@@ -107,14 +107,11 @@ export function applyEvent(
     // Sticky: once a session is known launched, stay launched — a later watched
     // hook event for the same key can't downgrade it.
     launched: prev?.launched || e.launched === true,
-    // In-process launches (the default now) emit launched:true and Duckterm
-    // owns their PTY. Live events don't carry the heartbeat flag that would mark
-    // a legacy AppleScript-tab launch, so derive optimistically from launched
-    // and let the authoritative /sessions seed (viewFromPersisted, which checks
-    // heartbeat) correct the rare external-tab case. Without this, a freshly
-    // launched session — which arrives via live events before the next seed —
-    // shows no terminal even though Duckterm owns its PTY.
-    ptyOwned: prev?.ptyOwned || e.launched === true,
+    // In-process launches (the default) emit launched:true and Duckterm owns
+    // their PTY. Tab launches (API in_terminal:true) also emit launched:true
+    // but stamp pty_owned:false — without that check, the live event would
+    // mount a dead black terminal for a session running in iTerm/Terminal.
+    ptyOwned: prev?.ptyOwned || (e.launched === true && e.pty_owned !== false),
     startedAt: prev?.startedAt ?? e._ts,
     updatedAt: e._ts,
     eventCount: (prev?.eventCount ?? 0) + 1,

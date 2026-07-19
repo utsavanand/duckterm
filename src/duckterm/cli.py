@@ -14,7 +14,7 @@ from pathlib import Path
 
 from duckterm import __version__
 
-DEFAULT_PORT = 4200
+DEFAULT_PORT = 4300
 DEFAULT_HOST = "127.0.0.1"
 
 
@@ -250,7 +250,7 @@ def _run(agent: str, agent_args: list[str], name: str | None = None) -> int:
         _register_run_session(key, agent, runtime, cwd, name)
     else:
         print(
-            "⚠ no Duckterm server on :4200 — running anyway, but it won't appear.\n"
+            "⚠ no Duckterm server on :4300 — running anyway, but it won't appear.\n"
             "  Start one in another terminal: duckterm serve",
             file=sys.stderr,
         )

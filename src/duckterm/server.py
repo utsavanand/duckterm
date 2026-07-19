@@ -609,6 +609,9 @@ class Server:
                 "branch": branch,
                 "intention": req.get("prompt", ""),
                 "launched": True,
+                # A tab launch is not attachable from the browser — the PTY
+                # lives in the user's terminal app, not in Duckterm.
+                "pty_owned": False,
             }
         )
         if name or req.get("notes"):
@@ -639,13 +642,22 @@ class Server:
         branch = req.get("branch") or f"fork/{parent_key[:8]}"
         base = str(parent["branch"])
 
-        # Headless: let the orchestrator create the worktree and supervise the
-        # agent (used by tests / non-interactive forks).
+        # PTY path (the dashboard's default): the orchestrator creates the
+        # worktree and supervises the agent, so the fork renders in the browser
+        # terminal. carry_context swaps in the parent harness's resume command
+        # so the fork continues the conversation in the isolated worktree.
         if not req.get("in_terminal", True):
             runtime_name = req.get("runtime", parent.get("runtime") or "generic")
+            run_command = command
+            carried = False
+            if req.get("carry_context"):
+                resumed = self._carry_context_argv(parent, parent_key, repo, command)
+                if resumed:
+                    run_command = shlex.join(resumed)
+                    carried = True
             try:
                 key = await self.orchestrator.launch(
-                    runtime=_build_runtime(runtime_name, command),
+                    runtime=_build_runtime(runtime_name, run_command),
                     repo_path=str(repo),
                     branch=branch,
                     base=base,
@@ -656,7 +668,17 @@ class Server:
             except (GitError, ValueError) as e:
                 await _write_json(writer, 400, {"error": str(e)})
                 return
-            await _write_json(writer, 200, {"session_key": key, "parent_session_key": parent_key})
+            await _write_json(
+                writer,
+                200,
+                {
+                    "session_key": key,
+                    "parent_session_key": parent_key,
+                    "branch": branch,
+                    "carried_context": carried,
+                    "opened_in_terminal": False,
+                },
+            )
             return
 
         # Default: create the worktree and open the agent in a terminal you can
@@ -703,6 +725,7 @@ class Server:
                 "parent_session_key": parent_key,
                 "intention": f"fork of {parent.get('source_app') or parent_key} ({base})",
                 "launched": True,
+                "pty_owned": False,
             }
         )
         if opened:
@@ -776,11 +799,12 @@ class Server:
     async def _fork_conversation(
         self, writer: asyncio.StreamWriter, parent_key: str, body: bytes
     ) -> None:
-        """Branch the *conversation* (not the code): open `claude --resume <id>
-        --fork-session` in a NEW terminal window so you can interact with the
-        forked conversation. Claude is interactive, so it belongs in a real
-        terminal, not a headless PTY. Only for a claude-code session whose
-        Claude session_id is known."""
+        """Branch the *conversation* (not the code): run `claude --resume <id>
+        --fork-session` so you can interact with the forked conversation. The
+        dashboard passes in_terminal:false and gets a PTY Duckterm owns (the
+        fork renders in the browser); in_terminal:true opens a real terminal
+        window for API callers who want one. Only for a claude-code session
+        whose Claude session_id is known."""
         parent = self.history.session(parent_key)
         if parent is None:
             await _write_json(writer, 404, {"error": f"no session {parent_key}"})
@@ -805,6 +829,28 @@ class Server:
         req = json.loads(body or b"{}")
         argv = ["claude", "--resume", session_id, "--fork-session"]
         child_key = f"convfork-{session_id[:8]}"
+
+        if not req.get("in_terminal", True):
+            key = await self.orchestrator.launch(
+                runtime=_build_runtime("claude-code", shlex.join(argv)),
+                cwd=cwd,
+                session_key=child_key,
+                parent_session_key=parent_key,
+                name=f"{parent.get('name') or parent.get('source_app') or parent_key} (fork)",
+            )
+            await _write_json(
+                writer,
+                200,
+                {
+                    "session_key": key,
+                    "parent_session_key": parent_key,
+                    "opened_in_terminal": False,
+                    "command": " ".join(argv),
+                    "cwd": cwd,
+                },
+            )
+            return
+
         fork_title = f"{parent.get('source_app') or parent_key} (fork)"
         opened = open_in_terminal(
             cwd,
@@ -942,31 +988,20 @@ class Server:
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
         runtime = row.get("runtime") or "generic"
         argv = self._resume_argv(session_key, runtime, row)
-        title = row.get("name") or row.get("source_app")
-        opened = open_in_terminal(
-            cwd,
-            argv,
-            env={"DUCKTERM_SESSION_KEY": session_key},
-            heartbeat=(_heartbeat_url(), session_key),
-            title=str(title) if title else None,
+        # Relaunch in a PTY Duckterm owns so the resumed session renders in the
+        # browser terminal — even if it originally ran in the user's own tab
+        # (duckterm run); clear the heartbeat flag so the row reads as
+        # PTY-owned again. The supervisor's SessionStart both persists the
+        # revive and reaches dashboards over SSE, lifting the stopped/archived
+        # rest-state back to busy.
+        await self.orchestrator.launch(
+            runtime=_build_runtime(runtime, shlex.join(argv)),
+            cwd=cwd,
+            session_key=session_key,
         )
-        if opened:
-            self.history.mark_heartbeat(session_key)
-            # Publish a SessionStart so the revive persists AND reaches dashboards
-            # over SSE — this is the one event that lifts the stopped/archived
-            # rest-state back to busy. (set_state alone wouldn't notify clients.)
-            self.bus.publish(
-                {
-                    "event_type": "SessionStart",
-                    "session_key": session_key,
-                    "runtime": row.get("runtime"),
-                    "cwd": row.get("cwd"),
-                    "source_app": row.get("source_app"),
-                    "launched": True,
-                }
-            )
+        self.history.clear_heartbeat(session_key)
         await _write_json(
-            writer, 200, {"resumed": opened, "session_key": session_key, "command": argv}
+            writer, 200, {"resumed": True, "session_key": session_key, "command": argv}
         )
 
     def _resume_argv(self, key: str, runtime: str, row: dict[str, Any]) -> list[str]:
@@ -1733,7 +1768,7 @@ def _pid_alive(pid: int) -> bool:
 
 
 def _heartbeat_url() -> str:
-    base = os.environ.get("DUCKTERM_URL", "http://127.0.0.1:4200").rstrip("/")
+    base = os.environ.get("DUCKTERM_URL", "http://127.0.0.1:4300").rstrip("/")
     return f"{base}/heartbeat"
 
 

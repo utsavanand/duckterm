@@ -497,6 +497,13 @@ class HistoryStore:
         self._conn.execute("UPDATE sessions SET heartbeat = 1 WHERE session_key = ?", (key,))
         self._conn.commit()
 
+    def clear_heartbeat(self, key: str) -> None:
+        """Unflag a heartbeat-tracked session — a resume moves it into a PTY
+        Duckterm owns, and heartbeat=1 would read as 'runs in the user's own
+        terminal' and hide the browser terminal for it."""
+        self._conn.execute("UPDATE sessions SET heartbeat = 0 WHERE session_key = ?", (key,))
+        self._conn.commit()
+
     def set_state(self, key: str, state: str, *, now: int | None = None) -> bool:
         """Set a session's state directly — for an explicit user action (Stop sets
         'stopped', Resume sets 'busy', Archive sets 'archived'). Distinct from

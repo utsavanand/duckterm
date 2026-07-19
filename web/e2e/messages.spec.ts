@@ -73,7 +73,7 @@ test("messages view renders structured conversation as HTML", async ({
   // Tools the agent ran collapse into one compact line, not a row each.
   await expect(page.locator(".rd-msg-tools")).toContainText("Bash");
   // The prompt that started the turn shows as context.
-  await expect(page.locator(".rd-msg-prompt")).toContainText("tell me about");
+  await expect(page.locator(".rd-turn-prompt")).toContainText("tell me about");
 });
 
 test("annotating a span stores it and sends it back to the agent", async ({

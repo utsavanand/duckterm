@@ -344,24 +344,63 @@ code,
   padding-left: 12px;
   color: var(--muted);
 }
-/* The user prompt that started the latest reply (small, dim, sets context). */
-.rd-msg-prompt {
-  font-size: 13px;
-  color: var(--muted);
-  font-style: italic;
-  border-left: 2px solid var(--border);
-  padding-left: 10px;
-  margin-bottom: 12px;
+/* Turn cards: color-code who's speaking. The user's prompt gets a blue rail,
+   the agent's reply a violet one — a left accent + faint tint, not full chat
+   bubbles, so long markdown stays readable. */
+.rd-turn {
+  border-left: 3px solid var(--border);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 14px 4px;
+  margin-bottom: 16px;
 }
-/* One compact line summarizing the tools an agent ran between prose — not a row
-   per tool call. */
+.rd-turn-user {
+  border-left-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.07);
+}
+.rd-turn-agent {
+  border-left-color: #a78bfa;
+  background: rgba(167, 139, 250, 0.05);
+}
+.rd-turn-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.rd-turn-user .rd-turn-label {
+  color: #3b82f6;
+}
+.rd-turn-agent .rd-turn-label {
+  color: #a78bfa;
+}
+.rd-turn-prompt {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text);
+  padding-bottom: 8px;
+  white-space: pre-wrap;
+}
+/* Tools the agent ran this turn, as compact chips — context, not the focus. */
 .rd-msg-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 12px;
+}
+.rd-tool-chip {
   font-size: 11px;
-  color: var(--muted);
   font-family: ui-monospace, Menlo, monospace;
-  margin: 6px 0 14px;
-  padding-left: 10px;
-  border-left: 2px solid var(--border);
+  color: var(--text-soft);
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 9px;
+  line-height: 1.5;
+}
+.rd-tool-count {
+  color: var(--muted);
+  margin-left: 4px;
 }
 /* xterm fills the pane and scrolls its OWN buffer (xterm-viewport), so a long
    session scrolls inside the terminal instead of growing the page. */

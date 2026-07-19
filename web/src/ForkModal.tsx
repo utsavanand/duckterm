@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { api } from "./api";
 import { SessionView } from "./types";
 import { Button, Field, inputStyle, Modal, useToast } from "./ui";
@@ -27,8 +27,6 @@ export function ForkModal({
     session.branch ? `${session.branch}-fork` : "",
   );
   const [command, setCommand] = useState("claude");
-  const [terminals, setTerminals] = useState<string[]>([]);
-  const [terminal, setTerminal] = useState<string>("");
   const [busy, setBusy] = useState(false);
   // Carry the parent's conversation into the worktree fork — only for harnesses
   // that can resume (Claude Code, Copilot). On by default when available.
@@ -36,48 +34,24 @@ export function ForkModal({
     session.runtime === "claude-code" || session.runtime === "copilot";
   const [carryContext, setCarryContext] = useState(canCarryContext);
 
-  useEffect(() => {
-    api
-      .terminals()
-      .then((d) => {
-        setTerminals(d.terminals);
-        setTerminal(d.terminals[0] ?? "");
-      })
-      .catch(() => undefined);
-  }, []);
-
+  // Forks run in a PTY Duckterm owns (in_terminal:false) so they render in the
+  // dashboard's terminal pane, same as launches — no external terminal window.
   async function submit() {
     setBusy(true);
     try {
       if (mode === "conversation") {
-        const r = await api.forkConversation(
-          session.key,
-          terminal || undefined,
-        );
-        if (r.opened_in_terminal) {
-          toast(`Opened forked conversation in ${terminal || "a terminal"}`);
-        } else {
-          toast(`Run it yourself: ${r.command}`, "err");
-        }
+        await api.forkConversation(session.key);
+        toast("Forked conversation running in Duckterm");
       } else if (hasBranch) {
         // True fork: branch off the parent's branch, open a new agent.
         const r = await api.fork(session.key, {
           command,
           branch: branch || undefined,
-          terminal: terminal || undefined,
+          in_terminal: false,
           carry_context: canCarryContext && carryContext,
         });
-        if (r.opened_in_terminal) {
-          const ctx = r.carried_context ? " with its conversation" : "";
-          toast(
-            `Opened fork on ${r.branch}${ctx} in ${terminal || "a terminal"}`,
-          );
-        } else {
-          toast(
-            `Worktree created; run in a terminal: cd ${r.worktree} && ${r.command}`,
-            "err",
-          );
-        }
+        const ctx = r.carried_context ? " with its conversation" : "";
+        toast(`Fork running on ${r.branch}${ctx}`);
       } else {
         // No branch yet: promote this in-place session onto a new worktree.
         const r = await api.promote(session.key, {
@@ -131,8 +105,8 @@ export function ForkModal({
             onChange={() => setMode("conversation")}
           />
           <span>
-            <strong>Conversation only</strong> — resume the agent's conversation
-            in a new terminal, no git branch
+            <strong>Conversation only</strong> — continue the agent's
+            conversation in a new Duckterm terminal, no git branch
             {!canConversationFork && " (Claude Code sessions only)"}
           </span>
         </label>
@@ -172,23 +146,6 @@ export function ForkModal({
             </label>
           )}
         </>
-      )}
-      {/* The terminal picker only matters when something is opened in one —
-          a true fork or a conversation fork, not a bare promote. */}
-      {terminals.length > 0 && !(mode === "worktree" && !hasBranch) && (
-        <Field label="Open in">
-          <select
-            style={inputStyle}
-            value={terminal}
-            onChange={(e) => setTerminal(e.target.value)}
-          >
-            {terminals.map((t) => (
-              <option key={t} value={t}>
-                {t === "iterm" ? "iTerm" : t === "terminal" ? "Terminal" : t}
-              </option>
-            ))}
-          </select>
-        </Field>
       )}
       <div
         style={{

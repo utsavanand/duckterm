@@ -6,14 +6,14 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      "/events": "http://localhost:4200",
-      "/stream": "http://localhost:4200",
-      "/sessions": "http://localhost:4200",
-      "/snapshots": "http://localhost:4200",
-      "/tree": "http://localhost:4200",
-      "/approvals": "http://localhost:4200",
-      "/terminals": "http://localhost:4200",
-      "/browse": "http://localhost:4200",
+      "/events": "http://localhost:4300",
+      "/stream": "http://localhost:4300",
+      "/sessions": "http://localhost:4300",
+      "/snapshots": "http://localhost:4300",
+      "/tree": "http://localhost:4300",
+      "/approvals": "http://localhost:4300",
+      "/terminals": "http://localhost:4300",
+      "/browse": "http://localhost:4300",
     },
   },
   test: {

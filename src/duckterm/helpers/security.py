@@ -2,7 +2,7 @@
 
 The server binds 127.0.0.1, which keeps it off the network but does NOT protect
 it from the browser: any web page the user visits can issue cross-origin
-requests to http://127.0.0.1:4200. The browser blocks the attacker from reading
+requests to http://127.0.0.1:4300. The browser blocks the attacker from reading
 the *responses* (no CORS headers are sent), but a "simple" cross-origin POST
 still reaches the handler — so a malicious tab could drive command-executing
 endpoints blind. This module closes that hole with two cheap checks:

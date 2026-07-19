@@ -110,24 +110,20 @@ export const api = {
     opts: {
       command?: string;
       branch?: string;
-      terminal?: string;
       in_terminal?: boolean;
       carry_context?: boolean;
     },
   ) =>
     post<{
-      opened_in_terminal?: boolean;
-      worktree?: string;
+      session_key: string;
       branch?: string;
-      command?: string;
       carried_context?: boolean;
     }>(`/sessions/${key}/fork`, opts),
-  forkConversation: (key: string, terminal?: string) =>
-    post<{ opened_in_terminal: boolean; command: string; cwd: string }>(
+  forkConversation: (key: string) =>
+    post<{ session_key: string; command: string; cwd: string }>(
       `/sessions/${key}/fork-conversation`,
-      { terminal },
+      { in_terminal: false },
     ),
-  terminals: () => get<{ terminals: string[] }>("/terminals"),
   stop: (key: string) => post<{ stopped: boolean }>(`/sessions/${key}/stop`),
   resume: (key: string) =>
     post<{ resumed: boolean }>(`/sessions/${key}/resume`),

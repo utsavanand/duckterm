@@ -113,17 +113,32 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
 
   return (
     <div className="rd-messages" ref={wrapRef} onMouseUp={onMouseUp}>
-      {latest.prompt && <div className="rd-msg-prompt">{latest.prompt}</div>}
-      {latest.tools.length > 0 && (
-        <div className="rd-msg-tools">{summarizeTools(latest.tools)}</div>
+      {latest.prompt && (
+        <div className="rd-turn rd-turn-user">
+          <div className="rd-turn-label">You</div>
+          <div className="rd-turn-prompt">{latest.prompt}</div>
+        </div>
       )}
-      {latest.texts.map((t, i) => (
-        <div
-          key={i}
-          className="rd-msg-text"
-          dangerouslySetInnerHTML={{ __html: html(t) }}
-        />
-      ))}
+      <div className="rd-turn rd-turn-agent">
+        <div className="rd-turn-label">Agent</div>
+        {latest.tools.length > 0 && (
+          <div className="rd-msg-tools">
+            {toolCounts(latest.tools).map(([name, n]) => (
+              <span key={name} className="rd-tool-chip">
+                {name}
+                {n > 1 && <span className="rd-tool-count">×{n}</span>}
+              </span>
+            ))}
+          </div>
+        )}
+        {latest.texts.map((t, i) => (
+          <div
+            key={i}
+            className="rd-msg-text"
+            dangerouslySetInnerHTML={{ __html: html(t) }}
+          />
+        ))}
+      </div>
       {sel && (
         <div
           className="rd-annotate-pop"
@@ -190,12 +205,9 @@ function latestReply(messages: Message[]): Reply | null {
   return reply.texts.length || reply.prompt ? reply : null;
 }
 
-// "used Read ×8, Bash" — counts per tool, most-used first.
-function summarizeTools(tools: string[]): string {
+// Tool usage as (name, count) pairs, most-used first — rendered as chips.
+function toolCounts(tools: string[]): [string, number][] {
   const counts = new Map<string, number>();
   for (const t of tools) counts.set(t, (counts.get(t) ?? 0) + 1);
-  const parts = [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([name, n]) => (n > 1 ? `${name} ×${n}` : name));
-  return `used ${parts.join(", ")}`;
+  return [...counts.entries()].sort((a, b) => b[1] - a[1]);
 }

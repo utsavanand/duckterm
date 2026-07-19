@@ -176,9 +176,12 @@ def test_stop_without_a_pty_reports_not_stopped(tmp_path: Path) -> None:
 def test_resume_relaunches_a_stopped_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Resume reopens a stopped launched session in its saved cwd. For
-    claude-code it continues the conversation with the recorded session id."""
-    import duckterm.server as server_mod
+    """Resume relaunches a stopped launched session in a PTY Duckterm owns, in
+    its saved cwd. For claude-code it continues the conversation with the
+    recorded session id, and the legacy heartbeat flag is cleared so the row
+    reads as PTY-owned (browser terminal attachable)."""
+    from pathlib import Path as P
+
     from duckterm.persistence.history import HistoryStore
 
     store = HistoryStore(tmp_path / "db.sqlite")
@@ -196,17 +199,20 @@ def test_resume_relaunches_a_stopped_session(
     store.mark_heartbeat("resumable")
     store.set_state("resumable", "stopped", now=2)
 
-    opened: dict = {}
-
-    def fake_open(cwd, argv, **kw):  # type: ignore[no-untyped-def]
-        opened["cwd"] = cwd
-        opened["argv"] = argv
-        return True
-
-    monkeypatch.setattr(server_mod, "open_in_terminal", fake_open)
+    launched: dict = {}
 
     async def scenario() -> dict[str, object]:
-        server = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
+        srv = Server(history=store)
+
+        async def fake_launch(*, runtime, cwd, session_key, **kw):  # type: ignore[no-untyped-def]
+            launched["cwd"] = cwd
+            launched["argv"] = runtime.launch_command(
+                cwd=P(cwd), session_key=session_key, initial_prompt=""
+            )
+            return session_key
+
+        monkeypatch.setattr(srv.orchestrator, "launch", fake_launch)
+        server = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
         async with server:
             body = await asyncio.to_thread(_post, port, "/sessions/resumable/resume")
@@ -214,9 +220,10 @@ def test_resume_relaunches_a_stopped_session(
 
     result = asyncio.run(scenario())
     assert result["resumed"] is True
-    assert opened["cwd"] == "/tmp/proj"
-    assert opened["argv"] == ["claude", "--resume", "claude-sid-123"]
-    assert store.session("resumable")["state"] == "busy"
+    assert launched["cwd"] == "/tmp/proj"
+    assert launched["argv"] == ["claude", "--resume", "claude-sid-123"]
+    # The PTY relaunch supersedes the old tab tracking.
+    assert store.session("resumable")["heartbeat"] == 0
 
 
 def test_archive_then_unarchive_round_trip(tmp_path: Path) -> None:

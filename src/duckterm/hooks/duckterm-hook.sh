@@ -23,7 +23,7 @@ EVENT_TYPE="${1:-Unknown}"
 # claude-code so older installs that pass only the event type keep working.
 RUNTIME="${2:-claude-code}"
 INPUT=$(cat)
-URL="${DUCKTERM_URL:-http://127.0.0.1:4200}"
+URL="${DUCKTERM_URL:-http://127.0.0.1:4300}"
 # Set by Duckterm when it launches the agent in a terminal, so the agent's
 # hook events attach to the row Duckterm already created instead of spawning
 # a duplicate session under Claude's own id. Empty for self-started sessions.

@@ -2,7 +2,7 @@
 
 A native menu-bar wrapper around the local Duckterm dashboard. The UI is the
 **same** dashboard you get in the browser — it's loaded in a `WKWebView` against
-`http://127.0.0.1:4200`, so there's one UI codebase, not a reimplementation.
+`http://127.0.0.1:4300`, so there's one UI codebase, not a reimplementation.
 
 ## What it does
 - Lives in the menu bar (`🦆`), no Dock icon.

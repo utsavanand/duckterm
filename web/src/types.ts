@@ -18,16 +18,14 @@ export interface DucktermEvent {
   worktree_path?: string;
   parent_session_key?: string;
   launched?: boolean;
+  // false when the session was launched into the user's own terminal app (API
+  // in_terminal:true) — launched, but with no PTY the browser can attach.
+  pty_owned?: boolean;
   runtime?: string;
 }
 
 export type SessionState =
-  | "idle"
-  | "busy"
-  | "waiting"
-  | "terminated"
-  | "stopped"
-  | "archived";
+  "idle" | "busy" | "waiting" | "terminated" | "stopped" | "archived";
 
 export interface SessionView {
   key: string;

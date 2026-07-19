@@ -4,7 +4,7 @@ import Foundation
 /// lifecycle. Finds the binary on PATH (or common install dirs), spawns it, and
 /// polls until the dashboard answers.
 final class ServerProcess {
-    let url = URL(string: "http://127.0.0.1:4200")!
+    let url = URL(string: "http://127.0.0.1:4300")!
     private var task: Process?
 
     /// Locate the `duckterm` executable. We can't rely on a GUI app inheriting

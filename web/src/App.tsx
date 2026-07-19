@@ -89,7 +89,7 @@ function Dashboard() {
   // Agents whose terminal we keep mounted (PTY Duckterm owns). Switching
   // between them is then instant — no WS reconnect, no buffer replay.
   const terminalAgents = useMemo(
-    () => agents.filter((s) => s.ptyOwned || s.worktreePath),
+    () => agents.filter((s) => s.ptyOwned),
     [agents],
   );
 
