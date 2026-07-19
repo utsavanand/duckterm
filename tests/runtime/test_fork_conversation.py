@@ -1,0 +1,174 @@
+"""Conversation fork: branch a claude-code session's *context* via
+`claude --resume <id> --fork-session`. We assert the guard rails (only
+claude-code, only when a Claude session_id is known) without needing a real
+claude binary."""
+
+import asyncio
+import json
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+from duckterm.persistence.history import HistoryStore
+from duckterm.runtimes.claude_code import project_slug
+from duckterm.server import Server
+
+
+def _token() -> str:
+    from duckterm.helpers import security
+
+    return security.load_or_create_token()
+
+
+def _post(port: int, path: str, payload: dict | None = None) -> tuple[int, dict]:
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=json.dumps(payload or {}).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "X-Duckterm-Token": _token(),
+        },
+        method="POST",
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=5)
+        return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def test_fork_conversation_rejects_non_claude_session(tmp_path: Path) -> None:
+    async def scenario() -> tuple[int, dict]:
+        store = HistoryStore(tmp_path / "db.sqlite")
+        srv = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            await asyncio.to_thread(
+                _post,
+                port,
+                "/events",
+                {"event_type": "SessionStart", "session_key": "g1", "runtime": "generic"},
+            )
+            return await asyncio.to_thread(_post, port, "/sessions/g1/fork-conversation", {})
+
+    status, body = asyncio.run(scenario())
+    assert status == 400
+    assert "claude-code" in body["error"]
+
+
+def test_fork_conversation_needs_a_claude_session_id(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # Isolate from the real ~/.claude so the fallback finds no transcript.
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "empty-home"))
+
+    async def scenario() -> tuple[int, dict]:
+        store = HistoryStore(tmp_path / "db.sqlite")
+        srv = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            # A claude-code session but no session_id event recorded yet.
+            await asyncio.to_thread(
+                _post,
+                port,
+                "/events",
+                {"event_type": "SessionStart", "session_key": "c1", "runtime": "claude-code"},
+            )
+            return await asyncio.to_thread(_post, port, "/sessions/c1/fork-conversation", {})
+
+    status, body = asyncio.run(scenario())
+    assert status == 400
+    # No recorded id and no transcript -> nothing resumable.
+    assert "resumable" in body["error"]
+
+
+def test_fork_conversation_opens_terminal_with_resume_command(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    # Don't actually spawn a terminal: capture the argv instead.
+    opened: dict = {}
+
+    def fake_open(
+        cwd: str,
+        argv: list[str],
+        *,
+        app: str | None = None,
+        env: dict | None = None,
+        heartbeat: tuple[str, str] | None = None,
+        title: str | None = None,
+    ) -> bool:
+        opened["cwd"] = cwd
+        opened["argv"] = argv
+        opened["env"] = env
+        opened["title"] = title
+        return True
+
+    monkeypatch.setattr("duckterm.server.open_in_terminal", fake_open)
+
+    # _resumable_session_id verifies the conversation transcript exists before
+    # forking, so seed one for claude-xyz under a fake home.
+    fake_home = tmp_path / "home"
+    slug = project_slug(Path("/work/repo"))
+    proj = fake_home / ".claude" / "projects" / slug
+    proj.mkdir(parents=True)
+    (proj / "claude-xyz.jsonl").write_text('{"role":"user","text":"hi"}\n')
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+    async def scenario() -> dict:
+        store = HistoryStore(tmp_path / "db.sqlite")
+        srv = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            # A claude-code session WITH a Claude session_id recorded.
+            await asyncio.to_thread(
+                _post,
+                port,
+                "/events",
+                {
+                    "event_type": "SessionStart",
+                    "session_key": "c2",
+                    "runtime": "claude-code",
+                    "session_id": "claude-xyz",
+                    "cwd": "/work/repo",
+                },
+            )
+            _, body = await asyncio.to_thread(_post, port, "/sessions/c2/fork-conversation", {})
+        return body
+
+    body = asyncio.run(scenario())
+    assert body["opened_in_terminal"] is True
+    assert opened["argv"] == ["claude", "--resume", "claude-xyz", "--fork-session"]
+    assert opened["cwd"] == "/work/repo"
+    # The fork's terminal carries Duckterm's key so the agent's hooks report
+    # under the same session and don't spawn a duplicate row.
+    assert opened["env"] == {"DUCKTERM_SESSION_KEY": body["session_key"]}
+
+
+def test_fork_conversation_errors_when_no_resumable_transcript(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    # The reported bug: the recorded session_id has no Claude conversation file,
+    # so --resume would fail. Fork must refuse with a clear error instead of
+    # opening a doomed terminal.
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "empty-home"))
+
+    async def scenario() -> tuple[int, dict]:
+        store = HistoryStore(tmp_path / "db.sqlite")
+        srv = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            await asyncio.to_thread(
+                _post,
+                port,
+                "/events",
+                {
+                    "event_type": "SessionStart",
+                    "session_key": "c3",
+                    "runtime": "claude-code",
+                    "session_id": "ghost-id-no-transcript",
+                    "cwd": "/work/repo",
+                },
+            )
+            return await asyncio.to_thread(_post, port, "/sessions/c3/fork-conversation", {})
+
+    status, body = asyncio.run(scenario())
+    assert status == 400
+    assert "resumable" in body["error"]

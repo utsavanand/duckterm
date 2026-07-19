@@ -1,0 +1,1744 @@
+"""asyncio HTTP/1.1 server.
+
+    POST /events              ingest one JSON event; returns the stamped event
+    GET  /events              last 100 events as JSON (polling fallback)
+    GET  /sessions            persisted session rows, incl. terminated (SQLite)
+    GET  /tree                fork lineage: nodes with parent_session_key
+    GET  /approvals           pending permission requests awaiting a decision
+    POST /approvals/:id/decide  answer an approval {decision: approve|deny}
+    POST /sessions/launch     spawn a supervised agent {command, cwd, ...}
+    POST /sessions/compare    launch one prompt as N variants side by side
+    POST /sessions/:key/fork  fork a session: child worktree off parent's branch
+    POST /sessions/:key/fork-conversation  branch the Claude conversation (--fork-session)
+    POST /sessions/:key/stop  terminate a supervised agent
+    DELETE /sessions/:key     remove a session and its events/metrics/checkpoints
+    POST /sessions/clear-terminated  delete all terminated sessions
+    POST /sessions/:key/checkpoint   record what was done (prompts/files/tools/git + summary)
+    GET  /sessions/:key/checkpoints   list checkpoint records
+    POST /sessions/:key/spotlight     apply worktree changes onto the main checkout
+    GET  /sessions/:key/diff          git diff of the session's worktree
+    GET  /sessions/:key/output        SSE: live agent output (PTY) lines
+    GET  /sessions/:key/terminal      WebSocket: raw PTY bytes <-> keystrokes/resize (xterm.js)
+    POST /sessions/:key/input         write to the agent's stdin (terminal-attach)
+    POST /snapshots           bundle recently-active sessions to disk
+    GET  /snapshots           list snapshots
+    GET  /snapshots/:id       fetch a snapshot manifest
+    POST /snapshots/:id/sessions/:key/restore  relaunch a session in a terminal
+    GET  /stream              SSE: {type:"init", events:[...]} then per-event frames
+    GET  /ws                  WebSocket: same event stream, bidirectional
+    GET  /                    liveness; carries the X-Duckterm self-probe header
+
+Hand-rolled over asyncio rather than a framework: routing is trivial and SSE
+wants direct control of the response stream. Zero runtime dependencies.
+"""
+
+import asyncio
+import contextlib
+import json
+import os
+import re
+import shlex
+import subprocess
+import time
+import urllib.parse
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from duckterm.agents.terminal import available_terminals, open_in_terminal
+from duckterm.core.approvals import ApprovalRegistry
+from duckterm.core.eventbus import EventBus
+from duckterm.core.orchestrator import Orchestrator
+from duckterm.git import gitdetect
+from duckterm.git.spotlight import spotlight_to_main
+from duckterm.git.worktrees import GitError
+from duckterm.harnesses import runtime_for
+from duckterm.helpers import browse, security
+from duckterm.persistence.checkpoints import build_checkpoint
+from duckterm.persistence.history import HistoryStore
+from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
+from duckterm.runtimes.base import AgentRuntime
+from duckterm.transport.httpio import (
+    KEEPALIVE_SECONDS,
+    SELF_PROBE_HEADER,
+    dashboard_dir,
+)
+from duckterm.transport.httpio import parse_request_line as _parse_request_line
+from duckterm.transport.httpio import read_body as _read_body
+from duckterm.transport.httpio import read_headers as _read_headers
+from duckterm.transport.httpio import write_file as _write_file
+from duckterm.transport.httpio import write_json as _write_json
+from duckterm.transport.httpio import write_response as _write_response
+from duckterm.transport.httpio import write_sse as _write_sse
+from duckterm.transport.websocket import (
+    close_frame,
+    encode_binary_frame,
+    encode_text_frame,
+    handshake_response,
+    ping_frame,
+    read_frame,
+    read_frame_opcode,
+)
+
+# How long the blocking hook polls for a decision before giving up (the
+# duckterm-hook.sh DEADLINE). A blocking approval older than this whose session
+# has moved on is abandoned and gets swept from "Needs human".
+_BLOCKING_POLL_MS = 180_000
+
+
+def infer_runtime(command: str) -> str:
+    """Guess the runtime from the command's first word, so callers don't have to
+    pass a separate runtime — `claude …` -> claude-code, `codex …` -> codex,
+    anything else -> generic."""
+    first = (command.strip().split() or [""])[0].rsplit("/", 1)[-1]
+    if first.startswith("claude"):
+        return "claude-code"
+    if first.startswith("codex"):
+        return "codex"
+    if first.startswith("copilot"):
+        return "copilot"
+    return "generic"
+
+
+def _build_runtime(name: str | None, command: str) -> AgentRuntime:
+    # Resolve through the harness registry — the single source of truth for which
+    # agents exist. infer_runtime() guesses from the command when name is unset.
+    return runtime_for(name or infer_runtime(command), command)
+
+
+class Route:
+    """One routing rule: match a (method, path) and invoke a handler. A path
+    matches exactly, or by prefix+suffix for routes with a :segment in the
+    middle (e.g. POST /sessions/:key/fork). `call` adapts to each handler's
+    arguments so the handlers themselves stay simple."""
+
+    def __init__(
+        self,
+        method: str,
+        matcher: str,
+        call: "RouteCall",
+        *,
+        prefix: str | None = None,
+        suffix: str | None = None,
+    ) -> None:
+        self.method = method
+        self.matcher = matcher  # exact path, or "" when prefix/suffix used
+        self.prefix = prefix
+        self.suffix = suffix
+        self.call = call
+
+    def matches(self, method: str, path: str) -> bool:
+        if method != self.method:
+            return False
+        if self.prefix is not None and self.suffix is not None:
+            return path.startswith(self.prefix) and path.endswith(self.suffix)
+        if self.prefix is not None:
+            return path.startswith(self.prefix)
+        return path == self.matcher
+
+    def segment(self, path: str) -> str:
+        """The :segment captured between prefix and suffix (or '' / the prefix
+        remainder for prefix-only routes)."""
+        if self.prefix is None:
+            return ""
+        end = -len(self.suffix) if self.suffix else len(path)
+        return path[len(self.prefix) : end]
+
+
+# Each handler receives (server, reader, writer, headers, body, segment) and
+# uses only what it needs. Grouped by concern.
+RouteCall = Any  # an async callable; kept loose to allow per-route adapters
+
+
+def _mid(prefix: str, suffix: str) -> dict[str, str]:
+    return {"prefix": prefix, "suffix": suffix}
+
+
+# fmt: off
+_ROUTES: list[Route] = [
+    # ── ingest ──
+    Route("POST", "/events", lambda s, r, w, h, b, seg: s._ingest(w, b)),
+    Route("POST", "/heartbeat", lambda s, r, w, h, b, seg: s._heartbeat(w, b)),
+    # ── query ──
+    Route("GET", "/events", lambda s, r, w, h, b, seg: s._recent(w)),
+    Route("GET", "/sessions", lambda s, r, w, h, b, seg: s._sessions(w)),
+    Route("GET", "/tree", lambda s, r, w, h, b, seg: s._tree(w)),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._browse(w, seg), prefix="/browse"),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._branches(w, seg), prefix="/branches"),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._read_agents_md(w, seg), prefix="/agents-md"),
+    Route("POST", "/agents-md", lambda s, r, w, h, b, seg: s._write_agents_md(w, b)),
+    Route("GET", "/approvals", lambda s, r, w, h, b, seg: s._list_approvals(w)),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._approval_decision(w, seg),
+          **_mid("/approvals/", "/decision")),
+    Route("GET", "/terminals", lambda s, r, w, h, b, seg: s._terminals(w)),
+    Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._diff(w, seg), **_mid("/sessions/", "/diff")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
+          **_mid("/sessions/", "/events")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._messages(w, seg),
+          **_mid("/sessions/", "/messages")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._list_annotations(w, seg),
+          **_mid("/sessions/", "/annotations")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._add_annotation(w, seg, b),
+          **_mid("/sessions/", "/annotations")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._list_checkpoints(w, seg),
+          **_mid("/sessions/", "/checkpoints")),
+    # ── control ──
+    Route("POST", "/sessions/launch", lambda s, r, w, h, b, seg: s._launch(w, b)),
+    Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
+    Route("POST", "/sessions/clear-terminated",
+          lambda s, r, w, h, b, seg: s._clear_terminated(w)),
+    # ── left-panel folders ──
+    Route("GET", "/folders", lambda s, r, w, h, b, seg: s._list_folders(w)),
+    Route("POST", "/folders", lambda s, r, w, h, b, seg: s._create_folder(w, b)),
+    Route("DELETE", "", lambda s, r, w, h, b, seg: s._delete_folder(w, seg),
+          prefix="/folders/"),
+    Route("PATCH", "", lambda s, r, w, h, b, seg: s._update_session(w, seg, b),
+          prefix="/sessions/"),
+    Route("DELETE", "", lambda s, r, w, h, b, seg: s._delete_session(w, seg, b),
+          prefix="/sessions/"),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._fork_conversation(w, seg, b),
+          **_mid("/sessions/", "/fork-conversation")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._fork(w, seg, b),
+          **_mid("/sessions/", "/fork")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._promote(w, seg, b),
+          **_mid("/sessions/", "/promote")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._stop(w, seg),
+          **_mid("/sessions/", "/stop")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._resume(w, seg),
+          **_mid("/sessions/", "/resume")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._archive(w, seg),
+          **_mid("/sessions/", "/archive")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._unarchive(w, seg),
+          **_mid("/sessions/", "/unarchive")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._checkpoint(w, seg, b),
+          **_mid("/sessions/", "/checkpoint")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._spotlight(w, seg),
+          **_mid("/sessions/", "/spotlight")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._input(w, seg, b),
+          **_mid("/sessions/", "/input")),
+    Route("POST", "/approvals", lambda s, r, w, h, b, seg: s._register_approval(w, b)),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._decide_approval(w, seg, b),
+          **_mid("/approvals/", "/decide")),
+    Route("POST", "/snapshots", lambda s, r, w, h, b, seg: s._create_snapshot(w)),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._restore(w, seg),
+          **_mid("/snapshots/", "/restore")),
+    # ── streams ──
+    Route("GET", "", lambda s, r, w, h, b, seg: s._output(r, w, seg),
+          **_mid("/sessions/", "/output")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._terminal(r, w, h, seg),
+          **_mid("/sessions/", "/terminal")),
+    Route("GET", "/stream", lambda s, r, w, h, b, seg: s._stream(r, w)),
+    Route("GET", "/ws", lambda s, r, w, h, b, seg: s._websocket(r, w, h)),
+    # ── single session (prefix-only; AFTER /sessions/:key/* sub-routes) ──
+    Route("GET", "", lambda s, r, w, h, b, seg: s._get_session(w, seg), prefix="/sessions/"),
+    # ── snapshot fetch (prefix-only; keep AFTER /snapshots/:id/restore) ──
+    Route("GET", "", lambda s, r, w, h, b, seg: s._get_snapshot(w, seg), prefix="/snapshots/"),
+    # ── dashboard (prefix-only catch for / and /assets/*) ──
+    Route("GET", "/", lambda s, r, w, h, b, seg: s._dashboard(w, "/")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._dashboard(w, "/assets/" + seg),
+          prefix="/assets/"),
+    Route("GET", "/favicon.svg", lambda s, r, w, h, b, seg: s._dashboard(w, "/favicon.svg")),
+    Route("GET", "/favicon.ico", lambda s, r, w, h, b, seg: s._dashboard(w, "/favicon.ico")),
+]
+# fmt: on
+
+
+class Server:
+    def __init__(self, bus: EventBus | None = None, history: HistoryStore | None = None) -> None:
+        self.history = history if history is not None else HistoryStore()
+        self.bus = bus if bus is not None else EventBus(sink=self._sink)
+        self.orchestrator = Orchestrator(self.bus, history=self.history)
+        self.snapshots = SnapshotManager(self.history)
+        self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
+        self.token = security.load_or_create_token()
+
+    # Activity that means a session moved past an *earlier* permission prompt:
+    # any of these arriving AFTER a request means it was answered and the agent
+    # continued (otherwise an answered-in-terminal request would linger as fake
+    # "needs human" noise). Time-gated so the tool that IS the request — Claude
+    # emits PermissionRequest and that tool's PreToolUse in the same tick —
+    # doesn't clear its own pending approval.
+    _RESOLVES_APPROVAL = {"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "SessionEnd"}
+
+    def _sink(self, event: dict[str, Any]) -> None:
+        """Fan a published event to the durable store and the approval registry.
+        Enrich watched sessions with git state detected from their cwd, so they
+        too can show repo/branch and be forked into a worktree."""
+        self._enrich_git(event)
+        self.history.record(event)
+        self.approvals.from_event(event)
+        if event.get("event_type") in self._RESOLVES_APPROVAL:
+            key = event.get("session_key") or event.get("session_id")
+            if key:
+                ts = int(event.get("_ts", 0))
+                self.approvals.drop_session_before(str(key), ts)
+                # A blocking approval older than the hook's poll deadline whose
+                # session has since moved on is abandoned — the hook stopped
+                # polling. Clear it so it doesn't linger in "Needs human".
+                self.approvals.drop_abandoned_blocking(str(key), ts, _BLOCKING_POLL_MS)
+
+    def _enrich_git(self, event: dict[str, Any]) -> None:
+        """If an event has a cwd but no repo/branch yet (a watched session),
+        detect git state from the cwd and add it. Cached per cwd, so this is
+        effectively once per session, not per event."""
+        cwd = event.get("cwd")
+        if not cwd or event.get("repo_path") or event.get("branch"):
+            return
+        info = gitdetect.detect(str(cwd))
+        if info is not None:
+            event["repo_path"] = info.repo_path
+            event["branch"] = info.branch
+            event.setdefault("source_app", info.repo_name)
+
+    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            request_line = await reader.readline()
+            if not request_line:
+                return
+            method, path = _parse_request_line(request_line)
+            headers = await _read_headers(reader)
+            body = await _read_body(reader, headers)
+            await self._dispatch(method, path, reader, writer, headers, body)
+        except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
+
+    async def _dispatch(
+        self,
+        method: str,
+        path: str,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        body: bytes,
+    ) -> None:
+        # Cross-origin requests are refused outright: a malicious web page must
+        # not be able to drive this server (which executes commands and touches
+        # the filesystem) even though it binds localhost. Same-origin requests
+        # and CLI tools send no Origin and pass.
+        if not security.origin_allowed(headers):
+            await _write_response(writer, 403, "cross-origin request refused")
+            return
+        # State-changing requests additionally require the per-install secret,
+        # which a blind CSRF can't read and therefore can't forge. GETs (the
+        # dashboard, static assets, read-only data) stay open so the browser can
+        # load the UI; they're already protected by the same-origin check above.
+        if method != "GET" and not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "missing or invalid token"})
+            return
+
+        for route in self._routes():
+            if route.matches(method, path):
+                await route.call(self, reader, writer, headers, body, route.segment(path))
+                return
+        await _write_response(writer, 404, "not found")
+
+    def _routes(self) -> list["Route"]:
+        # Grouped by concern. Each Route binds a (method, matcher) to a handler
+        # and declares which args it wants — keeps dispatch declarative.
+        return _ROUTES
+
+    async def _dashboard(self, writer: asyncio.StreamWriter, path: str) -> None:
+        """Serve the built React dashboard so there's one URL. The self-probe
+        header rides on every response. Falls back to a hint if not built."""
+        dist = dashboard_dir()
+        if dist is None:
+            await _write_response(
+                writer,
+                200,
+                "Duckterm server is running. Build the dashboard "
+                "(cd web && npm run build) to serve the UI here.",
+                extra_headers={SELF_PROBE_HEADER: "1"},
+            )
+            return
+        rel = "index.html" if path == "/" else path.lstrip("/")
+        target = (dist / rel).resolve()
+        if not str(target).startswith(str(dist.resolve())) or not target.is_file():
+            target = dist / "index.html"  # SPA fallback
+        if target.name == "index.html":
+            # Inject the per-install token so the dashboard's fetches can send it.
+            # Same-origin script can read it; a cross-origin attacker can't.
+            html = target.read_text().replace(
+                "<head>",
+                f'<head><meta name="duckterm-token" content="{self.token}">',
+                1,
+            )
+            await _write_response(
+                writer, 200, html, content_type="text/html", extra_headers={SELF_PROBE_HEADER: "1"}
+            )
+            return
+        await _write_file(writer, target)
+
+    async def _ingest(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            raw: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not isinstance(raw, dict):
+            await _write_json(writer, 400, {"error": "event must be a JSON object"})
+            return
+        # agent_pid comes from an external hook ($PPID) and is later fed to
+        # os.kill in the liveness sweep — coerce to a positive int or drop it.
+        if "agent_pid" in raw:
+            try:
+                pid = int(raw["agent_pid"])
+                raw["agent_pid"] = pid if pid > 0 else None
+            except (TypeError, ValueError):
+                raw["agent_pid"] = None
+        # A deleted (tombstoned) session whose agent is still running keeps firing
+        # hooks. Drop ALL of its events here — including SessionStart — so a
+        # session you deleted stays gone: no phantom rows, no events leaking into
+        # the Pulse feed. Deleted means deleted. To bring a session back that you
+        # deleted by mistake, `duckterm restart` (a fresh server has no
+        # tombstones, so still-running agents re-stream and reappear).
+        key = raw.get("session_key") or raw.get("session_id")
+        if key and self.history.is_tombstoned(str(key)):
+            await _write_json(writer, 200, {"dropped": "session deleted"})
+            return
+        event = self.bus.publish(raw)
+        await _write_json(writer, 200, event)
+
+    async def _recent(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, {"events": self.bus.recent()})
+
+    def _init_events(self) -> list[dict[str, object]]:
+        """Events for a stream's init replay, minus any whose session has since
+        been deleted. The ring buffer can still hold a deleted session's
+        SessionStart (it was published before the delete), and replaying it would
+        resurrect the row on a fresh page load — its tombstone Set starts empty,
+        so it can't filter the event out client-side."""
+        return [
+            e
+            for e in self.bus.recent()
+            if not self.history.is_tombstoned(
+                str(e.get("session_key") or e.get("session_id") or "")
+            )
+        ]
+
+    async def _session_events(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        """A session's own events from the durable store, oldest first — for the
+        detail-drawer timeline. (The /events ring buffer only holds the last 100
+        across all sessions, so it can't back a per-session view.)"""
+        await _write_json(writer, 200, {"events": self.history.events_for(session_key)})
+
+    async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        """Structured conversation records for the HTML / pagination views: the
+        agent's messages parsed from its transcript into ordered content blocks
+        (text / tool_use / tool_result). Claude-code only (the harness with a
+        structured transcript); others return an empty list. See
+        docs/structured-render-design.md."""
+        row = self.history.session(session_key)
+        if row is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        session_id = self.history.session_id_for(session_key)
+        cwd = row.get("worktree_path") or row.get("cwd")
+        runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
+        from duckterm.runtimes.claude_code import ClaudeCodeRuntime, parse_messages
+
+        messages: list[dict[str, object]] = []
+        if isinstance(runtime, ClaudeCodeRuntime) and cwd:
+            cwd_path = Path(str(cwd))
+            # Prefer the exact transcript by session_id (hooked sessions report
+            # it); fall back to the newest transcript for the cwd (in-process PTY
+            # launches don't report Claude's session_id).
+            path = (
+                runtime.locate_transcript(cwd=cwd_path, session_id=session_id)
+                if session_id
+                else None
+            )
+            if path is None:
+                path = runtime.latest_transcript(cwd=cwd_path)
+            if path is not None:
+                messages = parse_messages(path)
+        await _write_json(writer, 200, {"messages": messages})
+
+    async def _list_annotations(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        await _write_json(writer, 200, {"annotations": self.history.annotations(session_key)})
+
+    async def _add_annotation(
+        self, writer: asyncio.StreamWriter, session_key: str, body: bytes
+    ) -> None:
+        """Store a {quote, note} annotation AND send it back to the agent as a
+        follow-up prompt, so the user's feedback on a response re-enters the
+        conversation. Requires a live supervisor (the agent's stdin)."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        quote = (req.get("quote") or "").strip()
+        note = (req.get("note") or "").strip()
+        if not note:
+            await _write_json(writer, 400, {"error": "note is required"})
+            return
+        ann_id = security.new_session_key("ann")
+        self.history.add_annotation(ann_id, session_key, quote, note, int(time.time() * 1000))
+        # Compose the follow-up and write it to the agent's stdin (the same path
+        # the terminal uses). Quote the span so the agent knows what it's about.
+        supervisor = self.orchestrator.get(session_key)
+        sent = False
+        if supervisor is not None:
+            prompt = f'Re: "{quote}" — {note}' if quote else note
+            sent = supervisor.write_bytes(prompt.encode() + b"\r")
+        await _write_json(writer, 200, {"id": ann_id, "sent": sent})
+
+    async def _heartbeat(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        """A launched tab pings here while alive. Records last_seen so the sweep
+        can tell a killed tab from a quiet one."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        key = req.get("session_key")
+        if not security.valid_session_key(key):
+            await _write_json(writer, 400, {"error": "valid session_key required"})
+            return
+        # tty identifies which terminal the session runs in; constrain it to the
+        # /dev/tty… shape so a forged ping can't store an arbitrary payload.
+        tty = req.get("tty")
+        if tty is not None and not security.valid_tty(tty):
+            tty = None
+        ok = self.history.touch(str(key), int(time.time() * 1000), tty=tty)
+        await _write_json(writer, 200, {"ok": ok})
+
+    async def _sessions(self, writer: asyncio.StreamWriter) -> None:
+        sessions = self.history.sessions()
+        subagents = self.history.subagents_by_session()
+        for s in sessions:
+            s["subagents"] = subagents.get(str(s.get("session_key") or ""), [])
+        await _write_json(writer, 200, {"sessions": sessions})
+
+    async def _launch(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        command = req.get("command")
+        cwd = req.get("cwd")
+        repo_path = req.get("repo_path")
+        if not command or (not cwd and not repo_path):
+            await _write_json(
+                writer, 400, {"error": "command and one of cwd/repo_path are required"}
+            )
+            return
+        name = req.get("name")
+
+        # Headless: Duckterm supervises the agent invisibly (automation / CI).
+        if not req.get("in_terminal", True):
+            try:
+                key = await self.orchestrator.launch(
+                    runtime=_build_runtime(req.get("runtime"), command),
+                    cwd=cwd,
+                    repo_path=repo_path,
+                    branch=req.get("branch"),
+                    base=req.get("base"),
+                    session_key=req.get("session_key"),
+                    prompt=req.get("prompt", ""),
+                    name=name,
+                )
+            except (GitError, ValueError) as e:
+                await _write_json(writer, 400, {"error": str(e)})
+                return
+            if req.get("notes"):
+                self.history.set_meta(key, notes=req.get("notes"))
+            await _write_json(writer, 200, {"session_key": key, "opened_in_terminal": False})
+            return
+
+        # Default: open the agent in a terminal tab you can see and drive.
+        run_cwd = cwd
+        repo_name = None
+        branch = None
+        worktree_path = None
+        if repo_path:
+            try:
+                wt = self.orchestrator.worktrees.add(
+                    Path(repo_path),
+                    req.get("branch") or _branch_name(name),
+                    base=req.get("base") or None,
+                )
+            except (GitError, ValueError) as e:
+                await _write_json(writer, 400, {"error": str(e)})
+                return
+            run_cwd = str(wt.path)
+            repo_name = wt.repo_path.name
+            branch = wt.branch
+            worktree_path = str(wt.path)
+
+        # Unguessable key so the input/attach endpoints can't be hit by guessing
+        # a predictable `new-<timestamp>`. A caller-supplied key must be sane.
+        key = req.get("session_key") or security.new_session_key("new")
+        if not security.valid_session_key(key):
+            await _write_json(writer, 400, {"error": "invalid session_key"})
+            return
+        # Inject the prompt into the agent command the same way the headless path
+        # does — each runtime appends it in its own form (claude/codex positional,
+        # copilot `-p`). Without this the terminal launch dropped the prompt and
+        # only kept it as `intention`, so the agent opened with an empty session.
+        runtime = _build_runtime(req.get("runtime"), command)
+        argv = runtime.launch_command(
+            cwd=Path(run_cwd), session_key=key, initial_prompt=req.get("prompt", "")
+        )
+        opened = open_in_terminal(
+            str(run_cwd),
+            argv,
+            app=req.get("terminal"),
+            env={"DUCKTERM_SESSION_KEY": key},
+            heartbeat=(_heartbeat_url(), key),
+            title=name or repo_name,
+        )
+        # Record a tracked row so the session shows up with its name/repo/branch.
+        # The agent's hooks report under the same key (via DUCKTERM_SESSION_KEY)
+        # so they update this row instead of creating a duplicate.
+        self.bus.publish(
+            {
+                "event_type": "SessionStart",
+                "session_key": key,
+                "name": name,
+                "source_app": repo_name
+                or (run_cwd.rstrip("/").rsplit("/", 1)[-1] if run_cwd else key),
+                "runtime": _build_runtime(req.get("runtime"), command).name,
+                "cwd": str(run_cwd),
+                "repo_path": repo_path,
+                "worktree_path": worktree_path,
+                "branch": branch,
+                "intention": req.get("prompt", ""),
+                "launched": True,
+            }
+        )
+        if name or req.get("notes"):
+            self.history.set_meta(key, name=name, notes=req.get("notes"))
+        if opened:
+            self.history.mark_heartbeat(key)
+        await _write_json(
+            writer,
+            200,
+            {"session_key": key, "opened_in_terminal": opened, "command": command},
+        )
+
+    async def _fork(self, writer: asyncio.StreamWriter, parent_key: str, body: bytes) -> None:
+        parent = self.history.session(parent_key)
+        if parent is None:
+            await _write_json(writer, 404, {"error": f"no session {parent_key}"})
+            return
+        if not parent.get("repo_path") or not parent.get("branch"):
+            await _write_json(writer, 400, {"error": "parent has no worktree to fork from"})
+            return
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        command = req.get("command") or "claude"
+        repo = Path(str(parent["repo_path"]))
+        branch = req.get("branch") or f"fork/{parent_key[:8]}"
+        base = str(parent["branch"])
+
+        # Headless: let the orchestrator create the worktree and supervise the
+        # agent (used by tests / non-interactive forks).
+        if not req.get("in_terminal", True):
+            runtime_name = req.get("runtime", parent.get("runtime") or "generic")
+            try:
+                key = await self.orchestrator.launch(
+                    runtime=_build_runtime(runtime_name, command),
+                    repo_path=str(repo),
+                    branch=branch,
+                    base=base,
+                    parent_session_key=parent_key,
+                    session_key=req.get("session_key"),
+                    prompt=req.get("prompt", ""),
+                )
+            except (GitError, ValueError) as e:
+                await _write_json(writer, 400, {"error": str(e)})
+                return
+            await _write_json(writer, 200, {"session_key": key, "parent_session_key": parent_key})
+            return
+
+        # Default: create the worktree and open the agent in a terminal you can
+        # drive (an interactive agent like claude needs a real terminal).
+        try:
+            worktree = self.orchestrator.worktrees.add(repo, branch, base=base)
+        except (GitError, ValueError) as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        child_key = req.get("session_key") or security.new_session_key("fork")
+        if not security.valid_session_key(child_key):
+            await _write_json(writer, 400, {"error": "invalid session_key"})
+            return
+        # Carry the parent's conversation into the new worktree, so the fork has
+        # the isolated code AND the prior context — for any harness that can
+        # resume (each declares its own resume command). Falls back to a fresh
+        # agent when the harness has no native resume or no recorded session.
+        argv = shlex.split(command)
+        carried = False
+        if req.get("carry_context"):
+            resumed = self._carry_context_argv(parent, parent_key, repo, command)
+            if resumed:
+                argv = resumed
+                carried = True
+        opened = open_in_terminal(
+            str(worktree.path),
+            argv,
+            app=req.get("terminal"),
+            env={"DUCKTERM_SESSION_KEY": child_key},
+            heartbeat=(_heartbeat_url(), child_key),
+            title=worktree.branch,
+        )
+        # Record a tracked row so the fork shows its lineage. The agent's hooks
+        # report under child_key (via DUCKTERM_SESSION_KEY), updating this row.
+        self.bus.publish(
+            {
+                "event_type": "SessionStart",
+                "session_key": child_key,
+                "source_app": repo.name,
+                "runtime": parent.get("runtime") or "claude-code",
+                "repo_path": str(repo),
+                "worktree_path": str(worktree.path),
+                "branch": worktree.branch,
+                "parent_session_key": parent_key,
+                "intention": f"fork of {parent.get('source_app') or parent_key} ({base})",
+                "launched": True,
+            }
+        )
+        if opened:
+            self.history.mark_heartbeat(child_key)
+        await _write_json(
+            writer,
+            200,
+            {
+                "session_key": child_key,
+                "parent_session_key": parent_key,
+                "opened_in_terminal": opened,
+                "worktree": str(worktree.path),
+                "branch": worktree.branch,
+                "command": " ".join(argv),
+                "carried_context": carried,
+            },
+        )
+
+    async def _promote(self, writer: asyncio.StreamWriter, session_key: str, body: bytes) -> None:
+        """Create a git worktree + branch for a session that's been running in
+        place (no worktree yet) — for when the user decides the work is worth
+        isolating onto a branch they can publish. The repo is the session's cwd;
+        the new worktree is branched off `base` (default: the repo's HEAD)."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        row = self.history.session(session_key)
+        if row is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        if row.get("worktree_path"):
+            await _write_json(writer, 409, {"error": "session already has a worktree"})
+            return
+        repo_dir = row.get("repo_path") or row.get("cwd")
+        if not repo_dir:
+            await _write_json(writer, 400, {"error": "session has no directory to branch from"})
+            return
+        repo = Path(str(repo_dir))
+        branch = req.get("branch") or _branch_name(row.get("name") or session_key)
+        base = req.get("base") or None
+        try:
+            worktree = await asyncio.to_thread(
+                self.orchestrator.worktrees.add, repo, branch, base=base
+            )
+        except (GitError, ValueError) as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        # Record the new worktree/branch on the session row so the dashboard
+        # shows it and worktree-only actions (fork, spotlight) light up.
+        self.bus.publish(
+            {
+                "event_type": "Notification",
+                "session_key": session_key,
+                "repo_path": str(repo),
+                "worktree_path": str(worktree.path),
+                "branch": worktree.branch,
+            }
+        )
+        await _write_json(
+            writer,
+            200,
+            {
+                "session_key": session_key,
+                "worktree": str(worktree.path),
+                "branch": worktree.branch,
+            },
+        )
+
+    async def _fork_conversation(
+        self, writer: asyncio.StreamWriter, parent_key: str, body: bytes
+    ) -> None:
+        """Branch the *conversation* (not the code): open `claude --resume <id>
+        --fork-session` in a NEW terminal window so you can interact with the
+        forked conversation. Claude is interactive, so it belongs in a real
+        terminal, not a headless PTY. Only for a claude-code session whose
+        Claude session_id is known."""
+        parent = self.history.session(parent_key)
+        if parent is None:
+            await _write_json(writer, 404, {"error": f"no session {parent_key}"})
+            return
+        if (parent.get("runtime") or "") != "claude-code":
+            await _write_json(
+                writer, 400, {"error": "conversation fork is only for claude-code sessions"}
+            )
+            return
+        cwd = str(parent.get("cwd") or ".")
+        session_id = self._resumable_session_id(parent_key, cwd)
+        if not session_id:
+            await _write_json(
+                writer,
+                400,
+                {
+                    "error": "no resumable Claude conversation found for this session "
+                    "(its transcript may be gone, or it never recorded one yet)"
+                },
+            )
+            return
+        req = json.loads(body or b"{}")
+        argv = ["claude", "--resume", session_id, "--fork-session"]
+        child_key = f"convfork-{session_id[:8]}"
+        fork_title = f"{parent.get('source_app') or parent_key} (fork)"
+        opened = open_in_terminal(
+            cwd,
+            argv,
+            app=req.get("terminal"),
+            env={"DUCKTERM_SESSION_KEY": child_key},
+            title=fork_title,
+        )
+        # Record a row so the conversation fork shows its lineage.
+        self.bus.publish(
+            {
+                "event_type": "SessionStart",
+                "session_key": child_key,
+                "source_app": parent.get("source_app") or "fork",
+                "runtime": "claude-code",
+                "cwd": cwd,
+                "parent_session_key": parent_key,
+                "intention": f"conversation fork of {parent.get('source_app') or parent_key}",
+            }
+        )
+        await _write_json(
+            writer,
+            200,
+            {
+                "session_key": child_key,
+                "parent_session_key": parent_key,
+                "opened_in_terminal": opened,
+                "command": " ".join(argv),
+                "cwd": cwd,
+            },
+        )
+
+    def _carry_context_argv(
+        self, parent: dict[str, Any], parent_key: str, repo: Path, command: str
+    ) -> list[str] | None:
+        """The argv to relaunch a fork *with the parent's conversation* — built
+        from the parent harness's own resume command, so this works for any agent
+        that can resume (Claude: --resume <id> --fork-session; Copilot:
+        --resume=<id>). Returns None for harnesses with no native resume
+        (codex/generic) or when no resumable session is recorded."""
+        runtime = parent.get("runtime") or "generic"
+        cwd = str(parent.get("cwd") or repo)
+        if runtime == "claude-code":
+            sid = self._resumable_session_id(parent_key, cwd)
+            # --fork-session branches the conversation so the parent isn't touched.
+            return ["claude", "--resume", sid, "--fork-session"] if sid else None
+        if runtime == "copilot":
+            sid = self.history.session_id_for(parent_key)
+            return [*shlex.split(command), f"--resume={sid}"] if sid else None
+        # codex / generic: no native conversation resume — can't carry context.
+        return None
+
+    def _resumable_session_id(self, parent_key: str, cwd: str) -> str | None:
+        """A Claude conversation id that can actually be `--resume`d. The id from
+        the latest event isn't always valid (a forked/transient id, or its
+        transcript was deleted), so verify the transcript file exists. If the
+        recorded id is dead, fall back to the newest real conversation in this
+        cwd. Returns None if there's nothing resumable."""
+        from duckterm.runtimes.claude_code import ClaudeCodeRuntime, project_slug
+
+        rt = ClaudeCodeRuntime()
+        cwd_path = Path(cwd)
+        recorded = self.history.session_id_for(parent_key)
+        if recorded and rt.locate_transcript(cwd=cwd_path, session_id=recorded):
+            return recorded
+        # The recorded id has no transcript — use the most recent one for this
+        # project directory, if any.
+        slug = project_slug(cwd_path)
+        proj = Path.home() / ".claude" / "projects" / slug
+        if not proj.is_dir():
+            return None
+        transcripts = sorted(proj.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return transcripts[0].stem if transcripts else None
+
+    def _restore_session_with_resume_id(self, session: dict[str, Any]) -> dict[str, Any]:
+        """Return a copy of a snapshot session whose `session_key` is the harness's
+        resumable conversation id (so `--resume` works), or has `_no_resume` set
+        when nothing is resumable (restore then launches fresh). Codex/generic are
+        unchanged — they don't resume by id."""
+        runtime = session.get("runtime") or "generic"
+        key = str(session.get("session_key", ""))
+        cwd = str(session.get("worktree_path") or session.get("cwd") or ".")
+        resume_id: str | None = None
+        if runtime == "claude-code":
+            resume_id = self._resumable_session_id(key, cwd)
+        elif runtime == "copilot":
+            resume_id = self.history.session_id_for(key)
+        else:
+            return session  # codex/generic: no id-based resume
+        out = dict(session)
+        if resume_id:
+            out["session_key"] = resume_id
+        else:
+            out["_no_resume"] = True  # restore_command_for -> fresh launch
+        return out
+
+    async def _stop(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        # An in-process supervised session has a PTY we can terminate directly.
+        # A session running in the user's own terminal (duckterm run / a tab we
+        # opened) isn't ours to kill — the user stops it there.
+        stopped = await self.orchestrator.stop(session_key)
+        # Mark it stopped (resumable) rather than terminated — Stop is a pause; the
+        # worktree, branch, and conversation id are kept so Resume can continue it.
+        # Publish so the change persists AND reaches connected dashboards over SSE.
+        if stopped:
+            self._set_lifecycle(session_key, "stopped")
+            self.approvals.drop_session(session_key)
+        status = 200 if stopped else 404
+        await _write_json(writer, status, {"stopped": stopped, "session_key": session_key})
+
+    def _set_lifecycle(self, session_key: str, lifecycle: str) -> None:
+        """Publish a lifecycle event (stopped/archived) for a session. The bus
+        sink persists it via history.record (derive_state honors the marker) and
+        the SSE stream pushes it to dashboards, so a manual stop/archive updates
+        the UI live instead of only on reload."""
+        self.bus.publish(
+            {"event_type": "Notification", "session_key": session_key, "lifecycle": lifecycle}
+        )
+
+    async def _resume(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        """Resume a stopped/terminated launched session: relaunch its agent in the
+        saved worktree/cwd under the same session_key. For claude-code, continue
+        the conversation with `--resume <claude session_id>`; other runtimes
+        relaunch their command (fresh conversation if they have no native resume).
+        """
+        row = self.history.session(session_key)
+        if row is None:
+            await _write_json(writer, 404, {"error": f"no session {session_key}"})
+            return
+        if not row.get("heartbeat") and not row.get("launched"):
+            await _write_json(
+                writer, 400, {"error": "only Duckterm-launched sessions can be resumed"}
+            )
+            return
+        cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
+        runtime = row.get("runtime") or "generic"
+        argv = self._resume_argv(session_key, runtime, row)
+        title = row.get("name") or row.get("source_app")
+        opened = open_in_terminal(
+            cwd,
+            argv,
+            env={"DUCKTERM_SESSION_KEY": session_key},
+            heartbeat=(_heartbeat_url(), session_key),
+            title=str(title) if title else None,
+        )
+        if opened:
+            self.history.mark_heartbeat(session_key)
+            # Publish a SessionStart so the revive persists AND reaches dashboards
+            # over SSE — this is the one event that lifts the stopped/archived
+            # rest-state back to busy. (set_state alone wouldn't notify clients.)
+            self.bus.publish(
+                {
+                    "event_type": "SessionStart",
+                    "session_key": session_key,
+                    "runtime": row.get("runtime"),
+                    "cwd": row.get("cwd"),
+                    "source_app": row.get("source_app"),
+                    "launched": True,
+                }
+            )
+        await _write_json(
+            writer, 200, {"resumed": opened, "session_key": session_key, "command": argv}
+        )
+
+    def _resume_argv(self, key: str, runtime: str, row: dict[str, Any]) -> list[str]:
+        """The command to relaunch a session. claude-code continues its
+        conversation if we recorded a session id; everything else relaunches the
+        base agent binary (a fresh conversation — no native resume here yet)."""
+        if runtime == "claude-code":
+            sid = self.history.session_id_for(key)
+            return ["claude", "--resume", sid] if sid else ["claude"]
+        # The runtime name doubles as the default binary for the known agents.
+        binary = {"codex": "codex", "copilot": "copilot"}.get(runtime, "claude")
+        return [binary]
+
+    async def _archive(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        """Put a session away to declutter — keep all its history but hide it
+        behind the Archived filter. Stops its PTY first if it's still live, so
+        archive is also "I'm done, get it out of the way"."""
+        row = self.history.session(session_key)
+        if row is None:
+            await _write_json(writer, 404, {"error": f"no session {session_key}"})
+            return
+        # Only sessions Duckterm owns can be archived. Archiving a watched
+        # session would hide a row whose agent keeps running in a terminal we
+        # don't control, and unarchiving would offer a Resume that can't fire.
+        if not row.get("launched"):
+            await _write_json(
+                writer, 400, {"error": "only Duckterm-launched sessions can be archived"}
+            )
+            return
+        await self.orchestrator.stop(session_key)
+        self._set_lifecycle(session_key, "archived")
+        self.approvals.drop_session(session_key)
+        await _write_json(writer, 200, {"archived": True, "session_key": session_key})
+
+    async def _unarchive(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        """Bring an archived session back into view as a stopped (resumable) row."""
+        if self.history.session(session_key) is None:
+            await _write_json(writer, 404, {"unarchived": False, "session_key": session_key})
+            return
+        self._set_lifecycle(session_key, "stopped")
+        await _write_json(writer, 200, {"unarchived": True, "session_key": session_key})
+
+    async def _delete_session(
+        self, writer: asyncio.StreamWriter, session_key: str, body: bytes
+    ) -> None:
+        # Stop it first if it's live (best-effort), remove its worktree (if any),
+        # then drop it from the DB. If the worktree has unmerged commits and the
+        # caller didn't pass force, refuse so agent work isn't silently lost.
+        force = False
+        with contextlib.suppress(json.JSONDecodeError):
+            force = bool(json.loads(body or b"{}").get("force"))
+        row = self.history.session(session_key)
+        # -1 means the unmerged check failed; treat unknown as unsafe and refuse
+        # (unless forced), same as if there were unmerged commits.
+        unmerged = self._worktree_unmerged(row)
+        if unmerged != 0 and not force:
+            await _write_json(
+                writer,
+                409,
+                {
+                    "deleted": False,
+                    "session_key": session_key,
+                    "unmerged_commits": unmerged,
+                    "unmerged_check_failed": unmerged < 0,
+                    "branch": row.get("branch") if row else None,
+                },
+            )
+            return
+        await self.orchestrator.stop(session_key)
+        self._remove_worktree(row)
+        deleted = self.history.delete_session(session_key, now=int(time.time() * 1000))
+        self.approvals.drop_session(session_key)
+        status = 200 if deleted else 404
+        await _write_json(writer, status, {"deleted": deleted, "session_key": session_key})
+
+    def _worktree_path_of(self, row: dict[str, Any] | None) -> Path | None:
+        """The Duckterm-managed worktree for a session, or None. Guards that we
+        only ever act on worktrees under our own dir, never the user's repo."""
+        if row is None:
+            return None
+        wt = row.get("worktree_path")
+        if not wt or "/.duckterm/worktrees/" not in str(wt):
+            return None
+        return Path(str(wt))
+
+    def _worktree_unmerged(self, row: dict[str, Any] | None) -> int:
+        """Count commits on the worktree branch not yet in main. Returns -1 when
+        the git check itself fails: 'we couldn't tell' must NOT be treated as
+        'zero unmerged', or a broken check would silently bypass the delete guard
+        and discard the agent's work."""
+        wt = self._worktree_path_of(row)
+        if wt is None or not wt.exists():
+            return 0
+        try:
+            return self.orchestrator.worktrees.unmerged_commits(wt)
+        except GitError:
+            return -1
+
+    def _remove_worktree(self, row: dict[str, Any] | None) -> None:
+        """Remove the git worktree + branch for a Duckterm-created session.
+        Only touches worktrees under our worktrees dir; never the user's repo."""
+        wt = self._worktree_path_of(row)
+        if wt is None:
+            return
+        # The worktree itself knows its main repo (shared object store), so this
+        # works whether or not the row recorded the original repo_path.
+        with contextlib.suppress(GitError):
+            self.orchestrator.worktrees.remove_by_worktree(wt)
+
+    async def _update_session(
+        self, writer: asyncio.StreamWriter, session_key: str, body: bytes
+    ) -> None:
+        """Set a user-given name, notes, and/or folder group on a session (local).
+        `group: ""` ungroups; omitting a field leaves it unchanged."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        ok = self.history.set_meta(
+            session_key,
+            name=req.get("name"),
+            notes=req.get("notes"),
+            group=req.get("group"),
+        )
+        await _write_json(writer, 200 if ok else 404, {"updated": ok})
+
+    async def _clear_terminated(self, writer: asyncio.StreamWriter) -> None:
+        keys = self.history.clear_terminated()
+        await _write_json(writer, 200, {"cleared": len(keys), "session_keys": keys})
+
+    async def _list_folders(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, {"folders": self.history.folders()})
+
+    async def _create_folder(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            name = str(json.loads(body or b"{}").get("name", "")).strip()
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not name:
+            await _write_json(writer, 400, {"error": "name required"})
+            return
+        self.history.create_folder(name, now=int(time.time() * 1000))
+        await _write_json(writer, 200, {"created": name})
+
+    async def _delete_folder(self, writer: asyncio.StreamWriter, name: str) -> None:
+        self.history.delete_folder(urllib.parse.unquote(name))
+        await _write_json(writer, 200, {"deleted": urllib.parse.unquote(name)})
+
+    async def _tree(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, {"nodes": self.history.fork_tree()})
+
+    async def _terminals(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, {"terminals": available_terminals()})
+
+    async def _get_session(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        # Only a bare key — sub-paths like /diff, /output are their own routes.
+        if "/" in session_key:
+            await _write_response(writer, 404, "not found")
+            return
+        row = self.history.session(session_key)
+        if row is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        await _write_json(writer, 200, row)
+
+    async def _browse(self, writer: asyncio.StreamWriter, seg: str) -> None:
+        # seg is the part of the path after "/browse", e.g. "?path=/Users/x".
+        query = urllib.parse.urlparse("/browse" + seg).query
+        path = urllib.parse.parse_qs(query).get("path", [None])[0]
+        await _write_json(writer, 200, browse.listing(path))
+
+    async def _read_agents_md(self, writer: asyncio.StreamWriter, seg: str) -> None:
+        """Read the AGENTS.md for a folder (?dir=…). Returns the file's text, or
+        empty if it doesn't exist yet (so the editor can create it). One file per
+        folder — the shared, cross-agent instructions for work in that dir."""
+        query = urllib.parse.urlparse("/agents-md" + seg).query
+        directory = urllib.parse.parse_qs(query).get("dir", [None])[0]
+        if not directory:
+            await _write_json(writer, 400, {"error": "dir required"})
+            return
+        path = Path(directory) / "AGENTS.md"
+        text = path.read_text() if path.is_file() else ""
+        await _write_json(writer, 200, {"dir": directory, "text": text, "exists": path.is_file()})
+
+    async def _write_agents_md(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        """Write the AGENTS.md for a folder: {dir, text}. Creates the file if it
+        doesn't exist. The dir must already exist (it's an agent's working dir)."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        directory = req.get("dir")
+        text = req.get("text")
+        if not directory or not isinstance(text, str):
+            await _write_json(writer, 400, {"error": "dir and text are required"})
+            return
+        base = Path(directory)
+        if not base.is_dir():
+            await _write_json(writer, 400, {"error": f"no such directory: {directory}"})
+            return
+        (base / "AGENTS.md").write_text(text)
+        await _write_json(writer, 200, {"dir": directory, "written": True})
+
+    async def _branches(self, writer: asyncio.StreamWriter, seg: str) -> None:
+        """Branches in the repo at ?path=, for the 'base off' picker. Fetches
+        first so freshly-pushed remote branches appear."""
+        query = urllib.parse.urlparse("/branches" + seg).query
+        path = urllib.parse.parse_qs(query).get("path", [None])[0]
+        if not path:
+            await _write_json(writer, 400, {"error": "path required"})
+            return
+        try:
+            names = await asyncio.to_thread(self.orchestrator.worktrees.branches, Path(path))
+        except GitError as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        await _write_json(writer, 200, {"branches": names})
+
+    def _can_answer(self, session_key: str) -> bool:
+        # Answerable from the dashboard only if we own the session's PTY and can
+        # inject keystrokes. Blocking approvals don't need this — the hook polls.
+        return self.orchestrator.get(session_key) is not None
+
+    async def _register_approval(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        """A blocking pre-exec hook registers a permission request and gets an id
+        to poll. The dashboard answers it via /decide; the hook reads the answer
+        from /decision and returns it to the agent — so the dashboard is the
+        approval authority (no keystroke injection)."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        key = req.get("session_key") or req.get("session_id")
+        if not key:
+            await _write_json(writer, 400, {"error": "session_key required"})
+            return
+        # AskUserQuestion is the agent asking the human a multiple-choice question,
+        # not a tool-permission gate. The dashboard can't answer it with
+        # approve/deny, so don't register it — the agent prompts in its terminal.
+        # (Defends against pre-update hooks that still POST it; current hooks skip
+        # it client-side.)
+        if req.get("tool_name") == "AskUserQuestion":
+            await _write_json(writer, 200, {"id": None})
+            return
+        approval = self.approvals.register(
+            str(key),
+            str(req.get("tool_name") or "unknown"),
+            req.get("tool_input") or {},
+            int(time.time() * 1000),
+            blocking=True,
+        )
+        await _write_json(writer, 200, {"id": approval.id})
+
+    async def _approval_decision(self, writer: asyncio.StreamWriter, approval_id: str) -> None:
+        """The blocking hook polls this for the user's decision. `pending` while
+        unanswered; `approve`/`deny` once decided; `gone` if the request was
+        cleared (the hook should then fall through to the agent's own prompt)."""
+        a = self.approvals.get(approval_id)
+        if a is None:
+            await _write_json(writer, 200, {"status": "gone"})
+            return
+        if a.decided is None:
+            await _write_json(writer, 200, {"status": "pending"})
+            return
+        # Decided: report it, then forget so the registry doesn't accumulate.
+        decision = a.decided
+        self.approvals.forget(approval_id)
+        await _write_json(writer, 200, {"status": decision})
+
+    async def _list_approvals(self, writer: asyncio.StreamWriter) -> None:
+        pending = [
+            {
+                "id": a.id,
+                "session_key": a.session_key,
+                "tool_name": a.tool_name,
+                "detail": a.detail,
+                "created_at": a.created_at,
+                # A blocking request is always answerable here (the dashboard is
+                # the authority). An observe-only row is answerable only if we own
+                # the PTY or launched the tab; otherwise you answer in its terminal.
+                "reachable": a.blocking or self._can_answer(a.session_key),
+            }
+            for a in self.approvals.pending()
+        ]
+        await _write_json(writer, 200, {"approvals": pending})
+
+    async def _decide_approval(
+        self, writer: asyncio.StreamWriter, approval_id: str, body: bytes
+    ) -> None:
+        decision = json.loads(body or b"{}").get("decision")
+        if decision not in ("approve", "deny"):
+            await _write_json(writer, 400, {"error": "decision must be approve or deny"})
+            return
+        a = self.approvals.get(approval_id)
+        if a is None:
+            await _write_json(writer, 409, {"decided": False, "decision": decision})
+            return
+        # Record the decision. A blocking hook polling /decision picks it up and
+        # returns it to the agent.
+        decided = self.approvals.set_decision(approval_id, decision)
+        status = 200 if decided else 409
+        await _write_json(writer, status, {"decided": decided, "decision": decision})
+
+    def _worktree_of(self, session_key: str) -> str | None:
+        row = self.history.session(session_key)
+        if row is None:
+            return None
+        wt = row.get("worktree_path")
+        return str(wt) if wt else None
+
+    async def _checkpoint(
+        self, writer: asyncio.StreamWriter, session_key: str, body: bytes
+    ) -> None:
+        row = self.history.session(session_key)
+        if row is None:
+            # The row is gone — almost always because the session was deleted
+            # while its (watched) row still lingered in a stale dashboard tab.
+            msg = f"session {session_key} no longer exists (it may have been deleted)"
+            await _write_json(writer, 404, {"error": msg})
+            return
+        label = json.loads(body or b"{}").get("label", "checkpoint")
+        cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
+        # Summarize the delta since the most recent checkpoint (0 if first).
+        prior = self.history.checkpoints(session_key)
+        since_ms = int(prior[0]["created_at"]) if prior else 0
+        # Read the agent's own conversation (including its responses) from its
+        # native transcript, so the checkpoint captures what the agent said and
+        # did — not just the human prompts and tool calls in our event store.
+        transcript = self._read_transcript(session_key, row)
+        cp = await asyncio.to_thread(
+            build_checkpoint,
+            session_key=session_key,
+            label=label,
+            cwd=cwd,
+            # The whole session, not just the last 200 events — a checkpoint is
+            # a complete record and must capture every prompt.
+            events=self.history.events_for(session_key, limit=100_000),
+            transcript=transcript,
+            intention=str(row.get("intention") or ""),
+            now_ms=int(time.time() * 1000),
+            since_ms=since_ms,
+        )
+        self.history.add_checkpoint(
+            checkpoint_id=cp.id,
+            session_key=cp.session_key,
+            label=cp.label,
+            summary=cp.summary,
+            record=cp.record,
+            markdown_path=cp.markdown_path,
+            created_at=cp.created_at,
+        )
+        await _write_json(writer, 200, {"id": cp.id, "label": cp.label, "summary": cp.summary})
+
+    def _read_transcript(self, session_key: str, row: dict[str, Any]) -> list[dict[str, str]]:
+        """The agent's own conversation for a session (role/text incl. its
+        responses), read from its native transcript. Empty when we can't (no
+        runtime/session_id, or the agent keeps no readable transcript)."""
+        session_id = self.history.session_id_for(session_key)
+        if not session_id:
+            return []
+        runtime = _build_runtime(row.get("runtime"), "")
+        cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
+        try:
+            return runtime.read_transcript(cwd=cwd, session_id=session_id)
+        except OSError:
+            return []
+
+    async def _list_checkpoints(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        await _write_json(writer, 200, {"checkpoints": self.history.checkpoints(session_key)})
+
+    async def _spotlight(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        row = self.history.session(session_key)
+        if row is None or not row.get("worktree_path") or not row.get("repo_path"):
+            await _write_json(writer, 400, {"error": "session has no worktree/repo"})
+            return
+        try:
+            files = spotlight_to_main(
+                repo=Path(str(row["repo_path"])), worktree=Path(str(row["worktree_path"]))
+            )
+        except GitError as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        await _write_json(writer, 200, {"synced_files": files})
+
+    async def _diff(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        worktree = self._worktree_of(session_key)
+        if not worktree:
+            await _write_json(writer, 200, {"diff": ""})
+            return
+        result = await asyncio.to_thread(
+            subprocess.run,
+            ["git", "-C", worktree, "diff", "HEAD"],
+            capture_output=True,
+            text=True,
+        )
+        # A nonzero exit means the diff failed (bad repo, detached state). Don't
+        # report it as an empty diff — that reads as "no changes" in the UI.
+        if result.returncode != 0:
+            await _write_json(writer, 500, {"error": result.stderr.strip() or "git diff failed"})
+            return
+        await _write_json(writer, 200, {"diff": result.stdout})
+
+    async def _input(self, writer: asyncio.StreamWriter, session_key: str, body: bytes) -> None:
+        supervisor = self.orchestrator.get(session_key)
+        if supervisor is None:
+            await _write_json(writer, 404, {"error": "no live session (not launched by Duckterm)"})
+            return
+        text = json.loads(body or b"{}").get("text", "")
+        wrote = supervisor.write_input(text)
+        await _write_json(writer, 200 if wrote else 409, {"written": wrote})
+
+    async def _output(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, session_key: str
+    ) -> None:
+        supervisor = self.orchestrator.get(session_key)
+        if supervisor is None:
+            await _write_json(writer, 404, {"error": "no live session to stream"})
+            return
+        writer.write(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/event-stream\r\n"
+            b"Cache-Control: no-cache\r\n\r\n"
+        )
+        await writer.drain()
+        feed = supervisor.subscribe_output()
+        disconnect = asyncio.ensure_future(reader.read())
+        try:
+            while True:
+                nxt = asyncio.ensure_future(feed.__anext__())
+                done, _ = await asyncio.wait(
+                    {nxt, disconnect},
+                    timeout=KEEPALIVE_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if disconnect in done:
+                    nxt.cancel()
+                    break
+                if nxt not in done:
+                    nxt.cancel()
+                    writer.write(b": keepalive\r\n\r\n")
+                    await writer.drain()
+                    continue
+                writer.write(f"data: {json.dumps({'line': nxt.result()})}\n\n".encode())
+                await writer.drain()
+        finally:
+            disconnect.cancel()
+            await feed.aclose()
+
+    async def _terminal(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        session_key: str,
+    ) -> None:
+        """WebSocket terminal attach for a launched session. Streams raw PTY
+        bytes to the browser as binary frames (xterm.js renders them) and reads
+        client frames back: binary = keystrokes to the agent's stdin, text =
+        a JSON control message {"resize": {"cols", "rows"}}.
+
+        Only works for a session Duckterm launched (it owns the PTY/tmux).
+        Additive — leaves /ws (events) and /output (SSE line view) untouched."""
+        supervisor = self.orchestrator.get(session_key)
+        if supervisor is None:
+            await _write_json(writer, 404, {"error": "no live session to attach"})
+            return
+        key = headers.get("sec-websocket-key")
+        if not key:
+            await _write_response(writer, 400, "expected a WebSocket upgrade")
+            return
+        writer.write(handshake_response(key))
+        await writer.drain()
+
+        feed = supervisor.subscribe_bytes()
+        # Keep ONE pending future for each side across loop iterations. Never
+        # cancel the output future mid-flight: cancelling an in-flight
+        # `feed.__anext__()` corrupts the async generator, so the next call
+        # raises StopAsyncIteration and the connection dies the instant the user
+        # types. We re-create a side's future only after it actually completes.
+        outgoing = asyncio.ensure_future(feed.__anext__())
+        incoming = asyncio.ensure_future(read_frame(reader))
+        try:
+            while True:
+                done, _ = await asyncio.wait(
+                    {outgoing, incoming},
+                    timeout=KEEPALIVE_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:  # keepalive tick: nothing on either side
+                    writer.write(ping_frame())
+                    await writer.drain()
+                    continue
+                if incoming in done:
+                    frame = incoming.result()
+                    if frame is None or frame[0] == 0x8:  # EOF or client close
+                        break
+                    self._handle_terminal_frame(supervisor, frame)
+                    incoming = asyncio.ensure_future(read_frame(reader))
+                if outgoing in done:
+                    writer.write(encode_binary_frame(outgoing.result()))
+                    await writer.drain()
+                    outgoing = asyncio.ensure_future(feed.__anext__())
+        except (StopAsyncIteration, OSError):
+            pass
+        finally:
+            outgoing.cancel()
+            incoming.cancel()
+            # Await the cancelled output future before aclose(): you can't close
+            # an async generator while a __anext__() on it is still running
+            # ("asynchronous generator is already running").
+            with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+                await outgoing
+            await feed.aclose()
+            with contextlib.suppress(OSError):
+                writer.write(close_frame())
+                await writer.drain()
+
+    @staticmethod
+    def _handle_terminal_frame(supervisor: Any, frame: tuple[int, bytes]) -> None:
+        opcode, payload = frame
+        if opcode == 0x2:  # binary: raw keystrokes
+            supervisor.write_bytes(payload)
+        elif opcode == 0x1:  # text: a JSON control message
+            try:
+                msg = json.loads(payload)
+            except json.JSONDecodeError:
+                return
+            resize = msg.get("resize")
+            if isinstance(resize, dict):
+                cols, rows = resize.get("cols"), resize.get("rows")
+                if isinstance(cols, int) and isinstance(rows, int):
+                    supervisor.resize(cols, rows)
+
+    async def _compare(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        repo_path = req.get("repo_path")
+        prompt = req.get("prompt", "")
+        variants = req.get("variants")
+        if not repo_path or not isinstance(variants, list) or not variants:
+            await _write_json(
+                writer, 400, {"error": "repo_path and a non-empty variants list are required"}
+            )
+            return
+        group = req.get("group") or f"cmp-{int(time.time() * 1000)}"
+        keys = []
+        try:
+            for i, v in enumerate(variants):
+                key = await self.orchestrator.launch(
+                    runtime=_build_runtime(v.get("runtime", "generic"), v["command"]),
+                    repo_path=repo_path,
+                    branch=f"{group}/{v.get('runtime', 'generic')}-{i}",
+                    prompt=prompt,
+                    compare_group=group,
+                )
+                keys.append(key)
+        except (GitError, ValueError, KeyError) as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        await _write_json(writer, 200, {"group": group, "session_keys": keys})
+
+    async def _create_snapshot(self, writer: asyncio.StreamWriter) -> None:
+        snapshot_id = self.snapshots.create(now_ms=int(time.time() * 1000))
+        await _write_json(writer, 200, {"id": snapshot_id})
+
+    async def _list_snapshots(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, {"snapshots": self.snapshots.list()})
+
+    async def _get_snapshot(self, writer: asyncio.StreamWriter, snapshot_id: str) -> None:
+        manifest = self.snapshots.get(snapshot_id)
+        if manifest is None:
+            await _write_json(writer, 404, {"error": f"no snapshot {snapshot_id}"})
+            return
+        await _write_json(writer, 200, manifest)
+
+    async def _restore(self, writer: asyncio.StreamWriter, route: str) -> None:
+        # route is "<snapshot_id>/sessions/<session_key>"
+        parts = route.split("/sessions/")
+        if len(parts) != 2:
+            await _write_json(writer, 400, {"error": "bad restore path"})
+            return
+        snapshot_id, session_key = parts
+        manifest = self.snapshots.get(snapshot_id)
+        if manifest is None:
+            await _write_json(writer, 404, {"error": f"no snapshot {snapshot_id}"})
+            return
+        session = next((s for s in manifest["sessions"] if s["session_key"] == session_key), None)
+        if session is None:
+            await _write_json(writer, 404, {"error": f"no session {session_key} in snapshot"})
+            return
+        # `--resume` needs the harness's OWN conversation id, not Duckterm's
+        # session_key. Resolve it (same as conversation-fork); if there's nothing
+        # resumable, restore_command_for falls back to a fresh launch.
+        argv = restore_command_for(self._restore_session_with_resume_id(session))
+        cwd = str(session.get("worktree_path") or session.get("cwd") or ".")
+        # Restore under the snapshot's original session_key so the relaunched
+        # agent re-attaches to its row (its hooks report under this key via the
+        # env var) instead of spawning an untracked session. Without the env +
+        # heartbeat + SessionStart, the restored agent ran but never showed up.
+        key = str(session["session_key"])
+        spawned = open_in_terminal(
+            cwd,
+            argv,
+            env={"DUCKTERM_SESSION_KEY": key},
+            heartbeat=(_heartbeat_url(), key),
+            title=session.get("name") or session.get("source_app"),
+        )
+        if spawned:
+            self.history.mark_heartbeat(key)
+            self.bus.publish(
+                {
+                    "event_type": "SessionStart",
+                    "session_key": key,
+                    "name": session.get("name"),
+                    "runtime": session.get("runtime"),
+                    "cwd": session.get("cwd"),
+                    "worktree_path": session.get("worktree_path"),
+                    "branch": session.get("branch"),
+                    "source_app": session.get("source_app"),
+                    "launched": True,
+                }
+            )
+        await _write_json(writer, 200, {"restored": spawned, "command": " ".join(argv)})
+
+    async def _stream(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        writer.write(
+            b"HTTP/1.1 200 OK\r\n"
+            b"Content-Type: text/event-stream\r\n"
+            b"Cache-Control: no-cache\r\n"
+            b"Connection: keep-alive\r\n" + f"{SELF_PROBE_HEADER}: 1\r\n\r\n".encode()
+        )
+        await writer.drain()
+        _write_sse(writer, {"type": "init", "events": self._init_events()})
+        await writer.drain()
+
+        subscription = self.bus.subscribe()
+        # An EOF on the client reader means they disconnected; race it against each
+        # event wait so we stop promptly instead of blocking until the next keepalive.
+        disconnect = asyncio.ensure_future(reader.read())
+        try:
+            while True:
+                nxt = asyncio.ensure_future(subscription.next())
+                done, _ = await asyncio.wait(
+                    {nxt, disconnect},
+                    timeout=KEEPALIVE_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if disconnect in done:
+                    nxt.cancel()
+                    break
+                if nxt not in done:
+                    nxt.cancel()
+                    writer.write(b": keepalive\r\n\r\n")
+                    await writer.drain()
+                    continue
+                _write_sse(writer, nxt.result())
+                await writer.drain()
+        finally:
+            disconnect.cancel()
+            subscription.close()
+
+    async def _websocket(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+    ) -> None:
+        """Bidirectional event stream over WebSocket, a sibling to /stream. Sends
+        an init frame, then one text frame per event; closes on client close."""
+        key = headers.get("sec-websocket-key")
+        if not key:
+            await _write_response(writer, 400, "expected a WebSocket upgrade")
+            return
+        writer.write(handshake_response(key))
+        await writer.drain()
+        writer.write(encode_text_frame(json.dumps({"type": "init", "events": self._init_events()})))
+        await writer.drain()
+
+        subscription = self.bus.subscribe()
+        incoming = asyncio.ensure_future(read_frame_opcode(reader))
+        try:
+            while True:
+                nxt = asyncio.ensure_future(subscription.next())
+                done, _ = await asyncio.wait(
+                    {nxt, incoming}, timeout=KEEPALIVE_SECONDS, return_when=asyncio.FIRST_COMPLETED
+                )
+                if incoming in done:
+                    opcode = incoming.result()
+                    nxt.cancel()
+                    if opcode in (None, 0x8):  # EOF or close frame
+                        break
+                    incoming = asyncio.ensure_future(read_frame_opcode(reader))
+                    continue
+                if nxt not in done:
+                    nxt.cancel()
+                    continue  # keepalive tick; nothing to send
+                writer.write(encode_text_frame(json.dumps(nxt.result())))
+                await writer.drain()
+        finally:
+            incoming.cancel()
+            subscription.close()
+            with contextlib.suppress(OSError):
+                writer.write(close_frame())
+                await writer.drain()
+
+    async def serve(
+        self,
+        host: str,
+        port: int,
+        on_listening: Callable[[str, int], None] | None = None,
+    ) -> None:
+        adopted = await self.orchestrator.reconcile()
+        if adopted:
+            print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
+        server = await asyncio.start_server(self.handle, host, port)
+        if on_listening is not None:
+            on_listening(host, port)
+        sweeper = asyncio.create_task(self._sweep_dead_loop())
+        async with server:
+            try:
+                await server.serve_forever()
+            finally:
+                sweeper.cancel()
+
+    async def _sweep_dead_loop(self) -> None:
+        """Auto-archive sessions whose terminal is gone. Launched tabs ping every
+        20s; we archive after 60s of silence. Watched sessions (no heartbeat) are
+        archived when their recorded agent pid is no longer alive. Archived keeps
+        everything (resumable) — it's not delete."""
+        while True:
+            await asyncio.sleep(20)
+            now = int(time.time() * 1000)
+            for key in self.history.sweep_dead(now, stale_after_ms=60_000):
+                self._archive_swept(key)
+            for w in self.history.live_watched():
+                if not _pid_alive(int(w["agent_pid"])):
+                    self._archive_swept(str(w["session_key"]))
+
+    def _archive_swept(self, key: str) -> None:
+        """Archive a session whose terminal is gone (auto-sweep)."""
+        self._set_lifecycle(key, "archived")
+        self.approvals.drop_session(key)
+
+
+def _pid_alive(pid: int) -> bool:
+    """Whether a process is still running. `kill(pid, 0)` doesn't signal; it just
+    checks existence/permission. ESRCH = gone; EPERM = alive but not ours."""
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _heartbeat_url() -> str:
+    base = os.environ.get("DUCKTERM_URL", "http://127.0.0.1:4200").rstrip("/")
+    return f"{base}/heartbeat"
+
+
+def _branch_name(name: str | None) -> str:
+    """Auto-branch for a new session: a slug of the session name, namespaced
+    under duckterm/. Falls back to a timestamp when there's no name."""
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    return f"duckterm/{slug}" if slug else f"duckterm/{int(time.time())}"

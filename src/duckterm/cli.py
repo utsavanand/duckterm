@@ -1,0 +1,452 @@
+"""Command-line entry point. Subcommands land in their respective Acts:
+serve (Act 1), launch/fork (Acts 3/5), emit (Act 1+)."""
+
+import argparse
+import asyncio
+import errno
+import json
+import os
+import shutil
+import sys
+import urllib.request
+from collections.abc import Sequence
+from pathlib import Path
+
+from duckterm import __version__
+
+DEFAULT_PORT = 4200
+DEFAULT_HOST = "127.0.0.1"
+
+
+def _server_url() -> str:
+    return os.environ.get(
+        "DUCKTERM_URL", f"http://127.0.0.1:{os.environ.get('DUCKTERM_PORT', DEFAULT_PORT)}"
+    )
+
+
+def _installable_agents() -> list[str]:
+    """Agents the registry can wire hooks for — the --agent choices."""
+    from duckterm.harnesses import installable_agents
+
+    return installable_agents()
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="duckterm")
+    parser.add_argument("--version", action="version", version=__version__)
+    sub = parser.add_subparsers(dest="command")
+
+    serve = sub.add_parser("serve", help="run the orchestrator server")
+    serve.add_argument("--host", default=os.environ.get("DUCKTERM_HOST", DEFAULT_HOST))
+    serve.add_argument(
+        "--port", type=int, default=int(os.environ.get("DUCKTERM_PORT", DEFAULT_PORT))
+    )
+    serve.add_argument(
+        "--reload",
+        action="store_true",
+        help="dev: restart the server when a source file changes (watches src/duckterm)",
+    )
+
+    restart = sub.add_parser(
+        "restart",
+        help="stop the running server and start a fresh one (re-watches live agents)",
+    )
+    restart.add_argument("--host", default=os.environ.get("DUCKTERM_HOST", DEFAULT_HOST))
+    restart.add_argument(
+        "--port", type=int, default=int(os.environ.get("DUCKTERM_PORT", DEFAULT_PORT))
+    )
+
+    launch = sub.add_parser("launch", help="launch a supervised agent in a running server")
+    launch.add_argument(
+        "agent_command",
+        metavar="command",
+        help="agent invocation, e.g. 'claude' (quote the whole thing)",
+    )
+    launch.add_argument("--cwd", default=os.getcwd())
+    launch.add_argument("--session-key", default=None)
+    launch.add_argument("--prompt", default="")
+
+    run = sub.add_parser(
+        "run",
+        help="run an agent in THIS terminal as a launched session "
+        "(e.g. duckterm run --name login claude)",
+    )
+    # Duckterm's own options come BEFORE the agent; everything after the agent
+    # name is passed through to it (REMAINDER keeps argparse from grabbing the
+    # agent's own flags like --resume).
+    run.add_argument("--name", default=None, help="a label for this session in the dashboard")
+    run.add_argument("agent", help="the agent to run, e.g. claude / codex / copilot")
+    run.add_argument("agent_args", nargs=argparse.REMAINDER, help="args passed to the agent")
+
+    sub.add_parser("snapshot", help="bundle recently-active sessions to disk")
+    sub.add_parser("dashboard", help="build (if needed) and open the dashboard in a browser")
+    sub.add_parser("purge-test", help="delete all test/seed sessions and their data (test=1)")
+    sub.add_parser("doctor", help="check deps, server, hooks, and trust; print what's missing")
+
+    inst = sub.add_parser(
+        "install-hooks", help="wire an agent so its sessions stream into Duckterm"
+    )
+    inst.add_argument(
+        "--global",
+        dest="global_scope",
+        action="store_true",
+        help="install into the user-level config (every project) instead of this repo",
+    )
+    inst.add_argument(
+        "--agent",
+        choices=_installable_agents(),
+        default="claude-code",
+        help="which agent to wire (default: claude-code). codex: prefer --global "
+        "(repo-local hooks are unreliable upstream)",
+    )
+
+    uninst = sub.add_parser("uninstall-hooks", help="remove Duckterm's hooks for an agent")
+    uninst.add_argument("--global", dest="global_scope", action="store_true")
+    uninst.add_argument("--agent", choices=_installable_agents(), default="claude-code")
+    return parser
+
+
+def _serve(host: str, port: int, reload: bool = False) -> int:
+    from duckterm.server import Server
+
+    if reload:
+        from duckterm.dev_reload import watch_and_reexec
+
+        watch_and_reexec()  # background thread; re-execs this process on a .py change
+
+    try:
+        asyncio.run(Server().serve(host, port, on_listening=_print_listening))
+    except KeyboardInterrupt:
+        return 0
+    except OSError as e:
+        if e.errno != errno.EADDRINUSE:
+            raise
+        _print_port_in_use(host, port)
+        return 1
+    return 0
+
+
+def _restart(host: str, port: int) -> int:
+    """Stop the running server (if any) and start a fresh one. Watched agents keep
+    running independently and re-stream into the new server as their hooks fire —
+    so this is how you get the dashboard watching live sessions again after a
+    server upgrade or crash."""
+    import subprocess
+    import time
+
+    if _duckterm_responds(host, port):
+        print(f"stopping the server on :{port}…", file=sys.stderr)
+        # Kill whatever owns the port (our server). lsof is on macOS and Linux.
+        subprocess.run(
+            f"lsof -ti tcp:{port} -sTCP:LISTEN | xargs kill",
+            shell=True,
+            capture_output=True,
+        )
+        for _ in range(25):  # wait up to ~5s for the port to free
+            time.sleep(0.2)
+            if not _duckterm_responds(host, port):
+                break
+        else:
+            print(f"server on :{port} didn't stop; free it manually", file=sys.stderr)
+            return 1
+    else:
+        print(f"no server running on :{port}; starting one", file=sys.stderr)
+    # Forget deletions so any agent still running re-streams and reappears — the
+    # whole point of restart: recover sessions deleted by mistake while live.
+    from duckterm.persistence.history import HistoryStore
+
+    cleared = HistoryStore().clear_tombstones()
+    if cleared:
+        print(f"cleared {cleared} deletion(s) — live agents will re-appear", file=sys.stderr)
+    return _serve(host, port)
+
+
+def _print_listening(host: str, port: int) -> None:
+    print(f"duckterm serving on http://{host}:{port}", file=sys.stderr)
+
+
+def _print_port_in_use(host: str, port: int) -> None:
+    print(f"Port {port} is already in use.", file=sys.stderr)
+    if _duckterm_responds(host, port):
+        print(
+            f"\nAnother Duckterm is already running:\n  open http://{host}:{port}",
+            file=sys.stderr,
+        )
+    print(
+        f"\nFree the port or pick another:\n"
+        f"  lsof -ti :{port} | xargs kill\n"
+        f"  duckterm serve --port {port + 100}",
+        file=sys.stderr,
+    )
+
+
+def _duckterm_responds(host: str, port: int) -> bool:
+    """True if whatever owns the port answers with Duckterm's self-probe
+    header, so we can tell 'already running' from 'foreign process'."""
+    try:
+        resp = urllib.request.urlopen(f"http://{host}:{port}/", timeout=1)
+    except OSError:
+        return False
+    return bool(resp.headers.get("X-Duckterm") == "1")
+
+
+def _auth_headers(content_type: bool = True) -> dict[str, str]:
+    from duckterm.helpers import security
+
+    headers = {security.TOKEN_HEADER: security.load_or_create_token()}
+    if content_type:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+def _launch(command: str, cwd: str, session_key: str | None, prompt: str) -> int:
+    payload = {"command": command, "cwd": cwd, "session_key": session_key, "prompt": prompt}
+    req = urllib.request.Request(
+        f"{_server_url()}/sessions/launch",
+        data=json.dumps(payload).encode(),
+        headers=_auth_headers(),
+        method="POST",
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=5)
+    except OSError as e:
+        print(f"could not reach server at {_server_url()}: {e}", file=sys.stderr)
+        return 1
+    print(json.load(resp)["session_key"])
+    return 0
+
+
+def _run(agent: str, agent_args: list[str], name: str | None = None) -> int:
+    """Run an agent in the CURRENT terminal as a LAUNCHED Duckterm session.
+    Registers the session (so it appears immediately, owned by Duckterm), then
+    execs the agent wrapped with a heartbeat loop — the agent owns the TTY
+    natively (signals, exit code, prompts) and the row stays live while it runs.
+    A session is 'launched' purely from the SessionStart flag + heartbeat, not
+    from owning a new terminal — so no extra window is opened."""
+    import shlex
+
+    from duckterm.agents.terminal import with_heartbeat
+    from duckterm.helpers import security
+    from duckterm.server import _heartbeat_url, infer_runtime
+
+    if not shutil.which(agent):
+        print(f"'{agent}' not found on PATH", file=sys.stderr)
+        return 127
+
+    runtime = infer_runtime(agent)
+    if runtime != "generic" and not _hook_installed(runtime):
+        print(
+            f"⚠ {runtime} hooks aren't installed, so this session won't appear in "
+            f"Duckterm.\n  Fix: duckterm install-hooks --agent {runtime} --global"
+            f"  (then: duckterm doctor)",
+            file=sys.stderr,
+        )
+
+    cwd = os.getcwd()
+    key = security.new_session_key("run")
+    # Register a launched session up front so the row shows immediately. If the
+    # server is down, fall through to a plain exec (the agent still runs).
+    if _duckterm_responds(DEFAULT_HOST, DEFAULT_PORT):
+        _register_run_session(key, agent, runtime, cwd, name)
+    else:
+        print(
+            "⚠ no Duckterm server on :4200 — running anyway, but it won't appear.\n"
+            "  Start one in another terminal: duckterm serve",
+            file=sys.stderr,
+        )
+
+    agent_cmd = " ".join(shlex.quote(a) for a in [agent, *agent_args])
+    # Wrap with the heartbeat loop (current tab's tty), under the session key the
+    # agent's hooks will also report against, then exec a shell so it owns the TTY.
+    wrapped = with_heartbeat(agent_cmd, _heartbeat_url(), key)
+    os.environ["DUCKTERM_SESSION_KEY"] = key
+    os.execvp("sh", ["sh", "-c", wrapped])  # replaces this process; doesn't return
+
+
+def _register_run_session(key: str, agent: str, runtime: str, cwd: str, name: str | None) -> None:
+    """POST a launched SessionStart (and the optional name) so the dashboard row
+    appears before the agent starts. Best-effort: a failure just means the row
+    shows up a beat later from the agent's own hooks."""
+    start = {
+        "event_type": "SessionStart",
+        "session_key": key,
+        "runtime": runtime,
+        "cwd": cwd,
+        "source_app": name or os.path.basename(cwd.rstrip("/")) or agent,
+        "launched": True,
+    }
+    try:
+        _post_json("/events", start)
+        if name:
+            _patch_json(f"/sessions/{key}", {"name": name})
+    except OSError:
+        pass
+
+
+def _post_json(path: str, payload: dict[str, object]) -> None:
+    req = urllib.request.Request(
+        f"{_server_url()}{path}",
+        data=json.dumps(payload).encode(),
+        headers=_auth_headers(),
+        method="POST",
+    )
+    urllib.request.urlopen(req, timeout=3).read()
+
+
+def _patch_json(path: str, payload: dict[str, object]) -> None:
+    req = urllib.request.Request(
+        f"{_server_url()}{path}",
+        data=json.dumps(payload).encode(),
+        headers=_auth_headers(),
+        method="PATCH",
+    )
+    urllib.request.urlopen(req, timeout=3).read()
+
+
+def _hook_installed(runtime: str) -> bool:
+    """True if Duckterm's hook is wired into the agent's global settings."""
+    from duckterm.agents.hooks_install import hook_script_path, settings_path
+
+    try:
+        path = settings_path(global_scope=True, project_dir=Path.cwd(), agent=runtime)
+    except (KeyError, ValueError):
+        return False  # unknown/generic runtime has no hook to install
+    return path.exists() and str(hook_script_path()) in path.read_text()
+
+
+def _snapshot() -> int:
+    req = urllib.request.Request(
+        f"{_server_url()}/snapshots", data=b"", headers=_auth_headers(False), method="POST"
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=10)
+    except OSError as e:
+        print(f"could not reach server at {_server_url()}: {e}", file=sys.stderr)
+        return 1
+    print(json.load(resp)["id"])
+    return 0
+
+
+def _install_hooks(global_scope: bool, agent: str) -> int:
+    from duckterm.agents.hooks_install import install
+
+    if agent == "codex" and not global_scope:
+        print(
+            "note: codex repo-local hooks are unreliable upstream "
+            "(openai/codex#17532). Prefer: duckterm install-hooks --codex --global",
+            file=sys.stderr,
+        )
+    path = install(global_scope=global_scope, project_dir=Path.cwd(), agent=agent)
+    scope = "every project" if global_scope else "this repo"
+    print(f"installed Duckterm hooks for {agent} ({scope}): {path}")
+    print(f"Now run `duckterm serve`, then start {agent} — sessions appear automatically.")
+    if agent == "codex":
+        # Codex won't run a hook until you trust it (recorded against the
+        # script's hash; revoked if the script changes). There's no
+        # programmatic trust — it's an interactive review.
+        print(
+            "\nOne extra step for codex: hooks must be TRUSTED before they run.\n"
+            "  Start codex, run /hooks, and trust the Duckterm hook.\n"
+            "  (You'll need to re-trust if Duckterm updates the hook script.)",
+            file=sys.stderr,
+        )
+    print("\nVerify it's wired up: duckterm doctor")
+    return 0
+
+
+def _uninstall_hooks(global_scope: bool, agent: str) -> int:
+    from duckterm.agents.hooks_install import uninstall
+
+    path = uninstall(global_scope=global_scope, project_dir=Path.cwd(), agent=agent)
+    print(f"removed Duckterm {agent} hooks from {path}")
+    return 0
+
+
+def _dashboard() -> int:
+    import subprocess
+    import webbrowser
+
+    from duckterm.transport.httpio import dashboard_dir
+
+    if dashboard_dir() is None:
+        web = Path(__file__).resolve().parents[2] / "web"
+        if not web.exists():
+            print("dashboard source (web/) not found", file=sys.stderr)
+            return 1
+        print("building the dashboard (web/)…", file=sys.stderr)
+        build = subprocess.run(["npm", "run", "build"], cwd=web)
+        if build.returncode != 0:
+            print("dashboard build failed", file=sys.stderr)
+            return 1
+    url = _server_url()
+    try:
+        urllib.request.urlopen(f"{url}/", timeout=2)
+    except OSError:
+        print(f"server not reachable at {url} — start it with `duckterm serve`", file=sys.stderr)
+        return 1
+    print(f"opening {url}")
+    webbrowser.open(url)
+    return 0
+
+
+def _doctor() -> int:
+    from duckterm import doctor
+
+    results = doctor.run(f"{_server_url()}/", _installable_agents())
+    glyph = {"ok": "\033[32m✓\033[0m", "warn": "\033[33m!\033[0m", "fail": "\033[31m✗\033[0m"}
+    for r in results:
+        print(f"{glyph[r.status]} {r.title}")
+        if r.detail and r.status != "ok":
+            print(f"    → {r.detail}")
+    fails = sum(1 for r in results if r.status == "fail")
+    warns = sum(1 for r in results if r.status == "warn")
+    print()
+    if fails:
+        print(f"\033[31m{fails} problem(s) to fix.\033[0m", file=sys.stderr)
+    elif warns:
+        print(f"\033[33m{warns} thing(s) to check; nothing fatal.\033[0m")
+    else:
+        print("\033[32mAll checks passed.\033[0m")
+    return 1 if fails else 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv if argv is not None else sys.argv[1:])
+    if args.command is None:
+        parser.print_help()
+        return 0
+    if args.command == "serve":
+        return _serve(args.host, args.port, reload=args.reload)
+    if args.command == "restart":
+        return _restart(args.host, args.port)
+    if args.command == "launch":
+        return _launch(args.agent_command, args.cwd, args.session_key, args.prompt)
+    if args.command == "run":
+        return _run(args.agent, args.agent_args, args.name)
+    if args.command == "snapshot":
+        return _snapshot()
+    if args.command == "dashboard":
+        return _dashboard()
+    if args.command == "install-hooks":
+        return _install_hooks(args.global_scope, args.agent)
+    if args.command == "uninstall-hooks":
+        return _uninstall_hooks(args.global_scope, args.agent)
+    if args.command == "doctor":
+        return _doctor()
+    if args.command == "purge-test":
+        return _purge_test()
+    print(f"command '{args.command}' is not implemented yet", file=sys.stderr)
+    return 1
+
+
+def _purge_test() -> int:
+    from duckterm.persistence.history import HistoryStore
+
+    purged = HistoryStore().purge_test_sessions()
+    print(f"purged {len(purged)} test session(s) and all their data")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

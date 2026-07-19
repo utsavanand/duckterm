@@ -1,0 +1,1444 @@
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f7f7f8;
+  --bg-code: #0d0f14;
+  --border: #e8e8eb;
+  --border-strong: #d4d4d8;
+  --text: #0d0d0d;
+  --text-soft: #565869;
+  --muted: #8e8ea0;
+  --accent: #0d0d0d;
+  --accent-fg: #ffffff;
+  --busy: #4b5cff;
+  --idle: #18a957;
+  --wait: #c2820b;
+  --term: #9aa0aa;
+  --danger: #d92d20;
+  --danger-soft: #fef3f2;
+  --card: #ffffff;
+  --amber-bg: #fffaf0;
+  --amber-border: #f0d9a8;
+  --amber-text: #92660a;
+  --amber-chip: #fff4dd;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d0f14;
+  --bg-soft: #15181f;
+  --bg-code: #05070a;
+  --border: #242830;
+  --border-strong: #353a44;
+  --text: #e8eaed;
+  --text-soft: #a4a9b3;
+  --muted: #6b7280;
+  --accent: #f5f5f6;
+  --accent-fg: #0d0d0d;
+  --busy: #6b7cff;
+  --idle: #34d399;
+  --wait: #fbbf24;
+  --term: #6b7280;
+  --danger: #f87171;
+  --danger-soft: #2a1416;
+  --card: #15181f;
+  --amber-bg: #2a2010;
+  --amber-border: #4a3a18;
+  --amber-text: #fbbf24;
+  --amber-chip: #3a2c14;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+code,
+.mono {
+  font-family: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+.rd-app {
+  /* Fill the viewport exactly: topbar + the three panes, no page scroll. The
+     panes scroll internally (the terminal scrolls its own buffer). */
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0 28px;
+}
+
+/* ── three-panel layout: three columns split by vertical dividers, each a
+   flat list. No nested cards, no per-panel boxes. ── */
+.rd-panels {
+  display: grid;
+  grid-template-columns: minmax(340px, 1.4fr) minmax(260px, 1fr) minmax(280px, 1fr);
+  border-top: 1px solid var(--border);
+  align-items: stretch;
+  /* Fixed-height region: each column scrolls on its own, the page does not. */
+  height: calc(100vh - 100px);
+}
+@media (max-width: 1100px) {
+  .rd-panels {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+}
+.rd-panels > section,
+.rd-pulse {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* let the inner list shrink so overflow scrolls, not grows */
+  overflow: hidden;
+}
+.rd-panels > .rd-pulse {
+  border-right: none;
+}
+@media (max-width: 1100px) {
+  .rd-panels > section,
+  .rd-pulse {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 70vh;
+  }
+}
+/* ── terminal-forward three-pane layout: Agents | Terminal | Context. No
+   border-top here (the topbar already draws one line; a second read as a
+   double rule). ── */
+.rd-panels-3 {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.9fr) minmax(420px, 2fr) minmax(280px, 1fr);
+  align-items: stretch;
+  flex: 1; /* fill the space below the topbar exactly */
+  min-height: 0;
+}
+@media (max-width: 1100px) {
+  .rd-panels-3 {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+}
+.rd-panels-3 > section {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.rd-panels-3 > section:last-child {
+  border-right: none;
+}
+.rd-terminal-pane {
+  background: #0c0f16;
+  padding: 0;
+  min-height: 0;
+}
+/* The view toggle is a fixed-height bar; everything else (slots, messages) fills
+   the rest. (Don't blanket `> div { flex:1 }` — it stretched the toggle into a
+   tall box.) */
+.rd-terminal-pane > .rd-view-toggle {
+  flex: 0 0 auto;
+}
+/* One slot per kept-mounted terminal; only the selected one is display:flex. */
+.rd-terminal-slot {
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+/* Terminal | Messages view toggle at the top of the center pane. */
+.rd-view-toggle {
+  display: flex;
+  gap: 2px;
+  padding: 6px 8px;
+  background: #0c0f16;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.rd-view-toggle button {
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.rd-view-toggle button.active {
+  background: #1f2430;
+  color: #e5e7eb;
+}
+.rd-messages-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--card);
+}
+.rd-messages {
+  padding: 20px 28px 40px;
+  max-width: 760px;
+  position: relative;
+}
+/* Select-to-annotate popover: anchored under the selected span. */
+.rd-annotate-pop {
+  position: absolute;
+  z-index: 30;
+  width: 300px;
+  /* Opaque, not the translucent --card — the response text behind it must not
+     bleed through. */
+  background: #161b26;
+  border: 1px solid #2b3344;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+  padding: 12px;
+}
+.rd-annotate-quote {
+  font-size: 11px;
+  color: #9aa4b2;
+  margin-bottom: 8px;
+  line-height: 1.4;
+  max-height: 44px;
+  overflow: hidden;
+}
+.rd-annotate-pop textarea {
+  width: 100%;
+  height: 64px;
+  resize: none;
+  border: 1px solid #2b3344;
+  border-radius: 6px;
+  background: #0c0f16;
+  color: #e5e7eb;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 10px;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.rd-annotate-pop textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+.rd-annotate-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+.rd-annotate-actions button {
+  border: none;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.rd-annotate-actions button:hover:not(:disabled) {
+  background: #1d4ed8;
+}
+.rd-annotate-actions button:disabled {
+  background: #2b3344;
+  color: #6b7280;
+  cursor: default;
+}
+.rd-msg {
+  margin-bottom: 18px;
+}
+.rd-msg-text {
+  line-height: 1.65;
+  font-size: 14.5px;
+  color: var(--text);
+}
+/* Headings: clear hierarchy, breathing room. */
+.rd-msg-text h1,
+.rd-msg-text h2,
+.rd-msg-text h3 {
+  font-weight: 650;
+  line-height: 1.3;
+  margin: 22px 0 10px;
+}
+.rd-msg-text h1 {
+  font-size: 20px;
+}
+.rd-msg-text h2 {
+  font-size: 17px;
+}
+.rd-msg-text h3 {
+  font-size: 15px;
+}
+.rd-msg-text p {
+  margin: 0 0 12px;
+}
+.rd-msg-text ul,
+.rd-msg-text ol {
+  margin: 0 0 12px;
+  padding-left: 22px;
+}
+.rd-msg-text li {
+  margin: 3px 0;
+}
+.rd-msg-text a {
+  color: var(--accent, #2563eb);
+  text-decoration: none;
+}
+.rd-msg-text a:hover {
+  text-decoration: underline;
+}
+.rd-msg-text strong {
+  font-weight: 650;
+  color: var(--text);
+}
+/* Inline code: a subtle chip. */
+.rd-msg-text :not(pre) > code {
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12.5px;
+}
+/* Code blocks: a dark card, monospace, horizontal scroll for wide lines. */
+.rd-msg-text pre {
+  background: #0c0f16;
+  color: #d1d5db;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+  margin: 0 0 14px;
+}
+.rd-msg-text pre code {
+  background: none;
+  border: none;
+  padding: 0;
+}
+.rd-msg-text table {
+  border-collapse: collapse;
+  font-size: 13px;
+  margin: 0 0 14px;
+  width: 100%;
+}
+.rd-msg-text th,
+.rd-msg-text td {
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}
+.rd-msg-text th {
+  background: var(--hover);
+  font-weight: 600;
+}
+.rd-msg-text blockquote {
+  border-left: 3px solid var(--border);
+  margin: 0 0 12px;
+  padding-left: 12px;
+  color: var(--muted);
+}
+/* The user prompt that started the latest reply (small, dim, sets context). */
+.rd-msg-prompt {
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  margin-bottom: 12px;
+}
+/* One compact line summarizing the tools an agent ran between prose — not a row
+   per tool call. */
+.rd-msg-tools {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, Menlo, monospace;
+  margin: 6px 0 14px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+/* xterm fills the pane and scrolls its OWN buffer (xterm-viewport), so a long
+   session scrolls inside the terminal instead of growing the page. */
+.rd-terminal-pane .xterm,
+.rd-terminal-pane .terminal {
+  height: 100% !important;
+  padding: 6px 8px;
+}
+.rd-terminal-pane .xterm-viewport {
+  overflow-y: auto !important;
+}
+.rd-context-pane .rd-context-body {
+  overflow-y: auto;
+  padding: 12px 16px;
+}
+.rd-context-meta,
+.rd-context-git,
+.rd-context-folder {
+  margin-bottom: 16px;
+}
+.rd-context-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted, #6b7280);
+  margin: 12px 0 6px;
+}
+.rd-context-row {
+  display: flex;
+  gap: 10px;
+  font-size: 13px;
+  padding: 3px 0;
+}
+.rd-context-row .k {
+  width: 64px;
+  flex-shrink: 0;
+  color: var(--muted, #6b7280);
+}
+.rd-context-row .v {
+  color: var(--text);
+  word-break: break-word;
+}
+.rd-context-row .v.mono,
+.rd-context-path {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+}
+.rd-branch-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rd-branch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rd-branch.current {
+  color: var(--text);
+  font-weight: 600;
+}
+.rd-branch-mark {
+  color: var(--accent, #2563eb);
+  font-size: 9px;
+}
+.rd-context-diff {
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  background: #0c0f16;
+  color: #d1d5db;
+  border-radius: 6px;
+  padding: 10px;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.rd-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rd-panel-empty {
+  padding: 18px 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ── left column: agent list (rows are lines, not boxes) ── */
+.rd-tree {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow-y: auto;
+}
+.rd-row {
+  padding: 9px 16px;
+  cursor: pointer;
+}
+
+/* ── session groups (folders in the left panel) ── */
+.rd-group {
+  border-top: 1px solid var(--border);
+}
+.rd-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--text);
+  user-select: none;
+}
+.rd-group-head:hover {
+  background: var(--hover);
+}
+.rd-group-caret {
+  width: 10px;
+  color: var(--muted);
+}
+.rd-group-name {
+  flex: 1;
+}
+.rd-group-count {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--card);
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+.rd-group-del {
+  border: none;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  opacity: 0;
+}
+.rd-group-head:hover .rd-group-del {
+  opacity: 1;
+}
+.rd-group-del:hover {
+  color: var(--danger, #e5484d);
+}
+.rd-modal-hint {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 12px;
+}
+/* highlight a folder/zone while a session is dragged over it */
+.rd-group.drop-over,
+.rd-dropzone.drop-over,
+.rd-newgroup.drop-over {
+  outline: 2px dashed var(--accent, #f5821f);
+  outline-offset: -2px;
+  background: rgba(245, 130, 31, 0.06);
+}
+.rd-dropzone.has-groups {
+  border-top: 1px solid var(--border);
+}
+.rd-dropzone-label {
+  padding: 8px 14px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rd-newgroup {
+  margin: 8px 14px 12px;
+  padding: 10px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rd-row[draggable="true"] {
+  cursor: grab;
+}
+.rd-row:hover {
+  background: var(--bg-soft);
+}
+.rd-row.terminated {
+  opacity: 0.5;
+}
+.rd-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rd-row-twig {
+  color: var(--muted);
+  font-size: 12px;
+}
+.rd-row-collapse {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 2px;
+  line-height: 1;
+}
+.rd-row-collapse:hover {
+  color: var(--text);
+}
+.rd-row-click {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+/* Git branch glyph: marks agents actually working on a repo. */
+.rd-row-git {
+  color: var(--orange, #f5821f);
+  font-size: 13px;
+  line-height: 1;
+}
+/* Jump to a launched session's terminal tab. */
+.rd-row-jump {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.rd-row-jump:hover {
+  color: var(--text);
+  background: var(--bg-soft, rgba(127, 127, 127, 0.12));
+}
+.rd-row-name {
+  font-weight: 600;
+  font-size: 14px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rd-row-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 3px;
+  font-family: ui-monospace, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Sub-agents the agent spawned (Task tool), nested under its row. */
+.rd-subagents {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.rd-subagent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+}
+.rd-subagent-twig {
+  color: var(--border);
+}
+.rd-subagent .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.rd-subagent .dot.on {
+  background: var(--accent, #2563eb);
+}
+.rd-subagent.st-done {
+  opacity: 0.6;
+}
+.rd-subagent-type {
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+}
+.rd-subagent-task {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Actions stay hidden until you hover the row, so the resting state is a clean
+   list — not a wall of buttons. */
+.rd-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.15s ease, opacity 0.15s ease;
+}
+.rd-row:hover .rd-row-actions,
+.rd-row.expanded .rd-row-actions {
+  /* Fit two wrapped rows of action buttons (Fork/Notes/Checkpoint/Stop/
+     Archive/Delete) without clipping into the next agent row. */
+  max-height: 80px;
+  opacity: 1;
+}
+.rd-row-notes-wrap {
+  margin-top: 8px;
+}
+.rd-row-notes {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.rd-row-notes-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+.rd-row-notes-bar .hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* radio choice rows (run-in-place vs worktree, fork mode) */
+.rd-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.rd-radio:hover {
+  background: var(--bg-soft);
+}
+.rd-radio input {
+  margin-top: 2px;
+}
+.rd-radio strong {
+  font-weight: 600;
+}
+.rd-inline-code {
+  background: var(--bg-soft);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+/* agent picker in the New session modal */
+.rd-agent-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.rd-pill {
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.rd-pill:hover {
+  background: var(--bg-soft);
+}
+.rd-pill.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+  border-color: var(--accent);
+}
+
+/* watched vs launched origin badge on an agent row */
+.rd-origin {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.rd-origin.launched {
+  background: color-mix(in srgb, #4b5cff 16%, transparent);
+  color: #4b5cff;
+}
+.rd-origin.watched {
+  background: var(--bg-soft);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+/* ── right panel: pulse ── */
+.rd-pulse-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--idle);
+}
+/* Animated equalizer bars — a moving "live" indicator without a GIF asset. */
+.rd-pulse-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 11px;
+}
+.rd-pulse-bars span {
+  width: 2.5px;
+  background: var(--idle);
+  border-radius: 1px;
+  animation: rd-eq 0.9s ease-in-out infinite;
+}
+.rd-pulse-bars span:nth-child(1) {
+  animation-delay: 0s;
+}
+.rd-pulse-bars span:nth-child(2) {
+  animation-delay: 0.3s;
+}
+.rd-pulse-bars span:nth-child(3) {
+  animation-delay: 0.6s;
+}
+@keyframes rd-eq {
+  0%,
+  100% {
+    height: 3px;
+  }
+  50% {
+    height: 11px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rd-pulse-bars span {
+    animation: none;
+    height: 7px;
+  }
+}
+/* Static feed: newest pinned at top, no inner scroll — the slice in Pulse.tsx
+   keeps it to ~18 rows so it never overflows. */
+.rd-pulse-feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.rd-pulse-more {
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 10px 0 14px;
+}
+/* Travelling dots at the very top, where new events land — signals "more
+   updates arrive above" without a scrollbar. */
+.rd-pulse-incoming {
+  display: flex;
+  gap: 5px;
+  padding: 8px 16px 6px;
+  align-items: center;
+}
+.rd-pulse-incoming span {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--idle);
+  opacity: 0.3;
+  animation: rd-dots 1.4s ease-in-out infinite;
+}
+.rd-pulse-incoming span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.rd-pulse-incoming span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes rd-dots {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+@keyframes rd-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.rd-inline-spin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rd-spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  display: inline-block;
+  animation: rd-spin 0.7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .rd-spinner {
+    animation: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rd-pulse-incoming span {
+    animation: none;
+  }
+}
+.rd-pulse-row {
+  display: flex;
+  gap: 10px;
+  padding: 6px 16px;
+  font-size: 12.5px;
+}
+.rd-pulse-row.clickable {
+  cursor: pointer;
+}
+.rd-pulse-row.clickable:hover {
+  background: var(--bg-soft);
+}
+.rd-pulse-row.expanded {
+  background: var(--bg-soft);
+}
+.rd-pulse-detail {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 12px;
+  cursor: default;
+}
+.rd-pulse-detail .row {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+}
+.rd-pulse-detail .k {
+  color: var(--muted);
+  min-width: 64px;
+  flex-shrink: 0;
+}
+.rd-pulse-detail .v {
+  color: var(--text);
+  word-break: break-word;
+}
+.rd-pulse-detail code.v {
+  font-family: ui-monospace, Menlo, monospace;
+}
+.rd-pulse-json {
+  margin: 6px 0 0;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-soft);
+}
+.rd-pulse-row .t {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, Menlo, monospace;
+  white-space: nowrap;
+}
+.rd-pulse-row .body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.rd-pulse-row .who {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rd-pulse-row .what {
+  color: var(--text-soft);
+}
+
+/* ── middle panel: needs-you (Approvals rendered inside, no nested card) ── */
+.rd-attention-body {
+  flex: 1;
+  overflow-y: auto;
+}
+.rd-attention .rd-approvals {
+  border: none;
+  background: transparent;
+  border-radius: 0;
+  padding: 8px 14px 14px;
+}
+.rd-attention .rd-approvals h2 {
+  font-size: 13px;
+}
+
+/* ── top bar ── */
+.rd-topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 72px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+}
+.rd-brand {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rd-brand-mark {
+  display: block;
+  border-radius: 6px;
+}
+.rd-live {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-soft);
+}
+.rd-live .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.rd-live .dot.on {
+  background: var(--idle);
+}
+.rd-live .dot.off {
+  background: var(--danger);
+}
+
+/* ── buttons ── */
+.rd-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 14px;
+  padding: 9px 16px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
+  white-space: nowrap;
+}
+.rd-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.rd-btn-primary {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.rd-btn-primary:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.rd-btn-ghost {
+  background: var(--card);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.rd-btn-ghost:hover:not(:disabled) {
+  background: var(--bg-soft);
+}
+.rd-btn-danger {
+  background: var(--card);
+  border-color: #f3c0bb;
+  color: var(--danger);
+}
+.rd-btn-danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+/* Armed delete (second click confirms) — solid red so it reads as committed. */
+.rd-btn-danger.armed {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.rd-btn-sm {
+  padding: 5px 11px;
+  font-size: 12.5px;
+  border-radius: 7px;
+}
+.rd-spacer {
+  flex: 1;
+}
+
+/* ── approvals banner ── */
+.rd-approvals {
+  border: 1px solid var(--amber-border);
+  background: var(--amber-bg);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 24px;
+}
+.rd-approvals h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 12px;
+  color: var(--amber-text);
+  letter-spacing: 0.01em;
+}
+.rd-approval {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 0;
+  border-top: 1px solid var(--amber-border);
+}
+.rd-approval:first-of-type {
+  border-top: none;
+}
+.rd-approval .who {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+.rd-approval .who .when {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.rd-approval .what {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+.rd-approval .what code {
+  background: var(--amber-chip);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* ── tabs ── */
+.rd-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+.rd-tab {
+  border: none;
+  background: transparent;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-soft);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.rd-tab:hover {
+  color: var(--text);
+}
+.rd-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.rd-tab .count {
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-soft);
+  color: var(--text-soft);
+  border-radius: 99px;
+  padding: 1px 7px;
+}
+.rd-tab .count.alert {
+  background: var(--amber-chip);
+  color: var(--amber-text);
+}
+
+/* ── filter bar ── */
+.rd-filterbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.rd-segment {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.rd-segment button {
+  border: none;
+  background: var(--card);
+  padding: 6px 11px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-soft);
+  cursor: pointer;
+  white-space: nowrap;
+  text-transform: none;
+}
+.rd-segment button.active {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+.rd-segment button + button {
+  border-left: 1px solid var(--border);
+}
+/* The Agents panel head stacks: title row, then a filters row beneath it, so
+   the lifecycle tabs + Origin dropdown never crowd the title out of line. */
+.rd-panel-head-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+.rd-filters {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: space-between;
+}
+.rd-origin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.rd-origin select {
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background-color: var(--card);
+  color: var(--text-soft);
+  padding: 5px 26px 5px 8px;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+  cursor: pointer;
+}
+.rd-card.terminated {
+  opacity: 0.62;
+}
+
+/* ── section heading ── */
+.rd-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 36px 0 14px;
+}
+
+/* ── cards ── */
+.rd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(296px, 1fr));
+  gap: 14px;
+}
+.rd-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  background: var(--card);
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.rd-card:hover {
+  border-color: var(--border-strong);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.rd-card .head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+.rd-card .name {
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+.rd-state {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.rd-state .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+.st-busy {
+  color: var(--busy);
+}
+.st-busy .dot {
+  background: var(--busy);
+}
+.st-idle {
+  color: var(--idle);
+}
+.st-idle .dot {
+  background: var(--idle);
+}
+.st-waiting {
+  color: var(--wait);
+}
+.st-waiting .dot {
+  background: var(--wait);
+}
+.st-terminated {
+  color: var(--term);
+}
+.st-terminated .dot {
+  background: var(--term);
+}
+.st-stopped {
+  color: var(--term);
+}
+.st-stopped .dot {
+  background: var(--term);
+}
+.st-archived {
+  color: var(--muted);
+}
+.st-archived .dot {
+  background: var(--muted);
+}
+.rd-card .line {
+  font-size: 13px;
+  color: var(--text-soft);
+  margin-top: 8px;
+}
+.rd-card .sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+.rd-card .intent {
+  font-size: 12.5px;
+  color: var(--text-soft);
+  margin-top: 8px;
+  font-style: italic;
+}
+.rd-chip {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 5px;
+  background: var(--bg-soft);
+  color: var(--text-soft);
+  border: 1px solid var(--border);
+}
+.rd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.rd-empty {
+  color: var(--muted);
+  font-size: 14px;
+  padding: 28px 0;
+}
+
+/* ── fork tree ── */
+.rd-tree code {
+  font-size: 13px;
+}
+.rd-tree .node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+/* ── slim, unobtrusive scrollbars ──
+   WebKit (Chrome and the Mac app's WKWebView) renders chunky default
+   scrollbars; WKWebView shows them more readily than Chrome. Make them thin and
+   theme-colored so the scrollable panels look clean in both. */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+  background-clip: content-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* Drop the native <select> chrome — WebKit (WKWebView in the Mac app) draws
+   macOS's glossy aqua dropdown with its own bezel + arrows over our styling.
+   Reset appearance and paint a single custom chevron; the per-control rules
+   (inputStyle, .rd-origin select) supply colors/border/padding. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238a8f98' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}

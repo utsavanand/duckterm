@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Build Duckterm.app — a menu-bar wrapper around the local dashboard.
+#
+# Compiles the Swift sources directly (not via SwiftPM) into a .app bundle and
+# ad-hoc signs it so it runs on this machine. Requires a working Swift toolchain
+# with the macOS SDK — full Xcode is recommended; the standalone CommandLineTools
+# 16.4 SDK has a broken module map (duplicate SwiftBridging) that fails to import
+# AppKit. If you hit that, install Xcode and:
+#   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+#
+# Usage:
+#   ./build.sh          # build build/Duckterm.app
+#   ./build.sh --run    # build, then open it
+set -euo pipefail
+cd "$(dirname "$0")"
+
+APP="build/Duckterm.app"
+CONTENTS="$APP/Contents"
+MACOS="$CONTENTS/MacOS"
+
+echo "==> compiling"
+rm -rf build
+mkdir -p "$MACOS" "$CONTENTS/Resources"
+swiftc -O \
+  -framework AppKit -framework WebKit -framework UserNotifications -framework Foundation \
+  -o "$MACOS/Duckterm" \
+  Sources/Duckterm/*.swift
+
+echo "==> bundling app icon"
+# Regenerate the icns from the dashboard duck so the app icon never drifts from
+# the brand mark. Skips if node/playwright isn't available (uses the checked-in
+# icns as-is). Needs web/node_modules (run `npm ci` in web/ once).
+if command -v node >/dev/null 2>&1 && [ -d ../web/node_modules/playwright ]; then
+  node make-icon.mjs || echo "   (icon regen failed; using existing AppIcon.icns)"
+fi
+cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
+
+echo "==> writing Info.plist"
+cat > "$CONTENTS/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Duckterm</string>
+  <key>CFBundleDisplayName</key><string>Duckterm</string>
+  <key>CFBundleIdentifier</key><string>com.ducktermhq.menubar</string>
+  <key>CFBundleVersion</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleExecutable</key><string>Duckterm</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>NSHumanReadableCopyright</key><string>RubberDuckHQ</string>
+</dict>
+</plist>
+PLIST
+
+echo "==> ad-hoc signing (runs locally; not notarized for distribution)"
+codesign --force --deep --sign - "$APP"
+
+echo "==> done: $APP"
+if [[ "${1:-}" == "--run" ]]; then
+  open "$APP"
+fi

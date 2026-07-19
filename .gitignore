@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+node_modules/
+web/dist/
+.duckterm/
+.uv-suite-state/
+*.tsbuildinfo
+src/duckterm/dashboard/
+uv-out/

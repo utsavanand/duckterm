@@ -1,0 +1,65 @@
+[project]
+name = "duckterm"
+version = "0.1.0"
+description = "Run your CLI coding agents in real terminals in the browser — approvals, sub-agent trees, and annotatable responses beside the PTY"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Utsav Anand" }]
+keywords = ["ai", "agents", "claude", "codex", "orchestrator", "developer-tools", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/utsavanand/duckterm"
+Repository = "https://github.com/utsavanand/duckterm"
+
+[project.scripts]
+duckterm = "duckterm.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff==0.8.4",
+    "black==24.10.0",
+    "mypy==1.13.0",
+    "pytest==8.3.4",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+duckterm = ["hooks/*.sh", "dashboard/index.html", "dashboard/assets/*"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+strict = true
+packages = ["duckterm"]
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

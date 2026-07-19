@@ -1,0 +1,181 @@
+"""The Claude Code runtime: the richest adapter, because Claude emits structured
+hook events and writes a JSONL transcript.
+
+Two things this adds over the generic runtime:
+
+1. Transcript location + parsing. Claude writes the session transcript to
+   ~/.claude/projects/<slug>/<session_id>.jsonl, where <slug> is the cwd with
+   every non-alphanumeric char turned into a dash (see project_slug). Locating
+   and parsing it gives the summarizer the real conversation, not just the PTY log.
+
+2. State from hook events rather than scraped output. In practice Claude Code's
+   hooks POST events straight to /events (the claude-code ingest adapter), so the
+   server already classifies state via derive_state. detect_state here is only a
+   fallback for when this runtime is PTY-supervised without hooks wired.
+
+This is the one place we consciously special-case a single agent (design §4.1);
+every other runtime path stays generic.
+"""
+
+import json
+import re
+import shlex
+from pathlib import Path
+
+from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
+from duckterm.runtimes.base import Harness, HookSpec, SessionState
+
+
+def project_slug(cwd: Path) -> str:
+    """The ~/.claude/projects/ directory name Claude derives from a cwd. Claude
+    replaces EVERY non-alphanumeric char with a dash — not just `/`. So `.` and
+    `_` become dashes too: `/Users/a/.duckterm/x` -> `-Users-a--duckterm-x`
+    (note the double dash). A naive `.replace("/", "-")` kept the dot and looked
+    in a directory that never existed, breaking transcript lookup / conversation
+    fork for every worktree under ~/.duckterm/."""
+    return re.sub(r"[^a-zA-Z0-9]", "-", str(cwd.resolve()))
+
+
+class ClaudeCodeRuntime(Harness):
+    name = "claude-code"
+    hook_spec = HookSpec(
+        global_rel=Path(".claude") / "settings.json",
+        repo_rel=Path(".claude") / "settings.json",
+        build=claude_style_build,
+        strip=claude_style_strip,
+    )
+
+    def __init__(self, command: str = "claude") -> None:
+        self._argv = shlex.split(command)
+
+    def launch_command(self, *, cwd: Path, session_key: str, initial_prompt: str) -> list[str]:
+        argv = list(self._argv)
+        if initial_prompt:
+            argv += [initial_prompt]
+        return argv
+
+    def detect_state(self, recent_output: str) -> SessionState:
+        # Fallback only; the hook adapter normally drives state. Treat a trailing
+        # prompt-for-input marker as waiting, otherwise assume busy.
+        if "│ Do you want" in recent_output or "❯" in recent_output:
+            return "waiting"
+        return "busy"
+
+    def tool_in(self, recent_output: str) -> str | None:
+        return None
+
+    def locate_transcript(self, *, cwd: Path, session_id: str) -> Path | None:
+        slug = project_slug(cwd)
+        path = Path.home() / ".claude" / "projects" / slug / f"{session_id}.jsonl"
+        return path if path.exists() else None
+
+    def latest_transcript(self, *, cwd: Path) -> Path | None:
+        """The most recently modified transcript for a cwd. A session launched
+        in-process (PTY, no hooks) never reports Claude's own session_id, so we
+        can't locate its transcript by id — but the newest .jsonl in the project
+        slug dir IS the active session's. Used by the structured-messages view."""
+        slug = project_slug(cwd)
+        proj = Path.home() / ".claude" / "projects" / slug
+        if not proj.is_dir():
+            return None
+        files = sorted(proj.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+        return files[0] if files else None
+
+    def read_transcript(self, *, cwd: Path, session_id: str) -> list[dict[str, str]]:
+        path = self.locate_transcript(cwd=cwd, session_id=session_id)
+        return parse_transcript(path) if path else []
+
+    def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
+        return [*self._argv, "--resume", session_key]
+
+
+def parse_transcript(path: Path) -> list[dict[str, str]]:
+    """Yield {role, text} records from a Claude JSONL transcript. Tolerates the
+    several message shapes Claude has used (string content, or a list of content
+    blocks with text parts); skips lines it can't read rather than failing."""
+    records: list[dict[str, str]] = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        message = obj.get("message", obj)
+        role = message.get("role")
+        text = _extract_text(message.get("content"))
+        if role and text:
+            records.append({"role": str(role), "text": text})
+    return records
+
+
+def _extract_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = [
+            block["text"]
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "text" and "text" in block
+        ]
+        return "\n".join(parts)
+    return ""
+
+
+# Record types in the JSONL that carry an actual conversation message. Everything
+# else (mode, permission-mode, file-history-snapshot, ai-title, attachment, …) is
+# bookkeeping the structured view skips.
+_MESSAGE_TYPES = {"user", "assistant"}
+
+
+def parse_messages(path: Path) -> list[dict[str, object]]:
+    """Structured records for the HTML/pagination views — unlike parse_transcript
+    (which flattens to {role, text} for the summarizer), this keeps each message's
+    IDENTITY and its ordered content BLOCKS, so the UI can render, paginate, and
+    anchor annotations to a specific block.
+
+    Each record: {id, role, blocks: [...]}. A block is one of:
+      {type: "text", text}
+      {type: "tool_use", name, input}
+      {type: "tool_result", text}
+    `id` is the record's line index (stable for a given transcript), used as the
+    annotation anchor.
+    """
+    records: list[dict[str, object]] = []
+    for i, line in enumerate(path.read_text().splitlines()):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") not in _MESSAGE_TYPES:
+            continue
+        message = obj.get("message", obj)
+        role = message.get("role")
+        blocks = _blocks(message.get("content"))
+        if role and blocks:
+            records.append({"id": i, "role": str(role), "blocks": blocks})
+    return records
+
+
+def _blocks(content: object) -> list[dict[str, object]]:
+    """Normalize a message's content into ordered render blocks."""
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}] if content else []
+    if not isinstance(content, list):
+        return []
+    out: list[dict[str, object]] = []
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        bt = block.get("type")
+        if bt == "text" and block.get("text"):
+            out.append({"type": "text", "text": block["text"]})
+        elif bt == "tool_use":
+            out.append(
+                {"type": "tool_use", "name": block.get("name", "tool"), "input": block.get("input")}
+            )
+        elif bt == "tool_result":
+            out.append({"type": "tool_result", "text": _extract_text(block.get("content"))})
+    return out
