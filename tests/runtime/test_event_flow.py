@@ -173,6 +173,40 @@ def test_stop_without_a_pty_reports_not_stopped(tmp_path: Path) -> None:
     assert store.session("tabbed")["state"] != "stopped"
 
 
+def test_watched_sessions_are_not_ingested(tmp_path: Path) -> None:
+    """Duckterm is launched-only. A hook event carrying only the agent's own
+    session_id (no DUCKTERM_SESSION_KEY, so a session the user ran themselves)
+    must not create a row — watching those is Rubberduck's product. Events for
+    keys Duckterm issued keep flowing, including follow-ups that arrive with
+    only the session_id of an already-known session."""
+    from duckterm.persistence.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "db.sqlite")
+
+    async def scenario() -> list[dict[str, object]]:
+        server = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            # A watched claude session: hook reports only its own session_id.
+            await asyncio.to_thread(
+                _post_event,
+                port,
+                {"event_type": "SessionStart", "session_id": "outside-claude", "cwd": "/tmp"},
+            )
+            # A launched session: Duckterm issued the key (DUCKTERM_SESSION_KEY).
+            await asyncio.to_thread(
+                _post_event,
+                port,
+                {"event_type": "SessionStart", "session_key": "ours", "launched": True},
+            )
+            return store.sessions()
+
+    rows = asyncio.run(scenario())
+    keys = {r["session_key"] for r in rows}
+    assert "ours" in keys
+    assert "outside-claude" not in keys
+
+
 def test_resume_relaunches_a_stopped_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

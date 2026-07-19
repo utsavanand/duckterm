@@ -104,6 +104,13 @@ Infra:
   `/sessions/:key/focus`, close-tab-on-stop/delete, answer-prompt-by-tty.
   Transcript-as-event-source remains a future simplification, not a fork
   precondition.
+  - **2026-07-19: launched-only enforced.** Decided with the user: watching
+    sessions you started yourself is Rubberduck's product, not Duckterm's.
+    `/events` ingest drops hook events that carry no `session_key` (the hook
+    only sends one when `DUCKTERM_SESSION_KEY` was in the agent's env, i.e.
+    Duckterm started it), and a blocking approval from an unknown session gets
+    `id: null` so the hook falls through to the agent's own prompt. The hook
+    layer itself still moves — launched sessions depend on it.
 - `mac/` Swift shell — DECIDE, don't auto-move (see below).
 - `scripts/seed_demo.py` — demo seeding; regenerate fresh if needed.
 

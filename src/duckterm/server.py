@@ -398,6 +398,16 @@ class Server:
         if key and self.history.is_tombstoned(str(key)):
             await _write_json(writer, 200, {"dropped": "session deleted"})
             return
+        # Launched-only: the hook sends session_key only when DUCKTERM_SESSION_KEY
+        # was in the agent's env — i.e. Duckterm started it. An event with only
+        # the agent's own session_id comes from a session the user ran themselves;
+        # watching those is Rubberduck's product, not Duckterm's, so don't let it
+        # create a row here (it would be a session you can't act on or attach to).
+        if not raw.get("session_key") and not (
+            raw.get("session_id") and self.history.session(str(raw["session_id"]))
+        ):
+            await _write_json(writer, 200, {"dropped": "not a Duckterm-launched session"})
+            return
         event = self.bus.publish(raw)
         await _write_json(writer, 200, event)
 
@@ -1241,6 +1251,13 @@ class Server:
         key = req.get("session_key") or req.get("session_id")
         if not key:
             await _write_json(writer, 400, {"error": "session_key required"})
+            return
+        # Launched-only, same rule as /events ingest: a blocking hook from a
+        # session Duckterm didn't start gets no approval id, so it falls through
+        # to the agent's own terminal prompt instead of parking an approval on a
+        # session the dashboard doesn't show.
+        if not req.get("session_key") and self.history.session(str(key)) is None:
+            await _write_json(writer, 200, {"id": None})
             return
         # AskUserQuestion is the agent asking the human a multiple-choice question,
         # not a tool-permission gate. The dashboard can't answer it with
