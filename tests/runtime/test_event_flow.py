@@ -260,9 +260,55 @@ def test_resume_relaunches_a_stopped_session(
     assert store.session("resumable")["heartbeat"] == 0
 
 
-def test_archive_then_unarchive_round_trip(tmp_path: Path) -> None:
-    """Archive hides a session (keeps its history); unarchive brings it back as
-    a stopped (resumable) row."""
+def test_resume_relaunches_generic_agent_with_its_recorded_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A generic/custom agent has no native conversation resume — Resume must
+    relaunch the command it was originally launched with (recorded from
+    SessionStart), not guess a `claude` binary."""
+    from pathlib import Path as P
+
+    from duckterm.persistence.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.record(
+        {
+            "event_type": "SessionStart",
+            "session_key": "gen",
+            "runtime": "generic",
+            "command": "sh -c 'echo READY; exec cat'",
+            "cwd": "/tmp/e2e",
+            "launched": True,
+            "_ts": 1,
+            "_id": "a",
+        }
+    )
+    store.set_state("gen", "stopped", now=2)
+
+    launched: dict = {}
+
+    async def scenario() -> None:
+        srv = Server(history=store)
+
+        async def fake_launch(*, runtime, cwd, session_key, **kw):  # type: ignore[no-untyped-def]
+            launched["argv"] = runtime.launch_command(
+                cwd=P(cwd), session_key=session_key, initial_prompt=""
+            )
+            return session_key
+
+        monkeypatch.setattr(srv.orchestrator, "launch", fake_launch)
+        server = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            await asyncio.to_thread(_post, port, "/sessions/gen/resume")
+
+    asyncio.run(scenario())
+    assert launched["argv"] == ["sh", "-c", "echo READY; exec cat"]
+
+
+def test_archive_is_final_but_keeps_history(tmp_path: Path) -> None:
+    """Archive hides a session and is FINAL: history stays readable, but resume
+    is refused (stop is the pause; archive is the end)."""
     from duckterm.persistence.history import HistoryStore
 
     store = HistoryStore(tmp_path / "db.sqlite")
@@ -277,20 +323,27 @@ def test_archive_then_unarchive_round_trip(tmp_path: Path) -> None:
         }
     )
 
-    async def scenario() -> tuple[str, str]:
+    def post_expecting_400(port: int, path: str) -> dict[str, object]:
+        try:
+            return dict(json.loads(_post(port, path)))
+        except urllib.error.HTTPError as e:
+            assert e.code == 400
+            return dict(json.loads(e.read().decode()))
+
+    async def scenario() -> tuple[str, dict[str, object]]:
         server = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
         async with server:
             await asyncio.to_thread(_post, port, "/sessions/keep/archive")
             after_archive = store.session("keep")["state"]
-            await asyncio.to_thread(_post, port, "/sessions/keep/unarchive")
-            after_unarchive = store.session("keep")["state"]
-        return after_archive, after_unarchive
+            resume = await asyncio.to_thread(post_expecting_400, port, "/sessions/keep/resume")
+        return after_archive, resume
 
-    archived, unarchived = asyncio.run(scenario())
+    archived, resume_body = asyncio.run(scenario())
     assert archived == "archived"
-    assert unarchived == "stopped"  # back in view, resumable
+    assert "archive is final" in str(resume_body["error"])
     assert store.session("keep") is not None  # history kept
+    assert store.events_for("keep")  # ...and readable
 
 
 def test_watched_session_cannot_be_archived_via_handler(tmp_path: Path) -> None:

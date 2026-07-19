@@ -175,6 +175,10 @@ _SESSIONS_COLUMNS = {
     "test": "INTEGER NOT NULL DEFAULT 0",
     "last_seen": "INTEGER",
     "tty": "TEXT",
+    # The shell command the agent was launched with, recorded from SessionStart.
+    # Resume relaunches THIS for agents with no native conversation resume —
+    # without it a generic/custom agent would be "resumed" as a bare `claude`.
+    "command": "TEXT",
     # The agent process's pid (the hook's $PPID). For a watched session — which
     # has no heartbeat — this is how the liveness sweep tells a still-running
     # agent from one whose terminal was closed.
@@ -612,8 +616,8 @@ class HistoryStore:
                 "(session_key, runtime, repo_path, worktree_path, branch, "
                 " parent_session_key, compare_group, state, source_app, cwd, "
                 " last_event_type, last_tool, event_count, started_at, updated_at, ended_at, "
-                " last_seen, launched, test, agent_pid) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)",
+                " last_seen, launched, test, agent_pid, command) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     key,
                     event.get("runtime"),
@@ -634,6 +638,7 @@ class HistoryStore:
                     1 if event.get("launched") else 0,
                     1 if event.get("test") else 0,
                     event.get("agent_pid"),
+                    event.get("command"),
                 ),
             )
         else:
@@ -659,7 +664,8 @@ class HistoryStore:
                 # downgrade a launched session to watched.
                 "launched = MAX(launched, ?), "
                 "test = MAX(test, ?), "
-                "agent_pid = COALESCE(?, agent_pid) "
+                "agent_pid = COALESCE(?, agent_pid), "
+                "command = COALESCE(?, command) "
                 "WHERE session_key = ?",
                 (
                     event.get("runtime"),
@@ -678,6 +684,7 @@ class HistoryStore:
                     1 if event.get("launched") else 0,
                     1 if event.get("test") else 0,
                     event.get("agent_pid"),
+                    event.get("command"),
                     key,
                 ),
             )

@@ -209,8 +209,6 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/resume")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._archive(w, seg),
           **_mid("/sessions/", "/archive")),
-    Route("POST", "", lambda s, r, w, h, b, seg: s._unarchive(w, seg),
-          **_mid("/sessions/", "/unarchive")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._checkpoint(w, seg, b),
           **_mid("/sessions/", "/checkpoint")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._spotlight(w, seg),
@@ -622,6 +620,7 @@ class Server:
                 # A tab launch is not attachable from the browser — the PTY
                 # lives in the user's terminal app, not in Duckterm.
                 "pty_owned": False,
+                "command": command,
             }
         )
         if name or req.get("notes"):
@@ -736,6 +735,7 @@ class Server:
                 "intention": f"fork of {parent.get('source_app') or parent_key} ({base})",
                 "launched": True,
                 "pty_owned": False,
+                "command": shlex.join(argv),
             }
         )
         if opened:
@@ -995,6 +995,13 @@ class Server:
                 writer, 400, {"error": "only Duckterm-launched sessions can be resumed"}
             )
             return
+        # Stop is a pause; archive is final. An archived session keeps its
+        # history but is done — resuming it would contradict what Archive means.
+        if row.get("state") == "archived":
+            await _write_json(
+                writer, 400, {"error": "archived sessions can't be resumed (archive is final)"}
+            )
+            return
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
         runtime = row.get("runtime") or "generic"
         argv = self._resume_argv(session_key, runtime, row)
@@ -1017,25 +1024,30 @@ class Server:
     def _resume_argv(self, key: str, runtime: str, row: dict[str, Any]) -> list[str]:
         """The command to relaunch a session. claude-code continues its
         conversation if we recorded a session id; everything else relaunches the
-        base agent binary (a fresh conversation — no native resume here yet)."""
+        command it was originally launched with (recorded on SessionStart —
+        a fresh conversation, since those agents have no native resume)."""
         if runtime == "claude-code":
             sid = self.history.session_id_for(key)
             return ["claude", "--resume", sid] if sid else ["claude"]
-        # The runtime name doubles as the default binary for the known agents.
+        recorded = row.get("command")
+        if recorded:
+            return shlex.split(str(recorded))
+        # No recorded command (a pre-migration row): the runtime name doubles
+        # as the default binary for the known agents.
         binary = {"codex": "codex", "copilot": "copilot"}.get(runtime, "claude")
         return [binary]
 
     async def _archive(self, writer: asyncio.StreamWriter, session_key: str) -> None:
-        """Put a session away to declutter — keep all its history but hide it
-        behind the Archived filter. Stops its PTY first if it's still live, so
-        archive is also "I'm done, get it out of the way"."""
+        """Put a session away for good: history is kept, the row leaves the
+        list, and it can't be resumed (archive is FINAL — stop is the pause).
+        Stops its PTY first if it's still live."""
         row = self.history.session(session_key)
         if row is None:
             await _write_json(writer, 404, {"error": f"no session {session_key}"})
             return
         # Only sessions Duckterm owns can be archived. Archiving a watched
         # session would hide a row whose agent keeps running in a terminal we
-        # don't control, and unarchiving would offer a Resume that can't fire.
+        # don't control.
         if not row.get("launched"):
             await _write_json(
                 writer, 400, {"error": "only Duckterm-launched sessions can be archived"}
@@ -1045,14 +1057,6 @@ class Server:
         self._set_lifecycle(session_key, "archived")
         self.approvals.drop_session(session_key)
         await _write_json(writer, 200, {"archived": True, "session_key": session_key})
-
-    async def _unarchive(self, writer: asyncio.StreamWriter, session_key: str) -> None:
-        """Bring an archived session back into view as a stopped (resumable) row."""
-        if self.history.session(session_key) is None:
-            await _write_json(writer, 404, {"unarchived": False, "session_key": session_key})
-            return
-        self._set_lifecycle(session_key, "stopped")
-        await _write_json(writer, 200, {"unarchived": True, "session_key": session_key})
 
     async def _delete_session(
         self, writer: asyncio.StreamWriter, session_key: str, body: bytes

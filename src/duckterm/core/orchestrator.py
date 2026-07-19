@@ -116,7 +116,9 @@ class SessionSupervisor:
         )
         os.close(secondary)
         self._primary_fd = primary
-        self._emit("SessionStart")
+        # Record the exact launch command so Resume can relaunch it — agents
+        # with no native conversation resume have nothing else to go on.
+        self._emit("SessionStart", command=shlex.join(argv))
         self._task = asyncio.create_task(self._pump(primary))
 
     async def _start_tmux(self) -> None:
@@ -130,7 +132,7 @@ class SessionSupervisor:
         Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
         Path(self._pipe_path).write_text("")
         self._tmux_target = tmux.spawn_piped(self.session_key, command, self.cwd, self._pipe_path)
-        self._emit("SessionStart")
+        self._emit("SessionStart", command=command)
         self._task = asyncio.create_task(self._tail_pipe())
 
     async def reattach(self) -> None:

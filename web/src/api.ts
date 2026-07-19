@@ -129,8 +129,6 @@ export const api = {
     post<{ resumed: boolean }>(`/sessions/${key}/resume`),
   archive: (key: string) =>
     post<{ archived: boolean }>(`/sessions/${key}/archive`),
-  unarchive: (key: string) =>
-    post<{ unarchived: boolean }>(`/sessions/${key}/unarchive`),
   remove: (key: string, force = false) =>
     fetch(`/sessions/${key}`, {
       method: "DELETE",

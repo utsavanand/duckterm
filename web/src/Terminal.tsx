@@ -57,32 +57,45 @@ export function Terminal({ sessionKey }: { sessionKey: string }) {
     const focusOnClick = () => focusTerm();
     host.addEventListener("mousedown", focusOnClick);
 
+    // The WS dies whenever the session's PTY goes away — Stop, a server
+    // restart — and the session can come back (Resume, tmux reattach). The
+    // slot stays mounted across all of that, so the terminal must reconnect
+    // itself; the server repaints the current screen on each (re)attach.
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(
-      `${proto}://${location.host}/sessions/${sessionKey}/terminal`,
-    );
-    ws.binaryType = "arraybuffer";
+    let ws: WebSocket | null = null;
+    let retry: number | undefined;
+    let disposed = false;
 
     const sendResize = () => {
-      if (ws.readyState !== WebSocket.OPEN) return;
+      if (ws?.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify({ resize: { cols: term.cols, rows: term.rows } }));
     };
 
-    ws.onopen = () => {
-      fit.fit();
-      sendResize();
-      focusTerm();
+    const connect = () => {
+      ws = new WebSocket(
+        `${proto}://${location.host}/sessions/${sessionKey}/terminal`,
+      );
+      ws.binaryType = "arraybuffer";
+      ws.onopen = () => {
+        fit.fit();
+        sendResize();
+        focusTerm();
+      };
+      ws.onmessage = (ev) => {
+        // Raw PTY bytes. xterm's write() takes a Uint8Array and decodes UTF-8
+        // itself — passing bytes (not a decoded string) keeps multi-byte
+        // sequences split across frames intact.
+        term.write(new Uint8Array(ev.data as ArrayBuffer));
+      };
+      ws.onclose = () => {
+        if (!disposed) retry = window.setTimeout(connect, 1500);
+      };
     };
-    ws.onmessage = (ev) => {
-      // Raw PTY bytes. xterm's write() takes a Uint8Array and decodes UTF-8
-      // itself — passing bytes (not a decoded string) keeps multi-byte
-      // sequences split across frames intact.
-      term.write(new Uint8Array(ev.data as ArrayBuffer));
-    };
+    connect();
 
     // User keystrokes -> agent stdin, verbatim (arrows, ctrl-C, partial input).
     const onData = term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN)
+      if (ws?.readyState === WebSocket.OPEN)
         ws.send(new TextEncoder().encode(data));
     });
 
@@ -94,11 +107,16 @@ export function Terminal({ sessionKey }: { sessionKey: string }) {
     observer.observe(host);
 
     return () => {
+      disposed = true;
+      window.clearTimeout(retry);
       observer.disconnect();
       host.removeEventListener("focusout", refocusOnBlur);
       host.removeEventListener("mousedown", focusOnClick);
       onData.dispose();
-      ws.close();
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+      }
       term.dispose();
     };
   }, [sessionKey]);

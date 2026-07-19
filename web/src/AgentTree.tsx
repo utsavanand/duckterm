@@ -339,18 +339,6 @@ function TreeRow({
     }
   }
 
-  async function unarchiveSession() {
-    if (archiving) return;
-    setArchiving(true);
-    try {
-      await api.unarchive(s.key);
-      toast("Unarchived");
-    } catch (e) {
-      toast(`Unarchive failed: ${(e as Error).message}`, "err");
-      setArchiving(false);
-    }
-  }
-
   async function resumeSession() {
     if (resuming) return;
     setResuming(true);
@@ -452,24 +440,6 @@ function TreeRow({
           </ul>
         )}
         <div className="rd-row-actions">
-          {/* An archived session is at rest: only bring-it-back and delete. */}
-          {archived && (
-            <button
-              className="rd-btn rd-btn-sm rd-btn-primary"
-              title="Bring this session back into view (as stopped — resume to continue)"
-              disabled={archiving}
-              onClick={unarchiveSession}
-            >
-              {archiving ? (
-                <span className="rd-inline-spin">
-                  <span className="rd-spinner" />
-                  Unarchiving…
-                </span>
-              ) : (
-                "Unarchive"
-              )}
-            </button>
-          )}
           {/* One branching action: the modal offers a git worktree fork (or
               promotes an in-place session onto a branch) and, for claude-code,
               a conversation-only fork. */}
@@ -544,7 +514,7 @@ function TreeRow({
           {canArchive && (
             <button
               className="rd-btn rd-btn-sm rd-btn-ghost"
-              title="Put this session away — keeps its history, hides it under Archived"
+              title="Archive for good — history is kept, but the session leaves the list and can't be resumed (Stop is the pause)"
               disabled={archiving}
               onClick={archiveSession}
             >
