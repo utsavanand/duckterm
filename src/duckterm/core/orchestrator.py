@@ -193,6 +193,7 @@ class SessionSupervisor:
         except Exception as e:  # noqa: BLE001 — boundary: a background task
             print(f"[duckterm] tail-pipe for {self.session_key} failed: {e}", file=sys.stderr)
         finally:
+            self._close_byte_subs()
             self._emit("SessionEnd")
 
     async def _pump(self, primary: int) -> None:
@@ -246,6 +247,15 @@ class SessionSupervisor:
         for queue in self._byte_subs:
             queue.put_nowait(chunk)
 
+    def _close_byte_subs(self) -> None:
+        """Signal EOF to every attached terminal. Without this, a terminal WS
+        attached when the session stops would hang silently forever (its queue
+        just never fills again) instead of closing — and the browser's
+        reconnect loop, which is what picks up a Resume's NEW supervisor, only
+        runs after a close. b'' is the sentinel; a PTY read never yields it."""
+        for queue in self._byte_subs:
+            queue.put_nowait(b"")
+
     async def subscribe_bytes(self) -> AsyncGenerator[bytes, None]:
         """Yield raw PTY bytes as the agent emits them, for an xterm.js terminal.
         On attach, repaint the CURRENT screen (not the whole scrollback): for
@@ -259,7 +269,10 @@ class SessionSupervisor:
         self._byte_subs.add(queue)
         try:
             while True:
-                yield await queue.get()
+                chunk = await queue.get()
+                if chunk == b"":  # EOF sentinel: the session ended
+                    break
+                yield chunk
         finally:
             self._byte_subs.discard(queue)
 
@@ -320,6 +333,7 @@ class SessionSupervisor:
     async def _finish(self) -> None:
         if self._proc is not None:
             await self._proc.wait()
+        self._close_byte_subs()
         self._emit("SessionEnd")
 
     async def stop(self) -> None:

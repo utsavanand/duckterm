@@ -96,6 +96,75 @@ def test_install_sh_fallback_needs_no_manifest(tmp_path: Path) -> None:
     assert (target / "installed.marker").is_file()
 
 
+def test_uninstall_runs_declared_command_and_choices_are_listed(tmp_path: Path) -> None:
+    """A manifest can declare an uninstaller and picker choices; uninstall runs
+    the declared command, and the list exposes both to the dashboard."""
+    suite = tmp_path / "kit"
+    suite.mkdir()
+    for script, body in (
+        ("install.sh", "#!/bin/sh\ntouch installed.marker\n"),
+        ("uninstall.sh", "#!/bin/sh\nrm -f installed.marker\necho removed\n"),
+    ):
+        p = suite / script
+        p.write_text(body)
+        p.chmod(p.stat().st_mode | stat.S_IXUSR)
+    (suite / "duckterm-harness.json").write_text(
+        json.dumps(
+            {
+                "name": "kit",
+                "install": ["./install.sh"],
+                "uninstall": ["./uninstall.sh"],
+                "args_choices": {"--persona": ["sport", "professional"]},
+            }
+        )
+    )
+    target = tmp_path / "proj"
+    target.mkdir()
+    store = HistoryStore(tmp_path / "db.sqlite")
+
+    async def scenario() -> tuple[dict, dict]:
+        server = Server(history=store)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            await _post(port, server.token, "/harnesses/register", {"path": str(suite)})
+            _, listed = await _request(port, b"GET /harnesses HTTP/1.1\r\nHost: x\r\n\r\n")
+            await _post(port, server.token, "/harnesses/kit/install", {"dir": str(target)})
+            assert (target / "installed.marker").is_file()
+            _, uninstalled = await _post(
+                port, server.token, "/harnesses/kit/uninstall", {"dir": str(target)}
+            )
+        return listed, uninstalled
+
+    listed, uninstalled = asyncio.run(scenario())
+    entry = listed["harnesses"][0]
+    assert entry["uninstallable"] is True
+    assert entry["args_choices"] == {"--persona": ["sport", "professional"]}
+    assert uninstalled["ok"] is True
+    assert "removed" in uninstalled["output"]
+    assert not (target / "installed.marker").exists()
+
+
+def test_uninstall_without_declared_command_is_rejected(tmp_path: Path) -> None:
+    suite = _make_suite(tmp_path, manifest=True)  # install only
+    target = tmp_path / "proj"
+    target.mkdir()
+    store = HistoryStore(tmp_path / "db.sqlite")
+
+    async def scenario() -> int:
+        server = Server(history=store)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            await _post(port, server.token, "/harnesses/register", {"path": str(suite)})
+            status, _ = await _post(
+                port, server.token, "/harnesses/kit/uninstall", {"dir": str(target)}
+            )
+        return status
+
+    assert asyncio.run(scenario()) == 400
+
+
 def test_register_rejects_a_directory_with_no_installer(tmp_path: Path) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()

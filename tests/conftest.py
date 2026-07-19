@@ -25,6 +25,25 @@ def _isolated_home() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True, scope="session")
+def _isolated_tmux_socket() -> Iterator[None]:
+    """Give the whole test session its own tmux namespace, and sweep it at the
+    end. Tests that spawn tmux (supervisor, tmux unit tests) would otherwise
+    leak panes onto the developer's real duckterm socket — leftovers
+    accumulate and slow every tmux call down."""
+    prev = os.environ.get("DUCKTERM_TMUX_SOCKET")
+    socket = f"duckterm-pytest-{os.getpid()}"
+    os.environ["DUCKTERM_TMUX_SOCKET"] = socket
+    try:
+        yield
+    finally:
+        subprocess.run(["tmux", "-L", socket, "kill-server"], capture_output=True)
+        if prev is None:
+            os.environ.pop("DUCKTERM_TMUX_SOCKET", None)
+        else:
+            os.environ["DUCKTERM_TMUX_SOCKET"] = prev
+
+
+@pytest.fixture(autouse=True, scope="session")
 def _clean_git_env() -> Iterator[None]:
     """Strip inherited GIT_* repo pointers (GIT_DIR/GIT_INDEX_FILE/…) for the
     whole test session. Without this, running the suite from inside a git hook

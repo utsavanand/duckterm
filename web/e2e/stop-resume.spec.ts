@@ -25,8 +25,14 @@ test("stop pauses a PTY session; resume relaunches its recorded command", async 
 
   await row.hover();
   await row.getByRole("button", { name: "Stop", exact: true }).click();
+  // Stopping a tmux-backed session waits for its tail loop to notice the pane
+  // died — give it the same headroom as the resume poll (the 5s default flakes
+  // when the whole suite runs).
   await expect
-    .poll(async () => (await findSession((s) => s.session_key === key))?.state)
+    .poll(
+      async () => (await findSession((s) => s.session_key === key))?.state,
+      { timeout: 15_000 },
+    )
     .toBe("stopped");
 
   // The stopped row offers Resume; the relaunch runs `sh -c ...` again (the

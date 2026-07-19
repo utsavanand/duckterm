@@ -196,6 +196,8 @@ _ROUTES: list[Route] = [
     Route("POST", "/harnesses/register", lambda s, r, w, h, b, seg: s._register_harness(w, b)),
     Route("POST", "", lambda s, r, w, h, b, seg: s._install_harness(w, seg, b),
           **_mid("/harnesses/", "/install")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._uninstall_harness(w, seg, b),
+          **_mid("/harnesses/", "/uninstall")),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._deregister_harness(w, seg),
           prefix="/harnesses/"),
     # ── left-panel folders ──
@@ -1167,6 +1169,8 @@ class Server:
                 suite = suites.load(Path(str(row["path"])))
                 entry["description"] = suite.description
                 entry["has_manifest"] = suite.has_manifest
+                entry["args_choices"] = suite.args_choices
+                entry["uninstallable"] = suite.uninstall is not None
             except (ValueError, OSError, json.JSONDecodeError) as e:
                 entry["error"] = str(e)
             out.append(entry)
@@ -1204,6 +1208,18 @@ class Server:
         """Run a registered suite's installer against a target directory:
         {dir, args?: [...]}. Output comes back verbatim so the user sees what
         the installer did (or why it failed)."""
+        await self._run_suite(writer, name, body, action="install")
+
+    async def _uninstall_harness(
+        self, writer: asyncio.StreamWriter, name: str, body: bytes
+    ) -> None:
+        """Run a suite's declared uninstaller against a target directory.
+        400 for suites whose manifest declares none."""
+        await self._run_suite(writer, name, body, action="uninstall")
+
+    async def _run_suite(
+        self, writer: asyncio.StreamWriter, name: str, body: bytes, *, action: str
+    ) -> None:
         row = next((h for h in self.history.harnesses() if h["name"] == name), None)
         if row is None:
             await _write_json(writer, 404, {"error": f"no harness {name!r} registered"})
@@ -1223,7 +1239,14 @@ class Server:
         except (ValueError, json.JSONDecodeError) as e:
             await _write_json(writer, 400, {"error": str(e)})
             return
-        ok, output = await asyncio.to_thread(suites.run_install, suite, target, args)
+        if action == "uninstall":
+            if suite.uninstall is None:
+                await _write_json(writer, 400, {"error": f"{name} declares no uninstall command"})
+                return
+            runner = suites.run_uninstall
+        else:
+            runner = suites.run_install
+        ok, output = await asyncio.to_thread(runner, suite, target, args)
         await _write_json(
             writer,
             200 if ok else 502,
@@ -1626,7 +1649,11 @@ class Server:
         Only works for a session Duckterm launched (it owns the PTY/tmux).
         Additive — leaves /ws (events) and /output (SSE line view) untouched."""
         supervisor = self.orchestrator.get(session_key)
-        if supervisor is None:
+        # A stopped session's supervisor stays registered but its PTY is gone —
+        # attaching to it would hang a silent, never-ending connection. Refuse
+        # instead, so a reconnecting client keeps retrying and lands on the NEW
+        # supervisor the moment a Resume replaces the dead one.
+        if supervisor is None or not supervisor.running:
             await _write_json(writer, 404, {"error": "no live session to attach"})
             return
         key = headers.get("sec-websocket-key")

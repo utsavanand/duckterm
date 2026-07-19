@@ -9,11 +9,21 @@ Ported from uv-suite's watchtower tmux service. All calls are synchronous
 subprocess; drive them from async code via asyncio.to_thread.
 """
 
+import os
 import shutil
 import subprocess
 
-SOCKET = "duckterm"
 _PREFIX = "rd_"
+
+
+def socket_name() -> str:
+    """The tmux socket namespace. Tests and the e2e harness set
+    DUCKTERM_TMUX_SOCKET to their own value so their panes never mix with the
+    user's real sessions — and can be swept wholesale (kill-server) afterwards.
+    Before this, e2e runs leaked their cat/fixture panes onto the user's
+    socket; ~100 leftovers made every tmux call (send-keys, has-session)
+    slow enough to flake the terminal specs."""
+    return os.environ.get("DUCKTERM_TMUX_SOCKET", "duckterm")
 
 
 def has_tmux() -> bool:
@@ -22,7 +32,7 @@ def has_tmux() -> bool:
 
 def _tmux(*args: str) -> tuple[bool, str]:
     result = subprocess.run(
-        ["tmux", "-L", SOCKET, *args],
+        ["tmux", "-L", socket_name(), *args],
         capture_output=True,
         text=True,
     )

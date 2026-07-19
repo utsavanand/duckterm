@@ -38,16 +38,19 @@ The contract is `duckterm-harness.json` at the suite's root:
 ```json
 {
   "name": "uv-suite",
-  "description": "Agents, skills, hooks, and guardrails for Claude Code",
+  "description": "Agents, skills, hooks, guardrails, and personas for Claude Code",
   "install": ["./install.sh", "--project", "{dir}"],
-  "uninstall": ["./uninstall.sh"]
+  "uninstall": ["./uninstall.sh"],
+  "args_choices": { "--persona": ["professional", "sport", "auto", "spike"] }
 }
 ```
 
 - `install` is an argv template: `{dir}` is replaced with the target
   directory; a relative program path resolves against the suite's directory;
   the process runs with **cwd = the target directory**.
-- `uninstall` is optional (not yet surfaced in the UI).
+- `uninstall` is optional; suites that declare it get an Uninstall button.
+- `args_choices` maps a flag to its allowed values; the modal renders one
+  picker per flag and appends `flag value` to the argv (uv-suite's personas).
 - **Fallback:** a directory with an `install.sh` but no manifest is accepted
   as `{name: <dirname>, install: ["./install.sh"]}`. Since cwd is the target,
   any installer that defaults to `$(pwd)` works unmodified — uv-suite does.

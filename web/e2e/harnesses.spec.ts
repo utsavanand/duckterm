@@ -8,7 +8,9 @@ import { postEvent, seedSession } from "./helpers";
 // modal, install it into a project folder, and verify the installer really ran
 // there (marker file) with its output shown in the modal.
 
-test("register a harness and install it into a project", async ({ page }) => {
+test("register, install with a picker choice, then uninstall", async ({
+  page,
+}) => {
   const suite = mkdtempSync(join(tmpdir(), "rd-e2e-suite-"));
   writeFileSync(
     join(suite, "duckterm-harness.json"),
@@ -16,13 +18,20 @@ test("register a harness and install it into a project", async ({ page }) => {
       name: `kit-${Date.now()}`,
       description: "skills and hooks for the e2e test",
       install: ["./install.sh"],
+      uninstall: ["./uninstall.sh"],
+      args_choices: { "--persona": ["sport", "professional"] },
     }),
   );
   writeFileSync(
     join(suite, "install.sh"),
-    '#!/bin/sh\necho "installed into $PWD"\ntouch installed.marker\n',
+    '#!/bin/sh\necho "installed into $PWD with $*"\ntouch installed.marker\n',
+  );
+  writeFileSync(
+    join(suite, "uninstall.sh"),
+    '#!/bin/sh\nrm -f installed.marker\necho "uninstalled"\n',
   );
   chmodSync(join(suite, "install.sh"), 0o755);
+  chmodSync(join(suite, "uninstall.sh"), 0o755);
   const target = mkdtempSync(join(tmpdir(), "rd-e2e-target-"));
 
   await page.goto("/");
@@ -33,14 +42,23 @@ test("register a harness and install it into a project", async ({ page }) => {
   const row = page.locator(".rd-harness", { hasText: "skills and hooks" });
   await expect(row).toBeVisible();
 
+  // Pick a persona from the manifest-declared choices, then install.
   await row.getByPlaceholder("target project folder").fill(target);
+  await row.locator("select").selectOption("sport");
   await row.getByRole("button", { name: "Install", exact: true }).click();
 
   await expect(row.locator(".rd-harness-output")).toContainText(
-    "installed into",
+    "--persona sport",
     { timeout: 10_000 },
   );
   expect(existsSync(join(target, "installed.marker"))).toBe(true);
+
+  // Uninstall reverses it, with its own output shown.
+  await row.getByRole("button", { name: "Uninstall", exact: true }).click();
+  await expect(row.locator(".rd-harness-output")).toContainText("uninstalled", {
+    timeout: 10_000,
+  });
+  expect(existsSync(join(target, "installed.marker"))).toBe(false);
 });
 
 // The observation loop: corrections seeded for a folder come back as proposed

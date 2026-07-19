@@ -31,6 +31,10 @@ export default async function globalSetup() {
     { mode: 0o755 },
   );
 
+  // A private tmux namespace for this run's fixture agents, swept wholesale
+  // in global-teardown — never the user's real duckterm socket.
+  const tmuxSocket = `rd-e2e-${process.pid}`;
+
   const proc = spawn(
     "python",
     ["-m", "duckterm.cli", "serve", "--port", PORT],
@@ -41,6 +45,7 @@ export default async function globalSetup() {
         DUCKTERM_HOME: home,
         DUCKTERM_SUMMARIZER_CMD: fakeLlm,
         DUCKTERM_NO_TERMINAL: "1",
+        DUCKTERM_TMUX_SOCKET: tmuxSocket,
         PYTHONPATH: join(REPO, "src"),
       },
       stdio: "inherit",
@@ -63,6 +68,6 @@ export default async function globalSetup() {
 
   writeFileSync(
     join(tmpdir(), "rd-e2e-state.json"),
-    JSON.stringify({ home, pid: proc.pid, port: PORT }),
+    JSON.stringify({ home, pid: proc.pid, port: PORT, tmuxSocket }),
   );
 }

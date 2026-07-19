@@ -6,6 +6,8 @@ interface Harness {
   name: string;
   path: string;
   description?: string;
+  args_choices?: Record<string, string[]>;
+  uninstallable?: boolean;
   error?: string;
 }
 
@@ -58,6 +60,40 @@ export function HarnessesModal({
     }
   }
 
+  async function run(
+    h: Harness,
+    action: "install" | "uninstall",
+    dir: string,
+    args: string[],
+  ) {
+    setBusy(h.name);
+    setOutput(null);
+    try {
+      const res = await fetch(
+        `/harnesses/${encodeURIComponent(h.name)}/${action}`,
+        {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ dir, args }),
+        },
+      );
+      const d = (await res.json()) as {
+        ok?: boolean;
+        output?: string;
+        error?: string;
+      };
+      setOutput({ name: h.name, text: d.output ?? d.error ?? "" });
+      toast(
+        d.ok
+          ? `${action === "install" ? "Installed" : "Uninstalled"} ${h.name}`
+          : `${action} failed`,
+        d.ok ? undefined : "err",
+      );
+    } finally {
+      setBusy(null);
+    }
+  }
+
   return (
     <Modal title="Harnesses" onClose={onClose}>
       <p className="rd-harness-hint">
@@ -74,35 +110,7 @@ export function HarnessesModal({
           busy={busy === h.name}
           output={output?.name === h.name ? output.text : null}
           onRemove={() => deregister(h.name)}
-          onInstall={async (dir, args) => {
-            setBusy(h.name);
-            setOutput(null);
-            try {
-              const res = await fetch(
-                `/harnesses/${encodeURIComponent(h.name)}/install`,
-                {
-                  method: "POST",
-                  headers: authHeaders({ "Content-Type": "application/json" }),
-                  body: JSON.stringify({
-                    dir,
-                    args: args ? args.split(/\s+/) : [],
-                  }),
-                },
-              );
-              const d = (await res.json()) as {
-                ok?: boolean;
-                output?: string;
-                error?: string;
-              };
-              setOutput({ name: h.name, text: d.output ?? d.error ?? "" });
-              toast(
-                d.ok ? `Installed ${h.name}` : `Install failed`,
-                d.ok ? undefined : "err",
-              );
-            } finally {
-              setBusy(null);
-            }
-          }}
+          onRun={(action, dir, args) => run(h, action, dir, args)}
         />
       ))}
       {harnesses.length === 0 && (
@@ -131,18 +139,29 @@ function HarnessRow({
   defaultDir,
   busy,
   output,
-  onInstall,
+  onRun,
   onRemove,
 }: {
   harness: Harness;
   defaultDir: string | null;
   busy: boolean;
   output: string | null;
-  onInstall: (dir: string, args: string) => void;
+  onRun: (action: "install" | "uninstall", dir: string, args: string[]) => void;
   onRemove: () => void;
 }) {
   const [dir, setDir] = useState(defaultDir ?? "");
   const [args, setArgs] = useState("");
+  const choiceFlags = Object.keys(harness.args_choices ?? {});
+  const [choices, setChoices] = useState<Record<string, string>>({});
+
+  // Manifest-declared pickers first (e.g. --persona sport), then free text.
+  const argv = [
+    ...choiceFlags.flatMap((flag) =>
+      choices[flag] ? [flag, choices[flag]] : [],
+    ),
+    ...(args ? args.split(/\s+/) : []),
+  ];
+
   return (
     <div className="rd-harness">
       <div className="rd-harness-head">
@@ -159,25 +178,52 @@ function HarnessRow({
         </button>
       </div>
       <div className="rd-harness-path">{harness.path}</div>
-      <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
         <input
-          style={{ ...inputStyle, flex: 2 }}
+          style={{ ...inputStyle, flex: 2, minWidth: 180 }}
           value={dir}
           placeholder="target project folder"
           onChange={(e) => setDir(e.target.value)}
         />
+        {choiceFlags.map((flag) => (
+          <select
+            key={flag}
+            style={{ ...inputStyle, flex: 1, minWidth: 120 }}
+            value={choices[flag] ?? ""}
+            title={flag}
+            onChange={(e) =>
+              setChoices((c) => ({ ...c, [flag]: e.target.value }))
+            }
+          >
+            <option value="">{flag} (default)</option>
+            {harness.args_choices![flag].map((v) => (
+              <option key={v} value={v}>
+                {v}
+              </option>
+            ))}
+          </select>
+        ))}
         <input
-          style={{ ...inputStyle, flex: 1 }}
+          style={{ ...inputStyle, flex: 1, minWidth: 120 }}
           value={args}
-          placeholder="extra args (e.g. --persona sport)"
+          placeholder="extra args"
           onChange={(e) => setArgs(e.target.value)}
         />
         <Button
-          onClick={() => onInstall(dir, args)}
+          onClick={() => onRun("install", dir, argv)}
           disabled={busy || !dir.trim() || Boolean(harness.error)}
         >
-          {busy ? "Installing…" : "Install"}
+          {busy ? "Working…" : "Install"}
         </Button>
+        {harness.uninstallable && (
+          <Button
+            variant="ghost"
+            onClick={() => onRun("uninstall", dir, argv)}
+            disabled={busy || !dir.trim()}
+          >
+            Uninstall
+          </Button>
+        )}
       </div>
       {output !== null && <pre className="rd-harness-output">{output}</pre>}
     </div>
