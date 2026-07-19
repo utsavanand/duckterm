@@ -130,7 +130,7 @@ function Dashboard() {
             width={22}
             height={22}
           />
-          RubberDuckHQ
+          Rubber<span className="rd-brand-term">Term</span>
         </span>
         <span className="rd-live">
           <span className={`dot ${connected ? "on" : "off"}`} />

@@ -9,6 +9,9 @@
   --muted: #8e8ea0;
   --accent: #0d0d0d;
   --accent-fg: #ffffff;
+  /* Brand green — matches the Duckterm duck (favicon.svg gradient). */
+  --brand-green: #1fa34c;
+  --brand-green-strong: #178a3f;
   --busy: #4b5cff;
   --idle: #18a957;
   --wait: #c2820b;
@@ -33,6 +36,8 @@
   --muted: #6b7280;
   --accent: #f5f5f6;
   --accent-fg: #0d0d0d;
+  --brand-green: #4ade80;
+  --brand-green-strong: #22c55e;
   --busy: #6b7cff;
   --idle: #34d399;
   --wait: #fbbf24;
@@ -173,8 +178,8 @@ code,
   cursor: pointer;
 }
 .rd-view-toggle button.active {
-  background: #1f2430;
-  color: #e5e7eb;
+  background: rgba(74, 222, 128, 0.14);
+  color: var(--brand-green);
 }
 .rd-messages-wrap {
   flex: 1;
@@ -1065,6 +1070,9 @@ code,
   display: block;
   border-radius: 6px;
 }
+.rd-brand-term {
+  color: var(--brand-green);
+}
 .rd-live {
   font-size: 13px;
   display: inline-flex;
@@ -1104,8 +1112,8 @@ code,
   cursor: not-allowed;
 }
 .rd-btn-primary {
-  background: var(--accent);
-  color: var(--accent-fg);
+  background: var(--brand-green-strong);
+  color: #ffffff;
 }
 .rd-btn-primary:hover:not(:disabled) {
   opacity: 0.85;
