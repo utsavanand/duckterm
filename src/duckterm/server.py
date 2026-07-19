@@ -45,6 +45,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from duckterm import suites
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.eventbus import EventBus
@@ -54,6 +55,7 @@ from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
 from duckterm.harnesses import runtime_for
 from duckterm.helpers import browse, security
+from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.persistence.checkpoints import build_checkpoint
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
@@ -165,6 +167,7 @@ _ROUTES: list[Route] = [
     Route("GET", "/tree", lambda s, r, w, h, b, seg: s._tree(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._browse(w, seg), prefix="/browse"),
     Route("GET", "", lambda s, r, w, h, b, seg: s._branches(w, seg), prefix="/branches"),
+    Route("POST", "/agents-md/suggest", lambda s, r, w, h, b, seg: s._suggest_agents_md(w, b)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._read_agents_md(w, seg), prefix="/agents-md"),
     Route("POST", "/agents-md", lambda s, r, w, h, b, seg: s._write_agents_md(w, b)),
     Route("GET", "/approvals", lambda s, r, w, h, b, seg: s._list_approvals(w)),
@@ -188,6 +191,13 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
+    # ── installable harnesses (suites like uv-suite) ──
+    Route("GET", "/harnesses", lambda s, r, w, h, b, seg: s._list_harnesses(w)),
+    Route("POST", "/harnesses/register", lambda s, r, w, h, b, seg: s._register_harness(w, b)),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._install_harness(w, seg, b),
+          **_mid("/harnesses/", "/install")),
+    Route("DELETE", "", lambda s, r, w, h, b, seg: s._deregister_harness(w, seg),
+          prefix="/harnesses/"),
     # ── left-panel folders ──
     Route("GET", "/folders", lambda s, r, w, h, b, seg: s._list_folders(w)),
     Route("POST", "/folders", lambda s, r, w, h, b, seg: s._create_folder(w, b)),
@@ -1147,6 +1157,83 @@ class Server:
         keys = self.history.clear_terminated()
         await _write_json(writer, 200, {"cleared": len(keys), "session_keys": keys})
 
+    async def _list_harnesses(self, writer: asyncio.StreamWriter) -> None:
+        """Registered installable harnesses, with manifest details re-read from
+        disk (a suite that vanished from disk is reported, not hidden)."""
+        out = []
+        for row in self.history.harnesses():
+            entry: dict[str, Any] = {"name": row["name"], "path": row["path"]}
+            try:
+                suite = suites.load(Path(str(row["path"])))
+                entry["description"] = suite.description
+                entry["has_manifest"] = suite.has_manifest
+            except (ValueError, OSError, json.JSONDecodeError) as e:
+                entry["error"] = str(e)
+            out.append(entry)
+        await _write_json(writer, 200, {"harnesses": out})
+
+    async def _register_harness(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        """Register a suite by its directory path. The directory must carry a
+        duckterm-harness.json or an install.sh (the contract in suites.py)."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        raw = req.get("path")
+        if not raw:
+            await _write_json(writer, 400, {"error": "path required"})
+            return
+        path = Path(str(raw)).expanduser()
+        if not path.is_dir():
+            await _write_json(writer, 400, {"error": f"no such directory: {path}"})
+            return
+        try:
+            suite = suites.load(path)
+        except (ValueError, json.JSONDecodeError) as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        self.history.add_harness(suite.name, str(path), int(time.time() * 1000))
+        await _write_json(
+            writer,
+            200,
+            {"name": suite.name, "description": suite.description, "path": str(path)},
+        )
+
+    async def _install_harness(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
+        """Run a registered suite's installer against a target directory:
+        {dir, args?: [...]}. Output comes back verbatim so the user sees what
+        the installer did (or why it failed)."""
+        row = next((h for h in self.history.harnesses() if h["name"] == name), None)
+        if row is None:
+            await _write_json(writer, 404, {"error": f"no harness {name!r} registered"})
+            return
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        target = Path(str(req.get("dir") or "")).expanduser()
+        if not target.is_dir():
+            await _write_json(writer, 400, {"error": f"no such directory: {target}"})
+            return
+        args = [str(a) for a in req.get("args") or []]
+        try:
+            suite = suites.load(Path(str(row["path"])))
+        except (ValueError, json.JSONDecodeError) as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        ok, output = await asyncio.to_thread(suites.run_install, suite, target, args)
+        await _write_json(
+            writer,
+            200 if ok else 502,
+            {"ok": ok, "output": output, "harness": name, "dir": str(target)},
+        )
+
+    async def _deregister_harness(self, writer: asyncio.StreamWriter, name: str) -> None:
+        removed = self.history.remove_harness(name)
+        await _write_json(writer, 200 if removed else 404, {"removed": removed, "harness": name})
+
     async def _list_folders(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"folders": self.history.folders()})
 
@@ -1201,6 +1288,55 @@ class Server:
         path = Path(directory) / "AGENTS.md"
         text = path.read_text() if path.is_file() else ""
         await _write_json(writer, 200, {"dir": directory, "text": text, "exists": path.is_file()})
+
+    async def _suggest_agents_md(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        """The observation loop: {dir} -> proposed AGENTS.md rules distilled
+        from the corrections users gave agents working in that folder
+        (annotations + mid-session follow-up prompts). Proposals go back to the
+        editor for review — this never writes the file."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        directory = req.get("dir")
+        if not directory:
+            await _write_json(writer, 400, {"error": "dir required"})
+            return
+        corrections = self._corrections_for_dir(str(directory))
+        path = Path(str(directory)) / "AGENTS.md"
+        current = path.read_text() if path.is_file() else ""
+        rules = await asyncio.to_thread(suggest_rules, corrections, current)
+        await _write_json(
+            writer,
+            200,
+            {"suggestions": rules, "corrections_seen": len(corrections)},
+        )
+
+    def _corrections_for_dir(self, directory: str) -> "list[Correction]":
+        """Every correction signal from sessions that worked in `directory`:
+        annotation notes (span + pushback) and follow-up prompts (every
+        UserPromptSubmit after a session's first — the first is the task,
+        later ones are steering). Bounded so the LLM prompt stays small."""
+        root = str(Path(directory))
+        out: list[Correction] = []
+        for row in self.history.sessions():
+            in_dir = any(
+                str(row.get(field) or "").startswith(root)
+                for field in ("cwd", "worktree_path", "repo_path")
+            )
+            if not in_dir:
+                continue
+            key = str(row["session_key"])
+            for ann in self.history.annotations(key):
+                out.append(Correction("annotation", f"\"{ann['quote']}\" — {ann['note']}"))
+            prompts = [
+                str(e.get("prompt"))
+                for e in self.history.events_for(key)
+                if e.get("event_type") == "UserPromptSubmit" and e.get("prompt")
+            ]
+            out.extend(Correction("follow-up", p) for p in prompts[1:])
+        return out[-80:]  # newest-biased cap; enough signal, bounded prompt
 
     async def _write_agents_md(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Write the AGENTS.md for a folder: {dir, text}. Creates the file if it

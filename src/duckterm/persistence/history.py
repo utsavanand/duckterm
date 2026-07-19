@@ -102,6 +102,15 @@ CREATE TABLE IF NOT EXISTS annotations (
 CREATE INDEX IF NOT EXISTS idx_annotations_session ON annotations(session_key);
 -- Left-panel folders. Stored on their own so an empty folder (created before any
 -- session is moved into it) persists. Session membership lives in sessions.grp.
+-- Installable harnesses (suites of skills/hooks/sub-agents, e.g. uv-suite)
+-- the user registered by path. The manifest is re-read from disk on use, so
+-- only the pointer lives here.
+CREATE TABLE IF NOT EXISTS harnesses (
+    name          TEXT PRIMARY KEY,
+    path          TEXT NOT NULL,
+    registered_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS folders (
     name       TEXT PRIMARY KEY,
     created_at INTEGER NOT NULL
@@ -488,6 +497,26 @@ class HistoryStore:
             "INSERT OR IGNORE INTO folders (name, created_at) VALUES (?, ?)", (name, ts)
         )
         self._conn.commit()
+
+    def add_harness(self, name: str, path: str, ts: int) -> None:
+        self._conn.execute(
+            "INSERT INTO harnesses (name, path, registered_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(name) DO UPDATE SET path = excluded.path",
+            (name, path, ts),
+        )
+        self._conn.commit()
+
+    def harnesses(self) -> list[dict[str, Any]]:
+        """Registered installable harnesses, oldest first."""
+        rows = self._conn.execute(
+            "SELECT name, path, registered_at FROM harnesses ORDER BY registered_at"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def remove_harness(self, name: str) -> bool:
+        cur = self._conn.execute("DELETE FROM harnesses WHERE name = ?", (name,))
+        self._conn.commit()
+        return cur.rowcount > 0
 
     def delete_folder(self, name: str) -> None:
         """Remove a folder and ungroup its sessions (they return to Ungrouped)."""

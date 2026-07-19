@@ -17,6 +17,44 @@ export function AgentsMdModal({
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
+
+  // The observation loop: ask the server to distill the corrections users gave
+  // agents in this folder into proposed rules. They land in the editor for
+  // review — nothing is written until the user saves.
+  async function suggest() {
+    setSuggesting(true);
+    try {
+      const res = await fetch("/agents-md/suggest", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify({ dir }),
+      });
+      const d = (await res.json()) as {
+        suggestions?: string[];
+        corrections_seen?: number;
+        error?: string;
+      };
+      if (!res.ok) throw new Error(d.error ?? "suggest failed");
+      if (!d.suggestions?.length) {
+        toast(
+          d.corrections_seen
+            ? "No durable rules found in the corrections so far"
+            : "No corrections observed in this folder yet",
+        );
+        return;
+      }
+      setText(
+        (t) =>
+          `${t.trimEnd()}\n\n## Suggested from corrections (review before saving)\n${d.suggestions!.join("\n")}\n`,
+      );
+      toast(`${d.suggestions.length} suggestion(s) added — review, then Save`);
+    } catch (e) {
+      toast(`Suggest failed: ${(e as Error).message}`, "err");
+    } finally {
+      setSuggesting(false);
+    }
+  }
 
   useEffect(() => {
     fetch(`/agents-md?dir=${encodeURIComponent(dir)}`)
@@ -80,6 +118,13 @@ export function AgentsMdModal({
           marginTop: 12,
         }}
       >
+        <Button
+          variant="ghost"
+          onClick={suggest}
+          disabled={suggesting || loading}
+        >
+          {suggesting ? "Observing…" : "Suggest from corrections"}
+        </Button>
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>

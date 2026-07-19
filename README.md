@@ -12,6 +12,13 @@ structured layer a raw terminal can't show beside them:
   response, attach a note, and it's sent back to the agent as a follow-up turn.
 - **Worktree isolation & forks** — launch sessions into their own git worktrees;
   fork a session's conversation and compare branches.
+- **AGENTS.md that learns** — one shared instructions file per folder, read by
+  every agent; "Suggest from corrections" distills the feedback you've given
+  agents (annotations, follow-up prompts) into proposed rules you review and
+  save.
+- **Installable harnesses** — register a suite of skills/hooks/sub-agents
+  (e.g. uv-suite) by path and install it into any project from the dashboard.
+  Contract: [docs/harnesses.md](docs/harnesses.md).
 
 Duckterm is the terminal-forward sibling of
 [Rubberduck](https://github.com/utsavanand/rubber-duck). Rubberduck observes

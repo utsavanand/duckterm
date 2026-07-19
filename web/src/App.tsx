@@ -5,6 +5,7 @@ import { api } from "./api";
 import { Approvals } from "./Approvals";
 import { ContextPanel } from "./ContextPanel";
 import { ForkModal } from "./ForkModal";
+import { HarnessesModal } from "./HarnessesModal";
 import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
 import { NewFolderModal } from "./NewFolderModal";
@@ -30,9 +31,9 @@ function Dashboard() {
   const now = useNow(1000);
   const { theme, cycle: cycleTheme } = useTheme();
 
-  const [modal, setModal] = useState<"launch" | "agentsmd" | "folder" | null>(
-    null,
-  );
+  const [modal, setModal] = useState<
+    "launch" | "agentsmd" | "folder" | "harnesses" | null
+  >(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [forkKey, setForkKey] = useState<string | null>(null);
   const [view, setView] = useState<"terminal" | "messages">("terminal");
@@ -159,6 +160,13 @@ function Dashboard() {
         </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
+          onClick={() => setModal("harnesses")}
+          title="Install suites of skills/hooks/sub-agents (like uv-suite) into a project"
+        >
+          Harnesses
+        </button>
+        <button
+          className="rd-btn rd-btn-ghost rd-btn-sm"
           onClick={() => setModal("folder")}
           title="Create a folder to group agents"
         >
@@ -272,6 +280,12 @@ function Dashboard() {
       {modal === "launch" && <LaunchModal onClose={() => setModal(null)} />}
       {modal === "agentsmd" && agentsMdDir && (
         <AgentsMdModal dir={agentsMdDir} onClose={() => setModal(null)} />
+      )}
+      {modal === "harnesses" && (
+        <HarnessesModal
+          defaultDir={agentsMdDir}
+          onClose={() => setModal(null)}
+        />
       )}
       {forkSession && (
         <ForkModal session={forkSession} onClose={() => setForkKey(null)} />

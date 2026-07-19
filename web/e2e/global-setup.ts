@@ -21,6 +21,16 @@ const REPO = join(__dirname, "..", "..");
 export default async function globalSetup() {
   const home = mkdtempSync(join(tmpdir(), "rd-e2e-"));
 
+  // A deterministic stand-in for the LLM backend: the observation-loop spec
+  // asserts these exact rules come back as AGENTS.md suggestions. (It also
+  // becomes the checkpoint summarizer, which no spec asserts on.)
+  const fakeLlm = join(home, "fake-llm.sh");
+  writeFileSync(
+    fakeLlm,
+    "#!/bin/sh\nprintf -- '- Use rg, not grep\\n- No emoji in commit messages\\n'\n",
+    { mode: 0o755 },
+  );
+
   const proc = spawn(
     "python",
     ["-m", "duckterm.cli", "serve", "--port", PORT],
@@ -29,7 +39,7 @@ export default async function globalSetup() {
       env: {
         ...process.env,
         DUCKTERM_HOME: home,
-        DUCKTERM_SUMMARIZER: "off",
+        DUCKTERM_SUMMARIZER_CMD: fakeLlm,
         DUCKTERM_NO_TERMINAL: "1",
         PYTHONPATH: join(REPO, "src"),
       },

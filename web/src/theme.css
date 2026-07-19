@@ -407,6 +407,47 @@ code,
   color: var(--muted);
   margin-left: 4px;
 }
+/* Harnesses modal: one card per registered suite. */
+.rd-harness-hint {
+  font-size: 12px;
+  color: var(--text-soft);
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+.rd-harness {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.rd-harness-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.rd-harness-desc {
+  font-size: 12px;
+  color: var(--text-soft);
+  flex: 1;
+}
+.rd-harness-path {
+  font-size: 11px;
+  font-family: ui-monospace, Menlo, monospace;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.rd-harness-output {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  background: var(--bg-code);
+  color: #d1d5db;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
 /* xterm fills the pane and scrolls its OWN buffer (xterm-viewport), so a long
    session scrolls inside the terminal instead of growing the page. */
 .rd-terminal-pane .xterm,

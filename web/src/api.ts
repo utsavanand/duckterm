@@ -94,6 +94,27 @@ export const api = {
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ group }),
     }).then((r) => r.json() as Promise<{ updated: boolean }>),
+  // Installable harnesses (suites of skills/hooks/sub-agents, e.g. uv-suite).
+  harnesses: () =>
+    get<{
+      harnesses: {
+        name: string;
+        path: string;
+        description?: string;
+        has_manifest?: boolean;
+        error?: string;
+      }[];
+    }>("/harnesses"),
+  registerHarness: (path: string) =>
+    post<{ name: string; description: string; path: string }>(
+      "/harnesses/register",
+      { path },
+    ),
+  deregisterHarness: (name: string) =>
+    fetch(`/harnesses/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    }).then((r) => r.json() as Promise<{ removed: boolean }>),
   // Left-panel folders (persist even when empty).
   folders: () => get<{ folders: string[] }>("/folders"),
   createFolder: (name: string) =>
