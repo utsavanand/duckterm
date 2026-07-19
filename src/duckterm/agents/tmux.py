@@ -103,9 +103,20 @@ def capture_pane(target: str) -> str:
 def capture_screen(target: str) -> bytes:
     """The pane's CURRENT visible screen with colors/escapes (`-e`), as bytes —
     for an attaching terminal to repaint the live state instantly instead of
-    replaying the whole scrollback. `-J` joins wrapped lines."""
+    replaying the whole scrollback.
+
+    Trailing blank rows are dropped: the pane (120x40) is usually taller than
+    the browser's xterm viewport, and painting the full pane height scrolls
+    short static output out of view on attach. Lines are joined with CRLF —
+    subprocess text mode normalized the pane's newlines to bare LF, which in a
+    raw terminal moves down without returning to column 0."""
     ok, out = _tmux("capture-pane", "-t", target, "-p", "-e")
-    return out.encode(errors="replace") if ok else b""
+    if not ok:
+        return b""
+    lines = out.split("\n")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\r\n".join(lines).encode(errors="replace")
 
 
 def kill_session(target: str) -> bool:

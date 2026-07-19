@@ -12,7 +12,6 @@ test("a grouped session shows under its folder header and collapses", async ({
   await seedSession(key, { name: key, group: "Billing" });
 
   await page.goto("/");
-  await page.getByRole("button", { name: /^All \(/ }).click();
 
   // The folder header appears, with the session nested in its body.
   const header = page.locator(".rd-group-head", { hasText: "Billing" });

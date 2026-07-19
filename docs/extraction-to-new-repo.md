@@ -156,22 +156,29 @@ Infra:
 
 ---
 
-## State at extraction (2026-07-18)
+## State at extraction (2026-07-18; e2e repaired 2026-07-19)
 
-Green: ruff, black, mypy --strict, 222 Python tests, 27 web unit tests,
-slop-check, web build. CI (`.github/workflows/ci.yml`) runs exactly these.
+Green: ruff, black, mypy --strict, Python tests, web unit tests, slop-check,
+web build, and the full Playwright e2e suite. CI (`.github/workflows/ci.yml`)
+runs the python + web layers; `scripts/check.sh` adds the e2e layer.
 
-Playwright e2e: 4/15 specs pass. The 11 failures are inherited from
-rubber-duck's `terminal-forward-design` branch (identical failure set there;
-the pre-commit gate ran `--no-ui`, so they went unnoticed):
+The extraction inherited 11 failing e2e specs from rubber-duck's
+`terminal-forward-design` branch (its pre-commit gate ran `--no-ui`, so they
+went unnoticed there). Repaired 2026-07-19:
 
-- 9 specs (archive, checkpoint, delete, deleted-stays-gone, fork, groups,
-  snapshot, stop, terminal-rawmode) still target the pre-redesign dashboard —
-  they wait for an `All (n)` filter button the three-pane layout no longer has.
-  Several also assert watched-mode affordances ("Stop watching") that need a
-  product decision here before the specs are rewritten or deleted.
-- 2 terminal specs fail because the attach snapshot pads the buffer to the tmux
-  pane height (taller than the xterm viewport), so short static output like the
-  test's READY_CAT banner scrolls out of `.xterm-rows`. The attach path itself
-  is verified working: a raw WS probe receives the banner in the first binary
-  frame. Real TUIs redraw, which is why interactive use never shows this.
+- The attach snapshot (`tmux.capture_screen`) painted the full 120x40 pane
+  including trailing blank rows, scrolling short static output out of the
+  xterm viewport, and joined lines with bare LF (subprocess text mode had
+  normalized CRLF). It now trims trailing blank rows and joins with CRLF.
+- 8 specs were rewritten for the three-pane layout (the `All (n)` /
+  `Archived (n)` filter buttons no longer exist; archived rows just leave the
+  list). archive.spec unarchives via the API — the redesigned UI has no
+  archived view yet, so the row-level Unarchive button is unreachable. If
+  archive is meant to be reversible from the UI, that view needs building.
+- terminal-rawmode.spec depended on a hand-made `/tmp/rawtui.py` that no
+  longer existed; the spec now writes its raw-TUI program itself. Its locators
+  are scoped to the visible terminal slot (terminals stay mounted per agent).
+- snapshot.spec was deleted, along with the dead `SnapshotsModal.tsx` /
+  `CompareModal.tsx` and their api wrappers: the redesign never mounted them,
+  so snapshots are backend-only (covered by tests/runtime/test_snapshot_flow).
+  Restoring a snapshot UI is a product decision, not a test fix.

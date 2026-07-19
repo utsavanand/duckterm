@@ -13,9 +13,6 @@ test("delete removes the session from the UI and the backend", async ({
   expect(await findSession((s) => s.session_key === key)).toBeTruthy();
 
   await page.goto("/");
-  // Show all sessions so the seeded one (idle/busy) is visible regardless of
-  // the default Active filter.
-  await page.getByRole("button", { name: /^All \(/ }).click();
 
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();

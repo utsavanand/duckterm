@@ -61,11 +61,6 @@ export interface BrowseResult {
   entries: BrowseEntry[];
 }
 
-export interface CompareVariant {
-  runtime: "generic" | "claude-code" | "codex";
-  command: string;
-}
-
 export const api = {
   launch: (req: LaunchRequest) =>
     post<{ session_key: string; opened_in_terminal?: boolean }>(
@@ -164,30 +159,6 @@ export const api = {
     get<{ checkpoints: CheckpointRecord[] }>(`/sessions/${key}/checkpoints`),
   spotlight: (key: string) =>
     post<{ synced_files: string[] }>(`/sessions/${key}/spotlight`),
-  compare: (req: {
-    repo_path: string;
-    prompt: string;
-    variants: CompareVariant[];
-  }) =>
-    post<{ group: string; session_keys: string[] }>("/sessions/compare", req),
-  snapshot: () => post<{ id: string }>("/snapshots"),
-  snapshots: () =>
-    get<{ snapshots: { id: string; created_at: number }[] }>("/snapshots"),
-  // The sessions captured IN a snapshot (these are what can be restored from it).
-  snapshotSessions: (id: string) =>
-    get<{
-      id: string;
-      created_at: number;
-      sessions: {
-        session_key: string;
-        name?: string | null;
-        runtime?: string | null;
-      }[];
-    }>(`/snapshots/${id}`),
-  restore: (snapshotId: string, key: string) =>
-    post<{ command: string }>(
-      `/snapshots/${snapshotId}/sessions/${key}/restore`,
-    ),
   sessionEvents: (key: string) =>
     get<{ events: RawEvent[] }>(`/sessions/${key}/events`),
 };

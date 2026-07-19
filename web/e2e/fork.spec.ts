@@ -25,7 +25,6 @@ test("fork modal offers both kinds; conversation fork surfaces the backend error
   expect(res.body.error).toContain("resumable");
 
   await page.goto("/");
-  await page.getByRole("button", { name: /^All \(/ }).click();
 
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();

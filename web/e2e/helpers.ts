@@ -107,8 +107,3 @@ export async function checkpoints(key: string): Promise<Checkpoint[]> {
   const res = await fetch(`${base()}/sessions/${key}/checkpoints`);
   return (await res.json()).checkpoints;
 }
-
-export async function snapshotIds(): Promise<string[]> {
-  const res = await fetch(`${base()}/snapshots`);
-  return (await res.json()).snapshots.map((s: { id: string }) => s.id);
-}

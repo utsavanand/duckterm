@@ -18,7 +18,6 @@ test("watched session is observe-only: no Stop or Archive button", async ({
   expect(res.body).toMatchObject({ stopped: false, session_key: key });
 
   await page.goto("/");
-  await page.getByRole("button", { name: /^All \(/ }).click();
 
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();

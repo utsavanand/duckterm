@@ -12,7 +12,6 @@ test("a deleted watched session is not resurrected by its later events", async (
   await seedSession(key, { name: key });
 
   await page.goto("/");
-  await page.getByRole("button", { name: /^All \(/ }).click();
 
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();

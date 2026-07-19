@@ -29,7 +29,6 @@ test("checkpoint captures the session's prompts and commands", async ({
   expect(await checkpoints(key)).toHaveLength(0);
 
   await page.goto("/");
-  await page.getByRole("button", { name: /^All \(/ }).click();
 
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
