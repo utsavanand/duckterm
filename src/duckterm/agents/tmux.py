@@ -110,17 +110,23 @@ def capture_pane(target: str) -> str:
     return out if ok else ""
 
 
-def capture_screen(target: str) -> bytes:
-    """The pane's CURRENT visible screen with colors/escapes (`-e`), as bytes —
-    for an attaching terminal to repaint the live state instantly instead of
-    replaying the whole scrollback.
+def capture_screen(target: str, history_lines: int = 2000) -> bytes:
+    """The pane's screen WITH its scrollback history (colors/escapes intact,
+    `-e`), as bytes — what an attaching terminal paints so the current state
+    is at the bottom and the wheel has real history above it. Without the
+    history, output that scrolled off the tmux pane before (or between)
+    attaches simply didn't exist in the browser and scrollback felt broken.
 
-    Trailing blank rows are dropped: the pane (120x40) is usually taller than
-    the browser's xterm viewport, and painting the full pane height scrolls
-    short static output out of view on attach. Lines are joined with CRLF —
-    subprocess text mode normalized the pane's newlines to bare LF, which in a
-    raw terminal moves down without returning to column 0."""
-    ok, out = _tmux("capture-pane", "-t", target, "-p", "-e")
+    `-S -N` starts N lines back into tmux's history (clamped by tmux to what
+    exists); pass history_lines=0 for just the visible screen. Trailing blank
+    rows are dropped — the pane (120x40) is usually taller than the browser
+    viewport, and painting the padding scrolls short output out of view.
+    Lines are joined with CRLF: subprocess text mode normalized the pane's
+    newlines to bare LF, which in a raw terminal never returns to column 0."""
+    args = ["capture-pane", "-t", target, "-p", "-e"]
+    if history_lines:
+        args += ["-S", f"-{history_lines}"]
+    ok, out = _tmux(*args)
     if not ok:
         return b""
     lines = out.split("\n")

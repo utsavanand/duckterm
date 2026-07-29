@@ -39,6 +39,29 @@ def test_capture_screen_trims_pane_padding_and_uses_crlf() -> None:
 
 
 @pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
+def test_capture_screen_includes_scrolled_off_history() -> None:
+    """Output that scrolled past the pane top must still reach an attaching
+    terminal — it lives in tmux history, and the snapshot pulls it in (-S).
+    Without it, the browser's scrollback was empty above the visible screen."""
+    target = tmux.spawn("test-hist", "seq 1 200; sleep 5", cwd="/tmp")
+    try:
+        deadline = time.time() + 5
+        screen = b""
+        while time.time() < deadline and b"200" not in screen:
+            screen = tmux.capture_screen(target)
+            time.sleep(0.1)
+        # The pane is 40 rows: line 1 scrolled off long ago, yet the snapshot
+        # has it (history included) — and still ends at the live screen.
+        assert b"\r\n1\r\n" in b"\r\n" + screen
+        assert screen.endswith(b"200") or b"200" in screen
+        # Visible-screen-only capture (history_lines=0) must NOT have line 1.
+        visible = tmux.capture_screen(target, history_lines=0)
+        assert b"\r\n1\r\n" not in b"\r\n" + visible
+    finally:
+        tmux.kill_session(target)
+
+
+@pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
 def test_spawn_capture_kill_roundtrip() -> None:
     # A real end-to-end on the dedicated socket so we never touch the user's tmux.
     target = tmux.spawn("test-rt", "echo hello-from-tmux; sleep 5", cwd="/tmp")

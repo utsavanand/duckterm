@@ -20,6 +20,9 @@ export function Terminal({ sessionKey }: { sessionKey: string }) {
     if (!host) return;
 
     const term = new Xterm({
+      // Match the attach snapshot's history depth (tmux capture -S -2000):
+      // xterm's 1000-line default silently ate half the replayed history.
+      scrollback: 5000,
       fontSize: 12,
       fontFamily: "ui-monospace, Menlo, monospace",
       theme: { background: "#0c0f16", foreground: "#d1d5db" },
