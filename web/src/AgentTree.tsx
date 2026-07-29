@@ -16,6 +16,7 @@ export function AgentTree({
   onDelete,
   onFoldersChanged,
   onSessionMoved,
+  onRename,
 }: {
   sessions: SessionView[];
   now: number;
@@ -26,6 +27,7 @@ export function AgentTree({
   onDelete: (key: string) => Promise<boolean>;
   onFoldersChanged: () => void;
   onSessionMoved: (key: string, group: string) => void;
+  onRename: (key: string, name: string) => void;
 }) {
   const toast = useToast();
   const roots = buildForest(sessions);
@@ -83,6 +85,7 @@ export function AgentTree({
       onOpen={onOpen}
       onFork={onFork}
       onDelete={onDelete}
+      onRename={onRename}
     />
   );
 
@@ -236,6 +239,7 @@ function TreeRow({
   onOpen,
   onFork,
   onDelete,
+  onRename,
 }: {
   node: Node;
   depth: number;
@@ -244,6 +248,7 @@ function TreeRow({
   onOpen: (key: string) => void;
   onFork: (key: string) => void;
   onDelete: (key: string) => Promise<boolean>;
+  onRename: (key: string, name: string) => void;
 }) {
   const toast = useToast();
   const s = node.session;
@@ -273,6 +278,22 @@ function TreeRow({
   // Delete is destructive (wipes history) — require a second, deliberate click:
   // the button arms ("Confirm delete?") then deletes. Auto-disarms after 4s.
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // Double-click the name to rename in place — with several agents on one
+  // repo, "ENTOURAGE" three times over is unusable.
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(s.label);
+  async function saveRename() {
+    setRenaming(false);
+    const name = draft.trim();
+    if (!name || name === s.label) return;
+    onRename(s.key, name); // optimistic — PATCH emits no SSE event
+    try {
+      await api.updateSession(s.key, { name });
+      toast("Renamed");
+    } catch (e) {
+      toast(`Rename failed: ${(e as Error).message}`, "err");
+    }
+  }
   const hasChildren = node.children.length > 0;
   // Branching is possible for any live session on a git repo (worktree fork or
   // promote) and for any live claude-code session (conversation fork, even with
@@ -407,7 +428,32 @@ function TreeRow({
                 ⎇
               </span>
             )}
-            <span className="rd-row-name">{s.label}</span>
+            {renaming ? (
+              <input
+                className="rd-row-rename"
+                autoFocus
+                value={draft}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => setDraft(e.target.value)}
+                onBlur={saveRename}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveRename();
+                  if (e.key === "Escape") setRenaming(false);
+                }}
+              />
+            ) : (
+              <span
+                className="rd-row-name"
+                title="Double-click to rename"
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  setDraft(s.label);
+                  setRenaming(true);
+                }}
+              >
+                {s.label}
+              </span>
+            )}
             <span className={`rd-state st-${effState}`}>
               <span className="dot" />
               {stateLabel}
@@ -582,6 +628,7 @@ function TreeRow({
             onOpen={onOpen}
             onFork={onFork}
             onDelete={onDelete}
+            onRename={onRename}
           />
         ))}
     </>

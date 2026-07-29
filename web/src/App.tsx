@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { AgentTree } from "./AgentTree";
 import { api } from "./api";
@@ -79,6 +79,46 @@ function Dashboard() {
     [sessions, now],
   );
 
+  // "Needs you": the whole point of a fleet view is not staring at it. The
+  // count rides the tab title; sessions that ENTER waiting fire a browser
+  // notification (if the user granted permission via the bell).
+  const waiting = useMemo(
+    () => sessions.filter((s) => effectiveState(s, now) === "waiting"),
+    [sessions, now],
+  );
+  const waitingKeys = waiting.map((s) => s.key).join(",");
+  const prevWaiting = useRef<Set<string>>(new Set());
+  const [notifyOn, setNotifyOn] = useState(
+    () => "Notification" in window && Notification.permission === "granted",
+  );
+  useEffect(() => {
+    document.title = waiting.length
+      ? `(${waiting.length}) RubberTerm`
+      : "RubberTerm";
+    const current = new Set(waiting.map((s) => s.key));
+    if (notifyOn) {
+      for (const s of waiting) {
+        if (!prevWaiting.current.has(s.key)) {
+          new Notification(`${s.label} needs you`, {
+            body: "The agent is waiting on an answer.",
+          });
+        }
+      }
+    }
+    prevWaiting.current = current;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waitingKeys, notifyOn]);
+
+  async function toggleNotify() {
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "granted") {
+      const perm = await Notification.requestPermission();
+      setNotifyOn(perm === "granted");
+    } else {
+      setNotifyOn((v) => !v);
+    }
+  }
+
   // Default the selection to the first agent so the center pane isn't empty.
   useEffect(() => {
     if (selectedKey && sessions.some((s) => s.key === selectedKey)) return;
@@ -152,6 +192,18 @@ function Dashboard() {
         </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
+          title={
+            notifyOn
+              ? "Desktop notifications on (click to mute)"
+              : "Notify me when an agent needs an answer"
+          }
+          onClick={toggleNotify}
+          aria-label="Toggle notifications"
+        >
+          {notifyOn ? "🔔" : "🔕"}
+        </button>
+        <button
+          className="rd-btn rd-btn-ghost rd-btn-sm"
           title={`Theme: ${theme} (click to change)`}
           onClick={cycleTheme}
           aria-label="Toggle theme"
@@ -202,6 +254,7 @@ function Dashboard() {
               onSessionMoved={(key, group) =>
                 patchSession(key, { group: group || undefined })
               }
+              onRename={(key, name) => patchSession(key, { label: name })}
             />
           )}
         </section>
@@ -268,9 +321,7 @@ function Dashboard() {
               pollKey={sessions.length}
               onOpen={setSelectedKey}
               knownKeys={knownKeys}
-              waiting={sessions.filter(
-                (s) => effectiveState(s, now) === "waiting",
-              )}
+              waiting={waiting}
             />
             {selected && <ContextPanel session={selected} />}
           </div>

@@ -389,6 +389,28 @@ code,
   color: var(--muted);
   font-style: italic;
 }
+/* Follow-up box: steer the agent from the rendered view, shell-line styled
+   to match the prompt above it. */
+.rd-followup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.rd-followup input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  padding: 4px 0;
+}
+.rd-followup input:focus {
+  outline: none;
+}
 /* Harnesses modal: one card per registered suite. */
 .rd-harness-hint {
   font-size: 12px;
@@ -450,10 +472,9 @@ code,
   margin-bottom: 16px;
 }
 .rd-context-section-title {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  letter-spacing: 0;
   color: var(--muted, #6b7280);
   margin: 12px 0 6px;
 }
@@ -519,11 +540,10 @@ code,
   justify-content: space-between;
   gap: 10px;
   padding: 14px 16px 10px;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.06em;
+  letter-spacing: 0;
   flex-shrink: 0;
-  text-transform: uppercase;
   color: var(--muted);
 }
 .rd-panel-empty {
@@ -1369,10 +1389,9 @@ code,
   letter-spacing: -0.01em;
 }
 .rd-state {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--text-soft);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1511,4 +1530,35 @@ select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%238a8f98' d='M0 0l5 6 5-6z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
+}
+/* Inline rename input sits exactly where the name was. */
+.rd-row-rename {
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-bottom: 1px solid var(--brand-green);
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  outline: none;
+  width: 160px;
+}
+
+/* Topbar hierarchy: one primary action. Secondary buttons are quiet text
+   until hovered — five equal bordered buttons read as no hierarchy at all. */
+.rd-topbar .rd-btn-ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-soft);
+}
+.rd-topbar .rd-btn-ghost:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+/* The context pane's empty state is a status line, not a hero. */
+.rd-context-body > .rd-approvals ~ *,
+.rd-context-body .rd-panel-empty {
+  padding: 4px 0 14px;
+  font-size: 12.5px;
+  font-style: italic;
 }

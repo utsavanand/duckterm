@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
-import { authHeaders } from "./api";
+import { api, authHeaders } from "./api";
 import { useToast } from "./ui";
 
 // Structured view of an agent's latest reply (HTML-annotation mode,
@@ -36,7 +36,26 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
   const [loaded, setLoaded] = useState(false);
   const [sel, setSel] = useState<Selection | null>(null);
   const [note, setNote] = useState("");
+  const [followUp, setFollowUp] = useState("");
+  const [sending, setSending] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+
+  // Steer the agent without switching to the terminal: the same stdin path
+  // the terminal types into, one text box away from the rendered reply.
+  async function sendFollowUp() {
+    const text = followUp.trim();
+    if (!text || sending) return;
+    setSending(true);
+    try {
+      await api.sendInput(sessionKey, text + "\n");
+      setFollowUp("");
+      toast("Sent to the agent");
+    } catch (e) {
+      toast(`Send failed: ${(e as Error).message}`, "err");
+    } finally {
+      setSending(false);
+    }
+  }
 
   // Capture a text selection inside the messages and anchor a note popover to it.
   const onMouseUp = () => {
@@ -139,6 +158,24 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
           />
         ))
       )}
+      <div className="rd-followup">
+        <span className="rd-prompt-mark">❯</span>
+        <input
+          value={followUp}
+          placeholder="send a follow-up to the agent…"
+          onChange={(e) => setFollowUp(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") sendFollowUp();
+          }}
+        />
+        <button
+          className="rd-btn rd-btn-sm rd-btn-primary"
+          onClick={sendFollowUp}
+          disabled={sending || !followUp.trim()}
+        >
+          {sending ? "Sending…" : "Send"}
+        </button>
+      </div>
       {sel && (
         <div
           className="rd-annotate-pop"

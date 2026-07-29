@@ -87,6 +87,10 @@ export const api = {
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(meta),
     }).then((r) => r.json()),
+  // Type a follow-up straight to a live agent's stdin (the terminal path,
+  // but from the Messages view — no tab switch to answer or steer).
+  sendInput: (key: string, text: string) =>
+    post<{ written: boolean }>(`/sessions/${key}/input`, { text }),
   // Move a session into a folder group; "" ungroups it.
   setGroup: (key: string, group: string) =>
     fetch(`/sessions/${key}`, {
