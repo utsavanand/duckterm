@@ -113,32 +113,32 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
 
   return (
     <div className="rd-messages" ref={wrapRef} onMouseUp={onMouseUp}>
+      {/* The latest exchange, typeset like the tool it lives in: the prompt
+          as a shell line, the reply as plain prose. No chat bubbles. */}
       {latest.prompt && (
-        <div className="rd-turn rd-turn-user">
-          <div className="rd-turn-label">You</div>
-          <div className="rd-turn-prompt">{latest.prompt}</div>
+        <div className="rd-turn-user">
+          <span className="rd-prompt-mark">❯</span>
+          <span className="rd-turn-prompt">{latest.prompt}</span>
         </div>
       )}
-      <div className="rd-turn rd-turn-agent">
-        <div className="rd-turn-label">Agent</div>
-        {latest.tools.length > 0 && (
-          <div className="rd-msg-tools">
-            {toolCounts(latest.tools).map(([name, n]) => (
-              <span key={name} className="rd-tool-chip">
-                {name}
-                {n > 1 && <span className="rd-tool-count">×{n}</span>}
-              </span>
-            ))}
-          </div>
-        )}
-        {latest.texts.map((t, i) => (
+      {latest.tools.length > 0 && (
+        <div className="rd-msg-tools">
+          {toolCounts(latest.tools)
+            .map(([name, n]) => (n > 1 ? `${name} ×${n}` : name))
+            .join("  ·  ")}
+        </div>
+      )}
+      {latest.texts.length === 0 && (latest.prompt || latest.tools.length) ? (
+        <div className="rd-msg-pending">working — no reply yet</div>
+      ) : (
+        latest.texts.map((t, i) => (
           <div
             key={i}
             className="rd-msg-text"
             dangerouslySetInnerHTML={{ __html: html(t) }}
           />
-        ))}
-      </div>
+        ))
+      )}
       {sel && (
         <div
           className="rd-annotate-pop"

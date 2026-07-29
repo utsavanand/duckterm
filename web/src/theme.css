@@ -262,22 +262,26 @@ code,
   font-size: 14.5px;
   color: var(--text);
 }
-/* Headings: clear hierarchy, breathing room. */
+/* Headings: hierarchy without shouting — this is a pane, not a blog post. */
 .rd-msg-text h1,
 .rd-msg-text h2,
 .rd-msg-text h3 {
   font-weight: 650;
   line-height: 1.3;
-  margin: 22px 0 10px;
+  margin: 20px 0 8px;
 }
 .rd-msg-text h1 {
-  font-size: 20px;
-}
-.rd-msg-text h2 {
   font-size: 17px;
 }
-.rd-msg-text h3 {
+.rd-msg-text h2 {
   font-size: 15px;
+}
+.rd-msg-text h3 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-soft);
 }
 .rd-msg-text p {
   margin: 0 0 12px;
@@ -349,63 +353,41 @@ code,
   padding-left: 12px;
   color: var(--muted);
 }
-/* Turn cards: color-code who's speaking. The user's prompt gets a blue rail,
-   the agent's reply a violet one — a left accent + faint tint, not full chat
-   bubbles, so long markdown stays readable. */
-.rd-turn {
-  border-left: 3px solid var(--border);
-  border-radius: 0 8px 8px 0;
-  padding: 10px 14px 4px;
-  margin-bottom: 16px;
-}
+/* The latest exchange reads like the tool it lives in: the user's prompt is a
+   shell line (green mark, mono), the agent's reply is plain typeset prose
+   under a hairline — no chat bubbles, no role badges. */
 .rd-turn-user {
-  border-left-color: #3b82f6;
-  background: rgba(59, 130, 246, 0.07);
+  display: flex;
+  gap: 10px;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-soft);
+  padding: 2px 0 14px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 18px;
 }
-.rd-turn-agent {
-  border-left-color: #a78bfa;
-  background: rgba(167, 139, 250, 0.05);
-}
-.rd-turn-label {
-  font-size: 10px;
+.rd-prompt-mark {
+  color: var(--brand-green);
   font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  margin-bottom: 6px;
-}
-.rd-turn-user .rd-turn-label {
-  color: #3b82f6;
-}
-.rd-turn-agent .rd-turn-label {
-  color: #a78bfa;
+  user-select: none;
 }
 .rd-turn-prompt {
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--text);
-  padding-bottom: 8px;
+  flex: 1;
   white-space: pre-wrap;
 }
-/* Tools the agent ran this turn, as compact chips — context, not the focus. */
+/* What the agent ran this turn — one quiet mono line, context not focus. */
 .rd-msg-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin: 2px 0 12px;
-}
-.rd-tool-chip {
-  font-size: 11px;
   font-family: ui-monospace, Menlo, monospace;
-  color: var(--text-soft);
-  background: var(--hover);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 2px 9px;
-  line-height: 1.5;
-}
-.rd-tool-count {
+  font-size: 11px;
   color: var(--muted);
-  margin-left: 4px;
+  margin: 0 0 16px;
+  white-space: pre-wrap;
+}
+.rd-msg-pending {
+  font-size: 12.5px;
+  color: var(--muted);
+  font-style: italic;
 }
 /* Harnesses modal: one card per registered suite. */
 .rd-harness-hint {

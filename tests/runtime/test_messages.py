@@ -43,3 +43,35 @@ def test_parse_messages_keeps_blocks_and_skips_bookkeeping() -> None:
     assert msgs[2]["blocks"][0]["name"] == "Bash"
     # ids are stable line indices (used as annotation anchors).
     assert msgs[0]["id"] == 1 and msgs[1]["id"] == 2
+
+
+def test_parse_messages_skips_system_injected_user_turns() -> None:
+    """Claude Code records task notifications and hook reminders as user
+    messages. They must not render as 'you' or anchor the latest-reply view."""
+    path = _transcript(
+        [
+            {
+                "type": "user",
+                "promptSource": "typed",
+                "message": {"role": "user", "content": "real prompt"},
+            },
+            {
+                "type": "user",
+                "promptSource": "system",
+                "origin": {"kind": "task-notification"},
+                "message": {"role": "user", "content": "<task-notification>…</task-notification>"},
+            },
+            {
+                "type": "user",
+                "isMeta": True,
+                "message": {"role": "user", "content": "<system-reminder>…</system-reminder>"},
+            },
+            {
+                "type": "user",
+                "promptSource": "queued",
+                "message": {"role": "user", "content": "queued while busy — still a real prompt"},
+            },
+        ]
+    )
+    texts = [m["blocks"][0]["text"] for m in parse_messages(path)]
+    assert texts == ["real prompt", "queued while busy — still a real prompt"]

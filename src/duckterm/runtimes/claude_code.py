@@ -151,6 +151,14 @@ def parse_messages(path: Path) -> list[dict[str, object]]:
             continue
         if obj.get("type") not in _MESSAGE_TYPES:
             continue
+        # Claude Code also records SYSTEM-INJECTED turns as user messages:
+        # background task notifications (promptSource "system") and hook
+        # context/reminders (isMeta). Rendering those as "you" is wrong, and
+        # they'd anchor the latest-reply view on a machine-generated turn.
+        # Real typed prompts carry promptSource "typed"/"queued"; older
+        # transcripts have no marker, so only explicit system markers skip.
+        if obj.get("isMeta") or obj.get("promptSource") == "system":
+            continue
         message = obj.get("message", obj)
         role = message.get("role")
         blocks = _blocks(message.get("content"))
