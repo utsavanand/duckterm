@@ -162,6 +162,13 @@ def parse_messages(path: Path) -> list[dict[str, object]]:
         message = obj.get("message", obj)
         role = message.get("role")
         blocks = _blocks(message.get("content"))
+        # Slash-command records (/compact, /config …) are user-role turns whose
+        # text is machine markup like <local-command-stdout>…; they carry no
+        # promptSource marker, so filter by the tag itself.
+        if role == "user" and blocks and blocks[0].get("type") == "text":
+            first = str(blocks[0].get("text", "")).lstrip()
+            if first.startswith(("<local-command-", "<command-")):
+                continue
         if role and blocks:
             records.append({"id": i, "role": str(role), "blocks": blocks})
     return records

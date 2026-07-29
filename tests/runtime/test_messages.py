@@ -71,6 +71,19 @@ def test_parse_messages_skips_system_injected_user_turns() -> None:
                 "promptSource": "queued",
                 "message": {"role": "user", "content": "queued while busy — still a real prompt"},
             },
+            # Slash-command records have no promptSource marker at all — the
+            # machine markup itself is the signal.
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": "<local-command-stdout>Compacted…</local-command-stdout>",
+                },
+            },
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "<command-name>/compact</command-name>"},
+            },
         ]
     )
     texts = [m["blocks"][0]["text"] for m in parse_messages(path)]
