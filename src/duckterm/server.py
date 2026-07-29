@@ -1711,7 +1711,10 @@ class Server:
     def _handle_terminal_frame(supervisor: Any, frame: tuple[int, bytes]) -> None:
         opcode, payload = frame
         if opcode == 0x2:  # binary: raw keystrokes
-            supervisor.write_bytes(payload)
+            # queue_bytes, not write_bytes: tmux send-keys is a ~10ms
+            # subprocess, and running it inline here stalled the event loop
+            # (and every other session's stream) on each keypress.
+            supervisor.queue_bytes(payload)
         elif opcode == 0x1:  # text: a JSON control message
             try:
                 msg = json.loads(payload)

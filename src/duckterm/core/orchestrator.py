@@ -16,6 +16,7 @@ import pty
 import shlex
 import signal
 import sys
+import time
 import uuid
 from collections import deque
 from collections.abc import AsyncGenerator
@@ -79,6 +80,10 @@ class SessionSupervisor:
         # feeds the terminal off raw bytes. Same PTY, two views, no interference.
         self._byte_tail = deque[bytes](maxlen=2000)  # recent raw chunks, for replay
         self._byte_subs: set[asyncio.Queue[bytes]] = set()
+        # Terminal keystrokes: drained by one task so writes stay ordered.
+        self._input_queue: asyncio.Queue[bytes] | None = None
+        self._input_task: asyncio.Task[None] | None = None
+        self._last_input = 0.0
 
     def _emit(self, event_type: str, **fields: object) -> None:
         self.bus.publish(
@@ -164,10 +169,17 @@ class SessionSupervisor:
             # Seeking to end dropped everything printed before this tail loop got
             # going — for a fast-starting agent like claude that's the entire
             # interface, leaving the browser a blank, unusable terminal.
+            # Adaptive poll: 25ms while output is flowing (a keystroke's echo
+            # shows up next tick — 150ms here was most of the typing lag the
+            # terminal felt), backing off to 200ms after 5s of quiet so an
+            # idle session costs ~5 file reads a second, not 40.
+            last_output = 0.0
+            loop = asyncio.get_running_loop()
             with path.open("rb") as fh:
                 while True:
                     chunk = fh.read(4096)
                     if chunk:
+                        last_output = loop.time()
                         # Terminal gets the raw bytes (CR-LF intact).
                         self._record_bytes(chunk)
                         # The line view (state/tool detection, summaries, and the
@@ -189,7 +201,8 @@ class SessionSupervisor:
                         continue
                     if not tmux.session_exists(target):
                         break
-                    await asyncio.sleep(0.15)
+                    active = max(last_output, self._last_input)
+                    await asyncio.sleep(0.025 if loop.time() - active < 5 else 0.2)
         except Exception as e:  # noqa: BLE001 — boundary: a background task
             print(f"[duckterm] tail-pipe for {self.session_key} failed: {e}", file=sys.stderr)
         finally:
@@ -316,6 +329,24 @@ class SessionSupervisor:
             return True
         return False
 
+    def queue_bytes(self, data: bytes) -> None:
+        """Order-preserving, non-blocking keystroke path for the terminal WS.
+        tmux send-keys is a ~10ms subprocess — running it inline on the event
+        loop stalled every session's I/O on each keypress. A single drain task
+        does the writes off-loop, one at a time, so ordering is exact ('ab'
+        can never land as 'ba', which a thread pool wouldn't guarantee)."""
+        self._last_input = time.monotonic()
+        if self._input_queue is None:
+            self._input_queue = asyncio.Queue()
+            self._input_task = asyncio.create_task(self._drain_input())
+        self._input_queue.put_nowait(data)
+
+    async def _drain_input(self) -> None:
+        assert self._input_queue is not None
+        while True:
+            data = await self._input_queue.get()
+            await asyncio.to_thread(self.write_bytes, data)
+
     def write_input(self, text: str) -> bool:
         """Write to the agent's stdin (terminal-attach / approvals). Routes to
         tmux send-keys or the PTY depending on how the session is backed."""
@@ -337,6 +368,8 @@ class SessionSupervisor:
         self._emit("SessionEnd")
 
     async def stop(self) -> None:
+        if self._input_task is not None:
+            self._input_task.cancel()
         if self._tmux_target is not None:
             tmux.kill_session(self._tmux_target)
         elif self._proc is not None and self._proc.returncode is None:
