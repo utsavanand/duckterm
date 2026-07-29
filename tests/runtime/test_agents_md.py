@@ -77,3 +77,35 @@ def test_write_agents_md_rejects_missing_directory(tmp_path: Path) -> None:
             return status
 
     assert asyncio.run(scenario()) == 400
+
+
+def test_agents_md_refuses_paths_outside_home(tmp_path: Path) -> None:
+    """The endpoint writes files — it must be confined like /browse, not an
+    arbitrary-path write for anything that reaches the dashboard origin."""
+
+    async def scenario() -> tuple[int, int]:
+        store_path = tmp_path / "db.sqlite"
+        from duckterm.persistence.history import HistoryStore
+        from duckterm.server import Server
+
+        server = Server(history=HistoryStore(store_path))
+        token = server.token
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            payload = json.dumps({"dir": "/etc", "text": "owned"}).encode()
+            write_status, _ = await _request(
+                port,
+                b"POST /agents-md HTTP/1.1\r\nHost: x\r\n"
+                b"X-Duckterm-Token: " + token.encode() + b"\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload,
+            )
+            read_status, _ = await _request(
+                port, b"GET /agents-md?dir=/etc HTTP/1.1\r\nHost: x\r\n\r\n"
+            )
+        return write_status, read_status
+
+    write_status, read_status = asyncio.run(scenario())
+    assert write_status == 400
+    assert read_status == 400

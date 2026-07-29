@@ -39,6 +39,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 import time
 import urllib.parse
 from collections.abc import Callable
@@ -1299,6 +1300,17 @@ class Server:
         path = urllib.parse.parse_qs(query).get("path", [None])[0]
         await _write_json(writer, 200, browse.listing(path))
 
+    @staticmethod
+    def _agents_md_dir_allowed(directory: str) -> bool:
+        """Confine AGENTS.md reads/writes the way /browse confines listings:
+        the home tree (where real projects live) plus the system tempdir
+        (worktrees, scratch projects, tests). Without this the endpoint was an
+        arbitrary-path file write for anything reaching the dashboard origin."""
+        p = Path(directory).expanduser().resolve()
+        home = Path.home().resolve()
+        tmp = Path(tempfile.gettempdir()).resolve().parent
+        return p.is_relative_to(home) or p.is_relative_to(tmp)
+
     async def _read_agents_md(self, writer: asyncio.StreamWriter, seg: str) -> None:
         """Read the AGENTS.md for a folder (?dir=…). Returns the file's text, or
         empty if it doesn't exist yet (so the editor can create it). One file per
@@ -1307,6 +1319,9 @@ class Server:
         directory = urllib.parse.parse_qs(query).get("dir", [None])[0]
         if not directory:
             await _write_json(writer, 400, {"error": "dir required"})
+            return
+        if not self._agents_md_dir_allowed(directory):
+            await _write_json(writer, 400, {"error": "dir outside the home tree"})
             return
         path = Path(directory) / "AGENTS.md"
         text = path.read_text() if path.is_file() else ""
@@ -1373,6 +1388,9 @@ class Server:
         text = req.get("text")
         if not directory or not isinstance(text, str):
             await _write_json(writer, 400, {"error": "dir and text are required"})
+            return
+        if not self._agents_md_dir_allowed(str(directory)):
+            await _write_json(writer, 400, {"error": "dir outside the home tree"})
             return
         base = Path(directory)
         if not base.is_dir():

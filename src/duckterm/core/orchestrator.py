@@ -11,6 +11,7 @@ the same as in a real terminal.
 """
 
 import asyncio
+import contextlib
 import os
 import pty
 import shlex
@@ -111,14 +112,22 @@ class SessionSupervisor:
             cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=self.initial_prompt
         )
         primary, secondary = pty.openpty()
-        self._proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=self.cwd,
-            stdin=secondary,
-            stdout=secondary,
-            stderr=secondary,
-            start_new_session=True,
-        )
+        try:
+            self._proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=self.cwd,
+                stdin=secondary,
+                stdout=secondary,
+                stderr=secondary,
+                start_new_session=True,
+            )
+        except FileNotFoundError as e:
+            # A typo'd custom command. ValueError is what every launch/fork/
+            # resume handler already turns into a 400 — before this, the raw
+            # FileNotFoundError escaped as a bare 500 with no explanation.
+            os.close(secondary)
+            os.close(primary)
+            raise ValueError(f"command not found: {argv[0]}") from e
         os.close(secondary)
         self._primary_fd = primary
         # Record the exact launch command so Resume can relaunch it — agents
@@ -236,7 +245,15 @@ class SessionSupervisor:
     def _record_output(self, line: str) -> None:
         self._output.append(line)
         for queue in self._output_subs:
-            queue.put_nowait(line)
+            try:
+                queue.put_nowait(line)
+            except asyncio.QueueFull:
+                # Slow SSE reader: drop its oldest line — the line view is
+                # context, losing some under pressure beats growing forever.
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+                with contextlib.suppress(asyncio.QueueFull):
+                    queue.put_nowait(line)
 
     def output_tail(self, limit: int = 500) -> list[str]:
         lines = list(self._output)
@@ -245,7 +262,7 @@ class SessionSupervisor:
     async def subscribe_output(self) -> AsyncGenerator[str, None]:
         """Yield output lines as the agent emits them. Replays the recent tail
         first so a late subscriber sees context."""
-        queue: asyncio.Queue[str] = asyncio.Queue()
+        queue: asyncio.Queue[str] = asyncio.Queue(maxsize=2000)
         for line in self.output_tail():
             queue.put_nowait(line)
         self._output_subs.add(queue)
@@ -257,8 +274,19 @@ class SessionSupervisor:
 
     def _record_bytes(self, chunk: bytes) -> None:
         self._byte_tail.append(chunk)
-        for queue in self._byte_subs:
-            queue.put_nowait(chunk)
+        for queue in list(self._byte_subs):
+            try:
+                queue.put_nowait(chunk)
+            except asyncio.QueueFull:
+                # A terminal that stopped reading (backgrounded/stalled tab)
+                # must not grow server memory without bound. Cut it loose:
+                # make room, push the EOF sentinel so its WS closes when the
+                # client wakes up, and let it reconnect to a fresh snapshot.
+                self._byte_subs.discard(queue)
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+                with contextlib.suppress(asyncio.QueueFull):
+                    queue.put_nowait(b"")
 
     def _close_byte_subs(self) -> None:
         """Signal EOF to every attached terminal. Without this, a terminal WS
@@ -275,7 +303,9 @@ class SessionSupervisor:
         tmux, clear + capture-pane of the live pane; for a PTY, a small recent
         tail. Replaying 2000 chunks of history made the terminal redraw its entire
         backlog every time you (re)attached or switched tabs."""
-        queue: asyncio.Queue[bytes] = asyncio.Queue()
+        # Bounded: ~2000 chunks ≈ 8MB of 4KB reads. _record_bytes drops the
+        # subscriber (with an EOF) if it ever fills — see backpressure there.
+        queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2000)
         snapshot = self._attach_snapshot()
         if snapshot:
             queue.put_nowait(snapshot)

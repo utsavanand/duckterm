@@ -45,11 +45,15 @@ def target_for(session_id: str) -> str:
 
 def spawn(session_id: str, command: str, cwd: str) -> str:
     """Create a detached tmux session running `command` in `cwd`. Returns the
-    tmux target name."""
+    tmux target name. Raises ValueError when tmux itself refuses — before
+    this, a failed spawn 'succeeded' silently and the session just appeared
+    as terminated with an empty terminal and no explanation."""
     target = target_for(session_id)
     # `-x/-y` set the initial size; a detached session otherwise defaults to
     # 80x24, which mismatches the browser pane and garbles a TUI's wrapping.
-    _tmux("new-session", "-d", "-s", target, "-x", "120", "-y", "40", "-c", cwd, command)
+    ok, err = _tmux("new-session", "-d", "-s", target, "-x", "120", "-y", "40", "-c", cwd, command)
+    if not ok:
+        raise ValueError(f"tmux failed to start the session: {err.strip() or 'unknown error'}")
     # window-size manual: without it tmux sizes the window to the LARGEST/LATEST
     # attached client (none, for a detached session), so resize-window from the
     # browser is ignored. Manual makes our resize authoritative.

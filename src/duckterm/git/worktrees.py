@@ -41,12 +41,18 @@ def _clean_git_env() -> dict[str, str]:
 
 
 def _git(repo: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", "-C", str(repo), *args],
-        capture_output=True,
-        text=True,
-        env=_clean_git_env(),
-    )
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True,
+            text=True,
+            env=_clean_git_env(),
+            # Network commands (fetch) hang forever offline / on a dead VPN;
+            # without a cap the UI request never returns and threads pile up.
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise GitError(f"git {' '.join(args)} timed out after 30s") from e
     if result.returncode != 0:
         raise GitError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
     return result.stdout

@@ -12,6 +12,7 @@ now but stay NULL until Acts 4/5/7 populate them.
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -201,8 +202,19 @@ class HistoryStore:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # WAL: readers don't block the event-sink's writes. busy_timeout:
+        # the connection is shared between the event loop and to_thread
+        # handlers — wait out a held lock instead of raising "database is
+        # locked" at random.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(_SCHEMA)
         self._migrate()
+        # Retention: hooks write thousands of event rows a day and nothing
+        # else ever deletes them — sweep everything older than 30 days at
+        # startup so the DB doesn't grow without bound. Session rows stay.
+        cutoff = int((time.time() - 30 * 86400) * 1000)
+        self._conn.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
         self._conn.commit()
 
     def _migrate(self) -> None:

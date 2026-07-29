@@ -67,6 +67,7 @@ export function Terminal({ sessionKey }: { sessionKey: string }) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     let ws: WebSocket | null = null;
     let retry: number | undefined;
+    let attempts = 0; // consecutive failures — drives the backoff
     let disposed = false;
 
     const sendResize = () => {
@@ -80,6 +81,7 @@ export function Terminal({ sessionKey }: { sessionKey: string }) {
       );
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
+        attempts = 0; // live again — future retries start fast
         fit.fit();
         sendResize();
         focusTerm();
@@ -91,7 +93,13 @@ export function Terminal({ sessionKey }: { sessionKey: string }) {
         term.write(new Uint8Array(ev.data as ArrayBuffer));
       };
       ws.onclose = () => {
-        if (!disposed) retry = window.setTimeout(connect, 1500);
+        if (disposed) return;
+        // Fast retries pick a Resume up promptly; exponential backoff (cap
+        // 15s) keeps a long-stopped session from hammering the server with
+        // 404 attaches every 1.5s forever.
+        attempts += 1;
+        const delay = Math.min(1500 * 1.5 ** Math.min(attempts - 1, 6), 15000);
+        retry = window.setTimeout(connect, delay);
       };
     };
     connect();

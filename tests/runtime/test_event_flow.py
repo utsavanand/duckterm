@@ -592,3 +592,47 @@ def _post(port: int, path: str) -> str:
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__]))
+
+
+def test_launch_with_missing_binary_returns_400(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A typo'd custom command must come back as a clean 400 'command not
+    found', not an unhandled FileNotFoundError. Forced onto the PTY path —
+    under tmux the shell itself reports the missing binary in the pane."""
+    import duckterm.core.orchestrator as orch_mod
+    from duckterm.persistence.history import HistoryStore
+
+    monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: False)
+    store = HistoryStore(tmp_path / "db.sqlite")
+
+    def post_expecting_400(port: int) -> dict[str, object]:
+        payload = json.dumps(
+            {
+                "command": "definitely-not-a-binary-xyz",
+                "cwd": str(tmp_path),
+                "in_terminal": False,
+                "test": True,
+            }
+        ).encode()
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/sessions/launch",
+            data=payload,
+            headers={"Content-Type": "application/json", "X-Duckterm-Token": _token()},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            raise AssertionError("expected a 400")
+        except urllib.error.HTTPError as e:
+            assert e.code == 400
+            return dict(json.loads(e.read().decode()))
+
+    async def scenario() -> dict[str, object]:
+        server = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            return await asyncio.to_thread(post_expecting_400, port)
+
+    body = asyncio.run(scenario())
+    assert "command not found" in str(body["error"])

@@ -66,3 +66,40 @@ def test_stop_terminates_a_running_agent(tmp_path: Path) -> None:
     assert running_before is True
     assert events[0]["event_type"] == "SessionStart"
     assert events[-1]["event_type"] == "SessionEnd"
+
+
+def test_stalled_terminal_subscriber_is_dropped_not_grown(tmp_path: Path) -> None:
+    """Backpressure: a terminal that stops reading its byte queue must be cut
+    loose (with an EOF so its WS closes) instead of queuing output forever —
+    a backgrounded tab on a chatty agent would otherwise grow server memory
+    without bound."""
+    from duckterm.core.orchestrator import SessionSupervisor
+    from duckterm.runtimes.generic import GenericRuntime
+
+    async def scenario() -> tuple[int, bool, list[bytes]]:
+        bus, _ = collecting_bus()
+        sup = SessionSupervisor(
+            bus=bus, runtime=GenericRuntime("cat"), session_key="s", cwd=str(tmp_path)
+        )
+        feed = sup.subscribe_bytes()
+        first = asyncio.ensure_future(feed.__anext__())
+        await asyncio.sleep(0)  # let the generator register its queue
+
+        # A chatty agent while nobody drains: more chunks than the queue cap.
+        for i in range(2100):
+            sup._record_bytes(b"x%d" % i)
+        dropped = len(sup._byte_subs) == 0
+
+        # The stuck reader wakes up: it can drain what was queued, then the
+        # EOF sentinel ends the feed (StopAsyncIteration) instead of hanging.
+        got: list[bytes] = [await first]
+        try:
+            while True:
+                got.append(await feed.__anext__())
+        except StopAsyncIteration:
+            pass
+        return len(got), dropped, got[-2:]
+
+    received, dropped, _tail = asyncio.run(scenario())
+    assert dropped  # unsubscribed the moment its queue filled
+    assert received <= 2001  # bounded: cap + nothing after the drop
