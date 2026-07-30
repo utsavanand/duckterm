@@ -62,7 +62,7 @@ test("folder grid: subtree tiles, resize, dock, exit", async ({ page }) => {
   await expect(tileFor("gB")).toBeVisible(); // subfolder session included
 
   // 2 columns, then drag the vertical bar to resize.
-  await page.locator(".rd-grid-folder").selectOption("2");
+  await page.locator(".rd-grid-cols").selectOption("2");
   const tilesBox = page.locator(".rd-grid-tiles");
   const before = await tilesBox.evaluate(
     (el) => getComputedStyle(el).gridTemplateColumns,
@@ -86,6 +86,14 @@ test("folder grid: subtree tiles, resize, dock, exit", async ({ page }) => {
   await expect(chip).toBeVisible();
   await chip.click();
   await expect(tileFor("gA")).toBeVisible();
+
+  // Switch folders from inside the grid: pick the subfolder — only its
+  // session tiles now.
+  await page
+    .locator(".rd-grid-folder:not(.rd-grid-cols)")
+    .selectOption(`${folder}/deep`);
+  await expect(tileFor("gB")).toBeVisible({ timeout: 5_000 });
+  await expect(tileFor("gA")).toHaveCount(0);
 
   await page.getByRole("button", { name: /Exit grid/ }).click();
   await expect(page.locator(".rd-grid")).toHaveCount(0);

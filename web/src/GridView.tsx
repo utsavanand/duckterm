@@ -10,10 +10,14 @@ import { SessionView } from "./types";
 export function GridView({
   title,
   agents,
+  folders,
+  onSwitchFolder,
   onClose,
 }: {
   title: string;
   agents: SessionView[];
+  folders: string[];
+  onSwitchFolder: (folder: string) => void;
   onClose: () => void;
 }) {
   const [cols, setCols] = useState<number>(0); // 0 = auto
@@ -113,11 +117,23 @@ export function GridView({
   return (
     <div className="rd-grid">
       <div className="rd-grid-bar">
-        <span className="rd-grid-title">
-          {title} · {ordered.length}
-        </span>
+        <span className="rd-grid-title">{ordered.length} running</span>
+        {/* Switch folders without leaving the grid; the grid remounts per
+            folder (keyed in App) so the 3-up default re-applies. */}
         <select
           className="rd-grid-folder"
+          value={title}
+          onChange={(e) => onSwitchFolder(e.target.value)}
+        >
+          {!folders.includes(title) && <option value={title}>{title}</option>}
+          {folders.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+        </select>
+        <select
+          className="rd-grid-folder rd-grid-cols"
           title="Columns — drag tile headers to choose what sits where"
           value={cols}
           onChange={(e) => setCols(Number(e.target.value))}

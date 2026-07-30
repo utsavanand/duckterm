@@ -237,12 +237,15 @@ function Dashboard() {
 
       {gridFolder !== null ? (
         <GridView
+          key={gridFolder}
           title={gridFolder}
           agents={terminalAgents.filter(
             (s) =>
               s.group === gridFolder ||
               s.group?.startsWith(gridFolder + "/"),
           )}
+          folders={folders}
+          onSwitchFolder={setGridFolder}
           onClose={() => setGridFolder(null)}
         />
       ) : (
