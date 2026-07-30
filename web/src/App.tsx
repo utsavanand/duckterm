@@ -5,6 +5,7 @@ import { api } from "./api";
 import { Approvals } from "./Approvals";
 import { ContextPanel } from "./ContextPanel";
 import { ForkModal } from "./ForkModal";
+import { GridView } from "./GridView";
 import { HarnessesModal } from "./HarnessesModal";
 import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
@@ -37,6 +38,7 @@ function Dashboard() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [forkKey, setForkKey] = useState<string | null>(null);
   const [view, setView] = useState<"terminal" | "messages">("terminal");
+  const [grid, setGrid] = useState(false);
 
   // Folders persist on the server (incl. empty ones); the left list groups by
   // them. Refetch when sessions change, since moving a session can create or
@@ -212,6 +214,14 @@ function Dashboard() {
         </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
+          title="Fullscreen grid of every running terminal"
+          disabled={terminalAgents.length === 0}
+          onClick={() => setGrid(true)}
+        >
+          Grid
+        </button>
+        <button
+          className="rd-btn rd-btn-ghost rd-btn-sm"
           onClick={() => setModal("harnesses")}
           title="Install suites of skills/hooks/sub-agents (like uv-suite) into a project"
         >
@@ -232,6 +242,13 @@ function Dashboard() {
         </button>
       </header>
 
+      {grid ? (
+        <GridView
+          agents={terminalAgents}
+          folders={folders}
+          onClose={() => setGrid(false)}
+        />
+      ) : (
       <div className="rd-panels-3">
         <section className="rd-agents">
           <div className="rd-panel-head">
@@ -327,6 +344,7 @@ function Dashboard() {
           </div>
         </section>
       </div>
+      )}
 
       {modal === "launch" && <LaunchModal onClose={() => setModal(null)} />}
       {modal === "agentsmd" && agentsMdDir && (
