@@ -195,3 +195,49 @@ def test_fork_conversation_with_dead_transcript_starts_fresh_not_doomed(
     assert body["carried_conversation"] is False
     assert "no conversation to fork yet" in str(body["note"])
     assert "--resume" not in body["command"]  # never a doomed resume
+
+
+def test_fork_inherits_the_parents_folder(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """A fork belongs where its parent lives — forking from inside a folder
+    must not scatter children into Ungrouped (a folder's grid then showed
+    one session while its forks hid at the root)."""
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "empty-home"))
+
+    async def scenario() -> tuple[dict, dict]:
+        store = HistoryStore(tmp_path / "db.sqlite")
+        server = Server(history=store)
+
+        async def fake_launch(*, runtime, cwd, session_key, **kw):  # type: ignore[no-untyped-def]
+            # The real supervisor publishes SessionStart, which creates the
+            # child's row — the inheritance write needs it to exist.
+            store.record(
+                {
+                    "event_type": "SessionStart",
+                    "session_key": session_key,
+                    "launched": True,
+                    "_ts": 99,
+                    "_id": f"start-{session_key}",
+                }
+            )
+            return session_key
+
+        monkeypatch.setattr(server.orchestrator, "launch", fake_launch)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            await asyncio.to_thread(
+                _post,
+                port,
+                "/events",
+                {"event_type": "SessionStart", "session_key": "p1", "runtime": "claude-code"},
+            )
+            store.set_meta("p1", group="entourage/backend")
+            _, body = await asyncio.to_thread(
+                _post, port, "/sessions/p1/fork-conversation", {"in_terminal": False}
+            )
+            child = store.session(str(body["session_key"]))
+        return body, child
+
+    body, child = asyncio.run(scenario())
+    assert child is not None
+    assert child["grp"] == "entourage/backend"

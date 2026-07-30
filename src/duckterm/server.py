@@ -736,6 +736,7 @@ class Server:
             except (GitError, ValueError) as e:
                 await _write_json(writer, 400, {"error": str(e)})
                 return
+            self._inherit_group(parent, key)
             await _write_json(
                 writer,
                 200,
@@ -799,6 +800,7 @@ class Server:
         )
         if opened:
             self.history.mark_heartbeat(child_key)
+        self._inherit_group(parent, child_key)
         await _write_json(
             writer,
             200,
@@ -912,6 +914,7 @@ class Server:
                 parent_session_key=parent_key,
                 name=f"{parent.get('name') or parent.get('source_app') or parent_key} (fork)",
             )
+            self._inherit_group(parent, key)
             await _write_json(
                 writer,
                 200,
@@ -947,6 +950,7 @@ class Server:
                 "intention": f"conversation fork of {parent.get('source_app') or parent_key}",
             }
         )
+        self._inherit_group(parent, child_key)
         await _write_json(
             writer,
             200,
@@ -960,6 +964,14 @@ class Server:
                 "cwd": cwd,
             },
         )
+
+    def _inherit_group(self, parent: dict[str, Any], child_key: str) -> None:
+        """A fork belongs where its parent lives: copy the parent's folder to
+        the child. Without this, forking from inside a folder scattered the
+        children into Ungrouped (and a folder's grid showed one session)."""
+        grp = parent.get("grp")
+        if grp:
+            self.history.set_meta(child_key, group=str(grp))
 
     def _carry_context_argv(
         self, parent: dict[str, Any], parent_key: str, repo: Path, command: str
