@@ -1720,3 +1720,45 @@ select {
   min-height: 0;
   flex-direction: column;
 }
+/* Grid resize bars: invisible strips on tile edges; drag to change column/row
+   proportions. Tiles are position:relative so the bars pin to their edges. */
+.rd-grid-tile {
+  position: relative;
+}
+.rd-grid-split-v {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+.rd-grid-split-h {
+  position: absolute;
+  left: 0;
+  bottom: -4px;
+  height: 8px;
+  width: 100%;
+  cursor: row-resize;
+  z-index: 5;
+}
+.rd-grid-split-v:hover,
+.rd-grid-split-h:hover {
+  background: var(--brand-green);
+  opacity: 0.35;
+}
+/* Folder header actions (grid / new subfolder) match the delete button. */
+.rd-group-grid,
+.rd-group-add {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+}
+.rd-group-grid:hover,
+.rd-group-add:hover {
+  color: var(--text);
+}

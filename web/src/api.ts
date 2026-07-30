@@ -123,6 +123,17 @@ export const api = {
   folders: () => get<{ folders: string[] }>("/folders"),
   createFolder: (name: string) =>
     post<{ created: string }>("/folders", { name }),
+  // Re-parent a folder ("" = top level); subfolders + sessions follow.
+  moveFolder: (name: string, parent: string) =>
+    fetch(`/folders/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ parent }),
+    }).then(async (r) => {
+      const d = (await r.json()) as { to?: string; error?: string };
+      if (!r.ok) throw new Error(d.error ?? `${r.status}`);
+      return d as { moved: string; to: string };
+    }),
   deleteFolder: (name: string) =>
     fetch(`/folders/${encodeURIComponent(name)}`, {
       method: "DELETE",

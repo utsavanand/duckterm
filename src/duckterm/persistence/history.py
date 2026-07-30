@@ -531,10 +531,38 @@ class HistoryStore:
         return cur.rowcount > 0
 
     def delete_folder(self, name: str) -> None:
-        """Remove a folder and ungroup its sessions (they return to Ungrouped)."""
-        self._conn.execute("DELETE FROM folders WHERE name = ?", (name,))
-        self._conn.execute("UPDATE sessions SET grp = NULL WHERE grp = ?", (name,))
+        """Remove a folder AND its subfolders (path-nested, `a/b`); all their
+        sessions return to Ungrouped."""
+        like = name + "/%"
+        self._conn.execute("DELETE FROM folders WHERE name = ? OR name LIKE ?", (name, like))
+        self._conn.execute(
+            "UPDATE sessions SET grp = NULL WHERE grp = ? OR grp LIKE ?", (name, like)
+        )
         self._conn.commit()
+
+    def move_folder(self, old: str, new: str) -> bool:
+        """Re-parent a folder: rename `old` (and every descendant, and every
+        session grouped under them) to `new`. Folders nest by path (`a/b`), so
+        a move is a prefix rename. Refuses a move into the folder's own
+        subtree. Returns False when `old` doesn't exist."""
+        if new == old or new.startswith(old + "/"):
+            raise ValueError(f"can't move {old!r} inside itself")
+        if new in self.folders():
+            raise ValueError(f"a folder named {new!r} already exists")
+        if old not in self.folders():
+            return False
+        cut = len(old) + 1  # substr() is 1-indexed: keep from the char AFTER old
+        self._conn.execute(
+            "UPDATE OR REPLACE folders SET name = ? || substr(name, ?) "
+            "WHERE name = ? OR name LIKE ?",
+            (new, cut, old, old + "/%"),
+        )
+        self._conn.execute(
+            "UPDATE sessions SET grp = ? || substr(grp, ?) WHERE grp = ? OR grp LIKE ?",
+            (new, cut, old, old + "/%"),
+        )
+        self._conn.commit()
+        return True
 
     def mark_heartbeat(self, key: str) -> None:
         """Flag a session as heartbeat-tracked (Duckterm launched it in a tab

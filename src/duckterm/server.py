@@ -206,6 +206,8 @@ _ROUTES: list[Route] = [
     # ── left-panel folders ──
     Route("GET", "/folders", lambda s, r, w, h, b, seg: s._list_folders(w)),
     Route("POST", "/folders", lambda s, r, w, h, b, seg: s._create_folder(w, b)),
+    Route("PATCH", "", lambda s, r, w, h, b, seg: s._move_folder(w, seg, b),
+          prefix="/folders/"),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._delete_folder(w, seg),
           prefix="/folders/"),
     Route("PATCH", "", lambda s, r, w, h, b, seg: s._update_session(w, seg, b),
@@ -1329,6 +1331,29 @@ class Server:
     async def _delete_folder(self, writer: asyncio.StreamWriter, name: str) -> None:
         self.history.delete_folder(urllib.parse.unquote(name))
         await _write_json(writer, 200, {"deleted": urllib.parse.unquote(name)})
+
+    async def _move_folder(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
+        """Re-parent a folder: {parent: "a/b"} nests it there, {parent: ""}
+        moves it to the top level. Subfolders and grouped sessions follow (a
+        folder is a path prefix, so a move is a prefix rename)."""
+        old = urllib.parse.unquote(name)
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        parent = str(req.get("parent") or "").strip().strip("/")
+        leaf = old.rsplit("/", 1)[-1]
+        new = f"{parent}/{leaf}" if parent else leaf
+        try:
+            moved = self.history.move_folder(old, new)
+        except ValueError as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        if not moved:
+            await _write_json(writer, 404, {"error": f"no folder {old!r}"})
+            return
+        await _write_json(writer, 200, {"moved": old, "to": new})
 
     async def _tree(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"nodes": self.history.fork_tree()})

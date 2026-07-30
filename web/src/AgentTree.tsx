@@ -17,6 +17,7 @@ export function AgentTree({
   onFoldersChanged,
   onSessionMoved,
   onRename,
+  onOpenGrid,
 }: {
   sessions: SessionView[];
   now: number;
@@ -28,6 +29,7 @@ export function AgentTree({
   onFoldersChanged: () => void;
   onSessionMoved: (key: string, group: string) => void;
   onRename: (key: string, name: string) => void;
+  onOpenGrid: (folder: string) => void;
 }) {
   const toast = useToast();
   const roots = buildForest(sessions);
@@ -46,6 +48,29 @@ export function AgentTree({
     }
   }
 
+  // Drag one folder onto another to nest it; onto the root zone to un-nest.
+  async function moveFolder(name: string, parent: string) {
+    if (name === parent || parent.startsWith(name + "/")) return;
+    try {
+      const r = await api.moveFolder(name, parent);
+      toast(`Moved to ${r.to}`);
+      onFoldersChanged();
+    } catch (e) {
+      toast(`Move failed: ${(e as Error).message}`, "err");
+    }
+  }
+
+  async function createSubfolder(parent: string) {
+    const name = window.prompt(`New folder inside "${parent}":`)?.trim();
+    if (!name) return;
+    try {
+      await api.createFolder(`${parent}/${name.replaceAll("/", "-")}`);
+      onFoldersChanged();
+    } catch (e) {
+      toast(`Create failed: ${(e as Error).message}`, "err");
+    }
+  }
+
   async function removeFolder(name: string) {
     if (
       !window.confirm(
@@ -53,9 +78,10 @@ export function AgentTree({
       )
     )
       return;
-    // Optimistically ungroup the folder's sessions so they jump out immediately.
+    // Optimistically ungroup the folder's (and subfolders') sessions.
     for (const s of sessions) {
-      if (s.group === name) onSessionMoved(s.key, "");
+      if (s.group === name || s.group?.startsWith(name + "/"))
+        onSessionMoved(s.key, "");
     }
     try {
       await api.deleteFolder(name);
@@ -94,69 +120,135 @@ export function AgentTree({
     return <p className="rd-panel-empty">No agents yet.</p>;
   }
 
+  // Folders nest by path ("orders/refunds"): render the tree recursively.
+  const topLevel = folders.filter((f) => !f.includes("/"));
+  const childrenOf = (path: string) =>
+    folders.filter(
+      (f) =>
+        f.startsWith(path + "/") && !f.slice(path.length + 1).includes("/"),
+    );
+
+  const renderFolder = (path: string, depth: number) => (
+    <GroupHeader
+      key={path}
+      name={path}
+      depth={depth}
+      count={(byFolder.get(path) ?? []).length}
+      onDropSession={moveToGroup}
+      onDropFolder={moveFolder}
+      onDelete={() => removeFolder(path)}
+      onNewSubfolder={() => createSubfolder(path)}
+      onOpenGrid={() => onOpenGrid(path)}
+    >
+      {(byFolder.get(path) ?? []).map(renderNode)}
+      {childrenOf(path).map((c) => renderFolder(c, depth + 1))}
+    </GroupHeader>
+  );
+
   return (
     <div className="rd-tree">
       {/* All folders render (even empty ones) so you can create then fill them. */}
-      {folders.map((name) => (
-        <GroupHeader
-          key={name}
-          name={name}
-          count={(byFolder.get(name) ?? []).length}
-          onDropSession={moveToGroup}
-          onDelete={() => removeFolder(name)}
-        >
-          {(byFolder.get(name) ?? []).map(renderNode)}
-        </GroupHeader>
-      ))}
-      {/* Ungrouped sessions sit at the root; dropping here clears the folder. */}
-      <DropZone group="" onDropSession={moveToGroup} active={hasFolders}>
+      {topLevel.map((name) => renderFolder(name, 0))}
+      {/* Ungrouped sessions sit at the root; dropping here clears the folder
+          (or un-nests a dropped folder to the top level). */}
+      <DropZone
+        group=""
+        onDropSession={moveToGroup}
+        onDropFolder={moveFolder}
+        active={hasFolders}
+      >
         {ungrouped.map(renderNode)}
       </DropZone>
     </div>
   );
 }
 
-// A collapsible folder header that accepts dropped sessions.
+// A collapsible folder header: drop target for sessions AND folders, drag
+// source for nesting, with subfolder + grid actions. Folders are paths; the
+// header shows only the leaf name.
 function GroupHeader({
   name,
+  depth,
   count,
   onDropSession,
+  onDropFolder,
   onDelete,
+  onNewSubfolder,
+  onOpenGrid,
   children,
 }: {
   name: string;
+  depth: number;
   onDelete: () => void;
   count: number;
   onDropSession: (key: string, group: string) => void;
+  onDropFolder: (name: string, parent: string) => void;
+  onNewSubfolder: () => void;
+  onOpenGrid: () => void;
   children: ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [over, setOver] = useState(false);
+  const leaf = name.split("/").pop();
   return (
     <div className={`rd-group${over ? " drop-over" : ""}`}>
       <div
         className="rd-group-head"
+        style={{ paddingLeft: 14 + depth * 16 }}
+        draggable
+        onDragStart={(e) => {
+          e.stopPropagation();
+          e.dataTransfer.setData("text/rd-folder", name);
+          e.dataTransfer.effectAllowed = "move";
+        }}
         onClick={() => setCollapsed((c) => !c)}
         onDragOver={(e) => {
-          if (e.dataTransfer.types.includes("text/rd-session")) {
+          if (
+            e.dataTransfer.types.includes("text/rd-session") ||
+            e.dataTransfer.types.includes("text/rd-folder")
+          ) {
             e.preventDefault();
+            e.stopPropagation();
             setOver(true);
           }
         }}
         onDragLeave={() => setOver(false)}
         onDrop={(e) => {
           e.preventDefault();
+          e.stopPropagation();
           setOver(false);
           const key = e.dataTransfer.getData("text/rd-session");
           if (key) onDropSession(key, name);
+          const folder = e.dataTransfer.getData("text/rd-folder");
+          if (folder) onDropFolder(folder, name);
         }}
       >
         <span className="rd-group-caret">{collapsed ? "▸" : "▾"}</span>
-        <span className="rd-group-name">{name}</span>
+        <span className="rd-group-name">{leaf}</span>
         <span className="rd-group-count">{count}</span>
         <button
+          className="rd-group-grid"
+          title="Open this folder's terminals in a grid"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenGrid();
+          }}
+        >
+          ⛶
+        </button>
+        <button
+          className="rd-group-add"
+          title="New folder inside this one"
+          onClick={(e) => {
+            e.stopPropagation();
+            onNewSubfolder();
+          }}
+        >
+          +
+        </button>
+        <button
           className="rd-group-del"
-          title="Delete folder (sessions return to Ungrouped)"
+          title="Delete folder and its subfolders (sessions return to Ungrouped)"
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
@@ -175,11 +267,13 @@ function GroupHeader({
 function DropZone({
   group,
   onDropSession,
+  onDropFolder,
   active,
   children,
 }: {
   group: string;
   onDropSession: (key: string, group: string) => void;
+  onDropFolder: (name: string, parent: string) => void;
   active: boolean;
   children: ReactNode;
 }) {
@@ -188,7 +282,11 @@ function DropZone({
     <div
       className={`rd-dropzone${active ? " has-groups" : ""}${over ? " drop-over" : ""}`}
       onDragOver={(e) => {
-        if (active && e.dataTransfer.types.includes("text/rd-session")) {
+        if (
+          active &&
+          (e.dataTransfer.types.includes("text/rd-session") ||
+            e.dataTransfer.types.includes("text/rd-folder"))
+        ) {
           e.preventDefault();
           setOver(true);
         }
@@ -199,6 +297,8 @@ function DropZone({
         setOver(false);
         const key = e.dataTransfer.getData("text/rd-session");
         if (key) onDropSession(key, group);
+        const folder = e.dataTransfer.getData("text/rd-folder");
+        if (folder) onDropFolder(folder, "");
       }}
     >
       {active && <div className="rd-dropzone-label">Ungrouped</div>}

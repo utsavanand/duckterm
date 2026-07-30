@@ -1,25 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "./Terminal";
 import { SessionView } from "./types";
 
-// Fullscreen grid: every PTY-owned session tiled in a true 2D layout. The
-// columns control + drag-to-rearrange compose any shape — 3 across with one
-// below, 2×2, a single stack. Collapsed sessions dock to a bottom strip as
-// chips (click to bring back), so the grid itself only holds live tiles.
+// Fullscreen grid for ONE folder's terminals (subfolders included), opened
+// from the folder's ⛶. A true 2D layout: the columns control + drag-order
+// compose any shape (3 across with 1 below, 2×2, a stack), and the bars
+// between tiles drag to resize columns and rows. Collapsed sessions dock to
+// a bottom strip as chips.
 export function GridView({
+  title,
   agents,
-  folders,
   onClose,
 }: {
+  title: string;
   agents: SessionView[];
-  folders: string[];
   onClose: () => void;
 }) {
   const [cols, setCols] = useState<number>(0); // 0 = auto
-  const [folder, setFolder] = useState<string>("");
   const [order, setOrder] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dragKey, setDragKey] = useState<string | null>(null);
+  const [colSizes, setColSizes] = useState<number[]>([]);
+  const [rowSizes, setRowSizes] = useState<number[]>([]);
+  const tilesRef = useRef<HTMLDivElement>(null);
 
   // Esc exits — but only when focus is OUTSIDE a terminal (bubble phase):
   // inside one, Esc belongs to the agent (denying a claude prompt must not
@@ -32,22 +35,60 @@ export function GridView({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const inFolder = useMemo(
-    () => (folder ? agents.filter((a) => a.group === folder) : agents),
-    [agents, folder],
-  );
   const ordered = useMemo(() => {
     const rank = new Map(order.map((k, i) => [k, i]));
-    return [...inFolder].sort(
+    return [...agents].sort(
       (a, b) => (rank.get(a.key) ?? 999) - (rank.get(b.key) ?? 999),
     );
-  }, [inFolder, order]);
+  }, [agents, order]);
   const tiles = ordered.filter((s) => !collapsed.has(s.key));
   const docked = ordered.filter((s) => collapsed.has(s.key));
 
   // Auto: the squarest grid that fits (1→1, 2→2, 3→3 across, 4→2×2, 5-6→3…).
   const effectiveCols =
     cols || Math.min(tiles.length, Math.ceil(Math.sqrt(tiles.length)) + 1, 3);
+  const rowCount = Math.max(1, Math.ceil(tiles.length / effectiveCols));
+
+  // Size arrays follow the shape; user-dragged proportions reset on reshape
+  // (a resized 2×2 has no meaningful mapping onto a 3-wide layout).
+  useEffect(() => {
+    setColSizes(Array(effectiveCols).fill(1));
+    setRowSizes(Array(rowCount).fill(1));
+  }, [effectiveCols, rowCount]);
+
+  function startResize(
+    e: React.PointerEvent,
+    axis: "col" | "row",
+    index: number,
+  ) {
+    e.preventDefault();
+    const container = tilesRef.current;
+    if (!container) return;
+    const sizes = axis === "col" ? [...colSizes] : [...rowSizes];
+    const total = sizes.reduce((a, b) => a + b, 0);
+    const px =
+      axis === "col"
+        ? container.getBoundingClientRect().width
+        : container.getBoundingClientRect().height;
+    const start = axis === "col" ? e.clientX : e.clientY;
+
+    const onMove = (ev: PointerEvent) => {
+      const delta =
+        (((axis === "col" ? ev.clientX : ev.clientY) - start) / px) * total;
+      const a = Math.max(0.2, sizes[index] + delta);
+      const b = Math.max(0.2, sizes[index + 1] - delta);
+      const next = [...sizes];
+      next[index] = a;
+      next[index + 1] = b;
+      (axis === "col" ? setColSizes : setRowSizes)(next);
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
 
   function moveBefore(target: string) {
     if (!dragKey || dragKey === target) return;
@@ -69,22 +110,8 @@ export function GridView({
     <div className="rd-grid">
       <div className="rd-grid-bar">
         <span className="rd-grid-title">
-          {folder || "All agents"} · {ordered.length}
+          {title} · {ordered.length}
         </span>
-        {folders.length > 0 && (
-          <select
-            className="rd-grid-folder"
-            value={folder}
-            onChange={(e) => setFolder(e.target.value)}
-          >
-            <option value="">All agents</option>
-            {folders.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </select>
-        )}
         <select
           className="rd-grid-folder"
           title="Columns — drag tile headers to choose what sits where"
@@ -106,50 +133,72 @@ export function GridView({
         <p className="rd-panel-empty">No running terminals in this folder.</p>
       ) : (
         <div
+          ref={tilesRef}
           className="rd-grid-tiles"
-          style={{ gridTemplateColumns: `repeat(${effectiveCols}, 1fr)` }}
+          style={{
+            gridTemplateColumns: colSizes.map((f) => `${f}fr`).join(" "),
+            gridTemplateRows: rowSizes.map((f) => `${f}fr`).join(" "),
+          }}
         >
-          {tiles.map((s) => (
-            <div
-              key={s.key}
-              className="rd-grid-tile"
-              onDragOver={(e) => {
-                if (dragKey) e.preventDefault();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                moveBefore(s.key);
-                setDragKey(null);
-              }}
-            >
+          {tiles.map((s, i) => {
+            const col = i % effectiveCols;
+            const row = Math.floor(i / effectiveCols);
+            return (
               <div
-                className="rd-grid-tile-head"
-                draggable
-                title="Drag to rearrange"
-                onDragStart={() => setDragKey(s.key)}
-                onDragEnd={() => setDragKey(null)}
+                key={s.key}
+                className="rd-grid-tile"
+                onDragOver={(e) => {
+                  if (dragKey) e.preventDefault();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  moveBefore(s.key);
+                  setDragKey(null);
+                }}
               >
-                <span className={`rd-state st-${s.state}`}>
-                  <span className="dot" />
-                </span>
-                <span className="rd-grid-tile-name">{s.label}</span>
-                {s.branch && (
-                  <span className="rd-grid-tile-branch">⎇ {s.branch}</span>
-                )}
-                <span className="rd-spacer" />
-                <button
-                  className="rd-grid-tile-collapse"
-                  title="Collapse to the dock"
-                  onClick={() => toggleCollapse(s.key)}
+                <div
+                  className="rd-grid-tile-head"
+                  draggable
+                  title="Drag to rearrange"
+                  onDragStart={() => setDragKey(s.key)}
+                  onDragEnd={() => setDragKey(null)}
                 >
-                  ▾
-                </button>
+                  <span className={`rd-state st-${s.state}`}>
+                    <span className="dot" />
+                  </span>
+                  <span className="rd-grid-tile-name">{s.label}</span>
+                  {s.branch && (
+                    <span className="rd-grid-tile-branch">⎇ {s.branch}</span>
+                  )}
+                  <span className="rd-spacer" />
+                  <button
+                    className="rd-grid-tile-collapse"
+                    title="Collapse to the dock"
+                    onClick={() => toggleCollapse(s.key)}
+                  >
+                    ▾
+                  </button>
+                </div>
+                <div className="rd-grid-tile-term">
+                  <Terminal sessionKey={s.key} />
+                </div>
+                {col < effectiveCols - 1 && (
+                  <div
+                    className="rd-grid-split-v"
+                    title="Drag to resize columns"
+                    onPointerDown={(e) => startResize(e, "col", col)}
+                  />
+                )}
+                {row < rowCount - 1 && (
+                  <div
+                    className="rd-grid-split-h"
+                    title="Drag to resize rows"
+                    onPointerDown={(e) => startResize(e, "row", row)}
+                  />
+                )}
               </div>
-              <div className="rd-grid-tile-term">
-                <Terminal sessionKey={s.key} />
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {docked.length > 0 && (

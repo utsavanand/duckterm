@@ -30,6 +30,14 @@ async function api(path: string, init?: RequestInit): Promise<Response> {
 
 // Authenticated POST (sends the install token the real dashboard sends), for
 // cross-checking what a control endpoint returns. Returns status + parsed body.
+export async function apiPatch(
+  path: string,
+  body: Record<string, unknown> = {},
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await api(path, { method: "PATCH", body: JSON.stringify(body) });
+  return { status: res.status, body: await res.json().catch(() => ({})) };
+}
+
 export async function apiPost(
   path: string,
   body: Record<string, unknown> = {},

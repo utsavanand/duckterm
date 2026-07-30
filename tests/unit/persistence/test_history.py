@@ -362,3 +362,32 @@ def test_create_folder_is_idempotent(tmp_path: Path) -> None:
     store.create_folder("dup")
     store.create_folder("dup")
     assert store.folders().count("dup") == 1
+
+
+def test_move_folder_renames_subtree_and_sessions(tmp_path):
+    """Folders nest by path: moving one re-prefixes its subfolders and every
+    session grouped under them; moving into your own subtree is refused."""
+    import pytest
+
+    from duckterm.persistence.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.create_folder("orders", now=1)
+    store.create_folder("orders/refunds", now=2)
+    store.create_folder("billing", now=3)
+    store.record({"event_type": "SessionStart", "session_key": "s1", "_ts": 4, "_id": "a"})
+    store.set_meta("s1", group="orders/refunds")
+
+    assert store.move_folder("orders", "billing/orders") is True
+    assert "billing/orders" in store.folders()
+    assert "billing/orders/refunds" in store.folders()
+    assert "orders" not in store.folders()
+    assert store.session("s1")["grp"] == "billing/orders/refunds"
+
+    with pytest.raises(ValueError):
+        store.move_folder("billing", "billing/orders/deeper")  # own subtree
+
+    # Deleting a parent cascades: subfolders go, sessions ungroup.
+    store.delete_folder("billing")
+    assert store.folders() == []
+    assert store.session("s1")["grp"] is None

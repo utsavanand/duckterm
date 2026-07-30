@@ -38,7 +38,8 @@ function Dashboard() {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [forkKey, setForkKey] = useState<string | null>(null);
   const [view, setView] = useState<"terminal" | "messages">("terminal");
-  const [grid, setGrid] = useState(false);
+  // The folder whose terminals are tiled fullscreen; null = grid closed.
+  const [gridFolder, setGridFolder] = useState<string | null>(null);
 
   // Folders persist on the server (incl. empty ones); the left list groups by
   // them. Refetch when sessions change, since moving a session can create or
@@ -214,14 +215,6 @@ function Dashboard() {
         </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
-          title="Fullscreen grid of every running terminal"
-          disabled={terminalAgents.length === 0}
-          onClick={() => setGrid(true)}
-        >
-          Grid
-        </button>
-        <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
           onClick={() => setModal("harnesses")}
           title="Install suites of skills/hooks/sub-agents (like uv-suite) into a project"
         >
@@ -242,11 +235,15 @@ function Dashboard() {
         </button>
       </header>
 
-      {grid ? (
+      {gridFolder !== null ? (
         <GridView
-          agents={terminalAgents}
-          folders={folders}
-          onClose={() => setGrid(false)}
+          title={gridFolder}
+          agents={terminalAgents.filter(
+            (s) =>
+              s.group === gridFolder ||
+              s.group?.startsWith(gridFolder + "/"),
+          )}
+          onClose={() => setGridFolder(null)}
         />
       ) : (
       <div className="rd-panels-3">
@@ -272,6 +269,7 @@ function Dashboard() {
                 patchSession(key, { group: group || undefined })
               }
               onRename={(key, name) => patchSession(key, { label: name })}
+              onOpenGrid={setGridFolder}
             />
           )}
         </section>
