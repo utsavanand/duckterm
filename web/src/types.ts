@@ -50,6 +50,7 @@ export interface SessionView {
   idleSince?: number; // ts of the last Stop; drives the idle settling grace
   launched?: boolean; // true if Duckterm launched it (owns the tab); else watched
   ptyOwned?: boolean; // Duckterm owns a live PTY (in-process launch) — terminal-attachable
+  contextTokens?: number; // current context size (claude-code), the compact-soon signal
   group?: string; // folder label for organizing the left panel; undefined = ungrouped
   subagents?: SubAgent[]; // sub-agents spawned via the Task tool, for the tree
 }
@@ -81,6 +82,7 @@ export interface PersistedSession {
   notes?: string | null;
   grp?: string | null;
   subagents?: SubAgent[];
+  context_tokens?: number | null; // server-computed from the transcript tail
 }
 
 /** A sub-agent the session spawned via the Task tool (GET /sessions embeds these). */
@@ -139,6 +141,7 @@ export function viewFromPersisted(s: PersistedSession): SessionView {
     notes: s.notes ?? undefined,
     group: s.grp ?? undefined,
     subagents: s.subagents ?? undefined,
+    contextTokens: s.context_tokens ?? undefined,
   };
 }
 

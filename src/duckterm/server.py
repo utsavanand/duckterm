@@ -263,6 +263,9 @@ class Server:
         self.snapshots = SnapshotManager(self.history)
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
         self.token = security.load_or_create_token()
+        # transcript path -> (mtime, context_tokens): /sessions is fetched
+        # often and an unchanged transcript can't have new usage.
+        self._context_cache: dict[str, tuple[float, int | None]] = {}
 
     # Activity that means a session moved past an *earlier* permission prompt:
     # any of these arriving AFTER a request means it was answered and the agent
@@ -532,7 +535,34 @@ class Server:
         subagents = self.history.subagents_by_session()
         for s in sessions:
             s["subagents"] = subagents.get(str(s.get("session_key") or ""), [])
+            s["context_tokens"] = self._context_tokens_for(s)
         await _write_json(writer, 200, {"sessions": sessions})
+
+    def _context_tokens_for(self, row: dict[str, Any]) -> int | None:
+        """Current context size for a claude-code session, read from its
+        transcript tail — the signal for 'this session should be checkpointed
+        or compacted soon'."""
+        if (row.get("runtime") or "") != "claude-code":
+            return None
+        sid = self.history.session_id_for(str(row.get("session_key") or ""))
+        cwd = row.get("worktree_path") or row.get("cwd")
+        if not sid or not cwd:
+            return None
+        from duckterm.runtimes.claude_code import ClaudeCodeRuntime, context_tokens
+
+        path = ClaudeCodeRuntime().locate_transcript(cwd=Path(str(cwd)), session_id=sid)
+        if path is None:
+            return None
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            return None
+        cached = self._context_cache.get(str(path))
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
+        tokens = context_tokens(path)
+        self._context_cache[str(path)] = (mtime, tokens)
+        return tokens
 
     async def _launch(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         try:

@@ -1,14 +1,51 @@
 import { useEffect, useState } from "react";
+import { api } from "./api";
+import { contextLevel, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
+import { useToast } from "./ui";
+
+function age(startedAt: number): string {
+  const mins = Math.max(0, Math.round((Date.now() - startedAt) / 60_000));
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  return h < 24 ? `${h}h ${mins % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`;
+}
 
 // Right pane: context about the selected agent's terminal. If the session is on
 // a git branch, show a git view (branch, repo, and the working-tree diff). If
 // not, show the folder it's running in. (Approvals render above this in App.)
 export function ContextPanel({ session }: { session: SessionView }) {
+  const toast = useToast();
   const [diff, setDiff] = useState<string>("");
   const [branches, setBranches] = useState<string[]>([]);
+  const [acting, setActing] = useState<string | null>(null);
   const onBranch = !!session.branch;
   const dir = session.worktreePath ?? session.cwd ?? null;
+  const ctxLevel = contextLevel(session.contextTokens);
+
+  async function checkpoint() {
+    setActing("checkpoint");
+    try {
+      await api.checkpoint(session.key, "context-full");
+      toast("Checkpoint recorded");
+    } catch (e) {
+      toast(`Checkpoint failed: ${(e as Error).message}`, "err");
+    } finally {
+      setActing(null);
+    }
+  }
+
+  async function compact() {
+    setActing("compact");
+    try {
+      await api.sendInput(session.key, "/compact\n");
+      toast("Sent /compact to the agent");
+    } catch (e) {
+      toast(`Compact failed: ${(e as Error).message}`, "err");
+    } finally {
+      setActing(null);
+    }
+  }
 
   useEffect(() => {
     if (!onBranch) return;
@@ -41,6 +78,18 @@ export function ContextPanel({ session }: { session: SessionView }) {
           <span className="k">agent</span>
           <span className="v">{session.runtime ?? "—"}</span>
         </div>
+        <div className="rd-context-row">
+          <span className="k">running</span>
+          <span className="v">{age(session.startedAt)}</span>
+        </div>
+        {session.contextTokens != null && (
+          <div className="rd-context-row">
+            <span className="k">context</span>
+            <span className={`v${ctxLevel ? ` ctx-${ctxLevel}` : ""}`}>
+              {fmtTokens(session.contextTokens)} tokens
+            </span>
+          </div>
+        )}
         {session.intention && (
           <div className="rd-context-row">
             <span className="k">intent</span>
@@ -48,6 +97,35 @@ export function ContextPanel({ session }: { session: SessionView }) {
           </div>
         )}
       </div>
+
+      {ctxLevel && (
+        <div className={`rd-ctx-warning ${ctxLevel}`}>
+          <div className="rd-ctx-warning-text">
+            {ctxLevel === "high"
+              ? "Context is nearly full — checkpoint the session, or compact it before quality degrades."
+              : "This session has been going a while and its context is filling up — a checkpoint now makes it resumable later."}
+          </div>
+          <div className="rd-ctx-warning-actions">
+            <button
+              className="rd-btn rd-btn-sm rd-btn-ghost"
+              disabled={acting !== null}
+              onClick={checkpoint}
+            >
+              {acting === "checkpoint" ? "Capturing…" : "Checkpoint"}
+            </button>
+            {session.ptyOwned && (
+              <button
+                className="rd-btn rd-btn-sm rd-btn-ghost"
+                disabled={acting !== null}
+                title="Types /compact into the agent's terminal"
+                onClick={compact}
+              >
+                {acting === "compact" ? "Sending…" : "Compact"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {onBranch ? (
         <div className="rd-context-git">

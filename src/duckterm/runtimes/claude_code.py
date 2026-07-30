@@ -122,6 +122,38 @@ def _extract_text(content: object) -> str:
     return ""
 
 
+def context_tokens(path: Path) -> int | None:
+    """The session's CURRENT context size: prompt tokens of the last assistant
+    call (input + cache read + cache creation), from the transcript's usage
+    records. This is the "compact soon" signal — it grows with the
+    conversation and resets when the user compacts.
+
+    Reads only the file's tail (256KB) — transcripts grow to many MB and the
+    latest assistant record is always near the end."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            fh.seek(max(0, size - 256_000))
+            tail = fh.read().decode(errors="replace")
+    except OSError:
+        return None
+    for line in reversed(tail.splitlines()):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "assistant":
+            continue
+        usage = (obj.get("message") or {}).get("usage") or {}
+        total = sum(
+            int(usage.get(k) or 0)
+            for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+        )
+        if total:
+            return total
+    return None
+
+
 # Record types in the JSONL that carry an actual conversation message. Everything
 # else (mode, permission-mode, file-history-snapshot, ai-title, attachment, …) is
 # bookkeeping the structured view skips.

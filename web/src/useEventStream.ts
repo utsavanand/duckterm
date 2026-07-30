@@ -107,14 +107,20 @@ export function useEventStream(): {
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/sessions")
-      .then((r) => r.json())
-      .then((data: { sessions: PersistedSession[] }) => {
-        if (!cancelled) dispatch({ kind: "seed", sessions: data.sessions });
-      })
-      .catch(() => undefined);
+    const seed = () =>
+      fetch("/sessions")
+        .then((r) => r.json())
+        .then((data: { sessions: PersistedSession[] }) => {
+          if (!cancelled) dispatch({ kind: "seed", sessions: data.sessions });
+        })
+        .catch(() => undefined);
+    seed();
+    // Light periodic re-seed: context_tokens (and other server-computed
+    // fields) change as the agent works but emit no SSE event of their own.
+    const t = setInterval(seed, 30_000);
     return () => {
       cancelled = true;
+      clearInterval(t);
     };
   }, []);
 

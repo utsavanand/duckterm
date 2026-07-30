@@ -636,3 +636,60 @@ def test_launch_with_missing_binary_returns_400(
 
     body = asyncio.run(scenario())
     assert "command not found" in str(body["error"])
+
+
+def test_sessions_carry_context_tokens_from_the_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GET /sessions annotates claude-code sessions with the transcript's
+    current context size — what drives the row highlight and the
+    checkpoint/compact warning."""
+    from duckterm.persistence.history import HistoryStore
+    from duckterm.runtimes.claude_code import ClaudeCodeRuntime
+
+    transcript = tmp_path / "sid-1.jsonl"
+    transcript.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "usage": {
+                        "input_tokens": 2,
+                        "cache_read_input_tokens": 119_998,
+                        "cache_creation_input_tokens": 0,
+                    },
+                },
+            }
+        )
+    )
+    monkeypatch.setattr(
+        ClaudeCodeRuntime,
+        "locate_transcript",
+        lambda self, *, cwd, session_id: transcript if session_id == "sid-1" else None,
+    )
+
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.record(
+        {
+            "event_type": "SessionStart",
+            "session_key": "ctx",
+            "session_id": "sid-1",
+            "runtime": "claude-code",
+            "cwd": str(tmp_path),
+            "launched": True,
+            "_ts": 1,
+            "_id": "a",
+        }
+    )
+
+    async def scenario() -> list[dict[str, object]]:
+        server = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            body = await asyncio.to_thread(_get, port, "/sessions")
+        return list(json.loads(body)["sessions"])
+
+    sessions = asyncio.run(scenario())
+    row = next(s for s in sessions if s["session_key"] == "ctx")
+    assert row["context_tokens"] == 120_000

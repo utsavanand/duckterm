@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
-import { effectiveState } from "./sessions";
+import { contextLevel, effectiveState, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
 
@@ -294,6 +294,7 @@ function TreeRow({
       toast(`Rename failed: ${(e as Error).message}`, "err");
     }
   }
+  const ctxLevel = contextLevel(s.contextTokens);
   const hasChildren = node.children.length > 0;
   // Branching is possible for any live session on a git repo (worktree fork or
   // promote) and for any live claude-code session (conversation fork, even with
@@ -391,7 +392,7 @@ function TreeRow({
   return (
     <>
       <div
-        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}`}
+        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}`}
         style={{ paddingLeft: 12 + depth * 18 }}
         // Only root sessions are draggable into groups; forks follow their parent.
         draggable={depth === 0}
@@ -458,6 +459,18 @@ function TreeRow({
               <span className="dot" />
               {stateLabel}
             </span>
+            {ctxLevel && (
+              <span
+                className={`rd-ctx-chip ${ctxLevel}`}
+                title={`${fmtTokens(s.contextTokens!)} tokens in context — ${
+                  ctxLevel === "high"
+                    ? "checkpoint or compact now"
+                    : "consider a checkpoint soon"
+                }`}
+              >
+                {fmtTokens(s.contextTokens!)}
+              </span>
+            )}
           </span>
         </div>
         <div className="rd-row-meta" onClick={() => onOpen(s.key)}>

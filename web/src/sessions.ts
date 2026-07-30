@@ -112,6 +112,7 @@ export function applyEvent(
     // but stamp pty_owned:false — without that check, the live event would
     // mount a dead black terminal for a session running in iTerm/Terminal.
     ptyOwned: prev?.ptyOwned || (e.launched === true && e.pty_owned !== false),
+    contextTokens: prev?.contextTokens,
     startedAt: prev?.startedAt ?? e._ts,
     updatedAt: e._ts,
     eventCount: (prev?.eventCount ?? 0) + 1,
@@ -121,4 +122,19 @@ export function applyEvent(
 
 export function applyAll(events: DucktermEvent[]): Map<string, SessionView> {
   return events.reduce(applyEvent, new Map<string, SessionView>());
+}
+
+
+// Context-size thresholds (claude's window is ~200k): "warm" = start thinking
+// about a checkpoint; "high" = checkpoint or /compact now, quality degrades
+// as the auto-compact cliff approaches.
+export function contextLevel(tokens?: number): "warm" | "high" | null {
+  if (!tokens) return null;
+  if (tokens >= 160_000) return "high";
+  if (tokens >= 110_000) return "warm";
+  return null;
+}
+
+export function fmtTokens(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 }

@@ -85,3 +85,41 @@ def test_parse_transcript_handles_string_and_block_content(tmp_path: Path) -> No
         {"role": "user", "text": "fix the parser"},
         {"role": "assistant", "text": "Looking at it."},
     ]
+
+
+def test_context_tokens_reads_last_usage_from_the_tail(tmp_path):
+    """The compact-soon signal: prompt tokens of the LAST assistant call
+    (input + cache read + cache creation), found even when the transcript is
+    bigger than the tail window."""
+    import json
+
+    from duckterm.runtimes.claude_code import context_tokens
+
+    def assistant(inp, read, create):
+        return json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "usage": {
+                        "input_tokens": inp,
+                        "cache_read_input_tokens": read,
+                        "cache_creation_input_tokens": create,
+                        "output_tokens": 9,
+                    },
+                },
+            }
+        )
+
+    path = tmp_path / "t.jsonl"
+    # Padding bigger than the 256KB tail window, then two usage records —
+    # the LATER one must win.
+    filler = json.dumps({"type": "user", "message": {"role": "user", "content": "x" * 500}})
+    lines = [filler] * 600 + [assistant(5, 100, 0), filler, assistant(1, 53228, 141)]
+    path.write_text("\n".join(lines))
+    assert context_tokens(path) == 1 + 53228 + 141
+
+    # No usage anywhere -> None (a fresh session shows nothing, not zero).
+    empty = tmp_path / "empty.jsonl"
+    empty.write_text(filler)
+    assert context_tokens(empty) is None

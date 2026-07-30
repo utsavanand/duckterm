@@ -1562,3 +1562,57 @@ select {
   font-size: 12.5px;
   font-style: italic;
 }
+/* Context-pressure highlights: a session whose context is filling gets an
+   amber (warm) or red (high) left rail + a token chip; the same tint colors
+   the panel's context row and warning card. */
+.rd-row.ctx-warm {
+  box-shadow: inset 3px 0 0 var(--wait);
+}
+.rd-row.ctx-high {
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+.rd-ctx-chip {
+  font-size: 10.5px;
+  font-family: ui-monospace, Menlo, monospace;
+  border-radius: 4px;
+  padding: 0 5px;
+  line-height: 1.6;
+}
+.rd-ctx-chip.warm {
+  color: var(--amber-text);
+  background: var(--amber-chip);
+  border: 1px solid var(--amber-border);
+}
+.rd-ctx-chip.high {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+}
+.rd-context-row .v.ctx-warm {
+  color: var(--amber-text);
+  font-weight: 600;
+}
+.rd-context-row .v.ctx-high {
+  color: var(--danger);
+  font-weight: 600;
+}
+.rd-ctx-warning {
+  border: 1px solid var(--amber-border);
+  background: var(--amber-bg);
+  color: var(--amber-text);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 16px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.rd-ctx-warning.high {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.rd-ctx-warning-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
