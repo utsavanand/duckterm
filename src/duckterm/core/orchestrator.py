@@ -120,6 +120,10 @@ class SessionSupervisor:
                 stdout=secondary,
                 stderr=secondary,
                 start_new_session=True,
+                # The agent's hooks report under THIS key. Without it their
+                # events arrive keyless and the launched-only ingest drops
+                # them — no approvals, no session_id, no context tokens.
+                env={**os.environ, "DUCKTERM_SESSION_KEY": self.session_key},
             )
         except FileNotFoundError as e:
             # A typo'd custom command. ValueError is what every launch/fork/
@@ -145,7 +149,13 @@ class SessionSupervisor:
         self._pipe_path = str(paths.home() / "panes" / f"{self.session_key}.log")
         Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
         Path(self._pipe_path).write_text("")
-        self._tmux_target = tmux.spawn_piped(self.session_key, command, self.cwd, self._pipe_path)
+        self._tmux_target = tmux.spawn_piped(
+            self.session_key,
+            command,
+            self.cwd,
+            self._pipe_path,
+            env={"DUCKTERM_SESSION_KEY": self.session_key},
+        )
         self._emit("SessionStart", command=command)
         self._task = asyncio.create_task(self._tail_pipe())
 

@@ -43,15 +43,25 @@ def target_for(session_id: str) -> str:
     return f"{_PREFIX}{session_id}"
 
 
-def spawn(session_id: str, command: str, cwd: str) -> str:
+def spawn(session_id: str, command: str, cwd: str, env: dict[str, str] | None = None) -> str:
     """Create a detached tmux session running `command` in `cwd`. Returns the
     tmux target name. Raises ValueError when tmux itself refuses — before
     this, a failed spawn 'succeeded' silently and the session just appeared
-    as terminated with an empty terminal and no explanation."""
+    as terminated with an empty terminal and no explanation.
+
+    `env` entries reach the agent's environment (tmux new-session -e). This
+    is how DUCKTERM_SESSION_KEY gets in — without it the agent's hooks report
+    under claude's own session_id and the launched-only ingest drops those
+    events as foreign."""
     target = target_for(session_id)
+    env_args: list[str] = []
+    for k, v in (env or {}).items():
+        env_args += ["-e", f"{k}={v}"]
     # `-x/-y` set the initial size; a detached session otherwise defaults to
     # 80x24, which mismatches the browser pane and garbles a TUI's wrapping.
-    ok, err = _tmux("new-session", "-d", "-s", target, "-x", "120", "-y", "40", "-c", cwd, command)
+    ok, err = _tmux(
+        "new-session", "-d", "-s", target, "-x", "120", "-y", "40", "-c", cwd, *env_args, command
+    )
     if not ok:
         raise ValueError(f"tmux failed to start the session: {err.strip() or 'unknown error'}")
     # window-size manual: without it tmux sizes the window to the LARGEST/LATEST
@@ -61,10 +71,12 @@ def spawn(session_id: str, command: str, cwd: str) -> str:
     return target
 
 
-def spawn_piped(session_id: str, command: str, cwd: str, pipe_path: str) -> str:
+def spawn_piped(
+    session_id: str, command: str, cwd: str, pipe_path: str, env: dict[str, str] | None = None
+) -> str:
     """Spawn a detached session and stream its pane output to `pipe_path` from
     the start, so live output isn't missed. Returns the tmux target."""
-    target = spawn(session_id, command, cwd)
+    target = spawn(session_id, command, cwd, env)
     # -o starts piping immediately; appends raw pane output to the file.
     _tmux("pipe-pane", "-t", target, "-o", f"cat >> {pipe_path}")
     return target

@@ -103,3 +103,48 @@ def test_stalled_terminal_subscriber_is_dropped_not_grown(tmp_path: Path) -> Non
     received, dropped, _tail = asyncio.run(scenario())
     assert dropped  # unsubscribed the moment its queue filled
     assert received <= 2001  # bounded: cap + nothing after the drop
+
+
+def test_launched_agent_sees_its_duckterm_session_key(tmp_path: Path) -> None:
+    """The agent's hooks report under DUCKTERM_SESSION_KEY. If the spawn paths
+    don't put it in the environment, hook events arrive keyless and the
+    launched-only ingest drops them — no approvals, no session_id, no context
+    tokens. Pin BOTH paths (tmux and raw PTY)."""
+    import duckterm.core.orchestrator as orch_mod
+    from duckterm.core.orchestrator import Orchestrator
+    from duckterm.runtimes.generic import GenericRuntime
+
+    async def launched_env_line(force_pty: bool) -> str:
+        bus, _ = collecting_bus()
+        orch = Orchestrator(bus)
+        if force_pty:
+            real = orch_mod.tmux.has_tmux
+            orch_mod.tmux.has_tmux = lambda: False
+        try:
+            key = await orch.launch(
+                # The 0.3s sleep lets pipe-pane attach before the echo — instant
+                # output races the pipe (the attach snapshot covers that case
+                # in real use; here we assert on the piped stream).
+                runtime=GenericRuntime(
+                    "sh -c 'sleep 0.3; echo KEY=$DUCKTERM_SESSION_KEY; sleep 2'"
+                ),
+                cwd=str(tmp_path),
+                session_key=f"envtest-{'pty' if force_pty else 'tmux'}",
+            )
+        finally:
+            if force_pty:
+                orch_mod.tmux.has_tmux = real
+        sup = orch.get(key)
+        assert sup is not None
+        for _ in range(80):  # up to ~4s for the echo to land
+            joined = "".join(sup.output_tail())
+            if f"KEY={key}" in joined:
+                await orch.stop(key)
+                return joined
+            await asyncio.sleep(0.05)
+        await orch.stop(key)
+        raise AssertionError(f"KEY={key} never appeared in: {joined!r}")
+
+    for force_pty in (False, True):
+        out = asyncio.run(launched_env_line(force_pty))
+        assert "KEY=envtest" in out
