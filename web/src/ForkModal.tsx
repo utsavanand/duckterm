@@ -40,8 +40,10 @@ export function ForkModal({
     setBusy(true);
     try {
       if (mode === "conversation") {
-        await api.forkConversation(session.key);
-        toast("Forked conversation running in Duckterm");
+        const r = await api.forkConversation(session.key);
+        // A fresh session has no conversation to carry — the server forks a
+        // sibling session instead and says so; surface that, not a failure.
+        toast(r.note ?? "Forked conversation running in Duckterm");
       } else if (hasBranch) {
         // True fork: branch off the parent's branch, open a new agent.
         const r = await api.fork(session.key, {
@@ -50,8 +52,11 @@ export function ForkModal({
           in_terminal: false,
           carry_context: canCarryContext && carryContext,
         });
-        const ctx = r.carried_context ? " with its conversation" : "";
-        toast(`Fork running on ${r.branch}${ctx}`);
+        toast(
+          carryContext && canCarryContext && !r.carried_context
+            ? `Fork running on ${r.branch} — no conversation to carry yet, started fresh`
+            : `Fork running on ${r.branch}${r.carried_context ? " with its conversation" : ""}`,
+        );
       } else {
         // No branch yet: promote this in-place session onto a new worktree.
         const r = await api.promote(session.key, {

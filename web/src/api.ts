@@ -145,7 +145,13 @@ export const api = {
       carried_context?: boolean;
     }>(`/sessions/${key}/fork`, opts),
   forkConversation: (key: string) =>
-    post<{ session_key: string; command: string; cwd: string }>(
+    post<{
+      session_key: string;
+      command: string;
+      cwd: string;
+      carried_conversation?: boolean;
+      note?: string | null;
+    }>(
       `/sessions/${key}/fork-conversation`,
       { in_terminal: false },
     ),

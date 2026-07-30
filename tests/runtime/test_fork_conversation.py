@@ -56,13 +56,30 @@ def test_fork_conversation_rejects_non_claude_session(tmp_path: Path) -> None:
     assert "claude-code" in body["error"]
 
 
-def test_fork_conversation_needs_a_claude_session_id(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_fork_conversation_without_a_conversation_starts_fresh(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A session that hasn't had a conversation yet still forks — as a fresh
+    sibling session in the same folder, with the response saying so plainly
+    (the old behavior was a bare 400 the user read as 'fork is broken')."""
     # Isolate from the real ~/.claude so the fallback finds no transcript.
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "empty-home"))
 
+    launched: dict = {}
+
     async def scenario() -> tuple[int, dict]:
         store = HistoryStore(tmp_path / "db.sqlite")
-        srv = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
+        server = Server(history=store)
+
+        async def fake_launch(*, runtime, cwd, session_key, **kw):  # type: ignore[no-untyped-def]
+            launched["argv"] = runtime.launch_command(
+                cwd=Path(cwd), session_key=session_key, initial_prompt=""
+            )
+            launched["parent"] = kw.get("parent_session_key")
+            return session_key
+
+        monkeypatch.setattr(server.orchestrator, "launch", fake_launch)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
         port = srv.sockets[0].getsockname()[1]
         async with srv:
             # A claude-code session but no session_id event recorded yet.
@@ -72,12 +89,16 @@ def test_fork_conversation_needs_a_claude_session_id(tmp_path: Path, monkeypatch
                 "/events",
                 {"event_type": "SessionStart", "session_key": "c1", "runtime": "claude-code"},
             )
-            return await asyncio.to_thread(_post, port, "/sessions/c1/fork-conversation", {})
+            return await asyncio.to_thread(
+                _post, port, "/sessions/c1/fork-conversation", {"in_terminal": False}
+            )
 
     status, body = asyncio.run(scenario())
-    assert status == 400
-    # No recorded id and no transcript -> nothing resumable.
-    assert "resumable" in body["error"]
+    assert status == 200
+    assert body["carried_conversation"] is False
+    assert "no conversation to fork yet" in str(body["note"])
+    assert launched["argv"] == ["claude"]  # fresh, not --resume
+    assert launched["parent"] == "c1"  # lineage still recorded
 
 
 def test_fork_conversation_opens_terminal_with_resume_command(
@@ -142,12 +163,12 @@ def test_fork_conversation_opens_terminal_with_resume_command(
     assert opened["env"] == {"DUCKTERM_SESSION_KEY": body["session_key"]}
 
 
-def test_fork_conversation_errors_when_no_resumable_transcript(
+def test_fork_conversation_with_dead_transcript_starts_fresh_not_doomed(
     tmp_path: Path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    # The reported bug: the recorded session_id has no Claude conversation file,
-    # so --resume would fail. Fork must refuse with a clear error instead of
-    # opening a doomed terminal.
+    # The recorded session_id has no Claude conversation file, so --resume
+    # would fail. Instead of a doomed `claude --resume ghost` (or the old bare
+    # 400), fork falls back to a fresh sibling and says so.
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "empty-home"))
 
     async def scenario() -> tuple[int, dict]:
@@ -170,5 +191,7 @@ def test_fork_conversation_errors_when_no_resumable_transcript(
             return await asyncio.to_thread(_post, port, "/sessions/c3/fork-conversation", {})
 
     status, body = asyncio.run(scenario())
-    assert status == 400
-    assert "resumable" in body["error"]
+    assert status == 200
+    assert body["carried_conversation"] is False
+    assert "no conversation to fork yet" in str(body["note"])
+    assert "--resume" not in body["command"]  # never a doomed resume

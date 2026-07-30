@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Terminal } from "./Terminal";
 import { SessionView } from "./types";
 
-// Fullscreen grid: every PTY-owned session in one view, tiled side by side
-// (columns) or stacked (rows). Tiles drag-reorder; a tile collapses to its
-// header bar. This is the "watch the whole fleet work" mode — the three-pane
-// layout unmounts underneath, so each session keeps exactly one terminal WS.
+// Fullscreen grid: every PTY-owned session tiled in a true 2D layout. The
+// columns control + drag-to-rearrange compose any shape — 3 across with one
+// below, 2×2, a single stack. Collapsed sessions dock to a bottom strip as
+// chips (click to bring back), so the grid itself only holds live tiles.
 export function GridView({
   agents,
   folders,
@@ -15,12 +15,15 @@ export function GridView({
   folders: string[];
   onClose: () => void;
 }) {
-  const [orientation, setOrientation] = useState<"cols" | "rows">("cols");
+  const [cols, setCols] = useState<number>(0); // 0 = auto
   const [folder, setFolder] = useState<string>("");
   const [order, setOrder] = useState<string[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dragKey, setDragKey] = useState<string | null>(null);
 
+  // Esc exits — but only when focus is OUTSIDE a terminal (bubble phase):
+  // inside one, Esc belongs to the agent (denying a claude prompt must not
+  // yank the whole grid away). The Exit button always works.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -29,18 +32,26 @@ export function GridView({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const visible = useMemo(() => {
-    const inFolder = folder ? agents.filter((a) => a.group === folder) : agents;
-    // Stable manual order first, new arrivals appended.
+  const inFolder = useMemo(
+    () => (folder ? agents.filter((a) => a.group === folder) : agents),
+    [agents, folder],
+  );
+  const ordered = useMemo(() => {
     const rank = new Map(order.map((k, i) => [k, i]));
     return [...inFolder].sort(
       (a, b) => (rank.get(a.key) ?? 999) - (rank.get(b.key) ?? 999),
     );
-  }, [agents, folder, order]);
+  }, [inFolder, order]);
+  const tiles = ordered.filter((s) => !collapsed.has(s.key));
+  const docked = ordered.filter((s) => collapsed.has(s.key));
+
+  // Auto: the squarest grid that fits (1→1, 2→2, 3→3 across, 4→2×2, 5-6→3…).
+  const effectiveCols =
+    cols || Math.min(tiles.length, Math.ceil(Math.sqrt(tiles.length)) + 1, 3);
 
   function moveBefore(target: string) {
     if (!dragKey || dragKey === target) return;
-    const keys = visible.map((v) => v.key).filter((k) => k !== dragKey);
+    const keys = ordered.map((v) => v.key).filter((k) => k !== dragKey);
     keys.splice(keys.indexOf(target), 0, dragKey);
     setOrder(keys);
   }
@@ -58,7 +69,7 @@ export function GridView({
     <div className="rd-grid">
       <div className="rd-grid-bar">
         <span className="rd-grid-title">
-          {folder || "All agents"} · {visible.length}
+          {folder || "All agents"} · {ordered.length}
         </span>
         {folders.length > 0 && (
           <select
@@ -74,73 +85,88 @@ export function GridView({
             ))}
           </select>
         )}
-        <button
-          className="rd-btn rd-btn-sm rd-btn-ghost"
-          title="Arrange side by side or stacked"
-          onClick={() =>
-            setOrientation((o) => (o === "cols" ? "rows" : "cols"))
-          }
+        <select
+          className="rd-grid-folder"
+          title="Columns — drag tile headers to choose what sits where"
+          value={cols}
+          onChange={(e) => setCols(Number(e.target.value))}
         >
-          {orientation === "cols" ? "⬌ side by side" : "⬍ stacked"}
-        </button>
+          <option value={0}>auto columns</option>
+          <option value={1}>1 column</option>
+          <option value={2}>2 columns</option>
+          <option value={3}>3 columns</option>
+          <option value={4}>4 columns</option>
+        </select>
         <span className="rd-spacer" />
         <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={onClose}>
           Exit grid (esc)
         </button>
       </div>
-      {visible.length === 0 ? (
+      {tiles.length === 0 && docked.length === 0 ? (
         <p className="rd-panel-empty">No running terminals in this folder.</p>
       ) : (
-        <div className={`rd-grid-tiles ${orientation}`}>
-          {visible.map((s) => {
-            const isCollapsed = collapsed.has(s.key);
-            return (
+        <div
+          className="rd-grid-tiles"
+          style={{ gridTemplateColumns: `repeat(${effectiveCols}, 1fr)` }}
+        >
+          {tiles.map((s) => (
+            <div
+              key={s.key}
+              className="rd-grid-tile"
+              onDragOver={(e) => {
+                if (dragKey) e.preventDefault();
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                moveBefore(s.key);
+                setDragKey(null);
+              }}
+            >
               <div
-                key={s.key}
-                className={`rd-grid-tile${isCollapsed ? " collapsed" : ""}`}
-                onDragOver={(e) => {
-                  if (dragKey) e.preventDefault();
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  moveBefore(s.key);
-                  setDragKey(null);
-                }}
+                className="rd-grid-tile-head"
+                draggable
+                title="Drag to rearrange"
+                onDragStart={() => setDragKey(s.key)}
+                onDragEnd={() => setDragKey(null)}
               >
-                <div
-                  className="rd-grid-tile-head"
-                  draggable
-                  title="Drag to rearrange"
-                  onDragStart={() => setDragKey(s.key)}
-                  onDragEnd={() => setDragKey(null)}
+                <span className={`rd-state st-${s.state}`}>
+                  <span className="dot" />
+                </span>
+                <span className="rd-grid-tile-name">{s.label}</span>
+                {s.branch && (
+                  <span className="rd-grid-tile-branch">⎇ {s.branch}</span>
+                )}
+                <span className="rd-spacer" />
+                <button
+                  className="rd-grid-tile-collapse"
+                  title="Collapse to the dock"
+                  onClick={() => toggleCollapse(s.key)}
                 >
-                  <span className={`rd-state st-${s.state}`}>
-                    <span className="dot" />
-                  </span>
-                  <span className="rd-grid-tile-name">{s.label}</span>
-                  {s.branch && (
-                    <span className="rd-grid-tile-branch">⎇ {s.branch}</span>
-                  )}
-                  <span className="rd-spacer" />
-                  <button
-                    className="rd-grid-tile-collapse"
-                    title={isCollapsed ? "Expand" : "Collapse to a bar"}
-                    onClick={() => toggleCollapse(s.key)}
-                  >
-                    {isCollapsed ? "▸" : "▾"}
-                  </button>
-                </div>
-                {/* Keep the terminal mounted when collapsed (hidden, WS held)
-                    so expanding repaints instantly via the resize observer. */}
-                <div
-                  className="rd-grid-tile-term"
-                  style={{ display: isCollapsed ? "none" : "flex" }}
-                >
-                  <Terminal sessionKey={s.key} />
-                </div>
+                  ▾
+                </button>
               </div>
-            );
-          })}
+              <div className="rd-grid-tile-term">
+                <Terminal sessionKey={s.key} />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {docked.length > 0 && (
+        <div className="rd-grid-dock">
+          {docked.map((s) => (
+            <button
+              key={s.key}
+              className="rd-grid-dock-chip"
+              title="Bring back into the grid"
+              onClick={() => toggleCollapse(s.key)}
+            >
+              <span className={`rd-state st-${s.state}`}>
+                <span className="dot" />
+              </span>
+              {s.label}
+            </button>
+          ))}
         </div>
       )}
     </div>

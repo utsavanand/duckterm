@@ -39,8 +39,10 @@ import os
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import time
+import traceback
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
@@ -345,7 +347,19 @@ class Server:
 
         for route in self._routes():
             if route.matches(method, path):
-                await route.call(self, reader, writer, headers, body, route.segment(path))
+                try:
+                    await route.call(self, reader, writer, headers, body, route.segment(path))
+                except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
+                    raise  # client went away — the outer handler ignores these
+                except Exception as e:  # noqa: BLE001 — the fail-loudly boundary
+                    # An unhandled handler bug used to kill the connection
+                    # silently: the browser saw a network error, the log saw
+                    # nothing. Now the server log gets the full traceback and
+                    # the client gets a real 500 with the reason.
+                    print(f"[duckterm] {method} {path} failed: {e}", file=sys.stderr)
+                    traceback.print_exc()
+                    with contextlib.suppress(OSError):
+                        await _write_json(writer, 500, {"error": f"{type(e).__name__}: {e}"})
                 return
         await _write_response(writer, 404, "not found")
 
@@ -869,19 +883,24 @@ class Server:
             return
         cwd = str(parent.get("cwd") or ".")
         session_id = self._resumable_session_id(parent_key, cwd)
-        if not session_id:
-            await _write_json(
-                writer,
-                400,
-                {
-                    "error": "no resumable Claude conversation found for this session "
-                    "(its transcript may be gone, or it never recorded one yet)"
-                },
+        # A session that hasn't had a conversation yet (or whose transcript is
+        # gone) still forks — as a FRESH sibling session in the same folder.
+        # The response says so plainly, and the server log records why.
+        note = None
+        if session_id:
+            argv = ["claude", "--resume", session_id, "--fork-session"]
+            child_key = f"convfork-{session_id[:8]}"
+        else:
+            note = "no conversation to fork yet — started a fresh session in the same folder"
+            print(
+                f"[duckterm] conversation fork of {parent_key}: no resumable Claude "
+                f"conversation (none recorded, or its transcript is gone); "
+                f"launching fresh in {cwd}",
+                file=sys.stderr,
             )
-            return
+            argv = ["claude"]
+            child_key = security.new_session_key("convfork")
         req = json.loads(body or b"{}")
-        argv = ["claude", "--resume", session_id, "--fork-session"]
-        child_key = f"convfork-{session_id[:8]}"
 
         if not req.get("in_terminal", True):
             key = await self.orchestrator.launch(
@@ -898,6 +917,8 @@ class Server:
                     "session_key": key,
                     "parent_session_key": parent_key,
                     "opened_in_terminal": False,
+                    "carried_conversation": session_id is not None,
+                    "note": note,
                     "command": " ".join(argv),
                     "cwd": cwd,
                 },
@@ -931,6 +952,8 @@ class Server:
                 "session_key": child_key,
                 "parent_session_key": parent_key,
                 "opened_in_terminal": opened,
+                "carried_conversation": session_id is not None,
+                "note": note,
                 "command": " ".join(argv),
                 "cwd": cwd,
             },
