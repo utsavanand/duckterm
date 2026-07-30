@@ -18,7 +18,11 @@ export function GridView({
 }) {
   const [cols, setCols] = useState<number>(0); // 0 = auto
   const [order, setOrder] = useState<string[]>([]);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Default view: vertical sections, at most 3 expanded — sessions beyond the
+  // first three start in the dock so the grid opens readable, not cramped.
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    () => new Set(agents.slice(3).map((s) => s.key)),
+  );
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [colSizes, setColSizes] = useState<number[]>([]);
   const [rowSizes, setRowSizes] = useState<number[]>([]);
@@ -44,9 +48,9 @@ export function GridView({
   const tiles = ordered.filter((s) => !collapsed.has(s.key));
   const docked = ordered.filter((s) => collapsed.has(s.key));
 
-  // Auto: the squarest grid that fits (1→1, 2→2, 3→3 across, 4→2×2, 5-6→3…).
-  const effectiveCols =
-    cols || Math.min(tiles.length, Math.ceil(Math.sqrt(tiles.length)) + 1, 3);
+  // Auto: one vertical section per session, up to 4 across; more than that
+  // wraps into rows. Explicit columns always win.
+  const effectiveCols = cols || Math.max(1, Math.min(tiles.length, 4));
   const rowCount = Math.max(1, Math.ceil(tiles.length / effectiveCols));
 
   // Size arrays follow the shape; user-dragged proportions reset on reshape
@@ -129,8 +133,12 @@ export function GridView({
           Exit grid (esc)
         </button>
       </div>
-      {tiles.length === 0 && docked.length === 0 ? (
-        <p className="rd-panel-empty">No running terminals in this folder.</p>
+      {tiles.length === 0 ? (
+        <p className="rd-panel-empty">
+          {docked.length > 0
+            ? "Every session is collapsed — click a chip below to expand it."
+            : "No running terminals in this folder."}
+        </p>
       ) : (
         <div
           ref={tilesRef}

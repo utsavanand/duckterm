@@ -24,20 +24,42 @@ test("folder grid: subtree tiles, resize, dock, exit", async ({ page }) => {
   await apiPost("/folders", { name: `${folder}/deep` });
   const a = await launchCat("gA");
   const b = await launchCat("gB");
+  const c = await launchCat("gC");
+  const d = await launchCat("gD");
   await launchCat("gOutside");
-  // gA in the folder, gB in its SUBfolder (both must tile); gOutside is not.
+  // gA/gC/gD in the folder, gB in its SUBfolder (all must tile); gOutside not.
   await apiPatch(`/sessions/${a}`, { group: folder });
   await apiPatch(`/sessions/${b}`, { group: `${folder}/deep` });
+  await apiPatch(`/sessions/${c}`, { group: folder });
+  await apiPatch(`/sessions/${d}`, { group: folder });
 
   await page.goto(base());
   const head = page.locator(".rd-group-head", { hasText: folder });
   await expect(head).toBeVisible();
   await head.locator(".rd-group-grid").click();
 
+  // Default: vertical sections with at most 3 expanded — the 4th starts in
+  // the dock, out-of-scope sessions nowhere.
   const tileFor = (n: string) => page.locator(".rd-grid-tile", { hasText: n });
-  await expect(tileFor("gA")).toBeVisible({ timeout: 5_000 });
-  await expect(tileFor("gB")).toBeVisible(); // subfolder session included
+  await expect(page.locator(".rd-grid-tile")).toHaveCount(3, {
+    timeout: 5_000,
+  });
+  await expect(page.locator(".rd-grid-dock-chip")).toHaveCount(1);
   await expect(tileFor("gOutside")).toHaveCount(0); // out of scope
+
+  // The terminals must have REAL height (a zero-height regression once passed
+  // text assertions while rendering a black void).
+  const h = await page
+    .locator(".rd-grid-tile-term")
+    .first()
+    .evaluate((el) => el.clientHeight);
+  expect(h).toBeGreaterThan(150);
+
+  // Expand the docked one: all four tile (gA is now guaranteed visible).
+  await page.locator(".rd-grid-dock-chip").click();
+  await expect(page.locator(".rd-grid-tile")).toHaveCount(4);
+  await expect(tileFor("gA")).toBeVisible();
+  await expect(tileFor("gB")).toBeVisible(); // subfolder session included
 
   // 2 columns, then drag the vertical bar to resize.
   await page.locator(".rd-grid-folder").selectOption("2");

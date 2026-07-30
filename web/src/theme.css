@@ -1716,6 +1716,10 @@ select {
   padding: 2px 6px;
 }
 .rd-grid-tile-term {
+  /* display:flex is load-bearing: the Terminal host inside uses flex:1 +
+     height:0, so a block parent gave xterm ZERO height — a black void that
+     still passed text assertions (the rows exist in the DOM, just 0px). */
+  display: flex;
   flex: 1;
   min-height: 0;
   flex-direction: column;
