@@ -11,7 +11,8 @@ The contract is a `duckterm-harness.json` at the suite's root:
       "install": ["./install.sh", "--project", "{dir}"],
       "uninstall": ["./uninstall.sh"],                    // optional
       "args_choices": {"--persona": ["sport", "professional"]},  // optional
-      "detect": ".claude/skills/uv-help"                  // optional
+      "detect": ".claude/skills/uv-help",                 // optional
+      "compatible": ["claude-code"]                       // optional
     }
 
 - `install` is an argv template. "{dir}" is replaced with the target directory;
@@ -23,6 +24,8 @@ The contract is a `duckterm-harness.json` at the suite's root:
 - `detect` is a path (relative to an install target) whose existence proves
   the suite is installed there — how the dashboard shows which meta-harness a
   session is running under.
+- `compatible` names the agent harnesses the suite works with (registry names
+  like "claude-code"); omitted means it doesn't say.
 - Fallback: a directory with an `install.sh` but no manifest is accepted as
   {name: <dirname>, install: ["./install.sh"]} — that's enough for most
   one-script installers; options ride in as extra args.
@@ -48,6 +51,7 @@ class Suite:
     uninstall: list[str] | None
     args_choices: dict[str, list[str]]
     detect: str | None
+    compatible: list[str]
     has_manifest: bool
 
 
@@ -80,6 +84,7 @@ def load(path: Path) -> Suite:
             uninstall=[str(a) for a in uninstall] if isinstance(uninstall, list) else None,
             args_choices=choices,
             detect=str(data["detect"]) if data.get("detect") else None,
+            compatible=[str(c) for c in data.get("compatible") or []],
             has_manifest=True,
         )
     if (path / "install.sh").is_file():
@@ -91,6 +96,7 @@ def load(path: Path) -> Suite:
             uninstall=None,
             args_choices={},
             detect=None,
+            compatible=[],
             has_manifest=False,
         )
     raise ValueError(f"{path} has neither {MANIFEST} nor install.sh")
@@ -126,3 +132,77 @@ def _run(suite: Suite, base: list[str], target: Path, extra_args: list[str]) -> 
         return False, str(e)
     output = (result.stdout + result.stderr).strip()
     return result.returncode == 0, output
+
+
+# What a suite ships, by where such things conventionally live in its tree.
+# (kind, glob) — globs stay specific so a registered suite with a node_modules
+# doesn't get walked.
+_CONTENT_GLOBS = [
+    ("skill", "skills/*/SKILL.md"),
+    ("skill", "*/skills/*/SKILL.md"),
+    ("sub-agent", "agents/*.md"),
+    ("sub-agent", "agents/*/*.md"),
+    ("hook", "hooks/*.sh"),
+    ("hook", "*/hooks/*.sh"),
+    ("guardrail", "guardrails/*.md"),
+    ("persona", "personas/*.json"),
+]
+
+
+def contents(suite: Suite, cap: int = 200) -> list[dict[str, str]]:
+    """What ships inside a suite — skills, sub-agents, hooks, guardrails,
+    personas — each with the one-liner its own file declares (frontmatter
+    `description:` for markdown, the first header comment for shell)."""
+    seen: set[tuple[str, str]] = set()
+    out: list[dict[str, str]] = []
+    for kind, pattern in _CONTENT_GLOBS:
+        for path in sorted(suite.path.glob(pattern)):
+            name = path.parent.name if path.name == "SKILL.md" else path.stem
+            if (kind, name) in seen:
+                continue
+            seen.add((kind, name))
+            out.append({"kind": kind, "name": name, "description": _describe(path)})
+            if len(out) >= cap:
+                return out
+    return out
+
+
+def _describe(path: Path) -> str:
+    try:
+        head = path.read_text(errors="replace")[:4000].splitlines()
+    except OSError:
+        return ""
+    if path.suffix == ".md":
+        in_front = False
+        for i, line in enumerate(head):
+            stripped = line.strip()
+            if stripped == "---":
+                in_front = not in_front
+                continue
+            if in_front and stripped.startswith("description:"):
+                value = stripped.split(":", 1)[1].strip().strip("\"'")
+                if value in (">", "|", ">-", "|-"):
+                    # YAML folded/literal block: the text is the indented
+                    # lines that follow.
+                    block: list[str] = []
+                    for follow in head[i + 1 :]:
+                        if follow.startswith((" ", "\t")) and follow.strip():
+                            block.append(follow.strip())
+                        else:
+                            break
+                    value = " ".join(block)
+                return value[:200]
+        for line in head:
+            stripped = line.strip().lstrip("#").strip()
+            if stripped and stripped != "---" and not stripped.startswith(("name:", "tools:")):
+                return stripped[:200]
+        return ""
+    if path.suffix == ".sh":
+        for line in head[1:]:  # skip the shebang
+            stripped = line.strip()
+            if stripped.startswith("#") and stripped.strip("# "):
+                return stripped.lstrip("# ").strip()[:200]
+            if stripped and not stripped.startswith("#"):
+                break
+        return ""
+    return ""

@@ -91,8 +91,14 @@ export function ContextPanel({ session }: { session: SessionView }) {
           </div>
         )}
         <div className="rd-context-row">
-          <span className="k">running</span>
-          <span className="v">{age(session.startedAt)}</span>
+          <span className="k">started</span>
+          <span className="v">
+            {new Date(session.startedAt).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}{" "}
+            · up {age(session.startedAt)}
+          </span>
         </div>
         {session.contextTokens != null && (
           <div className="rd-context-row">

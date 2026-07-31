@@ -1766,3 +1766,54 @@ select {
 .rd-group-add:hover {
   color: var(--text);
 }
+/* Harness contents: what a suite ships, one line each. */
+.rd-harness-compat {
+  font-size: 11.5px;
+  color: var(--text-soft);
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rd-harness-contents-toggle {
+  border: none;
+  background: transparent;
+  color: var(--brand-green);
+  cursor: pointer;
+  font-size: 11.5px;
+  padding: 0;
+}
+.rd-harness-items {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.rd-harness-kind-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 8px 0 4px;
+}
+.rd-harness-item {
+  display: flex;
+  gap: 10px;
+  font-size: 12px;
+  padding: 2px 0;
+}
+.rd-harness-item-name {
+  font-family: ui-monospace, Menlo, monospace;
+  flex: 0 0 160px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rd-harness-item-desc {
+  color: var(--text-soft);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}

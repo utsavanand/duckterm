@@ -8,7 +8,14 @@ interface Harness {
   description?: string;
   args_choices?: Record<string, string[]>;
   uninstallable?: boolean;
+  compatible?: string[];
   error?: string;
+}
+
+interface HarnessItem {
+  kind: string;
+  name: string;
+  description: string;
 }
 
 // Installable harnesses: suites of skills, hooks, and sub-agents (uv-suite is
@@ -151,6 +158,21 @@ function HarnessRow({
 }) {
   const [dir, setDir] = useState(defaultDir ?? "");
   const [args, setArgs] = useState("");
+  const [items, setItems] = useState<HarnessItem[] | null>(null);
+  const [showContents, setShowContents] = useState(false);
+
+  async function toggleContents() {
+    const next = !showContents;
+    setShowContents(next);
+    if (next && items === null) {
+      try {
+        const d = await api.harnessContents(harness.name);
+        setItems(d.contents);
+      } catch {
+        setItems([]);
+      }
+    }
+  }
   const choiceFlags = Object.keys(harness.args_choices ?? {});
   const [choices, setChoices] = useState<Record<string, string>>({});
 
@@ -178,6 +200,45 @@ function HarnessRow({
         </button>
       </div>
       <div className="rd-harness-path">{harness.path}</div>
+      <div className="rd-harness-compat">
+        {harness.compatible && harness.compatible.length > 0
+          ? `works with ${harness.compatible.join(", ")}`
+          : "compatibility not declared — assume any harness"}
+        <button className="rd-harness-contents-toggle" onClick={toggleContents}>
+          {showContents ? "hide contents" : "view contents"}
+        </button>
+      </div>
+      {showContents && (
+        <div className="rd-harness-items">
+          {items === null ? (
+            <span className="rd-harness-desc">reading…</span>
+          ) : items.length === 0 ? (
+            <span className="rd-harness-desc">nothing recognizable found</span>
+          ) : (
+            ["skill", "sub-agent", "hook", "guardrail", "persona"].map(
+              (kind) => {
+                const of = items.filter((i) => i.kind === kind);
+                if (of.length === 0) return null;
+                return (
+                  <div key={kind} className="rd-harness-kind">
+                    <div className="rd-harness-kind-title">
+                      {kind}s · {of.length}
+                    </div>
+                    {of.map((i) => (
+                      <div key={i.name} className="rd-harness-item">
+                        <span className="rd-harness-item-name">{i.name}</span>
+                        <span className="rd-harness-item-desc">
+                          {i.description || "—"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              },
+            )
+          )}
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
         <input
           style={{ ...inputStyle, flex: 2, minWidth: 180 }}

@@ -201,6 +201,8 @@ _ROUTES: list[Route] = [
           **_mid("/harnesses/", "/install")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._uninstall_harness(w, seg, b),
           **_mid("/harnesses/", "/uninstall")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._harness_contents(w, seg),
+          **_mid("/harnesses/", "/contents")),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._deregister_harness(w, seg),
           prefix="/harnesses/"),
     # ── left-panel folders ──
@@ -1259,6 +1261,7 @@ class Server:
                 entry["has_manifest"] = suite.has_manifest
                 entry["args_choices"] = suite.args_choices
                 entry["uninstallable"] = suite.uninstall is not None
+                entry["compatible"] = suite.compatible
             except (ValueError, OSError, json.JSONDecodeError) as e:
                 entry["error"] = str(e)
             out.append(entry)
@@ -1339,6 +1342,24 @@ class Server:
             writer,
             200 if ok else 502,
             {"ok": ok, "output": output, "harness": name, "dir": str(target)},
+        )
+
+    async def _harness_contents(self, writer: asyncio.StreamWriter, name: str) -> None:
+        """What ships inside a registered suite — skills, sub-agents, hooks,
+        guardrails, personas — each with the one-liner its own file declares."""
+        row = next((h for h in self.history.harnesses() if h["name"] == name), None)
+        if row is None:
+            await _write_json(writer, 404, {"error": f"no harness {name!r} registered"})
+            return
+        try:
+            suite = suites.load(Path(str(row["path"])))
+        except (ValueError, json.JSONDecodeError) as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        await _write_json(
+            writer,
+            200,
+            {"harness": name, "compatible": suite.compatible, "contents": suites.contents(suite)},
         )
 
     async def _deregister_harness(self, writer: asyncio.StreamWriter, name: str) -> None:

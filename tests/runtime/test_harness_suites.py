@@ -283,3 +283,44 @@ def test_sessions_report_detected_meta_harness(tmp_path: Path) -> None:
     rows = {r["session_key"]: r for r in asyncio.run(scenario())}
     assert rows["with"]["suites"] == ["kit (project)"]
     assert rows["without"]["suites"] == []
+
+
+def test_harness_contents_lists_what_ships_with_descriptions(tmp_path: Path) -> None:
+    """The contents endpoint reads the suite's own files: skills (frontmatter
+    description, incl. YAML folded blocks), hooks (header comment), sub-agents
+    — plus the manifest's compatibility list."""
+    suite = tmp_path / "kit"
+    (suite / "skills" / "ship-it").mkdir(parents=True)
+    (suite / "skills" / "ship-it" / "SKILL.md").write_text(
+        "---\nname: ship-it\ndescription: >\n  Reviews, tests,\n  then ships.\n---\nbody\n"
+    )
+    (suite / "hooks").mkdir()
+    (suite / "hooks" / "guard.sh").write_text("#!/bin/sh\n# Blocks rm -rf outside the repo\n")
+    (suite / "agents").mkdir()
+    (suite / "agents" / "reviewer.md").write_text(
+        "---\ndescription: Reviews diffs for correctness.\n---\n"
+    )
+    (suite / "install.sh").write_text("#!/bin/sh\n")
+    (suite / "duckterm-harness.json").write_text(
+        json.dumps({"name": "kit", "install": ["./install.sh"], "compatible": ["claude-code"]})
+    )
+
+    store = HistoryStore(tmp_path / "db.sqlite")
+
+    async def scenario() -> dict:
+        server = Server(history=store)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            await _post(port, server.token, "/harnesses/register", {"path": str(suite)})
+            _, body = await _request(
+                port, b"GET /harnesses/kit/contents HTTP/1.1\r\nHost: x\r\n\r\n"
+            )
+        return body
+
+    body = asyncio.run(scenario())
+    assert body["compatible"] == ["claude-code"]
+    by_kind = {(i["kind"], i["name"]): i["description"] for i in body["contents"]}
+    assert by_kind[("skill", "ship-it")] == "Reviews, tests, then ships."
+    assert by_kind[("hook", "guard")] == "Blocks rm -rf outside the repo"
+    assert by_kind[("sub-agent", "reviewer")] == "Reviews diffs for correctness."

@@ -106,9 +106,15 @@ export const api = {
         path: string;
         description?: string;
         has_manifest?: boolean;
+        compatible?: string[];
         error?: string;
       }[];
     }>("/harnesses"),
+  harnessContents: (name: string) =>
+    get<{
+      compatible: string[];
+      contents: { kind: string; name: string; description: string }[];
+    }>(`/harnesses/${encodeURIComponent(name)}/contents`),
   registerHarness: (path: string) =>
     post<{ name: string; description: string; path: string }>(
       "/harnesses/register",
