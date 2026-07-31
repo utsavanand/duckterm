@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build Duckterm.app — a menu-bar wrapper around the local dashboard.
+# Build RubberTerm.app — the desktop shell around the local dashboard.
 #
 # Compiles the Swift sources directly (not via SwiftPM) into a .app bundle and
 # ad-hoc signs it so it runs on this machine. Requires a working Swift toolchain
@@ -14,7 +14,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="build/Duckterm.app"
+APP="build/RubberTerm.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 
@@ -23,7 +23,7 @@ rm -rf build
 mkdir -p "$MACOS" "$CONTENTS/Resources"
 swiftc -O \
   -framework AppKit -framework WebKit -framework UserNotifications -framework Foundation \
-  -o "$MACOS/Duckterm" \
+  -o "$MACOS/RubberTerm" \
   Sources/Duckterm/*.swift
 
 echo "==> bundling app icon"
@@ -41,12 +41,12 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Duckterm</string>
-  <key>CFBundleDisplayName</key><string>Duckterm</string>
-  <key>CFBundleIdentifier</key><string>com.ducktermhq.menubar</string>
+  <key>CFBundleName</key><string>RubberTerm</string>
+  <key>CFBundleDisplayName</key><string>RubberTerm</string>
+  <key>CFBundleIdentifier</key><string>com.rubberduckhq.rubberterm</string>
   <key>CFBundleVersion</key><string>0.1.0</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
-  <key>CFBundleExecutable</key><string>Duckterm</string>
+  <key>CFBundleExecutable</key><string>RubberTerm</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>

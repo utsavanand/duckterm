@@ -14,6 +14,8 @@ final class ServerProcess {
             "/opt/homebrew/bin/duckterm",
             "/usr/local/bin/duckterm",
             "\(NSHomeDirectory())/.local/bin/duckterm",
+            // Dev checkout: the venv the dashboard is developed against.
+            "\(NSHomeDirectory())/ws-my-projects/duckterm/.venv/bin/duckterm",
         ]
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             return path
