@@ -122,21 +122,24 @@ def _extract_text(content: object) -> str:
     return ""
 
 
-def context_tokens(path: Path) -> int | None:
-    """The session's CURRENT context size: prompt tokens of the last assistant
-    call (input + cache read + cache creation), from the transcript's usage
-    records. This is the "compact soon" signal — it grows with the
-    conversation and resets when the user compacts.
+def transcript_stats(path: Path) -> dict[str, object]:
+    """Live stats from the transcript's tail (256KB — transcripts grow to many
+    MB and the latest assistant record is always near the end):
 
-    Reads only the file's tail (256KB) — transcripts grow to many MB and the
-    latest assistant record is always near the end."""
+      context_tokens — prompt size of the last assistant call (input + cache
+        read + cache creation). The "compact soon" signal: grows with the
+        conversation, resets when the user compacts.
+      model — the model id of the last assistant call ("<synthetic>" records,
+        e.g. local command echoes, don't count).
+    """
+    stats: dict[str, object] = {"context_tokens": None, "model": None}
     try:
         size = path.stat().st_size
         with path.open("rb") as fh:
             fh.seek(max(0, size - 256_000))
             tail = fh.read().decode(errors="replace")
     except OSError:
-        return None
+        return stats
     for line in reversed(tail.splitlines()):
         try:
             obj = json.loads(line)
@@ -144,14 +147,26 @@ def context_tokens(path: Path) -> int | None:
             continue
         if obj.get("type") != "assistant":
             continue
-        usage = (obj.get("message") or {}).get("usage") or {}
+        message = obj.get("message") or {}
+        model = message.get("model")
+        if stats["model"] is None and model and not str(model).startswith("<"):
+            stats["model"] = str(model)
+        usage = message.get("usage") or {}
         total = sum(
             int(usage.get(k) or 0)
             for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
         )
-        if total:
-            return total
-    return None
+        if stats["context_tokens"] is None and total:
+            stats["context_tokens"] = total
+        if stats["context_tokens"] is not None and stats["model"] is not None:
+            break
+    return stats
+
+
+def context_tokens(path: Path) -> int | None:
+    """The current context size alone — see transcript_stats."""
+    tokens = transcript_stats(path)["context_tokens"]
+    return int(tokens) if isinstance(tokens, int) else None
 
 
 # Record types in the JSONL that carry an actual conversation message. Everything

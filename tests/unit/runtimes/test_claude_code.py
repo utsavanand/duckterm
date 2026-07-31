@@ -95,12 +95,13 @@ def test_context_tokens_reads_last_usage_from_the_tail(tmp_path):
 
     from duckterm.runtimes.claude_code import context_tokens
 
-    def assistant(inp, read, create):
+    def assistant(inp, read, create, model="claude-fable-5"):
         return json.dumps(
             {
                 "type": "assistant",
                 "message": {
                     "role": "assistant",
+                    "model": model,
                     "usage": {
                         "input_tokens": inp,
                         "cache_read_input_tokens": read,
@@ -118,6 +119,16 @@ def test_context_tokens_reads_last_usage_from_the_tail(tmp_path):
     lines = [filler] * 600 + [assistant(5, 100, 0), filler, assistant(1, 53228, 141)]
     path.write_text("\n".join(lines))
     assert context_tokens(path) == 1 + 53228 + 141
+
+    # The tail stats also carry the model of the last real assistant call —
+    # "<synthetic>" records (local command echoes) never count.
+    from duckterm.runtimes.claude_code import transcript_stats
+
+    stats = transcript_stats(path)
+    assert stats == {"context_tokens": 53370, "model": "claude-fable-5"}
+    synth = tmp_path / "synth.jsonl"
+    synth.write_text(assistant(1, 10, 0, model="<synthetic>"))
+    assert transcript_stats(synth)["model"] is None
 
     # No usage anywhere -> None (a fresh session shows nothing, not zero).
     empty = tmp_path / "empty.jsonl"

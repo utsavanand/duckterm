@@ -113,6 +113,8 @@ export function applyEvent(
     // mount a dead black terminal for a session running in iTerm/Terminal.
     ptyOwned: prev?.ptyOwned || (e.launched === true && e.pty_owned !== false),
     contextTokens: prev?.contextTokens,
+    model: prev?.model,
+    metaHarnesses: prev?.metaHarnesses,
     startedAt: prev?.startedAt ?? e._ts,
     updatedAt: e._ts,
     eventCount: (prev?.eventCount ?? 0) + 1,
@@ -124,6 +126,10 @@ export function applyAll(events: DucktermEvent[]): Map<string, SessionView> {
   return events.reduce(applyEvent, new Map<string, SessionView>());
 }
 
+
+// The standard claude context window; "left" in the panel is approximate
+// (the 1M-beta window would read pessimistically, never optimistically).
+export const CONTEXT_WINDOW = 200_000;
 
 // Context-size thresholds (claude's window is ~200k): "warm" = start thinking
 // about a checkpoint; "high" = checkpoint or /compact now, quality degrades

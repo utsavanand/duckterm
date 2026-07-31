@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
-import { contextLevel, fmtTokens } from "./sessions";
+import { CONTEXT_WINDOW, contextLevel, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
 
@@ -75,9 +75,21 @@ export function ContextPanel({ session }: { session: SessionView }) {
           <span className="v">{session.state}</span>
         </div>
         <div className="rd-context-row">
-          <span className="k">agent</span>
+          <span className="k">harness</span>
           <span className="v">{session.runtime ?? "—"}</span>
         </div>
+        {session.metaHarnesses && session.metaHarnesses.length > 0 && (
+          <div className="rd-context-row">
+            <span className="k">meta harness</span>
+            <span className="v">{session.metaHarnesses.join(", ")}</span>
+          </div>
+        )}
+        {session.model && (
+          <div className="rd-context-row">
+            <span className="k">model</span>
+            <span className="v">{session.model}</span>
+          </div>
+        )}
         <div className="rd-context-row">
           <span className="k">running</span>
           <span className="v">{age(session.startedAt)}</span>
@@ -86,7 +98,11 @@ export function ContextPanel({ session }: { session: SessionView }) {
           <div className="rd-context-row">
             <span className="k">context</span>
             <span className={`v${ctxLevel ? ` ctx-${ctxLevel}` : ""}`}>
-              {fmtTokens(session.contextTokens)} tokens
+              {fmtTokens(session.contextTokens)} used ·{" "}
+              {fmtTokens(
+                Math.max(0, CONTEXT_WINDOW - session.contextTokens),
+              )}{" "}
+              left
             </span>
           </div>
         )}

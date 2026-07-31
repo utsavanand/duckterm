@@ -654,6 +654,7 @@ def test_sessions_carry_context_tokens_from_the_transcript(
                 "type": "assistant",
                 "message": {
                     "role": "assistant",
+                    "model": "claude-fable-5",
                     "usage": {
                         "input_tokens": 2,
                         "cache_read_input_tokens": 119_998,
@@ -693,3 +694,4 @@ def test_sessions_carry_context_tokens_from_the_transcript(
     sessions = asyncio.run(scenario())
     row = next(s for s in sessions if s["session_key"] == "ctx")
     assert row["context_tokens"] == 120_000
+    assert row["model"] == "claude-fable-5"

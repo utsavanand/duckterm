@@ -10,7 +10,8 @@ The contract is a `duckterm-harness.json` at the suite's root:
       "description": "Agents, skills, hooks, and guardrails for Claude Code",
       "install": ["./install.sh", "--project", "{dir}"],
       "uninstall": ["./uninstall.sh"],                    // optional
-      "args_choices": {"--persona": ["sport", "professional"]}   // optional
+      "args_choices": {"--persona": ["sport", "professional"]},  // optional
+      "detect": ".claude/skills/uv-help"                  // optional
     }
 
 - `install` is an argv template. "{dir}" is replaced with the target directory;
@@ -19,6 +20,9 @@ The contract is a `duckterm-harness.json` at the suite's root:
   works for installers that default to $(pwd)).
 - `args_choices` maps a flag to its allowed values; the dashboard renders one
   picker per flag and appends `flag value` to the argv.
+- `detect` is a path (relative to an install target) whose existence proves
+  the suite is installed there — how the dashboard shows which meta-harness a
+  session is running under.
 - Fallback: a directory with an `install.sh` but no manifest is accepted as
   {name: <dirname>, install: ["./install.sh"]} — that's enough for most
   one-script installers; options ride in as extra args.
@@ -43,6 +47,7 @@ class Suite:
     install: list[str]
     uninstall: list[str] | None
     args_choices: dict[str, list[str]]
+    detect: str | None
     has_manifest: bool
 
 
@@ -74,6 +79,7 @@ def load(path: Path) -> Suite:
             install=[str(a) for a in install],
             uninstall=[str(a) for a in uninstall] if isinstance(uninstall, list) else None,
             args_choices=choices,
+            detect=str(data["detect"]) if data.get("detect") else None,
             has_manifest=True,
         )
     if (path / "install.sh").is_file():
@@ -84,6 +90,7 @@ def load(path: Path) -> Suite:
             install=["./install.sh"],
             uninstall=None,
             args_choices={},
+            detect=None,
             has_manifest=False,
         )
     raise ValueError(f"{path} has neither {MANIFEST} nor install.sh")

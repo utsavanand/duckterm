@@ -269,7 +269,7 @@ class Server:
         self.token = security.load_or_create_token()
         # transcript path -> (mtime, context_tokens): /sessions is fetched
         # often and an unchanged transcript can't have new usage.
-        self._context_cache: dict[str, tuple[float, int | None]] = {}
+        self._context_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
     # Activity that means a session moved past an *earlier* permission prompt:
     # any of these arriving AFTER a request means it was answered and the agent
@@ -551,34 +551,54 @@ class Server:
         subagents = self.history.subagents_by_session()
         for s in sessions:
             s["subagents"] = subagents.get(str(s.get("session_key") or ""), [])
-            s["context_tokens"] = self._context_tokens_for(s)
+            stats = self._transcript_stats_for(s)
+            s["context_tokens"] = stats.get("context_tokens")
+            s["model"] = stats.get("model")
+            s["suites"] = self._suites_for(s.get("worktree_path") or s.get("cwd"))
         await _write_json(writer, 200, {"sessions": sessions})
 
-    def _context_tokens_for(self, row: dict[str, Any]) -> int | None:
-        """Current context size for a claude-code session, read from its
-        transcript tail — the signal for 'this session should be checkpointed
-        or compacted soon'."""
+    def _transcript_stats_for(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Live transcript-tail stats for a claude-code session: current
+        context size (the checkpoint/compact signal) and the model in use."""
         if (row.get("runtime") or "") != "claude-code":
-            return None
+            return {}
         sid = self.history.session_id_for(str(row.get("session_key") or ""))
         cwd = row.get("worktree_path") or row.get("cwd")
         if not sid or not cwd:
-            return None
-        from duckterm.runtimes.claude_code import ClaudeCodeRuntime, context_tokens
+            return {}
+        from duckterm.runtimes.claude_code import ClaudeCodeRuntime, transcript_stats
 
         path = ClaudeCodeRuntime().locate_transcript(cwd=Path(str(cwd)), session_id=sid)
         if path is None:
-            return None
+            return {}
         try:
             mtime = path.stat().st_mtime
         except OSError:
-            return None
+            return {}
         cached = self._context_cache.get(str(path))
         if cached is not None and cached[0] == mtime:
             return cached[1]
-        tokens = context_tokens(path)
-        self._context_cache[str(path)] = (mtime, tokens)
-        return tokens
+        stats = transcript_stats(path)
+        self._context_cache[str(path)] = (mtime, stats)
+        return stats
+
+    def _suites_for(self, directory: object) -> list[str]:
+        """Which installed harness suites (meta-harnesses, e.g. uv-suite) a
+        session runs under: each registered suite with a `detect` marker is
+        checked in the session's own folder, then globally (~/.claude)."""
+        out: list[str] = []
+        for row in self.history.harnesses():
+            try:
+                suite = suites.load(Path(str(row["path"])))
+            except (ValueError, OSError, json.JSONDecodeError):
+                continue
+            if not suite.detect:
+                continue
+            if directory and (Path(str(directory)) / suite.detect).exists():
+                out.append(f"{suite.name} (project)")
+            elif suite.detect.startswith(".claude/") and (Path.home() / suite.detect).exists():
+                out.append(f"{suite.name} (global)")
+        return out
 
     async def _launch(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         try:

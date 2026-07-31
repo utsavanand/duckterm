@@ -232,3 +232,54 @@ def test_installer_env_is_the_users(tmp_path: Path) -> None:
 
     installed = asyncio.run(scenario())
     assert installed["output"] == f"home={os.environ['HOME']}"
+
+
+def test_sessions_report_detected_meta_harness(tmp_path: Path) -> None:
+    """A registered suite with a `detect` marker shows up on sessions whose
+    folder has it — the 'meta harness' row in the panel."""
+    suite = tmp_path / "kit"
+    suite.mkdir()
+    (suite / "install.sh").write_text("#!/bin/sh\n")
+    (suite / "duckterm-harness.json").write_text(
+        json.dumps({"name": "kit", "install": ["./install.sh"], "detect": ".claude/marker"})
+    )
+    project = tmp_path / "proj"
+    (project / ".claude").mkdir(parents=True)
+    (project / ".claude" / "marker").write_text("")
+    bare = tmp_path / "bare"
+    bare.mkdir()
+
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.record(
+        {
+            "event_type": "SessionStart",
+            "session_key": "with",
+            "cwd": str(project),
+            "launched": True,
+            "_ts": 1,
+            "_id": "a",
+        }
+    )
+    store.record(
+        {
+            "event_type": "SessionStart",
+            "session_key": "without",
+            "cwd": str(bare),
+            "launched": True,
+            "_ts": 2,
+            "_id": "b",
+        }
+    )
+
+    async def scenario() -> list[dict]:
+        server = Server(history=store)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            await _post(port, server.token, "/harnesses/register", {"path": str(suite)})
+            _, listed = await _request(port, b"GET /sessions HTTP/1.1\r\nHost: x\r\n\r\n")
+        return list(listed["sessions"])
+
+    rows = {r["session_key"]: r for r in asyncio.run(scenario())}
+    assert rows["with"]["suites"] == ["kit (project)"]
+    assert rows["without"]["suites"] == []
