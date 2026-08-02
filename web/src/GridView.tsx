@@ -1,12 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Edge,
+  LayoutNode,
+  evenColumns,
+  evenRow,
+  leaves,
+  moveToEdge,
+  removeLeaf,
+  resizeSplit,
+} from "./gridLayout";
 import { Terminal } from "./Terminal";
 import { SessionView } from "./types";
 
-// Fullscreen grid for ONE folder's terminals (subfolders included), opened
-// from the folder's ⛶. A true 2D layout: the columns control + drag-order
-// compose any shape (3 across with 1 below, 2×2, a stack), and the bars
-// between tiles drag to resize columns and rows. Collapsed sessions dock to
-// a bottom strip as chips.
+// Fullscreen grid for ONE folder's terminals (subfolders included). Panes work
+// like iTerm/tmux splits: drag a tile's header onto another tile's LEFT/RIGHT
+// edge to sit side-by-side, TOP/BOTTOM to stack — the drop zone highlights as
+// you hover. Bars between panes drag to resize. Collapsed sessions dock to a
+// bottom strip as chips.
 export function GridView({
   title,
   agents,
@@ -20,21 +30,49 @@ export function GridView({
   onSwitchFolder: (folder: string) => void;
   onClose: () => void;
 }) {
-  const [cols, setCols] = useState<number>(0); // 0 = auto
-  const [order, setOrder] = useState<string[]>([]);
-  // Default view: vertical sections, at most 3 expanded — sessions beyond the
-  // first three start in the dock so the grid opens readable, not cramped.
-  const [collapsed, setCollapsed] = useState<Set<string>>(
-    () => new Set(agents.slice(3).map((s) => s.key)),
+  const byKey = useMemo(() => new Map(agents.map((a) => [a.key, a])), [agents]);
+  // Default: vertical sections, at most 3 expanded; the rest dock.
+  const [tree, setTree] = useState<LayoutNode | null>(() =>
+    agents.length ? evenRow(agents.slice(0, 3).map((a) => a.key)) : null,
+  );
+  const [docked, setDocked] = useState<Set<string>>(
+    () => new Set(agents.slice(3).map((a) => a.key)),
   );
   const [dragKey, setDragKey] = useState<string | null>(null);
-  const [colSizes, setColSizes] = useState<number[]>([]);
-  const [rowSizes, setRowSizes] = useState<number[]>([]);
-  const tilesRef = useRef<HTMLDivElement>(null);
+  const [drop, setDrop] = useState<{ key: string; edge: Edge } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
-  // Esc exits — but only when focus is OUTSIDE a terminal (bubble phase):
-  // inside one, Esc belongs to the agent (denying a claude prompt must not
-  // yank the whole grid away). The Exit button always works.
+  /** A new pane joins as a right-hand column, sized like one more section. */
+  function withNewPane(node: LayoutNode | null, key: string): LayoutNode {
+    if (!node) return evenRow([key]);
+    const count = leaves(node).length;
+    return {
+      type: "split",
+      dir: "row",
+      children: [node, { type: "leaf", key }],
+      weights: [Math.max(1, count), 1],
+    };
+  }
+
+  // Sessions can appear (a new fork) or vanish (deleted) while the grid is up.
+  const agentKeys = agents.map((a) => a.key).join(",");
+  useEffect(() => {
+    setTree((t) => {
+      let next = t;
+      const known = new Set([...(t ? leaves(t) : []), ...docked]);
+      for (const a of agents) {
+        if (!known.has(a.key)) next = withNewPane(next, a.key);
+      }
+      if (next) {
+        for (const key of leaves(next)) {
+          if (!byKey.has(key)) next = next ? removeLeaf(next, key) : next;
+        }
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentKeys]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -43,52 +81,61 @@ export function GridView({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const ordered = useMemo(() => {
-    const rank = new Map(order.map((k, i) => [k, i]));
-    return [...agents].sort(
-      (a, b) => (rank.get(a.key) ?? 999) - (rank.get(b.key) ?? 999),
-    );
-  }, [agents, order]);
-  const tiles = ordered.filter((s) => !collapsed.has(s.key));
-  const docked = ordered.filter((s) => collapsed.has(s.key));
+  function preset(cols: number) {
+    const keys = tree ? leaves(tree) : [];
+    if (keys.length === 0) return;
+    setTree(cols === 0 ? evenRow(keys) : evenColumns(keys, cols));
+  }
 
-  // Auto: one vertical section per session, up to 4 across; more than that
-  // wraps into rows. Explicit columns always win.
-  const effectiveCols = cols || Math.max(1, Math.min(tiles.length, 4));
-  const rowCount = Math.max(1, Math.ceil(tiles.length / effectiveCols));
+  function collapse(key: string) {
+    setDocked((prev) => new Set(prev).add(key));
+    setTree((t) => (t ? removeLeaf(t, key) : t));
+  }
 
-  // Size arrays follow the shape; user-dragged proportions reset on reshape
-  // (a resized 2×2 has no meaningful mapping onto a 3-wide layout).
-  useEffect(() => {
-    setColSizes(Array(effectiveCols).fill(1));
-    setRowSizes(Array(rowCount).fill(1));
-  }, [effectiveCols, rowCount]);
+  function expand(key: string) {
+    setDocked((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    setTree((t) => withNewPane(t, key));
+  }
+
+  function edgeFor(e: React.DragEvent, el: HTMLElement): Edge {
+    const r = el.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    const y = (e.clientY - r.top) / r.height;
+    const d: [Edge, number][] = [
+      ["left", x],
+      ["right", 1 - x],
+      ["top", y],
+      ["bottom", 1 - y],
+    ];
+    d.sort((a, b) => a[1] - b[1]);
+    return d[0][0];
+  }
 
   function startResize(
     e: React.PointerEvent,
-    axis: "col" | "row",
+    dir: "row" | "col",
+    path: number[],
     index: number,
   ) {
     e.preventDefault();
-    const container = tilesRef.current;
+    e.stopPropagation();
+    const container = rootRef.current;
     if (!container) return;
-    const sizes = axis === "col" ? [...colSizes] : [...rowSizes];
-    const total = sizes.reduce((a, b) => a + b, 0);
-    const px =
-      axis === "col"
-        ? container.getBoundingClientRect().width
-        : container.getBoundingClientRect().height;
-    const start = axis === "col" ? e.clientX : e.clientY;
-
+    const rect = container.getBoundingClientRect();
+    const px = dir === "row" ? rect.width : rect.height;
+    let last = dir === "row" ? e.clientX : e.clientY;
     const onMove = (ev: PointerEvent) => {
-      const delta =
-        (((axis === "col" ? ev.clientX : ev.clientY) - start) / px) * total;
-      const a = Math.max(0.2, sizes[index] + delta);
-      const b = Math.max(0.2, sizes[index + 1] - delta);
-      const next = [...sizes];
-      next[index] = a;
-      next[index + 1] = b;
-      (axis === "col" ? setColSizes : setRowSizes)(next);
+      const pos = dir === "row" ? ev.clientX : ev.clientY;
+      // Pixel movement scaled into weight units against the full container —
+      // approximate for nested splits, but the drag FEELS direct, which is
+      // what matters.
+      const delta = ((pos - last) / px) * 3;
+      last = pos;
+      setTree((t) => (t ? resizeSplit(t, path, index, delta) : t));
     };
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
@@ -98,28 +145,98 @@ export function GridView({
     window.addEventListener("pointerup", onUp);
   }
 
-  function moveBefore(target: string) {
-    if (!dragKey || dragKey === target) return;
-    const keys = ordered.map((v) => v.key).filter((k) => k !== dragKey);
-    keys.splice(keys.indexOf(target), 0, dragKey);
-    setOrder(keys);
+  function renderNode(node: LayoutNode, path: number[]): JSX.Element | null {
+    if (node.type === "leaf") {
+      const s = byKey.get(node.key);
+      if (!s) return null;
+      const isDrop = drop?.key === node.key;
+      return (
+        <div
+          className="rd-grid-tile"
+          onDragOver={(e) => {
+            if (!dragKey || dragKey === node.key) return;
+            e.preventDefault();
+            setDrop({ key: node.key, edge: edgeFor(e, e.currentTarget) });
+          }}
+          onDragLeave={() => setDrop((d) => (d?.key === node.key ? null : d))}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (dragKey && drop?.key === node.key) {
+              setTree((t) =>
+                t ? moveToEdge(t, dragKey, node.key, drop.edge) : t,
+              );
+            }
+            setDragKey(null);
+            setDrop(null);
+          }}
+        >
+          {isDrop && <div className={`rd-grid-dropzone ${drop!.edge}`} />}
+          <div
+            className="rd-grid-tile-head"
+            draggable
+            title="Drag onto another tile's edge — left/right sits beside it, top/bottom stacks"
+            onDragStart={() => setDragKey(node.key)}
+            onDragEnd={() => {
+              setDragKey(null);
+              setDrop(null);
+            }}
+          >
+            <span className={`rd-state st-${s.state}`}>
+              <span className="dot" />
+            </span>
+            <span className="rd-grid-tile-name">{s.label}</span>
+            {s.branch && (
+              <span className="rd-grid-tile-branch">⎇ {s.branch}</span>
+            )}
+            <span className="rd-spacer" />
+            <button
+              className="rd-grid-tile-collapse"
+              title="Collapse to the dock"
+              onClick={() => collapse(node.key)}
+            >
+              ▾
+            </button>
+          </div>
+          <div className="rd-grid-tile-term">
+            <Terminal sessionKey={node.key} />
+          </div>
+        </div>
+      );
+    }
+    const total = node.weights.reduce((a, b) => a + b, 0);
+    return (
+      <div className={`rd-grid-split ${node.dir}`}>
+        {node.children.map((child, i) => (
+          <div
+            key={child.type === "leaf" ? child.key : `s${i}`}
+            className="rd-grid-cell"
+            style={{ flexGrow: node.weights[i] / total }}
+          >
+            {renderNode(child, [...path, i])}
+            {i < node.children.length - 1 && (
+              <div
+                className={
+                  node.dir === "row" ? "rd-grid-split-v" : "rd-grid-split-h"
+                }
+                title="Drag to resize"
+                onPointerDown={(e) => startResize(e, node.dir, path, i)}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+    );
   }
 
-  function toggleCollapse(key: string) {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-  }
+  const dockedList = agents.filter((a) => docked.has(a.key));
+  const shown = tree ? leaves(tree).length : 0;
 
   return (
     <div className="rd-grid">
       <div className="rd-grid-bar">
-        <span className="rd-grid-title">{ordered.length} running</span>
-        {/* Switch folders without leaving the grid; the grid remounts per
-            folder (keyed in App) so the 3-up default re-applies. */}
+        <span className="rd-grid-title">
+          {shown + dockedList.length} running
+        </span>
         <select
           className="rd-grid-folder"
           value={title}
@@ -134,105 +251,46 @@ export function GridView({
         </select>
         <select
           className="rd-grid-folder rd-grid-cols"
-          title="Columns — drag tile headers to choose what sits where"
-          value={cols}
-          onChange={(e) => setCols(Number(e.target.value))}
+          title="Reset the arrangement to an even layout"
+          value=""
+          onChange={(e) => {
+            if (e.target.value !== "") preset(Number(e.target.value));
+          }}
         >
-          <option value={0}>auto columns</option>
+          <option value="">reset layout…</option>
+          <option value={0}>side by side</option>
           <option value={1}>1 column</option>
           <option value={2}>2 columns</option>
           <option value={3}>3 columns</option>
           <option value={4}>4 columns</option>
         </select>
+        <span className="rd-grid-hint">
+          drag a title bar onto a tile's edge to split
+        </span>
         <span className="rd-spacer" />
         <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={onClose}>
           Exit grid (esc)
         </button>
       </div>
-      {tiles.length === 0 ? (
+      {!tree ? (
         <p className="rd-panel-empty">
-          {docked.length > 0
+          {dockedList.length > 0
             ? "Every session is collapsed — click a chip below to expand it."
             : "No running terminals in this folder."}
         </p>
       ) : (
-        <div
-          ref={tilesRef}
-          className="rd-grid-tiles"
-          style={{
-            gridTemplateColumns: colSizes.map((f) => `${f}fr`).join(" "),
-            gridTemplateRows: rowSizes.map((f) => `${f}fr`).join(" "),
-          }}
-        >
-          {tiles.map((s, i) => {
-            const col = i % effectiveCols;
-            const row = Math.floor(i / effectiveCols);
-            return (
-              <div
-                key={s.key}
-                className="rd-grid-tile"
-                onDragOver={(e) => {
-                  if (dragKey) e.preventDefault();
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  moveBefore(s.key);
-                  setDragKey(null);
-                }}
-              >
-                <div
-                  className="rd-grid-tile-head"
-                  draggable
-                  title="Drag to rearrange"
-                  onDragStart={() => setDragKey(s.key)}
-                  onDragEnd={() => setDragKey(null)}
-                >
-                  <span className={`rd-state st-${s.state}`}>
-                    <span className="dot" />
-                  </span>
-                  <span className="rd-grid-tile-name">{s.label}</span>
-                  {s.branch && (
-                    <span className="rd-grid-tile-branch">⎇ {s.branch}</span>
-                  )}
-                  <span className="rd-spacer" />
-                  <button
-                    className="rd-grid-tile-collapse"
-                    title="Collapse to the dock"
-                    onClick={() => toggleCollapse(s.key)}
-                  >
-                    ▾
-                  </button>
-                </div>
-                <div className="rd-grid-tile-term">
-                  <Terminal sessionKey={s.key} />
-                </div>
-                {col < effectiveCols - 1 && (
-                  <div
-                    className="rd-grid-split-v"
-                    title="Drag to resize columns"
-                    onPointerDown={(e) => startResize(e, "col", col)}
-                  />
-                )}
-                {row < rowCount - 1 && (
-                  <div
-                    className="rd-grid-split-h"
-                    title="Drag to resize rows"
-                    onPointerDown={(e) => startResize(e, "row", row)}
-                  />
-                )}
-              </div>
-            );
-          })}
+        <div ref={rootRef} className="rd-grid-tiles-tree">
+          {renderNode(tree, [])}
         </div>
       )}
-      {docked.length > 0 && (
+      {dockedList.length > 0 && (
         <div className="rd-grid-dock">
-          {docked.map((s) => (
+          {dockedList.map((s) => (
             <button
               key={s.key}
               className="rd-grid-dock-chip"
               title="Bring back into the grid"
-              onClick={() => toggleCollapse(s.key)}
+              onClick={() => expand(s.key)}
             >
               <span className={`rd-state st-${s.state}`}>
                 <span className="dot" />

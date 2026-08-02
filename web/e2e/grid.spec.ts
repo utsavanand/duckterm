@@ -61,23 +61,52 @@ test("folder grid: subtree tiles, resize, dock, exit", async ({ page }) => {
   await expect(tileFor("gA")).toBeVisible();
   await expect(tileFor("gB")).toBeVisible(); // subfolder session included
 
-  // 2 columns, then drag the vertical bar to resize.
-  await page.locator(".rd-grid-cols").selectOption("2");
-  const tilesBox = page.locator(".rd-grid-tiles");
-  const before = await tilesBox.evaluate(
-    (el) => getComputedStyle(el).gridTemplateColumns,
-  );
+  // iTerm-style structural drag: drag gA's title bar onto the BOTTOM edge of
+  // gC — they become vertically stacked (same column, gA below).
+  const gc = tileFor("gC");
+  const gcBox = await gc.boundingBox();
+  if (!gcBox) throw new Error("no gC tile");
+  await tileFor("gA")
+    .locator(".rd-grid-tile-head")
+    .dragTo(gc, {
+      targetPosition: { x: gcBox.width / 2, y: gcBox.height * 0.92 },
+    });
+  const a1 = await tileFor("gA").boundingBox();
+  const c1 = await gc.boundingBox();
+  if (!a1 || !c1) throw new Error("tiles vanished after drag");
+  expect(a1.y).toBeGreaterThan(c1.y); // stacked below…
+  expect(Math.abs(a1.x - c1.x)).toBeLessThan(4); // …in the same column
+
+  // …and back to side-by-side by dragging onto gC's RIGHT edge (the exact
+  // stacked→horizontal move that a flat grid couldn't express).
+  await tileFor("gA")
+    .locator(".rd-grid-tile-head")
+    .dragTo(gc, {
+      targetPosition: { x: c1.width * 0.94, y: c1.height / 2 },
+    });
+  const a2 = await tileFor("gA").boundingBox();
+  const c2 = await gc.boundingBox();
+  if (!a2 || !c2) throw new Error("tiles vanished after drag");
+  expect(a2.x).toBeGreaterThan(c2.x); // beside it…
+  expect(Math.abs(a2.y - c2.y)).toBeLessThan(4); // …on the same row
+
+  // Resize: drag the first bar; the first pane (the one that bar borders)
+  // actually changes width.
+  const firstPane = page.locator(".rd-grid-tile").first();
+  const widthBefore = (await firstPane.boundingBox())?.width ?? 0;
   const bar = page.locator(".rd-grid-split-v").first();
   const box = await bar.boundingBox();
   if (!box) throw new Error("no resize bar");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
-  await page.mouse.move(box.x + 160, box.y + box.height / 2, { steps: 4 });
+  await page.mouse.move(box.x + 140, box.y + box.height / 2, { steps: 4 });
   await page.mouse.up();
-  const after = await tilesBox.evaluate(
-    (el) => getComputedStyle(el).gridTemplateColumns,
-  );
-  expect(after).not.toBe(before); // proportions actually changed
+  const widthAfter = (await firstPane.boundingBox())?.width ?? 0;
+  expect(Math.abs(widthAfter - widthBefore)).toBeGreaterThan(30);
+
+  // Even-layout presets still work as a reset.
+  await page.locator(".rd-grid-cols").selectOption("2");
+  await expect(page.locator(".rd-grid-tile")).toHaveCount(4);
 
   // Collapse to the dock and bring back.
   await tileFor("gA").locator(".rd-grid-tile-collapse").click();
