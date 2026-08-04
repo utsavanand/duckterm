@@ -1,6 +1,9 @@
 # Session sharing (multiplayer) — design
 
-Status: DRAFT v2 — research done, proposal written, validation loops pending.
+Status: DRAFT v3 — research + four validation loops done; proposal revised
+below. The headline change from v2: **v1 drops the relay for a tunnelled
+read-only viewer**, and **"ask" must be rebuilt scoped to one session** (the
+current `/fleet/ask` digests every session — a real leak, not a design nit).
 
 ## The ask
 
@@ -155,41 +158,72 @@ a collaborator actually wants.
 
 ## Proposal
 
-### v1 — "watch + ask" over a relay (build now)
+The staging below is the post-validation version. The v2 design named a relay
+"build now" and reused `/fleet/ask`; both over-engineering reviews and the
+security review pushed back, and they were right — see Validation loops.
+
+### v1 — "watch + scoped-ask" over a tunnel (build now)
 
 The smallest thing that is genuinely multiplayer (live, not a transcript
-export) and whose parts all survive into later phases.
-
-**New component: `relay` — one small service, deliberately dumb.**
-- Accepts one outbound WebSocket per RubberTerm install ("device socket"),
-  authenticated by a device token minted at first connect.
-- `POST /shares` from the device: `{session_key, mode: "view", ttl}` →
-  `{share_id, url}`. Share row: `{share_id, device_id, session_key, mode,
-  exp, revoked}` in SQLite on the relay.
-- Serves the share page (static: xterm.js viewer + ask box) at
-  `/s/<share_id>#<token>` — token in the URL fragment so it never appears in
-  server logs or Referer headers; the page presents it over the WS.
-- Fans terminal frames from the device socket out to viewer sockets; forwards
-  `ask` messages down to the device and returns the answer.
-- Host offline → keeps the last screen, shows a banner with the disconnect
-  time; rejects asks. Device reconnects with backoff (same pattern as the
-  browser terminal client).
-- Deploy: single Fly.io shared-cpu app (~$5/mo). Python, same hand-rolled
-  HTTP/WS transport the main server uses — no new framework.
+export) and whose only always-on dependency is one the owner already runs. No
+relay, no hosted service, no pager.
 
 **Local server changes.**
-- A device-socket client task (connect out, re-register live shares on
-  reconnect, answer `ask`, stream the shared session's byte feed).
-- `POST /sessions/:key/share` + revoke + list, and the share UI in the
-  session detail panel (create link, copy, see viewers, revoke).
-- Join/leave notifications surface like approvals do today.
-- Read-only is structural in v1: the device never accepts input frames from
-  the relay at all — there is no code path from a viewer to a PTY fd.
+- A dedicated **viewer listener** on its own port that serves exactly two
+  things: a static xterm.js share page, and a read-only byte-stream WS for one
+  shared session. It has NO input path — no keystroke, resize, or control
+  handler reaches a PTY. This is the structural read-only boundary; it reuses
+  `subscribe_bytes` (which already sends a clear-screen `\x1b[2J\x1b[H` +
+  capture snapshot on attach) minus the input half. Read-only is enforced by
+  the absence of code, not a client toggle.
+- A **scoped ask endpoint** on that listener: `ask(session_key)` digests ONLY
+  the shared session and answers via the summarizer. This is a NEW code path —
+  the existing `/fleet/ask` digests every running session (`self.history.
+  sessions()`), so reusing it would leak every other session to a viewer.
+  Rate-limited and owner-budgeted (see security findings F1).
+- A **share table** in the local SQLite: `{share_id, session_key, token_hash,
+  mode, exp, revoked}`. `share_id` and `token` are per-share random (≥128-bit);
+  mode lives in the row, never in the token (F2). Revoke flips the flag AND
+  drops any live viewer socket for that share within seconds (F7).
+- `POST /sessions/:key/share` (+ revoke, list) on the main server, and a share
+  panel in the session detail drawer (create link, copy, see viewer count,
+  revoke). Join/leave surfaces like approvals do.
 
-**What a recipient gets from the emailed link:** the live terminal
-(read-only), the session's name/state/goal, and an ask box answered by the
-owner's machine via the existing `/fleet/ask` digest, scoped to that session.
-Owner's email client sends the link; we build no email infra in v1.
+**Exposure.** The owner points a **stable named cloudflared tunnel** (not a
+Quick Tunnel — those rotate URLs and break emailed links) at the viewer
+listener's port only. Because the tunnel fronts a listener that serves only
+the read-only stream + scoped ask, the "whole HTTP surface exposed" objection
+that killed tunnels-as-mechanism in v2 doesn't apply — the surface IS the
+share surface. First-run wires the tunnel; the owner needs a Cloudflare
+account + a domain (or we ship a small default).
+
+**What a recipient gets from the emailed link** (`https://<tunnel>/s/<share_
+id>#<token>`): the live terminal (read-only), the session's name/state/goal,
+and an ask box answered by the owner's machine, scoped to that one session.
+The owner's email client sends the link; we build no email infra. Token in the
+URL fragment (kept out of request lines/Referer), 24h default TTL, revocable.
+
+**Laptop sleeps** → the viewer's WS drops and the share page shows a "host
+offline, reconnecting" banner (the same reconnect-with-backoff the browser
+terminal client already implements). No frozen-screenshot persistence — that
+was a Warp-style choice the v2 doc adopted without noticing it contradicts the
+host-anchored privacy story of every tool it cited (finding from the
+over-engineering review).
+
+### When the relay earns its place (v1.5, triggered — not now)
+
+The relay stops being speculative the moment tunnels hit a concrete limit the
+owner actually feels: (a) two or more distinct people have watched a share and
+wanted the link to survive a server restart / not require the owner's tunnel
+running, or (b) fan-out to several simultaneous viewers per share becomes real
+(the tunnel + local listener handle "some browsers connected," but a relay's
+per-viewer bounded queues and viewer caps are the clean answer at scale). At
+that trigger, build the outbound-rendezvous relay (Fly shared-cpu ~$5/mo, the
+same hand-rolled transport grown a WS *client* half — note `transport/
+websocket.py` is server-only today, so this is real work the v2 estimate hid).
+Everything from v1 (share table, capability tokens, scoped ask, structural
+read-only) moves behind it unchanged; the local listener becomes a device
+socket. Until the trigger, the tunnel is the honest answer.
 
 ### v2 — "prompt it" (build when a real user asks for it)
 
@@ -203,9 +237,18 @@ Owner's email client sends the link; we build no email infra in v1.
   keystrokes. Raw-keystroke sharing (full terminal control) stays out until
   there's a concrete need; if added, it gets its own scarier grant, an input
   audit log, and a kill switch.
-- Local enforcement: every frame from the relay carries the share_id; the
-  local server checks mode + grant before acting. The relay checking too is
-  defense in depth, not the boundary.
+- Local enforcement: every frame carries the share_id; the local server
+  checks mode + grant before acting.
+- **"Send a prompt" is RCE-equivalent** (F6): a prompt into an agent with
+  shell/file/git tools runs arbitrary commands as the owner. So write requires
+  owner **preview-before-inject** (approve each shared prompt, like approvals
+  today), a per-share prompt rate limit, and an agent-permission cap while any
+  interact-share is live (never `--dangerously-skip-permissions`).
+- **Repo-access gating is a filter, not the grant** (F10): verifying GitHub
+  repo access bounds *who can ask* to a known, revocable identity — it does
+  NOT make a shell on the owner's laptop safe (read access to one repo ≠
+  should-have-shell). Explicit per-viewer owner approval stays the boundary;
+  don't let an "auto-grant if repo write" shortcut regress it.
 
 ### v3 — sessions that outlive the laptop (build when handoff demand is real)
 
@@ -219,9 +262,11 @@ Owner's email client sends the link; we build no email infra in v1.
 
 ### Explicitly rejected
 
-- **Tunnels (cloudflared/Funnel) as the product mechanism** — URL rotation
-  breaks emailed links, whole-surface exposure, nothing carries forward.
-  (Still fine for personal one-off use by power users.)
+- **Building the relay in v1** — reversed after validation. Two independent
+  over-engineering reviews found the relay was v3's paid-tier control plane
+  built speculatively under "everything carries forward," justified by
+  objections that apply to Quick Tunnels, not the stable named tunnel v1 now
+  uses. It returns as a *triggered* v1.5.
 - **Building on Liveblocks/Yjs/CRDT infra** — terminal bytes are a broadcast
   stream, not a merge problem. Presence ("Alice is watching") is a counter,
   not a CRDT.
@@ -237,16 +282,79 @@ Owner's email client sends the link; we build no email infra in v1.
 
 ## Validation loops
 
-(to be run: architecture/over-engineering critique, security review of the
-share path, failure-mode walkthrough — findings and resulting changes will be
-recorded here.)
+Four adversarial reviews ran against the v2 draft. Their load-bearing findings
+and how the proposal changed:
+
+### Over-engineering (two independent reviews, same verdict)
+
+- **Cut the relay from v1.** Its only v1 job — one remote browser reaches one
+  session read-only — is done by a stable named tunnel. Fan-out, presence, and
+  a stale-frame-on-sleep don't justify standing up the first always-on service
+  + pager. Both reviews independently landed here. → **Adopted:** v1 is now
+  tunnel-fronted; the relay is triggered v1.5.
+- **"Everything carries forward" is speculative future-proofing** (the
+  project's own architecture-slop guardrail) — the device socket + hosted
+  share table + fan-out is v3's paid-tier control plane. → Deleted as a build
+  justification.
+- **Host-offline snapshot persistence contradicts the doc's own research** —
+  tmate/Upterm/sshx/Live Share all do host-offline → session-dead; only Warp
+  persists. → **Adopted:** v1 shows a reconnect banner, no persisted frame.
+- **The effort estimate hid a real gap** — `transport/websocket.py` is
+  server-only (no client handshake, no outbound frame masking), so the device
+  socket needs a WS *client*. → Noted in the v1.5 trigger section.
+- Kept as correct simplicity calls: rejecting CRDT/Liveblocks, E2E-in-v1,
+  Slack-in-v1, cloud sandboxes; "send a prompt" over raw keystrokes; making
+  read-only structural.
+
+### Security (blocking findings — must be true before v1 ships)
+
+- **F1 / "scoped ask" is fictional in the current code** — `/fleet/ask`
+  digests *every* running session and its live screen, and a viewer-controlled
+  question already deepens the dump for any session it names. Reusing it hands
+  a viewer every other session's output and an unbounded `claude -p` invocation
+  on the owner's account. → **Adopted:** v1 builds a NEW session-scoped ask,
+  rate-limited + owner-budgeted, with the question wrapped as untrusted input;
+  regression test that a share for A cannot surface B.
+- **F2 — per-share random tokens, mode in the row, not HMAC-with-one-secret**
+  (a secret leak would forge every share, incl. future `interact`). → Adopted.
+- **F3 — "no input path" must be audited, not asserted:** sever viewer resize
+  (a viewer must not drive `TIOCSWINSZ` on the owner's PTY), allowlist the
+  viewer→owner message set to exactly `{ask}`, reject+log anything else. →
+  Adopted into the structural-read-only definition.
+- **F4 — device token lifecycle** (keychain storage, per-device revoke for a
+  stolen laptop, rotation) — a v1.5/relay concern, tracked there.
+- **F7 — revocation/expiry must drop LIVE viewer sockets**, not just gate at
+  connect. → Adopted into the share-table revoke behavior.
+- Accepted-with-written-risk: relay sees plaintext (F5, defer E2E, don't
+  persist frames), fragment-token residual leak (F6, 24h TTL, no-referrer,
+  don't log the auth frame), Origin-check the new local POSTs (F8).
+
+### Failure modes (the new boundary is where silent breakage lives)
+
+- The four that turn "share doesn't work" into an undebuggable dead end, all
+  **relay-boundary** concerns → deferred with the relay to v1.5, where they
+  become must-fix: reconnect reconciliation (device is source of truth for
+  liveness), a `share_ended` signal distinct from "host offline" (else a
+  deleted/stopped session shows a false offline banner forever), ask
+  correlation-id + timeout, and a protocol version handshake.
+- Reusable local primitives confirmed present: bounded byte queues with
+  drop-on-full and clear-screen resync (`orchestrator.py`), so the tunnel-v1
+  viewer inherits sane backpressure and repaint for free.
+- v1 (tunnel) note: add **jitter** to reconnect backoff before the relay
+  exists, so a relay redeploy later doesn't cause a synchronized reconnect
+  storm.
 
 ## Open questions for the owner
 
-1. Hosted relay = first always-on infra we operate, and the natural control
-   plane for a future paid tier. Comfortable running that (~$5/mo, one small
-   app), or should v1 ship relay-self-host instructions alongside?
-2. Positioning: is sharing the start of the paid product (market convention),
-   or free while single-user features stay the product?
-3. Does v1's read-only + ask meet the YC "multiplayer" bar you want to demo,
-   or should v2's request-control flow be pulled into the first release?
+1. **Tunnel setup friction.** v1 needs a stable named cloudflared tunnel,
+   which means a Cloudflare account + a domain. Fine to ask the owner to set
+   that up once, or should we ship a hosted default (which is the relay, one
+   phase early)?
+2. **Positioning.** Sharing is the paid tier across the whole market
+   (Conductor $50/mo, Devin Teams, Claude Code Team). Start the paid product
+   here, or keep it free while single-user features stay the product?
+3. **Demo bar.** v1's read-only watch + scoped ask is live and multiplayer —
+   it clears the YC "not a read-only transcript" line. Is that enough to demo,
+   or do you want v2's request-control (write) pulled into the first release
+   despite its RCE surface?
+4. **Build v1 now, or hold?** The doc is decision-ready. Nothing is built yet.
