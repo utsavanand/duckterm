@@ -9,12 +9,12 @@
   --muted: #8e8ea0;
   --accent: #0d0d0d;
   --accent-fg: #ffffff;
-  /* Brand yellow — the Rubberduck duck. (Var names kept as brand-green so the
-     many call sites don't churn; the value is the brand accent, now yellow.) */
-  --brand-green: #e0a500;
-  --brand-green-strong: #c48f00;
+  /* Brand green — a deep forest green (calmer than the old bright parrot
+     green). --idle shares it so the accent is one color across the UI. */
+  --brand-green: #157347;
+  --brand-green-strong: #0f5132;
   --busy: #4b5cff;
-  --idle: #e0a500;
+  --idle: #157347;
   --wait: #c2820b;
   --term: #9aa0aa;
   --danger: #d92d20;
@@ -37,10 +37,10 @@
   --muted: #6b7280;
   --accent: #f5f5f6;
   --accent-fg: #0d0d0d;
-  --brand-green: #fbbf24;
-  --brand-green-strong: #f5b40e;
+  --brand-green: #22a06b;
+  --brand-green-strong: #34c98a;
   --busy: #6b7cff;
-  --idle: #fbbf24;
+  --idle: #22a06b;
   --wait: #fbbf24;
   --term: #6b7280;
   --danger: #f87171;
