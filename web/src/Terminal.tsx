@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 
 // A real terminal for a launched session: xterm.js over the
 // /sessions/:key/terminal WebSocket. Raw PTY bytes stream in as binary frames
@@ -12,8 +13,21 @@ import "@xterm/xterm/css/xterm.css";
 //
 // The WS is a GET, so it rides the same 127.0.0.1 loopback gate as the rest of
 // the GET API — no token needed (only state-changing POSTs are token-gated).
-export function Terminal({ sessionKey }: { sessionKey: string }) {
+export function Terminal({
+  sessionKey,
+  theme = DEFAULT_TERM_THEME,
+}: {
+  sessionKey: string;
+  theme?: string;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Xterm | null>(null);
+
+  // Live theme switch: xterm repaints in place, no reconnect needed.
+  useEffect(() => {
+    if (termRef.current)
+      termRef.current.options.theme = TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME];
+  }, [theme]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -25,10 +39,11 @@ export function Terminal({ sessionKey }: { sessionKey: string }) {
       scrollback: 5000,
       fontSize: 12,
       fontFamily: "ui-monospace, Menlo, monospace",
-      theme: { background: "#0c0f16", foreground: "#d1d5db" },
+      theme: TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME],
       cursorBlink: true,
       convertEol: false,
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
@@ -135,10 +150,11 @@ export function Terminal({ sessionKey }: { sessionKey: string }) {
   // height:0 + flex:1 makes the host fill the pane with a DEFINITE height, so
   // xterm scrolls its buffer internally instead of growing the page. (A
   // min-height here would let it expand and scroll the whole dashboard.)
+  const bg = (TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME]).background;
   return (
     <div
       ref={hostRef}
-      style={{ flex: 1, height: 0, minHeight: 0, background: "#0c0f16" }}
+      style={{ flex: 1, height: 0, minHeight: 0, background: bg }}
     />
   );
 }

@@ -148,3 +148,41 @@ def test_launched_agent_sees_its_duckterm_session_key(tmp_path: Path) -> None:
     for force_pty in (False, True):
         out = asyncio.run(launched_env_line(force_pty))
         assert "KEY=envtest" in out
+
+
+def test_launch_extra_env_reaches_the_agent(tmp_path: Path) -> None:
+    """Launch-time env (e.g. the zsh-theme ZDOTDIR wrapper) must land in the
+    agent's environment on BOTH spawn paths, alongside the session key."""
+    import duckterm.core.orchestrator as orch_mod
+    from duckterm.core.orchestrator import Orchestrator
+    from duckterm.runtimes.generic import GenericRuntime
+
+    async def env_line(force_pty: bool) -> str:
+        bus, _ = collecting_bus()
+        orch = Orchestrator(bus)
+        if force_pty:
+            real = orch_mod.tmux.has_tmux
+            orch_mod.tmux.has_tmux = lambda: False
+        try:
+            key = await orch.launch(
+                runtime=GenericRuntime("sh -c 'sleep 0.3; echo MARK=$DUCKTERM_TEST_MARK; sleep 2'"),
+                cwd=str(tmp_path),
+                session_key=f"extraenv-{'pty' if force_pty else 'tmux'}",
+                env={"DUCKTERM_TEST_MARK": "wrapper-here"},
+            )
+        finally:
+            if force_pty:
+                orch_mod.tmux.has_tmux = real
+        sup = orch.get(key)
+        assert sup is not None
+        for _ in range(80):
+            joined = "".join(sup.output_tail())
+            if "MARK=wrapper-here" in joined:
+                await orch.stop(key)
+                return joined
+            await asyncio.sleep(0.05)
+        await orch.stop(key)
+        raise AssertionError(f"MARK never appeared in: {joined!r}")
+
+    for force_pty in (False, True):
+        assert "MARK=wrapper-here" in asyncio.run(env_line(force_pty))

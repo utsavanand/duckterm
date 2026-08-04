@@ -21,12 +21,14 @@ export function GridView({
   title,
   agents,
   folders,
+  termTheme,
   onSwitchFolder,
   onClose,
 }: {
   title: string;
   agents: SessionView[];
   folders: string[];
+  termTheme?: string;
   onSwitchFolder: (folder: string) => void;
   onClose: () => void;
 }) {
@@ -198,7 +200,7 @@ export function GridView({
             </button>
           </div>
           <div className="rd-grid-tile-term">
-            <Terminal sessionKey={node.key} />
+            <Terminal sessionKey={node.key} theme={termTheme} />
           </div>
         </div>
       );

@@ -1887,3 +1887,16 @@ select {
   font-size: 11px;
   color: var(--muted);
 }
+/* Terminal theme picker: quiet, sits with the topbar utilities. */
+.rd-term-theme {
+  font-size: 12px;
+  background: transparent;
+  color: var(--text-soft);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 3px 4px;
+}
+.rd-term-theme:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}

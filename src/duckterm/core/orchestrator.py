@@ -60,6 +60,7 @@ class SessionSupervisor:
         cwd: str,
         initial_prompt: str = "",
         extra: dict[str, object] | None = None,
+        env: dict[str, str] | None = None,
     ) -> None:
         self.bus = bus
         self.runtime = runtime
@@ -67,6 +68,7 @@ class SessionSupervisor:
         self.cwd = cwd
         self.initial_prompt = initial_prompt
         self._extra = extra or {}
+        self._env = env or {}
         self._proc: asyncio.subprocess.Process | None = None
         self._state: SessionState = "busy"
         self._task: asyncio.Task[None] | None = None
@@ -123,7 +125,7 @@ class SessionSupervisor:
                 # The agent's hooks report under THIS key. Without it their
                 # events arrive keyless and the launched-only ingest drops
                 # them — no approvals, no session_id, no context tokens.
-                env={**os.environ, "DUCKTERM_SESSION_KEY": self.session_key},
+                env={**os.environ, "DUCKTERM_SESSION_KEY": self.session_key, **self._env},
             )
         except FileNotFoundError as e:
             # A typo'd custom command. ValueError is what every launch/fork/
@@ -154,7 +156,7 @@ class SessionSupervisor:
             command,
             self.cwd,
             self._pipe_path,
-            env={"DUCKTERM_SESSION_KEY": self.session_key},
+            env={"DUCKTERM_SESSION_KEY": self.session_key, **self._env},
         )
         self._emit("SessionStart", command=command)
         self._task = asyncio.create_task(self._tail_pipe())
@@ -471,6 +473,7 @@ class Orchestrator:
         parent_session_key: str | None = None,
         compare_group: str | None = None,
         name: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> str:
         """Launch a supervised agent. If repo_path is given, the agent runs in a
         fresh git worktree on `branch` (default: a branch named for the session),
@@ -507,6 +510,7 @@ class Orchestrator:
             cwd=run_cwd,
             initial_prompt=prompt,
             extra=extra,
+            env=env,
         )
         self._supervisors[key] = supervisor
         await supervisor.start()

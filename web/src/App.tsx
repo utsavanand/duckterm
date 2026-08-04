@@ -12,6 +12,7 @@ import { Messages } from "./Messages";
 import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
 import { effectiveState } from "./sessions";
+import { TERM_THEMES, loadTermTheme } from "./termThemes";
 import { ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
 import { useTheme } from "./useTheme";
@@ -40,6 +41,11 @@ function Dashboard() {
   const [view, setView] = useState<"terminal" | "messages">("terminal");
   // The folder whose terminals are tiled fullscreen; null = grid closed.
   const [gridFolder, setGridFolder] = useState<string | null>(null);
+  // Terminal color theme — applies live to every mounted terminal.
+  const [termTheme, setTermTheme] = useState<string>(loadTermTheme);
+  useEffect(() => {
+    localStorage.setItem("rd-term-theme", termTheme);
+  }, [termTheme]);
 
   // Folders persist on the server (incl. empty ones); the left list groups by
   // them. Refetch when sessions change, since moving a session can create or
@@ -205,6 +211,18 @@ function Dashboard() {
         >
           {notifyOn ? "🔔" : "🔕"}
         </button>
+        <select
+          className="rd-term-theme"
+          title="Terminal color theme"
+          value={termTheme}
+          onChange={(e) => setTermTheme(e.target.value)}
+        >
+          {Object.keys(TERM_THEMES).map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
           title={`Theme: ${theme} (click to change)`}
@@ -239,6 +257,7 @@ function Dashboard() {
         <GridView
           key={gridFolder}
           title={gridFolder}
+          termTheme={termTheme}
           agents={terminalAgents.filter(
             (s) =>
               s.group === gridFolder ||
@@ -314,7 +333,7 @@ function Dashboard() {
                     : "none",
               }}
             >
-              <Terminal sessionKey={s.key} />
+              <Terminal sessionKey={s.key} theme={termTheme} />
             </div>
           ))}
           {selected && !selected.ptyOwned && !selected.worktreePath && (

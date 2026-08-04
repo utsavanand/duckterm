@@ -47,6 +47,7 @@ export interface LaunchRequest {
   notes?: string;
   terminal?: string;
   in_terminal?: boolean;
+  zsh_theme?: string;
 }
 
 export interface BrowseEntry {
@@ -73,6 +74,7 @@ export const api = {
     ),
   branches: (path: string) =>
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
+  zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
   promote: (key: string, opts: { branch?: string; base?: string }) =>
     post<{ worktree: string; branch: string }>(
       `/sessions/${key}/promote`,

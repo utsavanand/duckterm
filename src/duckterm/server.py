@@ -48,7 +48,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from duckterm import suites
+from duckterm import suites, zsh_themes
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.eventbus import EventBus
@@ -194,6 +194,7 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
+    Route("GET", "/zsh-themes", lambda s, r, w, h, b, seg: s._list_zsh_themes(w)),
     # ── installable harnesses (suites like uv-suite) ──
     Route("GET", "/harnesses", lambda s, r, w, h, b, seg: s._list_harnesses(w)),
     Route("POST", "/harnesses/register", lambda s, r, w, h, b, seg: s._register_harness(w, b)),
@@ -617,6 +618,15 @@ class Server:
             )
             return
         name = req.get("name")
+        # An oh-my-zsh prompt theme for this session's shell (ZDOTDIR wrapper —
+        # an env var alone loses to the hardcoded ZSH_THEME in ~/.zshrc).
+        extra_env: dict[str, str] = {}
+        if req.get("zsh_theme"):
+            try:
+                extra_env = zsh_themes.theme_env(req["zsh_theme"])
+            except ValueError as e:
+                await _write_json(writer, 400, {"error": str(e)})
+                return
 
         # Headless: Duckterm supervises the agent invisibly (automation / CI).
         if not req.get("in_terminal", True):
@@ -630,6 +640,7 @@ class Server:
                     session_key=req.get("session_key"),
                     prompt=req.get("prompt", ""),
                     name=name,
+                    env=extra_env,
                 )
             except (GitError, ValueError) as e:
                 await _write_json(writer, 400, {"error": str(e)})
@@ -677,7 +688,7 @@ class Server:
             str(run_cwd),
             argv,
             app=req.get("terminal"),
-            env={"DUCKTERM_SESSION_KEY": key},
+            env={"DUCKTERM_SESSION_KEY": key, **extra_env},
             heartbeat=(_heartbeat_url(), key),
             title=name or repo_name,
         )
@@ -1248,6 +1259,9 @@ class Server:
     async def _clear_terminated(self, writer: asyncio.StreamWriter) -> None:
         keys = self.history.clear_terminated()
         await _write_json(writer, 200, {"cleared": len(keys), "session_keys": keys})
+
+    async def _list_zsh_themes(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, {"themes": zsh_themes.list_themes()})
 
     async def _list_harnesses(self, writer: asyncio.StreamWriter) -> None:
         """Registered installable harnesses, with manifest details re-read from

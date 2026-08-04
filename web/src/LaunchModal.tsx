@@ -29,6 +29,16 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   const [branches, setBranches] = useState<string[]>([]);
   const [base, setBase] = useState("");
   const [newBranch, setNewBranch] = useState("");
+  // oh-my-zsh prompt themes found on this machine; empty = hide the picker.
+  const [zshThemes, setZshThemes] = useState<string[]>([]);
+  const [zshTheme, setZshTheme] = useState("");
+
+  useEffect(() => {
+    api
+      .zshThemes()
+      .then((d) => setZshThemes(d.themes))
+      .catch(() => undefined);
+  }, []);
 
   const path = picked?.path;
   const isGit = picked?.is_git ?? false;
@@ -69,6 +79,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
         name: name || undefined,
         prompt: prompt || undefined,
         in_terminal: false,
+        zsh_theme: zshTheme || undefined,
         ...(worktree
           ? {
               repo_path: path,
@@ -227,6 +238,23 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
           placeholder="e.g. login refactor"
         />
       </Field>
+      {zshThemes.length > 0 && (
+        <Field label="zsh prompt theme (optional — your oh-my-zsh themes)">
+          <select
+            className="rd-zsh-theme"
+            style={inputStyle}
+            value={zshTheme}
+            onChange={(e) => setZshTheme(e.target.value)}
+          >
+            <option value="">default (your current zshrc)</option>
+            {zshThemes.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
       <Field label="Prompt / what you want it to do (optional)">
         <input
           style={inputStyle}
