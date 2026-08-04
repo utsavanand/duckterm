@@ -34,9 +34,7 @@ def _ask(port: int, key: str, question: str) -> tuple[int, dict]:
         return e.code, json.loads(e.read())
 
 
-def test_scoped_ask_reads_only_the_named_session(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_scoped_ask_reads_only_the_named_session(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DUCKTERM_SUMMARIZER_CMD", "cat")
 
     async def scenario() -> tuple[int, dict]:

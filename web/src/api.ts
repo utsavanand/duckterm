@@ -175,10 +175,7 @@ export const api = {
       cwd: string;
       carried_conversation?: boolean;
       note?: string | null;
-    }>(
-      `/sessions/${key}/fork-conversation`,
-      { in_terminal: false },
-    ),
+    }>(`/sessions/${key}/fork-conversation`, { in_terminal: false }),
   stop: (key: string) => post<{ stopped: boolean }>(`/sessions/${key}/stop`),
   resume: (key: string) =>
     post<{ resumed: boolean }>(`/sessions/${key}/resume`),
@@ -204,6 +201,20 @@ export const api = {
       `/sessions/${key}/checkpoint`,
       { label },
     ),
+  createShare: (key: string) =>
+    post<{ share_id: string; url: string; expires_at: number }>(
+      `/sessions/${key}/share`,
+      {},
+    ),
+  listShares: (key: string) =>
+    get<{ shares: { share_id: string; url: string; expires_at: number }[] }>(
+      `/sessions/${key}/shares`,
+    ),
+  revokeShare: (shareId: string) =>
+    fetch(`/shares/${shareId}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    }).then((r) => r.ok),
   checkpoints: (key: string) =>
     get<{ checkpoints: CheckpointRecord[] }>(`/sessions/${key}/checkpoints`),
   spotlight: (key: string) =>

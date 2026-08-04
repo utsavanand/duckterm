@@ -106,9 +106,7 @@ def test_cannot_share_a_session_that_is_not_running(tmp_path, monkeypatch) -> No
         api = await asyncio.start_server(server.handle, "127.0.0.1", 0)
         port = api.sockets[0].getsockname()[1]
         async with api:
-            return await asyncio.to_thread(
-                _req, port, "POST", "/sessions/ghost/share", {}
-            )
+            return await asyncio.to_thread(_req, port, "POST", "/sessions/ghost/share", {})
 
     status, body = asyncio.run(scenario())
     assert status == 400

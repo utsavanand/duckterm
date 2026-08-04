@@ -1995,3 +1995,29 @@ select {
   white-space: pre-wrap;
   padding: 4px 0 0 14px;
 }
+
+/* Share link popover under a session row. */
+.rd-share-wrap {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-soft);
+}
+.rd-share-hint {
+  font-size: 11px;
+  color: var(--text-soft);
+  margin-bottom: 6px;
+}
+.rd-share-row {
+  display: flex;
+  gap: 6px;
+}
+.rd-share-url {
+  flex: 1;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 4px 8px;
+}

@@ -410,6 +410,10 @@ function TreeRow({
   const [notes, setNotes] = useState(s.notes ?? "");
   const [collapsed, setCollapsed] = useState(false);
   const [capturing, setCapturing] = useState(false);
+  // A live share link for this session (read-only view over the relay). Null
+  // until the user creates one; shown in a small popover to copy.
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
   // Once stop/delete is in flight, grey the whole row's actions so a second
   // click can't fire a phantom request before the row is removed.
   const [ending, setEnding] = useState(false);
@@ -526,6 +530,36 @@ function TreeRow({
       await act("Checkpoint recorded", () => api.checkpoint(s.key, "manual"));
     } finally {
       setCapturing(false);
+    }
+  }
+
+  async function share() {
+    if (sharing) return;
+    // Toggle: if a link is already showing, hide it; else create (or reuse) one.
+    if (shareUrl) {
+      setShareUrl(null);
+      return;
+    }
+    setSharing(true);
+    try {
+      const existing = await api.listShares(s.key);
+      const link =
+        existing.shares[0]?.url ?? (await api.createShare(s.key)).url;
+      setShareUrl(link);
+    } catch (e) {
+      toast(`Share failed: ${(e as Error).message}`, "err");
+    } finally {
+      setSharing(false);
+    }
+  }
+
+  async function copyShare() {
+    if (!shareUrl) return;
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      toast("Link copied");
+    } catch {
+      toast("Copy failed — select and copy manually", "err");
     }
   }
 
@@ -677,6 +711,23 @@ function TreeRow({
               )}
             </button>
           )}
+          {live && (
+            <button
+              className={`rd-btn rd-btn-sm rd-btn-ghost${shareUrl ? " active" : ""}`}
+              title="Share a read-only live link to this session"
+              disabled={sharing}
+              onClick={share}
+            >
+              {sharing ? (
+                <span className="rd-inline-spin">
+                  <span className="rd-spinner" />
+                  Sharing…
+                </span>
+              ) : (
+                "Share"
+              )}
+            </button>
+          )}
           {resumable && (
             <button
               className="rd-btn rd-btn-sm rd-btn-primary"
@@ -765,6 +816,22 @@ function TreeRow({
                 onClick={saveNotes}
               >
                 Save
+              </button>
+            </div>
+          </div>
+        )}
+        {shareUrl && (
+          <div className="rd-share-wrap">
+            <div className="rd-share-hint">
+              Read-only live link — anyone with it can watch this session:
+            </div>
+            <div className="rd-share-row">
+              <input className="rd-share-url" readOnly value={shareUrl} />
+              <button
+                className="rd-btn rd-btn-sm rd-btn-primary"
+                onClick={copyShare}
+              >
+                Copy
               </button>
             </div>
           </div>
