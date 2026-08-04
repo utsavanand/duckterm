@@ -38,6 +38,9 @@ $PY -m pytest -p no:cacheprovider
 step "slop check (docs/tests heuristics)"
 $PY scripts/slop_check.py
 
+step "Frontend lint (eslint) + types"
+( cd web && npm run lint --silent && npm run typecheck --silent )
+
 step "Frontend unit tests (vitest)"
 ( cd web && npm test --silent )
 

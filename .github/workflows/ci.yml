@@ -16,7 +16,7 @@ jobs:
       - run: ruff check src tests
       - run: black --check src tests scripts
       - run: mypy
-      - run: pytest
+      - run: python -m pytest
       - run: python scripts/slop_check.py
 
   web:

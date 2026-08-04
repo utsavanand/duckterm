@@ -12,7 +12,15 @@ import { Messages } from "./Messages";
 import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
 import { effectiveState } from "./sessions";
-import { TERM_THEMES, loadTermTheme } from "./termThemes";
+import { SessionView } from "./types";
+import {
+  TERM_THEMES,
+  ThemeOverrides,
+  loadTermTheme,
+  loadThemeOverrides,
+  resolveTermTheme,
+  saveThemeOverrides,
+} from "./termThemes";
 import { ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
 import { useTheme } from "./useTheme";
@@ -46,6 +54,28 @@ function Dashboard() {
   useEffect(() => {
     localStorage.setItem("rd-term-theme", termTheme);
   }, [termTheme]);
+  // Per-session / per-folder theme overrides (session > nearest folder > global).
+  const [themeOverrides, setThemeOverrides] =
+    useState<ThemeOverrides>(loadThemeOverrides);
+  useEffect(() => {
+    saveThemeOverrides(themeOverrides);
+  }, [themeOverrides]);
+  const themeFor = (s: SessionView) =>
+    resolveTermTheme(themeOverrides, termTheme, s.key, s.group);
+  const setSessionTheme = (key: string, theme: string | null) =>
+    setThemeOverrides((o) => {
+      const sessions = { ...o.sessions };
+      if (theme) sessions[key] = theme;
+      else delete sessions[key];
+      return { ...o, sessions };
+    });
+  const setFolderTheme = (folder: string, theme: string | null) =>
+    setThemeOverrides((o) => {
+      const folders = { ...o.folders };
+      if (theme) folders[folder] = theme;
+      else delete folders[folder];
+      return { ...o, folders };
+    });
 
   // Folders persist on the server (incl. empty ones); the left list groups by
   // them. Refetch when sessions change, since moving a session can create or
@@ -257,7 +287,7 @@ function Dashboard() {
         <GridView
           key={gridFolder}
           title={gridFolder}
-          termTheme={termTheme}
+          themeFor={themeFor}
           agents={terminalAgents.filter(
             (s) =>
               s.group === gridFolder ||
@@ -292,6 +322,8 @@ function Dashboard() {
               }
               onRename={(key, name) => patchSession(key, { label: name })}
               onOpenGrid={setGridFolder}
+              folderThemes={themeOverrides.folders}
+              onSetFolderTheme={setFolderTheme}
             />
           )}
         </section>
@@ -333,7 +365,7 @@ function Dashboard() {
                     : "none",
               }}
             >
-              <Terminal sessionKey={s.key} theme={termTheme} />
+              <Terminal sessionKey={s.key} theme={themeFor(s)} />
             </div>
           ))}
           {selected && !selected.ptyOwned && !selected.worktreePath && (
@@ -360,6 +392,24 @@ function Dashboard() {
               knownKeys={knownKeys}
               waiting={waiting}
             />
+            {selected && selected.ptyOwned && (
+              <label className="rd-session-theme">
+                terminal theme
+                <select
+                  value={themeOverrides.sessions[selected.key] ?? ""}
+                  onChange={(e) =>
+                    setSessionTheme(selected.key, e.target.value || null)
+                  }
+                >
+                  <option value="">folder / global default</option>
+                  {Object.keys(TERM_THEMES).map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {selected && <ContextPanel session={selected} />}
           </div>
         </section>

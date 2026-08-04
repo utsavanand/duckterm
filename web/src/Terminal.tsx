@@ -26,7 +26,8 @@ export function Terminal({
   // Live theme switch: xterm repaints in place, no reconnect needed.
   useEffect(() => {
     if (termRef.current)
-      termRef.current.options.theme = TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME];
+      termRef.current.options.theme =
+        TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME];
   }, [theme]);
 
   useEffect(() => {
@@ -145,6 +146,10 @@ export function Terminal({
       }
       term.dispose();
     };
+    // `theme` is deliberately not a dependency: the effect above restyles the
+    // live terminal in place — re-running this one would tear down the WS and
+    // rebuild the terminal on every theme switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionKey]);
 
   // height:0 + flex:1 makes the host fill the pane with a DEFINITE height, so

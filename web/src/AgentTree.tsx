@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
+import { TERM_THEMES } from "./termThemes";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
@@ -18,6 +19,8 @@ export function AgentTree({
   onSessionMoved,
   onRename,
   onOpenGrid,
+  folderThemes,
+  onSetFolderTheme,
 }: {
   sessions: SessionView[];
   now: number;
@@ -30,6 +33,8 @@ export function AgentTree({
   onSessionMoved: (key: string, group: string) => void;
   onRename: (key: string, name: string) => void;
   onOpenGrid: (folder: string) => void;
+  folderThemes: Record<string, string>;
+  onSetFolderTheme: (folder: string, theme: string | null) => void;
 }) {
   const toast = useToast();
   const roots = buildForest(sessions);
@@ -139,6 +144,8 @@ export function AgentTree({
       onDelete={() => removeFolder(path)}
       onNewSubfolder={() => createSubfolder(path)}
       onOpenGrid={() => onOpenGrid(path)}
+      theme={folderThemes[path]}
+      onSetTheme={(t) => onSetFolderTheme(path, t)}
     >
       {(byFolder.get(path) ?? []).map(renderNode)}
       {childrenOf(path).map((c) => renderFolder(c, depth + 1))}
@@ -175,6 +182,8 @@ function GroupHeader({
   onDelete,
   onNewSubfolder,
   onOpenGrid,
+  theme,
+  onSetTheme,
   children,
 }: {
   name: string;
@@ -185,6 +194,8 @@ function GroupHeader({
   onDropFolder: (name: string, parent: string) => void;
   onNewSubfolder: () => void;
   onOpenGrid: () => void;
+  theme: string | undefined;
+  onSetTheme: (theme: string | null) => void;
   children: ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -226,6 +237,25 @@ function GroupHeader({
         <span className="rd-group-caret">{collapsed ? "▸" : "▾"}</span>
         <span className="rd-group-name">{leaf}</span>
         <span className="rd-group-count">{count}</span>
+        <span
+          className={`rd-group-theme-wrap${theme ? " set" : ""}`}
+          title={`Terminal theme for this folder: ${theme ?? "default"}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          🎨
+          <select
+            className="rd-group-theme"
+            value={theme ?? ""}
+            onChange={(e) => onSetTheme(e.target.value || null)}
+          >
+            <option value="">default theme</option>
+            {Object.keys(TERM_THEMES).map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </span>
         <button
           className="rd-group-grid"
           title="Open this folder's terminals in a grid"

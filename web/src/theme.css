@@ -1900,3 +1900,40 @@ select {
   border-color: var(--border-strong);
   color: var(--text);
 }
+
+/* Folder theme picker: an invisible select over the 🎨 icon. */
+.rd-group-theme-wrap {
+  position: relative;
+  font-size: 12px;
+  opacity: 0.45;
+  cursor: pointer;
+}
+.rd-group-theme-wrap.set,
+.rd-group-theme-wrap:hover {
+  opacity: 1;
+}
+.rd-group-theme {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+/* Per-session theme picker in the right panel. */
+.rd-session-theme {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-soft);
+  padding: 6px 0;
+}
+.rd-session-theme select {
+  flex: 1;
+  font-size: 12px;
+  background: var(--bg-soft);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  padding: 3px 6px;
+}

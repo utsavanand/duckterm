@@ -158,3 +158,45 @@ export function loadTermTheme(): string {
   const saved = localStorage.getItem("rd-term-theme");
   return saved && saved in TERM_THEMES ? saved : DEFAULT_TERM_THEME;
 }
+
+// Overrides let one session (or a whole folder subtree) render differently.
+// Stored client-side like the global choice — it's a per-viewer display pref.
+export interface ThemeOverrides {
+  sessions: Record<string, string>;
+  folders: Record<string, string>;
+}
+
+const OVERRIDES_KEY = "rd-term-theme-overrides";
+
+export function loadThemeOverrides(): ThemeOverrides {
+  try {
+    const raw = JSON.parse(localStorage.getItem(OVERRIDES_KEY) ?? "{}");
+    return { sessions: raw.sessions ?? {}, folders: raw.folders ?? {} };
+  } catch {
+    return { sessions: {}, folders: {} };
+  }
+}
+
+export function saveThemeOverrides(o: ThemeOverrides): void {
+  localStorage.setItem(OVERRIDES_KEY, JSON.stringify(o));
+}
+
+/** Session override wins, then the nearest folder up the path ("a/b/c" checks
+ * a/b/c, a/b, a), then the global choice. Unknown names are ignored so a
+ * stale saved override can't blank a terminal. */
+export function resolveTermTheme(
+  o: ThemeOverrides,
+  globalTheme: string,
+  sessionKey: string,
+  group?: string,
+): string {
+  const s = o.sessions[sessionKey];
+  if (s && s in TERM_THEMES) return s;
+  let g = group ?? "";
+  while (g) {
+    const f = o.folders[g];
+    if (f && f in TERM_THEMES) return f;
+    g = g.includes("/") ? g.slice(0, g.lastIndexOf("/")) : "";
+  }
+  return globalTheme in TERM_THEMES ? globalTheme : DEFAULT_TERM_THEME;
+}
