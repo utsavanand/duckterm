@@ -64,6 +64,7 @@ from duckterm.persistence.checkpoints import build_checkpoint
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
 from duckterm.runtimes.base import AgentRuntime
+from duckterm.sharing.manager import ShareManager
 from duckterm.transport.httpio import (
     KEEPALIVE_SECONDS,
     SELF_PROBE_HEADER,
@@ -197,6 +198,13 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
     Route("GET", "/zsh-themes", lambda s, r, w, h, b, seg: s._list_zsh_themes(w)),
+    # ── session sharing: expose a running session to the relay ──
+    Route("POST", "", lambda s, r, w, h, b, seg: s._create_share(w, seg, b),
+          **_mid("/sessions/", "/share")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._list_shares(w, seg),
+          **_mid("/sessions/", "/shares")),
+    Route("DELETE", "", lambda s, r, w, h, b, seg: s._revoke_share(w, seg),
+          prefix="/shares/"),
     # ── installable harnesses (suites like uv-suite) ──
     Route("GET", "/harnesses", lambda s, r, w, h, b, seg: s._list_harnesses(w)),
     Route("POST", "/harnesses/register", lambda s, r, w, h, b, seg: s._register_harness(w, b)),
@@ -271,6 +279,7 @@ class Server:
         self.orchestrator = Orchestrator(self.bus, history=self.history)
         self.snapshots = SnapshotManager(self.history)
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
+        self.shares = ShareManager(self.orchestrator)
         self.token = security.load_or_create_token()
         # transcript path -> (mtime, context_tokens): /sessions is fetched
         # often and an unchanged transcript can't have new usage.
@@ -1080,6 +1089,9 @@ class Server:
         # A session running in the user's own terminal (duckterm run / a tab we
         # opened) isn't ours to kill — the user stops it there.
         stopped = await self.orchestrator.stop(session_key)
+        # A stopped session's PTY is gone — its shares can't stream anything, so
+        # revoke them rather than let viewers stare at a frozen "offline" screen.
+        await self.shares.revoke_for_session(session_key)
         # Mark it stopped (resumable) rather than terminated — Stop is a pause; the
         # worktree, branch, and conversation id are kept so Resume can continue it.
         # Publish so the change persists AND reaches connected dashboards over SSE.
@@ -1172,6 +1184,7 @@ class Server:
             )
             return
         await self.orchestrator.stop(session_key)
+        await self.shares.revoke_for_session(session_key)
         self._set_lifecycle(session_key, "archived")
         self.approvals.drop_session(session_key)
         await _write_json(writer, 200, {"archived": True, "session_key": session_key})
@@ -1203,6 +1216,7 @@ class Server:
             )
             return
         await self.orchestrator.stop(session_key)
+        await self.shares.revoke_for_session(session_key)
         self._remove_worktree(row)
         deleted = self.history.delete_session(session_key, now=int(time.time() * 1000))
         self.approvals.drop_session(session_key)
@@ -1362,6 +1376,35 @@ class Server:
 
     async def _list_zsh_themes(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"themes": zsh_themes.list_themes()})
+
+    # ── session sharing ──────────────────────────────────────────────────────
+
+    async def _create_share(
+        self, writer: asyncio.StreamWriter, session_key: str, body: bytes
+    ) -> None:
+        """Expose a running session through the relay and return the viewer link.
+        The link carries a capability token in its fragment (never logged)."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        ttl = int(req.get("ttl") or 24 * 3600)
+        try:
+            share = self.shares.create(session_key, ttl=ttl)
+        except ValueError as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        await _write_json(writer, 200, share.public(_relay_web_base()))
+
+    async def _list_shares(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        base = _relay_web_base()
+        shares = [s.public(base) for s in self.shares.for_session(session_key)]
+        await _write_json(writer, 200, {"shares": shares})
+
+    async def _revoke_share(self, writer: asyncio.StreamWriter, share_id: str) -> None:
+        revoked = await self.shares.revoke(share_id)
+        await _write_json(writer, 200 if revoked else 404, {"revoked": revoked})
 
     async def _list_harnesses(self, writer: asyncio.StreamWriter) -> None:
         """Registered installable harnesses, with manifest details re-read from
@@ -2224,6 +2267,13 @@ def _pid_alive(pid: int) -> bool:
 def _heartbeat_url() -> str:
     base = os.environ.get("DUCKTERM_URL", "http://127.0.0.1:4300").rstrip("/")
     return f"{base}/heartbeat"
+
+
+def _relay_web_base() -> str:
+    """The https base for viewer links (`…/s/<id>#<token>`) — the browser-facing
+    origin of the relay, distinct from the ws:// URL the laptop dials. Defaults
+    to a local relay for dev."""
+    return os.environ.get("RUBBERTERM_RELAY_WEB", "http://127.0.0.1:4400").rstrip("/")
 
 
 def _branch_name(name: str | None) -> str:

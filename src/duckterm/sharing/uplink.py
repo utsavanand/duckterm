@@ -54,10 +54,16 @@ class ShareUplink:
     def start(self) -> None:
         self._task = asyncio.create_task(self._run())
 
-    async def stop(self) -> None:
+    def request_stop(self) -> None:
+        """Signal the uplink to stop without awaiting — for a synchronous caller
+        (e.g. an expiry sweep). The task cancels itself on its next tick."""
         self._stopped.set()
         if self._task is not None:
             self._task.cancel()
+
+    async def stop(self) -> None:
+        self.request_stop()
+        if self._task is not None:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
 
