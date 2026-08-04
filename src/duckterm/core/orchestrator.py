@@ -367,6 +367,18 @@ class SessionSupervisor:
         recent = list(self._byte_tail)[-40:]
         return b"".join(recent)
 
+    def screen_text(self, lines: int = 30) -> str:
+        """Recent output as plain text, for the fleet digest. tmux: capture the
+        live pane — the pipe tail misses output that raced pipe-pane's attach;
+        PTY: the decoded output tail."""
+        if self._tmux_target is not None and tmux.session_exists(self._tmux_target):
+            rows = [
+                r.rstrip() for r in tmux.capture_pane(self._tmux_target).splitlines() if r.strip()
+            ]
+            if rows:
+                return "\n".join(rows[-lines:])
+        return "".join(self.output_tail(lines)).strip()
+
     def resize(self, cols: int, rows: int) -> bool:
         """Resize the agent's terminal so its TUI reflows to the pane. PTY: set
         the window size on the master fd (TIOCSWINSZ). tmux: resize the window."""

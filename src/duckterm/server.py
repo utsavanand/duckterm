@@ -59,6 +59,7 @@ from duckterm.git.worktrees import GitError
 from duckterm.harnesses import runtime_for
 from duckterm.helpers import browse, security
 from duckterm.llm.suggest import Correction, suggest_rules
+from duckterm.llm.summarizer import summarize
 from duckterm.persistence.checkpoints import build_checkpoint
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
@@ -192,6 +193,7 @@ _ROUTES: list[Route] = [
     # ── control ──
     Route("POST", "/sessions/launch", lambda s, r, w, h, b, seg: s._launch(w, b)),
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
+    Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
     Route("GET", "/zsh-themes", lambda s, r, w, h, b, seg: s._list_zsh_themes(w)),
@@ -645,8 +647,11 @@ class Server:
             except (GitError, ValueError) as e:
                 await _write_json(writer, 400, {"error": str(e)})
                 return
-            if req.get("notes"):
-                self.history.set_meta(key, notes=req.get("notes"))
+            # Persist the name like the terminal path does: the SessionStart
+            # event carries it to LIVE dashboards, but the row is what refresh
+            # and server-side readers (the fleet digest) see.
+            if name or req.get("notes"):
+                self.history.set_meta(key, name=name, notes=req.get("notes"))
             await _write_json(writer, 200, {"session_key": key, "opened_in_terminal": False})
             return
 
@@ -1259,6 +1264,101 @@ class Server:
     async def _clear_terminated(self, writer: asyncio.StreamWriter) -> None:
         keys = self.history.clear_terminated()
         await _write_json(writer, 200, {"cleared": len(keys), "session_keys": keys})
+
+    # The fleet chat is digest-based on purpose: one LLM call over capped
+    # per-session digests answers fleet-level questions ("who's stuck?",
+    # "which sessions touched auth?") in seconds. Upgrade path if digests
+    # prove too shallow for deep history questions: give the answerer tools
+    # to read a named session's full transcript and diff on demand.
+    _FLEET_STATES_DONE = ("stopped", "terminated", "archived")
+
+    def _fleet_digest(self, row: dict[str, Any], question: str) -> str:
+        key = str(row.get("session_key") or "")
+        name = str(row.get("name") or row.get("source_app") or key)
+        # A question that names a session gets a deeper look at that session.
+        focus = name.lower() in question.lower()
+        stats = self._transcript_stats_for(row)
+        meta = [
+            f"folder: {row.get('grp') or '-'}",
+            f"state: {row.get('state') or '?'}",
+            f"runtime: {row.get('runtime') or '?'}",
+        ]
+        if stats.get("model"):
+            meta.append(f"model: {stats['model']}")
+        if stats.get("context_tokens"):
+            meta.append(f"context tokens: {stats['context_tokens']}")
+        lines = [f"### {name} ({key})", " | ".join(meta)]
+        if row.get("intention"):
+            lines.append(f"goal: {row['intention']}")
+        cps = self.history.checkpoints(key)
+        if cps:
+            lines.append(f"last checkpoint: {cps[0].get('summary') or cps[0].get('label')}")
+        sup = self.orchestrator.get(key)
+        if sup is not None:
+            screen = sup.screen_text(120 if focus else 30)
+            if screen:
+                lines.append("recent terminal output:")
+                lines.append(screen)
+        return "\n".join(lines)
+
+    async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        """Answer a question about the currently running sessions: build a
+        digest of each, ask the configured summarizer backend once."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        question = str(req.get("question") or "").strip()
+        if not question:
+            await _write_json(writer, 400, {"error": "question required"})
+            return
+        running = [
+            r
+            for r in self.history.sessions()
+            if str(r.get("state") or "") not in self._FLEET_STATES_DONE
+        ]
+        if not running:
+            await _write_json(
+                writer, 200, {"answer": "No sessions are running right now.", "sessions": []}
+            )
+            return
+        digests = "\n\n".join(self._fleet_digest(r, question) for r in running)
+        history = [
+            f"Q: {h.get('q')}\nA: {h.get('a')}"
+            for h in (req.get("history") or [])[-2:]
+            if isinstance(h, dict)
+        ]
+        prompt = (
+            "You oversee a fleet of coding-agent sessions. Below is a digest of "
+            "each currently running session (state, goal, recent terminal "
+            "output). Answer the user's question about them, concise and "
+            "concrete — name sessions by their name. If the digests don't hold "
+            "the answer, say what to open instead of guessing.\n\n"
+            + digests
+            + ("\n\nEarlier exchanges:\n" + "\n".join(history) if history else "")
+            + f"\n\nQuestion: {question}\nAnswer:"
+        )
+        result = await asyncio.to_thread(summarize, prompt)
+        if not result.text:
+            await _write_json(
+                writer,
+                502,
+                {
+                    "error": "no summarizer backend — install claude/codex/copilot "
+                    "or set DUCKTERM_SUMMARIZER_CMD"
+                },
+            )
+            return
+        await _write_json(
+            writer,
+            200,
+            {
+                "answer": result.text,
+                "sessions": [str(r.get("session_key")) for r in running],
+                "backend": result.backend,
+            },
+        )
 
     async def _list_zsh_themes(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"themes": zsh_themes.list_themes()})

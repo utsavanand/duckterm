@@ -75,6 +75,11 @@ export const api = {
   branches: (path: string) =>
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
+  fleetAsk: (question: string, history: { q: string; a: string }[]) =>
+    post<{ answer: string; sessions: string[] }>("/fleet/ask", {
+      question,
+      history,
+    }),
   promote: (key: string, opts: { branch?: string; base?: string }) =>
     post<{ worktree: string; branch: string }>(
       `/sessions/${key}/promote`,

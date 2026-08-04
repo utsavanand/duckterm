@@ -4,6 +4,7 @@ import { AgentTree } from "./AgentTree";
 import { api } from "./api";
 import { Approvals } from "./Approvals";
 import { ContextPanel } from "./ContextPanel";
+import { FleetChat } from "./FleetChat";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { HarnessesModal } from "./HarnessesModal";
@@ -282,6 +283,7 @@ function Dashboard() {
           New session
         </button>
       </header>
+      <FleetChat />
 
       {gridFolder !== null ? (
         <GridView
