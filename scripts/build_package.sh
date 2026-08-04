@@ -14,7 +14,9 @@ cp -r web/dist/. src/duckterm/dashboard/
 
 echo "==> building sdist + wheel"
 rm -rf dist build ./*.egg-info
-python -m build
+# The repo venv has `build` installed; a bare `python` only exists inside an
+# activated venv, so this failed when run from a plain shell.
+"${PYTHON:-.venv/bin/python}" -m build
 
 echo "==> done. Artifacts in dist/:"
 ls -1 dist/
