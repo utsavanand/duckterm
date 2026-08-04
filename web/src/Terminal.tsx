@@ -23,11 +23,14 @@ export function Terminal({
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Xterm | null>(null);
 
-  // Live theme switch: xterm repaints in place, no reconnect needed.
+  // Live theme switch (e.g. toggling the app light/dark): set the new palette
+  // and force a full repaint so already-rendered rows recolor immediately,
+  // not just on the next write.
   useEffect(() => {
-    if (termRef.current)
-      termRef.current.options.theme =
-        TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME];
+    const term = termRef.current;
+    if (!term) return;
+    term.options.theme = TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME];
+    term.refresh(0, term.rows - 1);
   }, [theme]);
 
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
-import { TERM_THEMES } from "./termThemes";
+import { TermMode, themesForMode } from "./termThemes";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
@@ -22,6 +22,7 @@ export function AgentTree({
   onOpenGrid,
   folderThemes,
   onSetFolderTheme,
+  termMode,
 }: {
   sessions: SessionView[];
   now: number;
@@ -37,6 +38,7 @@ export function AgentTree({
   onOpenGrid: (folder: string) => void;
   folderThemes: Record<string, string>;
   onSetFolderTheme: (folder: string, theme: string | null) => void;
+  termMode: TermMode;
 }) {
   const toast = useToast();
   const roots = buildForest(sessions);
@@ -149,6 +151,7 @@ export function AgentTree({
       onOpenGrid={() => onOpenGrid(path)}
       theme={folderThemes[path]}
       onSetTheme={(t) => onSetFolderTheme(path, t)}
+      termMode={termMode}
     >
       {(byFolder.get(path) ?? []).map(renderNode)}
       {childrenOf(path).map((c) => renderFolder(c, depth + 1))}
@@ -187,6 +190,7 @@ function GroupHeader({
   onOpenGrid,
   theme,
   onSetTheme,
+  termMode,
   children,
 }: {
   name: string;
@@ -199,6 +203,7 @@ function GroupHeader({
   onOpenGrid: () => void;
   theme: string | undefined;
   onSetTheme: (theme: string | null) => void;
+  termMode: TermMode;
   children: ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -251,8 +256,8 @@ function GroupHeader({
             value={theme ?? ""}
             onChange={(e) => onSetTheme(e.target.value || null)}
           >
-            <option value="">default theme</option>
-            {Object.keys(TERM_THEMES).map((t) => (
+            <option value="">default ({termMode})</option>
+            {themesForMode(termMode).map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>

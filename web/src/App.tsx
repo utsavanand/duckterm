@@ -15,12 +15,15 @@ import { Terminal } from "./Terminal";
 import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
 import {
-  TERM_THEMES,
+  AUTO,
+  TermMode,
   ThemeOverrides,
-  loadTermTheme,
+  loadTermThemes,
   loadThemeOverrides,
   resolveTermTheme,
+  saveTermThemes,
   saveThemeOverrides,
+  themesForMode,
 } from "./termThemes";
 import { ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
@@ -40,7 +43,7 @@ function Dashboard() {
     useEventStream();
   const toast = useToast();
   const now = useNow(1000);
-  const { theme, cycle: cycleTheme } = useTheme();
+  const { theme, resolved: mode, cycle: cycleTheme } = useTheme();
 
   const [modal, setModal] = useState<
     "launch" | "agentsmd" | "folder" | "harnesses" | null
@@ -50,11 +53,16 @@ function Dashboard() {
   const [view, setView] = useState<"terminal" | "messages">("terminal");
   // The folder whose terminals are tiled fullscreen; null = grid closed.
   const [gridFolder, setGridFolder] = useState<string | null>(null);
-  // Terminal color theme — applies live to every mounted terminal.
-  const [termTheme, setTermTheme] = useState<string>(loadTermTheme);
+  // Terminal color theme, per app mode: the terminal follows the light/dark
+  // toggle, and each mode remembers its own pick ("auto" = the mode default).
+  const [termThemes, setTermThemes] =
+    useState<Record<TermMode, string>>(loadTermThemes);
   useEffect(() => {
-    localStorage.setItem("rd-term-theme", termTheme);
-  }, [termTheme]);
+    saveTermThemes(termThemes);
+  }, [termThemes]);
+  const termTheme = termThemes[mode];
+  const setTermTheme = (pick: string) =>
+    setTermThemes((p) => ({ ...p, [mode]: pick }));
   // Per-session / per-folder theme overrides (session > nearest folder > global).
   const [themeOverrides, setThemeOverrides] =
     useState<ThemeOverrides>(loadThemeOverrides);
@@ -62,7 +70,7 @@ function Dashboard() {
     saveThemeOverrides(themeOverrides);
   }, [themeOverrides]);
   const themeFor = (s: SessionView) =>
-    resolveTermTheme(themeOverrides, termTheme, s.key, s.group);
+    resolveTermTheme(themeOverrides, termTheme, mode, s.key, s.group);
   const setSessionTheme = (key: string, theme: string | null) =>
     setThemeOverrides((o) => {
       const sessions = { ...o.sessions };
@@ -244,11 +252,12 @@ function Dashboard() {
         </button>
         <select
           className="rd-term-theme"
-          title="Terminal color theme"
+          title={`Terminal color theme (${mode} mode)`}
           value={termTheme}
           onChange={(e) => setTermTheme(e.target.value)}
         >
-          {Object.keys(TERM_THEMES).map((t) => (
+          <option value={AUTO}>auto ({mode})</option>
+          {themesForMode(mode).map((t) => (
             <option key={t} value={t}>
               {t}
             </option>
@@ -292,131 +301,131 @@ function Dashboard() {
           themeFor={themeFor}
           agents={terminalAgents.filter(
             (s) =>
-              s.group === gridFolder ||
-              s.group?.startsWith(gridFolder + "/"),
+              s.group === gridFolder || s.group?.startsWith(gridFolder + "/"),
           )}
           folders={folders}
           onSwitchFolder={setGridFolder}
           onClose={() => setGridFolder(null)}
         />
       ) : (
-      <div className="rd-panels-3">
-        <section className="rd-agents">
-          <div className="rd-panel-head">
-            <span>Agents</span>
-          </div>
-          {agents.length === 0 ? (
-            <p className="rd-panel-empty">
-              No agents yet. Click New session to start one.
-            </p>
-          ) : (
-            <AgentTree
-              sessions={agents}
-              now={now}
-              labels={labels}
-              folders={folders}
-              selectedKey={selectedKey}
-              onOpen={setSelectedKey}
-              onFork={setForkKey}
-              onDelete={deleteSession}
-              onFoldersChanged={refreshFolders}
-              onSessionMoved={(key, group) =>
-                patchSession(key, { group: group || undefined })
-              }
-              onRename={(key, name) => patchSession(key, { label: name })}
-              onOpenGrid={setGridFolder}
-              folderThemes={themeOverrides.folders}
-              onSetFolderTheme={setFolderTheme}
-            />
-          )}
-        </section>
-
-        <section className="rd-terminal-pane">
-          <div className="rd-view-toggle">
-            <button
-              className={view === "terminal" ? "active" : ""}
-              onClick={() => setView("terminal")}
-            >
-              Terminal
-            </button>
-            <button
-              className={view === "messages" ? "active" : ""}
-              onClick={() => setView("messages")}
-            >
-              Messages
-            </button>
-          </div>
-          {/* Messages view: structured HTML render of the latest reply, with
-              select-to-annotate. */}
-          {view === "messages" && selected && (
-            <div className="rd-messages-wrap">
-              <Messages sessionKey={selected.key} />
+        <div className="rd-panels-3">
+          <section className="rd-agents">
+            <div className="rd-panel-head">
+              <span>Agents</span>
             </div>
-          )}
-          {/* Terminal view: keep a terminal MOUNTED per PTY-owned agent and just
+            {agents.length === 0 ? (
+              <p className="rd-panel-empty">
+                No agents yet. Click New session to start one.
+              </p>
+            ) : (
+              <AgentTree
+                sessions={agents}
+                now={now}
+                labels={labels}
+                folders={folders}
+                selectedKey={selectedKey}
+                onOpen={setSelectedKey}
+                onFork={setForkKey}
+                onDelete={deleteSession}
+                onFoldersChanged={refreshFolders}
+                onSessionMoved={(key, group) =>
+                  patchSession(key, { group: group || undefined })
+                }
+                onRename={(key, name) => patchSession(key, { label: name })}
+                onOpenGrid={setGridFolder}
+                folderThemes={themeOverrides.folders}
+                onSetFolderTheme={setFolderTheme}
+                termMode={mode}
+              />
+            )}
+          </section>
+
+          <section className="rd-terminal-pane">
+            <div className="rd-view-toggle">
+              <button
+                className={view === "terminal" ? "active" : ""}
+                onClick={() => setView("terminal")}
+              >
+                Terminal
+              </button>
+              <button
+                className={view === "messages" ? "active" : ""}
+                onClick={() => setView("messages")}
+              >
+                Messages
+              </button>
+            </div>
+            {/* Messages view: structured HTML render of the latest reply, with
+              select-to-annotate. */}
+            {view === "messages" && selected && (
+              <div className="rd-messages-wrap">
+                <Messages sessionKey={selected.key} />
+              </div>
+            )}
+            {/* Terminal view: keep a terminal MOUNTED per PTY-owned agent and just
               show the selected one. Re-mounting on every switch would reconnect
               the WS and replay the whole buffer from scratch each time. */}
-          {terminalAgents.map((s) => (
-            <div
-              key={s.key}
-              data-key={s.key}
-              className="rd-terminal-slot"
-              style={{
-                display:
-                  view === "terminal" && s.key === selectedKey
-                    ? "flex"
-                    : "none",
-              }}
-            >
-              <Terminal sessionKey={s.key} theme={themeFor(s)} />
-            </div>
-          ))}
-          {selected && !selected.ptyOwned && !selected.worktreePath && (
-            <div className="rd-panel-empty">
-              This agent isn’t running in a terminal Duckterm owns.
-            </div>
-          )}
-          {!selected && (
-            <div className="rd-panel-empty">
-              Select an agent to see its terminal.
-            </div>
-          )}
-        </section>
-
-        <section className="rd-context-pane">
-          <div className="rd-panel-head">
-            <span>{selected ? selected.label : "Context"}</span>
-          </div>
-          <div className="rd-context-body">
-            <Approvals
-              labels={labels}
-              pollKey={sessions.length}
-              onOpen={setSelectedKey}
-              knownKeys={knownKeys}
-              waiting={waiting}
-            />
-            {selected && selected.ptyOwned && (
-              <label className="rd-session-theme">
-                terminal theme
-                <select
-                  value={themeOverrides.sessions[selected.key] ?? ""}
-                  onChange={(e) =>
-                    setSessionTheme(selected.key, e.target.value || null)
-                  }
-                >
-                  <option value="">folder / global default</option>
-                  {Object.keys(TERM_THEMES).map((t) => (
-                    <option key={t} value={t}>
-                      {t}
-                    </option>
-                  ))}
-                </select>
-              </label>
+            {terminalAgents.map((s) => (
+              <div
+                key={s.key}
+                data-key={s.key}
+                className="rd-terminal-slot"
+                style={{
+                  display:
+                    view === "terminal" && s.key === selectedKey
+                      ? "flex"
+                      : "none",
+                }}
+              >
+                <Terminal sessionKey={s.key} theme={themeFor(s)} />
+              </div>
+            ))}
+            {selected && !selected.ptyOwned && !selected.worktreePath && (
+              <div className="rd-panel-empty">
+                This agent isn’t running in a terminal Duckterm owns.
+              </div>
             )}
-            {selected && <ContextPanel session={selected} />}
-          </div>
-        </section>
-      </div>
+            {!selected && (
+              <div className="rd-panel-empty">
+                Select an agent to see its terminal.
+              </div>
+            )}
+          </section>
+
+          <section className="rd-context-pane">
+            <div className="rd-panel-head">
+              <span>{selected ? selected.label : "Context"}</span>
+            </div>
+            <div className="rd-context-body">
+              <Approvals
+                labels={labels}
+                pollKey={sessions.length}
+                onOpen={setSelectedKey}
+                knownKeys={knownKeys}
+                waiting={waiting}
+              />
+              {selected && selected.ptyOwned && (
+                <label className="rd-session-theme">
+                  terminal theme
+                  <select
+                    value={themeOverrides.sessions[selected.key] ?? ""}
+                    onChange={(e) =>
+                      setSessionTheme(selected.key, e.target.value || null)
+                    }
+                  >
+                    <option value="">folder / {mode} default</option>
+                    {themesForMode(mode).map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {selected && <ContextPanel session={selected} />}
+            </div>
+          </section>
+        </div>
       )}
 
       {modal === "launch" && <LaunchModal onClose={() => setModal(null)} />}

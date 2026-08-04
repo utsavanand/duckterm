@@ -1,7 +1,12 @@
 // Terminal color themes (xterm.js ITheme palettes). Full 16-color ANSI sets —
-// TUIs render wrong without them. "duck" is the shipped default.
+// TUIs render wrong without them. Each theme is tagged light/dark so the
+// terminal can follow the app's light/dark toggle: the app mode chooses the
+// default and constrains the picker to themes of that mode.
+
+export type TermMode = "light" | "dark";
 
 export interface TermTheme {
+  mode: TermMode;
   background: string;
   foreground: string;
   cursor: string;
@@ -25,9 +30,10 @@ export interface TermTheme {
 
 export const TERM_THEMES: Record<string, TermTheme> = {
   duck: {
+    mode: "dark",
     background: "#0c0f16",
     foreground: "#d1d5db",
-    cursor: "#4ade80",
+    cursor: "#fbbf24",
     black: "#1f2430",
     red: "#f87171",
     green: "#4ade80",
@@ -46,6 +52,7 @@ export const TERM_THEMES: Record<string, TermTheme> = {
     brightWhite: "#f9fafb",
   },
   dracula: {
+    mode: "dark",
     background: "#282a36",
     foreground: "#f8f8f2",
     cursor: "#f8f8f2",
@@ -67,6 +74,7 @@ export const TERM_THEMES: Record<string, TermTheme> = {
     brightWhite: "#ffffff",
   },
   "solarized-dark": {
+    mode: "dark",
     background: "#002b36",
     foreground: "#839496",
     cursor: "#93a1a1",
@@ -88,6 +96,7 @@ export const TERM_THEMES: Record<string, TermTheme> = {
     brightWhite: "#fdf6e3",
   },
   "gruvbox-dark": {
+    mode: "dark",
     background: "#282828",
     foreground: "#ebdbb2",
     cursor: "#ebdbb2",
@@ -109,6 +118,7 @@ export const TERM_THEMES: Record<string, TermTheme> = {
     brightWhite: "#ebdbb2",
   },
   nord: {
+    mode: "dark",
     background: "#2e3440",
     foreground: "#d8dee9",
     cursor: "#d8dee9",
@@ -130,9 +140,10 @@ export const TERM_THEMES: Record<string, TermTheme> = {
     brightWhite: "#eceff4",
   },
   paper: {
+    mode: "light",
     background: "#ffffff",
     foreground: "#1f2328",
-    cursor: "#178a3f",
+    cursor: "#c48f00",
     black: "#24292f",
     red: "#cf222e",
     green: "#116329",
@@ -150,13 +161,64 @@ export const TERM_THEMES: Record<string, TermTheme> = {
     brightCyan: "#3192aa",
     brightWhite: "#8c959f",
   },
+  "solarized-light": {
+    mode: "light",
+    background: "#fdf6e3",
+    foreground: "#657b83",
+    cursor: "#586e75",
+    black: "#073642",
+    red: "#dc322f",
+    green: "#859900",
+    yellow: "#b58900",
+    blue: "#268bd2",
+    magenta: "#d33682",
+    cyan: "#2aa198",
+    white: "#eee8d5",
+    brightBlack: "#002b36",
+    brightRed: "#cb4b16",
+    brightGreen: "#586e75",
+    brightYellow: "#657b83",
+    brightBlue: "#839496",
+    brightMagenta: "#6c71c4",
+    brightCyan: "#93a1a1",
+    brightWhite: "#fdf6e3",
+  },
 };
 
-export const DEFAULT_TERM_THEME = "duck";
+// The terminal follows the app's light/dark toggle: each mode has its own
+// default and its own remembered pick. "auto" (the default global pick) means
+// "just use the mode's default"; picking a specific theme only applies while
+// the app is in that theme's mode.
+export const DEFAULT_BY_MODE: Record<TermMode, string> = {
+  dark: "duck",
+  light: "paper",
+};
+// Last-resort fallback for a bare Terminal mount before a mode is resolved.
+export const DEFAULT_TERM_THEME = DEFAULT_BY_MODE.dark;
+export const AUTO = "auto";
 
-export function loadTermTheme(): string {
-  const saved = localStorage.getItem("rd-term-theme");
-  return saved && saved in TERM_THEMES ? saved : DEFAULT_TERM_THEME;
+export function themesForMode(mode: TermMode): string[] {
+  return Object.keys(TERM_THEMES).filter((k) => TERM_THEMES[k].mode === mode);
+}
+
+// The global pick is stored per mode ({dark, light}), so switching the app
+// toggle restores whatever you'd chosen for that side rather than carrying a
+// dark theme into light mode.
+export function loadTermThemes(): Record<TermMode, string> {
+  try {
+    const raw = JSON.parse(localStorage.getItem("rd-term-theme") ?? "{}");
+    const pick = (m: TermMode) =>
+      typeof raw[m] === "string" && (raw[m] === AUTO || raw[m] in TERM_THEMES)
+        ? raw[m]
+        : AUTO;
+    return { dark: pick("dark"), light: pick("light") };
+  } catch {
+    return { dark: AUTO, light: AUTO };
+  }
+}
+
+export function saveTermThemes(picks: Record<TermMode, string>): void {
+  localStorage.setItem("rd-term-theme", JSON.stringify(picks));
 }
 
 // Overrides let one session (or a whole folder subtree) render differently.
@@ -181,22 +243,27 @@ export function saveThemeOverrides(o: ThemeOverrides): void {
   localStorage.setItem(OVERRIDES_KEY, JSON.stringify(o));
 }
 
-/** Session override wins, then the nearest folder up the path ("a/b/c" checks
- * a/b/c, a/b, a), then the global choice. Unknown names are ignored so a
- * stale saved override can't blank a terminal. */
+/** Resolve the terminal theme for a session, constrained to the app's current
+ * light/dark mode. Session override wins, then the nearest folder up the path
+ * ("a/b/c" checks a/b/c, a/b, a), then the mode's global pick, then the mode
+ * default. A pick that belongs to the OTHER mode is skipped, so toggling the
+ * app light/dark always yields a mode-appropriate terminal. */
 export function resolveTermTheme(
   o: ThemeOverrides,
-  globalTheme: string,
+  globalPick: string,
+  mode: TermMode,
   sessionKey: string,
   group?: string,
 ): string {
-  const s = o.sessions[sessionKey];
-  if (s && s in TERM_THEMES) return s;
+  const inMode = (name?: string) =>
+    !!name && name in TERM_THEMES && TERM_THEMES[name].mode === mode;
+
+  if (inMode(o.sessions[sessionKey])) return o.sessions[sessionKey];
   let g = group ?? "";
   while (g) {
-    const f = o.folders[g];
-    if (f && f in TERM_THEMES) return f;
+    if (inMode(o.folders[g])) return o.folders[g];
     g = g.includes("/") ? g.slice(0, g.lastIndexOf("/")) : "";
   }
-  return globalTheme in TERM_THEMES ? globalTheme : DEFAULT_TERM_THEME;
+  if (inMode(globalPick)) return globalPick;
+  return DEFAULT_BY_MODE[mode];
 }
