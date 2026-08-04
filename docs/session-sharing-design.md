@@ -1,22 +1,71 @@
 # Session sharing (multiplayer) — design
 
-Status: DRAFT v3 — research + four validation loops done; proposal revised
-below. The headline change from v2: **v1 drops the relay for a tunnelled
-read-only viewer**, and **"ask" must be rebuilt scoped to one session** (the
-current `/fleet/ask` digests every session — a real leak, not a design nit).
+Status: DRAFT v4 — a second, deeper research round (relay build-vs-buy, WebRTC
+P2P, remote-prompt safety, identity/follower) settled the architecture. The v3
+"tunnel, no relay" recommendation is **reversed**: it doesn't survive contact
+with a second user. Decision below.
+
+## Decision (v4)
+
+**Build a small relay we run, addressing shares by PATH under one domain.**
+The session keeps running on the owner's laptop; the laptop dials the relay
+outbound; viewers connect to `https://share.rubberterm.com/s/<id>`. This is
+the model tmate/sshx/upterm converged on and it dissolves every objection the
+earlier drafts wrestled with:
+
+- **The domain problem that killed the tunnel plan doesn't exist for a relay.**
+  Tunnels route by *hostname*, so each sharer seemed to need their own
+  subdomain/domain/account (a non-starter for a downloaded app). A relay routes
+  by *path* — one domain we own, `…/s/<session-id>`, no per-user DNS, no certs
+  to automate, zero user setup. The v3 tunnel idea required every sharer to own
+  a domain + Cloudflare account; that was the fatal flaw.
+- **A relay exposes only the pushed frames; a tunnel exposes the whole laptop
+  server.** With a tunnel we'd have to build auth + session-scoping in front of
+  the entire localhost server anyway. The relay inverts it: the laptop pushes
+  exactly one session's bytes; nothing else is reachable even in principle.
+- **True P2P (WebRTC) was investigated and rejected.** It can't remove the
+  central server (signaling needs one; TURN fallback carries *all* traffic for
+  the corporate-network teammates who need it most — 30–70% of them). At a
+  terminal's KB/s, TURN and a dumb relay cost the same (~$0), so P2P buys no
+  bandwidth savings, only complexity (aiortc drags heavy native deps, breaking
+  the zero-dependency install). What the owner actually wants from "P2P" — code,
+  agent, keys all stay on the laptop — the relay already delivers; the relay
+  only ever sees a byte stream. The last 10% ("relay can't even read the bytes")
+  is ~200 lines of sshx-style fragment-key encryption, later, not WebRTC.
+- **Cost & size:** ~300–500 lines of the same asyncio idiom, flat ~$5/mo on
+  Fly.io or a Hetzner box (does not grow with usage). It is not a reverse tunnel
+  reinvented — we control both ends and forward one message type.
+
+Runner-up (documented, not built): Cloudflare Tunnel provisioned
+programmatically under our own account is genuinely free and viable, but it
+still exposes the whole local server and makes us supervise a `cloudflared`
+child process on every user's Mac. Revisit only if we ever need to expose
+arbitrary local ports (previews), not terminal frames.
 
 ## The ask
 
 Share a running RubberTerm session with another person over email so they can:
 
 1. **View** the live terminal (read-only), from any browser, no install.
-2. **Ask questions** about the session (the existing `/fleet/ask` digest
-   mechanism, scoped to the shared session).
+2. **Ask questions** about the session (a new session-scoped digest — NOT the
+   existing `/fleet/ask`, which reads every session; see v1).
 3. **Prompt / drive** the session — only when the owner explicitly grants it.
 
 This is the "multiplayer AI" direction (YC F2026 RFS). It is also the first
 feature that can't be served from 127.0.0.1 — someone else's browser has to
 reach the session.
+
+> YC's RFS, verbatim: *"The best work tools of the last two decades won by
+> going multiplayer. Google Docs replaced Microsoft Word. Figma beat Photoshop
+> … But AI hasn't had its multiplayer moment yet. … right now, working with AI
+> is largely single-player. … the best you can do is send a link to a read-only
+> transcript they can't touch. … Anyone on a team should be able to drop into
+> the same live agent session to watch it work, redirect it, and hand it off,
+> the way they'd work with any other human team member."*
+>
+> The three verbs map onto the phases below: **watch** = v1, **redirect** = v2,
+> **hand off** = v3. The read-only transcript link is explicitly the thing to
+> beat — v1's live read-only view already clears that bar.
 
 ## Constraints that shape the design
 
@@ -156,129 +205,217 @@ prefer granting "send a prompt to the agent" (a structured message into the
 agent's input flow) over raw keystrokes — smaller blast radius, and it's what
 a collaborator actually wants.
 
-## Proposal
+## Proposal (v4, relay-first)
 
-The staging below is the post-validation version. The v2 design named a relay
-"build now" and reused `/fleet/ask`; both over-engineering reviews and the
-security review pushed back, and they were right — see Validation loops.
+Three phases. Each is the smallest thing that clears its bar; nothing is built
+speculatively for the next. Maps to the YC framing — v1 *watch*, v2 *redirect*,
+v3 *hand off*.
 
-### v1 — "watch + scoped-ask" over a tunnel (build now)
+### The relay (the one piece we run)
 
-The smallest thing that is genuinely multiplayer (live, not a transcript
-export) and whose only always-on dependency is one the owner already runs. No
-relay, no hosted service, no pager.
+A small always-on service under one domain we own. Deliberately dumb:
 
-**Local server changes.**
-- A dedicated **viewer listener** on its own port that serves exactly two
-  things: a static xterm.js share page, and a read-only byte-stream WS for one
-  shared session. It has NO input path — no keystroke, resize, or control
-  handler reaches a PTY. This is the structural read-only boundary; it reuses
-  `subscribe_bytes` (which already sends a clear-screen `\x1b[2J\x1b[H` +
-  capture snapshot on attach) minus the input half. Read-only is enforced by
-  the absence of code, not a client toggle.
-- A **scoped ask endpoint** on that listener: `ask(session_key)` digests ONLY
-  the shared session and answers via the summarizer. This is a NEW code path —
-  the existing `/fleet/ask` digests every running session (`self.history.
-  sessions()`), so reusing it would leak every other session to a viewer.
-  Rate-limited and owner-budgeted (see security findings F1).
-- A **share table** in the local SQLite: `{share_id, session_key, token_hash,
-  mode, exp, revoked}`. `share_id` and `token` are per-share random (≥128-bit);
-  mode lives in the row, never in the token (F2). Revoke flips the flag AND
-  drops any live viewer socket for that share within seconds (F7).
-- `POST /sessions/:key/share` (+ revoke, list) on the main server, and a share
-  panel in the session detail drawer (create link, copy, see viewer count,
-  revoke). Join/leave surfaces like approvals do.
+- Accepts one **outbound** WSS per shared session from the owner's laptop
+  (`/agent/<id>` + a device bearer token). Outbound works through every NAT and
+  corporate firewall — it's ordinary HTTPS. The laptop pushes exactly the same
+  binary xterm frames it already streams to the local browser.
+- Serves the viewer page + read-only stream at `https://share.rubberterm.com/s/<id>`.
+  **Path-based, not per-user hostname** — one domain, one cert, no DNS
+  automation. Fans frames to N viewer sockets; presence and (v2) prompt
+  proposals flow back on the same socket.
+- State is a dict (`session-id → {agent socket, viewer sockets, presence}`); a
+  restart just drops connections and the laptop re-dials with backoff (add
+  jitter so a relay redeploy doesn't cause a synchronized reconnect storm).
+- ~300–500 lines of asyncio, same idiom as the main server. Deploy: one Fly.io
+  shared-cpu (~$3–5/mo) or a Hetzner CX22 (~€4.35/mo). Flat cost; terminal
+  bytes are tiny.
 
-**Exposure.** The owner points a **stable named cloudflared tunnel** (not a
-Quick Tunnel — those rotate URLs and break emailed links) at the viewer
-listener's port only. Because the tunnel fronts a listener that serves only
-the read-only stream + scoped ask, the "whole HTTP surface exposed" objection
-that killed tunnels-as-mechanism in v2 doesn't apply — the surface IS the
-share surface. First-run wires the tunnel; the owner needs a Cloudflare
-account + a domain (or we ship a small default).
+### v1 — watch + scoped-ask (build now)
 
-**What a recipient gets from the emailed link** (`https://<tunnel>/s/<share_
-id>#<token>`): the live terminal (read-only), the session's name/state/goal,
-and an ask box answered by the owner's machine, scoped to that one session.
-The owner's email client sends the link; we build no email infra. Token in the
-URL fragment (kept out of request lines/Referer), 24h default TTL, revocable.
+**A recipient opens an emailed link and watches the live terminal, read-only,
+and can ask questions about that one session.** Genuinely multiplayer (live,
+not a transcript), and the read path has no way to touch the machine.
 
-**Laptop sleeps** → the viewer's WS drops and the share page shows a "host
-offline, reconnecting" banner (the same reconnect-with-backoff the browser
-terminal client already implements). No frozen-screenshot persistence — that
-was a Warp-style choice the v2 doc adopted without noticing it contradicts the
-host-anchored privacy story of every tool it cited (finding from the
-over-engineering review).
+- **Device→relay auth (ngrok model):** `rubberterm login` mints a 256-bit
+  random opaque device token, stored in the macOS keychain (not a dotfile),
+  presented as `Authorization: Bearer` on the outbound dial. Relay stores only
+  a hash. Revoke = delete the row (the "laptop stolen" recovery path); a device
+  list shows name/created/last-seen. No JWTs, no per-session keys — the relay
+  is the only verifier, so an opaque token + DB row is simpler and instantly
+  revocable.
+- **Viewer auth = the link is the capability** (tmate/sshx): share URL is
+  `…/s/<id>#<128-bit-token>`. The token rides in the URL **fragment**, which the
+  browser never sends in the request line — kept out of relay logs and Referer;
+  the page reads it and presents it inside the WS handshake. Per-share token,
+  hashed at rest, 24h default TTL, one-session scope, revocable. Leaked/forwarded
+  link ⇒ still read-only. Serve the page `Referrer-Policy: no-referrer`, zero
+  third-party JS (so nothing can read `location.hash`).
+- **Structural read-only:** the viewer stream handler has NO branch that writes
+  to a PTY — not a disabled input box, an absent code path. Viewer geometry is
+  NOT forwarded to the PTY (a viewer must not drive `TIOCSWINSZ` on the owner's
+  terminal); viewers letterbox/scale client-side. The only viewer→laptop message
+  in v1 is `ask`. A regression test asserts a viewer-credentialed connection's
+  input is dropped server-side.
+- **Scoped ask (a NEW endpoint):** digests ONLY the shared session. The existing
+  `/fleet/ask` digests every running session (`history.sessions()`) and a
+  viewer-controlled question already deepens the dump for any session it names —
+  reusing it would leak every other session to a viewer. The scoped version is
+  rate-limited and owner-budgeted (a leaked link must not become unbounded
+  `claude -p` spend on the owner's account), and wraps the question as untrusted
+  input with a "never reveal secrets/keys" system prompt (best-effort; the real
+  control is the scoping).
+- **Late-join snapshot:** on viewer connect the laptop sends a
+  `tmux capture-pane -e` snapshot (clear-screen + paint) then streams — the
+  joiner sees the current screen instantly. (Reuses the existing attach path.)
+- **Laptop offline:** viewers get a "host offline / session ended" close with
+  the right reason (distinguish "device socket dropped" from "session ended" —
+  a deleted/stopped session must not show a false "offline, reconnecting"
+  banner forever). No persisted frozen screenshot.
 
-### When the relay earns its place (v1.5, triggered — not now)
+### The follower / presence layer (v1)
 
-The relay stops being speculative the moment tunnels hit a concrete limit the
-owner actually feels: (a) two or more distinct people have watched a share and
-wanted the link to survive a server restart / not require the owner's tunnel
-running, or (b) fan-out to several simultaneous viewers per share becomes real
-(the tunnel + local listener handle "some browsers connected," but a relay's
-per-viewer bounded queues and viewer caps are the clean answer at scale). At
-that trigger, build the outbound-rendezvous relay (Fly shared-cpu ~$5/mo, the
-same hand-rolled transport grown a WS *client* half — note `transport/
-websocket.py` is server-only today, so this is real work the v2 estimate hid).
-Everything from v1 (share table, capability tokens, scoped ask, structural
-read-only) moves behind it unchanged; the local listener becomes a device
-socket. Until the trigger, the tunnel is the honest answer.
+For a single shared byte stream there is no per-viewer viewport — everyone
+renders the same grid, so **everyone already follows the owner, for free**
+(Live Share's default-follow mode is our only mode). The one per-viewer axis is
+**scrollback**: at the live edge vs. reviewing history. So "follow" for a
+terminal is exactly a live/reviewing state, and the presence layer is:
 
-### v2 — "prompt it" (build when a real user asks for it)
+- **Name on join** (viewers type one; write-tier viewers get their verified
+  email name). Per-connection, nothing persisted.
+- **Viewer list + "N watching"** broadcast as small JSON frames to every
+  connection incl. the owner's laptop; the owner's header shows who's watching.
+- **Join/leave toasts** + a **macOS notification to the owner on every join** —
+  this is both the multiplayer feeling and the anti-silent-watcher control
+  (the tmate-as-backdoor lesson).
+- **"● LIVE / reviewing" indicator**; scrolling up flips a viewer to "reviewing,"
+  broadcast so the owner sees "B is reviewing scrollback" vs "live."
+- Wire format reuses the existing WS: binary frames stay terminal bytes,
+  presence is text JSON, heartbeat piggybacks on the planned ping/pong. No CRDT,
+  no persistence — plain broadcast presence (Liveblocks/Yjs-awareness semantics).
+- Deferred (no coordinate space in a terminal): named 2D cursors, per-follower
+  shared-viewport control, Figma-style spotlight, chat.
 
-- Grant model: the owner flips a share to `interact` per viewer request
-  ("request control" on the share page → notification → owner approves).
-- Identity before write: GitHub OAuth on the share page; optionally require
-  repo access to the session's repo (the market's authorization convention).
-  The grant is stored per identity, not per link.
-- The write capability is **"send a prompt"** — a structured message injected
-  through the same path the Messages annotation flow already uses — not raw
-  keystrokes. Raw-keystroke sharing (full terminal control) stays out until
-  there's a concrete need; if added, it gets its own scarier grant, an input
-  audit log, and a kill switch.
-- Local enforcement: every frame carries the share_id; the local server
-  checks mode + grant before acting.
-- **"Send a prompt" is RCE-equivalent** (F6): a prompt into an agent with
-  shell/file/git tools runs arbitrary commands as the owner. So write requires
-  owner **preview-before-inject** (approve each shared prompt, like approvals
-  today), a per-share prompt rate limit, and an agent-permission cap while any
-  interact-share is live (never `--dangerously-skip-permissions`).
-- **Repo-access gating is a filter, not the grant** (F10): verifying GitHub
-  repo access bounds *who can ask* to a known, revocable identity — it does
-  NOT make a shell on the owner's laptop safe (read access to one repo ≠
-  should-have-shell). Explicit per-viewer owner approval stays the boundary;
-  don't let an "auto-grant if repo write" shortcut regress it.
+### v2 — redirect it: propose-a-prompt, owner-approved (build when asked)
 
-### v3 — sessions that outlive the laptop (build when handoff demand is real)
+**The design rule: B never gets a keyboard — B gets a suggestion box.** A prompt
+into an agent with shell/file/git tools is arbitrary code execution as the
+owner, so the write primitive is a *proposal the owner approves*, injected by
+RubberTerm's own code on the owner's Mac. This is stricter than Omnara (which
+types remote text straight into stdin, and has no notion of a second person)
+and mirrors Live Share (identity → host approval → per-resource grant →
+host-side enforcement → host can always see/intervene/eject).
 
-- The same server image runs on a $6/mo Fly machine/VPS and dials the same
-  relay as just another device. A "handoff" moves a session's repo state
-  (branch push + conversation export/resume) from laptop-device to
-  cloud-device. No E2B/Modal-style sandboxes — wrong pricing and lifecycle
-  for days-long tmux sessions.
-- This is also where accounts/teams/pricing enter (the market monetizes
-  exactly here). Not designed further now.
+Must be true before write-sharing ships:
+
+1. **Write capability never travels in the link.** A leaked URL can watch,
+   never type. (Test it — the tmate/sshx cautionary tale is a read-only
+   credential that was silently a write credential.)
+2. **Authenticated identity before write is requestable.** Anonymous viewers
+   can't request write. Recommendation: **email magic link**, not GitHub OAuth —
+   the invite went out over email, so "prove you control that inbox" is the
+   identity proof that matches the channel; GitHub proves a different identity
+   that may not map to the person. Roll-your-own (one `login_tokens` table +
+   Resend/SES, ~free) or Supabase Auth free tier. Repo-access is only ever a
+   *filter* on who-may-ask, never authorization to have a shell.
+3. **Request/grant ceremony, per person per session.** B clicks "Request to send
+   prompts" → owner sees "Bala (b@corp.com) wants to send prompts to session
+   foo [Allow/Deny]" (reuse the existing approvals UI). Scoped to (viewer,
+   session), revocable, auto-expires on share stop / session end / TTL (1h).
+   Never persisted across sessions.
+4. **The only primitive is "propose a prompt":** structured `{viewer, session,
+   text}`, length-capped, control-chars/escapes stripped. No raw-keystroke path
+   exists in the codebase at all — absent, not disabled.
+5. **Owner preview-before-inject by default.** The proposal lands in the owner's
+   approvals UI with Approve / Edit-then-approve / Reject. Nothing reaches the
+   agent until the owner acts.
+6. **Safe injection:** only when the agent is idle at its prompt (never mid-turn,
+   never while a permission prompt is showing — else the text could be eaten as
+   a "1" that approves a tool). Inject via `tmux load-buffer` + bracketed
+   `paste-buffer` (literal), then one Enter, prefixed
+   `[Prompt from remote collaborator Bala via RubberTerm]:` so agent and
+   transcript know it wasn't the owner.
+7. **Permission-mode cap while shared:** refuse write-sharing on any session
+   running `--dangerously-skip-permissions`/`bypassPermissions` or `acceptEdits`;
+   while a write grant is live, set `permissions.disableBypassPermissionsMode:
+   "disable"` so it can't be re-entered. The agent's own tool-permission prompts
+   still fire — and render **only for the owner**. (Note: even default mode runs
+   a built-in read-only command set + the repo's accumulated
+   `settings.local.json` allowlist promptless — so the *prompt itself* is the
+   attack surface. Preview-before-inject is what makes that acceptable.)
+8. **Audit log** (append-only, on the owner's Mac): viewer, timestamp, exact
+   text, decision, injection time; attribution visible inline in the transcript.
+9. **Kill switch:** one action revokes all grants, drops viewers, clears the
+   proposal queue; grants also die on session end / server restart.
+10. **Rate limit:** one pending proposal per viewer; cap injections (e.g.
+    10/10min/viewer).
+
+Later (opt-in, per trusted human, still idle-only/mode-capped/audited):
+auto-inject; force `plan` mode while shared with a one-click "run B's plan";
+delegated approvals (B may answer specific tool prompts — Warp does this, we
+don't in v1); full raw-keystroke control (distinct consent ceremony + persistent
+banner; likely never needed to "redirect the agent").
+
+### v3 — hand it off: sessions that outlive the laptop (build when handoff demand is real)
+
+The same server image runs on a $5–6/mo Fly machine/VPS and dials the SAME relay
+as just another device — because the relay treats hosts identically, a cloud
+host is indistinguishable from the laptop, and v1/v2 work is 100% reused. A
+"handoff" moves the session's repo state (branch push + conversation
+export/resume) laptop→cloud. No E2B/Modal sandboxes (idle-billed, 24h caps,
+~$70+/mo vs ~$6 for the wrong shape). This is where accounts/teams/pricing enter
+(the market monetizes exactly here — Conductor $50/mo, Devin Teams, Claude Code
+Team). Not designed further now.
 
 ### Explicitly rejected
 
-- **Building the relay in v1** — reversed after validation. Two independent
-  over-engineering reviews found the relay was v3's paid-tier control plane
-  built speculatively under "everything carries forward," justified by
-  objections that apply to Quick Tunnels, not the stable named tunnel v1 now
-  uses. It returns as a *triggered* v1.5.
-- **Building on Liveblocks/Yjs/CRDT infra** — terminal bytes are a broadcast
-  stream, not a merge problem. Presence ("Alice is watching") is a counter,
-  not a CRDT.
-- **Slack integration as v1** — strong future notification channel, but it
-  doesn't remove the need for the relay + share page, and it adds an app
-  review + OAuth surface now.
-- **E2E encryption of frames in v1** (sshx-style key-in-fragment) — the relay
-  is ours and single-tenant-ish at this scale; revisit when third parties run
-  relays or if positioning demands "relay can't read sessions."
-- **Accounts/sign-in in v1** — capability links with revocation are the
-  tmate-proven baseline; identity arrives in v2 where write access makes it
-  load-bearing.
+- **WebRTC / true P2P** — cannot remove the central server (signaling needs one;
+  TURN carries all traffic for 30–70% of corporate-network viewers), costs the
+  same as a relay at KB/s, and drags heavy native deps (aiortc→PyAV) that break
+  the zero-dependency install. sshx, tmate, and Live Share's remote path all use
+  relays. The "compute stays on my laptop" value P2P promises, the relay already
+  delivers.
+- **Per-user tunnels (Cloudflare named / ngrok / frp) as the mechanism** —
+  hostname routing forces a per-user domain/account (named tunnel), or metered
+  cost that grows with usage (~$100/mo at 100 users, ngrok), or broken tenant
+  isolation (frp's global token). All also expose the whole local server. The
+  relay's path-based routing under one domain is strictly better.
+- **Building on Liveblocks/Yjs/CRDT infra** — the PTY is single-writer; there is
+  no merge problem anywhere. Presence is ephemeral broadcast, a counter, not a
+  CRDT.
+- **GitHub OAuth as the v2 write identity** — magic-link email matches the invite
+  channel; GitHub is a later optional second IdP whose only value is
+  auto-approving *requests* from repo collaborators, never a replacement for
+  owner approval.
+- **E2E frame encryption in v1** (sshx fragment-key) — the relay is first-party;
+  document the concrete trigger (a third party runs a relay, or a paid
+  multi-tenant tier) and add the ~200 lines then.
+- **Slack as v1** — a good later notification channel; doesn't remove the relay
+  + share page and adds an OAuth/app-review surface now.
+
+## Research round 2 (what reversed the v3 decision)
+
+Four deep research passes after the v3 "tunnel, no relay" draft failed the
+"second user exists" test:
+
+- **Relay build-vs-buy** — the decisive finding: tunnels route by hostname (⇒
+  per-user domain/account, a non-starter), a relay routes by path (⇒ one domain,
+  zero user setup). A relay also exposes only pushed frames vs a tunnel exposing
+  the whole local server. Verified the "buy under one domain" options (CF Tunnel
+  programmatic = free but supervises `cloudflared` per user + exposes whole
+  server; ngrok = ~$100/mo at 100 users; frp = broken tenant isolation). Build
+  the relay, ~$5/mo flat.
+- **WebRTC / P2P** — rejected: can't remove the central server (signaling +
+  TURN), same cost as a relay at KB/s, breaks the zero-dep install; the relay
+  already delivers "compute stays on the laptop."
+- **Remote-prompt safety** — Omnara types remote text straight to stdin with no
+  approval and no second-person model; Live Share/Warp/tmate all gate write as a
+  separate credential + host approval + host-side enforcement. Yielded the v2
+  "propose-a-prompt, owner-approves, mode-capped, injected by us" design and its
+  10 must-haves.
+- **Identity + follower** — device auth = keychain-stored opaque bearer (ngrok
+  model); viewer read = link-capability, viewer write = magic-link email (matches
+  the invite channel) over GitHub OAuth; "follower" for a terminal = a
+  live/reviewing state + viewer list + join notifications, no CRDT.
 
 ## Validation loops
 
@@ -346,15 +483,17 @@ and how the proposal changed:
 
 ## Open questions for the owner
 
-1. **Tunnel setup friction.** v1 needs a stable named cloudflared tunnel,
-   which means a Cloudflare account + a domain. Fine to ask the owner to set
-   that up once, or should we ship a hosted default (which is the relay, one
-   phase early)?
+1. **Domain + relay host.** v1 needs one domain (e.g. `share.rubberterm.com`)
+   and one small always-on box (Fly.io ~$3–5/mo or a Hetzner CX22). That's the
+   only infra we operate. Ready to stand that up, or want it spec'd so someone
+   else can?
 2. **Positioning.** Sharing is the paid tier across the whole market
    (Conductor $50/mo, Devin Teams, Claude Code Team). Start the paid product
    here, or keep it free while single-user features stay the product?
-3. **Demo bar.** v1's read-only watch + scoped ask is live and multiplayer —
-   it clears the YC "not a read-only transcript" line. Is that enough to demo,
-   or do you want v2's request-control (write) pulled into the first release
-   despite its RCE surface?
+3. **Demo bar.** v1's read-only watch + scoped ask + presence is live and
+   multiplayer — it clears the YC "not a read-only transcript" line. Enough to
+   demo, or pull v2's propose-a-prompt (write) into the first release despite
+   its RCE surface and the extra auth/approval machinery it needs?
 4. **Build v1 now, or hold?** The doc is decision-ready. Nothing is built yet.
+   v1 = the relay + device auth + the read-only viewer/scoped-ask/presence on
+   the laptop.
