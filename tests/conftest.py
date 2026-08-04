@@ -1,6 +1,7 @@
 """Point DUCKTERM_HOME at a throwaway dir for the whole test session so no
 test writes to the developer's real ~/.duckterm/."""
 
+import contextlib
 import os
 import subprocess
 import tempfile
@@ -36,7 +37,9 @@ def _isolated_tmux_socket() -> Iterator[None]:
     try:
         yield
     finally:
-        subprocess.run(["tmux", "-L", socket, "kill-server"], capture_output=True)
+        # tmux may not exist at all (slim CI containers) — nothing to sweep then.
+        with contextlib.suppress(FileNotFoundError):
+            subprocess.run(["tmux", "-L", socket, "kill-server"], capture_output=True)
         if prev is None:
             os.environ.pop("DUCKTERM_TMUX_SOCKET", None)
         else:

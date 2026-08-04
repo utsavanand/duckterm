@@ -1453,8 +1453,12 @@ class Server:
         arbitrary-path file write for anything reaching the dashboard origin."""
         p = Path(directory).expanduser().resolve()
         home = Path.home().resolve()
-        tmp = Path(tempfile.gettempdir()).resolve().parent
-        return p.is_relative_to(home) or p.is_relative_to(tmp)
+        # gettempdir() itself, NOT its parent: on Linux that parent is "/",
+        # which made this check a no-op (and /etc writable). /tmp is listed
+        # explicitly because on macOS gettempdir() is /var/folders/… while
+        # scratch projects and tests live under /tmp (-> /private/tmp).
+        scratch = (Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve())
+        return p.is_relative_to(home) or any(p.is_relative_to(t) for t in scratch)
 
     async def _read_agents_md(self, writer: asyncio.StreamWriter, seg: str) -> None:
         """Read the AGENTS.md for a folder (?dir=…). Returns the file's text, or

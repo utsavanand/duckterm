@@ -12,6 +12,7 @@ the same as in a real terminal.
 
 import asyncio
 import contextlib
+import errno
 import os
 import pty
 import shlex
@@ -236,18 +237,40 @@ class SessionSupervisor:
         transport, _ = await loop.connect_read_pipe(
             lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(primary, "rb", 0)
         )
+        # Read CHUNKS, not lines: the terminal byte view must stream output the
+        # moment it arrives (a TUI prompt has no trailing newline), and on Linux
+        # a child exit surfaces as EIO on the master — line iteration would drop
+        # the buffered partial line on that path. Line assembly for state/tool
+        # detection happens here on top of the chunks.
+        pending = ""
+
+        def scan(line: str) -> None:
+            self._record_output(line)
+            tool = self.runtime.tool_in(line)
+            if tool is not None:
+                self._emit("PreToolUse", tool_name=tool)
+            new_state = self.runtime.detect_state(line)
+            if new_state != self._state:
+                self._state = new_state
+                self._emit(_STATE_EVENT[new_state])
+
         try:
-            async for raw in reader:
+            while True:
+                try:
+                    raw = await reader.read(4096)
+                except OSError as e:
+                    if e.errno != errno.EIO:
+                        raise
+                    break  # Linux PTY: the child exited — this is EOF, not a failure
+                if not raw:
+                    break
                 self._record_bytes(raw)
-                line = raw.decode(errors="replace")
-                self._record_output(line)
-                tool = self.runtime.tool_in(line)
-                if tool is not None:
-                    self._emit("PreToolUse", tool_name=tool)
-                new_state = self.runtime.detect_state(line)
-                if new_state != self._state:
-                    self._state = new_state
-                    self._emit(_STATE_EVENT[new_state])
+                pending += raw.decode(errors="replace")
+                *lines, pending = pending.split("\n")
+                for line in lines:
+                    scan(line + "\n")
+            if pending:
+                scan(pending)
         except Exception as e:  # noqa: BLE001 — boundary: a background task
             print(f"[duckterm] output pump for {self.session_key} failed: {e}", file=sys.stderr)
         finally:
