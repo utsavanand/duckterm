@@ -12,6 +12,7 @@ export function AgentTree({
   now,
   labels,
   folders,
+  selectedKey,
   onOpen,
   onFork,
   onDelete,
@@ -26,6 +27,7 @@ export function AgentTree({
   now: number;
   labels: Record<string, string>;
   folders: string[];
+  selectedKey: string | null;
   onOpen: (key: string) => void;
   onFork: (key: string) => void;
   onDelete: (key: string) => Promise<boolean>;
@@ -113,6 +115,7 @@ export function AgentTree({
       depth={0}
       now={now}
       labels={labels}
+      selectedKey={selectedKey}
       onOpen={onOpen}
       onFork={onFork}
       onDelete={onDelete}
@@ -366,6 +369,7 @@ function TreeRow({
   depth,
   now,
   labels,
+  selectedKey,
   onOpen,
   onFork,
   onDelete,
@@ -375,6 +379,7 @@ function TreeRow({
   depth: number;
   now: number;
   labels: Record<string, string>;
+  selectedKey: string | null;
   onOpen: (key: string) => void;
   onFork: (key: string) => void;
   onDelete: (key: string) => Promise<boolean>;
@@ -522,7 +527,7 @@ function TreeRow({
   return (
     <>
       <div
-        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}`}
+        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}`}
         style={{ paddingLeft: 12 + depth * 18 }}
         // Only root sessions are draggable into groups; forks follow their parent.
         draggable={depth === 0}
@@ -768,6 +773,7 @@ function TreeRow({
             depth={depth + 1}
             now={now}
             labels={labels}
+            selectedKey={selectedKey}
             onOpen={onOpen}
             onFork={onFork}
             onDelete={onDelete}

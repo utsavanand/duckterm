@@ -315,6 +315,7 @@ function Dashboard() {
               now={now}
               labels={labels}
               folders={folders}
+              selectedKey={selectedKey}
               onOpen={setSelectedKey}
               onFork={setForkKey}
               onDelete={deleteSession}

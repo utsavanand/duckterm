@@ -651,6 +651,16 @@ code,
 .rd-row:hover {
   background: var(--bg-soft);
 }
+/* The open session: highlighted so it reads as the source of the middle
+   terminal. An accent left-rail + tint; the negative margin keeps text
+   aligned with the other rows despite the border. */
+.rd-row.selected {
+  background: color-mix(in srgb, var(--idle) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--idle);
+}
+.rd-row.selected:hover {
+  background: color-mix(in srgb, var(--idle) 16%, transparent);
+}
 .rd-row.terminated {
   opacity: 0.5;
 }
