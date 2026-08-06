@@ -642,6 +642,22 @@ class HistoryStore:
         ).fetchall()
         return [{"session_key": r["session_key"], "agent_pid": r["agent_pid"]} for r in rows]
 
+    def stale_launched(self, live_keys: set[str]) -> list[str]:
+        """Launched sessions the DB still thinks are running but which have no
+        live backing — the reboot-zombie set. On startup the orchestrator adopts
+        every tmux session that survived (live_keys); any launched, non-at-rest
+        row NOT in that set has a dead PTY/tmux pane (a reboot kills the tmux
+        server) and would otherwise show 'busy'/'idle' forever, because state is
+        only advanced by events and no event will ever arrive. Returns their keys
+        so the caller can mark them stopped (resumable) — honest, not a lie."""
+        placeholders = ", ".join("?" for _ in self._AT_REST)
+        rows = self._conn.execute(
+            f"SELECT session_key FROM sessions WHERE launched = 1 "
+            f"AND state NOT IN ({placeholders})",
+            self._AT_REST,
+        ).fetchall()
+        return [r["session_key"] for r in rows if r["session_key"] not in live_keys]
+
     def set_outcome(self, key: str, outcome: str) -> None:
         """Record a session's outcome summary (written when it ends)."""
         self._conn.execute(

@@ -475,24 +475,44 @@ class Orchestrator:
 
     async def reconcile(self) -> list[str]:
         """On startup, re-adopt tmux sessions that outlived a previous server
-        run. Each is matched to its DB row (for cwd/runtime) and re-tailed.
-        Returns the session keys re-adopted."""
-        if not tmux.has_tmux():
-            return []
+        run, and reconcile the DB against reality so dead sessions don't linger
+        as zombies. Each live tmux session is matched to its DB row (for
+        cwd/runtime) and re-tailed. Returns the session keys re-adopted.
+
+        A real reboot kills the tmux server, so a launched session's pane is
+        gone — but its DB row still says 'busy'/'idle', and state only advances
+        on events, none of which will ever arrive. So after adopting the live
+        set, we mark every launched, non-at-rest row with no live backing as
+        'stopped' (resumable — honest, not deleted). This covers the tmux-died
+        case AND the no-tmux PTY case (where the live set is empty)."""
         from duckterm.runtimes.generic import GenericRuntime
 
         adopted: list[str] = []
-        for key in tmux.list_duckterm_sessions():
-            if key in self._supervisors:
-                continue
-            row = self.history.session(key) if self.history else None
-            cwd = str(row.get("cwd") or ".") if row else "."
-            supervisor = SessionSupervisor(
-                bus=self.bus, runtime=GenericRuntime("true"), session_key=key, cwd=cwd
-            )
-            self._supervisors[key] = supervisor
-            await supervisor.reattach()
-            adopted.append(key)
+        if tmux.has_tmux():
+            for key in tmux.list_duckterm_sessions():
+                if key in self._supervisors:
+                    continue
+                row = self.history.session(key) if self.history else None
+                cwd = str(row.get("cwd") or ".") if row else "."
+                supervisor = SessionSupervisor(
+                    bus=self.bus, runtime=GenericRuntime("true"), session_key=key, cwd=cwd
+                )
+                self._supervisors[key] = supervisor
+                await supervisor.reattach()
+                adopted.append(key)
+
+        if self.history is not None:
+            # Everything actually live right now: freshly adopted + anything a
+            # still-running server already supervises.
+            live = set(adopted) | set(self._supervisors)
+            reconciled = self.history.stale_launched(live)
+            for key in reconciled:
+                self.history.set_state(key, "stopped", now=int(time.time() * 1000))
+            if reconciled:
+                print(
+                    f"reconciled {len(reconciled)} session(s) whose backing died "
+                    f"(marked stopped, resumable): {', '.join(reconciled)}"
+                )
         return adopted
 
     async def launch(
