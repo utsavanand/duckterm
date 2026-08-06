@@ -1,12 +1,15 @@
-"""Storage locations under ~/.duckterm/, overridable via DUCKTERM_HOME."""
+"""Storage locations under ~/.duckterm/ (or ~/.duckterm-<instance>/).
 
-import os
+The root is resolved by helpers.instance.home(): explicit DUCKTERM_HOME wins,
+else it derives from DUCKTERM_INSTANCE, else the legacy ~/.duckterm."""
+
 from pathlib import Path
+
+from duckterm.helpers import instance
 
 
 def home() -> Path:
-    override = os.environ.get("DUCKTERM_HOME")
-    return Path(override) if override else Path.home() / ".duckterm"
+    return instance.home()
 
 
 def db_path() -> Path:

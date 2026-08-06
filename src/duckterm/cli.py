@@ -13,15 +13,13 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from duckterm import __version__
+from duckterm.helpers import instance
 
-DEFAULT_PORT = 4300
 DEFAULT_HOST = "127.0.0.1"
 
 
 def _server_url() -> str:
-    return os.environ.get(
-        "DUCKTERM_URL", f"http://127.0.0.1:{os.environ.get('DUCKTERM_PORT', DEFAULT_PORT)}"
-    )
+    return instance.server_url()
 
 
 def _installable_agents() -> list[str]:
@@ -38,9 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve = sub.add_parser("serve", help="run the orchestrator server")
     serve.add_argument("--host", default=os.environ.get("DUCKTERM_HOST", DEFAULT_HOST))
-    serve.add_argument(
-        "--port", type=int, default=int(os.environ.get("DUCKTERM_PORT", DEFAULT_PORT))
-    )
+    serve.add_argument("--port", type=int, default=instance.port())
     serve.add_argument(
         "--reload",
         action="store_true",
@@ -52,9 +48,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop the running server and start a fresh one (re-watches live agents)",
     )
     restart.add_argument("--host", default=os.environ.get("DUCKTERM_HOST", DEFAULT_HOST))
-    restart.add_argument(
-        "--port", type=int, default=int(os.environ.get("DUCKTERM_PORT", DEFAULT_PORT))
-    )
+    restart.add_argument("--port", type=int, default=instance.port())
 
     launch = sub.add_parser("launch", help="launch a supervised agent in a running server")
     launch.add_argument(
@@ -246,11 +240,12 @@ def _run(agent: str, agent_args: list[str], name: str | None = None) -> int:
     key = security.new_session_key("run")
     # Register a launched session up front so the row shows immediately. If the
     # server is down, fall through to a plain exec (the agent still runs).
-    if _duckterm_responds(DEFAULT_HOST, DEFAULT_PORT):
+    if _duckterm_responds(DEFAULT_HOST, instance.port()):
         _register_run_session(key, agent, runtime, cwd, name)
     else:
         print(
-            "⚠ no Duckterm server on :4300 — running anyway, but it won't appear.\n"
+            "⚠ no Duckterm server on this instance's port — running anyway, "
+            "but it won't appear.\n"
             "  Start one in another terminal: duckterm serve",
             file=sys.stderr,
         )

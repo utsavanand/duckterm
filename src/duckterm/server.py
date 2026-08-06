@@ -57,7 +57,7 @@ from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
 from duckterm.harnesses import runtime_for
-from duckterm.helpers import browse, security
+from duckterm.helpers import browse, instance, security
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence.checkpoints import build_checkpoint
@@ -2174,18 +2174,28 @@ class Server:
         port: int,
         on_listening: Callable[[str, int], None] | None = None,
     ) -> None:
-        adopted = await self.orchestrator.reconcile()
-        if adopted:
-            print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
-        server = await asyncio.start_server(self.handle, host, port)
-        if on_listening is not None:
-            on_listening(host, port)
-        sweeper = asyncio.create_task(self._sweep_dead_loop())
-        async with server:
-            try:
-                await server.serve_forever()
-            finally:
-                sweeper.cancel()
+        # Refuse to start if another live server already owns this DUCKTERM_HOME.
+        # Two servers on one home share a DB and (via a shared tmux socket)
+        # adopt each other's panes — a second instance can archive or kill the
+        # first's live agents. The pidfile turns that silent corruption into a
+        # clear error. (Per-instance home/socket/port normally prevent overlap;
+        # this guards the case where they were misconfigured to collide.)
+        lock = _acquire_home_lock()
+        try:
+            adopted = await self.orchestrator.reconcile()
+            if adopted:
+                print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
+            server = await asyncio.start_server(self.handle, host, port)
+            if on_listening is not None:
+                on_listening(host, port)
+            sweeper = asyncio.create_task(self._sweep_dead_loop())
+            async with server:
+                try:
+                    await server.serve_forever()
+                finally:
+                    sweeper.cancel()
+        finally:
+            _release_home_lock(lock)
 
     async def _sweep_dead_loop(self) -> None:
         """Auto-archive sessions whose terminal is gone. Launched tabs ping every
@@ -2221,9 +2231,40 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+def _acquire_home_lock() -> Path:
+    """Claim this DUCKTERM_HOME for one server. Writes a pidfile; if it already
+    names a live process, raise so the second server fails loudly instead of
+    silently sharing the DB and tmux panes. Returns the pidfile path."""
+    home = instance.home()
+    home.mkdir(parents=True, exist_ok=True)
+    lock = home / "server.pid"
+    if lock.exists():
+        try:
+            other = int(lock.read_text().strip() or "0")
+        except ValueError:
+            other = 0
+        if other and other != os.getpid() and _pid_alive(other):
+            raise SystemExit(
+                f"another RubberTerm server (pid {other}) already owns "
+                f"{home} — run it with a distinct DUCKTERM_INSTANCE, or stop that one."
+            )
+        # Stale pidfile (process gone / crashed): reclaim it.
+    lock.write_text(str(os.getpid()))
+    return lock
+
+
+def _release_home_lock(lock: Path) -> None:
+    # Only remove the pidfile if it's still ours (avoid deleting a lock a
+    # replacement server already reclaimed).
+    with contextlib.suppress(OSError, ValueError):
+        if int(lock.read_text().strip() or "0") == os.getpid():
+            lock.unlink()
+
+
 def _heartbeat_url() -> str:
-    base = os.environ.get("DUCKTERM_URL", "http://127.0.0.1:4300").rstrip("/")
-    return f"{base}/heartbeat"
+    # This instance's own callback base, so an agent this server launched
+    # heartbeats/ingests into THIS server — never another instance on :4300.
+    return f"{instance.server_url()}/heartbeat"
 
 
 def _branch_name(name: str | None) -> str:
