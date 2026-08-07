@@ -24,6 +24,20 @@ from duckterm.runtimes.base import SessionState
 
 Event = dict[str, Any]
 
+# Bump when the schema shape changes (a new column, a table rebuild). Stamped
+# into the DB's PRAGMA user_version after migrating. A server refuses to open a
+# DB whose user_version is NEWER than this — the old-binary-on-new-DB case, e.g.
+# a stable build opening a DB a beta build already migrated forward. Without the
+# guard, the old code would silently mis-read or clobber the newer data. Additive
+# column-adds are backward-compatible (old code ignores extra columns), so this
+# is a floor for "safe to open," not a hard per-version lock.
+_SCHEMA_VERSION = 1
+
+
+class SchemaTooNewError(RuntimeError):
+    """The database was written by a newer RubberTerm than this one."""
+
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     session_key         TEXT PRIMARY KEY,
@@ -210,8 +224,21 @@ class HistoryStore:
         # locked" at random.
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
+        # Refuse a DB written by a newer RubberTerm — opening it with older code
+        # would silently mis-read or clobber the newer schema (the prod-opens-a-
+        # beta-migrated-DB case). A fresh DB reports user_version 0, which passes.
+        db_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
+        if db_version > _SCHEMA_VERSION:
+            raise SchemaTooNewError(
+                f"database at {path} is schema v{db_version}, but this RubberTerm "
+                f"supports up to v{_SCHEMA_VERSION} — upgrade RubberTerm, or point "
+                f"DUCKTERM_HOME/DUCKTERM_INSTANCE at a matching data dir."
+            )
         self._conn.executescript(_SCHEMA)
         self._migrate()
+        # Stamp the current version after migrating so a later older binary is
+        # refused. (Can't parameterize a PRAGMA; the value is our own int.)
+        self._conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         # Retention: hooks write thousands of event rows a day and nothing
         # else ever deletes them — sweep everything older than 30 days at
         # startup so the DB doesn't grow without bound. Session rows stay.

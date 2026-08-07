@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from duckterm.core.eventbus import EventBus
 from duckterm.persistence.history import HistoryStore, derive_state, session_key_of
 
@@ -408,3 +410,33 @@ def test_move_folder_renames_subtree_and_sessions(tmp_path):
     store.delete_folder("billing")
     assert store.folders() == []
     assert store.session("s1")["grp"] is None
+
+
+def test_schema_version_is_stamped_on_a_fresh_db(tmp_path: Path) -> None:
+    import sqlite3
+
+    from duckterm.persistence.history import _SCHEMA_VERSION
+
+    db = tmp_path / "db.sqlite"
+    HistoryStore(db).close()
+    v = sqlite3.connect(str(db)).execute("PRAGMA user_version").fetchone()[0]
+    assert v == _SCHEMA_VERSION
+
+
+def test_refuses_to_open_a_newer_schema(tmp_path: Path) -> None:
+    """A DB migrated forward by a newer RubberTerm (higher user_version) must be
+    refused, not silently mis-read — the prod-opens-beta's-DB data-loss case."""
+    import sqlite3
+
+    from duckterm.persistence.history import SchemaTooNewError
+
+    db = tmp_path / "db.sqlite"
+    HistoryStore(db).close()  # stamps the current version
+    # Simulate a future build having bumped the schema.
+    conn = sqlite3.connect(str(db))
+    conn.execute("PRAGMA user_version = 999")
+    conn.commit()
+    conn.close()
+
+    with pytest.raises(SchemaTooNewError, match="schema v999"):
+        HistoryStore(db)
