@@ -225,7 +225,7 @@ def test_resume_relaunches_a_stopped_session(
             "session_key": "resumable",
             "session_id": "claude-sid-123",
             "runtime": "claude-code",
-            "cwd": "/tmp/proj",
+            "cwd": str(tmp_path),
             "_ts": 1,
             "_id": "a",
         }
@@ -254,7 +254,8 @@ def test_resume_relaunches_a_stopped_session(
 
     result = asyncio.run(scenario())
     assert result["resumed"] is True
-    assert launched["cwd"] == "/tmp/proj"
+    assert launched["cwd"] == str(tmp_path)
+    assert result["carried_conversation"] is True  # claude-code + recorded sid
     assert launched["argv"] == ["claude", "--resume", "claude-sid-123"]
     # The PTY relaunch supersedes the old tab tracking.
     assert store.session("resumable")["heartbeat"] == 0
@@ -277,7 +278,7 @@ def test_resume_relaunches_generic_agent_with_its_recorded_command(
             "session_key": "gen",
             "runtime": "generic",
             "command": "sh -c 'echo READY; exec cat'",
-            "cwd": "/tmp/e2e",
+            "cwd": str(tmp_path),
             "launched": True,
             "_ts": 1,
             "_id": "a",
@@ -304,6 +305,101 @@ def test_resume_relaunches_generic_agent_with_its_recorded_command(
 
     asyncio.run(scenario())
     assert launched["argv"] == ["sh", "-c", "echo READY; exec cat"]
+
+
+def test_resume_reports_carried_conversation_false_for_generic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A generic agent has no native resume — resume relaunches fresh, and the
+    response must say so (carried_conversation False) rather than implying the
+    prior conversation continued."""
+
+    from duckterm.persistence.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.record(
+        {
+            "event_type": "SessionStart",
+            "session_key": "gen2",
+            "runtime": "generic",
+            "command": "sh -c 'exec cat'",
+            "cwd": str(tmp_path),
+            "launched": True,
+            "_ts": 1,
+            "_id": "a",
+        }
+    )
+    store.set_state("gen2", "stopped", now=2)
+
+    async def scenario() -> dict[str, object]:
+        srv = Server(history=store)
+
+        async def fake_launch(*, runtime, cwd, session_key, **kw):  # type: ignore[no-untyped-def]
+            return session_key
+
+        monkeypatch.setattr(srv.orchestrator, "launch", fake_launch)
+        server = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            body = await asyncio.to_thread(_post, port, "/sessions/gen2/resume")
+        return dict(json.loads(body))
+
+    result = asyncio.run(scenario())
+    assert result["resumed"] is True
+    assert result["carried_conversation"] is False
+
+
+def test_resume_refuses_when_the_working_dir_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The saved worktree/cwd may have been removed; resuming into a missing dir
+    would land the agent in $HOME. Refuse with 409 instead."""
+    from duckterm.persistence.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.record(
+        {
+            "event_type": "SessionStart",
+            "session_key": "gonewt",
+            "runtime": "generic",
+            "command": "sh -c 'exec cat'",
+            "cwd": str(tmp_path / "removed-worktree"),  # never created
+            "launched": True,
+            "_ts": 1,
+            "_id": "a",
+        }
+    )
+    store.set_state("gonewt", "stopped", now=2)
+
+    def post_409(port: int, path: str) -> int:
+        import urllib.error
+        import urllib.request
+
+        from duckterm.helpers import security
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}",
+            data=b"{}",
+            headers={
+                "Content-Type": "application/json",
+                security.TOKEN_HEADER: security.load_or_create_token(),
+            },
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            return 200
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    async def scenario() -> int:
+        srv = Server(history=store)
+        server = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            return await asyncio.to_thread(post_409, port, "/sessions/gonewt/resume")
+
+    assert asyncio.run(scenario()) == 409
 
 
 def test_archive_is_final_but_keeps_history(tmp_path: Path) -> None:

@@ -41,7 +41,9 @@ def test_snapshot_list_and_restore(tmp_path: Path, monkeypatch) -> None:  # type
     # Restore resolves the resumable Claude conversation id from the transcript,
     # so seed a fake transcript for this session's cwd under a fake home.
     fake_home = tmp_path / "home"
-    cwd = "/repo"
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    cwd = str(repo)
     from duckterm.runtimes.claude_code import project_slug
 
     proj = fake_home / ".claude" / "projects" / project_slug(Path(cwd))
@@ -130,7 +132,12 @@ def test_restore_publishes_sessionstart_so_it_shows_up(
     bus = EventBus(sink=store.record)
     # A WATCHED codex session (no id-resume needed; launched defaults to 0).
     bus.publish(
-        {"event_type": "SessionStart", "session_key": "s1", "runtime": "codex", "cwd": "/repo"}
+        {
+            "event_type": "SessionStart",
+            "session_key": "s1",
+            "runtime": "codex",
+            "cwd": str(tmp_path),
+        }
     )
     assert store.session("s1")["launched"] == 0  # starts watched
     srv = Server(history=store)

@@ -1121,8 +1121,27 @@ class Server:
             )
             return
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
+        # The saved worktree/dir may be gone (deleted worktree, pruned, wiped
+        # home). Relaunching into a missing dir lands the agent in $HOME with no
+        # branch — refuse with a clear reason instead.
+        if not Path(cwd).is_dir():
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": "the session's working directory no longer exists — "
+                    "its worktree was likely removed",
+                    "cwd": cwd,
+                },
+            )
+            return
         runtime = row.get("runtime") or "generic"
         argv = self._resume_argv(session_key, runtime, row)
+        # Only claude-code with a recorded conversation id actually continues the
+        # conversation; every other runtime (and claude with no id) starts fresh.
+        # Report it honestly so the UI can warn — before this, resume always
+        # claimed success even when it silently dropped all prior context.
+        carried = runtime == "claude-code" and bool(self.history.session_id_for(session_key))
         # Relaunch in a PTY Duckterm owns so the resumed session renders in the
         # browser terminal — even if it originally ran in the user's own tab
         # (duckterm run); clear the heartbeat flag so the row reads as
@@ -1136,7 +1155,14 @@ class Server:
         )
         self.history.clear_heartbeat(session_key)
         await _write_json(
-            writer, 200, {"resumed": True, "session_key": session_key, "command": argv}
+            writer,
+            200,
+            {
+                "resumed": True,
+                "session_key": session_key,
+                "command": argv,
+                "carried_conversation": carried,
+            },
         )
 
     def _resume_argv(self, key: str, runtime: str, row: dict[str, Any]) -> list[str]:
@@ -2060,11 +2086,27 @@ class Server:
         if session is None:
             await _write_json(writer, 404, {"error": f"no session {session_key} in snapshot"})
             return
+        cwd = str(session.get("worktree_path") or session.get("cwd") or ".")
+        # The worktree/dir a snapshot points at may be gone (session deleted,
+        # `git worktree prune`, home wiped) — launching into a non-existent
+        # directory silently lands the agent in $HOME with the branch missing.
+        # Refuse with a clear reason instead. Checked BEFORE resolving the resume
+        # id (which may read a transcript) so a dead worktree short-circuits.
+        if not Path(cwd).is_dir():
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": "the session's working directory no longer exists — "
+                    "its worktree was likely removed",
+                    "cwd": cwd,
+                },
+            )
+            return
         # `--resume` needs the harness's OWN conversation id, not Duckterm's
         # session_key. Resolve it (same as conversation-fork); if there's nothing
         # resumable, restore_command_for falls back to a fresh launch.
         argv = restore_command_for(self._restore_session_with_resume_id(session))
-        cwd = str(session.get("worktree_path") or session.get("cwd") or ".")
         # Restore under the snapshot's original session_key so the relaunched
         # agent re-attaches to its row (its hooks report under this key via the
         # env var) instead of spawning an untracked session. Without the env +
