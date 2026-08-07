@@ -60,7 +60,7 @@ from duckterm.harnesses import runtime_for
 from duckterm.helpers import browse, instance, security
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
-from duckterm.persistence.checkpoints import build_checkpoint
+from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
 from duckterm.runtimes.base import AgentRuntime
@@ -1795,15 +1795,22 @@ class Server:
             now_ms=int(time.time() * 1000),
             since_ms=since_ms,
         )
+        # Row FIRST (the source of truth), markdown SECOND (a derived artifact).
+        # A crash between them leaves markdown_path NULL — never an orphan file
+        # with no row. The markdown lives under DUCKTERM_HOME, not the worktree,
+        # so deleting the session's worktree can't destroy its checkpoint log.
         self.history.add_checkpoint(
             checkpoint_id=cp.id,
             session_key=cp.session_key,
             label=cp.label,
             summary=cp.summary,
             record=cp.record,
-            markdown_path=cp.markdown_path,
+            markdown_path=None,
             created_at=cp.created_at,
         )
+        rel = await asyncio.to_thread(write_markdown, cp.session_key, cp.created_at, cp.markdown)
+        if rel is not None:
+            self.history.set_checkpoint_markdown(cp.id, rel)
         await _write_json(writer, 200, {"id": cp.id, "label": cp.label, "summary": cp.summary})
 
     def _read_transcript(self, session_key: str, row: dict[str, Any]) -> list[dict[str, str]]:

@@ -244,6 +244,23 @@ def test_delete_missing_session_returns_false(tmp_path: Path) -> None:
     assert store.delete_session("nope") is False
 
 
+def test_delete_removes_checkpoint_markdown_dir(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    # The checkpoint markdown lives under DUCKTERM_HOME (not the DB), so the
+    # delete cascade must remove it from disk too — else .md files orphan.
+    from duckterm.persistence.checkpoints import markdown_dir, write_markdown
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("DUCKTERM_HOME", str(home))
+    store = HistoryStore(tmp_path / "db.sqlite")
+    bus = make_bus(store)
+    bus.publish({"event_type": "SessionStart", "session_key": "s1"})
+    write_markdown("s1", 1, "# cp\n")
+    assert markdown_dir("s1").exists()
+
+    assert store.delete_session("s1") is True
+    assert not markdown_dir("s1").exists()  # gone from disk, not orphaned
+
+
 def test_clear_terminated_removes_only_terminated(tmp_path: Path) -> None:
     store = HistoryStore(tmp_path / "db.sqlite")
     bus = make_bus(store)

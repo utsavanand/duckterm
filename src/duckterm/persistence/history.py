@@ -10,7 +10,9 @@ Schema is created idempotently on open. Columns that later Acts fill
 now but stay NULL until Acts 4/5/7 populate them.
 """
 
+import contextlib
 import json
+import shutil
 import sqlite3
 import time
 from pathlib import Path
@@ -408,6 +410,16 @@ class HistoryStore:
                 markdown_path,
                 created_at,
             ),
+        )
+        self._conn.commit()
+
+    def set_checkpoint_markdown(self, checkpoint_id: str, markdown_path: str) -> None:
+        """Fill in a checkpoint's markdown path after the file is written — the
+        row is inserted first (source of truth), the file second, so a crash
+        between them leaves this NULL rather than pointing at a missing file."""
+        self._conn.execute(
+            "UPDATE checkpoints SET markdown_path = ? WHERE id = ?",
+            (markdown_path, checkpoint_id),
         )
         self._conn.commit()
 
@@ -811,6 +823,7 @@ class HistoryStore:
             (key, now),
         )
         self._conn.commit()
+        _remove_checkpoint_dir(key)  # the markdown log lives on disk, not in the DB
         return cur.rowcount > 0
 
     def purge_test_sessions(self) -> list[str]:
@@ -827,6 +840,7 @@ class HistoryStore:
             self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM tombstones WHERE session_key = ?", (key,))
+            _remove_checkpoint_dir(key)  # leave zero trace, including on disk
         self._conn.commit()
         return keys
 
@@ -843,3 +857,12 @@ class HistoryStore:
     def close(self) -> None:
         """Close the underlying SQLite connection."""
         self._conn.close()
+
+
+def _remove_checkpoint_dir(session_key: str) -> None:
+    """Delete a session's checkpoint markdown directory under DUCKTERM_HOME so a
+    deleted session leaves no orphaned .md files on disk. Best-effort; the DB
+    rows are already gone by the time this runs."""
+    d = paths.home() / "checkpoints" / session_key
+    with contextlib.suppress(OSError):
+        shutil.rmtree(d, ignore_errors=True)
