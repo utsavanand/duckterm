@@ -544,6 +544,7 @@ class Orchestrator:
             extra["name"] = name
         run_cwd = cwd
 
+        worktree = None
         if repo_path is not None:
             wt_branch = branch or f"duckterm/{key[:8]}"
             worktree = self.worktrees.add(Path(repo_path), wt_branch, base=base)
@@ -568,7 +569,18 @@ class Orchestrator:
             env=env,
         )
         self._supervisors[key] = supervisor
-        await supervisor.start()
+        try:
+            await supervisor.start()
+        except Exception:
+            # A failed spawn (e.g. a typo'd command -> ValueError) must not leave
+            # a git worktree + branch and a dead supervisor entry behind; those
+            # accreted on every failed launch. Roll both back, then re-raise so
+            # the caller still turns it into a 400.
+            self._supervisors.pop(key, None)
+            if worktree is not None:
+                with contextlib.suppress(Exception):
+                    self.worktrees.remove_by_worktree(worktree.path, delete_branch=True)
+            raise
         if self.history is not None and prompt:
             self.history.set_intention(key, prompt)
         if self.history is not None and supervisor._task is not None:

@@ -88,6 +88,13 @@ class WorktreeManager:
         _git(repo, "worktree", "remove", "--force", str(worktree_path))
         if delete_branch and branch is not None:
             _git(repo, "branch", "-D", branch)
+        # Prune the now-empty per-repo parent (root/<repo-name>/) so a removed
+        # worktree leaves no directory skeleton behind. rmdir only succeeds if
+        # it's empty, so a repo with other live worktrees is never touched.
+        parent = Path(worktree_path).parent
+        if parent != self._root:
+            with contextlib.suppress(OSError):
+                parent.rmdir()
 
     def remove_by_worktree(self, worktree_path: Path, *, delete_branch: bool = True) -> None:
         """Remove a worktree given only its path — resolves the main repo from
