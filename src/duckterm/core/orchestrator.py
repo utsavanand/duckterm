@@ -23,7 +23,6 @@ import uuid
 from collections import deque
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Protocol
 
 from duckterm.agents import tmux
 from duckterm.core.eventbus import EventBus
@@ -31,7 +30,7 @@ from duckterm.git.worktrees import WorktreeManager
 from duckterm.helpers import paths
 from duckterm.llm.summarizer import build_prompt, mechanical_summary, summarize
 from duckterm.persistence.history import HistoryStore
-from duckterm.runtimes.base import SessionState
+from duckterm.runtimes.base import AgentRuntime, SessionState
 
 # State -> the event_type whose derive_state yields that state. One vocabulary.
 _STATE_EVENT = {
@@ -41,22 +40,12 @@ _STATE_EVENT = {
 }
 
 
-class StateRuntime(Protocol):
-    name: str
-
-    def launch_command(self, *, cwd: Path, session_key: str, initial_prompt: str) -> list[str]: ...
-    def detect_state(self, recent_output: str) -> SessionState: ...
-    def tool_in(self, recent_output: str) -> str | None: ...
-    def locate_transcript(self, *, cwd: Path, session_id: str) -> Path | None: ...
-    def read_transcript(self, *, cwd: Path, session_id: str) -> list[dict[str, str]]: ...
-
-
 class SessionSupervisor:
     def __init__(
         self,
         *,
         bus: EventBus,
-        runtime: StateRuntime,
+        runtime: AgentRuntime,
         session_key: str,
         cwd: str,
         initial_prompt: str = "",
@@ -518,7 +507,7 @@ class Orchestrator:
     async def launch(
         self,
         *,
-        runtime: StateRuntime,
+        runtime: AgentRuntime,
         cwd: str | None = None,
         session_key: str | None = None,
         prompt: str = "",

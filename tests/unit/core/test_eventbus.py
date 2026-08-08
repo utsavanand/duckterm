@@ -71,6 +71,6 @@ def test_event_published_between_subscribe_and_read_is_not_lost() -> None:
 def test_subscriber_removed_on_close() -> None:
     bus = EventBus()
     sub = bus.subscribe()
-    assert bus.subscriber_count == 1
+    assert len(bus._subscribers) == 1
     sub.close()
-    assert bus.subscriber_count == 0
+    assert len(bus._subscribers) == 0  # closing frees the slot, no leak

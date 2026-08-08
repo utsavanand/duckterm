@@ -29,7 +29,7 @@ def test_subagents_attach_to_parent_not_a_new_session() -> None:
 
     # The sub-agent did NOT create a second session row.
     assert len(h.sessions()) == 1
-    subs = h.subagents("P")
+    subs = h.subagents_by_session().get("P", [])
     assert len(subs) == 1
     assert subs[0]["agent_type"] == "Explore"
     assert subs[0]["agent_prompt"] == "find the auth code"
@@ -46,7 +46,7 @@ def test_subagent_stop_flips_state_to_done() -> None:
         {"_id": "e3", "_ts": 9, "event_type": "SubagentStop", "session_key": "P", "agent_id": "a1"}
     )
 
-    sub = h.subagents("P")[0]
+    sub = h.subagents_by_session()["P"][0]
     assert sub["state"] == "done"
     assert sub["ended_at"] == 9
 
