@@ -69,4 +69,8 @@ DUCKTERM_INSTANCE=$CHANNEL duckterm serve
 DUCKTERM_INSTANCE=$CHANNEL duckterm install-hooks
 \`\`\`"
 
+echo "==> stamping docs/releases.md current-versions table"
+scripts/stamp_releases_doc.py
+
 echo "==> done: $(gh release view "$TAG" --json url -q .url)"
+echo "    commit docs/releases.md if its version table changed."
