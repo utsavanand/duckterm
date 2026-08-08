@@ -25,6 +25,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 from duckterm.agents import tmux
+from duckterm.core import events
 from duckterm.core.eventbus import EventBus
 from duckterm.git.worktrees import WorktreeManager
 from duckterm.helpers import paths
@@ -34,9 +35,9 @@ from duckterm.runtimes.base import AgentRuntime, SessionState
 
 # State -> the event_type whose derive_state yields that state. One vocabulary.
 _STATE_EVENT = {
-    "busy": "PreToolUse",
-    "idle": "Stop",
-    "waiting": "Notification",
+    "busy": events.PRE_TOOL_USE,
+    "idle": events.STOP,
+    "waiting": events.NOTIFICATION,
 }
 
 
@@ -128,7 +129,7 @@ class SessionSupervisor:
         self._primary_fd = primary
         # Record the exact launch command so Resume can relaunch it — agents
         # with no native conversation resume have nothing else to go on.
-        self._emit("SessionStart", command=shlex.join(argv))
+        self._emit(events.SESSION_START, command=shlex.join(argv))
         self._task = asyncio.create_task(self._pump(primary))
 
     async def _start_tmux(self) -> None:
@@ -148,7 +149,7 @@ class SessionSupervisor:
             self._pipe_path,
             env={"DUCKTERM_SESSION_KEY": self.session_key, **self._env},
         )
-        self._emit("SessionStart", command=command)
+        self._emit(events.SESSION_START, command=command)
         self._task = asyncio.create_task(self._tail_pipe())
 
     async def reattach(self) -> None:
@@ -204,7 +205,7 @@ class SessionSupervisor:
                             self._record_output(line)
                             tool = self.runtime.tool_in(line)
                             if tool is not None:
-                                self._emit("PreToolUse", tool_name=tool)
+                                self._emit(events.PRE_TOOL_USE, tool_name=tool)
                             new_state = self.runtime.detect_state(line)
                             if new_state != self._state:
                                 self._state = new_state
@@ -218,7 +219,7 @@ class SessionSupervisor:
             print(f"[duckterm] tail-pipe for {self.session_key} failed: {e}", file=sys.stderr)
         finally:
             self._close_byte_subs()
-            self._emit("SessionEnd")
+            self._emit(events.SESSION_END)
 
     async def _pump(self, primary: int) -> None:
         loop = asyncio.get_running_loop()
@@ -237,7 +238,7 @@ class SessionSupervisor:
             self._record_output(line)
             tool = self.runtime.tool_in(line)
             if tool is not None:
-                self._emit("PreToolUse", tool_name=tool)
+                self._emit(events.PRE_TOOL_USE, tool_name=tool)
             new_state = self.runtime.detect_state(line)
             if new_state != self._state:
                 self._state = new_state
@@ -431,7 +432,7 @@ class SessionSupervisor:
         if self._proc is not None:
             await self._proc.wait()
         self._close_byte_subs()
-        self._emit("SessionEnd")
+        self._emit(events.SESSION_END)
 
     async def stop(self) -> None:
         if self._input_task is not None:

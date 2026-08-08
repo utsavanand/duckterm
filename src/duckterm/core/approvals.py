@@ -23,6 +23,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from duckterm.core import events
+
 Decision = Literal["approve", "deny"]
 
 # Keystrokes that answer Claude Code's permission prompt (numbered menu: 1=Yes).
@@ -105,7 +107,7 @@ class ApprovalRegistry:
         (the non-blocking path: you'll answer in the terminal). Skipped when a
         blocking hook already registered a request for this session — that one is
         authoritative, so we don't want a duplicate observe-only row."""
-        if event.get("event_type") != "PermissionRequest":
+        if event.get("event_type") != events.PERMISSION_REQUEST:
             return None
         key = event.get("session_key") or event.get("session_id")
         if not key:

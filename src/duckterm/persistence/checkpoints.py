@@ -29,6 +29,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Import the names directly (not the module) — a parameter here is named
+# `events`, which would shadow a module import inside the functions below.
+from duckterm.core.events import POST_TOOL_USE, PRE_TOOL_USE, USER_PROMPT_SUBMIT
 from duckterm.helpers import paths
 from duckterm.llm.summarizer import summarize
 
@@ -61,11 +64,11 @@ def _extract(events: list[Event]) -> dict[str, Any]:
     # once (on PreToolUse) so a single run isn't recorded twice.
     for e in events:
         etype = e.get("event_type")
-        if etype == "UserPromptSubmit":
+        if etype == USER_PROMPT_SUBMIT:
             text = str(e.get("prompt") or e.get("tool_input", {}).get("prompt") or "").strip()
             if text:
                 prompts.append(text)
-        if etype in ("PreToolUse", "PostToolUse"):
+        if etype in (PRE_TOOL_USE, POST_TOOL_USE):
             tool = e.get("tool_name")
             if tool:
                 tools[str(tool)] += 1
@@ -73,7 +76,7 @@ def _extract(events: list[Event]) -> dict[str, Any]:
             path = tool_input.get("file_path")
             if path:
                 files[str(path)] += 1
-            if etype == "PreToolUse" and tool == "Bash":
+            if etype == PRE_TOOL_USE and tool == "Bash":
                 cmd = str(tool_input.get("command") or "").strip()
                 if cmd:
                     commands.append(cmd)

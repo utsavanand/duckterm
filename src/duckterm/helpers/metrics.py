@@ -9,6 +9,8 @@ the common JS/Python/Rust/Go invocations.
 import re
 from typing import Any
 
+from duckterm.core import events
+
 Event = dict[str, Any]
 
 # kind -> regex over the command string / tool name.
@@ -28,7 +30,7 @@ def classify(event: Event, patterns: dict[str, re.Pattern[str]] | None = None) -
 
     Looks at the tool command (tool_input.command) and the tool name — the
     fields a PreToolUse event carries for a shell/test invocation."""
-    if event.get("event_type") not in ("PreToolUse", "PostToolUse"):
+    if event.get("event_type") not in (events.PRE_TOOL_USE, events.POST_TOOL_USE):
         return None
     pats = patterns if patterns is not None else DEFAULT_PATTERNS
     haystack = " ".join(

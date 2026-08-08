@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from duckterm.core import events
 from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
 from duckterm.runtimes.base import SessionState
@@ -151,9 +152,9 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
     # (SessionStart) revives it. A stray late event — including the resumed-then-
     # exited agent's SessionEnd — must NOT flip it (e.g. archived -> terminated).
     # This guard runs before the SessionEnd/terminated rule on purpose.
-    if prev in ("stopped", "archived") and event.get("event_type") != "SessionStart":
+    if prev in ("stopped", "archived") and event.get("event_type") != events.SESSION_START:
         return prev
-    if lifecycle == "terminated" or event.get("event_type") == "SessionEnd":
+    if lifecycle == "terminated" or event.get("event_type") == events.SESSION_END:
         return "terminated"
     match event.get("event_type"):
         case "PermissionRequest" | "Notification":
@@ -287,7 +288,7 @@ class HistoryStore:
             ),
         )
         etype = event.get("event_type")
-        if etype in ("SubagentStart", "SubagentStop"):
+        if etype in (events.SUBAGENT_START, events.SUBAGENT_STOP):
             # A sub-agent event shares the parent's session_id, so it would
             # otherwise fold into the PARENT's row. Record it as a sub-agent
             # instead and don't touch the session table or metrics.
@@ -307,7 +308,7 @@ class HistoryStore:
         if not agent_id:
             return  # without an id we can't distinguish or update it
         ts = int(event["_ts"])
-        if event.get("event_type") == "SubagentStart":
+        if event.get("event_type") == events.SUBAGENT_START:
             self._conn.execute(
                 "INSERT INTO subagents "
                 "(agent_id, session_key, agent_type, agent_prompt, state, started_at) "

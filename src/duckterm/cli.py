@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from duckterm import __version__
+from duckterm.core import events
 from duckterm.helpers import instance
 
 DEFAULT_HOST = "127.0.0.1"
@@ -263,7 +264,7 @@ def _register_run_session(key: str, agent: str, runtime: str, cwd: str, name: st
     appears before the agent starts. Best-effort: a failure just means the row
     shows up a beat later from the agent's own hooks."""
     start = {
-        "event_type": "SessionStart",
+        "event_type": events.SESSION_START,
         "session_key": key,
         "runtime": runtime,
         "cwd": cwd,

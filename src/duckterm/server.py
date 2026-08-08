@@ -50,6 +50,7 @@ from typing import Any
 
 from duckterm import suites, zsh_themes
 from duckterm.agents.terminal import available_terminals, open_in_terminal
+from duckterm.core import events
 from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
@@ -282,7 +283,13 @@ class Server:
     # "needs human" noise). Time-gated so the tool that IS the request — Claude
     # emits PermissionRequest and that tool's PreToolUse in the same tick —
     # doesn't clear its own pending approval.
-    _RESOLVES_APPROVAL = {"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop", "SessionEnd"}
+    _RESOLVES_APPROVAL = {
+        events.PRE_TOOL_USE,
+        events.POST_TOOL_USE,
+        events.USER_PROMPT_SUBMIT,
+        events.STOP,
+        events.SESSION_END,
+    }
 
     def _sink(self, event: dict[str, Any]) -> None:
         """Fan a published event to the durable store and the approval registry.
@@ -702,7 +709,7 @@ class Server:
         # so they update this row instead of creating a duplicate.
         self.bus.publish(
             {
-                "event_type": "SessionStart",
+                "event_type": events.SESSION_START,
                 "session_key": key,
                 "name": name,
                 "source_app": repo_name
@@ -822,7 +829,7 @@ class Server:
         # report under child_key (via DUCKTERM_SESSION_KEY), updating this row.
         self.bus.publish(
             {
-                "event_type": "SessionStart",
+                "event_type": events.SESSION_START,
                 "session_key": child_key,
                 "source_app": repo.name,
                 "runtime": parent.get("runtime") or "claude-code",
@@ -888,7 +895,7 @@ class Server:
         # shows it and worktree-only actions (fork, spotlight) light up.
         self.bus.publish(
             {
-                "event_type": "Notification",
+                "event_type": events.NOTIFICATION,
                 "session_key": session_key,
                 "repo_path": str(repo),
                 "worktree_path": str(worktree.path),
@@ -979,7 +986,7 @@ class Server:
         # Record a row so the conversation fork shows its lineage.
         self.bus.publish(
             {
-                "event_type": "SessionStart",
+                "event_type": events.SESSION_START,
                 "session_key": child_key,
                 "source_app": parent.get("source_app") or "fork",
                 "runtime": "claude-code",
@@ -1095,7 +1102,7 @@ class Server:
         the SSE stream pushes it to dashboards, so a manual stop/archive updates
         the UI live instead of only on reload."""
         self.bus.publish(
-            {"event_type": "Notification", "session_key": session_key, "lifecycle": lifecycle}
+            {"event_type": events.NOTIFICATION, "session_key": session_key, "lifecycle": lifecycle}
         )
 
     async def _resume(self, writer: asyncio.StreamWriter, session_key: str) -> None:
@@ -1646,7 +1653,7 @@ class Server:
             prompts = [
                 str(e.get("prompt"))
                 for e in self.history.events_for(key)
-                if e.get("event_type") == "UserPromptSubmit" and e.get("prompt")
+                if e.get("event_type") == events.USER_PROMPT_SUBMIT and e.get("prompt")
             ]
             out.extend(Correction("follow-up", p) for p in prompts[1:])
         return out[-80:]  # newest-biased cap; enough signal, bounded prompt
@@ -2123,7 +2130,7 @@ class Server:
             self.history.mark_heartbeat(key)
             self.bus.publish(
                 {
-                    "event_type": "SessionStart",
+                    "event_type": events.SESSION_START,
                     "session_key": key,
                     "name": session.get("name"),
                     "runtime": session.get("runtime"),
