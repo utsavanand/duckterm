@@ -21,7 +21,7 @@ from typing import Any
 from duckterm.core import events
 from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
-from duckterm.runtimes.base import SessionState
+from duckterm.runtimes.base import AT_REST_STATES, SessionState
 
 Event = dict[str, Any]
 
@@ -585,7 +585,7 @@ class HistoryStore:
         self._conn.execute("UPDATE sessions SET heartbeat = 0 WHERE session_key = ?", (key,))
         self._conn.commit()
 
-    def set_state(self, key: str, state: str, *, now: int | None = None) -> bool:
+    def set_state(self, key: str, state: SessionState, *, now: int | None = None) -> bool:
         """Set a session's state directly — for an explicit user action (Stop sets
         'stopped', Resume sets 'busy', Archive sets 'archived'). Distinct from
         event-derived state. Returns whether the session exists.
@@ -620,7 +620,7 @@ class HistoryStore:
         return cur.rowcount > 0
 
     # States we never sweep — the session is already at rest or put away.
-    _AT_REST = ("terminated", "stopped", "archived")
+    _AT_REST = AT_REST_STATES
 
     def sweep_dead(self, now: int, *, stale_after_ms: int) -> list[str]:
         """Heartbeat-tracked (launched) sessions whose tab stopped pinging — the

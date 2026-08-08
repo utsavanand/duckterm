@@ -18,6 +18,11 @@ from typing import Any, Literal
 
 SessionState = Literal["idle", "busy", "waiting", "terminated", "stopped", "archived"]
 
+# States that are "at rest" — the session is finished or put away, so the sweeps
+# and startup reconciliation skip it. Defined once here (beside SessionState);
+# both the history store and the server import it.
+AT_REST_STATES: tuple[SessionState, ...] = ("terminated", "stopped", "archived")
+
 
 @dataclass(frozen=True)
 class HookSpec:

@@ -221,8 +221,8 @@ def _run(agent: str, agent_args: list[str], name: str | None = None) -> int:
     import shlex
 
     from duckterm.agents.terminal import with_heartbeat
+    from duckterm.harnesses import infer_runtime
     from duckterm.helpers import security
-    from duckterm.server import _heartbeat_url, infer_runtime
 
     if not shutil.which(agent):
         print(f"'{agent}' not found on PATH", file=sys.stderr)
@@ -254,7 +254,7 @@ def _run(agent: str, agent_args: list[str], name: str | None = None) -> int:
     agent_cmd = " ".join(shlex.quote(a) for a in [agent, *agent_args])
     # Wrap with the heartbeat loop (current tab's tty), under the session key the
     # agent's hooks will also report against, then exec a shell so it owns the TTY.
-    wrapped = with_heartbeat(agent_cmd, _heartbeat_url(), key)
+    wrapped = with_heartbeat(agent_cmd, instance.heartbeat_url(), key)
     os.environ["DUCKTERM_SESSION_KEY"] = key
     os.execvp("sh", ["sh", "-c", wrapped])  # replaces this process; doesn't return
 

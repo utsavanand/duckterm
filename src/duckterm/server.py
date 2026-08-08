@@ -57,14 +57,14 @@ from duckterm.core.orchestrator import Orchestrator
 from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
-from duckterm.harnesses import runtime_for
+from duckterm.harnesses import infer_runtime, runtime_for
 from duckterm.helpers import browse, instance, security
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
-from duckterm.runtimes.base import AgentRuntime
+from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime
 from duckterm.transport.httpio import (
     KEEPALIVE_SECONDS,
     SELF_PROBE_HEADER,
@@ -91,20 +91,6 @@ from duckterm.transport.websocket import (
 # duckterm-hook.sh DEADLINE). A blocking approval older than this whose session
 # has moved on is abandoned and gets swept from "Needs human".
 _BLOCKING_POLL_MS = 180_000
-
-
-def infer_runtime(command: str) -> str:
-    """Guess the runtime from the command's first word, so callers don't have to
-    pass a separate runtime — `claude …` -> claude-code, `codex …` -> codex,
-    anything else -> generic."""
-    first = (command.strip().split() or [""])[0].rsplit("/", 1)[-1]
-    if first.startswith("claude"):
-        return "claude-code"
-    if first.startswith("codex"):
-        return "codex"
-    if first.startswith("copilot"):
-        return "copilot"
-    return "generic"
 
 
 def _build_runtime(name: str | None, command: str) -> AgentRuntime:
@@ -701,7 +687,7 @@ class Server:
             argv,
             app=req.get("terminal"),
             env={"DUCKTERM_SESSION_KEY": key, **extra_env},
-            heartbeat=(_heartbeat_url(), key),
+            heartbeat=(instance.heartbeat_url(), key),
             title=name or repo_name,
         )
         # Record a tracked row so the session shows up with its name/repo/branch.
@@ -822,7 +808,7 @@ class Server:
             argv,
             app=req.get("terminal"),
             env={"DUCKTERM_SESSION_KEY": child_key},
-            heartbeat=(_heartbeat_url(), child_key),
+            heartbeat=(instance.heartbeat_url(), child_key),
             title=worktree.branch,
         )
         # Record a tracked row so the fork shows its lineage. The agent's hooks
@@ -1303,7 +1289,7 @@ class Server:
     # "which sessions touched auth?") in seconds. Upgrade path if digests
     # prove too shallow for deep history questions: give the answerer tools
     # to read a named session's full transcript and diff on demand.
-    _FLEET_STATES_DONE = ("stopped", "terminated", "archived")
+    _FLEET_STATES_DONE = AT_REST_STATES  # sessions past this state aren't "running"
 
     def _fleet_digest(self, row: dict[str, Any], question: str) -> str:
         key = str(row.get("session_key") or "")
@@ -2123,7 +2109,7 @@ class Server:
             cwd,
             argv,
             env={"DUCKTERM_SESSION_KEY": key},
-            heartbeat=(_heartbeat_url(), key),
+            heartbeat=(instance.heartbeat_url(), key),
             title=session.get("name") or session.get("source_app"),
         )
         if spawned:
@@ -2315,12 +2301,6 @@ def _release_home_lock(lock: Path) -> None:
     with contextlib.suppress(OSError, ValueError):
         if int(lock.read_text().strip() or "0") == os.getpid():
             lock.unlink()
-
-
-def _heartbeat_url() -> str:
-    # This instance's own callback base, so an agent this server launched
-    # heartbeats/ingests into THIS server — never another instance on :4300.
-    return f"{instance.server_url()}/heartbeat"
 
 
 def _branch_name(name: str | None) -> str:
