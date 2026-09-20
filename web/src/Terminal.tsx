@@ -129,6 +129,17 @@ export function Terminal({
         ws.send(new TextEncoder().encode(data));
     });
 
+    // Shift+Enter inserts a newline instead of submitting. xterm would send
+    // plain \r for it — indistinguishable from Enter — so intercept and send
+    // LF (Ctrl+J), the newline keystroke both claude-code and codex accept.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type === "keydown" && e.key === "Enter" && e.shiftKey) {
+        if (ws?.readyState === WebSocket.OPEN) ws.send(new Uint8Array([0x0a]));
+        return false;
+      }
+      return true;
+    });
+
     // Reflow the agent's TUI when the pane resizes.
     const observer = new ResizeObserver(() => {
       fit.fit();
