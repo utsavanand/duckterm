@@ -48,7 +48,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from duckterm import suites, zsh_themes
+from duckterm import connectors, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events
@@ -196,6 +196,12 @@ _ROUTES: list[Route] = [
           **_mid("/harnesses/", "/contents")),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._deregister_harness(w, seg),
           prefix="/harnesses/"),
+    # ── connectors (GitHub, Railway, … — credentials + MCP install) ──
+    Route("GET", "/connectors", lambda s, r, w, h, b, seg: s._list_connectors(w)),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._enable_connector(w, seg, b),
+          **_mid("/connectors/", "/enable")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._disable_connector(w, seg),
+          **_mid("/connectors/", "/disable")),
     # ── left-panel folders ──
     Route("GET", "/folders", lambda s, r, w, h, b, seg: s._list_folders(w)),
     Route("POST", "/folders", lambda s, r, w, h, b, seg: s._create_folder(w, b)),
@@ -1518,6 +1524,34 @@ class Server:
     async def _deregister_harness(self, writer: asyncio.StreamWriter, name: str) -> None:
         removed = self.history.remove_harness(name)
         await _write_json(writer, 200 if removed else 404, {"removed": removed, "harness": name})
+
+    async def _list_connectors(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, {"connectors": connectors.list_status()})
+
+    async def _enable_connector(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        token = str(req.get("token") or "").strip() or None
+        try:
+            result = connectors.enable(name, token)
+        except ValueError as e:
+            await _write_json(writer, 404, {"error": str(e)})
+            return
+        except RuntimeError as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        await _write_json(writer, 200, result)
+
+    async def _disable_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
+        try:
+            result = connectors.disable(name)
+        except ValueError as e:
+            await _write_json(writer, 404, {"error": str(e)})
+            return
+        await _write_json(writer, 200, result)
 
     async def _list_folders(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"folders": self.history.folders()})

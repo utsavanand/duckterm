@@ -3,6 +3,7 @@ import { AgentsMdModal } from "./AgentsMdModal";
 import { AgentTree } from "./AgentTree";
 import { api } from "./api";
 import { Approvals } from "./Approvals";
+import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
 import { FleetChat } from "./FleetChat";
 import { ForkModal } from "./ForkModal";
@@ -424,6 +425,7 @@ function Dashboard() {
               )}
               {selected && <ContextPanel session={selected} />}
             </div>
+            <Connectors />
           </section>
         </div>
       )}

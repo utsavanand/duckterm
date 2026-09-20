@@ -98,6 +98,13 @@ def build_parser() -> argparse.ArgumentParser:
     uninst = sub.add_parser("uninstall-hooks", help="remove Duckterm's hooks for an agent")
     uninst.add_argument("--global", dest="global_scope", action="store_true")
     uninst.add_argument("--agent", choices=_installable_agents(), default="claude-code")
+
+    crun = sub.add_parser(
+        "connector-run",
+        help="exec a connector's MCP server with its credential resolved at launch "
+        "(written into harness MCP configs by the Connectors panel — not run by hand)",
+    )
+    crun.add_argument("name", help="connector name (e.g. github)")
     return parser
 
 
@@ -443,6 +450,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _doctor()
     if args.command == "purge-test":
         return _purge_test()
+    if args.command == "connector-run":
+        from duckterm import connectors
+
+        connectors.run(args.name)  # execs the server; returns only on failure
+        return 1
     print(f"command '{args.command}' is not implemented yet", file=sys.stderr)
     return 1
 

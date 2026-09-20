@@ -50,6 +50,17 @@ export interface LaunchRequest {
   zsh_theme?: string;
 }
 
+export interface Connector {
+  name: string;
+  title: string;
+  description: string;
+  credential: string | null; // "gh-cli" | "stored" | "railway-cli" | null
+  installed: Record<string, boolean>; // per harness
+  enabled: boolean;
+  ready: boolean;
+  detail: string | null;
+}
+
 export interface BrowseEntry {
   name: string;
   path: string;
@@ -75,6 +86,11 @@ export const api = {
   branches: (path: string) =>
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
+  connectors: () => get<{ connectors: Connector[] }>("/connectors"),
+  enableConnector: (name: string, token?: string) =>
+    post<Connector>(`/connectors/${name}/enable`, token ? { token } : {}),
+  disableConnector: (name: string) =>
+    post<Connector>(`/connectors/${name}/disable`),
   fleetAsk: (question: string, history: { q: string; a: string }[]) =>
     post<{ answer: string; sessions: string[] }>("/fleet/ask", {
       question,
