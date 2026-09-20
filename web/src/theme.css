@@ -322,6 +322,45 @@ code,
   border: none;
   padding: 0;
 }
+/* Syntax tokens (hljs core, see render.ts). One dark palette — the code card
+   stays dark in both app themes. Colors follow GitHub dark-dimmed. */
+.rd-msg-text pre .hljs-comment,
+.rd-msg-text pre .hljs-quote {
+  color: #768390;
+  font-style: italic;
+}
+.rd-msg-text pre .hljs-keyword,
+.rd-msg-text pre .hljs-selector-tag,
+.rd-msg-text pre .hljs-deletion {
+  color: #f47067;
+}
+.rd-msg-text pre .hljs-string,
+.rd-msg-text pre .hljs-regexp,
+.rd-msg-text pre .hljs-addition {
+  color: #96d0ff;
+}
+.rd-msg-text pre .hljs-number,
+.rd-msg-text pre .hljs-literal,
+.rd-msg-text pre .hljs-built_in {
+  color: #6cb6ff;
+}
+.rd-msg-text pre .hljs-title,
+.rd-msg-text pre .hljs-name,
+.rd-msg-text pre .hljs-section {
+  color: #dcbdfb;
+}
+.rd-msg-text pre .hljs-attr,
+.rd-msg-text pre .hljs-attribute,
+.rd-msg-text pre .hljs-variable,
+.rd-msg-text pre .hljs-template-variable,
+.rd-msg-text pre .hljs-type,
+.rd-msg-text pre .hljs-params {
+  color: #f69d50;
+}
+.rd-msg-text pre .hljs-meta,
+.rd-msg-text pre .hljs-symbol {
+  color: #6cb6ff;
+}
 .rd-msg-text table {
   border-collapse: collapse;
   font-size: 13px;

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import { api, authHeaders } from "./api";
+import { html } from "./render";
 import { useToast } from "./ui";
 
 // Structured view of an agent's latest reply (HTML-annotation mode,
@@ -18,10 +17,6 @@ interface Message {
   id: number;
   role: "user" | "assistant";
   blocks: Block[];
-}
-
-function html(md: string): string {
-  return DOMPurify.sanitize(marked.parse(md, { async: false }) as string);
 }
 
 interface Selection {
