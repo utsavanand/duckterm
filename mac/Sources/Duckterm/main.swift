@@ -69,8 +69,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// A programmatic app has NO main menu, and on macOS ⌘C/⌘V/⌘X/⌘A/⌘Q/⌘W only
+// exist as menu key equivalents — without these, copy/paste in the terminal
+// was dead. The standard selectors route through the responder chain to the
+// web view, which forwards them to the page (xterm handles the events).
+private func buildMainMenu() -> NSMenu {
+    let main = NSMenu()
+
+    let appItem = NSMenuItem()
+    main.addItem(appItem)
+    let appMenu = NSMenu()
+    appMenu.addItem(
+        withTitle: "Hide RubberTerm", action: #selector(NSApplication.hide(_:)),
+        keyEquivalent: "h")
+    appMenu.addItem(
+        withTitle: "Quit RubberTerm", action: #selector(NSApplication.terminate(_:)),
+        keyEquivalent: "q")
+    appItem.submenu = appMenu
+
+    let editItem = NSMenuItem()
+    main.addItem(editItem)
+    let edit = NSMenu(title: "Edit")
+    edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+    edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+    edit.addItem(.separator())
+    edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+    edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+    edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    edit.addItem(
+        withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+    editItem.submenu = edit
+
+    let windowItem = NSMenuItem()
+    main.addItem(windowItem)
+    let windowMenu = NSMenu(title: "Window")
+    windowMenu.addItem(
+        withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+    windowMenu.addItem(
+        withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)),
+        keyEquivalent: "m")
+    windowItem.submenu = windowMenu
+    return main
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)  // a normal app: Dock icon + windows
+app.mainMenu = buildMainMenu()
 app.run()
