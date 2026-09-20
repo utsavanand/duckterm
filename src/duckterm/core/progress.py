@@ -29,11 +29,16 @@ no markdown fences, exactly this shape:
 
 - summary: 2-3 plain sentences: where the session stands right now
 - deliverables: concrete things produced or changed (features, fixes, files, releases)
-- learnings: decisions made and constraints discovered about the WORK itself
-- user_learnings: what this session taught you about working with THIS USER —
-  how they phrase requests, preferences they stated or implied, corrections
-  they had to repeat, errors or friction that recurred between user and agent.
-  Only include real observations from the conversation, never guesses.
+- learnings: decisions made and constraints discovered about the WORK itself.
+  Record the CURRENT decision, not the history of rejected alternatives. Skip
+  transient environment hiccups unless they constrain future work.
+- user_learnings: recurring collaboration patterns ONLY — a behavior you
+  observed at least TWICE, or a preference the user stated outright as a rule.
+  A one-off remark or a single decision is an anecdote, not a pattern: leave
+  it out. Describe the behavior neutrally ("approves with terse replies —
+  proceed immediately"), never characterize personality. Facts about the
+  user's life or the project belong in learnings/summary, not here. At most
+  4 items; an empty list is better than a stretched one.
 - next_actions: what should happen next, most important first
 Rules: at most 8 items per list, each item one plain sentence under 120 characters.
 Carry forward prior items that are still true; drop next_actions that got done
