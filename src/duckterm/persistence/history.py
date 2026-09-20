@@ -18,9 +18,10 @@ import time
 from pathlib import Path
 from typing import Any
 
+from duckterm.core import events
 from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
-from duckterm.runtimes.base import SessionState
+from duckterm.runtimes.base import AT_REST_STATES, SessionState
 
 Event = dict[str, Any]
 
@@ -151,9 +152,9 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
     # (SessionStart) revives it. A stray late event — including the resumed-then-
     # exited agent's SessionEnd — must NOT flip it (e.g. archived -> terminated).
     # This guard runs before the SessionEnd/terminated rule on purpose.
-    if prev in ("stopped", "archived") and event.get("event_type") != "SessionStart":
+    if prev in ("stopped", "archived") and event.get("event_type") != events.SESSION_START:
         return prev
-    if lifecycle == "terminated" or event.get("event_type") == "SessionEnd":
+    if lifecycle == "terminated" or event.get("event_type") == events.SESSION_END:
         return "terminated"
     match event.get("event_type"):
         case "PermissionRequest" | "Notification":
@@ -287,7 +288,7 @@ class HistoryStore:
             ),
         )
         etype = event.get("event_type")
-        if etype in ("SubagentStart", "SubagentStop"):
+        if etype in (events.SUBAGENT_START, events.SUBAGENT_STOP):
             # A sub-agent event shares the parent's session_id, so it would
             # otherwise fold into the PARENT's row. Record it as a sub-agent
             # instead and don't touch the session table or metrics.
@@ -307,7 +308,7 @@ class HistoryStore:
         if not agent_id:
             return  # without an id we can't distinguish or update it
         ts = int(event["_ts"])
-        if event.get("event_type") == "SubagentStart":
+        if event.get("event_type") == events.SUBAGENT_START:
             self._conn.execute(
                 "INSERT INTO subagents "
                 "(agent_id, session_key, agent_type, agent_prompt, state, started_at) "
@@ -327,15 +328,6 @@ class HistoryStore:
                 "UPDATE subagents SET state = 'done', ended_at = ? WHERE agent_id = ?",
                 (ts, str(agent_id)),
             )
-
-    def subagents(self, session_key: str) -> list[dict[str, Any]]:
-        """Sub-agents this session spawned, newest first."""
-        rows = self._conn.execute(
-            "SELECT agent_id, agent_type, agent_prompt, state, started_at, ended_at "
-            "FROM subagents WHERE session_key = ? ORDER BY started_at DESC",
-            (session_key,),
-        ).fetchall()
-        return [dict(r) for r in rows]
 
     def subagents_by_session(self) -> dict[str, list[dict[str, Any]]]:
         """All sub-agents grouped by parent session_key, for one /sessions fetch."""
@@ -463,29 +455,6 @@ class HistoryStore:
             d["record"] = json.loads(d.pop("record_json"))
             out.append(d)
         return out
-
-    def recent_events(
-        self, limit: int = 20, before: int | None = None
-    ) -> tuple[list[dict[str, Any]], int | None]:
-        """A page of the global event feed, newest-first, for the Pulse panel.
-
-        Keyset-paginated on rowid (monotonic insert order, unaffected by ts ties):
-        pass the `next_cursor` from the previous page as `before` to fetch older
-        events. Returns (events_newest_first, next_cursor); next_cursor is None
-        when the page reaches the start of history."""
-        sql = "SELECT rowid, payload_json FROM events"
-        params: list[Any] = []
-        if before is not None:
-            sql += " WHERE rowid < ?"
-            params.append(before)
-        sql += " ORDER BY rowid DESC LIMIT ?"
-        params.append(limit + 1)  # one extra row tells us if more remain
-        rows = self._conn.execute(sql, params).fetchall()
-        more = len(rows) > limit
-        rows = rows[:limit]
-        events = [json.loads(r["payload_json"]) for r in rows]
-        next_cursor = rows[-1]["rowid"] if more and rows else None
-        return events, next_cursor
 
     def events_for(self, key: str, limit: int = 200) -> list[dict[str, Any]]:
         """The most recent events for a session, oldest-first, for building a
@@ -616,7 +585,7 @@ class HistoryStore:
         self._conn.execute("UPDATE sessions SET heartbeat = 0 WHERE session_key = ?", (key,))
         self._conn.commit()
 
-    def set_state(self, key: str, state: str, *, now: int | None = None) -> bool:
+    def set_state(self, key: str, state: SessionState, *, now: int | None = None) -> bool:
         """Set a session's state directly — for an explicit user action (Stop sets
         'stopped', Resume sets 'busy', Archive sets 'archived'). Distinct from
         event-derived state. Returns whether the session exists.
@@ -651,7 +620,7 @@ class HistoryStore:
         return cur.rowcount > 0
 
     # States we never sweep — the session is already at rest or put away.
-    _AT_REST = ("terminated", "stopped", "archived")
+    _AT_REST = AT_REST_STATES
 
     def sweep_dead(self, now: int, *, stale_after_ms: int) -> list[str]:
         """Heartbeat-tracked (launched) sessions whose tab stopped pinging — the

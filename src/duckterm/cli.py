@@ -13,6 +13,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from duckterm import __version__
+from duckterm.core import events
 from duckterm.helpers import instance
 
 DEFAULT_HOST = "127.0.0.1"
@@ -231,8 +232,8 @@ def _run(agent: str, agent_args: list[str], name: str | None = None) -> int:
     import shlex
 
     from duckterm.agents.terminal import with_heartbeat
+    from duckterm.harnesses import infer_runtime
     from duckterm.helpers import security
-    from duckterm.server import _heartbeat_url, infer_runtime
 
     if not shutil.which(agent):
         print(f"'{agent}' not found on PATH", file=sys.stderr)
@@ -264,7 +265,7 @@ def _run(agent: str, agent_args: list[str], name: str | None = None) -> int:
     agent_cmd = " ".join(shlex.quote(a) for a in [agent, *agent_args])
     # Wrap with the heartbeat loop (current tab's tty), under the session key the
     # agent's hooks will also report against, then exec a shell so it owns the TTY.
-    wrapped = with_heartbeat(agent_cmd, _heartbeat_url(), key)
+    wrapped = with_heartbeat(agent_cmd, instance.heartbeat_url(), key)
     os.environ["DUCKTERM_SESSION_KEY"] = key
     os.execvp("sh", ["sh", "-c", wrapped])  # replaces this process; doesn't return
 
@@ -274,7 +275,7 @@ def _register_run_session(key: str, agent: str, runtime: str, cwd: str, name: st
     appears before the agent starts. Best-effort: a failure just means the row
     shows up a beat later from the agent's own hooks."""
     start = {
-        "event_type": "SessionStart",
+        "event_type": events.SESSION_START,
         "session_key": key,
         "runtime": runtime,
         "cwd": cwd,

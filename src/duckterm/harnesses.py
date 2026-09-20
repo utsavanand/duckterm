@@ -37,6 +37,21 @@ def runtime_for(name: str | None, command: str) -> AgentRuntime:
     return cls(command)
 
 
+def infer_runtime(command: str) -> str:
+    """Guess the runtime name from a command's first word, so callers needn't
+    pass one — `claude …` -> claude-code, `codex …` -> codex, else generic.
+    Lives here beside the registry (the source of truth for agent names) so the
+    CLI can use it without importing the whole server."""
+    first = (command.strip().split() or [""])[0].rsplit("/", 1)[-1]
+    if first.startswith("claude"):
+        return "claude-code"
+    if first.startswith("codex"):
+        return "codex"
+    if first.startswith("copilot"):
+        return "copilot"
+    return "generic"
+
+
 def installable_agents() -> list[str]:
     """Agents that can be wired for watched sessions (have a hook adapter)."""
     return [name for name, cls in REGISTRY.items() if cls.hook_spec is not None]

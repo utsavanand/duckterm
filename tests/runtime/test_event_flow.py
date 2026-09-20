@@ -68,6 +68,17 @@ def test_permission_request_clears_when_the_agent_moves_on() -> None:
         body = await asyncio.to_thread(_get, port, "/approvals")
         return len(json.loads(body)["approvals"])
 
+    async def wait_for_approvals(port: int, want: int) -> int:
+        # POST -> bus -> sink is async and the /approvals GET is a separate
+        # request, so read-after-write can race under load. Poll to the expected
+        # count instead of reading once (the flake was this race, not a bug).
+        for _ in range(100):  # up to ~2s
+            n = await count_approvals(port)
+            if n == want:
+                return n
+            await asyncio.sleep(0.02)
+        return await count_approvals(port)
+
     async def scenario() -> tuple[int, int]:
         server = await asyncio.start_server(Server().handle, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
@@ -82,14 +93,21 @@ def test_permission_request_clears_when_the_agent_moves_on() -> None:
                     "tool_input": {"command": "npm run build"},
                 },
             )
-            after_request = await count_approvals(port)
+            after_request = await wait_for_approvals(port, 1)  # request registered
+            # Clearing is drop_session_before (strictly-before the resolving
+            # event's ts). The bus stamps ts from the wall clock, so the two
+            # events must land in different milliseconds — a short sleep
+            # guarantees it (under load they could otherwise share a ms and the
+            # clear would no-op). This is a test-timing concern, not a product
+            # bug: real events are always milliseconds apart.
+            await asyncio.sleep(0.01)
             # The agent ran the command (answered in its terminal) and moved on.
             await asyncio.to_thread(
                 _post_event,
                 port,
                 {"event_type": "PreToolUse", "session_key": "pa", "tool_name": "Bash"},
             )
-            after_activity = await count_approvals(port)
+            after_activity = await wait_for_approvals(port, 0)  # cleared
         return after_request, after_activity
 
     after_request, after_activity = asyncio.run(scenario())

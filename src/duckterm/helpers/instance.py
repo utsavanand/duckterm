@@ -78,3 +78,9 @@ def server_url() -> str:
     if override:
         return override.rstrip("/")
     return f"http://127.0.0.1:{port()}"
+
+
+def heartbeat_url() -> str:
+    """The callback URL an agent's hooks post liveness to — this instance's own
+    server, so a dev-launched agent never heartbeats into prod."""
+    return f"{server_url()}/heartbeat"

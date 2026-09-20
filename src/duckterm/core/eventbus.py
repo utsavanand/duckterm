@@ -80,8 +80,3 @@ class EventBus:
     def subscribe(self) -> Subscription:
         """A live subscription that yields every event published from now on."""
         return Subscription(self)
-
-    @property
-    def subscriber_count(self) -> int:
-        """Number of open live subscriptions."""
-        return len(self._subscribers)

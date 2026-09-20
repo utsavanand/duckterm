@@ -23,24 +23,12 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+from duckterm.core import events
 from duckterm.runtimes.base import HookSpec
 
-# Canonical event set (Claude's names). Each harness maps these to its own.
-_EVENTS = [
-    "SessionStart",
-    "UserPromptSubmit",
-    "PreToolUse",
-    "PostToolUse",
-    "PostToolUseFailure",
-    "PermissionRequest",
-    "Notification",
-    "Stop",
-    "SessionEnd",
-    # Sub-agent lifecycle: lets Duckterm show the tree of sub-agents an agent
-    # spawns (via the Task tool). SubagentStart/Stop carry agent_id + agent_type.
-    "SubagentStart",
-    "SubagentStop",
-]
+# Canonical event set (Claude's names), defined once in core.events. Each
+# harness maps these to its own hook names below.
+_EVENTS = events.ALL
 
 _MARKER = "duckterm"  # present in our command string so we can find/remove it
 
