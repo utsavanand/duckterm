@@ -418,6 +418,7 @@ function Dashboard() {
                 onOpen={setSelectedKey}
                 knownKeys={knownKeys}
                 waiting={waiting}
+                selectedKey={selectedKey}
               />
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">

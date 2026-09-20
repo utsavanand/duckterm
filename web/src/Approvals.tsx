@@ -13,20 +13,23 @@ interface Approval {
 }
 
 // Surfaces what needs you: pending permission requests (Approve/Deny without
-// switching terminals) AND sessions that are simply waiting on an answer (the
-// agent asked a question and paused — answer it in its terminal).
+// switching terminals) AND sessions waiting on an answer — but only OTHER
+// sessions: the selected one's question is already on screen in its terminal,
+// and its waiting state shows in the left panel row. These rows are jump links.
 export function Approvals({
   labels,
   pollKey,
   onOpen,
   knownKeys,
   waiting,
+  selectedKey,
 }: {
   labels: Record<string, string>;
   pollKey: number;
   onOpen: (key: string) => void;
   knownKeys: Set<string>;
   waiting: SessionView[];
+  selectedKey: string | null;
 }) {
   const toast = useToast();
   const [approvals, setApprovals] = useState<Approval[]>([]);
@@ -69,7 +72,9 @@ export function Approvals({
   // Sessions that are waiting but aren't already covered by a pending approval
   // (the agent asked a question and paused, vs. a tool-permission prompt).
   const approvalKeys = new Set(approvals.map((a) => a.session_key));
-  const asking = waiting.filter((s) => !approvalKeys.has(s.key));
+  const asking = waiting.filter(
+    (s) => !approvalKeys.has(s.key) && s.key !== selectedKey,
+  );
   const total = approvals.length + asking.length;
 
   if (total === 0)
