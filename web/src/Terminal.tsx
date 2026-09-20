@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { bindClipboardBridge, releaseClipboardBridge } from "./clipboardBridge";
 import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 
 // A real terminal for a launched session: xterm.js over the
@@ -52,6 +53,7 @@ export function Terminal({
     term.loadAddon(fit);
     term.open(host);
     fit.fit();
+    bindClipboardBridge(term); // Mac-app Edit menu targets the focused terminal
     // Focus xterm's hidden input directly. term.focus() alone proved unreliable
     // on mount (after selecting an agent, focus stayed on <body>, so keystrokes
     // went nowhere and you had to click the terminal first). Targeting the
@@ -132,8 +134,11 @@ export function Terminal({
     // Shift+Enter inserts a newline instead of submitting. xterm would send
     // plain \r for it — indistinguishable from Enter — so intercept and send
     // LF (Ctrl+J), the newline keystroke both claude-code and codex accept.
+    // preventDefault too: xterm skips a suppressed key, but the browser's own
+    // default would still insert a newline into the hidden helper textarea.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type === "keydown" && e.key === "Enter" && e.shiftKey) {
+        e.preventDefault();
         if (ws?.readyState === WebSocket.OPEN) ws.send(new Uint8Array([0x0a]));
         return false;
       }
@@ -158,6 +163,7 @@ export function Terminal({
         ws.onclose = null;
         ws.close();
       }
+      releaseClipboardBridge(term);
       term.dispose();
     };
     // `theme` is deliberately not a dependency: the effect above restyles the

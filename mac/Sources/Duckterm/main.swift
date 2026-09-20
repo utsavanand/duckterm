@@ -57,6 +57,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notified = current  // a session that waits again later re-notifies
     }
 
+    // ── Edit-menu clipboard bridge ──
+    // WKWebView validates the standard copy:/paste: selectors against the DOM
+    // (an xterm selection is canvas-rendered, so Copy stayed disabled and ⌘C
+    // did nothing). These actions bypass that: ask the page for its selection
+    // via the __rtCopy/__rtPaste globals the dashboard exposes.
+    @objc func copyFromDashboard(_ sender: Any?) {
+        window?.evaluate("window.__rtCopy ? window.__rtCopy() : ''") { result in
+            guard let text = result as? String, !text.isEmpty else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+    }
+
+    @objc func pasteToDashboard(_ sender: Any?) {
+        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty,
+            let data = try? JSONSerialization.data(withJSONObject: [text]),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        window?.evaluate("window.__rtPaste && window.__rtPaste((\(json))[0])")
+    }
+
     private func notify(session: Session) {
         let content = UNMutableNotificationContent()
         content.title = "\(session.label) needs you"
@@ -94,8 +115,14 @@ private func buildMainMenu() -> NSMenu {
     edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
     edit.addItem(.separator())
     edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-    edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-    edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+    // Copy/Paste route through the dashboard bridge (nil target → responder
+    // chain → AppDelegate), not the WKWebView selectors — see copyFromDashboard.
+    edit.addItem(
+        withTitle: "Copy", action: #selector(AppDelegate.copyFromDashboard(_:)),
+        keyEquivalent: "c")
+    edit.addItem(
+        withTitle: "Paste", action: #selector(AppDelegate.pasteToDashboard(_:)),
+        keyEquivalent: "v")
     edit.addItem(
         withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     editItem.submenu = edit

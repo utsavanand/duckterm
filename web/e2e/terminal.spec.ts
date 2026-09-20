@@ -90,3 +90,23 @@ test("terminal: switching agents shows the other agent's terminal", async ({
     "MARKER_ONE",
   );
 });
+
+test("terminal: Shift+Enter sends a newline, not a submit", async ({ page }) => {
+  await launchCat("cat-NL");
+  await page.goto(base());
+  const row = page.locator(".rd-row-name", { hasText: "cat-NL" });
+  await expect(row).toBeVisible({ timeout: 10_000 });
+  await row.click();
+  await waitTerminalReady(page);
+
+  // cat runs in canonical mode: an LF completes the line, so cat echoes AAA a
+  // second time. Two AAAs = the newline byte reached the agent; had Shift+Enter
+  // sent nothing, AAA would appear exactly once with BBB glued to it.
+  await page.keyboard.type("AAA");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.type("BBB");
+
+  await expect(visibleRows(page)).toContainText("BBB", { timeout: 5_000 });
+  const joined = (await visibleRows(page).allTextContents()).join("\n");
+  expect(joined.split("AAA").length - 1).toBe(2);
+});

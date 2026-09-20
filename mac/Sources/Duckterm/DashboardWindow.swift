@@ -6,10 +6,16 @@ import WebKit
 /// spawning duplicates.
 final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
     private var window: NSWindow?
+    private var web: WKWebView?
     private let url: URL
 
     init(url: URL) {
         self.url = url
+    }
+
+    /// Run JS in the dashboard page — the Edit-menu clipboard bridge.
+    func evaluate(_ js: String, done: ((Any?) -> Void)? = nil) {
+        web?.evaluateJavaScript(js) { result, _ in done?(result) }
     }
 
     func show() {
@@ -19,7 +25,11 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
             return
         }
         let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
+        if #available(macOS 13.3, *) {
+            web.isInspectable = true  // debuggable from Safari's Develop menu
+        }
         web.navigationDelegate = self
+        self.web = web
         web.load(URLRequest(url: url))
 
         let win = NSWindow(
@@ -54,5 +64,6 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
 
     func windowWillClose(_ notification: Notification) {
         window = nil  // rebuild fresh next open so it reloads the dashboard
+        web = nil
     }
 }
