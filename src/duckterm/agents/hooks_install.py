@@ -63,10 +63,13 @@ def claude_style_build(config: dict[str, Any], script: str, runtime: str) -> dic
         entries = hooks.setdefault(event, [])
         entries[:] = [e for e in entries if not _claude_entry_is_ours(e)]
         blocking = supports_async and event == _BLOCKING_EVENT
+        # codex caps hook timeouts at 3s and prints a "clamping" warning at
+        # every session start for anything higher — write 3 so it's quiet.
+        plain_timeout = 3 if runtime == "codex" else 5
         hook: dict[str, Any] = {
             "type": "command",
             "command": f'"{script}" {event} {runtime}',
-            "timeout": _BLOCKING_TIMEOUT if blocking else 5,
+            "timeout": _BLOCKING_TIMEOUT if blocking else plain_timeout,
         }
         if supports_async:
             # The permission event blocks (waits for the dashboard's decision);
