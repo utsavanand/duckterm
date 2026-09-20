@@ -36,7 +36,10 @@ fi
 cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 
 echo "==> writing Info.plist"
-cat > "$CONTENTS/Info.plist" <<'PLIST'
+# Bundle version tracks the Python package (single source of truth) so the
+# app's About/Get Info never claims an older RubberTerm than the one it runs.
+VERSION="$("${PYTHON:-../.venv/bin/python}" -c 'import duckterm; print(duckterm.__version__)')"
+cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -44,8 +47,8 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundleName</key><string>RubberTerm</string>
   <key>CFBundleDisplayName</key><string>RubberTerm</string>
   <key>CFBundleIdentifier</key><string>com.rubberduckhq.rubberterm</string>
-  <key>CFBundleVersion</key><string>0.1.0</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleVersion</key><string>${VERSION}</string>
+  <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleExecutable</key><string>RubberTerm</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>

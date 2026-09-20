@@ -15,7 +15,7 @@ final class ServerProcess {
             "/usr/local/bin/duckterm",
             "\(NSHomeDirectory())/.local/bin/duckterm",
             // Dev checkout: the venv the dashboard is developed against.
-            "\(NSHomeDirectory())/ws-my-projects/duckterm/.venv/bin/duckterm",
+            "\(NSHomeDirectory())/workspace-2026/duckterm/.venv/bin/duckterm",
         ]
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             return path
@@ -45,6 +45,11 @@ final class ServerProcess {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bin)
         proc.arguments = ["serve"]
+        // The app IS the dashboard window — without this, serve would also
+        // open the default browser on the same URL.
+        var env = ProcessInfo.processInfo.environment
+        env["DUCKTERM_NO_BROWSER"] = "1"
+        proc.environment = env
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice
         do {
