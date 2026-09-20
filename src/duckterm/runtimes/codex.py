@@ -1,14 +1,13 @@
-"""The Codex runtime. Codex is a CLI agent without Claude's hook system, so
-state is detected from its terminal output (coarser than Claude's hook-driven
-state) and there is no structured transcript locator yet — summaries fall back
-to the activity digest.
+"""The Codex runtime. State is detected from terminal output (coarser than
+Claude's hook-driven state). Transcripts come from Codex's rollout JSONL files
+(~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl): flat {role, text} records for
+the summarizer, structured {id, role, blocks} records for the Messages view.
 
 This adapter exists to prove the boundary: a second real runtime drops in by
-implementing the same contract, with zero changes to the core. When Codex gains
-a stable transcript/log format worth parsing, add it here; until then, coarse
-output-based state is the honest level of support.
+implementing the same contract, with zero changes to the core.
 """
 
+import contextlib
 import json
 import re
 import shlex
@@ -67,8 +66,41 @@ class CodexRuntime(Harness):
         path = self.locate_transcript(cwd=cwd, session_id=session_id)
         return parse_codex_transcript(path) if path else []
 
+    def messages(self, *, cwd: Path, session_id: str | None) -> list[dict[str, object]]:
+        path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
+        if path is None:
+            path = self.latest_transcript(cwd=cwd)
+        return parse_codex_messages(path) if path else []
+
+    def latest_transcript(self, *, cwd: Path) -> Path | None:
+        """The newest rollout whose session_meta records this cwd. Sessions
+        launched in-process never report Codex's session_id, so locating by id
+        fails — but the rollout's first line names the cwd it ran in."""
+        root = Path.home() / ".codex" / "sessions"
+        if not root.exists():
+            return None
+        for path in sorted(root.glob("**/rollout-*.jsonl"), reverse=True):
+            if _rollout_cwd(path) == str(cwd):
+                return path
+        return None
+
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return list(self._argv)
+
+
+def _rollout_cwd(path: Path) -> str | None:
+    """The cwd a rollout ran in, from its session_meta first line."""
+    try:
+        with path.open(errors="replace") as f:
+            first = f.readline()
+        obj = json.loads(first)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if obj.get("type") != "session_meta":
+        return None
+    payload = obj.get("payload") or {}
+    cwd = payload.get("cwd")
+    return str(cwd) if cwd else None
 
 
 def parse_codex_transcript(path: Path) -> list[dict[str, str]]:
@@ -92,6 +124,59 @@ def parse_codex_transcript(path: Path) -> list[dict[str, str]]:
         text = _codex_text(payload.get("content"))
         if role and text:
             records.append({"role": str(role), "text": text})
+    return records
+
+
+def parse_codex_messages(path: Path) -> list[dict[str, object]]:
+    """Structured records for the Messages view, same shape as claude_code.
+    parse_messages: {id, role, blocks} with text / tool_use / tool_result
+    blocks. From a rollout, response_item payloads map as:
+      message (role user/assistant) -> a text block
+      function_call                 -> an assistant tool_use block
+      function_call_output          -> an assistant tool_result block
+    Skipped: developer-role messages (injected instructions), reasoning items,
+    and user turns that are machine context (<environment_context>,
+    <user_instructions>) — rendering those as "you" would be wrong and would
+    anchor the latest-reply view on a machine-generated turn."""
+    records: list[dict[str, object]] = []
+    for i, line in enumerate(path.read_text(errors="replace").splitlines()):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "response_item":
+            continue
+        payload = obj.get("payload") or {}
+        ptype = payload.get("type")
+        if ptype == "message":
+            role = payload.get("role")
+            if role not in ("user", "assistant"):
+                continue
+            text = _codex_text(payload.get("content"))
+            if role == "user" and text.lstrip().startswith(
+                ("<environment_context>", "<user_instructions>")
+            ):
+                continue
+            if text:
+                records.append(
+                    {"id": i, "role": str(role), "blocks": [{"type": "text", "text": text}]}
+                )
+        elif ptype == "function_call":
+            args: object = payload.get("arguments")
+            if isinstance(args, str):
+                # Keep the raw string if it isn't JSON — still renderable.
+                with contextlib.suppress(json.JSONDecodeError):
+                    args = json.loads(args)
+            block = {"type": "tool_use", "name": payload.get("name") or "tool", "input": args}
+            records.append({"id": i, "role": "assistant", "blocks": [block]})
+        elif ptype == "function_call_output":
+            out = payload.get("output")
+            text = out if isinstance(out, str) else json.dumps(out) if out is not None else ""
+            if text:
+                block = {"type": "tool_result", "text": text}
+                records.append({"id": i, "role": "assistant", "blocks": [block]})
     return records
 
 

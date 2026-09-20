@@ -74,5 +74,12 @@ class Harness(ABC):
     @abstractmethod
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]: ...
 
+    def messages(self, *, cwd: Path, session_id: str | None) -> list[dict[str, object]]:
+        """Structured records for the Messages view: {id, role, blocks}, where a
+        block is text / tool_use / tool_result (see claude_code.parse_messages).
+        Harnesses without a structured transcript return [] — the view is
+        simply unavailable for them."""
+        return []
+
 
 AgentRuntime = Harness

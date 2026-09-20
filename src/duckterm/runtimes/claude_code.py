@@ -85,6 +85,15 @@ class ClaudeCodeRuntime(Harness):
         path = self.locate_transcript(cwd=cwd, session_id=session_id)
         return parse_transcript(path) if path else []
 
+    def messages(self, *, cwd: Path, session_id: str | None) -> list[dict[str, object]]:
+        # Prefer the exact transcript by session_id (hooked sessions report it);
+        # fall back to the newest transcript for the cwd (in-process PTY
+        # launches don't report Claude's session_id).
+        path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
+        if path is None:
+            path = self.latest_transcript(cwd=cwd)
+        return parse_messages(path) if path else []
+
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return [*self._argv, "--resume", session_key]
 

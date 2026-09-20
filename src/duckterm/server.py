@@ -475,9 +475,9 @@ class Server:
     async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """Structured conversation records for the HTML / pagination views: the
         agent's messages parsed from its transcript into ordered content blocks
-        (text / tool_use / tool_result). Claude-code only (the harness with a
-        structured transcript); others return an empty list. See
-        docs/structured-render-design.md."""
+        (text / tool_use / tool_result). Each harness with a structured
+        transcript (claude-code, codex) implements messages(); the rest return
+        an empty list. See docs/structured-render-design.md."""
         row = self.history.session(session_key)
         if row is None:
             await _write_json(writer, 404, {"error": "no such session"})
@@ -485,23 +485,9 @@ class Server:
         session_id = self.history.session_id_for(session_key)
         cwd = row.get("worktree_path") or row.get("cwd")
         runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
-        from duckterm.runtimes.claude_code import ClaudeCodeRuntime, parse_messages
-
         messages: list[dict[str, object]] = []
-        if isinstance(runtime, ClaudeCodeRuntime) and cwd:
-            cwd_path = Path(str(cwd))
-            # Prefer the exact transcript by session_id (hooked sessions report
-            # it); fall back to the newest transcript for the cwd (in-process PTY
-            # launches don't report Claude's session_id).
-            path = (
-                runtime.locate_transcript(cwd=cwd_path, session_id=session_id)
-                if session_id
-                else None
-            )
-            if path is None:
-                path = runtime.latest_transcript(cwd=cwd_path)
-            if path is not None:
-                messages = parse_messages(path)
+        if cwd:
+            messages = runtime.messages(cwd=Path(str(cwd)), session_id=session_id)
         await _write_json(writer, 200, {"messages": messages})
 
     async def _list_annotations(self, writer: asyncio.StreamWriter, session_key: str) -> None:
