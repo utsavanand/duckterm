@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   applyAll,
   applyEvent,
+  contextLevel,
   effectiveState,
   IDLE_SETTLE_MS,
 } from "./sessions";
@@ -158,5 +159,20 @@ describe("applyAll", () => {
     expect(s.launched).toBe(true);
     expect(s.eventCount).toBe(3);
     expect(s.idleSince).toBe(9000);
+  });
+});
+
+describe("contextLevel (model-aware windows)", () => {
+  it("does not warn a 1M-window model at 123k", () => {
+    expect(contextLevel(123_000, "claude-fable-5")).toBeNull();
+  });
+  it("warns 200k-window models on the old thresholds", () => {
+    expect(contextLevel(123_000, "claude-sonnet-4")).toBe("warm");
+    expect(contextLevel(165_000, "claude-sonnet-4")).toBe("high");
+    expect(contextLevel(123_000, undefined)).toBe("warm"); // unknown = pessimistic
+  });
+  it("scales thresholds for large windows", () => {
+    expect(contextLevel(560_000, "claude-fable-5")).toBe("warm"); // >55% of 1M
+    expect(contextLevel(820_000, "claude-mythos-5")).toBe("high"); // >80%
   });
 });

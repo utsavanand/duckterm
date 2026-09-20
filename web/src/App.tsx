@@ -420,6 +420,7 @@ function Dashboard() {
                 waiting={waiting}
                 selectedKey={selectedKey}
               />
+              {selected && <ContextPanel session={selected} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
                   terminal theme
@@ -438,7 +439,6 @@ function Dashboard() {
                   </select>
                 </label>
               )}
-              {selected && <ContextPanel session={selected} />}
             </div>
             <Connectors />
           </section>

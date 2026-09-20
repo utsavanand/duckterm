@@ -487,7 +487,7 @@ function TreeRow({
       toast(`Rename failed: ${(e as Error).message}`, "err");
     }
   }
-  const ctxLevel = contextLevel(s.contextTokens);
+  const ctxLevel = contextLevel(s.contextTokens, s.model);
   const hasChildren = node.children.length > 0;
   // Branching is possible for any live session on a git repo (worktree fork or
   // promote) and for any live claude-code session (conversation fork, even with

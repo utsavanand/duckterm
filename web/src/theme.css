@@ -521,6 +521,22 @@ code,
   color: var(--brand-green);
   flex-shrink: 0;
 }
+.rd-history-checkpoint {
+  margin: 0 0 12px;
+}
+.rd-history-cp-head {
+  display: flex;
+  gap: 10px;
+  font-size: 12.5px;
+  font-family: ui-monospace, Menlo, monospace;
+  color: var(--text-soft);
+}
+.rd-history-checkpoint p {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-soft);
+  margin: 4px 0 0 22px;
+}
 
 /* Compact running summary at the top of the right panel. */
 .rd-context-summary {

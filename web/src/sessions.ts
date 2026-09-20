@@ -129,15 +129,29 @@ export function applyAll(events: DucktermEvent[]): Map<string, SessionView> {
 
 // The standard claude context window; "left" in the panel is approximate
 // (the 1M-beta window would read pessimistically, never optimistically).
-export const CONTEXT_WINDOW = 200_000;
+// Per-model context windows. A hardcoded 200k flagged a fable-5 session
+// (1M window) as nearly full at 123k. Unknown models keep the pessimistic
+// 200k default — warning too early beats never warning.
+const MODEL_WINDOWS: [RegExp, number][] = [[/fable|mythos/i, 1_000_000]];
+
+export function contextWindowFor(model?: string): number {
+  for (const [re, win] of MODEL_WINDOWS) {
+    if (model && re.test(model)) return win;
+  }
+  return 200_000;
+}
 
 // Context-size thresholds (claude's window is ~200k): "warm" = start thinking
 // about a checkpoint; "high" = checkpoint or /compact now, quality degrades
 // as the auto-compact cliff approaches.
-export function contextLevel(tokens?: number): "warm" | "high" | null {
+export function contextLevel(
+  tokens?: number,
+  model?: string,
+): "warm" | "high" | null {
   if (!tokens) return null;
-  if (tokens >= 160_000) return "high";
-  if (tokens >= 110_000) return "warm";
+  const win = contextWindowFor(model);
+  if (tokens >= win * 0.8) return "high";
+  if (tokens >= win * 0.55) return "warm";
   return null;
 }
 

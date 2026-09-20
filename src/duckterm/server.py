@@ -2419,6 +2419,13 @@ class Server:
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
+            # Backfill progress digests: sessions whose turns all happened
+            # before this server started would otherwise stay digest-less
+            # until their NEXT turn end (Stop events don't replay).
+            for row in self.history.sessions():
+                at_rest = row.get("state") in AT_REST_STATES
+                if not at_rest and not row.get("progress"):
+                    self._maybe_refresh_progress(str(row["session_key"]))
             server = await asyncio.start_server(self.handle, host, port)
             if on_listening is not None:
                 on_listening(host, port)
