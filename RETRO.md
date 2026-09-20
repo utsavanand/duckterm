@@ -1,0 +1,92 @@
+# Retro — lessons from real breakage
+
+Append-only. One entry per issue we actually hit: what broke, the root cause,
+and the rule that prevents the recurrence. Newest first.
+
+## 2026-09-20 — Codex sessions showed an empty Messages tab
+**Broke:** Messages view silently blank for codex sessions.
+**Cause:** `/sessions/:key/messages` was hardwired to claude-code with an
+`isinstance` check; every other harness returned `[]` with no signal.
+**Rule:** a per-harness capability belongs on the harness contract (default =
+unsupported), not behind `isinstance` in an endpoint. And "unsupported" should
+be visible in the UI, not indistinguishable from "no data".
+
+## 2026-09-20 — Shift+Enter submitted instead of inserting a newline
+**Broke:** multi-line prompts impossible in the browser terminal.
+**Cause:** xterm sends plain `\r` for Shift+Enter — the harness can't tell it
+from Enter.
+**Rule:** key chords that terminals don't encode distinctly must be intercepted
+client-side and translated to a keystroke the TUI understands (LF/Ctrl+J here).
+Test with the real harness, not just the shell.
+
+## 2026-09-20 — Mac app launched to a blank white window
+**Broke:** first cold launch (app starts its own server) showed a blank page.
+**Cause:** the WKWebView loaded the URL exactly once, racing the server it was
+itself starting; a failed local load has no retry.
+**Rule:** anything that loads from a server it also starts must retry until the
+server answers. "Works on my machine" here meant "a server was already running
+every time we tested".
+
+## 2026-09-20 — Copy/paste dead in the Mac app
+**Broke:** ⌘C/⌘V (and ⌘Q/⌘W) did nothing.
+**Cause:** a programmatic NSApplication has no main menu, and macOS key
+equivalents only exist via menu items.
+**Rule:** a minimal AppKit shell still needs App/Edit/Window menus. Smoke-test
+the boring OS integrations (copy, paste, quit) on every new native shell.
+
+## 2026-09-20 — Hooks failing with exit 127 in every session
+**Broke:** SessionStart/UserPromptSubmit/Stop hook errors in codex; events
+degraded.
+**Cause:** hook configs (`~/.codex/hooks.json`, `~/.claude/settings.json`) had
+absolute paths into a repo checkout that was later moved. A zombie app process
+was also still running from the deleted path.
+**Rule:** never wire user-level config to a repo checkout path; point it at an
+install location that survives moves (the pipx venv). After moving/renaming a
+repo, grep configs for the old path and `pgrep` for processes still running
+from it.
+
+## 2026-09-20 — "Clear terminated" left tmux panes and worktrees behind
+**Broke:** 6 orphaned tmux sessions (some weeks old) after clearing terminated
+sessions; orphaned test worktrees.
+**Cause:** the bulk endpoint deleted DB rows directly instead of going through
+the single-session teardown (stop supervisor, kill tmux, remove worktree).
+**Rule:** bulk operations must call the same teardown path as the single-item
+operation — never reimplement a subset. If deleting X leaves any resource of X
+alive, the delete is wrong even if the API returns 200.
+
+## 2026-09-20 — Release wheel built without the dashboard
+**Broke:** a naive `python -m build` produced a wheel missing the web UI —
+exactly the "dashboard isn't built" failure users hit on 0.3.4.
+**Cause:** bypassed `scripts/build_package.sh` (which builds web/ and bundles
+it) because the release script was blocked and steps were redone by hand.
+**Rule:** when re-running a blocked script manually, execute its steps, not
+your memory of them — read the script first. Verify the artifact (list the
+wheel contents) before publishing.
+
+## 2026-09-20 — `duckterm serve` wasn't a one-command experience
+**Broke:** fresh installs printed a URL to copy-paste; a port collision showed
+a dev-only "build the dashboard" instruction to installed users.
+**Cause:** UX written from the dev-checkout perspective; error messages didn't
+distinguish dev checkout from broken install.
+**Rule:** every user-facing message must be written for the audience that will
+actually see it. If a condition has two causes (dev vs installed), say which
+one applies.
+
+## 2026-09 (earlier) — CI red for weeks; flaky permission test
+**Broke:** both CI jobs failing (import errors, Linux-only PTY EIO,
+`gettempdir().parent == "/"`); a test flaked on same-millisecond timestamps.
+**Cause:** bare `pytest` doesn't put the repo root on sys.path (use
+`python -m pytest`); Linux PTY semantics differ from macOS; wall-clock
+ordering assumptions break at millisecond resolution.
+**Rule:** CI must run the same invocation devs run; reproduce Linux failures
+in Docker before guessing; never assert strict ordering of wall-clock
+timestamps taken in the same millisecond.
+
+## 2026-09 (earlier) — Share viewer stuck on "disconnected, retrying"
+**Broke:** relay viewer page never connected.
+**Cause:** auth token passed as a WebSocket subprotocol, which browsers reject
+unless the server echoes it back — and the relay wasn't validating tokens at
+all.
+**Rule:** pass browser-WS auth in the query string or a cookie, never as a
+subprotocol you don't echo. "It connects" is not "it authenticates" — test
+both the happy path and a wrong token.
