@@ -840,15 +840,13 @@ class HistoryStore:
         self._conn.commit()
         return keys
 
-    def clear_terminated(self) -> list[str]:
-        """Delete all terminated sessions. Returns the keys removed."""
+    def terminated_keys(self) -> list[str]:
+        """Keys of all terminated sessions. The server deletes them one by one
+        (each needs supervisor/tmux/worktree teardown, not just a row drop)."""
         rows = self._conn.execute(
             "SELECT session_key FROM sessions WHERE state = 'terminated'"
         ).fetchall()
-        keys = [r["session_key"] for r in rows]
-        for key in keys:
-            self.delete_session(key)
-        return keys
+        return [r["session_key"] for r in rows]
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""

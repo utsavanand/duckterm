@@ -49,6 +49,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm import suites, zsh_themes
+from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events
 from duckterm.core.approvals import ApprovalRegistry
@@ -388,9 +389,7 @@ class Server:
                     "Duckterm server is running, but this install is missing its "
                     "dashboard — reinstall RubberTerm (pipx reinstall duckterm)."
                 )
-            await _write_response(
-                writer, 200, msg, extra_headers={SELF_PROBE_HEADER: "1"}
-            )
+            await _write_response(writer, 200, msg, extra_headers={SELF_PROBE_HEADER: "1"})
             return
         rel = "index.html" if path == "/" else path.lstrip("/")
         target = (dist / rel).resolve()
@@ -1232,12 +1231,22 @@ class Server:
                 },
             )
             return
-        await self.orchestrator.stop(session_key)
+        deleted = await self._teardown_session(session_key, row)
+        status = 200 if deleted else 404
+        await _write_json(writer, status, {"deleted": deleted, "session_key": session_key})
+
+    async def _teardown_session(self, session_key: str, row: dict[str, Any] | None) -> bool:
+        """Everything a session leaves behind: supervisor/tmux pane, worktree,
+        DB rows (cascade), pending approvals. Callers do the unmerged check."""
+        if not await self.orchestrator.stop(session_key):
+            # No supervisor (launched before a server restart and never
+            # re-adopted) — kill any leftover tmux session by its canonical
+            # name so DB deletes never orphan panes.
+            tmux.kill_session(tmux.target_for(session_key))
         self._remove_worktree(row)
         deleted = self.history.delete_session(session_key, now=int(time.time() * 1000))
         self.approvals.drop_session(session_key)
-        status = 200 if deleted else 404
-        await _write_json(writer, status, {"deleted": deleted, "session_key": session_key})
+        return deleted
 
     def _worktree_path_of(self, row: dict[str, Any] | None) -> Path | None:
         """The Duckterm-managed worktree for a session, or None. Guards that we
@@ -1292,8 +1301,22 @@ class Server:
         await _write_json(writer, 200 if ok else 404, {"updated": ok})
 
     async def _clear_terminated(self, writer: asyncio.StreamWriter) -> None:
-        keys = self.history.clear_terminated()
-        await _write_json(writer, 200, {"cleared": len(keys), "session_keys": keys})
+        """Bulk delete of terminated sessions, through the same teardown as a
+        single DELETE (previously this only dropped DB rows, leaving tmux
+        panes and worktrees orphaned). Sessions whose worktree has unmerged
+        commits are skipped, not force-deleted."""
+        cleared: list[str] = []
+        skipped: list[str] = []
+        for key in self.history.terminated_keys():
+            row = self.history.session(key)
+            if self._worktree_unmerged(row) != 0:
+                skipped.append(key)
+                continue
+            await self._teardown_session(key, row)
+            cleared.append(key)
+        await _write_json(
+            writer, 200, {"cleared": len(cleared), "session_keys": cleared, "skipped": skipped}
+        )
 
     # The fleet chat is digest-based on purpose: one LLM call over capped
     # per-session digests answers fleet-level questions ("who's stuck?",
@@ -1530,18 +1553,29 @@ class Server:
         await _write_json(writer, 200, {"deleted": urllib.parse.unquote(name)})
 
     async def _move_folder(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
-        """Re-parent a folder: {parent: "a/b"} nests it there, {parent: ""}
-        moves it to the top level. Subfolders and grouped sessions follow (a
-        folder is a path prefix, so a move is a prefix rename)."""
+        """Re-parent and/or rename a folder: {parent: "a/b"} nests it there,
+        {parent: ""} moves it to the top level, {name: "x"} renames the leaf;
+        an omitted field keeps its current value. Subfolders and grouped
+        sessions follow (a folder is a path prefix, so both are a prefix
+        rename)."""
         old = urllib.parse.unquote(name)
         try:
             req: Any = json.loads(body or b"{}")
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
-        parent = str(req.get("parent") or "").strip().strip("/")
-        leaf = old.rsplit("/", 1)[-1]
+        if "parent" in req:
+            parent = str(req.get("parent") or "").strip().strip("/")
+        else:
+            parent = old.rsplit("/", 1)[0] if "/" in old else ""
+        leaf = str(req.get("name") or "").strip().strip("/") or old.rsplit("/", 1)[-1]
+        if "/" in leaf:
+            await _write_json(writer, 400, {"error": "name can't contain '/'"})
+            return
         new = f"{parent}/{leaf}" if parent else leaf
+        if new == old:
+            await _write_json(writer, 200, {"moved": old, "to": new})
+            return
         try:
             moved = self.history.move_folder(old, new)
         except ValueError as e:

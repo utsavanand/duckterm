@@ -245,16 +245,14 @@ def test_delete_removes_checkpoint_markdown_dir(tmp_path: Path, monkeypatch) -> 
     assert not markdown_dir("s1").exists()  # gone from disk, not orphaned
 
 
-def test_clear_terminated_removes_only_terminated(tmp_path: Path) -> None:
+def test_terminated_keys_lists_only_terminated(tmp_path: Path) -> None:
     store = HistoryStore(tmp_path / "db.sqlite")
     bus = make_bus(store)
     bus.publish({"event_type": "SessionStart", "session_key": "live"})
     bus.publish({"event_type": "SessionStart", "session_key": "dead"})
     bus.publish({"event_type": "SessionEnd", "session_key": "dead"})
 
-    cleared = store.clear_terminated()
-    assert cleared == ["dead"]
-    assert {s["session_key"] for s in store.sessions()} == {"live"}
+    assert store.terminated_keys() == ["dead"]
 
 
 def test_deleted_session_is_not_resurrected_by_later_events(tmp_path: Path) -> None:
