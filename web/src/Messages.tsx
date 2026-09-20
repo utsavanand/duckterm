@@ -124,7 +124,7 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
   if (loaded && !latest) {
     return (
       <div className="rd-panel-empty">
-        No agent reply yet (claude-code sessions only).
+        No agent reply yet (claude-code and codex sessions only).
       </div>
     );
   }
@@ -142,9 +142,12 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
       )}
       {latest.tools.length > 0 && (
         <div className="rd-msg-tools">
-          {toolCounts(latest.tools)
-            .map(([name, n]) => (n > 1 ? `${name} ×${n}` : name))
-            .join("  ·  ")}
+          {toolCounts(latest.tools).map(([name, n]) => (
+            <span key={name} className="rd-tool-chip">
+              {name}
+              {n > 1 ? ` ×${n}` : ""}
+            </span>
+          ))}
         </div>
       )}
       {latest.texts.length === 0 && (latest.prompt || latest.tools.length) ? (
