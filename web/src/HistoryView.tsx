@@ -37,7 +37,12 @@ export function HistoryView({ session }: { session: SessionView }) {
         <>
           {p.summary && <p className="rd-history-summary">{p.summary}</p>}
           <Bucket title="Delivered" items={p.deliverables} mark="✓" />
-          <Bucket title="Learnings" items={p.learnings} mark="◆" />
+          <Bucket title="Task learnings" items={p.learnings} mark="◆" />
+          <Bucket
+            title="Working together"
+            items={p.user_learnings}
+            mark="◇"
+          />
           <Bucket title="Next actions" items={p.next_actions} mark="→" />
         </>
       )}

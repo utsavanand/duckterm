@@ -11,9 +11,11 @@ import json
 import re
 from typing import Any
 
-# The three list buckets the UI renders (plus a freeform "summary" paragraph);
-# anything else the model returns is dropped.
-KEYS = ("deliverables", "learnings", "next_actions")
+# The list buckets the UI renders (plus a freeform "summary" paragraph);
+# anything else the model returns is dropped. `learnings` is about the WORK;
+# `user_learnings` is about the COLLABORATION — how this user prompts, what
+# they correct, what keeps going wrong between user and agent.
+KEYS = ("deliverables", "learnings", "user_learnings", "next_actions")
 _MAX_ITEMS = 8
 _MAX_ITEM_CHARS = 160
 _MAX_SUMMARY_CHARS = 400
@@ -22,11 +24,16 @@ _MAX_TRANSCRIPT_CHARS = 8_000
 _PROMPT = """You maintain a running progress digest for an AI coding-agent session.
 Update the digest from the prior digest and the recent conversation. Return STRICT JSON only,
 no markdown fences, exactly this shape:
-{"summary": "...", "deliverables": ["..."], "learnings": ["..."], "next_actions": ["..."]}
+{"summary": "...", "deliverables": ["..."], "learnings": ["..."],
+ "user_learnings": ["..."], "next_actions": ["..."]}
 
 - summary: 2-3 plain sentences: where the session stands right now
 - deliverables: concrete things produced or changed (features, fixes, files, releases)
-- learnings: decisions made, constraints discovered, things worth remembering
+- learnings: decisions made and constraints discovered about the WORK itself
+- user_learnings: what this session taught you about working with THIS USER —
+  how they phrase requests, preferences they stated or implied, corrections
+  they had to repeat, errors or friction that recurred between user and agent.
+  Only include real observations from the conversation, never guesses.
 - next_actions: what should happen next, most important first
 Rules: at most 8 items per list, each item one plain sentence under 120 characters.
 Carry forward prior items that are still true; drop next_actions that got done

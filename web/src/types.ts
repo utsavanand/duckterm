@@ -63,7 +63,8 @@ export interface SessionView {
 export interface ProgressDigest {
   summary: string;
   deliverables: string[];
-  learnings: string[];
+  learnings: string[]; // about the work
+  user_learnings: string[]; // about the collaboration (how the user works)
   next_actions: string[];
 }
 
@@ -132,6 +133,7 @@ function parseProgress(raw: string | null | undefined): ProgressDigest | undefin
       summary: d.summary ?? "",
       deliverables: d.deliverables ?? [],
       learnings: d.learnings ?? [],
+      user_learnings: d.user_learnings ?? [],
       next_actions: d.next_actions ?? [],
     };
   } catch {

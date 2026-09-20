@@ -548,10 +548,19 @@ code,
   background: var(--bg-soft);
   border: 1px solid var(--border);
   border-radius: 8px;
+  cursor: pointer;
+}
+/* Clamp lives on an INNER element: clamping the padded container let the
+   clipped fifth line peek through the bottom padding (WebKit quirk). */
+.rd-context-summary-text {
   display: -webkit-box;
   -webkit-line-clamp: 4;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+.rd-context-summary.open .rd-context-summary-text {
+  display: block;
+  overflow: visible;
 }
 
 /* File-edit modal (e.g. filling in a .env the agent asked for). */

@@ -52,7 +52,7 @@ def test_refresh_progress_stores_digest_on_session(fake_summarizer: Path) -> Non
         return json.loads(row["progress"])
 
     digest = asyncio.run(scenario())
-    assert digest == _DIGEST
+    assert digest == {**_DIGEST, "user_learnings": []}  # parse fills the new bucket
 
 
 def test_stop_event_triggers_debounced_refresh(fake_summarizer: Path) -> None:

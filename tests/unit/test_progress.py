@@ -16,6 +16,26 @@ def test_parse_extracts_json_from_fenced_reply() -> None:
     assert digest["summary"] == "Built the login flow."
     assert digest["deliverables"] == ["login page"]
     assert digest["next_actions"] == ["add tests"]
+    assert digest["user_learnings"] == []  # absent key -> empty, not crash
+
+
+def test_parse_keeps_user_learnings_bucket() -> None:
+    digest = progress.parse(
+        json.dumps(
+            {
+                "summary": "s",
+                "deliverables": [],
+                "learnings": ["sqlite is enough"],
+                "user_learnings": ["user prefers short diffs", "repeats: no emoji"],
+                "next_actions": [],
+            }
+        )
+    )
+    assert digest is not None
+    assert digest["user_learnings"] == [
+        "user prefers short diffs",
+        "repeats: no emoji",
+    ]
 
 
 def test_parse_rejects_garbage_and_empty() -> None:

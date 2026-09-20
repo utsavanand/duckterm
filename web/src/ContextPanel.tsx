@@ -33,6 +33,7 @@ export function ContextPanel({ session }: { session: SessionView }) {
   // Newest checkpoint timestamp — the context warning acknowledges a fresh
   // one instead of nagging as if nothing happened.
   const [lastCheckpoint, setLastCheckpoint] = useState<number | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const onBranch = !!session.branch;
   const dir = session.worktreePath ?? session.cwd ?? null;
   const ctxLevel = contextLevel(session.contextTokens, session.model);
@@ -95,8 +96,18 @@ export function ContextPanel({ session }: { session: SessionView }) {
       {/* The latest running summary (3-4 lines); the full digest — delivered,
           learnings, next actions — lives in the middle pane's History tab. */}
       {session.progress?.summary && (
-        <p className="rd-context-summary" title="Running summary — see the History tab for the full digest">
-          {session.progress.summary}
+        <p
+          className={`rd-context-summary${summaryOpen ? " open" : ""}`}
+          title={
+            summaryOpen
+              ? "Click to collapse"
+              : "Click to expand — full digest in the History tab"
+          }
+          onClick={() => setSummaryOpen((o) => !o)}
+        >
+          <span className="rd-context-summary-text">
+            {session.progress.summary}
+          </span>
         </p>
       )}
       <div className="rd-context-meta">
