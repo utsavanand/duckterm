@@ -1603,8 +1603,9 @@ class Server:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
         token = str(req.get("token") or "").strip() or None
+        secret = str(req.get("secret") or "").strip() or None
         try:
-            result = connectors.enable(name, token)
+            result = connectors.enable(name, token, secret)
         except ValueError as e:
             await _write_json(writer, 404, {"error": str(e)})
             return

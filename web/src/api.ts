@@ -87,8 +87,11 @@ export const api = {
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
   connectors: () => get<{ connectors: Connector[] }>("/connectors"),
-  enableConnector: (name: string, token?: string) =>
-    post<Connector>(`/connectors/${name}/enable`, token ? { token } : {}),
+  enableConnector: (name: string, token?: string, secret?: string) =>
+    post<Connector>(`/connectors/${name}/enable`, {
+      ...(token ? { token } : {}),
+      ...(secret ? { secret } : {}),
+    }),
   disableConnector: (name: string) =>
     post<Connector>(`/connectors/${name}/disable`),
   fleetAsk: (question: string, history: { q: string; a: string }[]) =>

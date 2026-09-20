@@ -136,3 +136,45 @@ def test_unknown_connector_raises() -> None:
         connectors.enable("gitlab")
     with pytest.raises(ValueError):
         connectors.disable("gitlab")
+
+
+def test_porkbun_enable_needs_both_keys_and_validates(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub(isolated_env, "uvx", "exit 0")
+    home = tmp_path / "home"
+    home.mkdir()
+
+    with pytest.raises(RuntimeError, match="API key AND secret"):
+        connectors.enable("porkbun", home=home)
+
+    monkeypatch.setattr(connectors, "porkbun_keys_valid", lambda t, s: False)
+    with pytest.raises(RuntimeError, match="rejected"):
+        connectors.enable("porkbun", token="pk1_x", secret="sk1_y", home=home)
+    assert connectors.load_secret("porkbun") is None  # bad keys not persisted
+
+    monkeypatch.setattr(connectors, "porkbun_keys_valid", lambda t, s: True)
+    result = connectors.enable("porkbun", token="pk1_x", secret="sk1_y", home=home)
+    assert result["enabled"] is True
+    assert result["credential"] == "stored"
+    claude = json.loads((home / ".claude.json").read_text())
+    entry = claude["mcpServers"]["porkbun"]
+    assert entry["args"] == ["connector-run", "porkbun"]
+    assert "pk1_" not in json.dumps(claude)  # keys never land in the config
+    assert "sk1_" not in json.dumps(claude)
+
+
+def test_porkbun_disable_clears_both_secrets(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub(isolated_env, "uvx", "exit 0")
+    monkeypatch.setattr(connectors, "porkbun_keys_valid", lambda t, s: True)
+    home = tmp_path / "home"
+    home.mkdir()
+    connectors.enable("porkbun", token="pk1_x", secret="sk1_y", home=home)
+
+    result = connectors.disable("porkbun", home=home)
+
+    assert result["enabled"] is False
+    assert connectors.load_secret("porkbun") is None
+    assert connectors.load_secret("porkbun-secret") is None

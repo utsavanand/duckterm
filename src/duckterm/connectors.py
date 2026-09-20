@@ -17,6 +17,7 @@ DUCKTERM_HOME/connectors on other platforms / when DUCKTERM_NO_KEYCHAIN is set
 (tests, CI).
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -30,7 +31,7 @@ from duckterm.agents import mcp_install
 _GITHUB_ENV = "GITHUB_PERSONAL_ACCESS_TOKEN"
 _GITHUB_IMAGE = "ghcr.io/github/github-mcp-server"
 HARNESSES = ("claude-code", "codex")
-NAMES = ("github", "railway")
+NAMES = ("github", "railway", "porkbun")
 
 
 # ── secret store ──
@@ -197,11 +198,19 @@ def _duckterm_bin() -> str:
 # ── enable / disable / status ──
 
 
-def enable(name: str, token: str | None = None, *, home: Path | None = None) -> dict[str, object]:
+def enable(
+    name: str,
+    token: str | None = None,
+    secret: str | None = None,
+    *,
+    home: Path | None = None,
+) -> dict[str, object]:
     if name == "github":
         return _enable_github(token, home=home)
     if name == "railway":
         return _enable_railway(home=home)
+    if name == "porkbun":
+        return _enable_porkbun(token, secret, home=home)
     raise ValueError(f"unknown connector {name!r}")
 
 
@@ -235,12 +244,54 @@ def _enable_railway(*, home: Path | None) -> dict[str, object]:
     return status("railway", home=home)
 
 
+def _enable_porkbun(
+    token: str | None, secret: str | None, *, home: Path | None
+) -> dict[str, object]:
+    """Porkbun (DNS/domains): two credentials (API key + secret), no CLI to
+    reuse. Runs major/porkbun-mcp via uvx with write mode on — the point of
+    connecting it is letting the agent manage records."""
+    if token and secret:
+        if not porkbun_keys_valid(token, secret):
+            raise RuntimeError("Porkbun rejected those keys (api.porkbun.com ping)")
+        save_secret("porkbun", token)
+        save_secret("porkbun-secret", secret)
+    if not (load_secret("porkbun") and load_secret("porkbun-secret")):
+        raise RuntimeError(
+            "Porkbun needs an API key AND secret key (porkbun.com/account/api; "
+            "also enable API access per domain)"
+        )
+    if shutil.which("uvx") is None:
+        raise RuntimeError("uvx not found — install uv (brew install uv)")
+    command, args = _duckterm_bin(), ["connector-run", "porkbun"]
+    mcp_install.claude_install("porkbun", command, args, home=home)
+    mcp_install.codex_install("porkbun", command, args, home=home)
+    return status("porkbun", home=home)
+
+
+def porkbun_keys_valid(token: str, secret: str) -> bool:
+    req = urllib.request.Request(
+        "https://api.porkbun.com/api/json/v3/ping",
+        data=json.dumps({"apikey": token, "secretapikey": secret}).encode(),
+        headers={"Content-Type": "application/json", "User-Agent": "duckterm"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            body = json.loads(resp.read().decode())
+            return body.get("status") == "SUCCESS"
+    except urllib.error.HTTPError:
+        return False
+    except OSError:
+        return True  # offline is not "invalid"
+
+
 def disable(name: str, *, home: Path | None = None) -> dict[str, object]:
     if name not in NAMES:
         raise ValueError(f"unknown connector {name!r}")
     mcp_install.claude_remove(name, home=home)
     mcp_install.codex_remove(name, home=home)
     delete_secret(name)
+    if name == "porkbun":
+        delete_secret("porkbun-secret")
     return status(name, home=home)
 
 
@@ -291,6 +342,24 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
             "ready": logged_in,
             "detail": detail,
         }
+    if name == "porkbun":
+        has_keys = bool(load_secret("porkbun") and load_secret("porkbun-secret"))
+        runnable = shutil.which("uvx") is not None
+        detail = None
+        if not runnable:
+            detail = "install uv (brew install uv)"
+        elif not has_keys:
+            detail = "needs API key + secret (porkbun.com/account/api)"
+        return {
+            "name": "porkbun",
+            "title": "Porkbun",
+            "description": "Domains and DNS records via porkbun-mcp (writes enabled)",
+            "credential": "stored" if has_keys else None,
+            "installed": installed,
+            "enabled": all(installed.values()),
+            "ready": has_keys and runnable,
+            "detail": detail,
+        }
     raise ValueError(f"unknown connector {name!r}")
 
 
@@ -311,4 +380,12 @@ def run(name: str) -> None:
             raise SystemExit(1)
         argv = github_server_argv()
         os.execvpe(argv[0], argv, {**os.environ, _GITHUB_ENV: cred[0]})
+    if name == "porkbun":
+        key, secret = load_secret("porkbun"), load_secret("porkbun-secret")
+        if not (key and secret):
+            print("duckterm: Porkbun keys missing — re-enable the connector", file=sys.stderr)
+            raise SystemExit(1)
+        uvx = shutil.which("uvx") or "uvx"
+        env = {**os.environ, "PORKBUN_API_KEY": key, "PORKBUN_SECRET_KEY": secret}
+        os.execvpe(uvx, [uvx, "porkbun-mcp", "--get-muddy"], env)
     raise SystemExit(f"duckterm: connector {name!r} has no runnable server")
