@@ -156,7 +156,18 @@ def _restart(host: str, port: int) -> int:
 
 
 def _print_listening(host: str, port: int) -> None:
-    print(f"duckterm serving on http://{host}:{port}", file=sys.stderr)
+    url = f"http://{host}:{port}"
+    print(f"duckterm serving on {url}", file=sys.stderr)
+    # Open the dashboard automatically so `duckterm serve` is one command with no
+    # follow-up copy-paste. Only when a UI is actually bundled (a dev checkout
+    # without a build would just open a "server running" text page); and never
+    # when the user asked us not to (DUCKTERM_NO_BROWSER, set by tests/headless).
+    from duckterm.transport.httpio import dashboard_dir
+
+    if dashboard_dir() is not None and not os.environ.get("DUCKTERM_NO_BROWSER"):
+        import webbrowser
+
+        webbrowser.open(url)
 
 
 def _print_port_in_use(host: str, port: int) -> None:

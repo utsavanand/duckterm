@@ -380,12 +380,23 @@ class Server:
         header rides on every response. Falls back to a hint if not built."""
         dist = dashboard_dir()
         if dist is None:
+            # No bundled UI. For an installed copy this means a broken wheel
+            # (the dashboard should ship inside it) — tell them to reinstall,
+            # not to run a dev build they have no source for. Only a source
+            # checkout (web/ present) gets the build hint.
+            web_src = Path(__file__).resolve().parents[2] / "web"
+            if web_src.is_dir():
+                msg = (
+                    "Duckterm server is running, but the dashboard isn't built. "
+                    "From the repo: cd web && npm run build (or run `duckterm dashboard`)."
+                )
+            else:
+                msg = (
+                    "Duckterm server is running, but this install is missing its "
+                    "dashboard — reinstall RubberTerm (pipx reinstall duckterm)."
+                )
             await _write_response(
-                writer,
-                200,
-                "Duckterm server is running. Build the dashboard "
-                "(cd web && npm run build) to serve the UI here.",
-                extra_headers={SELF_PROBE_HEADER: "1"},
+                writer, 200, msg, extra_headers={SELF_PROBE_HEADER: "1"}
             )
             return
         rel = "index.html" if path == "/" else path.lstrip("/")

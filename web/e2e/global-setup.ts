@@ -45,6 +45,7 @@ export default async function globalSetup() {
         DUCKTERM_HOME: home,
         DUCKTERM_SUMMARIZER_CMD: fakeLlm,
         DUCKTERM_NO_TERMINAL: "1",
+        DUCKTERM_NO_BROWSER: "1",
         DUCKTERM_TMUX_SOCKET: tmuxSocket,
         PYTHONPATH: join(REPO, "src"),
       },
