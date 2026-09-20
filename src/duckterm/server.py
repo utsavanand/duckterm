@@ -51,7 +51,7 @@ from typing import Any
 from duckterm import connectors, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
-from duckterm.core import events
+from duckterm.core import events, progress
 from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
@@ -162,6 +162,8 @@ _ROUTES: list[Route] = [
     Route("POST", "/agents-md/suggest", lambda s, r, w, h, b, seg: s._suggest_agents_md(w, b)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._read_agents_md(w, seg), prefix="/agents-md"),
     Route("POST", "/agents-md", lambda s, r, w, h, b, seg: s._write_agents_md(w, b)),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._read_file(w, seg), prefix="/file"),
+    Route("POST", "/file", lambda s, r, w, h, b, seg: s._write_file(w, b)),
     Route("GET", "/approvals", lambda s, r, w, h, b, seg: s._list_approvals(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._approval_decision(w, seg),
           **_mid("/approvals/", "/decision")),
@@ -265,6 +267,8 @@ class Server:
         self.orchestrator = Orchestrator(self.bus, history=self.history)
         self.snapshots = SnapshotManager(self.history)
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
+        # Per-session (last digest ts, event_count) — debounces progress refreshes.
+        self._progress_marks: dict[str, tuple[int, int]] = {}
         self.token = security.load_or_create_token()
         # transcript path -> (mtime, context_tokens): /sessions is fetched
         # often and an unchanged transcript can't have new usage.
@@ -291,6 +295,10 @@ class Server:
         self._enrich_git(event)
         self.history.record(event)
         self.approvals.from_event(event)
+        if event.get("event_type") == events.STOP:
+            key = event.get("session_key") or event.get("session_id")
+            if key:
+                self._maybe_refresh_progress(str(key))
         if event.get("event_type") in self._RESOLVES_APPROVAL:
             key = event.get("session_key") or event.get("session_id")
             if key:
@@ -1317,6 +1325,66 @@ class Server:
     # to read a named session's full transcript and diff on demand.
     _FLEET_STATES_DONE = AT_REST_STATES  # sessions past this state aren't "running"
 
+    # ── running progress digest (deliverables / learnings / next actions) ──
+    # Regenerated on turn ends (Stop), debounced so a chatty session costs at
+    # most one summarizer call per window; stored on the session row so it
+    # survives restarts and rides along in /sessions.
+    _PROGRESS_MIN_INTERVAL_MS = 90_000
+    _PROGRESS_MIN_NEW_EVENTS = 4
+
+    def _maybe_refresh_progress(self, session_key: str) -> None:
+        row = self.history.session(session_key)
+        if row is None:
+            return
+        now = int(time.time() * 1000)
+        last_ts, last_count = self._progress_marks.get(session_key, (0, 0))
+        count = int(row.get("event_count") or 0)
+        if now - last_ts < self._PROGRESS_MIN_INTERVAL_MS:
+            return
+        if count - last_count < self._PROGRESS_MIN_NEW_EVENTS:
+            return
+        self._progress_marks[session_key] = (now, count)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no loop (sync test context) — the next Stop will retry
+        loop.create_task(self._refresh_progress(session_key))
+
+    async def _refresh_progress(self, session_key: str) -> None:
+        row = self.history.session(session_key)
+        if row is None:
+            return
+        transcript = await asyncio.to_thread(self._progress_transcript, row)
+        if not transcript:
+            return
+        prior = None
+        with contextlib.suppress(json.JSONDecodeError, TypeError):
+            prior = json.loads(row.get("progress") or "")
+        prompt = progress.build_prompt(transcript, prior, str(row.get("intention") or ""))
+        summary = await asyncio.to_thread(summarize, prompt)
+        digest = progress.parse(summary.text)
+        if digest is None:
+            return
+        self.history.set_progress(session_key, json.dumps(digest), int(time.time() * 1000))
+
+    def _progress_transcript(self, row: dict[str, Any]) -> list[dict[str, str]]:
+        """Conversation records for the digest: the harness transcript when one
+        exists, else the live terminal screen (generic agents)."""
+        key = str(row.get("session_key") or "")
+        cwd = row.get("worktree_path") or row.get("cwd")
+        session_id = self.history.session_id_for(key)
+        if cwd and session_id:
+            runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
+            records = runtime.read_transcript(cwd=Path(str(cwd)), session_id=session_id)
+            if records:
+                return records
+        sup = self.orchestrator.get(key)
+        if sup is not None:
+            screen = sup.screen_text(120)
+            if screen:
+                return [{"role": "terminal", "text": screen}]
+        return []
+
     def _fleet_digest(self, row: dict[str, Any], question: str) -> str:
         key = str(row.get("session_key") or "")
         name = str(row.get("name") or row.get("source_app") or key)
@@ -1643,6 +1711,64 @@ class Server:
         # scratch projects and tests live under /tmp (-> /private/tmp).
         scratch = (Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve())
         return p.is_relative_to(home) or any(p.is_relative_to(t) for t in scratch)
+
+    # ── plain-file editor (e.g. .env secrets an agent asks you to fill in
+    #    without pasting them into the conversation) ──
+
+    _FILE_MAX_BYTES = 1_000_000  # editor guard: this is for configs, not blobs
+
+    async def _read_file(self, writer: asyncio.StreamWriter, seg: str) -> None:
+        """Read a text file (?path=…) for the in-dashboard editor. Same path
+        confinement as AGENTS.md: home tree + tempdir only."""
+        query = urllib.parse.urlparse("/file" + seg).query
+        raw = urllib.parse.parse_qs(query).get("path", [None])[0]
+        if not raw:
+            await _write_json(writer, 400, {"error": "path is required"})
+            return
+        if not self._agents_md_dir_allowed(raw):
+            await _write_json(writer, 403, {"error": "path outside the allowed roots"})
+            return
+        path = Path(raw).expanduser().resolve()
+        if path.is_dir():
+            await _write_json(writer, 400, {"error": "path is a directory"})
+            return
+        text = ""
+        if path.exists():
+            if path.stat().st_size > self._FILE_MAX_BYTES:
+                await _write_json(writer, 400, {"error": "file too large for the editor"})
+                return
+            text = path.read_text(errors="replace")
+        await _write_json(writer, 200, {"path": str(path), "text": text, "exists": path.exists()})
+
+    async def _write_file(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        """Write a text file for the in-dashboard editor. Secrets typed here go
+        straight to disk — never through an agent's conversation. chmod 600 on
+        create for dotfiles, since the common case is credentials."""
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        raw, text = str(req.get("path") or ""), req.get("text")
+        if not raw or not isinstance(text, str):
+            await _write_json(writer, 400, {"error": "path and text are required"})
+            return
+        if len(text.encode()) > self._FILE_MAX_BYTES:
+            await _write_json(writer, 400, {"error": "file too large for the editor"})
+            return
+        if not self._agents_md_dir_allowed(raw):
+            await _write_json(writer, 403, {"error": "path outside the allowed roots"})
+            return
+        path = Path(raw).expanduser().resolve()
+        if path.is_dir():
+            await _write_json(writer, 400, {"error": "path is a directory"})
+            return
+        fresh = not path.exists()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        if fresh and path.name.startswith("."):
+            path.chmod(0o600)
+        await _write_json(writer, 200, {"path": str(path), "written": True})
 
     async def _read_agents_md(self, writer: asyncio.StreamWriter, seg: str) -> None:
         """Read the AGENTS.md for a folder (?dir=…). Returns the file's text, or

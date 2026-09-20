@@ -18,9 +18,7 @@ def test_project_slug_dashes_every_non_alphanumeric() -> None:
     assert project_slug(Path("/Users/dev/myrepo")) == "-Users-dev-myrepo"
 
 
-def test_locate_transcript_finds_a_dotted_worktree_path(
-    tmp_path: Path, monkeypatch
-) -> None:  # type: ignore[no-untyped-def]
+def test_locate_transcript_finds_a_dotted_worktree_path(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     # The real-world failing case: a fork under ~/.duckterm/worktrees.
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     cwd = Path("/Users/sumo/.duckterm/worktrees/omni/test-fork")

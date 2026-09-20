@@ -168,12 +168,21 @@ export function AgentTree({
         f.startsWith(path + "/") && !f.slice(path.length + 1).includes("/"),
     );
 
+  // A folder's count is its whole SUBTREE (own sessions + every descendant
+  // folder's) — a parent showing 0 while its child holds 2 read as empty.
+  const subtreeCount = (path: string) =>
+    [...byFolder.entries()].reduce(
+      (n, [g, nodes]) =>
+        g === path || g.startsWith(path + "/") ? n + nodes.length : n,
+      0,
+    );
+
   const renderFolder = (path: string, depth: number) => (
     <GroupHeader
       key={path}
       name={path}
       depth={depth}
-      count={(byFolder.get(path) ?? []).length}
+      count={subtreeCount(path)}
       onDropSession={moveToGroup}
       onDropFolder={moveFolder}
       onDelete={() => removeFolder(path)}

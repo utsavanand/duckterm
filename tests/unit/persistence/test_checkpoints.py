@@ -155,7 +155,8 @@ def test_build_renders_markdown_without_writing(tmp_path: Path, monkeypatch) -> 
 
 
 def test_write_markdown_uses_the_stable_home_root_and_relative_path(
-    tmp_path: Path, monkeypatch  # type: ignore[no-untyped-def]
+    tmp_path: Path,
+    monkeypatch,  # type: ignore[no-untyped-def]
 ) -> None:
     # write_markdown puts the file under DUCKTERM_HOME/checkpoints/<key>/ (NOT
     # the worktree) and returns a path RELATIVE to that root, so it survives a

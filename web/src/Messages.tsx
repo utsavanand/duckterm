@@ -29,6 +29,11 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
   const toast = useToast();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // How many turns BACK from the newest we're viewing (0 = latest).
+  const [back, setBack] = useState(0);
+  useEffect(() => {
+    setBack(0); // a different session starts at its latest turn
+  }, [sessionKey]);
   const [sel, setSel] = useState<Selection | null>(null);
   const [note, setNote] = useState("");
   const [followUp, setFollowUp] = useState("");
@@ -110,11 +115,11 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
     };
   }, [sessionKey]);
 
-  // The LATEST agent reply: the prose since the last user prompt, rendered as
-  // clean HTML — a readable version of what the CLI just output. We don't dump
-  // the whole history; this is "the new message", made readable. Tools the agent
-  // ran in this turn collapse into one compact line.
-  const latest = latestReply(messages);
+  // One interaction turn at a time, defaulting to the newest. `back` counts
+  // turns from the end, so while you're on the latest (back=0) new turns keep
+  // appearing in place; while browsing older ones your position holds steady.
+  const turns = turnsOf(messages);
+  const latest = turns.length ? turns[Math.max(0, turns.length - 1 - back)] : null;
 
   if (loaded && !latest) {
     return (
@@ -124,10 +129,33 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
     );
   }
   if (!latest) return <div className="rd-messages" />;
+  const showingLatest = back === 0;
 
   return (
     <div className="rd-messages" ref={wrapRef} onMouseUp={onMouseUp}>
-      {/* The latest exchange, typeset like the tool it lives in: the prompt
+      {/* Step through interaction turns; ‹ goes to the previous exchange. */}
+      {turns.length > 1 && (
+        <div className="rd-turn-nav">
+          <button
+            aria-label="Previous turn"
+            disabled={back >= turns.length - 1}
+            onClick={() => setBack((b) => Math.min(b + 1, turns.length - 1))}
+          >
+            ‹
+          </button>
+          <span>
+            turn {turns.length - back} / {turns.length}
+          </span>
+          <button
+            aria-label="Next turn"
+            disabled={back === 0}
+            onClick={() => setBack((b) => Math.max(b - 1, 0))}
+          >
+            ›
+          </button>
+        </div>
+      )}
+      {/* One exchange, typeset like the tool it lives in: the prompt
           as a shell line, the reply as plain prose. No chat bubbles. */}
       {latest.prompt && (
         <div className="rd-turn-user">
@@ -146,7 +174,9 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
         </div>
       )}
       {latest.texts.length === 0 && (latest.prompt || latest.tools.length) ? (
-        <div className="rd-msg-pending">working — no reply yet</div>
+        <div className="rd-msg-pending">
+          {showingLatest ? "working — no reply yet" : "no reply in this turn"}
+        </div>
       ) : (
         latest.texts.map((t, i) => (
           <div
@@ -212,32 +242,29 @@ interface Reply {
   tools: string[]; // tool names the agent ran in the turn
 }
 
-// Walk back from the end to the most recent user prompt; everything after it is
-// the agent's latest reply.
-function latestReply(messages: Message[]): Reply | null {
-  let start = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (
-      messages[i].role === "user" &&
-      messages[i].blocks.some((b) => b.type === "text")
-    ) {
-      start = i;
-      break;
+// Split the transcript into interaction turns: each user text message starts a
+// new turn; everything until the next one (assistant prose, tool calls) is that
+// turn's reply. Leading assistant-only content forms its own turn.
+function turnsOf(messages: Message[]): Reply[] {
+  const turns: Reply[] = [];
+  let cur: Reply | null = null;
+  for (const m of messages) {
+    const isPrompt =
+      m.role === "user" && m.blocks.some((b) => b.type === "text");
+    if (isPrompt || cur === null) {
+      cur = { prompt: null, texts: [], tools: [] };
+      turns.push(cur);
     }
-  }
-  const turn = start >= 0 ? messages.slice(start) : messages;
-  const reply: Reply = { prompt: null, texts: [], tools: [] };
-  turn.forEach((m, idx) => {
     for (const b of m.blocks) {
       if (b.type === "text") {
-        if (m.role === "user" && idx === 0) reply.prompt = b.text;
-        else if (m.role === "assistant") reply.texts.push(b.text);
+        if (m.role === "user" && cur.prompt === null) cur.prompt = b.text;
+        else if (m.role === "assistant") cur.texts.push(b.text);
       } else if (b.type === "tool_use") {
-        reply.tools.push(b.name);
+        cur.tools.push(b.name);
       }
     }
-  });
-  return reply.texts.length || reply.prompt ? reply : null;
+  }
+  return turns.filter((t) => t.prompt || t.texts.length || t.tools.length);
 }
 
 // Tool usage as (name, count) pairs, most-used first — rendered as chips.

@@ -195,9 +195,7 @@ def test_worktree_fork_carries_claude_conversation(
     assert "ctx-fork" in opened["cwd"]
 
 
-def test_worktree_fork_no_context_for_codex(
-    git_repo: Path, tmp_path: Path, monkeypatch
-) -> None:  # type: ignore[no-untyped-def]
+def test_worktree_fork_no_context_for_codex(git_repo: Path, tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Codex has no native conversation resume, so carry_context is a no-op — the
     fork launches the base command fresh (carried_context False)."""
     opened: dict = {}

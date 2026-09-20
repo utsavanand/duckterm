@@ -115,9 +115,7 @@ def test_restore_marks_no_resume_when_no_conversation_id(tmp_path: Path) -> None
     assert resolved.get("_no_resume") is True
 
 
-def test_restore_publishes_sessionstart_so_it_shows_up(
-    tmp_path: Path, monkeypatch
-) -> None:  # type: ignore[no-untyped-def]
+def test_restore_publishes_sessionstart_so_it_shows_up(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """Restoring must re-attach the session to the dashboard: open the terminal
     under the original key and publish a SessionStart, or the agent runs but
     never appears in the left panel."""

@@ -55,6 +55,16 @@ export interface SessionView {
   metaHarnesses?: string[]; // installed suites this session runs under
   group?: string; // folder label for organizing the left panel; undefined = ungrouped
   subagents?: SubAgent[]; // sub-agents spawned via the Task tool, for the tree
+  progress?: ProgressDigest; // running digest (summary/deliverables/learnings/next)
+  progressAt?: number; // when the digest was last regenerated (ms)
+}
+
+/** The running progress digest the server regenerates every few turns. */
+export interface ProgressDigest {
+  summary: string;
+  deliverables: string[];
+  learnings: string[];
+  next_actions: string[];
 }
 
 /** A persisted session row from GET /sessions (SQLite, snake_case). */
@@ -72,6 +82,8 @@ export interface PersistedSession {
   metrics?: Record<string, number>;
   intention?: string | null;
   outcome_summary?: string | null;
+  progress?: string | null;
+  progress_at?: number | null;
   compare_group?: string | null;
   runtime?: string | null;
   branch?: string | null;
@@ -112,6 +124,21 @@ export function repoNameFrom(
   return sourceApp ?? undefined;
 }
 
+function parseProgress(raw: string | null | undefined): ProgressDigest | undefined {
+  if (!raw) return undefined;
+  try {
+    const d = JSON.parse(raw) as ProgressDigest;
+    return {
+      summary: d.summary ?? "",
+      deliverables: d.deliverables ?? [],
+      learnings: d.learnings ?? [],
+      next_actions: d.next_actions ?? [],
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export function viewFromPersisted(s: PersistedSession): SessionView {
   return {
     key: s.session_key,
@@ -129,6 +156,8 @@ export function viewFromPersisted(s: PersistedSession): SessionView {
     metrics: s.metrics,
     intention: s.intention ?? undefined,
     outcome: s.outcome_summary ?? undefined,
+    progress: parseProgress(s.progress),
+    progressAt: s.progress_at ?? undefined,
     compareGroup: s.compare_group ?? undefined,
     runtime: s.runtime ?? undefined,
     branch: s.branch ?? undefined,

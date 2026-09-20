@@ -9,6 +9,7 @@ import { FleetChat } from "./FleetChat";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { HarnessesModal } from "./HarnessesModal";
+import { HistoryView } from "./HistoryView";
 import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
 import { NewFolderModal } from "./NewFolderModal";
@@ -51,7 +52,9 @@ function Dashboard() {
   >(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [forkKey, setForkKey] = useState<string | null>(null);
-  const [view, setView] = useState<"terminal" | "messages">("terminal");
+  const [view, setView] = useState<"terminal" | "messages" | "history">(
+    "terminal",
+  );
   // The folder whose terminals are tiled fullscreen; null = grid closed.
   const [gridFolder, setGridFolder] = useState<string | null>(null);
   // Terminal color theme, per app mode: the terminal follows the light/dark
@@ -355,12 +358,23 @@ function Dashboard() {
               >
                 Messages
               </button>
+              <button
+                className={view === "history" ? "active" : ""}
+                onClick={() => setView("history")}
+              >
+                History
+              </button>
             </div>
             {/* Messages view: structured HTML render of the latest reply, with
               select-to-annotate. */}
             {view === "messages" && selected && (
               <div className="rd-messages-wrap">
                 <Messages sessionKey={selected.key} />
+              </div>
+            )}
+            {view === "history" && selected && (
+              <div className="rd-messages-wrap">
+                <HistoryView session={selected} />
               </div>
             )}
             {/* Terminal view: keep a terminal MOUNTED per PTY-owned agent and just

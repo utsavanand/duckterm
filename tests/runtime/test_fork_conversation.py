@@ -56,9 +56,7 @@ def test_fork_conversation_rejects_non_claude_session(tmp_path: Path) -> None:
     assert "claude-code" in body["error"]
 
 
-def test_fork_conversation_without_a_conversation_starts_fresh(
-    tmp_path: Path, monkeypatch
-) -> None:  # type: ignore[no-untyped-def]
+def test_fork_conversation_without_a_conversation_starts_fresh(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     """A session that hasn't had a conversation yet still forks — as a fresh
     sibling session in the same folder, with the response saying so plainly
     (the old behavior was a bare 400 the user read as 'fork is broken')."""
@@ -101,9 +99,7 @@ def test_fork_conversation_without_a_conversation_starts_fresh(
     assert launched["parent"] == "c1"  # lineage still recorded
 
 
-def test_fork_conversation_opens_terminal_with_resume_command(
-    tmp_path: Path, monkeypatch
-) -> None:  # type: ignore[no-untyped-def]
+def test_fork_conversation_opens_terminal_with_resume_command(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
     # Don't actually spawn a terminal: capture the argv instead.
     opened: dict = {}
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { FileEditModal } from "./FileEditModal";
 import { CONTEXT_WINDOW, contextLevel, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
@@ -19,6 +20,7 @@ export function ContextPanel({ session }: { session: SessionView }) {
   const [diff, setDiff] = useState<string>("");
   const [branches, setBranches] = useState<string[]>([]);
   const [acting, setActing] = useState<string | null>(null);
+  const [editingFile, setEditingFile] = useState(false);
   const onBranch = !!session.branch;
   const dir = session.worktreePath ?? session.cwd ?? null;
   const ctxLevel = contextLevel(session.contextTokens);
@@ -69,6 +71,13 @@ export function ContextPanel({ session }: { session: SessionView }) {
 
   return (
     <div className="rd-context">
+      {/* The latest running summary (3-4 lines); the full digest — delivered,
+          learnings, next actions — lives in the middle pane's History tab. */}
+      {session.progress?.summary && (
+        <p className="rd-context-summary" title="Running summary — see the History tab for the full digest">
+          {session.progress.summary}
+        </p>
+      )}
       <div className="rd-context-meta">
         <div className="rd-context-row">
           <span className="k">state</span>
@@ -194,6 +203,18 @@ export function ContextPanel({ session }: { session: SessionView }) {
           <div className="rd-context-section-title">Folder</div>
           <code className="rd-context-path">{session.cwd ?? "—"}</code>
         </div>
+      )}
+      {dir && (
+        <button
+          className="rd-btn rd-btn-ghost rd-btn-sm"
+          title="Edit a file in this session's folder (e.g. fill in a .env the agent asked for) — content goes straight to disk, never through the agent"
+          onClick={() => setEditingFile(true)}
+        >
+          Edit file…
+        </button>
+      )}
+      {editingFile && dir && (
+        <FileEditModal dir={dir} onClose={() => setEditingFile(false)} />
       )}
     </div>
   );

@@ -210,6 +210,11 @@ _SESSIONS_COLUMNS = {
     # has no heartbeat — this is how the liveness sweep tells a still-running
     # agent from one whose terminal was closed.
     "agent_pid": "INTEGER",
+    # Running progress digest, JSON {deliverables, learnings, next_actions} —
+    # regenerated every few turns (core/progress.py) and shown in the right
+    # panel. progress_at is its wall-clock stamp (ms).
+    "progress": "TEXT",
+    "progress_at": "INTEGER",
 }
 
 
@@ -845,6 +850,15 @@ class HistoryStore:
             _remove_checkpoint_dir(key)  # leave zero trace, including on disk
         self._conn.commit()
         return keys
+
+    def set_progress(self, key: str, digest_json: str, now: int) -> bool:
+        """Store the running progress digest (JSON text) on the session row."""
+        cur = self._conn.execute(
+            "UPDATE sessions SET progress = ?, progress_at = ? WHERE session_key = ?",
+            (digest_json, now, key),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
 
     def terminated_keys(self) -> list[str]:
         """Keys of all terminated sessions. The server deletes them one by one
