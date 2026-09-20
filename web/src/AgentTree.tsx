@@ -69,6 +69,32 @@ export function AgentTree({
     }
   }
 
+  async function renameFolder(path: string) {
+    const leaf = path.split("/").pop() ?? path;
+    const name = window.prompt(`Rename folder "${leaf}" to:`, leaf)?.trim();
+    if (!name || name === leaf) return;
+    if (name.includes("/")) {
+      toast("Folder names can't contain '/'", "err");
+      return;
+    }
+    const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+    const next = parent ? `${parent}/${name}` : name;
+    try {
+      await api.renameFolder(path, name);
+      // Sessions follow the rename server-side; mirror it locally so rows
+      // don't jump to Ungrouped until the next refetch.
+      for (const s of sessions) {
+        if (s.group === path) onSessionMoved(s.key, next);
+        else if (s.group?.startsWith(path + "/"))
+          onSessionMoved(s.key, next + s.group.slice(path.length));
+      }
+      onFoldersChanged();
+      toast(`Renamed to ${next}`);
+    } catch (e) {
+      toast(`Rename failed: ${(e as Error).message}`, "err");
+    }
+  }
+
   async function createSubfolder(parent: string) {
     const name = window.prompt(`New folder inside "${parent}":`)?.trim();
     if (!name) return;
@@ -110,11 +136,15 @@ export function AgentTree({
     else ungrouped.push(node);
   }
 
-  const renderNode = (node: Node) => (
+  // `indent` is the FOLDER depth (visual only); TreeRow's own `depth` tracks
+  // fork nesting — conflating them made grouped sessions render flush-left,
+  // visually outside the folder that contains them.
+  const renderNode = (node: Node, indent: number) => (
     <TreeRow
       key={node.session.key}
       node={node}
       depth={0}
+      indent={indent}
       now={now}
       labels={labels}
       selectedKey={selectedKey}
@@ -147,13 +177,14 @@ export function AgentTree({
       onDropSession={moveToGroup}
       onDropFolder={moveFolder}
       onDelete={() => removeFolder(path)}
+      onRename={() => renameFolder(path)}
       onNewSubfolder={() => createSubfolder(path)}
       onOpenGrid={() => onOpenGrid(path)}
       theme={folderThemes[path]}
       onSetTheme={(t) => onSetFolderTheme(path, t)}
       termMode={termMode}
     >
-      {(byFolder.get(path) ?? []).map(renderNode)}
+      {(byFolder.get(path) ?? []).map((n) => renderNode(n, depth + 1))}
       {childrenOf(path).map((c) => renderFolder(c, depth + 1))}
     </GroupHeader>
   );
@@ -170,7 +201,7 @@ export function AgentTree({
         onDropFolder={moveFolder}
         active={hasFolders}
       >
-        {ungrouped.map(renderNode)}
+        {ungrouped.map((n) => renderNode(n, 0))}
       </DropZone>
     </div>
   );
@@ -186,6 +217,7 @@ function GroupHeader({
   onDropSession,
   onDropFolder,
   onDelete,
+  onRename,
   onNewSubfolder,
   onOpenGrid,
   theme,
@@ -196,6 +228,7 @@ function GroupHeader({
   name: string;
   depth: number;
   onDelete: () => void;
+  onRename: () => void;
   count: number;
   onDropSession: (key: string, group: string) => void;
   onDropFolder: (name: string, parent: string) => void;
@@ -243,7 +276,16 @@ function GroupHeader({
         }}
       >
         <span className="rd-group-caret">{collapsed ? "▸" : "▾"}</span>
-        <span className="rd-group-name">{leaf}</span>
+        <span
+          className="rd-group-name"
+          title="Double-click to rename"
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onRename();
+          }}
+        >
+          {leaf}
+        </span>
         <span className="rd-group-count">{count}</span>
         <span
           className={`rd-group-theme-wrap${theme ? " set" : ""}`}
@@ -372,6 +414,7 @@ function buildForest(sessions: SessionView[]): Node[] {
 function TreeRow({
   node,
   depth,
+  indent = 0,
   now,
   labels,
   selectedKey,
@@ -382,6 +425,7 @@ function TreeRow({
 }: {
   node: Node;
   depth: number;
+  indent?: number; // folder depth — visual offset only, unlike fork `depth`
   now: number;
   labels: Record<string, string>;
   selectedKey: string | null;
@@ -533,7 +577,7 @@ function TreeRow({
     <>
       <div
         className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}`}
-        style={{ paddingLeft: 12 + depth * 18 }}
+        style={{ paddingLeft: 12 + indent * 16 + depth * 18 }}
         // Only root sessions are draggable into groups; forks follow their parent.
         draggable={depth === 0}
         onDragStart={(e) => {
@@ -776,6 +820,7 @@ function TreeRow({
             key={child.session.key}
             node={child}
             depth={depth + 1}
+            indent={indent}
             now={now}
             labels={labels}
             selectedKey={selectedKey}

@@ -118,15 +118,17 @@ async def write_file(writer: asyncio.StreamWriter, path: Path) -> None:
 
 
 def dashboard_dir() -> Path | None:
-    """Locate the built dashboard. Prefer the copy bundled in the installed
-    package (src/duckterm/dashboard); fall back to the dev build at web/dist
-    so a repo checkout serves the freshly-built UI.
+    """Locate the built dashboard. In a repo checkout, web/dist wins: the
+    packaged copy (src/duckterm/dashboard) is a build artifact frozen at the
+    last release build, and preferring it silently served a STALE UI to dev
+    servers and the e2e suite. An installed package has no web/ tree, so it
+    serves its bundled copy.
 
     This file lives at src/duckterm/transport/httpio.py, so the package root
     is two parents up and the repo root is four."""
     pkg_root = Path(__file__).resolve().parents[1]  # src/duckterm/
-    packaged = pkg_root / "dashboard"
-    if (packaged / "index.html").is_file():
-        return packaged
     dev = pkg_root.parents[1] / "web" / "dist"  # repo/web/dist
-    return dev if (dev / "index.html").is_file() else None
+    if (dev / "index.html").is_file():
+        return dev
+    packaged = pkg_root / "dashboard"
+    return packaged if (packaged / "index.html").is_file() else None

@@ -420,3 +420,15 @@ def test_refuses_to_open_a_newer_schema(tmp_path: Path) -> None:
 
     with pytest.raises(SchemaTooNewError, match="schema v999"):
         HistoryStore(db)
+
+
+def test_folders_include_implied_ancestors(tmp_path: Path) -> None:
+    """A session grouped under a nested path must surface every ancestor —
+    the left-panel tree renders from top-level roots, so a missing parent
+    made the whole subtree (and its sessions) invisible."""
+    store = HistoryStore(tmp_path / "db.sqlite")
+    bus = make_bus(store)
+    bus.publish({"event_type": "SessionStart", "session_key": "s"})
+    store.set_meta("s", group="a/b/c")
+
+    assert store.folders() == ["a", "a/b", "a/b/c"]

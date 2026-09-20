@@ -163,6 +163,17 @@ export const api = {
       if (!r.ok) throw new Error(d.error ?? `${r.status}`);
       return d as { moved: string; to: string };
     }),
+  // Rename the leaf (parent unchanged); subfolders + sessions follow.
+  renameFolder: (path: string, name: string) =>
+    fetch(`/folders/${encodeURIComponent(path)}`, {
+      method: "PATCH",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ name }),
+    }).then(async (r) => {
+      const d = (await r.json()) as { to?: string; error?: string };
+      if (!r.ok) throw new Error(d.error ?? `${r.status}`);
+      return d as { moved: string; to: string };
+    }),
   deleteFolder: (name: string) =>
     fetch(`/folders/${encodeURIComponent(name)}`, {
       method: "DELETE",

@@ -19,6 +19,21 @@ const PORT = process.env.RD_TEST_PORT || "4399";
 const REPO = join(__dirname, "..", "..");
 
 export default async function globalSetup() {
+  // Build the dashboard the suite is about to test. Without this, the server
+  // serves whatever web/dist happens to hold — we spent an afternoon
+  // "testing" a bundle three releases old.
+  await new Promise<void>((resolve, reject) => {
+    const build = spawn("npm", ["run", "build", "--silent"], {
+      cwd: join(__dirname, ".."),
+      stdio: "inherit",
+    });
+    build.on("exit", (code) =>
+      code === 0
+        ? resolve()
+        : reject(new Error(`dashboard build failed (${code})`)),
+    );
+  });
+
   const home = mkdtempSync(join(tmpdir(), "rd-e2e-"));
 
   // A deterministic stand-in for the LLM backend: the observation-loop spec

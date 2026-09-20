@@ -3,6 +3,19 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-20 — The e2e suite spent an afternoon testing a stale UI bundle
+**Broke:** two new Playwright tests failed mysteriously (pass alone, fail in
+suite); the served dashboard didn't contain the code under test.
+**Cause:** `dashboard_dir()` preferred the packaged copy
+(src/duckterm/dashboard, frozen at the last release build) over web/dist, so
+dev servers and e2e silently served a bundle three releases old. Compounded
+by reading `... | tail -3` output and mistaking a truncated failure list for
+a pass.
+**Rule:** the dev checkout must always serve the freshest build (dist wins
+over the packaged artifact), and the e2e suite must BUILD what it tests, not
+trust what's lying around. Never judge a test run from truncated output —
+read the pass/fail summary line itself.
+
 ## 2026-09-20 — Copy/paste still dead in the Mac app after adding menus
 **Broke:** ⌘C/⌘V did nothing in RubberTerm.app even with a proper Edit menu.
 **Cause:** WKWebView enables the standard `copy:` menu item only when the DOM

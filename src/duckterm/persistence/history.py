@@ -502,12 +502,18 @@ class HistoryStore:
 
     def folders(self) -> list[str]:
         """Folder names: those explicitly created plus any referenced by a
-        session's group (so a folder never silently disappears)."""
+        session's group (so a folder never silently disappears), plus every
+        implied ancestor — the tree renders from top-level roots, so a session
+        grouped under "a/b" would be INVISIBLE if "a" were missing."""
         rows = self._conn.execute("SELECT name FROM folders").fetchall()
         used = self._conn.execute(
             "SELECT DISTINCT grp FROM sessions WHERE grp IS NOT NULL AND grp != ''"
         ).fetchall()
         names = {r["name"] for r in rows} | {r["grp"] for r in used}
+        for name in list(names):
+            while "/" in name:
+                name = name.rsplit("/", 1)[0]
+                names.add(name)
         return sorted(names, key=str.lower)
 
     def create_folder(self, name: str, *, now: int | None = None) -> None:
