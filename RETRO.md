@@ -3,6 +3,17 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-20 — Digest turned a one-off remark into a personality trait
+**Broke:** the "working together" digest characterized the user from single
+data points — one 'too wordy' comment became "iterates on naming rapidly,"
+one scoping decision became "prefers simple scope."
+**Cause:** the summarizer prompt asked for observations but set no evidence
+bar, so the model generalized from n=1 and padded the list to look thorough.
+**Rule:** any LLM feature that makes claims about a PERSON needs an explicit
+evidence bar in the prompt (recurrence or an outright statement), behavior
+over personality, and "an empty list is better than a stretched one."
+Review the first real outputs with the user — they spot overreach instantly.
+
 ## 2026-09-20 — The e2e suite spent an afternoon testing a stale UI bundle
 **Broke:** two new Playwright tests failed mysteriously (pass alone, fail in
 suite); the served dashboard didn't contain the code under test.
