@@ -45,12 +45,25 @@ DUCKTERM_INSTANCE=beta duckterm@beta install-hooks
 
 ### Prod (daily driver)
 
+Grab the wheel URL from the newest non-pre-release on the
+[releases page](https://github.com/utsavanand/duckterm/releases) (the version
+table above names it):
+
 ```sh
 pipx install \
-  https://github.com/utsavanand/duckterm/releases/download/v0.1.0/duckterm-0.1.0-py3-none-any.whl
+  https://github.com/utsavanand/duckterm/releases/download/v0.4.1/duckterm-0.4.1-py3-none-any.whl
 DUCKTERM_INSTANCE=prod duckterm serve
 DUCKTERM_INSTANCE=prod duckterm install-hooks   # your daily setup; fine here
 ```
+
+### Mac app (optional, wraps prod)
+
+`RubberTerm-<version>-macos.zip` on the same release: unzip, drag
+`RubberTerm.app` to `/Applications`. It needs the `duckterm` CLI installed
+(above) — the app starts/attaches to the local server and wraps the dashboard
+in a native window with notifications. Ad-hoc signed, not notarized: on first
+open, right-click → Open (or `xattr -d com.apple.quarantine
+/Applications/RubberTerm.app`).
 
 ### Dev (source)
 
