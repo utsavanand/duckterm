@@ -3,6 +3,26 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-20 — Copy/paste still dead in the Mac app after adding menus
+**Broke:** ⌘C/⌘V did nothing in RubberTerm.app even with a proper Edit menu.
+**Cause:** WKWebView enables the standard `copy:` menu item only when the DOM
+has a selection — xterm renders selection on canvas, so the item stayed
+disabled and the key equivalent was inert. Fixed by bridging Copy/Paste menu
+actions into the page (`__rtCopy`/`__rtPaste` globals + NSPasteboard).
+**Rule:** in a native web-view shell, don't assume responder-chain editing
+selectors work for canvas-rendered UI — bridge explicitly. And make the web
+view `isInspectable` from day one so the next web-in-native bug is debuggable.
+
+## 2026-09-20 — Declared Shift+Enter "shipped" before testing the real path
+**Broke:** user reported Shift+Enter still submitting after the fix shipped.
+**Cause:** the fix was validated by reasoning (unit-level) only; no test drove
+a real browser keystroke through WS → tmux → agent. The follow-up e2e and a
+live probe against a codex TUI were written only after the bug report.
+**Rule:** a fix for an interaction bug ships WITH a test at the outermost
+layer that was broken (here: a Playwright keypress asserting the byte reached
+the agent). "The code now sends the right byte" is a hypothesis until the
+end-to-end test passes.
+
 ## 2026-09-20 — Codex sessions showed an empty Messages tab
 **Broke:** Messages view silently blank for codex sessions.
 **Cause:** `/sessions/:key/messages` was hardwired to claude-code with an
