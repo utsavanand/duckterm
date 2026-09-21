@@ -59,7 +59,7 @@ from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
 from duckterm.harnesses import infer_runtime, runtime_for
-from duckterm.helpers import browse, instance, security, session_credentials
+from duckterm.helpers import browse, instance, security
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
