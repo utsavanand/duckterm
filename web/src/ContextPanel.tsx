@@ -35,6 +35,7 @@ export function ContextPanel({ session }: { session: SessionView }) {
   // one instead of nagging as if nothing happened.
   const [lastCheckpoint, setLastCheckpoint] = useState<number | null>(null);
   const [summaryOpen, setSummaryOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
   const onBranch = !!session.branch;
   const dir = session.worktreePath ?? session.cwd ?? null;
   const ctxLevel = contextLevel(session.contextTokens, session.model);
@@ -73,7 +74,12 @@ export function ContextPanel({ session }: { session: SessionView }) {
   }, [session.key]);
 
   useEffect(() => {
-    if (!onBranch) return;
+    setDiffOpen(false); // a new session starts with the diff collapsed
+  }, [session.key]);
+
+  useEffect(() => {
+    // The diff is heavy and rarely needed — fetch it only when opened.
+    if (!onBranch || !diffOpen) return;
     setDiff("");
     fetch(`/sessions/${session.key}/diff`)
       .then((r) => r.json())
@@ -81,7 +87,7 @@ export function ContextPanel({ session }: { session: SessionView }) {
         setDiff(d.error ? `git diff failed: ${d.error}` : (d.diff ?? "")),
       )
       .catch(() => setDiff(""));
-  }, [session.key, onBranch]);
+  }, [session.key, onBranch, diffOpen]);
 
   useEffect(() => {
     if (!onBranch || !dir) return;
@@ -233,10 +239,17 @@ export function ContextPanel({ session }: { session: SessionView }) {
               </ul>
             </>
           )}
-          <div className="rd-context-section-title">Working-tree diff</div>
-          <pre className="rd-context-diff">
-            {diff || "No uncommitted changes."}
-          </pre>
+          <button
+            className="rd-context-toggle"
+            onClick={() => setDiffOpen((o) => !o)}
+          >
+            Working-tree diff {diffOpen ? "▾" : "▸"}
+          </button>
+          {diffOpen && (
+            <pre className="rd-context-diff">
+              {diff || "No uncommitted changes."}
+            </pre>
+          )}
         </div>
       ) : (
         <div className="rd-context-folder">

@@ -714,7 +714,41 @@ code,
 .rd-approvals-body {
   max-height: 35vh;
   overflow-y: auto;
+  overflow-x: hidden; /* long commands must never push Approve/Deny off-screen */
   margin-top: 8px;
+}
+/* min-width:0 is the actual fix: a flex child with an unbreakable <code>
+   string otherwise refuses to shrink, inflating the row into a horizontal
+   scroll with the buttons stranded past the edge. */
+.rd-approval-main {
+  flex: 1;
+  min-width: 0;
+}
+/* The command: one truncated line at rest; tap to reveal the full command. */
+.rd-approval-cmd {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+.rd-approval-cmd code {
+  display: block;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text-soft);
+  background: var(--bg-soft);
+  border-radius: 4px;
+  padding: 3px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rd-approval-cmd.open code {
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 /* Compact waiting list: "N sessions waiting" + scrollable jump rows. */
@@ -755,8 +789,9 @@ code,
    split from the per-session context above by a hard divider. */
 .rd-connectors {
   border-top: 1px solid var(--border);
-  flex-shrink: 0;
-  max-height: 45%;
+  flex: 0 1 auto;
+  min-height: 0; /* without this the flex child won't shrink -> no scrolling */
+  max-height: 40%;
   overflow-y: auto;
   padding-bottom: 12px;
 }
@@ -923,6 +958,8 @@ code,
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: 130px;
+  overflow-y: auto;
 }
 .rd-branch {
   display: flex;
@@ -938,6 +975,21 @@ code,
 .rd-branch-mark {
   color: var(--accent, #2563eb);
   font-size: 9px;
+}
+.rd-context-toggle {
+  display: block;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  padding: 0;
+  margin: 12px 0 6px;
+  cursor: pointer;
+}
+.rd-context-toggle:hover {
+  color: var(--text-soft);
 }
 .rd-context-diff {
   font-family: ui-monospace, Menlo, monospace;

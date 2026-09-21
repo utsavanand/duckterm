@@ -34,6 +34,8 @@ export function Approvals({
   const toast = useToast();
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [expanded, setExpanded] = useState(false);
+  // Which approval's full command is revealed (one line + ellipsis at rest).
+  const [cmdOpen, setCmdOpen] = useState<string | null>(null);
   // A NEW actionable approval auto-expands once; collapsing again sticks.
   const approvalIds = approvals.map((a) => a.id).join(",");
   const prevIds = useRef("");
@@ -113,25 +115,34 @@ export function Approvals({
         <div className="rd-approval" key={a.id}>
           {(() => {
             const openable = knownKeys.has(a.session_key);
+            const showCmd = cmdOpen === a.id;
             return (
-              <div
-                style={{ flex: 1, cursor: openable ? "pointer" : "default" }}
-                onClick={openable ? () => onOpen(a.session_key) : undefined}
-                title={openable ? "Open session details" : undefined}
-              >
-                <div className="who">
+              <div className="rd-approval-main">
+                <div
+                  className="who"
+                  style={{ cursor: openable ? "pointer" : "default" }}
+                  onClick={openable ? () => onOpen(a.session_key) : undefined}
+                  title={openable ? "Open session details" : undefined}
+                >
                   {labels[a.session_key] ?? a.session_key.slice(0, 8)} ·{" "}
                   {a.tool_name}
                   {a.created_at > 0 && (
                     <span className="when">
-                      {new Date(a.created_at).toLocaleTimeString()}
+                      {new Date(a.created_at).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })}
                     </span>
                   )}
                 </div>
                 {a.detail && (
-                  <div className="what">
+                  <button
+                    className={`rd-approval-cmd${showCmd ? " open" : ""}`}
+                    title={showCmd ? "Collapse" : "Show the full command"}
+                    onClick={() => setCmdOpen(showCmd ? null : a.id)}
+                  >
                     <code>{a.detail}</code>
-                  </div>
+                  </button>
                 )}
               </div>
             );
