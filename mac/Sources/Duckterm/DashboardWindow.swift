@@ -4,7 +4,7 @@ import WebKit
 /// A single window hosting the dashboard in a WKWebView. Reused across opens —
 /// clicking the menu item brings the existing window forward rather than
 /// spawning duplicates.
-final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
+final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     private var window: NSWindow?
     private var web: WKWebView?
     private let url: URL
@@ -29,6 +29,11 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
             web.isInspectable = true  // debuggable from Safari's Develop menu
         }
         web.navigationDelegate = self
+        // Without a UI delegate, WKWebView silently no-ops window.confirm
+        // (returns false) and window.prompt (returns null) — which made the
+        // dashboard's delete-folder ✕ and rename prompts dead in the app
+        // while working fine in a browser.
+        web.uiDelegate = self
         self.web = web
         web.load(URLRequest(url: url))
 
@@ -65,5 +70,56 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate {
     func windowWillClose(_ notification: Notification) {
         window = nil  // rebuild fresh next open so it reloads the dashboard
         web = nil
+    }
+
+    // ── JS dialog panels (WKUIDelegate) — native sheets for alert/confirm/prompt ──
+
+    private func sheetHost() -> NSWindow? {
+        window ?? NSApp.mainWindow
+    }
+
+    func webView(
+        _ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        guard let host = sheetHost() else { return completionHandler() }
+        alert.beginSheetModal(for: host) { _ in completionHandler() }
+    }
+
+    func webView(
+        _ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        guard let host = sheetHost() else { return completionHandler(false) }
+        alert.beginSheetModal(for: host) { response in
+            completionHandler(response == .alertFirstButtonReturn)
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String,
+        defaultText: String?, initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping (String?) -> Void
+    ) {
+        let alert = NSAlert()
+        alert.messageText = prompt
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = defaultText ?? ""
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard let host = sheetHost() else { return completionHandler(nil) }
+        alert.beginSheetModal(for: host) { response in
+            completionHandler(
+                response == .alertFirstButtonReturn ? field.stringValue : nil)
+        }
     }
 }
