@@ -19,7 +19,7 @@ async def _suggest(port: int, token: str, directory: str) -> tuple[int, dict]:
     payload = json.dumps({"dir": directory}).encode()
     return await _request(
         port,
-        b"POST /agents-md/suggest HTTP/1.1\r\nHost: x\r\n"
+        b"POST /agents-md/suggest HTTP/1.1\r\nHost: localhost\r\n"
         b"X-Duckterm-Token: " + token.encode() + b"\r\n"
         b"Content-Type: application/json\r\n"
         b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload,
