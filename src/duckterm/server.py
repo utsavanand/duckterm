@@ -2009,6 +2009,9 @@ class Server:
         await _write_json(writer, 200, {"status": decision})
 
     async def _list_approvals(self, writer: asyncio.StreamWriter) -> None:
+        # Zombie sweep by wall clock — event-driven cleanup starves during
+        # long tool runs (see ApprovalRegistry.expire_stale_blocking).
+        self.approvals.expire_stale_blocking(int(time.time() * 1000), _BLOCKING_POLL_MS)
         pending = [
             {
                 "id": a.id,

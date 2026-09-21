@@ -168,6 +168,19 @@ class ApprovalRegistry:
             if a.session_key != session_key or a.created_at >= ts or a.blocking
         }
 
+    def expire_stale_blocking(self, now: int, max_age_ms: int) -> None:
+        """Wall-clock expiry for ALL sessions' blocking approvals past the
+        hook's poll deadline. The event-driven cleanup (drop_abandoned_blocking)
+        starves during a long tool run — no events, no sweep — so an
+        answered-in-terminal request lingered with dead Approve/Deny buttons
+        for the whole run. Called at listing time: by the deadline the hook has
+        provably stopped polling, so the decision could never be consumed."""
+        self._pending = {
+            aid: a
+            for aid, a in self._pending.items()
+            if not a.blocking or now - a.created_at < max_age_ms
+        }
+
     def drop_abandoned_blocking(self, session_key: str, now: int, max_age_ms: int) -> None:
         """Drop a session's blocking approvals older than `max_age_ms` — the hook
         that registered them has stopped polling (it timed out, the agent moved

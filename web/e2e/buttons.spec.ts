@@ -8,13 +8,13 @@ import { apiPost, base, seedSession } from "./helpers";
 // exercise: Approve/Deny, Notes, the AGENTS.md modal, the theme toggle, and
 // folder delete.
 
-test("approve button answers a blocking permission request", async ({
-  page,
-}) => {
+// The approvals UI is removed from the right panel (2026-09-20, see TODO.md:
+// re-home). The backend contract still matters — a blocking hook registers,
+// a decision lands, the poller consumes it — so cover it at the API level.
+test("a blocking permission request can be decided and polled", async () => {
   const key = `e2e-approve-${Date.now()}`;
   await seedSession(key, { name: key });
 
-  // A blocking hook registers the request and then polls /decision.
   const reg = await apiPost("/approvals", {
     session_key: key,
     tool_name: "Bash",
@@ -24,11 +24,8 @@ test("approve button answers a blocking permission request", async ({
   const id = reg.body.id as string;
   expect(id).toBeTruthy();
 
-  await page.goto("/");
-  const approval = page.locator(".rd-approval", { hasText: key });
-  await expect(approval).toBeVisible({ timeout: 10_000 });
-  await approval.getByRole("button", { name: "Approve" }).click();
-  await expect(page.getByText("Approved")).toBeVisible();
+  const decide = await apiPost(`/approvals/${id}/decide`, { decision: "approve" });
+  expect(decide.status).toBe(200);
 
   // The polling hook sees the decision (what actually unblocks the agent).
   const res = await fetch(`${base()}/approvals/${id}/decision`);
