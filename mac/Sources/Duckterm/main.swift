@@ -5,7 +5,11 @@ import UserNotifications
 /// dashboard (an embedded web view — never your browser). Owns the local server
 /// process, shows native notifications when a session needs you, and quits when
 /// you close the window.
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var remote: RemoteConnection?
+    private var hosts = RemoteHost.load()
+    private var connectionGeneration = 0
     private let server = ServerProcess()
     private var poller: SessionPoller?
     private var window: DashboardWindow?
@@ -18,14 +22,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window?.show()  // open the dashboard window on launch
         NSApp.activate(ignoringOtherApps: true)
 
-        Task {
-            _ = await server.start()  // start the server, or attach to a running one
-            await MainActor.run { self.startPolling() }
-        }
+        let selected = UserDefaults.standard.string(forKey: "selectedRemoteHost")
+        switchHost(hosts.first { $0.target == selected })
     }
 
     func applicationWillTerminate(_ note: Notification) {
         poller?.stop()
+        remote?.stop()
         server.stop()
     }
 
@@ -41,12 +44,96 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startPolling() {
-        let p = SessionPoller(base: server.url)
+        poller?.stop()
+        let generation = connectionGeneration
+        let p = SessionPoller(base: remote?.url ?? server.url)
         p.onUpdate = { [weak self] _, waiting in
-            self?.notifyWaiting(waiting)
+            guard let self, self.connectionGeneration == generation else { return }
+            self.notifyWaiting(waiting)
         }
         p.start()
         poller = p
+    }
+
+    @objc func chooseHost(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = "Connect to a computer"
+        alert.informativeText = "Remote agents keep running when you close Duckterm. SSH authentication must already be configured."
+        let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 28))
+        picker.addItems(withTitles: ["This Mac"] + hosts.map { $0.name })
+        alert.accessoryView = picker
+        alert.addButton(withTitle: "Connect")
+        alert.addButton(withTitle: "Add remote host…")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Forget selected host")
+        let result = alert.runModal()
+        if result == .alertSecondButtonReturn { addHost(); return }
+        if result.rawValue == NSApplication.ModalResponse.alertFirstButtonReturn.rawValue + 3 {
+            let index = picker.indexOfSelectedItem - 1
+            if hosts.indices.contains(index) {
+                let removed = hosts.remove(at: index)
+                RemoteHost.save(hosts)
+                if remote?.host == removed { switchHost(nil) }
+            }
+            return
+        }
+        guard result == .alertFirstButtonReturn else { return }
+        switchHost(picker.indexOfSelectedItem == 0 ? nil : hosts[picker.indexOfSelectedItem - 1])
+    }
+
+    private func addHost() {
+        let alert = NSAlert()
+        alert.messageText = "Add remote host"
+        alert.informativeText = "Enter an alias from ~/.ssh/config or user@hostname. Run ssh to this host in Terminal first to authorize access and verify its host key. Duckterm must be serving on remote port 4300."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "duckterm-dev"
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save and connect")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            let target = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let host = try RemoteHost(name: target, target: target)
+            if !hosts.contains(host) { hosts.append(host); RemoteHost.save(hosts) }
+            switchHost(host)
+        } catch { showConnectionError(error) }
+    }
+
+    private func switchHost(_ host: RemoteHost?) {
+        UserDefaults.standard.set(host?.target, forKey: "selectedRemoteHost")
+        connectionGeneration += 1
+        let generation = connectionGeneration
+        poller?.stop()
+        notified.removeAll()
+        remote?.stop()
+        remote = nil
+        if let host {
+            do {
+                let connection = try RemoteConnection(host: host)
+                remote = connection
+                window?.connect(url: connection.url, remote: true, title: "Duckterm · \(host.name) · Connecting")
+                connection.onStatus = { [weak self] status, _ in
+                    guard let self, self.connectionGeneration == generation else { return }
+                    self.window?.setTitle("Duckterm · \(host.name) · \(status)")
+                }
+                connection.start()
+                startPolling()
+            } catch { showConnectionError(error) }
+        } else {
+            window?.connect(url: server.url, remote: false, title: "Duckterm · This Mac")
+            Task {
+                _ = await server.start()
+                guard self.connectionGeneration == generation else { return }
+                self.startPolling()
+            }
+        }
+    }
+
+    private func showConnectionError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could not connect"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 
     private func notifyWaiting(_ waiting: [Session]) {
@@ -94,6 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // exist as menu key equivalents — without these, copy/paste in the terminal
 // was dead. The standard selectors route through the responder chain to the
 // web view, which forwards them to the page (xterm handles the events).
+@MainActor
 private func buildMainMenu() -> NSMenu {
     let main = NSMenu()
 
@@ -107,6 +195,12 @@ private func buildMainMenu() -> NSMenu {
         withTitle: "Quit RubberTerm", action: #selector(NSApplication.terminate(_:)),
         keyEquivalent: "q")
     appItem.submenu = appMenu
+
+    let hostItem = NSMenuItem()
+    main.addItem(hostItem)
+    let hostMenu = NSMenu(title: "Computer")
+    hostMenu.addItem(withTitle: "Connect to computer…", action: #selector(AppDelegate.chooseHost(_:)), keyEquivalent: "K")
+    hostItem.submenu = hostMenu
 
     let editItem = NSMenuItem()
     main.addItem(editItem)
@@ -139,9 +233,11 @@ private func buildMainMenu() -> NSMenu {
     return main
 }
 
+MainActor.assumeIsolated {
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)  // a normal app: Dock icon + windows
 app.mainMenu = buildMainMenu()
 app.run()
+}

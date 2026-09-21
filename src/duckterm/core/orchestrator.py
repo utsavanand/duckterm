@@ -29,6 +29,7 @@ from duckterm.core import events
 from duckterm.core.eventbus import EventBus
 from duckterm.git.worktrees import WorktreeManager
 from duckterm.helpers import paths
+from duckterm.helpers.private_files import private_write
 from duckterm.llm.summarizer import build_prompt, mechanical_summary, summarize
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.base import AgentRuntime, SessionState
@@ -141,7 +142,7 @@ class SessionSupervisor:
         command = shlex.join(argv)
         self._pipe_path = str(paths.home() / "panes" / f"{self.session_key}.log")
         Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(self._pipe_path).write_text("")
+        private_write(Path(self._pipe_path), "")
         self._tmux_target = tmux.spawn_piped(
             self.session_key,
             command,
@@ -159,7 +160,7 @@ class SessionSupervisor:
         self._pipe_path = str(paths.home() / "panes" / f"{self.session_key}.log")
         if not Path(self._pipe_path).exists():
             Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(self._pipe_path).write_text("")
+            private_write(Path(self._pipe_path), "")
         self._task = asyncio.create_task(self._tail_pipe())
 
     async def _tail_pipe(self) -> None:
@@ -187,7 +188,8 @@ class SessionSupervisor:
             # idle session costs ~5 file reads a second, not 40.
             last_output = 0.0
             loop = asyncio.get_running_loop()
-            with path.open("rb") as fh:
+            fh = path.open("rb")
+            try:
                 while True:
                     chunk = fh.read(4096)
                     if chunk:
@@ -211,10 +213,22 @@ class SessionSupervisor:
                                 self._state = new_state
                                 self._emit(_STATE_EVENT[new_state])
                         continue
+                    # The bounded writer rotates by rename. Drain the old inode,
+                    # then follow the replacement without replaying the old file.
+                    try:
+                        rotated = path.stat().st_ino != os.fstat(fh.fileno()).st_ino
+                    except FileNotFoundError:
+                        rotated = False
+                    if rotated:
+                        fh.close()
+                        fh = path.open("rb")
+                        continue
                     if not tmux.session_exists(target):
                         break
                     active = max(last_output, self._last_input)
                     await asyncio.sleep(0.025 if loop.time() - active < 5 else 0.2)
+            finally:
+                fh.close()
         except Exception as e:  # noqa: BLE001 — boundary: a background task
             print(f"[duckterm] tail-pipe for {self.session_key} failed: {e}", file=sys.stderr)
         finally:

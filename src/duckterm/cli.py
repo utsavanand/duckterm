@@ -105,6 +105,16 @@ def build_parser() -> argparse.ArgumentParser:
         "(written into harness MCP configs by the Connectors panel — not run by hand)",
     )
     crun.add_argument("name", help="connector name (e.g. github)")
+    broker = sub.add_parser("connector-service", help="run the isolated hosted connector service")
+    broker.add_argument("--config", type=Path, default=Path("/etc/duckterm-broker/config.json"))
+    admin = sub.add_parser(
+        "connector-admin", help="administer hosted connectors over administrator SSH"
+    )
+    admin.add_argument("name", choices=["github", "railway", "porkbun"])
+    admin.add_argument("--config", type=Path, default=Path("/etc/duckterm-broker/config.json"))
+    admin.add_argument("--version", type=int)
+    admin.add_argument("--write-access", action="store_true")
+    admin.add_argument("--disable", action="store_true")
     return parser
 
 
@@ -450,6 +460,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _doctor()
     if args.command == "purge-test":
         return _purge_test()
+    if args.command in ("connector-service", "connector-admin"):
+        from duckterm import connector_broker
+
+        if args.command == "connector-service":
+            asyncio.run(connector_broker.serve(args.config))
+        else:
+            connector_broker.admin(
+                args.config, args.name, args.version, args.write_access, args.disable
+            )
+        return 0
     if args.command == "connector-run":
         from duckterm import connectors
 

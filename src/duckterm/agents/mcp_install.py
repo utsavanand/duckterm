@@ -15,6 +15,8 @@ import json
 import tomllib
 from pathlib import Path
 
+from duckterm.helpers.private_files import private_write
+
 
 def _claude_path(home: Path) -> Path:
     return home / ".claude.json"
@@ -42,7 +44,7 @@ def claude_install(
     if env:
         entry["env"] = env
     servers[name] = entry
-    path.write_text(json.dumps(config, indent=2) + "\n")
+    private_write(path, json.dumps(config, indent=2) + "\n")
     return path
 
 
@@ -55,7 +57,7 @@ def claude_remove(name: str, *, home: Path | None = None) -> bool:
     if name not in servers:
         return False
     del servers[name]
-    path.write_text(json.dumps(config, indent=2) + "\n")
+    private_write(path, json.dumps(config, indent=2) + "\n")
     return True
 
 
@@ -118,7 +120,7 @@ def codex_install(
         lines += [f"{k} = {_toml_str(v)}" for k, v in env.items()]
     candidate = text + "\n".join(lines) + "\n"
     tomllib.loads(candidate)  # refuse to write a config we'd corrupt
-    path.write_text(candidate)
+    private_write(path, candidate)
     return path
 
 
@@ -128,7 +130,7 @@ def codex_remove(name: str, *, home: Path | None = None) -> bool:
         return False
     candidate = _strip_codex_sections(path.read_text(), name)
     tomllib.loads(candidate)
-    path.write_text(candidate)
+    private_write(path, candidate)
     return True
 
 

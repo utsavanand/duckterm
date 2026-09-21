@@ -7,11 +7,30 @@ import WebKit
 final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     private var window: NSWindow?
     private var web: WKWebView?
-    private let url: URL
+    private var url: URL
 
     init(url: URL) {
         self.url = url
     }
+
+    func connect(url: URL, remote: Bool, title: String) {
+        self.url = url
+        web?.stopLoading()
+        // Replace the web view to drop old sockets, callbacks and page state.
+        // Remote sessions use an ephemeral browser store, never local cookies.
+        guard let window else { return }
+        let config = WKWebViewConfiguration()
+        if remote { config.websiteDataStore = .nonPersistent() }
+        let replacement = WKWebView(frame: window.contentView?.frame ?? .zero, configuration: config)
+        replacement.navigationDelegate = self
+        replacement.uiDelegate = self
+        self.web = replacement
+        window.contentView = replacement
+        replacement.load(URLRequest(url: url))
+        window.title = title
+    }
+
+    func setTitle(_ title: String) { window?.title = title }
 
     /// Run JS in the dashboard page — the Edit-menu clipboard bridge.
     func evaluate(_ js: String, done: ((Any?) -> Void)? = nil) {
@@ -61,10 +80,29 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        let failedURL = url
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
-            guard let self else { return }
+            guard let self, self.url == failedURL, self.web === webView else { return }
             webView.load(URLRequest(url: self.url))
         }
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let destination = navigationAction.request.url else { decisionHandler(.cancel); return }
+        if destination.scheme == url.scheme && destination.host == url.host && destination.port == url.port {
+            decisionHandler(.allow)
+        } else {
+            if ["https", "http"].contains(destination.scheme ?? "") { NSWorkspace.shared.open(destination) }
+            decisionHandler(.cancel)
+        }
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let destination = navigationAction.request.url,
+           ["https", "http"].contains(destination.scheme ?? "") { NSWorkspace.shared.open(destination) }
+        return nil
     }
 
     func windowWillClose(_ notification: Notification) {

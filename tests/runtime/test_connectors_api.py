@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from duckterm import connectors
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
 
@@ -45,6 +46,7 @@ def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     server_bin = bin_dir / "github-mcp-server"
     server_bin.write_text("#!/bin/sh\nexit 0\n")
     server_bin.chmod(0o755)
+    monkeypatch.setattr(connectors, "github_identity", lambda token: "test-user")
     return home
 
 
@@ -60,11 +62,11 @@ def test_connectors_lifecycle_over_endpoints(isolated: Path, tmp_path: Path) -> 
     status, body = _status_and_body(w)
     assert status == 200
     github = next(c for c in body["connectors"] if c["name"] == "github")
-    assert github["credential"] == "gh-cli"
+    assert github["credential"] is None
     assert github["enabled"] is False
 
     w = _W()
-    asyncio.run(server._enable_connector(w, "github", b"{}"))
+    asyncio.run(server._enable_connector(w, "github", b'{"source":"gh-cli"}'))
     status, body = _status_and_body(w)
     assert (status, body["enabled"]) == (200, True)
     assert json.loads((isolated / ".claude.json").read_text())["mcpServers"]["github"]

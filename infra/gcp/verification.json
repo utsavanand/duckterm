@@ -1,0 +1,19 @@
+{
+  "scope": "Infrastructure smoke checks only; not application or provider QA",
+  "bootstrapCompletedUtc": "2026-09-21T03:48:47+00:00",
+  "sshHostKeyVerified": true,
+  "tmuxProcessSurvivedSeparateSshConnections": true,
+  "smokeProcessCleanedUp": true,
+  "agentHasNoAdministrativeGroups": "uid=1001(duckterm) gid=1002(duckterm) groups=1002(duckterm)",
+  "agentCannotReadBrokerHome": true,
+  "cloudIdentity": {
+    "service_account_listing_empty": true,
+    "default_token_status": "404",
+    "no_token_available": true
+  },
+  "testCorrection": "Initial assertion expected service-accounts listing HTTP 404; GCP returns HTTP 200 with empty body. Verified empty listing and HTTP 404 from default/token instead.",
+  "temporaryLocalTunnelClosed": true,
+  "applicationQaComplete": false,
+  "providerLoginsConfigured": false,
+  "secretValuesStored": false
+}

@@ -47,3 +47,15 @@ code-signing + notarization with an Apple Developer account (not set up here).
 Menu-bar app + server lifecycle + dashboard window + notifications are
 implemented. Native (non-WebView) panels are intentionally out of scope — see
 the roadmap.
+
+## Remote workspaces
+
+The desktop app now offers **Computer → Connect to computer…**. Choose This Mac
+or save an SSH alias (for development, `duckterm-dev`). Authenticate and verify
+its host key in Terminal first. The app remembers the selected computer and
+reconnects its tunnel after connection failures; the title reports connectivity.
+Closing the window closes the tunnel, not remote agents.
+
+Remote servers must bind loopback and run under the persistent Linux service.
+See [remote workspace operations](../docs/remote-workspace-operations.md).
+Native validation: `swift test --package-path mac` from the repository root.

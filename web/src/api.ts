@@ -54,6 +54,11 @@ export interface Connector {
   name: string;
   title: string;
   description: string;
+  identity: string | null;
+  sources: string[];
+  write_access: boolean;
+  managed: boolean;
+  revoke_url: string;
   credential: string | null; // "gh-cli" | "stored" | "railway-cli" | null
   installed: Record<string, boolean>; // per harness
   enabled: boolean;
@@ -87,11 +92,13 @@ export const api = {
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
   connectors: () => get<{ connectors: Connector[] }>("/connectors"),
-  enableConnector: (name: string, token?: string, secret?: string) =>
+  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false) =>
     post<Connector>(`/connectors/${name}/enable`, {
+      source, write_access,
       ...(token ? { token } : {}),
       ...(secret ? { secret } : {}),
     }),
+  forgetConnector: (name: string) => post<Connector>(`/connectors/${name}/forget`),
   disableConnector: (name: string) =>
     post<Connector>(`/connectors/${name}/disable`),
   fleetAsk: (question: string, history: { q: string; a: string }[]) =>

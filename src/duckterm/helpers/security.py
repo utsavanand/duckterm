@@ -21,6 +21,7 @@ import secrets
 from pathlib import Path
 
 from duckterm.helpers import paths
+from duckterm.helpers.private_files import private_write
 
 TOKEN_HEADER = "x-duckterm-token"
 
@@ -81,8 +82,7 @@ def load_or_create_token() -> str:
         return path.read_text().strip()
     token = secrets.token_urlsafe(32)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token)
-    path.chmod(0o600)
+    private_write(path, token)
     return token
 
 

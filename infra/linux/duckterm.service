@@ -1,0 +1,36 @@
+[Unit]
+Description=Duckterm persistent remote workspace
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=duckterm
+Group=duckterm
+WorkingDirectory=/home/duckterm/projects
+Environment=HOME=/home/duckterm
+Environment=DUCKTERM_HOME=/home/duckterm/.duckterm
+Environment=DUCKTERM_HOSTED=1
+Environment=DUCKTERM_NO_BROWSER=1
+Environment=PATH=/home/duckterm/.local/bin:/opt/duckterm/venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/duckterm/venv/bin/duckterm serve --host 127.0.0.1 --port 4300
+Restart=on-failure
+RestartSec=3
+# Only the HTTP supervisor stops. Its tmux server and agents must survive.
+# Stopping work requires Duckterm's explicit per-session Stop action.
+KillMode=process
+TimeoutStopSec=10
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/home/duckterm /tmp /var/tmp
+ProtectHome=false
+PrivateTmp=false
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

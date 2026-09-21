@@ -2,145 +2,89 @@ import { useEffect, useState } from "react";
 import { api, Connector } from "./api";
 import { useToast } from "./ui";
 
-// Bottom half of the right column: machine-global connectors. Enabling one
-// stores/uses a credential (preferring an existing CLI login) and registers
-// the service's MCP server in the claude-code and codex user configs — the
-// backend keeps tokens out of those plaintext files via a launch-time shim.
+const sourceNames: Record<string, string> = {
+  "gh-cli": "GitHub CLI login on this computer",
+  stored: "Stored API credentials",
+  "railway-cli": "Railway CLI login on this computer",
+};
+
 export function Connectors() {
   const toast = useToast();
   const [rows, setRows] = useState<Connector[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
-  // Credential fallback inputs: GitHub shows one (PAT) when no gh login
-  // exists; Porkbun always needs two (API key + secret key).
-  const [tokenFor, setTokenFor] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [source, setSource] = useState("");
   const [token, setToken] = useState("");
   const [secret, setSecret] = useState("");
+  const [write, setWrite] = useState(false);
 
-  const refresh = () =>
-    api
-      .connectors()
-      .then((d) => setRows(d.connectors))
-      .catch(() => undefined);
   useEffect(() => {
-    refresh();
+    api.connectors().then(d => setRows(d.connectors)).catch(() => undefined);
   }, []);
 
-  async function toggle(c: Connector) {
-    const needsKeys =
-      !c.enabled &&
-      !c.credential &&
-      ((c.name === "github" && !token.trim()) ||
-        (c.name === "porkbun" && !(token.trim() && secret.trim())));
-    if (needsKeys) {
-      setTokenFor(c.name); // reveal the credential input(s) instead of failing
-      return;
-    }
+  function edit(c: Connector) {
+    setEditing(c.name);
+    setSource(c.credential ?? (c.sources.length === 1 ? c.sources[0] : ""));
+    setWrite(c.write_access);
+    setToken("");
+    setSecret("");
+  }
+
+  async function change(c: Connector, action: "enable" | "disable" | "forget") {
+    if (action === "forget" && !window.confirm(`Forget credentials stored by Duckterm for ${c.title}? This also disables the connector. CLI logins and provider authorization remain active.`)) return;
     setBusy(c.name);
     try {
-      const next = c.enabled
-        ? await api.disableConnector(c.name)
-        : await api.enableConnector(
-            c.name,
-            token.trim() || undefined,
-            secret.trim() || undefined,
-          );
-      setRows((rs) => rs.map((r) => (r.name === next.name ? next : r)));
-      setTokenFor(null);
+      const next = action === "enable"
+        ? await api.enableConnector(c.name, token.trim() || undefined, secret.trim() || undefined, source, write)
+        : action === "forget" ? await api.forgetConnector(c.name) : await api.disableConnector(c.name);
+      setRows(rs => rs.map(r => r.name === next.name ? next : r));
+      setEditing(null);
       setToken("");
       setSecret("");
-      toast(
-        next.enabled
-          ? `${next.title} connected — takes effect on NEW sessions`
-          : `${next.title} disconnected`,
-      );
+      toast(action === "enable" ? `${c.title} enabled — available to new agent sessions` : `${c.title} disabled in Duckterm${action === "forget" ? "; stored credentials removed" : "; authorization retained"}`);
     } catch (e) {
+      // Clear submitted secrets even when validation fails.
+      setToken("");
+      setSecret("");
       toast(`${c.title}: ${(e as Error).message}`, "err");
     } finally {
       setBusy(null);
     }
   }
 
-  return (
-    <div className="rd-connectors">
-      <div className="rd-panel-head">
-        <span>Connectors</span>
+  return <div className="rd-connectors">
+    <div className="rd-panel-head"><span>Connectors · this computer</span></div>
+    <div className="rd-connector-desc">Enabled integrations are shared by agents on this computer.</div>
+    {rows.map(c => <div key={c.name} className="rd-connector">
+      <div className="rd-connector-row">
+        <span className={`dot ${c.enabled ? "on" : "off"}`} />
+        <span className="rd-connector-title">{c.title}</span>
+        <span className="rd-connector-cred">{c.credential ? sourceNames[c.credential] ?? c.credential : "Not connected"}</span>
+        {!c.managed && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => c.enabled ? change(c, "disable") : edit(c)}>{c.enabled ? "Disable" : "Connect"}</button>}
       </div>
-      {rows.map((c) => (
-        <div key={c.name} className="rd-connector">
-          <div className="rd-connector-row">
-            <span className={`dot ${c.enabled ? "on" : c.ready ? "off" : "warn"}`} />
-            <span className="rd-connector-title">{c.title}</span>
-            <span className="rd-connector-cred">
-              {c.credential ? `via ${c.credential}` : (c.detail ?? "")}
-            </span>
-            <button
-              className="rd-btn rd-btn-ghost rd-btn-sm"
-              // github/porkbun stay clickable when not ready: the click reveals
-              // the key inputs; others (CLI-login based) have nothing to type.
-              disabled={
-                busy === c.name ||
-                (!c.enabled &&
-                  !c.ready &&
-                  c.name !== "github" &&
-                  c.name !== "porkbun")
-              }
-              onClick={() => toggle(c)}
-            >
-              {busy === c.name ? "…" : c.enabled ? "Disconnect" : "Connect"}
-            </button>
-          </div>
-          <div className="rd-connector-desc">{c.description}</div>
-          {c.enabled && (
-            <div className="rd-connector-installed">
-              {Object.entries(c.installed)
-                .map(([h, ok]) => `${h}: ${ok ? "✓" : "✗"}`)
-                .join("  ·  ")}
-            </div>
-          )}
-          {tokenFor === c.name && (
-            <div className="rd-connector-token">
-              <input
-                autoFocus
-                type="password"
-                value={token}
-                placeholder={
-                  c.name === "porkbun"
-                    ? "API key (pk1_…)"
-                    : "GitHub personal access token"
-                }
-                onChange={(e) => setToken(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") toggle(c);
-                  if (e.key === "Escape") setTokenFor(null);
-                }}
-              />
-              {c.name === "porkbun" && (
-                <input
-                  type="password"
-                  value={secret}
-                  placeholder="Secret key (sk1_…)"
-                  onChange={(e) => setSecret(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") toggle(c);
-                    if (e.key === "Escape") setTokenFor(null);
-                  }}
-                />
-              )}
-              <button
-                className="rd-btn rd-btn-sm rd-btn-primary"
-                disabled={
-                  busy === c.name ||
-                  !token.trim() ||
-                  (c.name === "porkbun" && !secret.trim())
-                }
-                onClick={() => toggle(c)}
-              >
-                Save
-              </button>
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
+      <div className="rd-connector-desc">{c.description}{c.name === "porkbun" ? ` · ${c.write_access ? "Write access enabled" : "Read-only"}` : ""}</div>
+      <div className="rd-connector-desc">{c.identity ?? (c.credential ? "Identity not verified — reconnect to verify" : c.detail)}</div>
+      {c.managed ? <div className="rd-connector-desc">Managed through the remote connector administrator.</div> : <>
+        {c.credential && <div className="rd-connector-installed">
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => edit(c)}>Change connection</button>
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Forget stored credentials</button>
+          <a href={c.revoke_url} target="_blank" rel="noreferrer">Revoke at {c.title} ↗</a>
+          <div>Revocation must be completed on the provider’s website. Disable does not revoke authorization.</div>
+        </div>}
+        {editing === c.name && <div className="rd-connector-token">
+          <label>Credential source <select aria-label={`${c.title} credential source`} value={source} onChange={e => { setSource(e.target.value); setToken(""); setSecret(""); }}>
+            <option value="" disabled>Choose a source</option>
+            {c.sources.map(s => <option key={s} value={s}>{sourceNames[s] ?? s}</option>)}
+          </select></label>
+          {source === "stored" && <>
+            <input aria-label={`${c.title} API key`} type="password" autoComplete="off" value={token} placeholder={c.credential === "stored" ? "Leave blank to reuse stored credentials" : "API key or personal access token"} onChange={e => setToken(e.target.value)} />
+            {c.name === "porkbun" && <input aria-label="Porkbun secret key" type="password" autoComplete="off" value={secret} placeholder="Secret key" onChange={e => setSecret(e.target.value)} />}
+          </>}
+          {c.name === "porkbun" && <label><input type="checkbox" checked={write} onChange={e => setWrite(e.target.checked)} />Allow changes to domains and DNS records</label>}
+          <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null || !source} onClick={() => change(c, "enable")}>Verify and enable</button>
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => { setEditing(null); setToken(""); setSecret(""); }}>Cancel</button>
+        </div>}
+      </>}
+    </div>)}
+  </div>;
 }

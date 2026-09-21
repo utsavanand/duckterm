@@ -15,11 +15,13 @@ from duckterm import connectors
 
 @pytest.fixture(autouse=True)
 def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DUCKTERM_NO_KEYCHAIN", "1")
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "duckterm-home"))
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setattr(connectors, "github_identity", lambda token: "test-user")
     return bin_dir
 
 
@@ -39,11 +41,13 @@ def test_secret_store_file_backend_roundtrip(isolated_env: Path) -> None:
     assert connectors.load_secret("github") is None
 
 
-def test_github_token_prefers_gh_cli_over_stored(isolated_env: Path) -> None:
+def test_github_token_uses_only_explicit_source(isolated_env: Path) -> None:
     connectors.save_secret("github", "ghp_stored")
-    assert connectors.github_token() == ("ghp_stored", "stored")
+    assert connectors.github_token("stored") == ("ghp_stored", "stored")
     _stub(isolated_env, "gh", 'echo "ghp_from_cli"')
-    assert connectors.github_token() == ("ghp_from_cli", "gh-cli")
+    assert connectors.github_token("stored") == ("ghp_stored", "stored")
+    assert connectors.github_token("gh-cli") == ("ghp_from_cli", "gh-cli")
+    assert connectors.github_token() is None
 
 
 def test_github_enable_writes_both_harness_configs(isolated_env: Path, tmp_path: Path) -> None:
@@ -52,7 +56,7 @@ def test_github_enable_writes_both_harness_configs(isolated_env: Path, tmp_path:
     home = tmp_path / "home"
     home.mkdir()
 
-    result = connectors.enable("github", home=home)
+    result = connectors.enable("github", source="gh-cli", home=home)
 
     claude = json.loads((home / ".claude.json").read_text())
     entry = claude["mcpServers"]["github"]
@@ -69,7 +73,7 @@ def test_github_enable_without_credential_fails_clean(isolated_env: Path, tmp_pa
     home = tmp_path / "home"
     home.mkdir()
     with pytest.raises(RuntimeError, match="no GitHub credential"):
-        connectors.enable("github", home=home)
+        connectors.enable("github", source="gh-cli", home=home)
     assert not (home / ".claude.json").exists()  # nothing half-installed
 
 
@@ -77,7 +81,11 @@ def test_github_enable_rejects_bad_token_before_storing(
     isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stub(isolated_env, "github-mcp-server", "exit 0")
-    monkeypatch.setattr(connectors, "github_token_valid", lambda t: False)
+
+    def reject(token: str) -> str:
+        raise RuntimeError("GitHub rejected that token")
+
+    monkeypatch.setattr(connectors, "github_identity", reject)
     home = tmp_path / "home"
     home.mkdir()
     with pytest.raises(RuntimeError, match="rejected"):
@@ -89,27 +97,29 @@ def test_railway_enable_requires_login_and_uses_cli_mcp(isolated_env: Path, tmp_
     home = tmp_path / "home"
     home.mkdir()
     with pytest.raises(RuntimeError, match="not installed"):
-        connectors.enable("railway", home=home)
+        connectors.enable("railway", source="railway-cli", home=home)
 
-    railway = _stub(isolated_env, "railway", "exit 1")  # installed, logged out
+    _stub(isolated_env, "railway", "exit 1")  # installed, logged out
     with pytest.raises(RuntimeError, match="railway login"):
-        connectors.enable("railway", home=home)
+        connectors.enable("railway", source="railway-cli", home=home)
 
     _stub(isolated_env, "railway", "exit 0")  # logged in
-    result = connectors.enable("railway", home=home)
+    result = connectors.enable("railway", source="railway-cli", home=home)
     claude = json.loads((home / ".claude.json").read_text())
-    assert claude["mcpServers"]["railway"] == {"command": str(railway), "args": ["mcp"]}
+    assert claude["mcpServers"]["railway"]["args"] == ["connector-run", "railway"]
     assert result["enabled"] is True
     assert result["credential"] == "railway-cli"
 
 
-def test_disable_removes_configs_and_secret(isolated_env: Path, tmp_path: Path) -> None:
+def test_disable_removes_configs_and_retains_authorization(
+    isolated_env: Path, tmp_path: Path
+) -> None:
     _stub(isolated_env, "gh", 'echo "ghp_x"')
     _stub(isolated_env, "github-mcp-server", "exit 0")
     home = tmp_path / "home"
     home.mkdir()
     connectors.save_secret("github", "ghp_fallback")
-    connectors.enable("github", home=home)
+    connectors.enable("github", source="gh-cli", home=home)
 
     result = connectors.disable("github", home=home)
 
@@ -117,7 +127,9 @@ def test_disable_removes_configs_and_secret(isolated_env: Path, tmp_path: Path) 
     assert "github" not in tomllib.loads((home / ".codex" / "config.toml").read_text()).get(
         "mcp_servers", {}
     )
-    assert connectors.load_secret("github") is None  # secret gone too
+    assert connectors.load_secret("github") == "ghp_fallback"
+    connectors.forget("github", home=home)
+    assert connectors.load_secret("github") is None
     assert result["enabled"] is False
 
 
@@ -164,7 +176,7 @@ def test_porkbun_enable_needs_both_keys_and_validates(
     assert "sk1_" not in json.dumps(claude)
 
 
-def test_porkbun_disable_clears_both_secrets(
+def test_porkbun_forget_clears_both_secrets(
     isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _stub(isolated_env, "uvx", "exit 0")
@@ -173,8 +185,52 @@ def test_porkbun_disable_clears_both_secrets(
     home.mkdir()
     connectors.enable("porkbun", token="pk1_x", secret="sk1_y", home=home)
 
-    result = connectors.disable("porkbun", home=home)
+    result = connectors.forget("porkbun", home=home)
 
     assert result["enabled"] is False
     assert connectors.load_secret("porkbun") is None
     assert connectors.load_secret("porkbun-secret") is None
+
+
+def test_selected_source_never_falls_back(isolated_env: Path) -> None:
+    connectors.save_secret("github", "stored-secret")
+    _stub(isolated_env, "gh", "exit 1")
+    assert connectors.github_token("gh-cli") is None
+    assert connectors.github_token("stored") == ("stored-secret", "stored")
+
+
+def test_hosted_machine_refuses_local_secret_storage(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DUCKTERM_HOSTED", "1")
+    with pytest.raises(RuntimeError, match="connector service"):
+        connectors.save_secret("github", "must-not-persist")
+    assert not connectors._secret_file("github").exists()
+
+
+def test_porkbun_write_opt_in_overrides_ambient_environment(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub(isolated_env, "uvx", "exit 0")
+    monkeypatch.setattr(connectors, "porkbun_keys_valid", lambda t, s: True)
+    monkeypatch.setenv("PORKBUN_GET_MUDDY", "true")
+    home = tmp_path / "home"
+    home.mkdir()
+    result = connectors.enable("porkbun", "pk-test", "sk-test", home=home)
+    assert result["write_access"] is False
+    argv, env = connectors.server_command("porkbun", connectors.policy("porkbun"))
+    assert "--get-muddy" not in argv
+    assert env["PORKBUN_GET_MUDDY"] == "false"
+    connectors.enable("porkbun", home=home, write_access=True)
+    argv, _ = connectors.server_command("porkbun", connectors.policy("porkbun"))
+    assert "--get-muddy" in argv
+
+
+def test_offline_validation_does_not_claim_verified_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def offline(*args: object, **kwargs: object) -> None:
+        raise OSError("network unavailable")
+
+    monkeypatch.setattr(connectors.urllib.request, "urlopen", offline)
+    # Restore the real validator because the fixture stubs GitHub's network.
+    with pytest.raises(RuntimeError, match="Cannot verify"):
+        connectors.porkbun_keys_valid("pk", "sk")
