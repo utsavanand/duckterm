@@ -146,7 +146,7 @@ def github_token_valid(token: str) -> bool:
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status == 200
+            return bool(resp.status == 200)
     except urllib.error.HTTPError:
         return False
     except OSError:
@@ -277,7 +277,7 @@ def porkbun_keys_valid(token: str, secret: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=6) as resp:
             body = json.loads(resp.read().decode())
-            return body.get("status") == "SUCCESS"
+            return bool(body.get("status") == "SUCCESS")
     except urllib.error.HTTPError:
         return False
     except OSError:
