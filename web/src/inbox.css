@@ -57,3 +57,7 @@
 .rd-inbox-setup .rd-inbox-help { margin-top: 16px; }
 .rd-inbox-setup .rd-inbox-introduction { margin-bottom: 0; }
 .rd-inbox-no-answer { color: var(--muted); margin-top: 16px !important; }
+
+.rd-inbox-tabs { display: flex; gap: 8px; padding: 20px 32px 0; }
+.rd-inbox-tabs button[aria-pressed="true"] { background: var(--bg-soft); color: var(--text); border-color: var(--border-strong); }
+.rd-inbox-direction { display: block; font-size: 10px; color: var(--muted); font-weight: 400; margin-bottom: 3px; }

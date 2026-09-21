@@ -54,9 +54,9 @@ describe("session inbox", () => {
     const sender = await screen.findByText("Client implementation");
     expect(screen.getByText("Answered")).toBeVisible();
     fireEvent.click(sender.closest("summary")!);
-    expect(screen.getByText("From session: a")).toBeVisible();
+    expect(screen.getByText("From session: a → To session: b")).toBeVisible();
     expect(screen.getByText(/Retry once/).textContent).toBe(message.answer);
-    expect(api.inbox).toHaveBeenCalledWith("b", undefined);
+    expect(api.inbox).toHaveBeenCalledWith("b", undefined, "all");
   });
 
   it("distinguishes an empty inbox from an API failure and supports retry", async () => {
@@ -77,7 +77,7 @@ describe("session inbox", () => {
     fireEvent.click(await screen.findByText("Load older messages"));
     expect(await screen.findByText("Older sender")).toBeVisible();
     expect(screen.getByText("Client implementation")).toBeVisible();
-    expect(api.inbox).toHaveBeenCalledWith("b", 12);
+    expect(api.inbox).toHaveBeenCalledWith("b", 12, "all");
   });
 
   it("does not leak a late response into the next selected session", async () => {

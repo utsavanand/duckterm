@@ -427,3 +427,35 @@ def test_folder_history_pagination_and_retention(store: HistoryStore, monkeypatc
     assert second["next_cursor"] is None
     now += 8 * 86400
     assert store.session_api.folder_conversations("work")["messages"] == []
+
+
+def test_owner_mailbox_directions_share_answer_status(store: HistoryStore) -> None:
+    a, b = enroll(store, "a"), enroll(store, "b")
+    q = ask(store, a)
+    server = Server(history=store)
+    owner = {"x-duckterm-token": server.token}
+    sent_url = "/sessions/a/inbox?direction=sent"
+    assert dispatch(server, "GET", sent_url, {})[0] == 401
+    assert dispatch(server, "GET", sent_url, a)[0] == 403
+    sent = dispatch(server, "GET", sent_url, owner)[1]["messages"]
+    assert sent[0]["recipient_name"] == "Session b"
+    assert sent[0]["status"] == "queued"
+    assert store.session_api.inbox("a", owner=True)["messages"] == []
+    assert store.session_api.inbox("c", owner=True, direction="all")["messages"] == []
+    call(store, b, "POST", f"/questions/{q['id']}/answer", {"text": "Full reply 🦆"})
+    for key, direction in (
+        ("a", "sent"),
+        ("a", "all"),
+        ("b", "received"),
+        ("b", "all"),
+        ("b", "sent"),
+    ):
+        page = store.session_api.inbox(key, owner=True, direction=direction)
+        assert len(page["messages"]) == 1
+        assert page["messages"][0]["id"] == q["id"]
+        assert page["messages"][0]["status"] == "answered"
+        assert page["messages"][0]["answer"] == "Full reply 🦆"
+    assert dispatch(server, "GET", "/sessions/a/inbox?direction=invalid", owner)[0] == 400
+    assert store.session_api.pending_counts() == {}
+    with pytest.raises(APIError):
+        store.session_api.inbox("a", direction="sent")

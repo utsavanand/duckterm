@@ -564,7 +564,12 @@ class Server:
         try:
             params = urllib.parse.parse_qs(query)
             before = int(params["before"][0]) if "before" in params else None
-            result = self.history.session_api.inbox(session_key, owner=True, before=before)
+            result = self.history.session_api.inbox(
+                session_key,
+                owner=True,
+                before=before,
+                direction=params.get("direction", ["received"])[0],
+            )
         except ValueError:
             await _write_json(writer, 400, {"error": "invalid cursor"})
             return

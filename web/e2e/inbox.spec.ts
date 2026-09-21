@@ -34,7 +34,7 @@ test("Inbox beside History shows real session questions and replies", async ({ p
   await page.getByRole("button", { name: "Show introduction to paste" }).click();
   await expect(page.getByLabel("Introduction to paste into the agent")).toHaveValue(/Duckterm session capability:/);
   await expect(page.getByLabel("Introduction to paste into the agent")).toHaveValue(/collaboration\.md/);
-  await expect(page.locator(".rd-inbox-message strong")).toHaveText("API implementation");
+  await expect(page.locator(".rd-inbox-message strong")).toHaveText("Request fromAPI implementation");
   await expect(page.locator(".rd-inbox-status")).toHaveText("Pending");
   await expect(page.getByText("This agent isn’t running in a terminal Duckterm owns.")).toHaveCount(0);
 
@@ -50,8 +50,23 @@ test("Inbox beside History shows real session questions and replies", async ({ p
   await expect(page.locator(".rd-inbox-answer p")).toHaveText("Include id, status, and updated_at.\nKeep the request ID stable.");
   await page.getByText("Agent setup and instructions", { exact: true }).click();
   await page.screenshot({ path: "/tmp/duckterm-inbox.png" });
+  await page.getByRole("button", { name: "Sent", exact: true }).click();
+  await expect(page.locator(".rd-inbox-message strong")).toHaveText("Reply toAPI implementation");
+  await expect(page.locator(".rd-inbox-status")).toHaveText("Answered");
   await page.reload();
   await page.locator(".rd-row-name", { hasText: "Client implementation" }).click();
   await page.locator(".rd-view-toggle button", { hasText: "Inbox" }).click();
   await expect(page.locator(".rd-inbox-status")).toHaveText("Answered");
-});
+
+  // Switch participants: Sent must use the same persisted answer.
+  await page.goto(base());
+  await page.locator(".rd-row-name", { hasText: "API implementation" }).click();
+  await page.locator(".rd-view-toggle button", { hasText: "Inbox" }).click();
+  await page.getByRole("button", { name: "Sent", exact: true }).click();
+  await expect(page.locator(".rd-inbox-message strong")).toHaveText("Request toClient implementation");
+  await expect(page.locator(".rd-inbox-status")).toHaveText("Answered");
+  await page.locator(".rd-inbox-message summary").click();
+  await expect(page.locator(".rd-inbox-answer p")).toContainText("Keep the request ID stable.");
+  await page.getByRole("button", { name: "Received", exact: true }).click();
+  await expect(page.getByText("No messages yet")).toBeVisible();
+ });

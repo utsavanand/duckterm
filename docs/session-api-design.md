@@ -250,6 +250,16 @@ include queued and accepted requests; accepting does not mean answering. Counts
 cover loaded pages, with that limitation labeled when older pages remain. The
 session card and agent setup instructions are collapsed below the message list.
 
+The owner endpoint `GET /sessions/:id/inbox` accepts `direction=received|sent|all`
+(default `received`). Received includes requests addressed to the session. Sent
+includes requests it initiated and requests to which it has submitted a reply or
+decline reason. All includes both participants' exchanges once each. The UI
+starts on All and labels sent requests and sent replies separately. Direction
+changes reset pagination and discard late responses from the previous view.
+Both participants read the same persisted request and answer status; submitting
+a reply marks that request answered rather than creating a second pending item.
+Agent inbox access and received-pending sidebar counts remain unchanged.
+
 ## Folder conversation history
 
 The telephone button beside a sidebar folder opens an owner-only conversation

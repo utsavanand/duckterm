@@ -423,16 +423,37 @@ class SessionAPI:
             "next_cursor": rows[49]["sequence"] if len(rows) > 50 else None,
         }
 
-    def inbox(self, key: str, *, owner: bool = False, before: int | None = None) -> dict[str, Any]:
+    def inbox(
+        self,
+        key: str,
+        *,
+        owner: bool = False,
+        before: int | None = None,
+        direction: str = "received",
+    ) -> dict[str, Any]:
         self._session(key, live=not owner)
+        if direction not in ("received", "sent", "all"):
+            raise APIError(400, "invalid direction")
+        if not owner and direction != "received":
+            raise APIError(403, "owner credential required")
         if before is not None and not 0 < before <= 9223372036854775807:
             raise APIError(400, "invalid cursor")
         self._sweep()
-        # Sequence cursor uses SQLite rowid, avoiding same-millisecond pagination gaps.
+        # Both participants view the same request row, including its answer status.
+        predicate = {
+            "received": "q.recipient = ?",
+            "sent": "(q.sender = ? OR (q.recipient = ? AND q.answer IS NOT NULL))",
+            "all": "(q.recipient = ? OR q.sender = ?)",
+        }[direction]
+        keys = (key, key) if direction in ("all", "sent") else (key,)
         rows = self.conn.execute(
-            "SELECT rowid AS sequence, * FROM session_questions WHERE recipient = ? "
-            "AND rowid < ? ORDER BY rowid DESC LIMIT 51",
-            (key, before if before is not None else 9223372036854775807),
+            "SELECT q.rowid AS sequence, q.*, "
+            "COALESCE(NULLIF(r.name, ''), NULLIF(r.source_app, ''), q.recipient) "
+            "AS recipient_name FROM session_questions q "
+            "JOIN sessions r ON r.session_key = q.recipient WHERE "
+            + predicate
+            + " AND q.rowid < ? ORDER BY q.rowid DESC LIMIT 51",
+            (*keys, before if before is not None else 9223372036854775807),
         ).fetchall()
         messages = []
         for row in rows[:50]:
@@ -443,7 +464,10 @@ class SessionAPI:
                         continue
                 except APIError:
                     continue
-            messages.append(_public_question(dict(row)))
+            message = _public_question(dict(row))
+            if owner:
+                message["recipient_name"] = row["recipient_name"]
+            messages.append(message)
         cursor = rows[49]["sequence"] if len(rows) > 50 else None
         result: dict[str, Any] = {"messages": messages, "next_cursor": cursor}
         if owner:

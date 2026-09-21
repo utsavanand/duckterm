@@ -78,6 +78,7 @@ export interface InboxMessage {
   sender: string;
   recipient: string;
   sender_name: string;
+  recipient_name?: string;
   question: string;
   status: "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled";
   answer: string | null;
@@ -118,8 +119,10 @@ export const api = {
   },
   collaborationInstructions: (key: string) => post<{ prompt: string }>(`/sessions/${encodeURIComponent(key)}/collaboration/instructions`),
   introduceCollaboration: (key: string) => post<{ sent: boolean }>(`/sessions/${encodeURIComponent(key)}/collaboration/introduce`),
-  inbox: async (key: string, before?: number): Promise<InboxPage> => {
-    const suffix = before === undefined ? "" : `?before=${before}`;
+  inbox: async (key: string, before?: number, direction: "all" | "received" | "sent" = "received"): Promise<InboxPage> => {
+    const query = new URLSearchParams({ direction });
+    if (before !== undefined) query.set("before", String(before));
+    const suffix = `?${query}`;
     const res = await fetch(`/sessions/${encodeURIComponent(key)}/inbox${suffix}`, {
       cache: "no-store",
       headers: authHeaders(),
