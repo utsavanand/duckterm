@@ -147,7 +147,7 @@ def test_stale_blocking_approvals_expire_at_listing_time(tmp_path: Path) -> None
     import asyncio
     import json as _json
 
-    from duckterm.server import Server, _BLOCKING_POLL_MS
+    from duckterm.server import _BLOCKING_POLL_MS, Server
 
     class _W:
         def __init__(self) -> None:

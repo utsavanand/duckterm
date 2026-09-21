@@ -154,3 +154,16 @@ def test_detect_state_recognizes_real_codex_approval_prompt() -> None:
     assert r.detect_state("Working (2s)\nWould you like to run the following command?") == "waiting"
     # And fresh work below an old prompt reads busy.
     assert r.detect_state("Press enter to confirm\nWorking (17m 36s)") == "busy"
+
+
+def test_detect_state_ignores_code_text_and_reads_review_as_busy() -> None:
+    from duckterm.runtimes.codex import CodexRuntime
+
+    r = CodexRuntime()
+    # codex's approval machinery running is WORK (interruptible-active line).
+    assert r.detect_state("Reviewing approval request (5m 38s • esc to interrupt)") == "busy"
+    # code on screen must not vote "waiting" (this exact word broke a session).
+    assert r.detect_state('<iframe allow="autoplay" allowfullscreen>') == "idle"
+    assert r.detect_state("if approved_by_reviewer(x):") == "idle"
+    # real prompts still read as waiting.
+    assert r.detect_state("Do you want to proceed?") == "waiting"

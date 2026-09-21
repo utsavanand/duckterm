@@ -17,14 +17,22 @@ from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
 from duckterm.runtimes.base import Harness, HookSpec, SessionState
 
 # Codex prints a spinner/working line while busy and a prompt glyph when idle.
-_WORKING = re.compile(r"(working|thinking|running|applying patch)", re.IGNORECASE)
+# "esc to interrupt" appears on every interruptible-active line (including
+# "Reviewing approval request (5m …)" — codex's approval machinery running is
+# WORK, not waiting-on-you).
+_WORKING = re.compile(
+    r"(working|thinking|running|reviewing|applying patch|esc to interrupt)", re.IGNORECASE
+)
 # Codex's real approval prompt says "Would you like to run the following
 # command?" and ends with "Press enter to confirm" — neither matched the old
 # pattern, so the output detector never saw codex enter waiting, its cached
 # state diverged from the hook-driven DB state, and a terminal-approved long
 # command stayed "waiting" for its whole run.
+# UI prompt markers only. Bare "allow"/"approve" are gone: they matched code
+# ON SCREEN (a diff containing `allowfullscreen` voted a busy session into
+# "waiting").
 _WAITING = re.compile(
-    r"(allow|approve|\(y/n\)|continue\?|would you like to|press enter to confirm)",
+    r"(\(y/n\)|continue\?|would you like to|press enter to confirm|do you want to proceed)",
     re.IGNORECASE,
 )
 
