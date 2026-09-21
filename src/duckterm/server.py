@@ -44,6 +44,7 @@ import tempfile
 import time
 import traceback
 import urllib.parse
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -172,6 +173,7 @@ _ROUTES: list[Route] = [
     Route("POST", "/agents-md", lambda s, r, w, h, b, seg: s._write_agents_md(w, b)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._read_file(w, seg), prefix="/file"),
     Route("POST", "/file", lambda s, r, w, h, b, seg: s._write_file(w, b)),
+    Route("POST", "/paste-image", lambda s, r, w, h, b, seg: s._paste_image(w, h, b)),
     Route("GET", "/approvals", lambda s, r, w, h, b, seg: s._list_approvals(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._approval_decision(w, seg),
           **_mid("/approvals/", "/decision")),
@@ -1945,6 +1947,36 @@ class Server:
                 return
             text = path.read_text(errors="replace")
         await _write_json(writer, 200, {"path": str(path), "text": text, "exists": path.exists()})
+
+    _PASTE_MAX_BYTES = 10_000_000  # clipboard screenshots, not videos
+
+    async def _paste_image(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], body: bytes
+    ) -> None:
+        """Save a pasted clipboard image and return its file path — the
+        terminal then types that path, which both claude and codex read as an
+        image attachment (the iTerm paste-an-image experience). Files land
+        under DUCKTERM_HOME/pastes; nothing user-controlled shapes the name."""
+        if not body:
+            await _write_json(writer, 400, {"error": "empty image"})
+            return
+        if len(body) > self._PASTE_MAX_BYTES:
+            await _write_json(writer, 413, {"error": "image too large (10MB cap)"})
+            return
+        ctype = headers.get("content-type", "image/png")
+        ext = {
+            "image/png": "png",
+            "image/jpeg": "jpg",
+            "image/gif": "gif",
+            "image/webp": "webp",
+        }.get(ctype, "png")
+        from duckterm.helpers import paths as _paths
+
+        directory = _paths.home() / "pastes"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"paste-{uuid.uuid4().hex[:12]}.{ext}"
+        path.write_bytes(body)
+        await _write_json(writer, 200, {"path": str(path)})
 
     async def _write_file(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Write a text file for the in-dashboard editor. Secrets typed here go
