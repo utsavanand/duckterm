@@ -38,7 +38,11 @@ cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 echo "==> writing Info.plist"
 # Bundle version tracks the Python package (single source of truth) so the
 # app's About/Get Info never claims an older RubberTerm than the one it runs.
-VERSION="$("${PYTHON:-../.venv/bin/python}" -c 'import duckterm; print(duckterm.__version__)')"
+# Read the version from the source file directly — importing duckterm needs
+# an installed venv, which a fresh release worktree doesn't have (that
+# dependency once aborted the build MID-BUNDLE, shipping a partial .app).
+VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' ../src/duckterm/__init__.py)"
+[ -n "$VERSION" ] || { echo "could not read version" >&2; exit 1; }
 cat > "$CONTENTS/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
