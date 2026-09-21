@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { reduce, State } from "./useEventStream";
-import { DucktermEvent, SessionView } from "./types";
+import { DucktermEvent, PersistedSession, SessionView } from "./types";
 
 const emptyState = (): State => ({
   sessions: new Map<string, SessionView>(),
@@ -96,5 +96,37 @@ describe("reduce — seed", () => {
 
     expect(after.sessions.has("s1")).toBe(true);
     expect(after.tombstoned.has("s1")).toBe(false);
+  });
+});
+
+describe("seed keeps a saved rename authoritative", () => {
+  it("persisted name beats the live label from replayed events", () => {
+    let state: State = { sessions: new Map(), tombstoned: new Set() };
+    // Replay arrives first: live view labels the session with the launch name.
+    state = reduce(state, {
+      kind: "event",
+      event: {
+        event_type: "SessionStart",
+        session_key: "k",
+        name: "Main",
+        _ts: 1,
+      } as unknown as DucktermEvent,
+    });
+    expect(state.sessions.get("k")!.label).toBe("Main");
+    // Then the seed lands with the user's saved rename.
+    state = reduce(state, {
+      kind: "seed",
+      sessions: [
+        {
+          session_key: "k",
+          name: "main-dev",
+          state: "busy",
+          event_count: 1,
+          started_at: 1,
+          updated_at: 1,
+        } as unknown as PersistedSession,
+      ],
+    });
+    expect(state.sessions.get("k")!.label).toBe("main-dev");
   });
 });
