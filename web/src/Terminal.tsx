@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { authHeaders } from "./api";
 import { bindClipboardBridge, releaseClipboardBridge } from "./clipboardBridge";
 import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 
@@ -131,6 +132,32 @@ export function Terminal({
         ws.send(new TextEncoder().encode(data));
     });
 
+    // Pasting an IMAGE (screenshot, browser "Copy Image") carries no text —
+    // xterm would silently drop it. Save it server-side and type the file
+    // path instead: both claude and codex read image paths as attachments
+    // (the iTerm paste-an-image experience). Text pastes proceed untouched.
+    const onPasteImage = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      const image = [...items].find((i) => i.type.startsWith("image/"));
+      if (!image) return; // plain text — xterm's normal paste handles it
+      e.preventDefault();
+      const blob = image.getAsFile();
+      if (!blob) return;
+      fetch("/paste-image", {
+        method: "POST",
+        headers: authHeaders({ "Content-Type": blob.type }),
+        body: blob,
+      })
+        .then((r) => r.json())
+        .then((d: { path?: string }) => {
+          if (d.path && ws?.readyState === WebSocket.OPEN)
+            ws.send(new TextEncoder().encode(d.path + " "));
+        })
+        .catch(() => undefined);
+    };
+    term.textarea?.addEventListener("paste", onPasteImage);
+
     // Shift+Enter inserts a newline instead of submitting. xterm would send
     // plain \r for it — indistinguishable from Enter — so intercept and send
     // LF (Ctrl+J), the newline keystroke both claude-code and codex accept.
@@ -158,6 +185,7 @@ export function Terminal({
       observer.disconnect();
       host.removeEventListener("focusout", refocusOnBlur);
       host.removeEventListener("mousedown", focusOnClick);
+      term.textarea?.removeEventListener("paste", onPasteImage);
       onData.dispose();
       if (ws) {
         ws.onclose = null;

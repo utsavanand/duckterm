@@ -12,6 +12,7 @@ import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
 import { InboxView } from "./InboxView";
 import { useInboxCounts } from "./useInboxCounts";
+import { MoveRemoteModal } from "./RemoteProject";
 import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
 import { NewFolderModal } from "./NewFolderModal";
@@ -55,6 +56,13 @@ function Dashboard() {
     "launch" | "agentsmd" | "folder" | "harnesses" | null
   >(desktop()?.draft ? "launch" : null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [moveKey, setMoveKey] = useState<string | null>(null);
+  useEffect(() => {
+    const move = (event: Event) => setMoveKey((event as CustomEvent<string>).detail);
+    window.addEventListener("move-to-remote", move);
+    return () => window.removeEventListener("move-to-remote", move);
+  }, []);
+  const moveSession = sessions.find(s => s.key === moveKey);
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
@@ -214,6 +222,27 @@ function Dashboard() {
   // The selected agent's working directory anchors AGENTS.md (per-folder file).
   const agentsMdDir = selected?.worktreePath ?? selected?.cwd ?? null;
 
+  // Pending rule candidates for that folder badge the AGENTS.md button — the
+  // recurring-review nudge. Re-fetched when the editor closes (a save may
+  // have promoted/rejected them all).
+  const [ruleCandidates, setRuleCandidates] = useState(0);
+  useEffect(() => {
+    if (!agentsMdDir || modal === "agentsmd") return;
+    let stale = false;
+    fetch(`/agents-md?dir=${encodeURIComponent(agentsMdDir)}`)
+      .then((r) => r.json())
+      .then((d: { rules?: { status: string }[] }) => {
+        if (!stale)
+          setRuleCandidates(
+            (d.rules ?? []).filter((r) => r.status === "candidate").length,
+          );
+      })
+      .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, [agentsMdDir, modal]);
+
   return (
     <div className="rd-app">
       <header className="rd-topbar">
@@ -238,11 +267,16 @@ function Dashboard() {
           disabled={!agentsMdDir}
           title={
             agentsMdDir
-              ? "Edit the AGENTS.md for this agent's folder"
+              ? ruleCandidates
+                ? `${ruleCandidates} proposed rule(s) awaiting review`
+                : "Edit the AGENTS.md rules for this agent's folder"
               : "Select an agent to edit its AGENTS.md"
           }
         >
           AGENTS.md
+          {ruleCandidates > 0 && (
+            <span className="rd-rules-badge">{ruleCandidates}</span>
+          )}
         </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
@@ -479,6 +513,7 @@ function Dashboard() {
           onClose={() => setModal(null)}
         />
       )}
+      {moveSession && <MoveRemoteModal session={moveSession} onClose={() => setMoveKey(null)} />}
       {forkSession && (
         <ForkModal session={forkSession} onClose={() => setForkKey(null)} />
       )}

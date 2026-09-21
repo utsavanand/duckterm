@@ -3,6 +3,33 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-21 — Remote transfer and connection lifecycle need durable ownership
+**Broke:** concurrent connector handshakes exceeded the connection limit; forgetting
+an inactive computer left its tunnel and picker entry alive. Project migration
+had only a design and could not preserve worktree state or recover a lost response.
+**Cause:** capacity was checked before an await, host removal updated only storage,
+and transfer/launch stages had no durable owner.
+**Rule:** reserve capacity without yielding, remove cached connections with host
+metadata, and journal reviewed snapshots and launch claims. Test interrupted uploads,
+Git index/working-tree preservation, and lost responses before allowing migration.
+
+## 2026-09-21 — Installation docs advertised missing downloads
+**Broke:** the README recommended a nonexistent PyPI package and a Mac ZIP that
+was absent from the latest release; the release guide linked an older wheel.
+**Cause:** installation prose was not checked against published release assets.
+**Rule:** verify the exact public wheel URL and native archive before publishing
+installation instructions. State the native app's dependencies, architecture,
+and signing status, and keep one canonical quick start.
+
+## 2026-09-21 — A fresh browser hid a stale native dashboard
+**Broke:** the browser showed six connectors while the user's open native window
+still showed three. The file editor also sat below verbose metadata and branches.
+**Cause:** verification opened a fresh page instead of checking the existing
+native window; secondary details displaced the main file action.
+**Rule:** load the shipped assets in the native app as part of verification.
+Keep the main action above metadata, collapse secondary lists, and verify the
+committed build independently of concurrent work before installing it.
+
 ## 2026-09-20 — Masked a gate again, hours after writing the rule
 **Broke:** a commit gate ran `pytest | tail -1` — the pipeline reported
 tail's exit code, the failure scrolled past, and the commit landed anyway

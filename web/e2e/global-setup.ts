@@ -42,7 +42,7 @@ export default async function globalSetup() {
   const fakeLlm = join(home, "fake-llm.sh");
   writeFileSync(
     fakeLlm,
-    "#!/bin/sh\nprintf -- '- Use rg, not grep\\n- No emoji in commit messages\\n'\n",
+    "#!/bin/sh\nprintf -- '- [all] [1] Use rg, not grep\\n- [all] [1] No emoji in commit messages\\n'\n",
     { mode: 0o755 },
   );
 

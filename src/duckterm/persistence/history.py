@@ -176,6 +176,10 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
 # EXISTS won't add these to a pre-existing DB, so we ALTER them in on open.
 _SESSIONS_COLUMNS = {
     "runtime": "TEXT",
+    # Model id observed in the session's transcript (e.g. "claude-fable-5").
+    # Persisted so AGENTS.md rule scopes like "claude-code/fable-5" can match
+    # sessions whose transcript is gone. NULL when the runtime doesn't expose it.
+    "model": "TEXT",
     "repo_path": "TEXT",
     "worktree_path": "TEXT",
     "branch": "TEXT",
@@ -487,6 +491,11 @@ class HistoryStore:
         self._conn.execute(
             "UPDATE sessions SET intention = ? WHERE session_key = ?", (intention, key)
         )
+        self._conn.commit()
+
+    def set_model(self, key: str, model: str) -> None:
+        """Record the model a session runs on, first observed in its transcript."""
+        self._conn.execute("UPDATE sessions SET model = ? WHERE session_key = ?", (model, key))
         self._conn.commit()
 
     def set_meta(

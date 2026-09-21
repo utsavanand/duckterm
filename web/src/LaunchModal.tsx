@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, BrowseResult, LaunchRequest } from "./api";
 import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
+import { RemoteProject, PreparedProject } from "./RemoteProject";
 import { Button, Field, inputStyle, Modal, useToast } from "./ui";
 
 // New session: a command (runtime is inferred from it), a path picked by
@@ -24,6 +25,15 @@ export function LaunchModal({
 }) {
   const toast = useToast();
   const native = desktop();
+  const [, refreshTargets] = useState(0);
+  useEffect(() => {
+    const refresh = () => { refreshTargets(n => n + 1); setTarget(desktop()?.currentTarget ?? "local"); setPicked(null); setPrepared(null); setProjectKind("existing"); };
+    window.addEventListener("desktop-targets-changed", refresh);
+    return () => window.removeEventListener("desktop-targets-changed", refresh);
+  }, []);
+  const [projectKind, setProjectKind] = useState<"existing" | "copy" | "clone">("existing");
+  const [prepared, setPrepared] = useState<PreparedProject | null>(null);
+  const [transferBusy, setTransferBusy] = useState(false);
   const [target, setTarget] = useState(native?.currentTarget ?? "local");
   const elsewhere = !!native && target !== native.currentTarget;
   const destination = useMemo(() => elsewhere ? {
@@ -65,6 +75,28 @@ export function LaunchModal({
   const path = picked?.path;
   const isGit = picked?.is_git ?? false;
 
+  // Launch-time nudge: proposed AGENTS.md rules waiting in the picked folder.
+  // The new agent won't see them (candidates don't render) — surfacing the
+  // count here is the moment the user most cares about the folder's rules.
+  const [pendingRules, setPendingRules] = useState(0);
+  useEffect(() => {
+    setPendingRules(0);
+    if (!path || elsewhere) return;
+    let stale = false;
+    fetch(`/agents-md?dir=${encodeURIComponent(path)}`)
+      .then((r) => r.json())
+      .then((d: { rules?: { status: string }[] }) => {
+        if (!stale)
+          setPendingRules(
+            (d.rules ?? []).filter((r) => r.status === "candidate").length,
+          );
+      })
+      .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, [path, elsewhere]);
+
   // When a git folder is picked and the user wants a worktree, fetch the
   // branches to base off (local + remote, fetched fresh on the server).
   useEffect(() => {
@@ -99,7 +131,7 @@ export function LaunchModal({
       const worktree = isGit && mode === "worktree";
       // Run the agent in a PTY Duckterm owns (in_terminal:false) so it renders
       // in the in-app terminal — no external iTerm/Terminal tab.
-      const launched = await destination.launch({
+      const launched = prepared ? await destinationRequest<{ session_key: string }>(target, "project-launch", { id: prepared.id, command, name, prompt }) : await destination.launch({
         command,
         name: name || undefined,
         prompt: prompt || undefined,
@@ -125,16 +157,18 @@ export function LaunchModal({
   }
 
   return (
-    <Modal title={group && !elsewhere ? `New session in ${group}` : "New session"} onClose={() => { if (!busy) onClose(); }}>
+    <Modal title={group && !elsewhere ? `New session in ${group}` : "New session"} onClose={() => { if (!busy && !transferBusy) onClose(); }}>
       {native && (
         <Field label="Run on">
           <select
             aria-label="Run on"
             style={inputStyle}
             value={target}
-            disabled={busy}
+            disabled={busy || transferBusy}
             onChange={(event) => {
               setTarget(event.target.value);
+              setPrepared(null);
+              setProjectKind("existing");
               setPicked(null);
               setMode(null);
               setBrowsing(false);
@@ -184,6 +218,13 @@ export function LaunchModal({
         </Field>
       )}
 
+      {native && target !== "local" && <Field label="Project source">
+        <select aria-label="Project source" style={inputStyle} value={projectKind} disabled={busy || transferBusy} onChange={e => { setProjectKind(e.target.value as "existing" | "copy" | "clone"); setPicked(null); setPrepared(null); setMode(null); }}>
+          <option value="existing">Existing remote folder</option><option value="copy">Copy local project</option><option value="clone">Clone Git repository</option>
+        </select>
+      </Field>}
+      {projectKind !== "existing" && !prepared && <RemoteProject key={target + projectKind} target={target} kind={projectKind} command={command} onBusy={setTransferBusy} onPrepared={p => { setPrepared(p); setPicked({ path: p.destination, parent: null, is_git: false, entries: [] }); setMode("in-place"); }} />}
+      {(projectKind === "existing" || prepared) && <>
       <Field label={native ? `Folder on ${native.targets.find((t) => t.id === target)?.name ?? target}` : "Folder to work in"}>
         {path ? (
           <div
@@ -208,7 +249,7 @@ export function LaunchModal({
             >
               {isGit ? "git repo" : "plain folder"}
             </span>
-            <Button size="sm" variant="ghost" onClick={() => setBrowsing(true)}>
+            <Button size="sm" variant="ghost" disabled={!!prepared || busy || transferBusy} onClick={() => setBrowsing(true)}>
               Change
             </Button>
           </div>
@@ -218,6 +259,14 @@ export function LaunchModal({
           </Button>
         )}
       </Field>
+
+      {pendingRules > 0 && (
+        <div className="rd-rules-nudge">
+          {pendingRules} proposed AGENTS.md rule{pendingRules > 1 ? "s" : ""}{" "}
+          awaiting review in this folder — the new agent won't see them until
+          accepted (AGENTS.md button, top bar).
+        </div>
+      )}
 
       {browsing && (
         <DirBrowser
@@ -287,6 +336,7 @@ export function LaunchModal({
         </>
       )}
 
+      </>}
       <Field label="Name (optional)">
         <input
           style={inputStyle}
@@ -329,10 +379,10 @@ export function LaunchModal({
           marginTop: 8,
         }}
       >
-        <Button variant="ghost" onClick={onClose} disabled={busy}>
+        <Button variant="ghost" onClick={onClose} disabled={busy || transferBusy}>
           Cancel
         </Button>
-        <Button onClick={submit} disabled={busy}>
+        <Button onClick={submit} disabled={busy || transferBusy}>
           {busy ? "Launching…" : "Launch"}
         </Button>
       </div>

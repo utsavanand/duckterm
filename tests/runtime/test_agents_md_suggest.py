@@ -97,7 +97,10 @@ def test_suggest_gathers_corrections_and_returns_rules(
 
     def fake_summarize(prompt: str) -> Summary:
         seen["prompt"] = prompt
-        return Summary(text="- Use rg, not grep\n- Don't add obvious comments", backend="fake")
+        return Summary(
+            text="- [all] [1] Use rg, not grep\n- [codex] [1] Don't add obvious comments",
+            backend="fake",
+        )
 
     monkeypatch.setattr(suggest_mod, "summarize", fake_summarize)
 
@@ -110,7 +113,11 @@ def test_suggest_gathers_corrections_and_returns_rules(
 
     status, body = asyncio.run(scenario())
     assert status == 200
-    assert body["suggestions"] == ["- Use rg, not grep", "- Don't add obvious comments"]
+    assert [(s["id"], s["scope"], s["status"]) for s in body["suggestions"]] == [
+        ("use-rg-not-grep", "all", "candidate"),
+        ("don-t-add-obvious-comments", "codex", "candidate"),
+    ]
+    assert all(s["source"] == "correction" for s in body["suggestions"])
     assert body["corrections_seen"] == 2  # the follow-up + the annotation
     # The LLM saw the real corrections — and NOT the task prompt or the
     # other folder's steering.
@@ -141,3 +148,63 @@ def test_suggest_with_no_corrections_skips_the_llm(
     status, body = asyncio.run(scenario())
     assert status == 200
     assert body == {"suggestions": [], "corrections_seen": 0}
+
+
+def test_rejected_tombstone_blocks_reproposal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rule the user rejected must not come back from the same corrections —
+    the whole point of keeping rejected rules in the file."""
+    store = HistoryStore(tmp_path / "db.sqlite")
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    (workdir / ".duckterm-rules.json").write_text(
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "id": "use-rg-not-grep",
+                        "text": "Use rg, not grep",
+                        "status": "rejected",
+                    }
+                ]
+            }
+        )
+    )
+    store.record(
+        {
+            "event_type": "SessionStart",
+            "session_key": "s1",
+            "cwd": str(workdir),
+            "launched": True,
+            "_ts": 1,
+            "_id": "a",
+        }
+    )
+    for i, prompt in enumerate(["the task", "use rg please", "really, rg not grep"]):
+        store.record(
+            {
+                "event_type": "UserPromptSubmit",
+                "session_key": "s1",
+                "prompt": prompt,
+                "_ts": 2 + i,
+                "_id": f"p{i}",
+            }
+        )
+
+    monkeypatch.setattr(
+        suggest_mod,
+        "summarize",
+        lambda prompt: Summary(text="- [all] [2] Use rg, not grep", backend="fake"),
+    )
+
+    async def scenario() -> tuple[int, dict]:
+        server = Server(history=store)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        async with srv:
+            return await _suggest(port, server.token, str(workdir))
+
+    status, body = asyncio.run(scenario())
+    assert status == 200
+    assert body["suggestions"] == []  # tombstoned, not re-proposed

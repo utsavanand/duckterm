@@ -789,9 +789,9 @@ code,
    split from the per-session context above by a hard divider. */
 .rd-connectors {
   border-top: 1px solid var(--border);
-  flex: 0 1 auto;
-  min-height: 0; /* without this the flex child won't shrink -> no scrolling */
-  max-height: 40%;
+  /* Fill whatever the context above doesn't need, and scroll inside it. */
+  flex: 1 1 0;
+  min-height: 0;
   overflow-y: auto;
   padding-bottom: 12px;
 }
@@ -916,13 +916,75 @@ code,
 .rd-context-pane .rd-context-body {
   overflow-y: auto;
   padding: 12px 16px;
-  flex: 1; /* top half of the split column — connectors pin below */
+  /* Natural height: the context takes what its content needs (shrinkable
+     only if enormous); connectors get ALL remaining space below. */
+  flex: 0 1 auto;
   min-height: 0;
 }
 .rd-context-meta,
 .rd-context-git,
 .rd-context-folder {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
+}
+.rd-context-files {
+  margin-bottom: 14px;
+}
+.rd-context-edit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  font-weight: 600;
+}
+.rd-context-edit-hint {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.rd-context-tools {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.rd-context-meta-harness {
+  color: var(--muted);
+}
+.rd-context-meta-harness::before {
+  content: "·";
+  margin-right: 8px;
+}
+.rd-context-repository {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 12px;
+}
+.rd-context-repo {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.rd-context-current-branch {
+  color: var(--muted);
+  font-family: ui-monospace, Menlo, monospace;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.rd-context-git-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 14px;
+}
+.rd-context-git-actions .rd-context-toggle {
+  margin: 0;
+  padding: 6px 0;
 }
 .rd-context-section-title {
   font-size: 12px;
@@ -934,8 +996,8 @@ code,
 .rd-context-row {
   display: flex;
   gap: 10px;
-  font-size: 13px;
-  padding: 3px 0;
+  font-size: 12px;
+  padding: 2px 0;
 }
 .rd-context-row .k {
   width: 64px;
@@ -967,6 +1029,10 @@ code,
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.rd-branch .mono {
+  min-width: 0;
 }
 .rd-branch.current {
   color: var(--text);
@@ -2502,4 +2568,122 @@ select {
   font-size: 13px;
   white-space: pre-wrap;
   padding: 4px 0 0 14px;
+}
+
+/* ── Typed AGENTS.md rules editor ── */
+.rd-rules-list {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.rd-rules-section {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.rd-rule {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.rd-rule-candidate {
+  border-color: var(--warn, #d97706);
+  border-style: dashed;
+}
+.rd-rule-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.rd-rule-edit {
+  width: 100%;
+  font: inherit;
+  background: var(--card);
+  color: var(--text);
+  border: none;
+  resize: vertical;
+  padding: 0;
+}
+.rd-rule-edit:focus {
+  outline: none;
+}
+.rd-rule-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rd-rule-scope {
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.rd-rules-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 12px 0;
+}
+.rd-rules-legacy {
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rd-rules-rejected summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rd-rules-rejected .rd-rule {
+  opacity: 0.6;
+  margin-top: 6px;
+}
+.rd-rules-add {
+  display: flex;
+  gap: 8px;
+}
+.rd-rules-add input {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+}
+/* pending-candidate count on the top-bar AGENTS.md button */
+.rd-rules-badge {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--warn, #d97706);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+/* launch-modal nudge: rules waiting in the picked folder */
+.rd-rules-nudge {
+  border: 1px dashed var(--warn, #d97706);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
 }

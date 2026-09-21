@@ -7,7 +7,7 @@ says what's on each tier, how to install it, and what to test. Pair it with
 <!-- CURRENT-VERSIONS:START (auto-updated by scripts/release.sh — do not edit by hand) -->
 | Tier | Version | Install from |
 |---|---|---|
-| **prod** (stable, daily) | `v0.4.26` | https://github.com/utsavanand/duckterm/releases/tag/v0.4.26 |
+| **prod** (stable, daily) | `v0.4.35` | https://github.com/utsavanand/duckterm/releases/tag/v0.4.35 |
 | **beta** (staging, testing) | `v0.4.0b1` | https://github.com/utsavanand/duckterm/releases/tag/v0.4.0b1 |
 | **dev** (source) | `main` | git checkout |
 <!-- CURRENT-VERSIONS:END -->
@@ -45,40 +45,30 @@ DUCKTERM_INSTANCE=beta duckterm@beta install-hooks
 
 ### Prod (daily driver)
 
-Grab the wheel URL from the newest non-pre-release on the
-[releases page](https://github.com/utsavanand/duckterm/releases) (the version
-table above names it):
-
-```sh
-pipx install \
-  https://github.com/utsavanand/duckterm/releases/download/v0.4.1/duckterm-0.4.1-py3-none-any.whl
-DUCKTERM_INSTANCE=prod duckterm serve
-DUCKTERM_INSTANCE=prod duckterm install-hooks   # your daily setup; fine here
-```
+Use the [current README quick start](../README.md#install) for the published
+wheel URL and prerequisites. See [installation and upgrades](installation.md)
+for updating an existing installation.
 
 ### Mac app (optional, wraps prod)
 
-`RubberTerm-<version>-macos.zip` on the same release: unzip, drag
-`RubberTerm.app` to `/Applications`. It needs the `duckterm` CLI installed
-(above) — the app starts/attaches to the local server and wraps the dashboard
-in a native window with notifications. Ad-hoc signed, not notarized: on first
-open, right-click → Open (or `xattr -d com.apple.quarantine
-/Applications/RubberTerm.app`).
+The [README Mac app section](../README.md#mac-app) links the current archive and
+states its architecture and signing status. Install the CLI first; the native
+window attaches to or starts that local server.
 
 ### Dev (source)
 
-```sh
-git clone https://github.com/utsavanand/duckterm && cd duckterm
-pip install -e ".[dev]" && (cd web && npm install)
-DUCKTERM_INSTANCE=dev python -m duckterm.cli serve
-```
+Follow [Development](../README.md#development) for an isolated Python environment,
+frontend build, and test setup. Use `DUCKTERM_INSTANCE=dev` to keep development
+sessions separate from your daily installation.
 
 ### Uninstall / roll back a tier
 
 ```sh
-pipx uninstall duckterm@beta          # remove beta; data in ~/.duckterm-beta stays
-pipx install <older-wheel-url>         # roll prod back to a previous wheel
+pipx uninstall duckterm@beta          # data in ~/.duckterm-beta stays
 ```
+
+For production upgrades and removal, see [installation](installation.md).
+Restore a compatible backup before downgrading across database schema changes.
 
 ## What to test (beta checklist)
 

@@ -1,10 +1,27 @@
 # Remote project selection and session migration
 
-Status: implementation design, following user feedback on September 20, 2026.
+Status: implemented in the remote-session candidate; live candidate QA is pending.
 The Test build now keeps New session mounted when selecting a destination,
 browses through a constrained native request/reply bridge, and switches the
 dashboard only after successful remote launch. Tested against the live VM.
-Project copy/clone and session migration are not yet implemented.
+Project copy/clone and Move to remote now use a reviewed snapshot and a durable
+operation journal. Local tests cover project integrity, retries, restart recovery,
+and launch deduplication. The new candidate has not yet been validated on the VM.
+
+Current supported limits: 1 GiB including Git history, 50,000 files, a new
+unoccupied destination, Claude Code 2.1.267 or Codex 0.155.1 with an exact recorded
+conversation UUID. Other provider versions and sessions without an exact ID fail
+with an actionable error; no newest-transcript fallback is used. Submodules, LFS,
+unsafe symlinks, embedded Git URL credentials, and incompatible Linux manifests
+are blocked. Required project runtimes are checked, but dependency installation
+remains an explicit user action.
+
+Transfer progress and drafts survive reopening the form. Pause retains the
+snapshot for retry. A lost launch response checks the recorded destination
+session; an ambiguous or exited launch requires inspection and cannot blindly
+spawn another process. Continue locally explicitly releases the source transfer
+reservation and creates a separate continuation. Snapshots remain private under
+Duckterm's transfers directory for recovery; automatic retention is not implemented.
 
 ## New session
 

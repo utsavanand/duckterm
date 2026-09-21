@@ -31,6 +31,7 @@ if sys.argv[1] == "start":
                 "cwd": str(HOME_DIR / "projects"),
                 "in_terminal": False,
                 "session_key": key,
+                "test": True,
             },
         )
     pids = subprocess.check_output(

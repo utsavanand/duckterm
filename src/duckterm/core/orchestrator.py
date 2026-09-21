@@ -101,6 +101,7 @@ class SessionSupervisor:
             self.session_key,
             self.initial_prompt,
             home=Path(self._env["DUCKTERM_SESSION_TOKEN_FILE"]).parent.parent,
+            cwd=Path(self.cwd),
         )
         argv = self.runtime.launch_command(
             cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=prompt
@@ -538,13 +539,14 @@ class Orchestrator:
         compare_group: str | None = None,
         name: str | None = None,
         env: dict[str, str] | None = None,
+        test: bool = False,
     ) -> str:
         """Launch a supervised agent. If repo_path is given, the agent runs in a
         fresh git worktree on `branch` (default: a branch named for the session),
         forked from `base` (default: repo HEAD); otherwise it runs in `cwd`.
         `parent_session_key` records fork lineage."""
         key = session_key or uuid.uuid4().hex
-        extra: dict[str, object] = {}
+        extra: dict[str, object] = {"test": test}
         if parent_session_key is not None:
             extra["parent_session_key"] = parent_session_key
         if compare_group is not None:

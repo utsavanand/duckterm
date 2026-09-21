@@ -51,13 +51,14 @@ export interface LaunchRequest {
 }
 
 export interface Connector {
+  managed?: boolean;
+  hosted?: boolean;
   name: string;
   title: string;
   description: string;
   identity: string | null;
   sources: string[];
   write_access: boolean;
-  managed: boolean;
   revoke_url: string;
   credential: string | null; // "gh-cli" | "stored" | "railway-cli" | null
   installed: Record<string, boolean>; // per harness

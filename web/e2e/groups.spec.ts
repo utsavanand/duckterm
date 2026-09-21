@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { seedSession } from "./helpers";
+import { postEvent, seedSession } from "./helpers";
 
 // A session with a `group` renders under a collapsible folder header in the left
 // panel, and clicking the header collapses/expands it. (Drag-and-drop assignment
@@ -142,4 +142,24 @@ test("nested folder moves to top level via the unnest button", async ({
   // Its session followed the move.
   const body = page.locator(".rd-group", { hasText: "Inner" });
   await expect(body.locator(".rd-row", { hasText: key })).toBeVisible();
+});
+
+// A terminated session's run is over: workflow actions (Rename, Notes,
+// Checkpoint, Fork) must not render — only Resume/Archive/Delete apply, and
+// a watched one says "Delete", never "Stop watching" (nothing is running).
+test("terminated session rows show only end-state actions", async ({
+  page,
+}) => {
+  const key = `e2e-ended-${Date.now()}`;
+  await seedSession(key, { name: key });
+  await postEvent({ event_type: "SessionEnd", session_key: key });
+
+  await page.goto("/");
+  const row = page.locator(".rd-row", { hasText: key });
+  await expect(row).toBeVisible();
+  await row.hover();
+  await expect(row.getByRole("button", { name: "Delete" })).toBeVisible();
+  for (const gone of ["Rename", "Notes", "Checkpoint", "Fork", "Stop watching"]) {
+    await expect(row.getByRole("button", { name: gone })).toHaveCount(0);
+  }
 });

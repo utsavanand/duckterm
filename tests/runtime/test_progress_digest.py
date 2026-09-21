@@ -103,3 +103,86 @@ def test_stop_event_triggers_debounced_refresh(fake_summarizer: Path) -> None:
     server.bus.publish({"event_type": "Stop", "session_key": "S"})
     # Within the debounce window with no new events: no new mark taken.
     assert server._progress_marks == marks_before
+
+
+def test_digest_bridge_files_recurring_learnings_as_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user_learning archived in >=3 sessions of one folder becomes a
+    candidate rule in that folder's rule set — but only when the folder
+    already adopted the typed format (rules.json exists)."""
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
+    server = _server()
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    now = 1
+    for i in range(3):
+        key = f"s{i}"
+        server.bus.publish(
+            {"event_type": "SessionStart", "session_key": key, "cwd": str(workdir), "_ts": now}
+        )
+        server.history.set_state(key, "idle")
+        server.digests.merge(
+            key,
+            [{"bucket": "user_learnings", "text": "Prefers merge over rebase."}],
+            [],
+            now,
+        )
+    row = server.history.session("s0")
+    assert row is not None
+
+    # No rules.json yet -> the bridge must not create files in the folder.
+    server._file_digest_candidates(row)
+    assert not (workdir / ".duckterm-rules.json").exists()
+    assert not (workdir / "AGENTS.md").exists()
+
+    # Folder opts in (empty rule set) -> the recurring learning is filed.
+    (workdir / ".duckterm-rules.json").write_text('{"rules": []}')
+    server._file_digest_candidates(row)
+    rules = json.loads((workdir / ".duckterm-rules.json").read_text())["rules"]
+    assert [(r["id"], r["status"], r["source"], r["evidence"]) for r in rules] == [
+        ("prefers-merge-over-rebase", "candidate", "digest", 3)
+    ]
+    # Candidates never render into AGENTS.md.
+    assert "Prefers merge" not in (workdir / "AGENTS.md").read_text()
+
+    # Re-running with unchanged evidence must not rewrite or duplicate.
+    server._file_digest_candidates(row)
+    again = json.loads((workdir / ".duckterm-rules.json").read_text())["rules"]
+    assert len(again) == 1
+
+
+def test_digest_bridge_respects_rejected_tombstone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
+    server = _server()
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    (workdir / ".duckterm-rules.json").write_text(
+        json.dumps(
+            {
+                "rules": [
+                    {
+                        "id": "prefers-merge-over-rebase",
+                        "text": "Prefers merge over rebase.",
+                        "status": "rejected",
+                    }
+                ]
+            }
+        )
+    )
+    for i in range(3):
+        key = f"s{i}"
+        server.bus.publish(
+            {"event_type": "SessionStart", "session_key": key, "cwd": str(workdir), "_ts": 1}
+        )
+        server.digests.merge(
+            key, [{"bucket": "user_learnings", "text": "Prefers merge over rebase."}], [], 1
+        )
+    row = server.history.session("s0")
+    assert row is not None
+    server._file_digest_candidates(row)
+    rules = json.loads((workdir / ".duckterm-rules.json").read_text())["rules"]
+    assert len(rules) == 1
+    assert rules[0]["status"] == "rejected"  # not resurrected

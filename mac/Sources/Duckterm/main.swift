@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hosts = RemoteHost.load()
     private var launchConnections: [String: RemoteConnection] = [:]
     private let launchAPI = LaunchDestination()
+    private let projectTransfer = ProjectTransfer()
     private var connectionGeneration = 0
     private let server = ServerProcess()
     private var localStart: Task<Bool, Never>?
@@ -37,6 +38,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window?.onLaunchRequest = { [weak self] target, operation, params in
             guard let self else { throw LaunchDestination.Failure.message("App closed") }
+            if operation == "project-pause", let id = params["id"] as? String {
+                self.projectTransfer.pause(id)
+                return ["paused": true]
+            }
+            if operation == "project-preview" || operation == "project-continue" {
+                _ = await self.ensureLocalServer()
+                return try await self.launchAPI.perform(base: self.server.url, operation: operation == "project-preview" ? "transfer-preview" : "transfer-continue", params: params)
+            }
             let base: URL
             if target == "local" {
                 _ = await self.ensureLocalServer()
@@ -53,6 +62,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     connection.start()
                 }
                 base = self.launchConnections[target]!.url
+            }
+            if operation == "project-transfer" {
+                guard target != "local" else { throw LaunchDestination.Failure.message("Choose a remote computer") }
+                _ = await self.ensureLocalServer()
+                return try await self.projectTransfer.copy(api: self.launchAPI, local: self.server.url, remote: base, params: params)
+            }
+            if operation.hasPrefix("project-") {
+                let mapped = operation.replacingOccurrences(of: "project-", with: "transfer-")
+                let result = try await self.launchAPI.perform(base: base, operation: mapped, params: params)
+                if operation == "project-launch", params["source_session"] as? String != nil,
+                   let row = result as? [String: Any], let key = row["session_key"] as? String, let id = params["id"] as? String {
+                    _ = await self.ensureLocalServer()
+                    _ = try await self.launchAPI.perform(base: self.server.url, operation: "transfer-link", params: ["id": id, "target": target, "session_key": key])
+                }
+                return result
             }
             return try await self.launchAPI.perform(base: base, operation: operation, params: params)
         }
@@ -128,7 +152,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if hosts.indices.contains(index) {
                 let removed = hosts.remove(at: index)
                 RemoteHost.save(hosts)
+                launchConnections.removeValue(forKey: removed.target)?.stop()
+                window?.desktopHosts = hosts
                 if remote?.host == removed { switchHost(nil) }
+                else { window?.refreshDesktop() }
             }
             return
         }
@@ -217,8 +244,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func pasteToDashboard(_ sender: Any?) {
-        guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty,
-            let data = try? JSONSerialization.data(withJSONObject: [text]),
+        let pasteboard = NSPasteboard.general
+        if let text = pasteboard.string(forType: .string), !text.isEmpty {
+            sendPaste(text)
+            return
+        }
+        // No text — an IMAGE on the clipboard (screenshot, browser Copy Image).
+        // Save it and paste the file PATH: claude and codex both read image
+        // paths as attachments, which is what iTerm-style image paste does.
+        let types: [NSPasteboard.PasteboardType] = [.png, .tiff]
+        for type in types {
+            guard var data = pasteboard.data(forType: type) else { continue }
+            if type == .tiff, let rep = NSBitmapImageRep(data: data),
+                let png = rep.representation(using: .png, properties: [:])
+            {
+                data = png
+            }
+            let home = ProcessInfo.processInfo.environment["DUCKTERM_HOME"]
+                ?? (NSHomeDirectory() + "/.duckterm")
+            let dir = URL(fileURLWithPath: home).appendingPathComponent("pastes")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let file = dir.appendingPathComponent("paste-\(UUID().uuidString.prefix(12)).png")
+            guard (try? data.write(to: file)) != nil else { return }
+            sendPaste(file.path + " ")
+            return
+        }
+    }
+
+    private func sendPaste(_ text: String) {
+        guard let data = try? JSONSerialization.data(withJSONObject: [text]),
             let json = String(data: data, encoding: .utf8)
         else { return }
         window?.evaluate("window.__rtPaste && window.__rtPaste((\(json))[0])")

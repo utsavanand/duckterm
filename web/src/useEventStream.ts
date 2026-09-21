@@ -50,9 +50,20 @@ export function reduce(state: State, action: Action): State {
       const live = next.get(s.session_key);
       // Persisted is the base (it carries identity/metadata a live event can't:
       // repoName, worktreePath, notes, intention). Then layer the live view's
-      // DEFINED fields on top so dynamic state (state, eventCount, name) wins
+      // DEFINED fields on top so dynamic state (state, eventCount) wins
       // without undefined live fields clobbering persisted ones.
-      next.set(s.session_key, live ? mergeDefined(persisted, live) : persisted);
+      const merged = live ? mergeDefined(persisted, live) : persisted;
+      // A saved rename (sessions.name) is authoritative over whatever label
+      // the live view derived from replayed events — without this, the stale
+      // launch-time name resurfaced on every restart.
+      if (s.name) merged.label = persisted.label;
+      // Identity flags come from the DB, full stop. A replayed HOOK event
+      // (no launched marker) writes a DEFINED false into the live view, and
+      // a defined field wins the merge — flipping an owned session to
+      // "watched" and hiding its terminal until a full reload.
+      merged.launched = persisted.launched;
+      merged.ptyOwned = persisted.ptyOwned;
+      next.set(s.session_key, merged);
     }
     // A seed only lists live sessions; anything we'd tombstoned that the server
     // confirms exists again can drop its tombstone.

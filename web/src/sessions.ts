@@ -74,15 +74,18 @@ export function applyEvent(
     // only overwrite what this event actually carries.
     ...prev,
     key,
-    // A user-set name always wins; then keep the established label. We do NOT
-    // re-derive from e.source_app on later events: source_app is the cwd's
-    // basename, so an agent that cd's into a subdir (e.g. `web/`) would rename
-    // the session to "web". Only the first event (no prev) derives from it.
+    // An ESTABLISHED label wins over event names: renames go through PATCH +
+    // the /sessions seed, while the SSE replay re-delivers old SessionStart
+    // events whose `name` is the original launch name — letting those win
+    // reverted every rename on restart. Event names only label brand-new
+    // sessions. (And never re-derive from e.source_app on later events:
+    // it's the cwd basename, so a cd into web/ would rename the session.)
     label:
-      e.name ||
       prev?.label ||
+      e.name ||
       e.session_name ||
-      (prev ? key.slice(0, 8) : e.source_app || key.slice(0, 8)),
+      e.source_app ||
+      key.slice(0, 8),
     state: deriveState(e, prev?.state),
     // Stamp when the agent stopped; clear it on any new activity. effectiveState
     // uses this to settle to idle only after a quiet grace period.

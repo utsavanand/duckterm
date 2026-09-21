@@ -80,10 +80,41 @@ def introduction(key: str, *, home: Path | None = None) -> str:
     )
 
 
-def launch_prompt(runtime: str, key: str, prompt: str, *, home: Path | None = None) -> str:
+def scoped_rules(cwd: Path, runtime: str, model: str | None = None) -> str:
+    """Runtime-scoped active rules from the folder's typed rule set, as a
+    prompt block. Only scoped rules: "all" rules already reach every agent
+    through AGENTS.md itself — this channel hands an agent the rules that name
+    ITS runtime explicitly instead of relying on it honoring the scope labels
+    in the shared file. Empty when there are none (or rules.json is absent or
+    hand-corrupted — that must not block a launch)."""
+    from duckterm.core.agents_rules import load_rules
+
+    try:
+        rules = load_rules(cwd)
+    except (ValueError, OSError):
+        return ""
+    lines = [
+        r.text
+        for r in rules
+        if r.status == "active" and r.scope != "all" and r.matches(runtime, model)
+    ]
+    if not lines:
+        return ""
+    return "Rules for your runtime from this folder's AGENTS.md (follow them):\n" + "\n".join(
+        f"- {t}" for t in lines
+    )
+
+
+def launch_prompt(
+    runtime: str, key: str, prompt: str, *, home: Path | None = None, cwd: Path | None = None
+) -> str:
     if runtime not in SUPPORTED_RUNTIMES:
         return prompt
     intro = introduction(key, home=home)
+    if cwd is not None:
+        rules = scoped_rules(cwd, runtime)
+        if rules:
+            intro = intro + "\n\n" + rules
     if prompt:
         return intro + "\n\nContinue with the user's task below.\n\nUser's task:\n" + prompt
     return intro + "\n\nRead these instructions, then await the user's task."

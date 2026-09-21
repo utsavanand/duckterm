@@ -7,12 +7,15 @@ and initial provisioning. The live environment and completed infrastructure
 checks are recorded in [gcp-development-environment.md](gcp-development-environment.md).
 Application implementation and its QA remain separate from this completed setup.
 
-Current evidence: [remote-qa.json](../infra/gcp/remote-qa.json). Both remote
-provider logins, concurrent coding tasks, real GitHub execution and disable,
-and native automatic SSH reconnect have passed. Interactive Mac QA, reboot,
-extended failure coverage, overnight verification, and main reconciliation
-remain. GitHub is the selected first live connector; Railway and Porkbun remain
-disconnected and are not claimed as live-validated.
+Current evidence: [remote-qa.json](../infra/gcp/remote-qa.json). The candidate now
+implements project copy/clone and exact-conversation handoff, integrates main
+through b458c63, and fixes the broker capacity race and forgotten-host cache.
+Local automated, native compilation, and synthetic native transfer checks pass.
+The prior persistence check's successful same-PID result was recovered from the VM
+journal. Candidate live migration, authorized reboot, and native user acceptance
+remain. Uploading the candidate requires explicit approval following an automatic
+approval-review rejection; no candidate deployment has occurred. GitHub remains
+the first live provider; Railway and Porkbun live checks are deferred.
 
 Latest product direction: launch destination belongs in **New session → Run on**;
 connection management belongs in **Settings → Remote computers**. The user also

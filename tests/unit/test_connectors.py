@@ -246,3 +246,111 @@ def test_offline_validation_does_not_claim_verified_identity(
     # Restore the real validator because the fixture stubs GitHub's network.
     with pytest.raises(RuntimeError, match="Cannot verify"):
         connectors.porkbun_keys_valid("pk", "sk")
+
+
+@pytest.fixture()
+def hf_runner(isolated_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    _stub(isolated_env, "npx", "exit 0")
+    _stub(isolated_env, "node", "echo v22.14.0")
+
+
+def test_huggingface_anonymous_lifecycle(hf_runner: None, tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    result = connectors.enable("huggingface", home=home)
+    assert result["ready"] is True
+    assert result["enabled"] is True
+    assert result["credential"] == "anonymous"
+    claude = json.loads((home / ".claude.json").read_text())
+    codex = tomllib.loads((home / ".codex/config.toml").read_text())
+    for entry in (claude["mcpServers"]["huggingface"], codex["mcp_servers"]["huggingface"]):
+        assert entry["args"] == ["connector-run", "huggingface"]
+        assert "env" not in entry
+    assert connectors.disable("huggingface", home=home)["enabled"] is False
+    assert "huggingface" not in json.loads((home / ".claude.json").read_text())["mcpServers"]
+    assert "huggingface" not in tomllib.loads((home / ".codex/config.toml").read_text()).get(
+        "mcp_servers", {}
+    )
+
+
+def test_huggingface_missing_runner_does_not_store_token(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(connectors, "huggingface_token_valid", lambda _: pytest.fail("network"))
+    with pytest.raises(RuntimeError, match="Node.js"):
+        connectors.enable("huggingface", token="hf_test", home=tmp_path)
+    assert connectors.load_secret("huggingface") is None
+    assert not (tmp_path / ".claude.json").exists()
+    assert connectors.status("huggingface", home=tmp_path)["ready"] is False
+
+
+def test_huggingface_token_validation_preserves_existing_secret(
+    hf_runner: None, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connectors.save_secret("huggingface", "hf_old")
+    monkeypatch.setattr(connectors, "huggingface_token_valid", lambda _: False)
+    with pytest.raises(RuntimeError, match="rejected"):
+        connectors.enable("huggingface", token="hf_bad", home=tmp_path)
+    assert connectors.load_secret("huggingface") == "hf_old"
+    assert not (tmp_path / ".claude.json").exists()
+    monkeypatch.setattr(connectors, "huggingface_token_valid", lambda _: True)
+    result = connectors.enable("huggingface", token="hf_new", home=tmp_path)
+    assert result["credential"] == "stored"
+    for path in (tmp_path / ".claude.json", tmp_path / ".codex/config.toml"):
+        assert "hf_new" not in path.read_text()
+    connectors.disable("huggingface", home=tmp_path)
+    assert connectors.load_secret("huggingface") == "hf_new"
+    connectors.forget("huggingface", home=tmp_path)
+    assert connectors.load_secret("huggingface") is None
+
+
+@pytest.mark.parametrize("credential", [None, "stored", "env"])
+def test_huggingface_launch_resolves_optional_token_without_exposing_it(
+    hf_runner: None, monkeypatch: pytest.MonkeyPatch, credential: str | None
+) -> None:
+    if credential:
+        connectors.save_secret("huggingface", "hf_stored")
+    if credential == "env":
+        monkeypatch.setenv("HF_TOKEN", "hf_environment")
+
+    argv, env = connectors.server_command("huggingface")
+    binary = argv[0]
+    assert binary.endswith("/npx")
+    assert "mcp-remote@0.1.38" in argv
+    assert "https://huggingface.co/mcp?bouquet=search" in argv
+    assert "--silent" in argv
+    assert not any("hf_stored" in arg or "hf_environment" in arg for arg in argv)
+    if credential:
+        expected = "hf_environment" if credential == "env" else "hf_stored"
+        assert env["DUCKTERM_HF_AUTH"] == f"Bearer {expected}"
+        assert argv[-2:] == ["--header", "Authorization:${DUCKTERM_HF_AUTH}"]
+    else:
+        assert "--header" not in argv
+
+
+@pytest.mark.parametrize("code, rejected", [(401, True), (403, True), (429, False), (503, False)])
+def test_huggingface_validation_distinguishes_rejection_from_outage(
+    monkeypatch: pytest.MonkeyPatch, code: int, rejected: bool
+) -> None:
+    def fail(req, timeout):
+        assert req.full_url == "https://huggingface.co/api/whoami-v2"
+        assert req.get_header("Authorization") == "Bearer hf_test"
+        raise connectors.urllib.error.HTTPError(req.full_url, code, "failure", {}, None)
+
+    monkeypatch.setattr(connectors.urllib.request, "urlopen", fail)
+    if rejected:
+        assert connectors.huggingface_token_valid("hf_test") is False
+    else:
+        with pytest.raises(RuntimeError, match="unavailable"):
+            connectors.huggingface_token_valid("hf_test")
+
+
+@pytest.mark.parametrize("version", ["v18.20.0", "not-a-version"])
+def test_huggingface_rejects_unsupported_node(
+    hf_runner: None, isolated_env: Path, tmp_path: Path, version: str
+) -> None:
+    _stub(isolated_env, "node", f"echo {version}")
+    with pytest.raises(RuntimeError, match="Node.js 22"):
+        connectors.enable("huggingface", home=tmp_path)
+    assert not (tmp_path / ".claude.json").exists()

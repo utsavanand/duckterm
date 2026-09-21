@@ -113,3 +113,46 @@ def test_owner_introduction_requires_idle_live_agent(tmp_path, monkeypatch):
     assert writes[0].endswith(b"\x1b[201~\r")
     assert server.token.encode() not in writes[0]
     store.close()
+
+
+def test_launch_prompt_injects_runtime_scoped_rules(tmp_path):
+    """Scoped active rules from the folder's typed rule set ride the launch
+    prompt for the matching runtime; "all" rules stay out (AGENTS.md itself
+    reaches every agent), as do candidates and other runtimes' rules."""
+    import json as _json
+
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    (workdir / ".duckterm-rules.json").write_text(
+        _json.dumps(
+            {
+                "rules": [
+                    {"id": "shared", "text": "Shared rule.", "status": "active"},
+                    {"id": "codex-r", "text": "Codex rule.", "scope": "codex", "status": "active"},
+                    {
+                        "id": "claude-r",
+                        "text": "Claude rule.",
+                        "scope": "claude-code",
+                        "status": "active",
+                    },
+                    {
+                        "id": "pending",
+                        "text": "Pending rule.",
+                        "scope": "codex",
+                        "status": "candidate",
+                    },
+                ]
+            }
+        )
+    )
+    prompt = launch_prompt("codex", "k1", "do the task", home=tmp_path, cwd=workdir)
+    assert "Codex rule." in prompt
+    assert "Shared rule." not in prompt
+    assert "Claude rule." not in prompt
+    assert "Pending rule." not in prompt
+    assert prompt.endswith("do the task")
+
+    # Corrupt rules.json must not block a launch.
+    (workdir / ".duckterm-rules.json").write_text("{nope")
+    prompt = launch_prompt("codex", "k2", "still works", home=tmp_path, cwd=workdir)
+    assert prompt.endswith("still works")

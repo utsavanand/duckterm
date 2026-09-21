@@ -1,3 +1,4 @@
+import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
 import { Duck, poseFor } from "./Duck";
@@ -519,6 +520,10 @@ function TreeRow({
   // would offer a Resume that can't fire. Keep watched sessions observe-only.
   const canStop = live && s.launched;
   const canArchive = !archived && s.launched;
+  // A terminated session's run is OVER: forking, notes, checkpoints, and
+  // rename are workflow actions for something in progress — only Resume (if
+  // resumable), Archive, and Delete apply.
+  const ended = effState === "terminated";
   const stateLabel = effState; // "waiting" reads fine on its own
   const [notesOpen, setNotesOpen] = useState(false);
   const [notes, setNotes] = useState(s.notes ?? "");
@@ -670,7 +675,7 @@ function TreeRow({
           ) : (
             depth > 0 && <span className="rd-row-twig">⑂</span>
           )}
-          <Duck pose={poseFor(effState)} size={32} />
+          <Duck pose={poseFor(effState)} size={24} />
           <span className="rd-row-click" onClick={() => onOpen(s.key)}>
             {s.branch && (
               <span
@@ -759,16 +764,18 @@ function TreeRow({
           </ul>
         )}
         <div className="rd-row-actions">
-          <button
-            className="rd-btn rd-btn-sm rd-btn-ghost"
-            title="Rename this session (double-clicking the name works too)"
-            onClick={() => {
-              setDraft(s.label);
-              setRenaming(true);
-            }}
-          >
-            Rename
-          </button>
+          {!ended && (
+            <button
+              className="rd-btn rd-btn-sm rd-btn-ghost"
+              title="Rename this session (double-clicking the name works too)"
+              onClick={() => {
+                setDraft(s.label);
+                setRenaming(true);
+              }}
+            >
+              Rename
+            </button>
+          )}
           {onUngroup && (
             <button
               className="rd-btn rd-btn-sm rd-btn-ghost"
@@ -781,7 +788,7 @@ function TreeRow({
           {/* One branching action: the modal offers a git worktree fork (or
               promotes an in-place session onto a branch) and, for claude-code,
               a conversation-only fork. */}
-          {!archived && canBranch && (
+          {!archived && !ended && canBranch && (
             <button
               className="rd-btn rd-btn-sm rd-btn-ghost"
               title="Fork this session — into a git worktree, or fork the conversation"
@@ -790,7 +797,7 @@ function TreeRow({
               Fork
             </button>
           )}
-          {!archived && (
+          {!archived && !ended && (
             <button
               className={`rd-btn rd-btn-sm rd-btn-ghost${notesOpen ? " active" : ""}`}
               title="Personal notes for this session (local only)"
@@ -799,7 +806,7 @@ function TreeRow({
               Notes{s.notes ? " •" : ""}
             </button>
           )}
-          {!archived && (
+          {!archived && !ended && (
             <button
               className="rd-btn rd-btn-sm rd-btn-ghost"
               title="Record what was done so far"
@@ -816,6 +823,19 @@ function TreeRow({
               )}
             </button>
           )}
+          {resumable && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "") && <>
+            <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key }))}>Move to remote…</button>
+            <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={async () => {
+              if (!window.confirm("Continue this session locally as a separate continuation? A remote session, if created, will remain running.")) return;
+              await destinationRequest("local", "project-continue", { source_session: s.key });
+              localStorage.removeItem(`moved-session:${s.key}`);
+              await resumeSession();
+            }}>Continue locally</button>
+            {(s.remoteTransfer?.stage === "moved" || localStorage.getItem(`moved-session:${s.key}`)) && <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => {
+              const moved = s.remoteTransfer?.stage === "moved" ? s.remoteTransfer : JSON.parse(localStorage.getItem(`moved-session:${s.key}`)!);
+              selectLaunchTarget(moved.target, {});
+            }}>Open remote session</button>}
+          </>}
           {resumable && (
             <button
               className="rd-btn rd-btn-sm rd-btn-primary"
@@ -871,7 +891,7 @@ function TreeRow({
             title={
               confirmDelete
                 ? "Click again to confirm"
-                : s.launched
+                : s.launched || !live
                   ? "Delete this session and its history"
                   : "Stop watching — remove it from the dashboard (the agent keeps running in its own terminal)"
             }
@@ -880,7 +900,7 @@ function TreeRow({
           >
             {confirmDelete
               ? "Confirm?"
-              : s.launched
+              : s.launched || !live
                 ? "Delete"
                 : "Stop watching"}
           </button>

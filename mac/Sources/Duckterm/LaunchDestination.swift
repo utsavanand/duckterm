@@ -24,7 +24,9 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
         guard base.scheme == "http", base.host == "127.0.0.1" else {
             throw Failure.message("Invalid destination")
         }
-        let paths = ["browse": "/browse", "branches": "/branches", "themes": "/zsh-themes", "launch": "/sessions/launch"]
+        var paths = ["browse": "/browse", "branches": "/branches", "themes": "/zsh-themes", "launch": "/sessions/launch"]
+        let transfers = ["preview", "prepare", "chunk", "begin", "receive", "finish", "clone", "launch", "status", "preflight", "link", "continue"]
+        for name in transfers { paths["transfer-" + name] = "/transfers/" + name }
         guard let path = paths[operation] else { throw Failure.message("Unsupported operation") }
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
         components.path = path
@@ -34,6 +36,12 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
         }
         var request = URLRequest(url: components.url!)
         request.timeoutInterval = 30
+        if operation.hasPrefix("transfer-") {
+            request.timeoutInterval = 240
+            request.httpMethod = "POST"
+            request.httpBody = try JSONSerialization.data(withJSONObject: params)
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
         if operation == "launch" {
             let allowed: Set<String> = ["command", "name", "prompt", "cwd", "repo_path", "branch", "base", "zsh_theme"]
             guard Set(params.keys).isSubset(of: allowed), params.values.allSatisfy({ $0 is String }) else {
@@ -69,7 +77,7 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
             try await Task.sleep(nanoseconds: 500_000_000)
         }
         guard let token else { throw Failure.message("Could not connect to this computer. Check SSH access and try again.") }
-        if operation == "launch" { request.setValue(token, forHTTPHeaderField: "X-Duckterm-Token") }
+        if request.httpMethod == "POST" { request.setValue(token, forHTTPHeaderField: "X-Duckterm-Token") }
         let (data, response): (Data, URLResponse)
         do { (data, response) = try await session.data(for: request) }
         catch {

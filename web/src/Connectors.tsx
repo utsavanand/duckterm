@@ -5,6 +5,9 @@ import { useToast } from "./ui";
 const sourceNames: Record<string, string> = {
   "gh-cli": "GitHub CLI login on this computer",
   stored: "Stored API credentials",
+  anonymous: "Public access (no token)",
+  "google-oauth": "Google OAuth on this computer",
+  "gcloud-cli": "Google Cloud CLI account",
   "railway-cli": "Railway CLI login on this computer",
 };
 
@@ -18,13 +21,16 @@ export function Connectors() {
   const [secret, setSecret] = useState("");
   const [write, setWrite] = useState(false);
 
+  const refresh = () => { api.connectors().then(d => setRows(d.connectors)).catch(() => undefined); };
   useEffect(() => {
-    api.connectors().then(d => setRows(d.connectors)).catch(() => undefined);
+    refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
   }, []);
 
   function edit(c: Connector) {
     setEditing(c.name);
-    setSource(c.credential ?? (c.sources.length === 1 ? c.sources[0] : ""));
+    setSource(c.credential ?? (c.sources?.length === 1 ? c.sources[0] : ""));
     setWrite(c.write_access);
     setToken("");
     setSecret("");
@@ -35,7 +41,7 @@ export function Connectors() {
     setBusy(c.name);
     try {
       const next = action === "enable"
-        ? await api.enableConnector(c.name, token.trim() || undefined, secret.trim() || undefined, source, write)
+        ? await api.enableConnector(c.name, editing === c.name ? token.trim() || undefined : undefined, editing === c.name ? secret.trim() || undefined : undefined, source, write)
         : action === "forget" ? await api.forgetConnector(c.name) : await api.disableConnector(c.name);
       setRows(rs => rs.map(r => r.name === next.name ? next : r));
       setEditing(null);
@@ -53,17 +59,44 @@ export function Connectors() {
   }
 
   return <div className="rd-connectors">
-    <div className="rd-panel-head"><span>Connectors · this computer</span></div>
+    <div className="rd-panel-head"><span>Connectors ({rows.length}) · this computer</span><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh</button></div>
     <div className="rd-connector-desc">Enabled integrations are shared by agents on this computer.</div>
     {rows.map(c => <div key={c.name} className="rd-connector">
       <div className="rd-connector-row">
         <span className={`dot ${c.enabled ? "on" : "off"}`} />
         <span className="rd-connector-title">{c.title}</span>
         <span className="rd-connector-cred">{c.credential ? sourceNames[c.credential] ?? c.credential : "Not connected"}</span>
-        {!c.managed && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => c.enabled ? change(c, "disable") : edit(c)}>{c.enabled ? "Disable" : "Connect"}</button>}
+        {(!c.managed || c.hosted === false) && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => c.enabled ? change(c, "disable") : c.managed ? change(c, "enable") : edit(c)}>{c.enabled ? "Disable" : "Connect"}</button>}
       </div>
       <div className="rd-connector-desc">{c.description}{c.name === "porkbun" ? ` · ${c.write_access ? "Write access enabled" : "Read-only"}` : ""}</div>
       <div className="rd-connector-desc">{c.identity ?? (c.credential ? "Identity not verified — reconnect to verify" : c.detail)}</div>
+          {!c.managed && c.name === "gmail" && !c.ready && (
+            <details className="rd-connector-desc">
+              <summary>Set up personal Gmail</summary>
+              <p>On the connector host, enable the Gmail API in your Google Cloud project.
+                Configure an External OAuth consent screen with your Gmail address as a test user,
+                then create a Desktop app OAuth client.</p>
+              <p>Save the downloaded client JSON as <code>~/.gmail-mcp/gcp-oauth.keys.json</code>.</p>
+              <p>Run <code>duckterm connector-auth gmail</code> and sign in with Google.
+                This connector requests read-only mail access.</p>
+              <p>Then click Refresh and Connect.</p>
+              <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">
+                Open Google Cloud credentials
+              </a>
+            </details>
+          )}
+          {!c.managed && c.name === "gcp" && !c.ready && (
+            <details className="rd-connector-desc">
+              <summary>Set up Google Cloud</summary>
+              <p>Install the Google Cloud CLI on the connector host, then run
+                <code> gcloud auth login</code> and
+                <code> gcloud config set project YOUR_PROJECT_ID</code>.</p>
+              <p>Then click Refresh and Connect. Tools use the active account's permissions.</p>
+              <a href="https://cloud.google.com/sdk/docs/install" target="_blank" rel="noreferrer">
+                Google Cloud CLI installation
+              </a>
+            </details>
+          )}
       {c.managed ? <div className="rd-connector-desc">Managed through the remote connector administrator.</div> : <>
         {c.credential && <div className="rd-connector-installed">
           <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => edit(c)}>Change connection</button>
@@ -74,7 +107,7 @@ export function Connectors() {
         {editing === c.name && <div className="rd-connector-token">
           <label>Credential source <select aria-label={`${c.title} credential source`} value={source} onChange={e => { setSource(e.target.value); setToken(""); setSecret(""); }}>
             <option value="" disabled>Choose a source</option>
-            {c.sources.map(s => <option key={s} value={s}>{sourceNames[s] ?? s}</option>)}
+            {(c.sources ?? []).map(s => <option key={s} value={s}>{sourceNames[s] ?? s}</option>)}
           </select></label>
           {source === "stored" && <>
             <input aria-label={`${c.title} API key`} type="password" autoComplete="off" value={token} placeholder={c.credential === "stored" ? "Leave blank to reuse stored credentials" : "API key or personal access token"} onChange={e => setToken(e.target.value)} />

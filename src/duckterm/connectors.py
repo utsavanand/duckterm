@@ -12,6 +12,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -24,7 +25,9 @@ from duckterm.helpers.private_files import private_write
 _GITHUB_ENV = "GITHUB_PERSONAL_ACCESS_TOKEN"
 _GITHUB_IMAGE = "ghcr.io/github/github-mcp-server"
 HARNESSES = ("claude-code", "codex")
-NAMES = ("github", "railway", "porkbun")
+NAMES = ("github", "railway", "porkbun", "huggingface", "gmail", "gcp")
+_HF_URL = "https://huggingface.co/mcp?bouquet=search"
+_MCP_REMOTE = "mcp-remote@0.1.38"
 
 
 # ── secret store ──
@@ -172,6 +175,53 @@ def _railway_cli() -> str | None:
     return shutil.which("railway")
 
 
+def huggingface_token() -> tuple[str, str] | None:
+    token = os.environ.get("HF_TOKEN", "").strip()
+    if token:
+        return token, "HF_TOKEN"
+    stored_token = load_secret("huggingface")
+    return (stored_token, "stored") if stored_token else None
+
+
+def huggingface_token_valid(token: str) -> bool:
+    req = urllib.request.Request(
+        "https://huggingface.co/api/whoami-v2",
+        headers={"Authorization": f"Bearer {token}", "User-Agent": "duckterm"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return bool(resp.status == 200)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return False
+        raise RuntimeError("Hugging Face token validation is unavailable; try again") from exc
+    except OSError as exc:
+        raise RuntimeError("Could not reach Hugging Face to validate the token; try again") from exc
+
+
+def huggingface_server_argv() -> list[str]:
+    npx = shutil.which("npx")
+    node = shutil.which("node")
+    if npx is None or node is None:
+        raise RuntimeError("install Node.js 22+ with npm to connect Hugging Face")
+    try:
+        result = subprocess.run(
+            [node, "--version"], capture_output=True, text=True, timeout=3, check=True
+        )
+        major = int(result.stdout.strip().removeprefix("v").split(".")[0])
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        raise RuntimeError("could not check Node.js version; install Node.js 22+ with npm") from exc
+    if major < 22:
+        raise RuntimeError("Hugging Face requires Node.js 22+ with npm")
+    return [npx, "--yes", _MCP_REMOTE, _HF_URL, "--transport", "http-only", "--silent"]
+
+
+def _install(name: str, *, home: Path | None = None) -> None:
+    command, args = _duckterm_bin(), ["connector-run", name]
+    mcp_install.claude_install(name, command, args, home=home)
+    mcp_install.codex_install(name, command, args, home=home)
+
+
 def railway_logged_in() -> bool:
     cli = _railway_cli()
     if cli is None:
@@ -207,8 +257,19 @@ def enable(
     write_access: bool = False,
 ) -> dict[str, object]:
     previous = policy(name, home=home)
+    from duckterm import connector_client
+
     if os.environ.get("DUCKTERM_HOSTED"):
         raise RuntimeError("Manage hosted credentials through the separate connector administrator")
+    if connector_client.configured():
+        if token or secret:
+            raise RuntimeError("Configure provider credentials on the shared connector host")
+        available = {row["name"]: row for row in connector_client.statuses()}
+        if not available.get(name, {}).get("enabled"):
+            raise RuntimeError("Connector is not enabled for this workspace on the shared host")
+        _install(name, home=home)
+        _save_policy(name, {"enabled": True, "generation": uuid.uuid4().hex})
+        return status(name, home=home)
     identity: str | None = None
     if name == "github":
         source = source or ("stored" if token else None)
@@ -250,6 +311,18 @@ def enable(
         if token and secret:
             save_secret("porkbun", token)
             save_secret("porkbun-secret", secret)
+    elif name == "huggingface":
+        huggingface_server_argv()
+        if token:
+            if not huggingface_token_valid(token):
+                raise RuntimeError("Hugging Face rejected that token")
+            save_secret(name, token)
+        source = "stored" if token else "anonymous"
+    elif name in ("gmail", "gcp"):
+        from duckterm import google_connectors
+
+        google_connectors.command(name)
+        source = "google-oauth" if name == "gmail" else "gcloud-cli"
     # Publish disabled first: an old live runner must not use a replaced identity.
     _save_policy(name, {**previous, "enabled": False, "generation": uuid.uuid4().hex})
     command, args = _duckterm_bin(), ["connector-run", name]
@@ -318,6 +391,9 @@ def forget(name: str, *, home: Path | None = None) -> dict[str, object]:
 
 
 _REVOKE_URLS = {
+    "gmail": "https://myaccount.google.com/permissions",
+    "gcp": "https://myaccount.google.com/permissions",
+    "huggingface": "https://huggingface.co/settings/tokens",
     "github": "https://github.com/settings/tokens",
     "railway": "https://railway.com/account/tokens",
     "porkbun": "https://porkbun.com/account/api",
@@ -325,6 +401,10 @@ _REVOKE_URLS = {
 
 
 def status(name: str, *, home: Path | None = None) -> dict[str, object]:
+    from duckterm import connector_client
+
+    if connector_client.configured():
+        return next(row for row in list_status(home=home) if row["name"] == name)
     current = policy(name, home=home)
     installed = {
         "claude-code": mcp_install.claude_installed(name, home=home),
@@ -351,12 +431,38 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
         available = ["stored"]
         ready = shutil.which("uvx") is not None and source is not None
         detail = None if ready else "Needs uv and an API key + secret"
+    elif name == "huggingface":
+        available = ["anonymous", "stored"]
+        try:
+            huggingface_server_argv()
+            ready, detail = True, "Public discovery; token optional"
+        except RuntimeError as exc:
+            detail = str(exc)
+    elif name in ("gmail", "gcp"):
+        from duckterm import google_connectors
+
+        available = ["google-oauth" if name == "gmail" else "gcloud-cli"]
+        try:
+            google_connectors.command(name)
+            ready = True
+        except RuntimeError as exc:
+            detail = str(exc)
     descriptions = {
+        "gmail": "Search and read personal Gmail",
+        "gcp": "Google Cloud resources",
+        "huggingface": "Discover models, datasets, and documentation",
         "github": "Repos, PRs, issues, and actions",
         "railway": "Deployments, services, and logs",
         "porkbun": "Domains and DNS records",
     }
-    title = {"github": "GitHub", "railway": "Railway", "porkbun": "Porkbun"}[name]
+    title = {
+        "github": "GitHub",
+        "railway": "Railway",
+        "porkbun": "Porkbun",
+        "gmail": "Gmail",
+        "gcp": "Google Cloud",
+        "huggingface": "Hugging Face",
+    }[name]
     return {
         "name": name,
         "title": title,
@@ -377,29 +483,54 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
 
 
 def list_status(*, home: Path | None = None) -> list[dict[str, object]]:
-    rows = [status(n, home=home) for n in NAMES]
-    if os.environ.get("DUCKTERM_HOSTED"):
-        from duckterm import connector_client
+    from duckterm import connector_client
 
-        try:
-            remote = {row["name"]: row for row in connector_client.statuses()}
-            for row in rows:
-                entry = remote.get(row["name"], {})
-                row.update(
-                    enabled=bool(entry.get("enabled")),
-                    ready=bool(entry.get("enabled")),
-                    credential="secret-manager" if entry.get("enabled") else None,
-                    identity=entry.get("identity"),
-                    write_access=bool(entry.get("write_access")),
-                    detail=None,
-                )
-        except (OSError, ValueError, RuntimeError):
-            for row in rows:
-                row.update(enabled=False, ready=False, detail="Connector service disconnected")
-    return rows
+    if not connector_client.configured():
+        return [status(n, home=home) for n in NAMES]
+    titles = {
+        "github": "GitHub",
+        "railway": "Railway",
+        "porkbun": "Porkbun",
+        "huggingface": "Hugging Face",
+        "gmail": "Gmail",
+        "gcp": "Google Cloud",
+    }
+    try:
+        remote = {row["name"]: row for row in connector_client.statuses()}
+        detail = None
+    except (OSError, ValueError, RuntimeError):
+        remote, detail = {}, "Shared connector service unavailable"
+    return [
+        {
+            "name": name,
+            "title": titles[name],
+            "description": "Provided by your shared connector host",
+            "credential": "shared-host" if remote.get(name, {}).get("enabled") else None,
+            "installed": {
+                "claude-code": mcp_install.claude_installed(name, home=home),
+                "codex": mcp_install.codex_installed(name, home=home),
+            },
+            "enabled": bool(remote.get(name, {}).get("enabled"))
+            and mcp_install.claude_installed(name, home=home)
+            and mcp_install.codex_installed(name, home=home),
+            "ready": bool(remote.get(name, {}).get("enabled")),
+            "managed": True,
+            "hosted": bool(os.environ.get("DUCKTERM_HOSTED")),
+            "sources": [],
+            "identity": remote.get(name, {}).get("identity"),
+            "write_access": bool(remote.get(name, {}).get("write_access")),
+            "revoke_url": _REVOKE_URLS[name],
+            "detail": detail
+            or (None if remote.get(name, {}).get("enabled") else "Not enabled for this workspace"),
+        }
+        for name in NAMES
+    ]
 
 
-def server_command(name: str, current: dict[str, object]) -> tuple[list[str], dict[str, str]]:
+def server_command(
+    name: str, current: dict[str, object] | None = None
+) -> tuple[list[str], dict[str, str]]:
+    current = current or policy(name)
     env = dict(os.environ)
     # Ambient credentials must not override the explicitly selected source/policy.
     for env_key in (
@@ -428,6 +559,17 @@ def server_command(name: str, current: dict[str, object]) -> tuple[list[str], di
         if current.get("write_access"):
             args.append("--get-muddy")
         return args, env
+    if name == "huggingface":
+        argv = huggingface_server_argv()
+        cred = huggingface_token()
+        if cred:
+            env["DUCKTERM_HF_AUTH"] = f"Bearer {cred[0]}"
+            argv.extend(["--header", "Authorization:${DUCKTERM_HF_AUTH}"])
+        return argv, env
+    if name in ("gmail", "gcp"):
+        from duckterm import google_connectors
+
+        return google_connectors.command(name)
     cli = _railway_cli()
     if not cli:
         raise RuntimeError("Railway CLI is unavailable")
@@ -435,9 +577,9 @@ def server_command(name: str, current: dict[str, object]) -> tuple[list[str], di
 
 
 def run(name: str) -> None:
-    if os.environ.get("DUCKTERM_HOSTED"):
-        from duckterm import connector_client
+    from duckterm import connector_client
 
+    if connector_client.configured():
         connector_client.run(name)
         return
     current = policy(name)
@@ -446,7 +588,15 @@ def run(name: str) -> None:
     argv, env = server_command(name, current)
     # Keep the supervisor alive so Disable closes already-running MCP processes.
     # New process group also owns descendants; no PID files or PID-reuse hazards.
-    proc = subprocess.Popen(argv, env=env, start_new_session=True)
+    workspace = tempfile.TemporaryDirectory(prefix="duckterm-gmail-") if name == "gmail" else None
+    try:
+        proc = subprocess.Popen(
+            argv, env=env, cwd=workspace.name if workspace else None, start_new_session=True
+        )
+    except BaseException:
+        if workspace:
+            workspace.cleanup()
+        raise
 
     def stop(_signal: int, _frame: object) -> None:
         raise SystemExit(0)
@@ -469,4 +619,15 @@ def run(name: str) -> None:
             os.killpg(proc.pid, signal.SIGKILL)
         proc.wait()
         signal.signal(signal.SIGTERM, previous)
+        if workspace:
+            workspace.cleanup()
     raise SystemExit(proc.returncode or 0)
+
+
+def execution_state(name: str) -> dict[str, object]:
+    return policy(name)
+
+
+def _set_enabled(name: str, enabled: bool) -> None:
+    """Compatibility entry point for shared-host policy administration."""
+    _save_policy(name, {**policy(name), "enabled": enabled, "generation": uuid.uuid4().hex})

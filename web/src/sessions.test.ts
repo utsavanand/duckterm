@@ -176,3 +176,30 @@ describe("contextLevel (model-aware windows)", () => {
     expect(contextLevel(820_000, "claude-mythos-5")).toBe("high"); // >80%
   });
 });
+
+describe("label precedence (renames must survive restarts)", () => {
+  it("a replayed event's launch name cannot override an established label", () => {
+    let m = new Map<string, SessionView>();
+    m.set("k", { key: "k", label: "main-dev" } as SessionView);
+    m = applyEvent(m, {
+      event_type: "SessionStart",
+      session_key: "k",
+      name: "Main", // the original launch name, replayed over SSE on restart
+      _ts: 1,
+    } as unknown as DucktermEvent);
+    expect(m.get("k")!.label).toBe("main-dev");
+  });
+
+  it("an event name still labels a brand-new session", () => {
+    const m = applyEvent(
+      new Map(),
+      {
+        event_type: "SessionStart",
+        session_key: "k",
+        name: "Main",
+        _ts: 1,
+      } as unknown as DucktermEvent,
+    );
+    expect(m.get("k")!.label).toBe("Main");
+  });
+});
