@@ -244,6 +244,12 @@ streamed partial answers, and cross-machine sharing are excluded. On-demand
 reading and explicit replies are the chosen workflow. UI viewing does not mark a
 question answered, and an idle session is never forced to process its inbox.
 
+The session Inbox prioritizes requests in compact From, Request, Status, and
+Received columns. Rows expand to show full questions and replies. Pending counts
+include queued and accepted requests; accepting does not mean answering. Counts
+cover loaded pages, with that limitation labeled when older pages remain. The
+session card and agent setup instructions are collapsed below the message list.
+
 ## Folder conversation history
 
 The telephone button beside a sidebar folder opens an owner-only conversation

@@ -20,6 +20,7 @@ describe("session inbox", () => {
     vi.mocked(api.inbox).mockResolvedValue({ messages: [], next_cursor: null });
     vi.mocked(api.collaborationInstructions).mockResolvedValue({ prompt: "Read collaboration.md" });
     render(<InboxView session={{ ...session, runtime: "codex", state: "busy" }} />);
+    fireEvent.click(screen.getByText("Agent setup and instructions"));
     fireEvent.click(screen.getByText("Show introduction to paste"));
     expect(await screen.findByLabelText("Introduction to paste into the agent")).toHaveValue("Read collaboration.md");
     expect(api.introduceCollaboration).not.toHaveBeenCalled();
@@ -29,6 +30,7 @@ describe("session inbox", () => {
     vi.mocked(api.introduceCollaboration).mockResolvedValue({ sent: true });
     render(<InboxView session={{ ...session, runtime: "codex", state: "idle" }} />);
     await screen.findByText("No messages yet");
+    fireEvent.click(screen.getByText("Agent setup and instructions"));
     expect(api.introduceCollaboration).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Introduce session collaboration" }));
     expect(await screen.findByText(/does not confirm the agent has read/)).toBeVisible();
@@ -40,6 +42,7 @@ describe("session inbox", () => {
     vi.mocked(api.inbox).mockResolvedValue({ messages: [], next_cursor: null });
     vi.mocked(api.introduceCollaboration).mockRejectedValue(new Error("Terminal unavailable"));
     const view = render(<InboxView session={{ ...session, runtime: "codex", state: "busy" }} />);
+    fireEvent.click(screen.getByText("Agent setup and instructions"));
     expect(screen.getByRole("button", { name: "Introduce session collaboration" })).toBeDisabled();
     view.rerender(<InboxView session={{ ...session, runtime: "codex", state: "idle" }} />);
     fireEvent.click(screen.getByRole("button", { name: "Introduce session collaboration" }));

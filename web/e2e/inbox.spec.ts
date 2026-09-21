@@ -28,11 +28,14 @@ test("Inbox beside History shows real session questions and replies", async ({ p
   await page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" }).click();
   await expect(page.locator(".rd-session-card")).toContainText("inbox-test/frontend");
   await expect(page.locator(".rd-session-card")).toContainText("inbox-test");
+  await expect(page.locator(".rd-session-card")).not.toHaveAttribute("open", "");
+  await expect(page.locator(".rd-inbox-setup")).not.toHaveAttribute("open", "");
+  await page.getByText("Agent setup and instructions", { exact: true }).click();
   await page.getByRole("button", { name: "Show introduction to paste" }).click();
   await expect(page.getByLabel("Introduction to paste into the agent")).toHaveValue(/Duckterm session capability:/);
   await expect(page.getByLabel("Introduction to paste into the agent")).toHaveValue(/collaboration\.md/);
   await expect(page.locator(".rd-inbox-message strong")).toHaveText("API implementation");
-  await expect(page.locator(".rd-inbox-status")).toHaveText("Awaiting response");
+  await expect(page.locator(".rd-inbox-status")).toHaveText("Pending");
   await expect(page.getByText("This agent isn’t running in a terminal Duckterm owns.")).toHaveCount(0);
 
   const reply = await fetch(`${base()}/api/v1/session/questions/${question.id}/answer`, {
@@ -45,6 +48,7 @@ test("Inbox beside History shows real session questions and replies", async ({ p
   await expect(page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" })).toHaveCount(0);
   await page.locator(".rd-inbox-message summary").click();
   await expect(page.locator(".rd-inbox-answer p")).toHaveText("Include id, status, and updated_at.\nKeep the request ID stable.");
+  await page.getByText("Agent setup and instructions", { exact: true }).click();
   await page.screenshot({ path: "/tmp/duckterm-inbox.png" });
   await page.reload();
   await page.locator(".rd-row-name", { hasText: "Client implementation" }).click();
