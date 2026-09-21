@@ -11,6 +11,27 @@ The title reports connection failure separately from agent state. Files and
 terminals belong to the selected computer; local working directories and
 connectors are not copied to it.
 
+## Model login prerequisites
+
+Before starting Codex device login, enable **Device code authorization for
+Codex** in ChatGPT → Settings → Security. If that setting is disabled, OpenAI's
+consent page disables Continue and never reaches code entry. Repeatedly issuing
+new codes does not fix that. Enable the setting first, then start one fresh
+`codex login --device-auth` on the remote account and use that attempt's code.
+The CLI must report success; browser account sign-in alone is not confirmation.
+Verify afterward with `codex login status`.
+
+Claude uses `claude auth login --claudeai`; paste its browser-returned code
+directly into the remote login terminal. Verify with `claude auth status`.
+Neither flow requires copying the laptop's credential cache. Both authenticate
+the persistent `duckterm` OS user, not the administrative SSH user.
+
+Install Codex's matching `codex-code-mode-host` with `infra/linux/install-tools.py`.
+Ubuntu 24.04 also needs the distribution `bubblewrap` package and its AppArmor
+profile, configured by `infra/gcp/bootstrap.sh`. Keep the host-wide unprivileged
+namespace restriction enabled. Verify a real sandboxed terminal command as well
+as login; a text-only model request does not exercise these prerequisites.
+
 ## Service lifecycle
 
 `infra/linux/install-workspace.sh` installs a built source distribution and the
@@ -45,10 +66,15 @@ JSON through stdin to `gcloud secrets versions add --data-file=-`. Do not paste
 secrets into chat, shell arguments, source files, or the agent terminal.
 GitHub/Railway payloads are `{"token":"…"}`; Porkbun also needs `"secret":"…"`.
 The account or workspace Railway API token is required, not a project token.
+`infra/gcp/connect-github.py` offers explicit reuse of the Mac's GitHub CLI
+authorization or a separate token, displays the verified identity, then uploads
+directly to Secret Manager. Reusing authorization shares permissions and provider
+revocation with the Mac. This development project's active GitHub version is 2;
+version 1 was a synthetic QA credential and has been destroyed.
 Then, through administrator SSH on the connector VM:
 
 ```sh
-sudo /opt/duckterm/venv/bin/duckterm connector-admin github --version=1
+sudo /opt/duckterm/venv/bin/duckterm connector-admin github --version=2
 sudo /opt/duckterm/venv/bin/duckterm connector-admin porkbun --version=1
 # Enable writes only when explicitly intended:
 sudo /opt/duckterm/venv/bin/duckterm connector-admin porkbun --version=1 --write-access

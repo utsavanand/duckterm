@@ -9,6 +9,11 @@ import urllib.request
 from pathlib import Path
 
 TOOLS = {
+    "codex-code-mode-host": (
+        "https://github.com/openai/codex/releases/download/rust-v0.155.1/codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz",
+        "9fd083743af55be818aceb351d371fb5136f5b6aa3938f167087373d27067b2d",
+        "codex-code-mode-host-x86_64-unknown-linux-musl",
+    ),
     "codex": (
         "https://github.com/openai/codex/releases/download/rust-v0.155.1/codex-x86_64-unknown-linux-musl.tar.gz",
         "a0ef8b2debc3bf747e07b1a039354de31300ac0dcc2276498ba281470b5d9115",

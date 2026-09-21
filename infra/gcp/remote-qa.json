@@ -1,0 +1,38 @@
+{
+  "checkedAtUtc": "2026-09-21T05:49:46.147325+00:00",
+  "project": "duckterm-20260920",
+  "automated": {
+    "python": 401,
+    "frontend": 51,
+    "playwright": 32,
+    "nativeUnit": 2
+  },
+  "livePassed": [
+    "native automatic SSH reconnect after tunnel termination",
+    "two persistent pane PIDs survived workspace service restart",
+    "concurrent Claude and Codex sessions each created and tested Python programs",
+    "finished coding sessions reported terminated",
+    "GitHub get_me over mutual TLS as utsavanand",
+    "GitHub disable closed live stream and rejected new stream",
+    "GitHub re-enabled using pinned secret version 2",
+    "native Keychain create/read/update/delete with synthetic credential",
+    "remote dashboard listed both completed coding sessions"
+  ],
+  "pending": [
+    "interactive native host switching",
+    "VM reboot recovery after overnight test",
+    "extended connector rotation/failure tests",
+    "overnight persistence result",
+    "reconcile main checkout uncommitted work before merge"
+  ],
+  "deferred": [
+    "Railway live provider QA: user selected GitHub first",
+    "Porkbun live provider QA: user selected GitHub first"
+  ],
+  "overnight": {
+    "status": "scheduled-not-yet-passed",
+    "scheduledUtc": "2026-09-21T13:11:51Z",
+    "unit": "duckterm-overnight-qa.service"
+  },
+  "mergedToMain": false
+}

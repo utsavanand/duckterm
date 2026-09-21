@@ -30,9 +30,13 @@
       "duckterm-porkbun"
     ],
     "agentVmMayAccessSecrets": false,
-    "credentialVersionsCreated": 0,
-    "brokerDeployed": false,
-    "brokerSecretAccess": "secretAccessor on the three connector entries only"
+    "credentialVersionsCreated": 2,
+    "brokerDeployed": true,
+    "brokerSecretAccess": "secretAccessor on the three connector entries only",
+    "githubVersion": 2,
+    "destroyedSyntheticVersions": [
+      "duckterm-github/versions/1"
+    ]
   },
   "estimatedMonthlyUsdBeforeCredits": {
     "compute730Hours": 24.46,
@@ -42,7 +46,6 @@
     "excluded": [
       "network egress",
       "taxes",
-      "future connector-service compute",
       "model-provider charges"
     ],
     "connectorVmAdditional": 10.17,
@@ -77,6 +80,6 @@
     "allowedClientTag": "duckterm-agent",
     "tlsPort": 8443,
     "tlsClientAuthentication": "required",
-    "providerCredentialsAdded": false
+    "providerCredentialsAdded": true
   }
 }

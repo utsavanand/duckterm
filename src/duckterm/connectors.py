@@ -447,6 +447,11 @@ def run(name: str) -> None:
     # Keep the supervisor alive so Disable closes already-running MCP processes.
     # New process group also owns descendants; no PID files or PID-reuse hazards.
     proc = subprocess.Popen(argv, env=env, start_new_session=True)
+
+    def stop(_signal: int, _frame: object) -> None:
+        raise SystemExit(0)
+
+    previous = signal.signal(signal.SIGTERM, stop)
     try:
         while proc.poll() is None:
             latest = policy(name)
@@ -454,11 +459,14 @@ def run(name: str) -> None:
                 break
             time.sleep(0.2)
     finally:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGTERM)
-        try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
             proc.wait(timeout=2)
-        except subprocess.TimeoutExpired:
+        # A parent can exit while a descendant ignores TERM and retains credentials.
+        with contextlib.suppress(ProcessLookupError):
             os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
+        proc.wait()
+        signal.signal(signal.SIGTERM, previous)
     raise SystemExit(proc.returncode or 0)

@@ -7,6 +7,13 @@ and initial provisioning. The live environment and completed infrastructure
 checks are recorded in [gcp-development-environment.md](gcp-development-environment.md).
 Application implementation and its QA remain separate from this completed setup.
 
+Current evidence: [remote-qa.json](../infra/gcp/remote-qa.json). Both remote
+provider logins, concurrent coding tasks, real GitHub execution and disable,
+and native automatic SSH reconnect have passed. Interactive Mac QA, reboot,
+extended failure coverage, overnight verification, and main reconciliation
+remain. GitHub is the selected first live connector; Railway and Porkbun remain
+disconnected and are not claimed as live-validated.
+
 ## Outcome and scope
 
 Duckterm connects to a persistent Linux computer belonging to one user. The
@@ -105,9 +112,11 @@ credential, not a zero-consent login shortcut.
 
 ### 2. Make connector identity and credential storage explicit
 
-- SQLite stores connector ID, selected credential source, account identity,
-  enabled state, write mode, secret reference, and validation status. It stores
-  no plaintext token, OAuth refresh token, or private key.
+- Connector policy stores IDs, selected credential source, identity, enabled
+  state, and write mode in JSON metadata. Hosted secret references and permission
+  policy live in the root-owned broker configuration. SQLite holds session
+  history. None of these stores contains plaintext provider tokens, OAuth
+  refresh tokens, or private keys.
 - Replace implicit GitHub CLI precedence with an explicit source choice. Resolve
   and display the selected account; show unverified/offline rather than claiming
   successful validation when the provider cannot be reached.

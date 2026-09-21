@@ -11,4 +11,5 @@ python3 -m venv /opt/duckterm/venv
 install -d -o duckterm -g duckterm -m 0700 /home/duckterm/projects /home/duckterm/.duckterm
 install -m 0644 "$SOURCE_DIR/infra/linux/duckterm.service" /etc/systemd/system/duckterm.service
 systemctl daemon-reload
-systemctl enable --now duckterm.service
+systemctl enable duckterm.service
+systemctl restart duckterm.service
