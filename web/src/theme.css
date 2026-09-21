@@ -529,6 +529,42 @@ code,
   color: var(--brand-green);
   flex-shrink: 0;
 }
+.rd-history-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--bg-soft);
+  border-radius: 10px;
+  padding: 1px 7px;
+  margin-left: 6px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+/* Buckets grow forever — each scrolls on its own past ~8 items. */
+.rd-history-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+}
+.rd-history-bucket li.done {
+  color: var(--muted);
+}
+.rd-history-bucket li.done .rd-history-item-text {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent);
+}
+.rd-history-bucket li.done .rd-history-mark {
+  color: var(--muted);
+}
+.rd-history-item-text {
+  flex: 1;
+}
+.rd-history-when {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, Menlo, monospace;
+  flex-shrink: 0;
+  align-self: baseline;
+}
 .rd-history-checkpoint {
   margin: 0 0 12px;
 }

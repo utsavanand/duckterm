@@ -55,14 +55,16 @@ from duckterm.core import events, progress
 from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
+from duckterm.core.session_api import MAX_BODY_BYTES, APIError
 from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
 from duckterm.harnesses import infer_runtime, runtime_for
-from duckterm.helpers import browse, instance, security
+from duckterm.helpers import browse, instance, security, session_credentials
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
+from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime
@@ -180,6 +182,8 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/annotations")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._list_checkpoints(w, seg),
           **_mid("/sessions/", "/checkpoints")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._session_digest(w, seg),
+          **_mid("/sessions/", "/digest")),
     # ── control ──
     Route("POST", "/sessions/launch", lambda s, r, w, h, b, seg: s._launch(w, b)),
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
@@ -269,6 +273,8 @@ class Server:
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
+        # Durable digest archive (deliverables/learnings/next actions as rows).
+        self.digests = DigestStore()
         self.token = security.load_or_create_token()
         # transcript path -> (mtime, context_tokens): /sessions is fetched
         # often and an unchanged transcript can't have new usage.
@@ -1246,6 +1252,7 @@ class Server:
         self._remove_worktree(row)
         deleted = self.history.delete_session(session_key, now=int(time.time() * 1000))
         self.approvals.drop_session(session_key)
+        self.digests.delete_session(session_key)
         return deleted
 
     def _worktree_path_of(self, row: dict[str, Any] | None) -> Path | None:
@@ -1365,7 +1372,24 @@ class Server:
         digest = progress.parse(summary.text)
         if digest is None:
             return
-        self.history.set_progress(session_key, json.dumps(digest), int(time.time() * 1000))
+        now = int(time.time() * 1000)
+        self.history.set_progress(session_key, json.dumps(digest), now)
+        # Validate before archiving: L1 (each item makes sense on its own) +
+        # L2 (compared against what's already stored) in one summarizer call.
+        # A failed/garbled validation falls back to a code-only merge — the
+        # store's normalized-text dedup still applies, and losing a digest to
+        # a flaky validator would be worse than an occasional near-duplicate.
+        existing = self.digests.items(session_key)
+        verdict_reply = await asyncio.to_thread(
+            summarize, progress.validate_prompt(digest, existing)
+        )
+        verdicts = progress.parse_verdicts(verdict_reply.text) or progress.fallback_verdicts(digest)
+        self.digests.merge(session_key, verdicts["accept"], verdicts["done_next_action_ids"], now)
+
+    async def _session_digest(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        """The accumulated, validated digest archive for a session — the
+        History tab's growing lists (latest summary rides the session row)."""
+        await _write_json(writer, 200, {"items": self.digests.items(session_key)})
 
     def _progress_transcript(self, row: dict[str, Any]) -> list[dict[str, str]]:
         """Conversation records for the digest: the harness transcript when one

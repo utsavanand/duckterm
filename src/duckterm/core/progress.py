@@ -91,3 +91,72 @@ def parse(text: str) -> dict[str, Any] | None:
     if not digest["summary"] and not any(digest[k] for k in KEYS):
         return None
     return digest
+
+
+# ── validation: L1 (does each item make sense on its own) + L2 (compare
+#    against what's already stored) — one summarizer call for both ──
+
+_VALIDATE_PROMPT = """You are validating a candidate progress digest before it is stored.
+
+L1 — judge each CANDIDATE item on its own: reject items that are vague
+("made progress"), not concrete, or restate another candidate.
+L2 — compare candidates against the EXISTING stored items: reject candidates
+that duplicate or merely rephrase an existing item; separately, list the ids
+of existing next_actions that the candidates imply are now completed (they
+typically reappear as deliverables).
+
+Return STRICT JSON only, exactly this shape:
+{"accept": [{"bucket": "...", "text": "..."}],
+ "reject": [{"text": "...", "reason": "..."}],
+ "done_next_action_ids": ["..."]}
+Buckets are: deliverables, learnings, user_learnings, next_actions.
+When unsure whether an item is a duplicate, reject it — the archive already
+has it. Keep accepted text verbatim from the candidate.
+
+CANDIDATE ITEMS:
+{candidate}
+
+EXISTING STORED ITEMS (id | bucket | status | text):
+{existing}
+"""
+
+
+def candidate_items(digest: dict[str, Any]) -> list[dict[str, str]]:
+    """Flatten a parsed digest into (bucket, text) items for validation."""
+    return [{"bucket": bucket, "text": text} for bucket in KEYS for text in digest.get(bucket, [])]
+
+
+def validate_prompt(digest: dict[str, Any], existing: list[dict[str, Any]]) -> str:
+    cand = json.dumps(candidate_items(digest))
+    rows = (
+        "\n".join(f"{r['id']} | {r['bucket']} | {r['status']} | {r['text']}" for r in existing)
+        or "(none yet)"
+    )
+    return _VALIDATE_PROMPT.replace("{candidate}", cand).replace("{existing}", rows)
+
+
+def parse_verdicts(text: str) -> dict[str, Any] | None:
+    """The validator's reply, or None when unusable (caller falls back to
+    the code-only merge — validation failing must never lose a digest)."""
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match is None:
+        return None
+    try:
+        raw = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw, dict) or not isinstance(raw.get("accept"), list):
+        return None
+    accept = [
+        {"bucket": str(i.get("bucket", "")), "text": str(i.get("text", "")).strip()}
+        for i in raw["accept"]
+        if isinstance(i, dict) and str(i.get("text", "")).strip()
+    ]
+    done = [str(i) for i in raw.get("done_next_action_ids", []) if str(i).strip()]
+    return {"accept": accept, "done_next_action_ids": done}
+
+
+def fallback_verdicts(digest: dict[str, Any]) -> dict[str, Any]:
+    """Code-only merge when the validator call fails: accept everything (the
+    store's normalized-text dedup still applies), complete nothing."""
+    return {"accept": candidate_items(digest), "done_next_action_ids": []}
