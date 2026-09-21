@@ -18,6 +18,8 @@ Latest product direction: launch destination belongs in **New session → Run on
 connection management belongs in **Settings → Remote computers**. The user also
 requested **Move to remote** on an existing session. That transfer/resume flow
 is now in scope and must preserve the local session until remote success.
+Project selection, transfer semantics, portability evidence, and acceptance
+tests are specified in [remote-project-migration.md](remote-project-migration.md).
 
 ## Outcome and scope
 

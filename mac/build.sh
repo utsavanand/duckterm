@@ -35,6 +35,11 @@ APP="build/$APP_NAME.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 
+if [[ "$TEST_BUILD" == 1 ]]; then
+  echo "==> building Test dashboard"
+  (cd ../web && npm run build --silent)
+fi
+
 echo "==> compiling"
 rm -rf "$APP"
 mkdir -p "$MACOS" "$CONTENTS/Resources"
@@ -87,6 +92,10 @@ from pathlib import Path
 contents = Path(sys.argv[1])
 shutil.copytree('../src/duckterm', contents / 'Resources/backend/duckterm',
                 ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+dashboard = contents / 'Resources/backend/duckterm/dashboard'
+if dashboard.exists():
+    shutil.rmtree(dashboard)
+shutil.copytree('../web/dist', dashboard)
 with (contents / 'Info.plist').open('rb') as f:
     info = plistlib.load(f)
 info['DucktermTestBuild'] = True

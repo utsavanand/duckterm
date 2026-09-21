@@ -1,11 +1,11 @@
 {
-  "checkedAtUtc": "2026-09-21T05:49:46.147325+00:00",
+  "checkedAtUtc": "2026-09-21T06:49:31.460451+00:00",
   "project": "duckterm-20260920",
   "automated": {
-    "python": 401,
-    "frontend": 53,
-    "playwright": 33,
-    "nativeUnit": 2
+    "python": 486,
+    "frontend": 61,
+    "playwright": 36,
+    "nativeUnit": 4
   },
   "livePassed": [
     "native automatic SSH reconnect after tunnel termination",
@@ -18,7 +18,10 @@
     "native Keychain create/read/update/delete with synthetic credential",
     "remote dashboard listed both completed coding sessions",
     "actual WKWebView Run on selection delivered correct draft to native bridge",
-    "Claude resumed a synthetic Mac transcript on Linux and recalled its exact marker"
+    "Claude resumed a synthetic Mac transcript on Linux and recalled its exact marker",
+    "Codex resumed one synthetic Mac rollout by exact UUID on Linux and recalled its exact marker",
+    "actual WKWebView browsed remote folders and launched a print command without switching dashboards until launch success",
+    "user confirmed Remote destination and Browse in New session"
   ],
   "pending": [
     "interactive native host switching",
@@ -26,7 +29,8 @@
     "extended connector rotation/failure tests",
     "overnight persistence result",
     "reconcile main checkout uncommitted work before merge",
-    "existing-session migration implementation and Codex portability"
+    "project copy/clone and full existing-session migration implementation",
+    "user acceptance of stable destination form"
   ],
   "deferred": [
     "Railway live provider QA: user selected GitHub first",

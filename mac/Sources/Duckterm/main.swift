@@ -9,8 +9,11 @@ import UserNotifications
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var remote: RemoteConnection?
     private var hosts = RemoteHost.load()
+    private var launchConnections: [String: RemoteConnection] = [:]
+    private let launchAPI = LaunchDestination()
     private var connectionGeneration = 0
     private let server = ServerProcess()
+    private var localStart: Task<Bool, Never>?
     private var poller: SessionPoller?
     private var window: DashboardWindow?
     private var notified = Set<String>()  // waiting keys we've already alerted on
@@ -30,7 +33,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if target == "add" { self.addHost(launchDraft: draft); return }
             let host = self.hosts.first { $0.target == target }
             guard target == "local" || host != nil else { return }
-            self.switchHost(host, launchDraft: draft)
+            self.switchHost(host, launchDraft: draft.isEmpty ? nil : draft)
+        }
+        window?.onLaunchRequest = { [weak self] target, operation, params in
+            guard let self else { throw LaunchDestination.Failure.message("App closed") }
+            let base: URL
+            if target == "local" {
+                _ = await self.ensureLocalServer()
+                base = self.server.url
+            } else if let active = self.remote, active.host.target == target {
+                base = active.url
+            } else {
+                guard let host = self.hosts.first(where: { $0.target == target }) else {
+                    throw LaunchDestination.Failure.message("Unknown computer")
+                }
+                if self.launchConnections[target] == nil {
+                    let connection = try RemoteConnection(host: host)
+                    self.launchConnections[target] = connection
+                    connection.start()
+                }
+                base = self.launchConnections[target]!.url
+            }
+            return try await self.launchAPI.perform(base: base, operation: operation, params: params)
         }
         window?.show()  // open the dashboard window on launch
         NSApp.activate(ignoringOtherApps: true)
@@ -42,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ note: Notification) {
         poller?.stop()
         remote?.stop()
+        launchConnections.values.forEach { $0.stop() }
         server.stop()
     }
 
@@ -54,6 +79,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag { window?.show() }
         return true
+    }
+
+    private func ensureLocalServer() async -> Bool {
+        if let localStart { return await localStart.value }
+        let pending = Task { await server.start() }
+        localStart = pending
+        defer { localStart = nil }
+        return await pending.value
     }
 
     private func startPolling() {
@@ -134,20 +167,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         remote = nil
         if let host {
             do {
-                let connection = try RemoteConnection(host: host)
+                let prepared = launchConnections.removeValue(forKey: host.target)
+                let connection = try prepared ?? RemoteConnection(host: host)
                 remote = connection
                 window?.connect(url: connection.url, remote: true, title: "\(AppIdentity.name) · \(host.name) · Connecting")
                 connection.onStatus = { [weak self] status, _ in
                     guard let self, self.connectionGeneration == generation else { return }
                     self.window?.setTitle("\(AppIdentity.name) · \(host.name) · \(status)")
                 }
-                connection.start()
+                if prepared == nil { connection.start() }
                 startPolling()
             } catch { showConnectionError(error) }
         } else {
             window?.connect(url: server.url, remote: false, title: "\(AppIdentity.name) · This Mac")
             Task {
-                _ = await server.start()
+                _ = await ensureLocalServer()
                 guard self.connectionGeneration == generation else { return }
                 self.startPolling()
             }

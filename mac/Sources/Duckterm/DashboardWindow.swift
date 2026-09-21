@@ -4,7 +4,7 @@ import WebKit
 /// A single window hosting the dashboard in a WKWebView. Reused across opens —
 /// clicking the menu item brings the existing window forward rather than
 /// spawning duplicates.
-final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
     private var window: NSWindow?
     private var web: WKWebView?
     private var url: URL
@@ -12,6 +12,8 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     var desktopTarget = "local"
     var launchDraft: [String: String]?
     var onChooseLaunchTarget: ((String, [String: String]) -> Void)?
+
+    var onLaunchRequest: ((String, String, [String: Any]) async throws -> Any)?
 
     private func desktopScript() -> WKUserScript {
         var state: [String: Any] = [
@@ -29,6 +31,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     private func configureDesktop(_ config: WKWebViewConfiguration) {
         config.userContentController.addUserScript(desktopScript())
         config.userContentController.add(self, name: "remoteSession")
+        config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "launchRequest")
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -45,6 +48,28 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
               Set(draft.keys).isSubset(of: ["agent", "command", "name", "prompt"]),
               draft.values.allSatisfy({ $0.utf8.count <= 16384 }) else { return }
         onChooseLaunchTarget?(target, draft)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage,
+                               replyHandler: @escaping (Any?, String?) -> Void) {
+        let origin = message.frameInfo.securityOrigin
+        guard message.webView === web, message.frameInfo.isMainFrame,
+              origin.protocol == url.scheme, origin.host == url.host, origin.port == url.port,
+              let body = message.body as? [String: Any],
+              let target = body["target"] as? String,
+              target == "local" || desktopHosts.contains(where: { $0.target == target }),
+              let operation = body["operation"] as? String,
+              ["browse", "branches", "themes", "launch"].contains(operation),
+              let params = body["params"] as? [String: Any],
+              let encoded = try? JSONSerialization.data(withJSONObject: params), encoded.count <= 65536,
+              let handler = onLaunchRequest else {
+            replyHandler(nil, "Invalid launch request"); return
+        }
+        Task { @MainActor in
+            do { replyHandler(try await handler(target, operation, params), nil) }
+            catch { replyHandler(nil, error.localizedDescription) }
+        }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

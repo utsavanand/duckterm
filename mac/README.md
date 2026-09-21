@@ -43,7 +43,8 @@ building production preserves `RubberTerm Test.app`.
 
 Click **New session**, then choose the destination under **Run on**. Pick
 **This Mac** or a saved **Remote** computer. The agent, task name, and prompt
-carry over; choose a folder on the destination computer before launching.
+stay in the same form; choose a folder on the destination computer before launching.
+The underlying dashboard changes only after the new session starts successfully.
 Folders and sidebar groups from one computer are not silently reused on another.
 
 For the configured development deployment, build with:
@@ -53,8 +54,7 @@ DUCKTERM_TEST_REMOTE_HOST=duckterm-dev mac/build.sh --test --run
 ```
 
 This seeds the development host when the Test app has no saved connections.
-Other hosts can be added directly from **Run on → Connect a remote computer…**
-or managed under **Settings → Remote computers**. Verify a new host's SSH key
+Add and manage other hosts under **Settings → Remote computers**. Verify a new host's SSH key
 and authentication first. There is no Command-Shift-K shortcut; another app
 may register that key combination globally.
 

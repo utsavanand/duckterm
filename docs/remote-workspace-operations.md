@@ -5,8 +5,9 @@ duck and TEST badge distinguish it from the production app. Follow the
 [test-to-production workflow](../mac/README.md) before promotion.
 
 Choose **New session → Run on → This Mac / Remote** to start an agent on the
-selected computer. The form preserves its agent/name/prompt when switching;
-the folder picker always browses the destination. Manage saved connections
+selected computer. The form stays mounted and preserves its agent/name/prompt;
+the folder picker always browses the destination. The dashboard changes only
+after successful launch. Cancel leaves it unchanged. Manage saved connections
 under **Settings → Remote computers**. Verify new hosts in Terminal first;
 the app never accepts unknown or changed host keys. SSH credentials remain in
 SSH configuration/agent. The selected computer is remembered; notifications
