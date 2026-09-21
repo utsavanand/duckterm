@@ -59,11 +59,19 @@ export function AgentTree({
     }
   }
 
-  // Drag one folder onto another to nest it; onto the root zone to un-nest.
+  // Drag one folder onto another to nest it; onto the root zone (or the ⬆
+  // header button) to un-nest.
   async function moveFolder(name: string, parent: string) {
     if (name === parent || parent.startsWith(name + "/")) return;
     try {
       const r = await api.moveFolder(name, parent);
+      // Sessions follow the move server-side; mirror locally or they'd render
+      // under a group path that no longer exists (invisible until reload).
+      for (const s of sessions) {
+        if (s.group === name) onSessionMoved(s.key, r.to);
+        else if (s.group?.startsWith(name + "/"))
+          onSessionMoved(s.key, r.to + s.group.slice(name.length));
+      }
       toast(`Moved to ${r.to}`);
       onFoldersChanged();
     } catch (e) {
@@ -154,6 +162,11 @@ export function AgentTree({
       onFork={onFork}
       onDelete={onDelete}
       onRename={onRename}
+      onUngroup={
+        node.session.group
+          ? () => moveToGroup(node.session.key, "")
+          : undefined
+      }
     />
   );
 
@@ -191,6 +204,7 @@ export function AgentTree({
       onRename={() => renameFolder(path)}
       onNewSubfolder={() => createSubfolder(path)}
       onNewSession={() => onNewSessionIn(path)}
+      onUnnest={path.includes("/") ? () => moveFolder(path, "") : undefined}
       onOpenGrid={() => onOpenGrid(path)}
       theme={folderThemes[path]}
       onSetTheme={(t) => onSetFolderTheme(path, t)}
@@ -232,6 +246,7 @@ function GroupHeader({
   onRename,
   onNewSubfolder,
   onNewSession,
+  onUnnest,
   onOpenGrid,
   theme,
   onSetTheme,
@@ -247,6 +262,7 @@ function GroupHeader({
   onDropFolder: (name: string, parent: string) => void;
   onNewSubfolder: () => void;
   onNewSession: () => void;
+  onUnnest?: () => void; // set only for nested folders
   onOpenGrid: () => void;
   theme: string | undefined;
   onSetTheme: (theme: string | null) => void;
@@ -330,6 +346,18 @@ function GroupHeader({
         >
           ⛶
         </button>
+        {onUnnest && (
+          <button
+            className="rd-group-unnest"
+            title="Move this folder to the top level"
+            onClick={(e) => {
+              e.stopPropagation();
+              onUnnest();
+            }}
+          >
+            ⬆
+          </button>
+        )}
         <button
           className="rd-group-rename"
           title="Rename this folder (double-clicking the name works too)"
@@ -456,6 +484,7 @@ function TreeRow({
   onFork,
   onDelete,
   onRename,
+  onUngroup,
 }: {
   node: Node;
   depth: number;
@@ -467,6 +496,7 @@ function TreeRow({
   onFork: (key: string) => void;
   onDelete: (key: string) => Promise<boolean>;
   onRename: (key: string, name: string) => void;
+  onUngroup?: () => void; // set only for grouped root sessions
 }) {
   const toast = useToast();
   const s = node.session;
@@ -727,6 +757,15 @@ function TreeRow({
           >
             Rename
           </button>
+          {onUngroup && (
+            <button
+              className="rd-btn rd-btn-sm rd-btn-ghost"
+              title="Move this session out of its folder (dragging onto UNGROUPED works too)"
+              onClick={onUngroup}
+            >
+              Ungroup
+            </button>
+          )}
           {/* One branching action: the modal offers a git worktree fork (or
               promotes an in-place session onto a branch) and, for claude-code,
               a conversation-only fork. */}

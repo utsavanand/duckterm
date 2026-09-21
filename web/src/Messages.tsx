@@ -19,6 +19,8 @@ interface Message {
   blocks: Block[];
 }
 
+let mermaidSeq = 0; // unique ids for mermaid.render across re-renders
+
 interface Selection {
   quote: string;
   x: number;
@@ -56,6 +58,46 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
       setSending(false);
     }
   }
+
+  // Render mermaid fences into diagrams. The library is a lazy chunk,
+  // imported only when a message actually contains one; a failed render
+  // leaves the source visible as code instead of a blank box.
+  useEffect(() => {
+    const blocks = wrapRef.current?.querySelectorAll<HTMLElement>(
+      "pre.rd-mermaid:not([data-rendered])",
+    );
+    if (!blocks || blocks.length === 0) return;
+    let live = true;
+    import("mermaid").then(async ({ default: mermaid }) => {
+      if (!live) return;
+      const dark =
+        document.documentElement.getAttribute("data-theme") !== "light";
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: dark ? "dark" : "default",
+      });
+      for (const el of [...blocks]) {
+        el.setAttribute("data-rendered", "1");
+        const src = el.textContent ?? "";
+        try {
+          const { svg } = await mermaid.render(
+            `rdm-${++mermaidSeq}`,
+            src,
+          );
+          const host = document.createElement("div");
+          host.className = "rd-mermaid-svg";
+          host.innerHTML = svg;
+          el.replaceWith(host);
+        } catch {
+          // invalid diagram — keep the readable code block
+        }
+      }
+    });
+    return () => {
+      live = false;
+    };
+  });
 
   // Capture a text selection inside the messages and anchor a note popover to it.
   const onMouseUp = () => {

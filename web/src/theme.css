@@ -291,6 +291,14 @@ code,
 :root[data-theme="dark"] .rd-msg-text strong {
   color: #ffffff; /* bold should pop off the softened body gray */
 }
+.rd-mermaid-svg {
+  margin: 0 0 14px;
+  overflow-x: auto;
+}
+.rd-mermaid-svg svg {
+  max-width: 100%;
+  height: auto;
+}
 .rd-msg-text hr {
   border: none;
   border-top: 1px solid var(--border);
@@ -2022,6 +2030,7 @@ select {
 .rd-group-grid,
 .rd-group-rename,
 .rd-group-subfolder,
+.rd-group-unnest,
 .rd-group-add {
   border: none;
   background: transparent;
@@ -2036,17 +2045,20 @@ select {
    it's the primary action. */
 .rd-group-rename,
 .rd-group-subfolder,
+.rd-group-unnest,
 .rd-group-grid {
   display: none;
 }
 .rd-group-head:hover .rd-group-rename,
 .rd-group-head:hover .rd-group-subfolder,
+.rd-group-head:hover .rd-group-unnest,
 .rd-group-head:hover .rd-group-grid {
   display: inline-block;
 }
 .rd-group-grid:hover,
 .rd-group-rename:hover,
 .rd-group-subfolder:hover,
+.rd-group-unnest:hover,
 .rd-group-add:hover {
   color: var(--text);
 }

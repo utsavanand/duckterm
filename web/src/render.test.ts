@@ -23,3 +23,10 @@ describe("html (markdown rendering)", () => {
     expect(out).not.toContain("onerror");
   });
 });
+
+it("tags mermaid fences for client-side rendering instead of highlighting", () => {
+  const out = html("```mermaid\nflowchart LR\n  A[App] <--> B[Server]\n```");
+  expect(out).toContain('class="rd-mermaid"');
+  expect(out).toContain("A[App] &lt;--&gt; B[Server]"); // escaped, still readable
+  expect(out).not.toContain("hljs-");
+});

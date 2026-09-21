@@ -47,6 +47,12 @@ function escapeHtml(s: string): string {
 marked.use({
   renderer: {
     code({ text, lang }: { text: string; lang?: string }) {
+      // Mermaid fences render as diagrams client-side (Messages lazy-loads
+      // the mermaid chunk only when one exists). Emit the source escaped in
+      // a tagged block; invalid diagrams stay readable as code.
+      if (lang === "mermaid") {
+        return `<pre class="rd-mermaid"><code>${escapeHtml(text)}</code></pre>\n`;
+      }
       const language = lang && hljs.getLanguage(lang) ? lang : null;
       const body = language
         ? hljs.highlight(text, { language }).value

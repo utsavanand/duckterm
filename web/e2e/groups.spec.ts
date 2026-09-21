@@ -97,3 +97,49 @@ test("double-click renames a folder and its session follows", async ({
   const body = page.locator(".rd-group", { hasText: to });
   await expect(body.locator(".rd-row", { hasText: key })).toBeVisible();
 });
+
+// Ungroup via the row's explicit button (drag-to-UNGROUPED also works, but a
+// visible control is the discoverable path).
+test("Ungroup button moves a session out of its folder", async ({ page }) => {
+  const key = `e2e-ung-${Date.now()}`;
+  await seedSession(key, { name: key, group: `Grp-${Date.now()}` });
+
+  await page.goto("/");
+  const row = page.locator(".rd-row", { hasText: key });
+  await expect(row).toBeVisible();
+  await row.hover();
+  await row.getByRole("button", { name: "Ungroup" }).click();
+
+  // The row now renders in the root drop zone, not inside any folder body.
+  await expect(
+    page.locator(".rd-group-body .rd-row", { hasText: key }),
+  ).toHaveCount(0);
+  await expect(page.locator(".rd-row", { hasText: key })).toBeVisible();
+});
+
+// Un-nest a folder to the top level via its header button.
+test("nested folder moves to top level via the unnest button", async ({
+  page,
+}) => {
+  const key = `e2e-unn-${Date.now()}`;
+  const parent = `Top-${Date.now()}`;
+  await seedSession(key, { name: key, group: `${parent}/Inner` });
+
+  await page.goto("/");
+  const inner = page.locator(".rd-group-head", { hasText: "Inner" });
+  await expect(inner).toBeVisible();
+  await inner.hover();
+  await inner.locator(".rd-group-unnest").click();
+
+  // Inner is now a top-level folder (base padding, no parent prefix).
+  await expect
+    .poll(() =>
+      page
+        .locator(".rd-group-head", { hasText: "Inner" })
+        .evaluate((el) => parseInt(getComputedStyle(el).paddingLeft)),
+    )
+    .toBe(14);
+  // Its session followed the move.
+  const body = page.locator(".rd-group", { hasText: "Inner" });
+  await expect(body.locator(".rd-row", { hasText: key })).toBeVisible();
+});
