@@ -55,11 +55,12 @@ from duckterm.core import events, progress
 from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
+from duckterm.core.session_api import MAX_BODY_BYTES, APIError
 from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
 from duckterm.harnesses import infer_runtime, runtime_for
-from duckterm.helpers import browse, instance, security
+from duckterm.helpers import browse, instance, security, session_credentials, session_instructions
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
@@ -151,6 +152,10 @@ def _mid(prefix: str, suffix: str) -> dict[str, str]:
 
 # fmt: off
 _ROUTES: list[Route] = [
+    Route("POST", "", lambda s, r, w, h, b, seg: s._introduce_collaboration(w, seg, send=False),
+          **_mid("/sessions/", "/collaboration/instructions")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._introduce_collaboration(w, seg),
+          **_mid("/sessions/", "/collaboration/introduce")),
     # ── ingest ──
     Route("POST", "/events", lambda s, r, w, h, b, seg: s._ingest(w, b)),
     Route("POST", "/heartbeat", lambda s, r, w, h, b, seg: s._heartbeat(w, b)),
@@ -173,6 +178,8 @@ _ROUTES: list[Route] = [
     Route("GET", "", lambda s, r, w, h, b, seg: s._diff(w, seg), **_mid("/sessions/", "/diff")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
           **_mid("/sessions/", "/events")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._session_enroll(w, seg, b),
+          **_mid("/sessions/", "/collaboration")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._messages(w, seg),
           **_mid("/sessions/", "/messages")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._list_annotations(w, seg),
@@ -208,6 +215,7 @@ _ROUTES: list[Route] = [
     Route("POST", "", lambda s, r, w, h, b, seg: s._disable_connector(w, seg),
           **_mid("/connectors/", "/disable")),
     # ── left-panel folders ──
+    Route("GET", "/session-inbox-counts", lambda s, r, w, h, b, seg: s._inbox_counts(w, h)),
     Route("GET", "/folders", lambda s, r, w, h, b, seg: s._list_folders(w)),
     Route("POST", "/folders", lambda s, r, w, h, b, seg: s._create_folder(w, b)),
     Route("PATCH", "", lambda s, r, w, h, b, seg: s._move_folder(w, seg, b),
@@ -334,6 +342,15 @@ class Server:
                 return
             method, path = _parse_request_line(request_line)
             headers = await _read_headers(reader)
+            if path.startswith("/api/v1/session/"):
+                try:
+                    size = int(headers.get("content-length", "0"))
+                except ValueError:
+                    await _write_json(writer, 400, {"error": "invalid content length"})
+                    return
+                if size < 0 or size > MAX_BODY_BYTES:
+                    await _write_json(writer, 413, {"error": "request body too large"})
+                    return
             body = await _read_body(reader, headers)
             await self._dispatch(method, path, reader, writer, headers, body)
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
@@ -357,6 +374,19 @@ class Server:
         if not security.origin_allowed(headers):
             await _write_response(writer, 403, "cross-origin request refused")
             return
+        if path.startswith("/api/v1/session/"):
+            try:
+                status, result = self.history.session_api.handle(method, path, headers, body)
+            except APIError as exc:
+                status, result = exc.status, {"error": str(exc)}
+            await _write_json(writer, status, result)
+            return
+        # A presented agent credential must never fall through to owner routes.
+        if headers.get("authorization", "").startswith("Bearer "):
+            await _write_json(
+                writer, 403, {"error": "session credentials cannot access owner routes"}
+            )
+            return
         # State-changing requests additionally require the per-install secret,
         # which a blind CSRF can't read and therefore can't forge. GETs (the
         # dashboard, static assets, read-only data) stay open so the browser can
@@ -365,6 +395,11 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        inbox_path = urllib.parse.urlsplit(path)
+        inbox_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/inbox", inbox_path.path)
+        if method == "GET" and inbox_match:
+            await self._session_inbox(writer, inbox_match[1], headers, inbox_path.query)
+            return
         for route in self._routes():
             if route.matches(method, path):
                 try:
@@ -490,6 +525,97 @@ class Server:
         detail-drawer timeline. (The /events ring buffer only holds the last 100
         across all sessions, so it can't back a per-session view.)"""
         await _write_json(writer, 200, {"events": self.history.events_for(session_key)})
+
+    async def _inbox_counts(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        await _write_json(writer, 200, {"counts": self.history.session_api.pending_counts()})
+
+    async def _session_inbox(
+        self, writer: asyncio.StreamWriter, session_key: str, headers: dict[str, str], query: str
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            params = urllib.parse.parse_qs(query)
+            before = int(params["before"][0]) if "before" in params else None
+            result = self.history.session_api.inbox(session_key, owner=True, before=before)
+        except ValueError:
+            await _write_json(writer, 400, {"error": "invalid cursor"})
+            return
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
+
+    def _session_env(self, key: str) -> dict[str, str]:
+        return {
+            **session_credentials.launch_env(key),
+            "DUCKTERM_SESSION_TOKEN_FILE": str(
+                session_credentials.credential_path(key, self.history.session_api.credential_dir)
+            ),
+        }
+
+    def _collaboration_prompt(self, runtime: str, key: str, prompt: str = "") -> str:
+        return session_instructions.launch_prompt(
+            runtime, key, prompt, home=self.history.session_api.credential_dir.parent
+        )
+
+    async def _introduce_collaboration(
+        self, writer: asyncio.StreamWriter, session_key: str, *, send: bool = True
+    ) -> None:
+        row = self.history.session(session_key)
+        if row is None:
+            await _write_json(writer, 404, {"error": "session not found"})
+            return
+        if row.get("runtime") not in session_instructions.SUPPORTED_RUNTIMES:
+            await _write_json(
+                writer, 409, {"error": "this runtime has no supported prompt interface"}
+            )
+            return
+        if row.get("state") in AT_REST_STATES:
+            await _write_json(writer, 409, {"error": "Resume the session first"})
+            return
+        supervisor = self.orchestrator.get(session_key)
+        if send and (row.get("state") != "idle" or supervisor is None or not supervisor.running):
+            await _write_json(
+                writer,
+                409,
+                {"error": "Introduction requires an idle agent with a connected terminal"},
+            )
+            return
+        self.history.session_api.ensure(session_key)
+        prompt = (
+            session_instructions.introduction(
+                session_key, home=self.history.session_api.credential_dir.parent
+            )
+            + "\n\nRead these instructions, then continue the user's current task."
+        )
+        if not send:
+            await _write_json(writer, 200, {"prompt": prompt})
+            return
+        assert supervisor is not None
+        # A user-requested follow-up, bracketed as one paste rather than many Enter presses.
+        sent = supervisor.write_bytes(b"\x1b[200~" + prompt.encode() + b"\x1b[201~\r")
+        await _write_json(writer, 200 if sent else 409, {"sent": sent})
+
+    async def _session_enroll(
+        self, writer: asyncio.StreamWriter, session_key: str, body: bytes
+    ) -> None:
+        try:
+            req = json.loads(body or b"{}")
+            if not isinstance(req, dict):
+                raise APIError(400, "expected a JSON object")
+            result = self.history.session_api.enroll(session_key, req)
+        except (ValueError, UnicodeDecodeError):
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
 
     async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """Structured conversation records for the HTML / pagination views: the
@@ -715,16 +841,11 @@ class Server:
         # only kept it as `intention`, so the agent opened with an empty session.
         runtime = _build_runtime(req.get("runtime"), command)
         argv = runtime.launch_command(
-            cwd=Path(run_cwd), session_key=key, initial_prompt=req.get("prompt", "")
+            cwd=Path(run_cwd),
+            session_key=key,
+            initial_prompt=self._collaboration_prompt(runtime.name, key, req.get("prompt", "")),
         )
-        opened = open_in_terminal(
-            str(run_cwd),
-            argv,
-            app=req.get("terminal"),
-            env={"DUCKTERM_SESSION_KEY": key, **extra_env},
-            heartbeat=(instance.heartbeat_url(), key),
-            title=name or repo_name,
-        )
+
         # Record a tracked row so the session shows up with its name/repo/branch.
         # The agent's hooks report under the same key (via DUCKTERM_SESSION_KEY)
         # so they update this row instead of creating a duplicate.
@@ -747,6 +868,14 @@ class Server:
                 "pty_owned": False,
                 "command": command,
             }
+        )
+        opened = open_in_terminal(
+            str(run_cwd),
+            argv,
+            app=req.get("terminal"),
+            env={**self._session_env(key), **extra_env},
+            heartbeat=(instance.heartbeat_url(), key),
+            title=name or repo_name,
         )
         if name or req.get("notes"):
             self.history.set_meta(key, name=name, notes=req.get("notes"))
@@ -838,13 +967,14 @@ class Server:
             if resumed:
                 argv = resumed
                 carried = True
-        opened = open_in_terminal(
-            str(worktree.path),
-            argv,
-            app=req.get("terminal"),
-            env={"DUCKTERM_SESSION_KEY": child_key},
-            heartbeat=(instance.heartbeat_url(), child_key),
-            title=worktree.branch,
+
+        fork_runtime = _build_runtime(parent.get("runtime"), shlex.join(argv))
+        argv = fork_runtime.launch_command(
+            cwd=worktree.path,
+            session_key=child_key,
+            initial_prompt=self._collaboration_prompt(
+                fork_runtime.name, child_key, req.get("prompt", "")
+            ),
         )
         # Record a tracked row so the fork shows its lineage. The agent's hooks
         # report under child_key (via DUCKTERM_SESSION_KEY), updating this row.
@@ -863,6 +993,14 @@ class Server:
                 "pty_owned": False,
                 "command": shlex.join(argv),
             }
+        )
+        opened = open_in_terminal(
+            str(worktree.path),
+            argv,
+            app=req.get("terminal"),
+            env=self._session_env(child_key),
+            heartbeat=(instance.heartbeat_url(), child_key),
+            title=worktree.branch,
         )
         if opened:
             self.history.mark_heartbeat(child_key)
@@ -997,13 +1135,12 @@ class Server:
             return
 
         fork_title = f"{parent.get('source_app') or parent_key} (fork)"
-        opened = open_in_terminal(
-            cwd,
-            argv,
-            app=req.get("terminal"),
-            env={"DUCKTERM_SESSION_KEY": child_key},
-            title=fork_title,
+        argv = _build_runtime("claude-code", shlex.join(argv)).launch_command(
+            cwd=Path(cwd),
+            session_key=child_key,
+            initial_prompt=self._collaboration_prompt("claude-code", child_key),
         )
+
         # Record a row so the conversation fork shows its lineage.
         self.bus.publish(
             {
@@ -1015,6 +1152,13 @@ class Server:
                 "parent_session_key": parent_key,
                 "intention": f"conversation fork of {parent.get('source_app') or parent_key}",
             }
+        )
+        opened = open_in_terminal(
+            cwd,
+            argv,
+            app=req.get("terminal"),
+            env=self._session_env(child_key),
+            title=fork_title,
         )
         self._inherit_group(parent, child_key)
         await _write_json(
@@ -2343,29 +2487,37 @@ class Server:
         # env var) instead of spawning an untracked session. Without the env +
         # heartbeat + SessionStart, the restored agent ran but never showed up.
         key = str(session["session_key"])
+        restore_runtime = _build_runtime(session.get("runtime"), shlex.join(argv))
+        argv = restore_runtime.launch_command(
+            cwd=Path(cwd),
+            session_key=key,
+            initial_prompt=self._collaboration_prompt(restore_runtime.name, key),
+        )
+        self.bus.publish(
+            {
+                "event_type": events.SESSION_START,
+                "session_key": key,
+                "name": session.get("name"),
+                "runtime": session.get("runtime"),
+                "cwd": session.get("cwd"),
+                "worktree_path": session.get("worktree_path"),
+                "branch": session.get("branch"),
+                "source_app": session.get("source_app"),
+                "launched": True,
+            }
+        )
         spawned = open_in_terminal(
             cwd,
             argv,
-            env={"DUCKTERM_SESSION_KEY": key},
+            env=self._session_env(key),
             heartbeat=(instance.heartbeat_url(), key),
             title=session.get("name") or session.get("source_app"),
         )
         if spawned:
             self.history.mark_heartbeat(key)
-            self.bus.publish(
-                {
-                    "event_type": events.SESSION_START,
-                    "session_key": key,
-                    "name": session.get("name"),
-                    "runtime": session.get("runtime"),
-                    "cwd": session.get("cwd"),
-                    "worktree_path": session.get("worktree_path"),
-                    "branch": session.get("branch"),
-                    "source_app": session.get("source_app"),
-                    "launched": True,
-                }
-            )
-        await _write_json(writer, 200, {"restored": spawned, "command": " ".join(argv)})
+        else:
+            self.bus.publish({"event_type": events.SESSION_END, "session_key": key})
+        await _write_json(writer, 200, {"restored": spawned, "command": shlex.join(argv)})
 
     async def _stream(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         writer.write(
@@ -2473,6 +2625,8 @@ class Server:
                 if not at_rest and not row.get("progress"):
                     self._maybe_refresh_progress(str(row["session_key"]))
             server = await asyncio.start_server(self.handle, host, port)
+            actual_port = server.sockets[0].getsockname()[1]
+            self.history.session_api.set_url(f"http://127.0.0.1:{actual_port}")
             if on_listening is not None:
                 on_listening(host, port)
             sweeper = asyncio.create_task(self._sweep_dead_loop())

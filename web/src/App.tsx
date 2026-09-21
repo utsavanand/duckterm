@@ -10,6 +10,8 @@ import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
+import { InboxView } from "./InboxView";
+import { useInboxCounts } from "./useInboxCounts";
 import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
 import { NewFolderModal } from "./NewFolderModal";
@@ -41,8 +43,10 @@ function useNow(intervalMs: number): number {
 }
 
 function Dashboard() {
-  const { sessions, connected, removeSessions, patchSession } =
+  const { sessions: sourceSessions, connected, removeSessions, patchSession } =
     useEventStream();
+  const inboxCounts = useInboxCounts();
+  const sessions = sourceSessions.map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 }));
   const toast = useToast();
   const now = useNow(1000);
   const { theme, resolved: mode, cycle: cycleTheme } = useTheme();
@@ -54,7 +58,7 @@ function Dashboard() {
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
-  const [view, setView] = useState<"terminal" | "messages" | "history">(
+  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox">(
     "terminal",
   );
   // The folder whose terminals are tiled fullscreen; null = grid closed.
@@ -331,6 +335,7 @@ function Dashboard() {
                 folders={folders}
                 selectedKey={selectedKey}
                 onOpen={setSelectedKey}
+                onOpenInbox={(key) => { setSelectedKey(key); setView("inbox"); }}
                 onFork={setForkKey}
                 onDelete={deleteSession}
                 onFoldersChanged={refreshFolders}
@@ -370,6 +375,12 @@ function Dashboard() {
               >
                 History
               </button>
+              <button
+                className={view === "inbox" ? "active" : ""}
+                onClick={() => setView("inbox")}
+              >
+                Inbox{selected && inboxCounts[selected.key] ? ` (${inboxCounts[selected.key]})` : ""}
+              </button>
             </div>
             {/* Messages view: structured HTML render of the latest reply, with
               select-to-annotate. */}
@@ -381,6 +392,15 @@ function Dashboard() {
             {view === "history" && selected && (
               <div className="rd-messages-wrap">
                 <HistoryView session={selected} />
+              </div>
+            )}
+            {view === "inbox" && (
+              <div className="rd-messages-wrap">
+                {selected ? (
+                  <InboxView key={selected.key} session={{ ...selected, state: effectiveState(selected, now) }} />
+                ) : (
+                  <p className="rd-panel-empty">Select a session to see its inbox.</p>
+                )}
               </div>
             )}
             {/* Terminal view: keep a terminal MOUNTED per PTY-owned agent and just
@@ -401,12 +421,12 @@ function Dashboard() {
                 <Terminal sessionKey={s.key} theme={themeFor(s)} />
               </div>
             ))}
-            {selected && !selected.ptyOwned && !selected.worktreePath && (
+            {view === "terminal" && selected && !selected.ptyOwned && !selected.worktreePath && (
               <div className="rd-panel-empty">
                 This agent isn’t running in a terminal Duckterm owns.
               </div>
             )}
-            {!selected && (
+            {view === "terminal" && !selected && (
               <div className="rd-panel-empty">
                 Select an agent to see its terminal.
               </div>

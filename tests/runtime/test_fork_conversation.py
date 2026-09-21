@@ -152,11 +152,15 @@ def test_fork_conversation_opens_terminal_with_resume_command(tmp_path: Path, mo
 
     body = asyncio.run(scenario())
     assert body["opened_in_terminal"] is True
-    assert opened["argv"] == ["claude", "--resume", "claude-xyz", "--fork-session"]
+    assert opened["argv"][:-1] == ["claude", "--resume", "claude-xyz", "--fork-session"]
+    assert opened["argv"][-1].startswith("Duckterm session capability:")
     assert opened["cwd"] == "/work/repo"
     # The fork's terminal carries Duckterm's key so the agent's hooks report
     # under the same session and don't spawn a duplicate row.
-    assert opened["env"] == {"DUCKTERM_SESSION_KEY": body["session_key"]}
+    assert opened["env"]["DUCKTERM_SESSION_KEY"] == body["session_key"]
+    credentials = json.loads(Path(opened["env"]["DUCKTERM_SESSION_TOKEN_FILE"]).read_text())
+    assert credentials["session_id"] == body["session_key"]
+    assert credentials["token"]
 
 
 def test_fork_conversation_with_dead_transcript_starts_fresh_not_doomed(

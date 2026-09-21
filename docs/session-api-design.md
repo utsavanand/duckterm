@@ -1,348 +1,282 @@
-# Session discovery and questions
+# Session cards, discovery, and inboxes
 
-Status: proposed contract, September 20, 2026. This document describes new
-behavior; the session API is not implemented yet.
+Implemented in the working tree. Activation requires installing this build and
+starting the updated server; editing source does not upgrade a running installed
+server. The startup migration enrolls existing ongoing sessions automatically.
 
-## Objective
+## Architecture
 
-A running session can discover other ongoing sessions in its permitted folder
-tree, learn their published purpose and current activity, and ask one a question.
-The recipient answers in its existing conversation, and the complete answer to
-that question returns to the requester with an explicit completion signal.
+One broker inside Duckterm's existing asyncio server provides a separate identity
+and credential for each session. It reuses the session IDs and sidebar folders in
+SQLite. It does not start a server per session or scrape terminal screens.
 
-Use one broker in the existing Duckterm server. Each session has its own API
-identity and permissions, rather than its own listening process or port. The
-broker owns discovery, authorization, delivery, and request history. Runtime
-adapters own how a particular agent receives a question and submits its answer.
+- `core/session_api.py`: scoped discovery, cards, durable questions and answers.
+- `persistence/history.py`: migration, automatic enrollment, folder/lifecycle sync.
+- `helpers/session_credentials.py`: private capability files and launch environment.
+- `session_client.py`: the agent-facing `duckterm session` commands.
+- `InboxView.tsx`: owner-visible inbox and current card, beside History.
 
-This is local session collaboration, separate from the remote human sharing
-proposal in [session-sharing-design.md](session-sharing-design.md).
+The dashboard highlights sessions with pending questions and displays an Inbox
+count. Clicking that badge opens the recipient's inbox. Counts include queued
+and accepted requests; merely viewing the inbox does not clear them. They clear
+on answer, decline, cancellation, or expiry. Polling refreshes inboxes and badges
+about every three seconds. The agent decides when to respond; no automatic
+terminal input, interruption, or approval response is sent.
 
-## Repository findings that constrain the implementation
+## Enrollment and migration
 
-- `HistoryStore` already stores session keys, names, intentions, working
-  directories, runtime, activity state, and folder membership (`grp`). Reuse
-  these identities instead of creating a second session registry.
-- Sidebar folders currently use mutable slash-separated names. `move_folder`
-  renames both a folder and its descendants. Authorization needs stable folder
-  IDs and parent relationships so rename and move have distinct meanings.
-- `SessionSupervisor.write_input` and `write_bytes` can write to a supervised
-  terminal. They provide neither a prompt transaction nor a correlated reply.
-  Native terminal launches can also have a tracked row without a supervisor
-  capable of accepting that input.
-- Runtime state detection and `Stop` events are useful activity signals. They
-  do not prove that a particular question was received or answered. Transcript
-  readers return conversations, but do not expose a uniform request/turn mapping.
-- The existing server allows local GETs without authentication. Hooks read the
-  installation-wide token and submit events with a caller-supplied session key.
-  A new scoped endpoint alone cannot establish isolation from those paths.
-- There is no common runtime contract for delivering a message safely while a
-  user types, an agent runs a tool, or an approval prompt is open.
+Opening the database with this build performs an idempotent backfill of ongoing
+sessions. Existing enrollment and valid tokens are preserved; missing credential
+files are repaired. Stopped/archived/terminated sessions are not activated.
+Every new session is enrolled when registered, before its supervised child is
+spawned. Native terminal launches, forks, resumes, and restores use the same
+registration path. Ordinary hook events also enroll previously unregistered live
+sessions. A repeated SessionStart hook does not rotate a live session's credential.
 
-## Session identity and published metadata
+The default shared ancestor is the **top-level sidebar folder**, as selected by
+the user. All sessions under that folder can collaborate. Ungrouped sessions have
+a private card and inbox but cannot discover or message other sessions.
 
-Example response from the proposed discovery API:
+Credentials live in `session-credentials/` beside the database, in files named
+by a hash of the session ID. Each file is atomically written with mode 0600; the
+database stores the token hash. New launches receive the file path through
+`DUCKTERM_SESSION_TOKEN_FILE`. Existing agents already have
+`DUCKTERM_SESSION_KEY`; the CLI uses that to locate their backfilled credential
+without changing their environment or restarting them. `server.json` records the
+actual listening URL, including non-default ports. These files are never exposed
+through discovery or inbox responses. The CLI never falls back to the owner token.
 
-```json
-{
-  "session_id": "new-42f37b809ae6d152",
-  "api_name": "billing-auth",
-  "name": "Fix billing authentication",
-  "purpose": "Implement and verify service-to-service authentication for billing.",
-  "folder": {
-    "id": "fld_billing",
-    "path": "payments/backend/billing"
-  },
-  "workspace": {
-    "cwd": "/work/payments-billing",
-    "repository": "/work/payments"
-  },
-  "runtime": "claude-code",
-  "activity": {
-    "state": "busy",
-    "summary": "Checking token refresh behavior in integration tests.",
-    "updated_at": "2026-09-20T20:00:00Z"
-  },
-  "capabilities": ["questions.receive", "answers.explicit"],
-  "availability": "online"
-}
+Stopping or ending a session invalidates its credential and cancels pending
+exchanges. Its card metadata remains for inspection. Resuming automatically
+issues a fresh credential. Deleting a session removes its membership, capability
+file, and exchanges involving it. Forks receive distinct credentials.
+
+Schema version 3 prevents an older binary from opening the migrated database:
+older code cannot maintain these membership guarantees. Before updating a live
+installation, retain a consistent SQLite backup and the previous package if a
+rollback is needed. The migration requires no model calls.
+
+## Folder moves and discoverability
+
+Folder paths remain the application's canonical sidebar identifiers. Membership
+changes and request authorization changes are committed with the folder update.
+
+- Renaming a folder updates session card paths, shared ancestors beneath that
+  folder, and the corresponding request scopes. Credentials remain valid.
+- Moving a session within its shared ancestor preserves its enrollment and threads.
+- Moving a session outside its shared ancestor assigns the destination top-level
+  folder. It immediately loses access to peers in its previous scope and gains
+  access to enrolled peers in its new scope.
+- Moving an automatically enrolled group into another top-level folder joins
+  the destination's scope. Existing threads are retained when both participants
+  move together. An owner-selected narrower explicit scope follows its folder
+  instead; moving a session out of that scope returns it to automatic scoping.
+- Deleting a folder moves its sessions to Ungrouped and makes them private.
+- Pending exchanges that no longer have matching authorized participants are
+  cancelled. The owner can inspect retained records; peers cannot retrieve a
+  thread outside its recorded/current authorization scope.
+- API aliases are unique per shared ancestor. A collision during a move is
+  disambiguated with the moving session's stable ID hash.
+
+Discovery supports `self_folder`, `parent`, `grandparent`, and `shared_root`.
+Each searches the selected folder's subtree, bounded by the granted root. Both
+participants must have the same root. Filesystem cwd and Git worktree paths are
+metadata; changing cwd does not grant access to a different sidebar tree.
+
+## The updating session card
+
+Cards return `session_id`, `api_name`, `name`, `purpose`, `activity`, `state`,
+`folder`, `root`, `cwd`, `last_tool`, `next_actions`, `deliverables`, `updated_at`,
+and supported capabilities. The immutable session ID routes questions; the alias
+is for discoverability.
+
+Names, state, folders, and cwd come from current session records. Progress
+summaries, deliverables, and next actions come from the existing progress digest
+pipeline. As the session finishes work and its digest is updated, the card changes
+without re-enrollment. The timestamp reflects session, publication, and digest
+updates. Until a digest exists, purpose falls back to the session display name and
+activity falls back to state. An agent can publish a more useful purpose/activity;
+a newer progress digest supersedes its activity, while explicit purpose remains.
+
+Cards exclude raw prompts, private notes, transcripts, tool arguments, and
+credentials. Progress-derived card fields are intentionally shared with peers in
+the same scope. If automatic digest generation is disabled/unavailable, state and
+folder changes still update, and the agent can publish its own descriptions.
+
+## Agent commands
+
+Run inside an enrolled session with the updated Duckterm CLI:
+
+```sh
+duckterm session self
+duckterm session discover --scope shared_root
+duckterm session publish --purpose 'Implement billing authentication' \
+  --activity 'Testing token expiration and refresh'
+duckterm session inbox
+duckterm session ask other-session-id 'Which fields does your client need?' \
+  --request-key client-contract-1 --timeout 900
 ```
 
-`session_id` is the existing immutable session key and the routing identity.
-`api_name` is a readable alias, unique within the collaboration root; renaming
-it cannot redirect an existing request. `name` is the existing display name.
-`purpose` is a short, explicitly published description; do not automatically
-publish the initial prompt, which can contain private instructions or secrets.
-Likewise, activity summaries are published by the session rather than copied
-from terminal output. Show their timestamp so old descriptions remain visibly
-old. Unpublished fields are null, not inferred from private transcripts.
+The receiving agent can choose to act when idle, or the user can tell it:
+“Run `duckterm session inbox` and answer the pending questions.” Then:
 
-Folder membership, workspace paths, runtime, liveness, and capabilities come
-from the broker. Sessions may update only their own alias, purpose, and activity
-summary. Display names remain owner-managed initially. Discovery excludes
-transcripts, notes, tool arguments, approvals, credentials, and raw output.
+```sh
+duckterm session accept q-request-id
+duckterm session reply q-request-id --file answer.txt
+# Or supply the answer on stdin. A decline uses the same --file option.
+duckterm session get q-request-id
+duckterm session cancel q-request-id
+```
 
-## Folder scope
+Requests return immediately with an ID; `get` retrieves the status and full
+answer later. `accept` is optional acknowledgment. Replies contain exactly the
+text submitted by the recipient. This does not collect the recipient's entire
+conversation or guess a response boundary from terminal output. No MCP server or
+runtime-specific protocol is required for the on-demand CLI workflow.
 
-Working assumption: “folder” means the Duckterm sidebar hierarchy. Filesystem
-directories remain descriptive metadata. This keeps worktrees in the same
-logical project even when their disk paths are siblings in a different place.
+## HTTP API
 
-At launch, the owner chooses a **collaboration root**: a folder that contains
-the session. The default is the session's own folder. An ungrouped session has
-only self access until the owner assigns a root. A session cannot enlarge its
-root, move itself, or grant another session access.
+All agent routes use `Authorization: Bearer <session token>` and are under
+`/api/v1/session`. Identity comes from the credential, never a supplied sender ID.
 
-For a session in `payments/backend/billing` with root `payments`:
-
-| Requested scope | Selected folder | Visible candidates |
-| --- | --- | --- |
-| `self_folder` | `payments/backend/billing` | Ongoing members of its subtree |
-| `parent` | `payments/backend` | Ongoing members of its subtree |
-| `grandparent` | `payments` | Ongoing members of its subtree |
-| Another ancestor above the root | None | Denied |
-| An unrelated folder | None | Denied |
-
-Scope is computed from server-side membership, never a client-provided cwd or
-path prefix. Discovery also requires the target to participate in the same
-collaboration root. This prevents a broad-root session from inspecting a
-session that opted into a narrower, private collaboration group. Both parties
-must opt into the same root to discover and communicate with each other.
-
-The session can select an ancestor to expand its search, but cannot exceed the
-owner's grant. No implicit “two levels up from cwd”: that can turn a repository
-boundary into an entire workspace or home directory.
-
-Use stable folder IDs and validate parent links without cycles. Renames
-preserve identity. Moving a session or folder across its authorized root
-suspends affected memberships and pending deliveries in the same transaction.
-Rejoining requires an owner grant. Check current membership on discovery,
-enqueue, delivery, event replay, and reply retrieval. Knowing a session or
-request ID never bypasses those checks. Unauthorized target lookups return the
-same 404 as unknown targets.
-
-If filesystem scope is preferred instead, keep it a separate policy mode:
-resolve symlinks and `..`, use path-component ancestry, and grant an explicit
-canonical root. Worktree membership must be owner-assigned; a shared Git remote
-or repository name is not an authorization proof.
-
-## Proposed API, version 1
-
-Agent endpoints require a session credential on every request, including GETs.
-The broker derives the caller identity from that credential. Request bodies
-cannot supply or override the sender identity.
-
-| Method and route | Meaning |
+| Method / route | Behavior |
 | --- | --- |
-| `GET /api/v1/session/self` | Identity, published metadata, root, capabilities |
-| `PATCH /api/v1/session/self` | Publish own alias, purpose, activity summary |
-| `GET /api/v1/session/peers?scope=parent&cursor=...` | Paginated permitted ongoing peers |
-| `GET /api/v1/session/peers/:id` | Published metadata for an authorized peer |
-| `POST /api/v1/session/questions` | Enqueue a question addressed to a peer |
-| `GET /api/v1/session/questions/:id` | Request status and complete answer, if available |
-| `POST /api/v1/session/questions/:id/cancel` | Requester cancels further delivery/waiting |
-| `GET /api/v1/session/inbox` | Recipient's pending questions |
-| `POST /api/v1/session/questions/:id/accept` | Recipient acknowledges a delivered question |
-| `POST /api/v1/session/questions/:id/answer` | Recipient submits the explicit final answer |
-| `POST /api/v1/session/questions/:id/decline` | Recipient declines with a reason |
-| `GET /api/v1/session/events` | Authorized events with durable replay cursor |
+| `GET /self` | Current session card |
+| `PATCH /self` | Publish `{purpose?, activity?}` |
+| `GET /peers?scope=shared_root&cursor=...` | Paginated authorized ongoing peers |
+| `GET /inbox?before=...` | Incoming questions and their response states |
+| `POST /questions` | Create `{target_session_id, question, timeout_seconds?}` |
+| `GET /questions/:id` | Request status and complete answer |
+| `POST /questions/:id/accept` | Recipient acknowledgment |
+| `POST /questions/:id/answer` | Recipient final response `{text}` |
+| `POST /questions/:id/decline` | Recipient explanation `{text}` |
+| `POST /questions/:id/cancel` | Sender cancellation |
 
-Creation request:
+Creation requires an `Idempotency-Key` header. Identical retries return the
+original request; different content with that key returns 409. Answer retries
+are also idempotent; conflicting final answers return 409. Request IDs are
+unguessable, and knowing one does not bypass participant/scope checks.
 
-```json
-{
-  "target_session_id": "new-42f37b809ae6d152",
-  "question": "What token refresh contract should my client implement?",
-  "timeout_seconds": 300
-}
-```
+Owner routes use `X-Duckterm-Token`:
 
-Require `Idempotency-Key` on creation; scope it to the authenticated sender.
-Reusing the key with identical content returns the original request. Reusing
-it with different content returns 409. Return 202 with an immutable request ID,
-`queued` status, deadline, and status URL after committing the request.
+| Method / route | Behavior |
+| --- | --- |
+| `GET /sessions/:id/inbox?before=...` | Owner inspection, including current card |
+| `GET /session-inbox-counts` | Pending counts for dashboard highlights |
+| `POST /sessions/:id/collaboration` | Optional explicit root/alias/purpose override and token rotation |
 
-The request ID accompanies delivery, acknowledgment, response chunks, and the
-final answer. The answer endpoint accepts `{text, delivery_id}`; only the
-authenticated recipient holding the current delivery may answer. Identical
-retries return the stored answer; conflicting final answers return 409.
-Final answers are immutable. Follow-up questions create new request IDs.
+The owner enrollment body is `{root, api_name?, purpose?}`. Routine launches and
+moves need no such call. A presented agent bearer credential is rejected on
+owner routes. Agent and inbox reads require credentials as well as writes.
 
-Use JSON errors `{error: {code, message}}`. Distinguish malformed input (400),
-bad credentials (401), unknown/inaccessible resources (404), state conflicts
-(409), oversized content (413), rate limits (429), and unsupported delivery
-(422). Deadlines are request states, not ambiguous HTTP connection failures.
+## Persistence, limits, and access boundary
 
-## Delivery and complete answers
+`session_api_members` stores capabilities and publications. `session_questions`
+stores attributed questions, deadlines, idempotency data, status, and complete
+answers. Both survive server restarts. Status is queued, accepted, answered,
+declined, cancelled, or expired. Cancellation stops the exchange; it does not
+interrupt the recipient's other work. Closed requests cannot accept late answers.
 
-The broker commits a question before attempting delivery. One question at a
-time may occupy a recipient's conversation; further questions remain queued.
-User work and approvals take precedence. A busy session need not be interrupted.
+Discovery and inbox pages contain at most 50 records. Questions allow 16 KiB and
+answers 256 KiB; oversized content is rejected instead of truncated. Deadlines
+default to five minutes and allow up to fifteen. A sender can create ten questions
+per minute. Creation is refused when the combined set of pending requests sent
+by that sender or addressed to that recipient reaches twenty. Records are swept
+after seven days beyond their deadline. Sweeps run on broker reads/operations;
+there is no always-running polling worker dedicated to expiry.
 
-The runtime contract must expose delivery capabilities explicitly:
+**Authorization is API-level, not OS/process isolation.** The scoped broker
+checks current membership on every request. However, agents running as the same
+OS user can potentially read other capability files, the installation token,
+SQLite, or tmux, and existing global local endpoints retain their prior trust
+model. A client that omits its bearer header can still reach legacy public GET
+routes. This implementation must not be described as containing a hostile agent
+within its folder. Strict containment would require protected storage and an
+OS-enforced sandbox/network boundary, which is outside this feature's scope.
 
-1. A structured message transport, where available, submits the question and
-   returns a native turn ID. Its adapter maps that turn's completion and answer
-   to the broker request. Verify this for each runtime before advertising it.
-2. A cooperative inbox adapter lets the existing agent accept a request and
-   reply through a tool or CLI. The complete answer is exactly the text supplied
-   in its explicit final reply; there is no inference from terminal silence.
-3. A terminal adapter may deliver a visible question only if it can establish a
-   safe prompt boundary and serialize delivery with all other input writers.
-   Deliver a broker-controlled envelope with the sender and request ID, and use
-   the cooperative reply mechanism. Input delivery and answer collection are
-   separate operations.
+## Verification and intentionally excluded behavior
 
-The current raw PTY write methods do not satisfy option 3. Checking an `idle`
-badge and then calling `write_input` leaves a race with user input and shell
-prompts. Bracketed paste helps transport text but does not establish that an
-agent, rather than a shell or permission dialog, will receive it. Do not mark a
-generic terminal as question-capable until its adapter passes that contract.
-Unsupported targets remain discoverable with an explicit capability list.
+### Introducing the capability to agents
 
-Responses appear in the existing terminal conversation when handled there,
-and the same final response returns to the requester through the API/tool
-result. Optional streaming uses explicit sequenced chunks plus a final marker;
-v1 can return the final answer atomically. “Complete answer” means the response
-to this request, not the recipient's whole transcript or hidden reasoning.
+For Codex and Claude sessions launched through the dashboard/server (including
+supervised launches, native-terminal launches, forks, and restores), Duckterm
+prepends a capability introduction to the initial prompt. The original task is
+kept separately as the session intention. An empty task introduces the capability
+and tells the agent to await the user's task. No credential is placed in the
+prompt. This is an ordinary prompt introduction, not an installed native skill
+or a new system/developer instruction.
 
-An agent-facing tool surface can be small: `session_self`, `session_publish`,
-`session_discover`, `session_ask`, `session_inbox`, and `session_reply`. These
-are adapters over the broker, with identical authorization. A CLI should also
-support structured JSON and reading replies from stdin/files, avoiding shell
-quoting tricks for multiline answers. A blocking `ask` waits on the durable
-request; disconnecting the client does not lose or duplicate the question.
+The introduction references an atomically written, private instruction file at
+`<instance-home>/session-instructions/<sha256-session-key>/collaboration.md`.
+It explains CLI discovery, publication, inbox handling, deadlines, and treating
+peer messages as untrusted requests. The file is regenerated when an introduction
+is prepared. Live membership and metadata come from the API, not the file.
 
-## Lifecycle and persistence
+Existing sessions are enrolled without unsolicited terminal input. The Inbox
+offers **Introduce session collaboration**, an owner-authenticated
+`POST /sessions/:id/collaboration/introduce`. It requires a supported runtime,
+an idle session, and a live supervised terminal. It sends one bracketed paste
+followed by Enter. The user should use it at an empty input prompt: idle state
+does not prove there is no draft text or that the client will obey the message.
+The UI confirms delivery, not that the model read or understood the guide.
 
-```text
-queued -> delivering -> accepted -> answered
-   |           |           |
-   +-----------+-----------+-> declined / expired / cancelled / failed
-```
+**Show introduction to paste** calls owner-authenticated
+`POST /sessions/:id/collaboration/instructions`, returning the same introduction
+without sending terminal input. This supports externally owned terminals and
+lets the user choose when to submit it. Stopped sessions must be resumed first.
 
-Persist memberships and credential hashes, request content, sender/recipient,
-idempotency key and content hash, deadline, delivery attempts, acknowledgment,
-answer, and sequenced request events in SQLite. Use transactions and uniqueness
-constraints for state transitions and deduplication. Keep this behind a broker
-store interface instead of adding request logic throughout `server.py`.
+Generic commands and Copilot do not receive automatic introductions; Copilot's
+current `-p` adapter would change an empty interactive launch into a programmatic
+invocation. The `duckterm run` CLI is an argv passthrough and also does not rewrite
+arbitrary agent arguments; its enrolled sessions can use the manual introduction.
+The launch tests verify prompt transport and credential separation using fake
+agents, not model compliance. Long-running clients may eventually compact the
+introduction out of context; the Inbox actions can introduce it again.
 
-The database is authoritative; EventBus wakes subscribers after commit.
-Reconnection replays persisted events, filtered by current authorization.
-Never attach a session client to the existing global event stream. Apply the
-same check before each emitted event, not just when opening the stream.
+Tests cover startup backfill, stable credentials on reopen, immediate API access
+from a freshly spawned child, private ungrouped sessions, folder moves/renames,
+live card updates, request retries, scope enforcement, expiry, and count clearing.
+The browser test sends and answers a real HTTP question and checks the Inbox tab,
+session highlight, card, full reply, and persistence after reload.
 
-There is no exactly-once guarantee for a raw terminal side effect. Persist a
-delivery attempt before writing. If the server crashes between terminal write
-and acknowledgment, retain an uncertain delivery rather than automatically
-pasting it again. Only an adapter with recipient-side deduplication may retry
-automatically. A final-answer retry is independently idempotent.
+Automatic terminal injection, automatic model invocation to answer questions,
+streamed partial answers, and cross-machine sharing are excluded. On-demand
+reading and explicit replies are the chosen workflow. UI viewing does not mark a
+question answered, and an idle session is never forced to process its inbox.
 
-Expired or cancelled requests cannot accept later answers. Cancellation stops
-broker delivery and waiting; it does not send Ctrl-C or undo recipient work.
-Stopping, deleting, or archiving a recipient terminates its outstanding requests
-with a stable reason. A temporarily disconnected recipient can remain queued
-until its deadline; discovery must distinguish availability from activity.
-Resume creates a new credential generation; fork creates a new session identity
-and inherits no active deliveries or credentials.
+## Isolated upgrade rehearsal
 
-Prevent unbounded accumulation: proposed initial limits are a 16 KiB question,
-256 KiB final answer, 20 pending requests per sender and recipient, 10 new
-questions per sender per minute, and a maximum 15-minute deadline. Oversized
-answers fail explicitly, never truncate silently. Retain terminal request
-records for seven days; retain deduplication tombstones for that same retry
-window, with expired replay cursors reported explicitly. Make limits visible
-to clients and configurable by the owner.
+`scripts/rehearse_session_upgrade.py --old-python /path/to/installed/python`
+runs with the checkout's Python. It creates a temporary home, database,
+credentials, localhost port, and unique tmux socket; starts the old release;
+launches two disposable, deterministic agents; backs up SQLite; then replaces
+only the isolated server with checkout code. It never upgrades the global
+installation or accesses the production database or tmux socket. Test resources
+are removed on completion or failure.
 
-Reject self-questions. The client must not recursively block both sides on
-each other: expose waiting dependencies, reject request cycles when identified,
-and retain deadline enforcement even if clients omit dependency information.
-Do not make an agent answer a question by creating an unrestricted child agent.
+The September 20 rehearsal from installed version 0.4.19 (schema 1) to schema 3
+confirmed unchanged agent PIDs and retained in-memory conversation markers,
+automatic enrollment of existing sessions, terminal input after reattachment,
+discovery, full Unicode replies through the actual session CLI, live card
+publication, folder rename and cross-root visibility changes, and automatic
+enrollment of a third new session. A second server restart checks credential
+stability and persisted answers.
 
-## Authentication and what “no permission” guarantees
+**Pending approvals do not survive a server restart.** They live in memory;
+the rehearsal verifies that the old approval returns `gone` and a newly created
+approval can be approved and polled successfully. Activation should wait until
+in-flight approvals have settled. Agent process survival does not mean every
+HTTP request or hook survives the restart.
 
-Mint revocable, per-session credentials with a launch generation. Store only
-hashes, supply credentials through the launch environment or a protected
-capability channel, and never put them in URLs, discovery payloads, terminal
-envelopes, or request events. Resumed and already-running sessions need an
-explicit bootstrap flow; a caller-supplied `DUCKTERM_SESSION_KEY` is not proof
-of identity. Existing sessions without enrollment remain owner-visible only.
+These are deterministic agents, not live Claude/Codex model sessions. The check
+exercises tmux process continuity and the broker/CLI, not model conversation
+semantics or every installed harness's hook retry behavior. The CLI is invoked
+explicitly from the checkout; replacing the globally installed package and
+browser asset activation remain separate deployment steps. Raw PTY sessions
+without tmux are not covered by the process-survival result.
 
-The owner/control API grants roots and manages enrollment. An agent credential
-cannot access owner operations, other sessions' credentials, global discovery,
-global events, terminal input, filesystem reads, or approval decisions. Hooks
-must migrate to credentials bound to their own session, with narrowly scoped
-event-ingest and own-approval capabilities. They must stop reading the global
-administrative token. Internal summarizer subprocesses must not inherit usable
-session credentials.
-
-Two guarantees must be distinguished:
-
-- **API authorization:** the broker rejects operations outside the session's
-  grant, even if the caller supplies another ID, alias, folder, or replay cursor.
-- **Process isolation:** a session cannot bypass the broker by reading another
-  session's transcript, the SQLite database, the installation token, a tmux
-  socket, or the owner API directly.
-
-The first is achievable in this application. The second is not supplied by the
-current same-user terminal architecture. A hostile process running with the
-owner's filesystem and network privileges can bypass an API filter. Strict
-isolation requires an enforced process sandbox/OS identity or container with
-restricted mounts and network access to only its scoped broker transport.
-Running that sandbox is an additional product capability, not something a
-bearer token or a filesystem path comparison can substitute for.
-
-Before advertising strict isolation, close global unauthenticated reads,
-protect control-plane credentials and storage from session processes, and
-prevent sessions from reaching the control listener. Authenticating global
-GETs alone is insufficient while the same process can read the owner token.
-Document whether a launch enforces process isolation or only cooperative API
-scope. Do not describe the latter as a security sandbox.
-
-Question content is attributed peer input, with no authority to change the
-recipient's tools or permissions. Keep it out of system instructions. Owner
-visibility should include who asked whom, request status, and the returned
-answer; this does not grant other sessions visibility into that audit trail.
-
-## Implementation sequence and release gates
-
-1. **Scope and store:** migrate sidebar folders to stable IDs; add root grants,
-   published metadata, broker credentials, and durable requests. Preserve
-   existing folder rendering and rename/move behavior through a compatibility
-   projection. Revoke grants transactionally on boundary-crossing moves.
-2. **Authenticated broker:** implement the versioned API, paginated discovery,
-   explicit inbox/answer transport, limits, deadlines, restart recovery, and
-   per-request audit events. Separate agent and owner authorization before
-   exposing this surface to agent tools.
-3. **Usable runtime integration:** enroll new and existing sessions; supply CLI
-   and tools; implement and verify one runtime end to end. The receiving agent
-   must see the question in its existing session and the requester must receive
-   that exact complete answer. Advertise unsupported runtimes accurately.
-4. **Terminal delivery:** implement a verified runtime-specific prompt boundary
-   and shared input serialization. Test native terminal, supervised PTY, and
-   tmux restart paths separately; supported launch modes must be explicit.
-5. **Strict containment, if required:** isolate session processes from the owner
-   listener, storage, credentials, transcript files, and tmux control. This is
-   required before claiming sessions cannot access anything outside their tree.
-
-Required behavior tests:
-
-- Same folder, parent, grandparent, and disallowed ancestor discovery; separate
-  roots; ungrouped sessions; sibling prefixes; alias collision and rename.
-- Boundary changes between enqueue and delivery, and between completion and
-  result retrieval; active streams lose access immediately after revocation.
-- Forged sender identity, wrong recipient replies, expired credentials, old
-  launch generations, and attempts to use agent credentials on owner routes.
-- A asks B, B sees the attributed question, B explicitly replies with a long
-  multiline answer, and only A/B and the owner can retrieve that exact answer.
-- Busy agents, open approvals, partially typed user input, agent exit to shell,
-  unsupported delivery, two simultaneous senders, and reciprocal questions.
-- Duplicate creation/reply; crash before and after delivery/acknowledgment;
-  disconnect/replay; expiry; cancellation; stop/archive/delete; slow clients.
-- Storage bounds, rate limits, oversized payloads, and no credentials or private
-  transcript fields in discovery, errors, event streams, or logs.
-
-The first end-to-end milestone is two enrolled sessions in one granted tree
-exchanging an explicitly correlated answer, with an unrelated third session
-invisible. Raw keystroke injection plus scraping the next terminal output does
-not meet that milestone.
+Concurrent browser runs should each set a distinct `RD_TEST_PORT` and
+`RD_TEST_STATE_FILE` (an absolute temporary JSON path). Setup, request helpers,
+and teardown use that state path, preventing another worktree's run from
+redirecting test requests or cleanup to the wrong test server. Without an
+override, the legacy shared state filename remains the default.

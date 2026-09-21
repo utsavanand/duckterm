@@ -12,9 +12,12 @@ On Linux it tries the common emulators. Falls back to printing the command.
 
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
+
+from duckterm.helpers import session_credentials
 
 MAC_TERMINALS = ("iterm", "terminal")
 
@@ -49,6 +52,8 @@ def open_in_terminal(
     (url, session_key): the tab pings `url` every 20s while alive so Duckterm
     can tell a killed tab from a quiet one. `title` names the tab (the user's
     session name) so you can find it among other tabs."""
+    if env and env.get("DUCKTERM_SESSION_KEY"):
+        env = {**session_credentials.launch_env(env["DUCKTERM_SESSION_KEY"]), **env}
     exports = "".join(f"export {k}={_q(v)}; " for k, v in (env or {}).items())
     agent = " ".join(_q(a) for a in argv)
     if heartbeat is not None:
@@ -171,7 +176,7 @@ def _open_iterm(command: str, title: str | None = None) -> bool:
 
 def _q(s: str) -> str:
     """Shell-quote a path/arg for the `cd && cmd` string."""
-    return "'" + s.replace("'", "'\\''") + "'" if (" " in s or "'" in s) else s
+    return shlex.quote(s)
 
 
 def _esc(s: str) -> str:
