@@ -527,6 +527,10 @@ function TreeRow({
   // would offer a Resume that can't fire. Keep watched sessions observe-only.
   const canStop = live && s.launched;
   const canArchive = !archived && s.launched;
+  // A terminated session's run is OVER: forking, notes, checkpoints, and
+  // rename are workflow actions for something in progress — only Resume (if
+  // resumable), Archive, and Delete apply.
+  const ended = effState === "terminated";
   const stateLabel = effState; // "waiting" reads fine on its own
   const [notesOpen, setNotesOpen] = useState(false);
   const [notes, setNotes] = useState(s.notes ?? "");
@@ -767,16 +771,18 @@ function TreeRow({
           </ul>
         )}
         <div className="rd-row-actions">
-          <button
-            className="rd-btn rd-btn-sm rd-btn-ghost"
-            title="Rename this session (double-clicking the name works too)"
-            onClick={() => {
-              setDraft(s.label);
-              setRenaming(true);
-            }}
-          >
-            Rename
-          </button>
+          {!ended && (
+            <button
+              className="rd-btn rd-btn-sm rd-btn-ghost"
+              title="Rename this session (double-clicking the name works too)"
+              onClick={() => {
+                setDraft(s.label);
+                setRenaming(true);
+              }}
+            >
+              Rename
+            </button>
+          )}
           {onUngroup && (
             <button
               className="rd-btn rd-btn-sm rd-btn-ghost"
@@ -789,7 +795,7 @@ function TreeRow({
           {/* One branching action: the modal offers a git worktree fork (or
               promotes an in-place session onto a branch) and, for claude-code,
               a conversation-only fork. */}
-          {!archived && canBranch && (
+          {!archived && !ended && canBranch && (
             <button
               className="rd-btn rd-btn-sm rd-btn-ghost"
               title="Fork this session — into a git worktree, or fork the conversation"
@@ -798,7 +804,7 @@ function TreeRow({
               Fork
             </button>
           )}
-          {!archived && (
+          {!archived && !ended && (
             <button
               className={`rd-btn rd-btn-sm rd-btn-ghost${notesOpen ? " active" : ""}`}
               title="Personal notes for this session (local only)"
@@ -807,7 +813,7 @@ function TreeRow({
               Notes{s.notes ? " •" : ""}
             </button>
           )}
-          {!archived && (
+          {!archived && !ended && (
             <button
               className="rd-btn rd-btn-sm rd-btn-ghost"
               title="Record what was done so far"
@@ -879,7 +885,7 @@ function TreeRow({
             title={
               confirmDelete
                 ? "Click again to confirm"
-                : s.launched
+                : s.launched || !live
                   ? "Delete this session and its history"
                   : "Stop watching — remove it from the dashboard (the agent keeps running in its own terminal)"
             }
@@ -888,7 +894,7 @@ function TreeRow({
           >
             {confirmDelete
               ? "Confirm?"
-              : s.launched
+              : s.launched || !live
                 ? "Delete"
                 : "Stop watching"}
           </button>

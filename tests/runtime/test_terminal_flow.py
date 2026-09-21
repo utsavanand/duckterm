@@ -14,7 +14,7 @@ from duckterm.server import Server
 
 def _client_handshake(key: str) -> bytes:
     return (
-        f"GET /sessions/SKEY/terminal HTTP/1.1\r\nHost: x\r\n"
+        f"GET /sessions/SKEY/terminal HTTP/1.1\r\nHost: localhost\r\n"
         f"Upgrade: websocket\r\nSec-WebSocket-Key: {key}\r\n\r\n"
     ).encode()
 

@@ -19,6 +19,7 @@ import hashlib
 import struct
 
 _GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+MAX_FRAME_BYTES = 1024 * 1024
 
 
 def accept_key(client_key: str) -> str:
@@ -83,6 +84,8 @@ async def read_frame_opcode(reader: asyncio.StreamReader) -> int | None:
         length = struct.unpack(">H", await reader.readexactly(2))[0]
     elif length == 127:
         length = struct.unpack(">Q", await reader.readexactly(8))[0]
+    if length > MAX_FRAME_BYTES:
+        raise ValueError("WebSocket frame too large")
     if masked:
         await reader.readexactly(4)  # mask key
     if length:
@@ -107,6 +110,8 @@ async def read_frame(reader: asyncio.StreamReader) -> tuple[int, bytes] | None:
         length = struct.unpack(">H", await reader.readexactly(2))[0]
     elif length == 127:
         length = struct.unpack(">Q", await reader.readexactly(8))[0]
+    if length > MAX_FRAME_BYTES:
+        raise ValueError("WebSocket frame too large")
     mask = await reader.readexactly(4) if masked else b"\x00\x00\x00\x00"
     payload = bytearray(await reader.readexactly(length)) if length else bytearray()
     if masked:

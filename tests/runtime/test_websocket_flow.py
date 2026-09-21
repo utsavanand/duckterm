@@ -30,7 +30,7 @@ def test_handshake_and_event_delivery(tmp_path: Path) -> None:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
             client_key = "dGhlIHNhbXBsZSBub25jZQ=="
             writer.write(
-                f"GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
+                f"GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
                 f"Sec-WebSocket-Key: {client_key}\r\n\r\n".encode()
             )
             await writer.drain()

@@ -27,6 +27,7 @@ import urllib.request
 from pathlib import Path
 
 from duckterm.agents import mcp_install
+from duckterm.helpers.security import write_private_text
 
 _GITHUB_ENV = "GITHUB_PERSONAL_ACCESS_TOKEN"
 _GITHUB_IMAGE = "ghcr.io/github/github-mcp-server"
@@ -70,9 +71,7 @@ def save_secret(name: str, token: str) -> None:
         )
         return
     path = _secret_file(name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token)
-    path.chmod(0o600)
+    write_private_text(path, token)
 
 
 def load_secret(name: str) -> str | None:

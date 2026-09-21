@@ -34,20 +34,20 @@ def test_write_then_read_agents_md(tmp_path: Path) -> None:
         async with srv:
             # GET before write: empty, exists=false.
             _, before = await _request(
-                port, f"GET /agents-md?dir={tmp_path} HTTP/1.1\r\nHost: x\r\n\r\n".encode()
+                port, f"GET /agents-md?dir={tmp_path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode()
             )
             # POST writes the file (state-changing -> token required).
             payload = json.dumps({"dir": str(tmp_path), "text": "# rules\nno tabs"}).encode()
             await _request(
                 port,
-                b"POST /agents-md HTTP/1.1\r\nHost: x\r\n"
+                b"POST /agents-md HTTP/1.1\r\nHost: localhost\r\n"
                 b"X-Duckterm-Token: " + token.encode() + b"\r\n"
                 b"Content-Type: application/json\r\n"
                 b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload,
             )
             # GET after write: the text we wrote.
             _, after = await _request(
-                port, f"GET /agents-md?dir={tmp_path} HTTP/1.1\r\nHost: x\r\n\r\n".encode()
+                port, f"GET /agents-md?dir={tmp_path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode()
             )
             return before, after, (tmp_path / "AGENTS.md").read_text()
 
@@ -69,7 +69,7 @@ def test_write_agents_md_rejects_missing_directory(tmp_path: Path) -> None:
             payload = json.dumps({"dir": str(tmp_path / "nope"), "text": "x"}).encode()
             status, _ = await _request(
                 port,
-                b"POST /agents-md HTTP/1.1\r\nHost: x\r\n"
+                b"POST /agents-md HTTP/1.1\r\nHost: localhost\r\n"
                 b"X-Duckterm-Token: " + token.encode() + b"\r\n"
                 b"Content-Type: application/json\r\n"
                 b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload,
@@ -96,13 +96,13 @@ def test_agents_md_refuses_paths_outside_home(tmp_path: Path) -> None:
             payload = json.dumps({"dir": "/etc", "text": "owned"}).encode()
             write_status, _ = await _request(
                 port,
-                b"POST /agents-md HTTP/1.1\r\nHost: x\r\n"
+                b"POST /agents-md HTTP/1.1\r\nHost: localhost\r\n"
                 b"X-Duckterm-Token: " + token.encode() + b"\r\n"
                 b"Content-Type: application/json\r\n"
                 b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload,
             )
             read_status, _ = await _request(
-                port, b"GET /agents-md?dir=/etc HTTP/1.1\r\nHost: x\r\n\r\n"
+                port, b"GET /agents-md?dir=/etc HTTP/1.1\r\nHost: localhost\r\n\r\n"
             )
         return write_status, read_status
 
