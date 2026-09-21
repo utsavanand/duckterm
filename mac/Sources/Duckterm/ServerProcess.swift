@@ -40,8 +40,14 @@ final class ServerProcess {
     /// Returns true once the server is reachable. Starts it if it isn't already
     /// running (an external `duckterm serve` is reused, not duplicated).
     func start() async -> Bool {
-        if await isUp() { return true }  // someone already runs it; just attach.
-        guard let bin = findBinary() else { return false }
+        if await isUp() {
+            AppDiagnostics.shared.record("Connected to existing local server")
+            return true
+        }
+        guard let bin = findBinary() else {
+            AppDiagnostics.shared.record("Server CLI not found")
+            return false
+        }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bin)
         proc.arguments = ["serve"]
@@ -55,13 +61,19 @@ final class ServerProcess {
         do {
             try proc.run()
         } catch {
+            AppDiagnostics.shared.record("Server launch failed", code: (error as NSError).code)
             return false
         }
+        AppDiagnostics.shared.record("Server process started")
         task = proc
         for _ in 0..<40 {  // up to ~8s for the server to bind
-            if await isUp() { return true }
+            if await isUp() {
+                AppDiagnostics.shared.record("Local server ready")
+                return true
+            }
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
+        AppDiagnostics.shared.record("Server startup timed out")
         return false
     }
 

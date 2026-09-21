@@ -39,6 +39,14 @@ SessionEnd could arrive before the server recorded the resumable stop.
 preserving pending questions and their original deadlines. Test late exit events,
 resume with a fresh credential, expiry while stopped, and final cancellation.
 
+## 2026-09-21 — Report attachments must match what the user reviewed
+**Broke:** the first report collector checked a file's size and then performed an
+unbounded read; an attachment could grow or be replaced after selection.
+**Cause:** treating a selected filesystem path as an immutable attachment.
+**Rule:** open without following symlinks, verify the opened file, bound the read,
+and retain the selected bytes for export. Test size/count limits, opt-outs,
+duplicate names, and private output permissions before wiring up delivery.
+
 ## 2026-09-21 — Installation docs advertised missing downloads
 **Broke:** the README recommended a nonexistent PyPI package and a Mac ZIP that
 was absent from the latest release; the release guide linked an older wheel.
