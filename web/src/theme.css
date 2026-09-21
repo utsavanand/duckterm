@@ -2569,3 +2569,121 @@ select {
   white-space: pre-wrap;
   padding: 4px 0 0 14px;
 }
+
+/* ── Typed AGENTS.md rules editor ── */
+.rd-rules-list {
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.rd-rules-section {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.rd-rule {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.rd-rule-candidate {
+  border-color: var(--warn, #d97706);
+  border-style: dashed;
+}
+.rd-rule-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.rd-rule-edit {
+  width: 100%;
+  font: inherit;
+  background: var(--card);
+  color: var(--text);
+  border: none;
+  resize: vertical;
+  padding: 0;
+}
+.rd-rule-edit:focus {
+  outline: none;
+}
+.rd-rule-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rd-rule-scope {
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-family: ui-monospace, Menlo, monospace;
+}
+.rd-rules-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 12px 0;
+}
+.rd-rules-legacy {
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.rd-rules-rejected summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+.rd-rules-rejected .rd-rule {
+  opacity: 0.6;
+  margin-top: 6px;
+}
+.rd-rules-add {
+  display: flex;
+  gap: 8px;
+}
+.rd-rules-add input {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+}
+/* pending-candidate count on the top-bar AGENTS.md button */
+.rd-rules-badge {
+  display: inline-block;
+  min-width: 16px;
+  padding: 0 4px;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: var(--warn, #d97706);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+/* launch-modal nudge: rules waiting in the picked folder */
+.rd-rules-nudge {
+  border: 1px dashed var(--warn, #d97706);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}

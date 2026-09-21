@@ -1,0 +1,158 @@
+{
+  "rules": [
+    {
+      "id": "no-piped-gates",
+      "text": "Never pipe the gate or tests through grep/tail/head \u2014 pipelines report the filter's exit code, not the test's. Run `scripts/gate.sh` bare; read the log at /tmp/duckterm-gate.log. Piped gates shipped two broken releases (RETRO.md).",
+      "scope": "all",
+      "status": "active",
+      "source": "retro",
+      "evidence": 3,
+      "added": "2026-09-21",
+      "heading": "Shipping",
+      "note": ""
+    },
+    {
+      "id": "ship-end-to-end",
+      "text": "A fix isn't done until shipped end-to-end: commit \u2192 gate \u2192 bump version \u2192 tag \u2192 fresh-worktree build (`scripts/build_package.sh`) \u2192 GitHub release with ABSOLUTE asset paths \u2192 `pipx install --force` \u2192 relaunch RubberTerm.app \u2192 curl the dashboard for 200.",
+      "scope": "all",
+      "status": "active",
+      "source": "manual",
+      "evidence": 1,
+      "added": "2026-09-21",
+      "heading": "Shipping",
+      "note": ""
+    },
+    {
+      "id": "worktree-builds-no-import",
+      "text": "Build releases from a fresh worktree at the tag with its own venv. Never import duckterm inside build scripts \u2014 read the version with sed. An import once aborted the build mid-bundle and shipped a partial app.",
+      "scope": "all",
+      "status": "active",
+      "source": "retro",
+      "evidence": 1,
+      "added": "2026-09-21",
+      "heading": "Shipping",
+      "note": ""
+    },
+    {
+      "id": "contested-files",
+      "text": "Other agent sessions work in this repo concurrently. Never stage whole contested files and never `git add -A`. Don't format, lint-fix, or delete another session's untracked WIP \u2014 exclude it and move on.",
+      "scope": "all",
+      "status": "active",
+      "source": "retro",
+      "evidence": 2,
+      "added": "2026-09-21",
+      "heading": "Parallel sessions",
+      "note": ""
+    },
+    {
+      "id": "verify-committed-tree",
+      "text": "Before releasing, verify the COMMITTED tree imports and compiles in a fresh worktree. The working tree lies when another session has WIP.",
+      "scope": "all",
+      "status": "active",
+      "source": "retro",
+      "evidence": 2,
+      "added": "2026-09-21",
+      "heading": "Parallel sessions",
+      "note": ""
+    },
+    {
+      "id": "commit-format",
+      "text": "Commit messages: problem / fix / how-tested. No Co-Authored-By trailers.",
+      "scope": "all",
+      "status": "active",
+      "source": "correction",
+      "evidence": 2,
+      "added": "2026-09-21",
+      "heading": "Conventions",
+      "note": ""
+    },
+    {
+      "id": "zero-deps",
+      "text": "The server stays zero-dependency Python stdlib. Don't add pip deps to solve a problem stdlib can solve.",
+      "scope": "all",
+      "status": "active",
+      "source": "manual",
+      "evidence": 1,
+      "added": "2026-09-21",
+      "heading": "Conventions",
+      "note": ""
+    },
+    {
+      "id": "meta-harness-term",
+      "text": "The user-facing term is \"meta-harness\" \u2014 never \"suite\" or \"overlay\" in UI or docs.",
+      "scope": "all",
+      "status": "active",
+      "source": "correction",
+      "evidence": 1,
+      "added": "2026-09-21",
+      "heading": "Conventions",
+      "note": ""
+    },
+    {
+      "id": "retro-after-fix",
+      "text": "Append a lesson to RETRO.md after every real fix, newest first.",
+      "scope": "all",
+      "status": "active",
+      "source": "correction",
+      "evidence": 1,
+      "added": "2026-09-21",
+      "heading": "Conventions",
+      "note": ""
+    },
+    {
+      "id": "flag-test-sessions",
+      "text": "Probe/test sessions must carry test:true and be deleted afterwards. Never leave unflagged test data in the DB.",
+      "scope": "all",
+      "status": "active",
+      "source": "correction",
+      "evidence": 1,
+      "added": "2026-09-21",
+      "heading": "Testing hygiene",
+      "note": ""
+    },
+    {
+      "id": "read-full-test-output",
+      "text": "Read complete test output (or the exit code) before claiming green \u2014 tail-truncated output has been misread as a pass twice.",
+      "scope": "all",
+      "status": "active",
+      "source": "retro",
+      "evidence": 2,
+      "added": "2026-09-21",
+      "heading": "Testing hygiene",
+      "note": ""
+    },
+    {
+      "id": "verify-visuals-at-size",
+      "text": "Verify visual changes at real size with real data before shipping \u2014 the user reviews screenshots/previews before implementation for anything visual. Prefer removing a struggling UI element over patching it; note the re-home idea in TODO.md.",
+      "scope": "all",
+      "status": "active",
+      "source": "correction",
+      "evidence": 3,
+      "added": "2026-09-21",
+      "heading": "UI changes",
+      "note": ""
+    },
+    {
+      "id": "claude-context-budget",
+      "text": "fable-5 sessions have a 1M-token context window \u2014 don't compact or trim summaries preemptively at 200k-window thresholds.",
+      "scope": "claude-code",
+      "status": "active",
+      "source": "manual",
+      "evidence": 1,
+      "added": "2026-09-21",
+      "heading": "Runtime-specific",
+      "note": ""
+    },
+    {
+      "id": "codex-approvals-in-terminal",
+      "text": "Answer approval prompts in your own terminal promptly \u2014 codex approvals fire no hooks, so nothing else will surface them to the user.",
+      "scope": "codex",
+      "status": "active",
+      "source": "manual",
+      "evidence": 1,
+      "added": "2026-09-21",
+      "heading": "Runtime-specific",
+      "note": ""
+    }
+  ]
+}

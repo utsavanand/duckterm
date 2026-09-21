@@ -1,121 +1,96 @@
-# AGENTS.md as an evolving, typed template
+# AGENTS.md as an evolving, typed rule set
+
+Status: shipped in 0.4.33. Decisions below were made with the user
+(2026-09-21); the earlier comments-in-markdown draft is superseded.
 
 ## Problem
 
-AGENTS.md today is a free-form textarea per folder. Nothing keeps it alive:
-rules are untyped prose, there is no way to scope a rule to one agent runtime,
-no provenance (why does this rule exist?), no dedupe target for the suggest
-loop, and no forcing function to review it. It starts empty and stays empty.
+AGENTS.md was a free-form textarea per folder. Nothing kept it alive: rules
+were untyped prose, there was no way to scope a rule to one agent runtime, no
+provenance, no dedupe key for the suggest loop, and no forcing function to
+review it. It started empty and stayed empty.
 
 ## Design
 
-One file per folder stays the source of truth — plain markdown that any agent
-reads directly, with duckterm layered on top. Structure comes from **typed
-blocks**: each rule is a markdown list item (or short paragraph) preceded by an
-HTML-comment header carrying machine-readable metadata. Agents reading the raw
-file see the metadata inline (comments are visible in raw text, invisible when
-rendered); duckterm's tooling parses it.
+Per folder, `.duckterm-rules.json` is the **source of truth**; `AGENTS.md` is
+**rendered from it** on every save (banner marks it generated — hand edits are
+overwritten). One writer (`core/agents_rules.save_rules`), so the two files
+never drift.
 
-### Block wire format
-
-```markdown
-<!-- rule {"id":"no-piped-gates","scope":"all","status":"active","source":"retro","evidence":3,"added":"2026-09-21"} -->
-- Never pipe the gate or tests through grep/tail/head — pipelines report the
-  filter's exit code. Run `scripts/gate.sh` bare; the log is the verdict.
-```
-
-A block is the comment plus the content lines that follow, ending at the next
-blank line, `<!-- rule` comment, or heading. Headings (`##`) group blocks for
-human reading and carry no metadata.
-
-### Block type
+### Rule type (`core/agents_rules.RuleBlock`)
 
 ```python
 @dataclass
 class RuleBlock:
-    id: str          # kebab-case, unique per file; the dedupe key
-    scope: str       # "all" | runtime ("claude-code", "codex")
-                     #       | runtime/model ("claude-code/fable-5")
-    status: str      # "active" | "candidate"
+    id: str          # kebab-case slug of the text — the dedupe key
+    text: str        # the rule
+    scope: str       # "all" | runtime | "runtime/model-fragment"
+                     #   e.g. "codex", "claude-code/fable-5"
+    status: str      # "active" | "candidate" | "rejected"
     source: str      # "manual" | "correction" | "digest" | "retro"
-    evidence: int    # how many observed signals back this rule
+    evidence: int    # observed signals backing the rule
     added: str       # ISO date
-    text: str        # the markdown content lines
+    heading: str     # markdown section it renders under
+    note: str        # reviewer note (e.g. why rejected)
 ```
 
-Every field has a consumer; anything without one was cut:
+Lifecycle: machine proposals land as `candidate` and never render into
+AGENTS.md; a human promotes to `active` (renders) or demotes to `rejected`.
+**Rejected rules stay as tombstones** — the suggest loop and digest bridge
+dedupe against every id regardless of status, so a rejected rule is never
+re-proposed from the same signals. Ids are deterministic slugs of the text
+(`rule_id`), so the same correction distilled twice collides on purpose.
 
-- `id` — dedupe: the suggest loop must not re-propose a rule that exists.
-- `scope` — the point of the exercise: rules that apply to one runtime only.
-- `status` — machine-proposed rules land as `candidate` and never silently
-  become `active`; a human promotes them by saving.
-- `source` + `evidence` — the reviewer's trust signal ("3 corrections said
-  this" reads differently from "someone typed it once"), and the retirement
-  signal (a candidate whose evidence stops growing gets dropped at review).
-- `added` — staleness at review time.
+### Scope and delivery
 
-Deliberately absent: `category` (markdown headings already group blocks),
-`last_confirmed` / `expires` (no consumer until a retirement pass exists),
-per-block authorship (git blame answers that).
+Sessions record `runtime` and (since 0.4.33) `model` — persisted from
+transcript stats, so `claude-code/fable-5` scopes are matchable; codex doesn't
+expose a model and stays runtime-scoped. Two delivery tiers:
 
-### Scoping rules for agents
-
-Scoped blocks stay in the shared file — a codex agent reading raw AGENTS.md
-sees claude-scoped blocks with their scope label and skips them; models follow
-"applies to X only" reliably. Two delivery tiers:
-
-1. **Without duckterm** (someone opens the folder in a bare CLI): the raw file
-   is self-describing. Scope labels are in the block headers.
-2. **With duckterm**: `helpers/session_instructions.launch_prompt()` already
-   prepends per-runtime instructions at session launch. Extend it to append
-   the blocks whose scope matches the launching runtime — the agent gets its
-   scoped rules explicitly, not by convention.
-
-Scope granularity today is **runtime** (`sessions.runtime` is recorded).
-`runtime/model` syntax is reserved but unusable until events record the model
-— that is the prerequisite, not speculative future-proofing: fable-5 vs
-smaller models already warrant different guidance (context budget, tendency
-to over-engineer).
+1. The rendered AGENTS.md labels scoped rules inline (`*(codex only)*`) —
+   works for any agent reading the raw file, no duckterm involved.
+2. At launch, `session_instructions.launch_prompt` appends the active rules
+   whose scope names the launching runtime — the agent is handed its own
+   rules explicitly instead of relying on it honoring labels. "all" rules
+   are NOT injected (AGENTS.md itself already reaches every agent).
 
 ## The evolution loop (recurring practice)
 
-Three sources feed candidates; a human always saves. Nothing writes the file
-autonomously — same contract as today's suggest button.
+Three candidate sources, four review surfaces. Nothing ever writes an ACTIVE
+rule autonomously.
 
-1. **Suggest from corrections** (exists; upgrade). Emits typed `candidate`
-   blocks instead of bare lines. Scope is inferred from evidence: if every
-   correction came from codex sessions, the block is scoped `codex`;
-   mixed → `all`. Evidence = correction count. Dedupe against existing ids.
-2. **Digest bridge** (new). The progress digest already tracks
-   `user_learnings` with recurrence evidence across sessions. A learning
-   whose recurrence crosses the same threshold that earns it an evidence bar
-   (≥3) is exactly an AGENTS.md rule candidate — file it as one, scoped to
-   the runtimes it was observed in.
-3. **Manual** — the editor, as today. Saved rules get `source:"manual"`.
+- **Suggest from corrections** (editor button): annotations + follow-up
+  prompts from the folder's sessions, each labeled with its runtime, are
+  distilled by the summarizer LLM into `- [SCOPE] [N] rule` lines → typed
+  candidates (source `correction`, evidence N). Hallucinated scopes fall back
+  to what the evidence supports.
+- **Digest bridge** (automatic): a `user_learnings` digest item recurring in
+  ≥3 distinct sessions of one folder is filed as a candidate (source
+  `digest`, evidence = session count, scope inferred from the sessions'
+  runtimes/models). Opt-in gate: only for folders where rules.json already
+  exists — the bridge must not start creating files in every watched folder.
+- **Manual**: the editor's Add field (active immediately, source `manual`).
 
-**The forcing function**: the AGENTS.md button shows a badge with the pending
-candidate count for the selected folder (same pattern as inbox badges). A
-badge you see on every glance at the dashboard is the recurring practice —
-no cron, no scheduled review, no nag modal.
+Review surfaces: the AGENTS.md button badges the pending-candidate count for
+the selected folder; the launch modal shows a nudge when the picked folder
+has candidates (the new agent won't see them until accepted); the editor
+lists candidates first with Accept/Reject; rejected rules sit collapsed with
+Restore.
 
-**Retirement**: at review (editor open), candidates older than 30 days whose
-evidence hasn't grown are listed for deletion. Active rules are only ever
-retired by a human deleting them.
+## Endpoints
 
-## Implementation plan
+- `GET /agents-md?dir=` → `{rules, text, exists, managed}` — `managed` is
+  false for a hand-written AGENTS.md that predates the format; the editor
+  offers a line-by-line import instead of clobbering it.
+- `POST /agents-md` `{dir, rules}` → saves rules.json + renders AGENTS.md.
+  Legacy `{dir, text}` still writes a plain file.
+- `POST /agents-md/suggest` `{dir}` → typed candidates, tombstone-deduped.
 
-| Step | What | Where | Notes |
-|------|------|-------|-------|
-| 1 | `RuleBlock` parse/render/merge | `core/agents_rules.py` (new) | Pure functions + unit tests. Ships in the same change as step 2 — a parser with no consumer is dead code. |
-| 2 | Suggest loop emits typed scoped blocks | `llm/suggest.py`, `server.py` `_suggest_agents_md` | server.py is contested — index-level edit protocol. |
-| 3 | Launch-prompt injection of scoped blocks | `helpers/session_instructions.py` | Follows the existing collaboration-guide pattern. |
-| 4 | Candidate badge + candidate styling in editor | `web/src/AgentsMdModal.tsx`, `App.tsx` | App.tsx contested. |
-| 5 | Digest bridge | `server.py` `_refresh_progress` | Only after 1–4 prove out. |
-| 6 | Record model per session | hook payload → sessions table | Unlocks `runtime/model` scope. |
+Both confined to the home tree + tmp, same as before.
 
-What breaks without each piece: without 1–2 the template stays untyped prose
-(the current state); without 3 scoped rules rely on agents honoring labels;
-without 4 there is no recurring practice, only a button nobody remembers;
-without 5 the richest correction signal (digest recurrence) is wasted;
-without 6 "model-specific" means "runtime-specific". Steps 5–6 wait until
-the loop demonstrably produces rules worth keeping.
+## Deliberately not built
+
+- Retirement automation (candidates stale >30 days): wait until real
+  candidate volume shows it's needed; Reject is one click.
+- Per-rule authorship: git blame on rules.json answers it.
+- Cross-folder rule inheritance: no observed need; folders are independent.

@@ -49,6 +49,28 @@ export function LaunchModal({
   const path = picked?.path;
   const isGit = picked?.is_git ?? false;
 
+  // Launch-time nudge: proposed AGENTS.md rules waiting in the picked folder.
+  // The new agent won't see them (candidates don't render) — surfacing the
+  // count here is the moment the user most cares about the folder's rules.
+  const [pendingRules, setPendingRules] = useState(0);
+  useEffect(() => {
+    setPendingRules(0);
+    if (!path) return;
+    let stale = false;
+    fetch(`/agents-md?dir=${encodeURIComponent(path)}`)
+      .then((r) => r.json())
+      .then((d: { rules?: { status: string }[] }) => {
+        if (!stale)
+          setPendingRules(
+            (d.rules ?? []).filter((r) => r.status === "candidate").length,
+          );
+      })
+      .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, [path]);
+
   // When a git folder is picked and the user wants a worktree, fetch the
   // branches to base off (local + remote, fetched fresh on the server).
   useEffect(() => {
@@ -170,6 +192,14 @@ export function LaunchModal({
           </Button>
         )}
       </Field>
+
+      {pendingRules > 0 && (
+        <div className="rd-rules-nudge">
+          {pendingRules} proposed AGENTS.md rule{pendingRules > 1 ? "s" : ""}{" "}
+          awaiting review in this folder — the new agent won't see them until
+          accepted (AGENTS.md button, top bar).
+        </div>
+      )}
 
       {browsing && (
         <DirBrowser

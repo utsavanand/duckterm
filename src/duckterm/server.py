@@ -712,7 +712,12 @@ class Server:
             s["subagents"] = subagents.get(str(s.get("session_key") or ""), [])
             stats = self._transcript_stats_for(s)
             s["context_tokens"] = stats.get("context_tokens")
-            s["model"] = stats.get("model")
+            live_model = stats.get("model")
+            if live_model and live_model != s.get("model"):
+                # Persist so rule scopes like "claude-code/fable-5" still match
+                # after the transcript is gone (codex exposes none -> stays NULL).
+                self.history.set_model(str(s["session_key"]), str(live_model))
+            s["model"] = live_model or s.get("model")
             s["suites"] = self._suites_for(s.get("worktree_path") or s.get("cwd"))
             self._reconcile_waiting(s)
         await _write_json(writer, 200, {"sessions": sessions})
@@ -1568,6 +1573,78 @@ class Server:
         )
         verdicts = progress.parse_verdicts(verdict_reply.text) or progress.fallback_verdicts(digest)
         self.digests.merge(session_key, verdicts["accept"], verdicts["done_next_action_ids"], now)
+        self._file_digest_candidates(row)
+
+    # A collaboration pattern seen in this many distinct sessions of one folder
+    # graduates from digest observation to a proposed AGENTS.md rule.
+    _DIGEST_RULE_MIN_SESSIONS = 3
+
+    def _file_digest_candidates(self, row: dict[str, Any]) -> None:
+        """The digest→AGENTS.md bridge: user_learnings that recur across
+        sessions in this folder become candidate rules in its rule set. Only
+        for folders that already adopted the typed format (rules.json exists) —
+        the bridge must not start creating files in every watched folder. A
+        human still promotes: candidates never render into AGENTS.md."""
+        from duckterm.core import agents_rules
+        from duckterm.core.agents_rules import RuleBlock, infer_scope, rule_id
+        from duckterm.persistence.digests import _normalize
+
+        directory = row.get("worktree_path") or row.get("cwd")
+        if not directory:
+            return
+        base = Path(str(directory)).expanduser()
+        if not (base / agents_rules.RULES_FILENAME).is_file():
+            return
+        root = str(Path(str(directory)))
+        # normalized learning -> (representative text, session keys, runtimes, models)
+        seen: dict[str, tuple[str, set[str], set[str], set[str]]] = {}
+        for s in self.history.sessions():
+            in_dir = any(
+                str(s.get(field) or "").startswith(root)
+                for field in ("cwd", "worktree_path", "repo_path")
+            )
+            if not in_dir:
+                continue
+            key = str(s["session_key"])
+            for item in self.digests.items(key):
+                if item["bucket"] != "user_learnings":
+                    continue
+                norm = _normalize(str(item["text"]))
+                text, keys, runtimes, models = seen.setdefault(
+                    norm, (str(item["text"]), set(), set(), set())
+                )
+                keys.add(key)
+                if s.get("runtime"):
+                    runtimes.add(str(s["runtime"]))
+                if s.get("model"):
+                    models.add(str(s["model"]))
+        proposals = [
+            RuleBlock(
+                id=rule_id(text),
+                text=text,
+                scope=infer_scope(runtimes, models) if runtimes else "all",
+                status="candidate",
+                source="digest",
+                evidence=len(keys),
+                added=time.strftime("%Y-%m-%d"),
+            )
+            for text, keys, runtimes, models in seen.values()
+            if len(keys) >= self._DIGEST_RULE_MIN_SESSIONS
+        ]
+        if not proposals:
+            return
+        # A hand-corrupted rules.json must not kill the digest loop — and must
+        # not be "repaired" by overwriting it with an empty rule set.
+        try:
+            existing = agents_rules.load_rules(base)
+        except (json.JSONDecodeError, TypeError):
+            return
+        from dataclasses import asdict
+
+        before = [asdict(r) for r in existing]  # merge mutates evidence in place
+        merged = agents_rules.merge_candidates(existing, proposals)
+        if [asdict(r) for r in merged] != before:
+            agents_rules.save_rules(base, merged)
 
     async def _session_digest(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """The accumulated, validated digest archive for a session — the
@@ -2009,9 +2086,15 @@ class Server:
         await _write_json(writer, 200, {"path": str(path), "written": True})
 
     async def _read_agents_md(self, writer: asyncio.StreamWriter, seg: str) -> None:
-        """Read the AGENTS.md for a folder (?dir=…). Returns the file's text, or
-        empty if it doesn't exist yet (so the editor can create it). One file per
-        folder — the shared, cross-agent instructions for work in that dir."""
+        """Read the typed rule set for a folder (?dir=…). `rules` come from
+        .duckterm-rules.json (the source of truth); `text` is the current
+        AGENTS.md — rendered output when managed, the hand-written file when a
+        folder predates the typed format (managed=false, so the editor can
+        offer an import instead of clobbering it)."""
+        from dataclasses import asdict
+
+        from duckterm.core import agents_rules
+
         query = urllib.parse.urlparse("/agents-md" + seg).query
         directory = urllib.parse.parse_qs(query).get("dir", [None])[0]
         if not directory:
@@ -2020,12 +2103,24 @@ class Server:
         if not self._agents_md_dir_allowed(directory):
             await _write_json(writer, 400, {"error": "dir outside the home tree"})
             return
-        path = (Path(directory).expanduser() / "AGENTS.md").resolve()
+        base = Path(directory).expanduser().resolve()
+        path = base / "AGENTS.md"
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
+        rules = agents_rules.load_rules(base)
         text = path.read_text() if path.is_file() else ""
-        await _write_json(writer, 200, {"dir": directory, "text": text, "exists": path.is_file()})
+        await _write_json(
+            writer,
+            200,
+            {
+                "dir": directory,
+                "rules": [asdict(r) for r in rules],
+                "text": text,
+                "exists": path.is_file(),
+                "managed": (base / agents_rules.RULES_FILENAME).is_file(),
+            },
+        )
 
     async def _suggest_agents_md(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """The observation loop: {dir} -> proposed AGENTS.md rules distilled
@@ -2045,13 +2140,20 @@ class Server:
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
+        from dataclasses import asdict
+
+        from duckterm.core import agents_rules
+
         corrections = self._corrections_for_dir(str(directory))
-        current = path.read_text() if path.is_file() else ""
-        rules = await asyncio.to_thread(suggest_rules, corrections, current)
+        existing = agents_rules.load_rules(path.parent)
+        proposed = await asyncio.to_thread(suggest_rules, corrections, existing)
+        # Rejected tombstones and already-active rules block re-proposal.
+        taken = {r.id for r in existing}
+        fresh = [r for r in proposed if r.id not in taken]
         await _write_json(
             writer,
             200,
-            {"suggestions": rules, "corrections_seen": len(corrections)},
+            {"suggestions": [asdict(r) for r in fresh], "corrections_seen": len(corrections)},
         )
 
     def _corrections_for_dir(self, directory: str) -> "list[Correction]":
@@ -2069,19 +2171,27 @@ class Server:
             if not in_dir:
                 continue
             key = str(row["session_key"])
+            runtime = str(row.get("runtime") or "")
+            model = str(row.get("model") or "")
             for ann in self.history.annotations(key):
-                out.append(Correction("annotation", f"\"{ann['quote']}\" — {ann['note']}"))
+                out.append(
+                    Correction("annotation", f"\"{ann['quote']}\" — {ann['note']}", runtime, model)
+                )
             prompts = [
                 str(e.get("prompt"))
                 for e in self.history.events_for(key)
                 if e.get("event_type") == events.USER_PROMPT_SUBMIT and e.get("prompt")
             ]
-            out.extend(Correction("follow-up", p) for p in prompts[1:])
+            out.extend(Correction("follow-up", p, runtime, model) for p in prompts[1:])
         return out[-80:]  # newest-biased cap; enough signal, bounded prompt
 
     async def _write_agents_md(self, writer: asyncio.StreamWriter, body: bytes) -> None:
-        """Write the AGENTS.md for a folder: {dir, text}. Creates the file if it
-        doesn't exist. The dir must already exist (it's an agent's working dir)."""
+        """Save a folder's rule set: {dir, rules: [...]} writes
+        .duckterm-rules.json AND renders AGENTS.md from it (the only writer, so
+        the two never drift). Legacy {dir, text} still writes a plain AGENTS.md
+        for folders that never adopted the typed format."""
+        from duckterm.core import agents_rules
+
         try:
             req: Any = json.loads(body or b"{}")
         except json.JSONDecodeError:
@@ -2089,8 +2199,9 @@ class Server:
             return
         directory = req.get("dir")
         text = req.get("text")
-        if not directory or not isinstance(text, str):
-            await _write_json(writer, 400, {"error": "dir and text are required"})
+        rules_raw = req.get("rules")
+        if not directory or (not isinstance(text, str) and not isinstance(rules_raw, list)):
+            await _write_json(writer, 400, {"error": "dir and rules (or text) are required"})
             return
         if not self._agents_md_dir_allowed(str(directory)):
             await _write_json(writer, 400, {"error": "dir outside the home tree"})
@@ -2103,7 +2214,22 @@ class Server:
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
-        path.write_text(text)
+        if isinstance(rules_raw, list):
+            known = set(agents_rules.RuleBlock.__dataclass_fields__)
+            rules: list[agents_rules.RuleBlock] = []
+            for entry in rules_raw:
+                if not isinstance(entry, dict) or not entry.get("id") or not entry.get("text"):
+                    await _write_json(writer, 400, {"error": "each rule needs id and text"})
+                    return
+                if entry.get("status", "candidate") not in agents_rules.STATUSES:
+                    await _write_json(writer, 400, {"error": f"bad status on {entry['id']}"})
+                    return
+                rules.append(
+                    agents_rules.RuleBlock(**{k: v for k, v in entry.items() if k in known})
+                )
+            agents_rules.save_rules(base, rules)
+        else:
+            path.write_text(text)
         await _write_json(writer, 200, {"dir": directory, "written": True})
 
     async def _branches(self, writer: asyncio.StreamWriter, seg: str) -> None:

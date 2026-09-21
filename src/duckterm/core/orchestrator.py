@@ -100,6 +100,7 @@ class SessionSupervisor:
             self.session_key,
             self.initial_prompt,
             home=Path(self._env["DUCKTERM_SESSION_TOKEN_FILE"]).parent.parent,
+            cwd=Path(self.cwd),
         )
         argv = self.runtime.launch_command(
             cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=prompt

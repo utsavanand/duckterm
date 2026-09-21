@@ -213,6 +213,27 @@ function Dashboard() {
   // The selected agent's working directory anchors AGENTS.md (per-folder file).
   const agentsMdDir = selected?.worktreePath ?? selected?.cwd ?? null;
 
+  // Pending rule candidates for that folder badge the AGENTS.md button — the
+  // recurring-review nudge. Re-fetched when the editor closes (a save may
+  // have promoted/rejected them all).
+  const [ruleCandidates, setRuleCandidates] = useState(0);
+  useEffect(() => {
+    if (!agentsMdDir || modal === "agentsmd") return;
+    let stale = false;
+    fetch(`/agents-md?dir=${encodeURIComponent(agentsMdDir)}`)
+      .then((r) => r.json())
+      .then((d: { rules?: { status: string }[] }) => {
+        if (!stale)
+          setRuleCandidates(
+            (d.rules ?? []).filter((r) => r.status === "candidate").length,
+          );
+      })
+      .catch(() => undefined);
+    return () => {
+      stale = true;
+    };
+  }, [agentsMdDir, modal]);
+
   return (
     <div className="rd-app">
       <header className="rd-topbar">
@@ -237,11 +258,16 @@ function Dashboard() {
           disabled={!agentsMdDir}
           title={
             agentsMdDir
-              ? "Edit the AGENTS.md for this agent's folder"
+              ? ruleCandidates
+                ? `${ruleCandidates} proposed rule(s) awaiting review`
+                : "Edit the AGENTS.md rules for this agent's folder"
               : "Select an agent to edit its AGENTS.md"
           }
         >
           AGENTS.md
+          {ruleCandidates > 0 && (
+            <span className="rd-rules-badge">{ruleCandidates}</span>
+          )}
         </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
