@@ -791,7 +791,7 @@ code,
   border-top: 1px solid var(--border);
   flex: 0 1 auto;
   min-height: 0; /* without this the flex child won't shrink -> no scrolling */
-  max-height: 40%;
+  max-height: 55%; /* six connectors and counting — give the section real room */
   overflow-y: auto;
   padding-bottom: 12px;
 }
@@ -922,7 +922,67 @@ code,
 .rd-context-meta,
 .rd-context-git,
 .rd-context-folder {
-  margin-bottom: 16px;
+  margin-bottom: 10px;
+}
+.rd-context-files {
+  margin-bottom: 14px;
+}
+.rd-context-edit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  font-weight: 600;
+}
+.rd-context-edit-hint {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.rd-context-tools {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.rd-context-meta-harness {
+  color: var(--muted);
+}
+.rd-context-meta-harness::before {
+  content: "·";
+  margin-right: 8px;
+}
+.rd-context-repository {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 12px;
+}
+.rd-context-repo {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.rd-context-current-branch {
+  color: var(--muted);
+  font-family: ui-monospace, Menlo, monospace;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.rd-context-git-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 14px;
+}
+.rd-context-git-actions .rd-context-toggle {
+  margin: 0;
+  padding: 6px 0;
 }
 .rd-context-section-title {
   font-size: 12px;
@@ -934,8 +994,8 @@ code,
 .rd-context-row {
   display: flex;
   gap: 10px;
-  font-size: 13px;
-  padding: 3px 0;
+  font-size: 12px;
+  padding: 2px 0;
 }
 .rd-context-row .k {
   width: 64px;
@@ -967,6 +1027,10 @@ code,
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.rd-branch .mono {
+  min-width: 0;
 }
 .rd-branch.current {
   color: var(--text);
