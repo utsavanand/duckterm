@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { authHeaders } from "./api";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
@@ -33,6 +33,14 @@ export function Approvals({
 }) {
   const toast = useToast();
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [expanded, setExpanded] = useState(false);
+  // A NEW actionable approval auto-expands once; collapsing again sticks.
+  const approvalIds = approvals.map((a) => a.id).join(",");
+  const prevIds = useRef("");
+  useEffect(() => {
+    if (approvalIds && approvalIds !== prevIds.current) setExpanded(true);
+    prevIds.current = approvalIds;
+  }, [approvalIds]);
 
   const refresh = useCallback(() => {
     fetch("/approvals")
@@ -80,11 +88,27 @@ export function Approvals({
   if (total === 0)
     return <p className="rd-panel-empty">Nothing needs you right now.</p>;
 
+  // One line by default, pinned at the top; expanding reveals a scroll area
+  // capped at ~35% of the panel so it can never crowd out the context below.
   return (
-    <div className="rd-approvals">
-      <h2>
-        {total} session{total > 1 ? "s" : ""} waiting
-      </h2>
+    <div className={`rd-approvals${expanded ? " expanded" : ""}`}>
+      <button className="rd-approvals-line" onClick={() => setExpanded((e) => !e)}>
+        <span className="dot" />
+        {approvals.length > 0 && (
+          <b>
+            {approvals.length} approval{approvals.length > 1 ? "s" : ""}
+          </b>
+        )}
+        {approvals.length > 0 && asking.length > 0 && " · "}
+        {asking.length > 0 && (
+          <>
+            {asking.length} waiting
+          </>
+        )}
+        <span className="rd-approvals-caret">{expanded ? "▾" : "▸"}</span>
+      </button>
+      {expanded && (
+        <div className="rd-approvals-body">
       {approvals.map((a) => (
         <div className="rd-approval" key={a.id}>
           {(() => {
@@ -154,6 +178,8 @@ export function Approvals({
               {labels[s.key] ?? s.label}
             </button>
           ))}
+        </div>
+      )}
         </div>
       )}
     </div>

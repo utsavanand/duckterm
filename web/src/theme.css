@@ -674,6 +674,49 @@ code,
   margin: 0 0 12px;
   line-height: 1.45;
 }
+/* Approvals card: ONE pinned line by default; expanding reveals a scroll
+   area capped at 35% of the panel height. Sticky so it stays reachable while
+   the context below scrolls. */
+.rd-approvals {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 8px 12px; /* slim: one line at rest (base card set 16/18) */
+  margin-bottom: 14px;
+  background: var(--amber-bg); /* opaque over scrolled content */
+}
+.rd-approvals-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--amber-text);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 0;
+  text-align: left;
+}
+.rd-approvals-line .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--wait);
+  flex-shrink: 0;
+}
+.rd-approvals-caret {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+.rd-approvals-body {
+  max-height: 35vh;
+  overflow-y: auto;
+  margin-top: 8px;
+}
+
 /* Compact waiting list: "N sessions waiting" + scrollable jump rows. */
 .rd-waiting-list {
   max-height: 132px;
