@@ -1,49 +1,42 @@
-# Duckterm.app (macOS menu-bar app)
+# RubberTerm.app for macOS
 
-A native menu-bar wrapper around the local Duckterm dashboard. The UI is the
-**same** dashboard you get in the browser — it's loaded in a `WKWebView` against
-`http://127.0.0.1:4300`, so there's one UI codebase, not a reimplementation.
+A native desktop window around the local dashboard, using WKWebView. It appears
+in the Dock and supports standard macOS clipboard shortcuts and notifications.
+Closing the last window quits the app. A server started by the app stops when
+the app quits; a server started separately is left running.
 
-## What it does
-- Lives in the menu bar (`🦆`), no Dock icon.
-- Starts `duckterm serve` on launch (or attaches to one already running) and
-  stops it on quit — `ServerProcess.swift`.
-- **Open dashboard** opens the dashboard in a native window — `DashboardWindow.swift`.
-- Polls `/sessions` for a menu-bar count (busy · waiting · idle) and fires a
-  native notification when a session starts waiting on you — `SessionPoller.swift`.
+## Install
 
-## Build
-Requires a working Swift toolchain with the macOS SDK. **Full Xcode is
-recommended.** The standalone CommandLineTools 16.4 SDK ships a broken module map
-(duplicate `SwiftBridging`) that fails to import AppKit; if you hit
-`redefinition of module 'SwiftBridging'`, install Xcode and point the toolchain
-at it:
+Use the [README Mac app instructions](../README.md#mac-app). The published
+Apple Silicon archive requires macOS 13+ and the separately installed `duckterm`
+CLI, tmux, and your agent CLIs. It is ad-hoc signed, not notarized. The app and
+CLI should come from the same release.
+
+## Build from source
+
+Use a working Swift toolchain and macOS SDK (Xcode or compatible Command Line
+Tools). From the repository root:
 
 ```sh
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-sudo xcodebuild -license accept
+./mac/build.sh
+open mac/build/RubberTerm.app
 ```
 
-Then:
+The build uses `swiftc` for the current machine's architecture and reads its
+version from `src/duckterm/__init__.py`. It produces an ad-hoc-signed app at
+`mac/build/RubberTerm.app`. Building on Intel produces an Intel app; the
+published arm64 archive is for Apple Silicon only.
 
-```sh
-./build.sh          # -> build/Duckterm.app
-./build.sh --run    # build and launch
-```
+If the SDK reports duplicate `SwiftBridging` modules, select a compatible Xcode
+toolchain. The Python CLI must be installed before the app can start its server.
 
-The build compiles the sources directly with `swiftc` (not SwiftPM) into an
-ad-hoc-signed `.app`. That runs on this machine; distributing to others needs
-code-signing + notarization with an Apple Developer account (not set up here).
+## Verify
 
-## Verify (smoke test, once it builds)
-1. `./build.sh --run` — the `🦆` appears in the menu bar.
-2. The menu shows a live count; **Open dashboard** shows the three-panel UI.
-3. In the window: the **Pulse** feed streams live (SSE works in WKWebView), and a
-   row action (Stop / Checkpoint) succeeds (auth token + same-origin work in the
-   embedded web view).
-4. Make a session wait on input → a native notification fires.
+1. Launch the app; verify its Dock icon and dashboard window appear.
+2. Open a session and verify terminal input, copy, and paste.
+3. Verify the file editor and native prompt dialogs work.
+4. Allow notifications and verify a supported agent's waiting state triggers one.
+5. Quit and relaunch; verify the dashboard reconnects to existing agent terminals.
 
-## Status
-Menu-bar app + server lifecycle + dashboard window + notifications are
-implemented. Native (non-WebView) panels are intentionally out of scope — see
-the roadmap.
+A broadly distributed installer should use Developer ID signing and notarization;
+these are not supplied by the current local build script.

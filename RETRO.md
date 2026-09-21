@@ -3,6 +3,14 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-21 — Installation docs advertised missing downloads
+**Broke:** the README recommended a nonexistent PyPI package and a Mac ZIP that
+was absent from the latest release; the release guide linked an older wheel.
+**Cause:** installation prose was not checked against published release assets.
+**Rule:** verify the exact public wheel URL and native archive before publishing
+installation instructions. State the native app's dependencies, architecture,
+and signing status, and keep one canonical quick start.
+
 ## 2026-09-21 — A fresh browser hid a stale native dashboard
 **Broke:** the browser showed six connectors while the user's open native window
 still showed three. The file editor also sat below verbose metadata and branches.
