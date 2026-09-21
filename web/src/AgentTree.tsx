@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
+import { Duck, poseFor } from "./Duck";
 import { TermMode, themesForMode } from "./termThemes";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
@@ -704,7 +705,7 @@ function TreeRow({
               </span>
             )}
             <span className={`rd-state st-${effState}`}>
-              <span className="dot" />
+              <Duck pose={poseFor(effState)} size={22} />
               {stateLabel}
             </span>
             {ctxLevel && (

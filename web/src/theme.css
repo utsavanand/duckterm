@@ -634,6 +634,77 @@ code,
   line-height: 1.4;
 }
 
+/* ── the rubber duck mascot (Duck.tsx) — poses are CSS keyframes ── */
+@keyframes duck-float-calm { 0%,100%{transform:translateY(0) rotate(-2deg)} 50%{transform:translateY(-2.5px) rotate(2deg)} }
+@keyframes duck-bob-work { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-1.2px)} }
+@keyframes duck-typing { 0%,100%{transform:rotate(0)} 25%{transform:rotate(-9deg)} 50%{transform:rotate(3deg)} 75%{transform:rotate(-6deg)} }
+@keyframes duck-screen-glow { 0%,100%{opacity:.55} 50%{opacity:.95} }
+@keyframes duck-water-drift { 0%{transform:translateX(0)} 50%{transform:translateX(-3px)} 100%{transform:translateX(0)} }
+@keyframes duck-tap { 0%,86%,100%{transform:rotate(0)} 90%{transform:rotate(-2.5deg)} 95%{transform:rotate(1.5deg)} }
+@keyframes duck-breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.025)} }
+@keyframes duck-zdrift { 0%{opacity:0; transform:translate(0,2px) scale(.8)} 25%{opacity:.95} 100%{opacity:0; transform:translate(8px,-14px) scale(1.25)} }
+.rd-duck { display:inline-block; vertical-align:middle; flex-shrink:0; }
+.duck-water { animation: duck-water-drift 3s ease-in-out infinite; }
+.duck-pose-work { animation: duck-bob-work 1.6s ease-in-out infinite; transform-origin:30px 42px; }
+.duck-wing-typing { animation: duck-typing .55s ease-in-out infinite; transform-origin:36px 38px; }
+.duck-screenline { animation: duck-screen-glow 1.1s ease-in-out infinite; }
+.duck-screenline-2 { animation-delay: .3s; }
+.duck-pose-wait { animation: duck-tap 2.4s ease-in-out infinite; transform-origin:31px 42px; }
+.duck-pose-idle { animation: duck-float-calm 3.4s ease-in-out infinite; transform-origin:31px 42px; }
+.duck-pose-sleep { animation: duck-breathe 3.6s ease-in-out infinite; transform-origin:31px 44px; }
+.duck-z { font-family: ui-sans-serif, system-ui, sans-serif; }
+.duck-z1 { animation: duck-zdrift 3.2s ease-out infinite 0s; }
+.duck-z2 { animation: duck-zdrift 3.2s ease-out infinite 1.6s; }
+@media (prefers-reduced-motion: reduce) {
+  .duck-water, .duck-pose-work, .duck-wing-typing, .duck-screenline,
+  .duck-pose-wait, .duck-pose-idle, .duck-pose-sleep, .duck-z1, .duck-z2 {
+    animation: none;
+  }
+}
+/* "Right now" line for the selected session (right panel). */
+.rd-rightnow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text);
+  margin: 0 0 12px;
+  line-height: 1.45;
+}
+/* Compact waiting list: "N sessions waiting" + scrollable jump rows. */
+.rd-waiting-list {
+  max-height: 132px;
+  overflow-y: auto;
+  margin-top: 6px;
+}
+.rd-waiting-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12.5px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.rd-waiting-row:hover {
+  background: var(--hover);
+}
+.rd-waiting-row .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.rd-waiting-row:disabled {
+  opacity: .5;
+  cursor: default;
+}
+
 /* Connectors: the bottom half of the right column — machine-global switches,
    split from the per-session context above by a hard divider. */
 .rd-connectors {

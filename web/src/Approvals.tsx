@@ -83,7 +83,7 @@ export function Approvals({
   return (
     <div className="rd-approvals">
       <h2>
-        {total} session{total > 1 ? "s" : ""} waiting on you
+        {total} session{total > 1 ? "s" : ""} waiting
       </h2>
       {approvals.map((a) => (
         <div className="rd-approval" key={a.id}>
@@ -139,35 +139,23 @@ export function Approvals({
           )}
         </div>
       ))}
-      {asking.map((s) => {
-        const openable = knownKeys.has(s.key);
-        return (
-          <div className="rd-approval" key={s.key}>
-            <div
-              style={{ flex: 1, cursor: openable ? "pointer" : "default" }}
-              onClick={openable ? () => onOpen(s.key) : undefined}
-              title={openable ? "Open session details" : undefined}
+      {asking.length > 0 && (
+        <div className="rd-waiting-list">
+          {/* Compact jump rows: click to open that session's terminal. */}
+          {asking.map((s) => (
+            <button
+              className="rd-waiting-row"
+              key={s.key}
+              disabled={!knownKeys.has(s.key)}
+              onClick={() => onOpen(s.key)}
+              title="Jump to this session"
             >
-              <div className="who">
-                {labels[s.key] ?? s.label} · waiting on your answer
-              </div>
-              <div className="what">
-                Answer it in the session&apos;s terminal.
-              </div>
-            </div>
-            <span
-              className={`rd-origin ${s.launched ? "launched" : "watched"}`}
-              title={
-                s.launched
-                  ? "Launched by Duckterm — answer in its terminal tab"
-                  : "Watched — answer in its own terminal"
-              }
-            >
-              {s.launched ? "launched" : "watched"}
-            </span>
-          </div>
-        );
-      })}
+              <span className="dot" style={{ background: "var(--wait)" }} />
+              {labels[s.key] ?? s.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

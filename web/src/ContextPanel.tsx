@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api";
+import { Duck, duckPhrase, poseFor } from "./Duck";
 import { FileEditModal } from "./FileEditModal";
 import { contextLevel, contextWindowFor, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
@@ -110,11 +111,11 @@ export function ContextPanel({ session }: { session: SessionView }) {
           </span>
         </p>
       )}
+      <div className="rd-rightnow">
+        <Duck pose={poseFor(session.state)} size={34} />
+        <span>{duckPhrase(session, session.state)}</span>
+      </div>
       <div className="rd-context-meta">
-        <div className="rd-context-row">
-          <span className="k">state</span>
-          <span className="v">{session.state}</span>
-        </div>
         <div className="rd-context-row">
           <span className="k">harness</span>
           <span className="v">{session.runtime ?? "—"}</span>
