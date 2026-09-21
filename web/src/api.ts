@@ -84,6 +84,7 @@ export interface InboxMessage {
   answer: string | null;
   created_at: number;
   expires_at: number;
+  overdue?: boolean;
   answered_at: number | null;
 }
 

@@ -64,7 +64,7 @@ export function FolderConversations({ folder, onClose }: { folder: string; onClo
         <button autoFocus className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onClose} aria-label="Close conversations">Close</button>
       </header>
       <p className="rd-conversations-description">Messages involving sessions currently in this folder or its subfolders. Newest first; updates appear automatically.</p>
-      <p className="rd-conversations-retention">History is retained for seven days after each request expires. Moving a session changes which folder shows its conversations.</p>
+      <p className="rd-conversations-retention">Open requests stay available. Closed conversations are retained for seven days after resolution. Moving a session changes which folder shows its conversations.</p>
       {error && <div role="alert"><p>Could not refresh conversations: {error}</p><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setRetry((n) => n + 1)}>Retry</button></div>}
       {!loaded && !error && <p role="status">Loading conversations…</p>}
       {loaded && messages.length === 0 && <p className="rd-conversations-empty">No conversations yet. Questions sent between sessions and their responses will appear here.</p>}
@@ -73,7 +73,7 @@ export function FolderConversations({ folder, onClose }: { folder: string; onClo
           <details className="rd-conversation" key={message.id}>
             <summary>
               <div className="rd-conversation-participants"><strong title={message.sender}>{message.sender_name}</strong><span aria-label="to">→</span><strong title={message.recipient}>{message.recipient_name}</strong></div>
-              <span className={`rd-conversation-status status-${message.status}`}>{statusLabels[message.status]}</span>
+              <span className={`rd-conversation-status status-${message.status}`}>{message.overdue ? "Overdue · awaiting reply" : statusLabels[message.status]}</span>
               <p className="rd-conversation-preview">{message.question}</p>
               <time dateTime={new Date(message.created_at).toISOString()}>{new Date(message.created_at).toLocaleString()}</time>
             </summary>

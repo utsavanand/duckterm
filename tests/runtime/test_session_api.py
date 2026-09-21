@@ -150,10 +150,11 @@ def test_deadlines_cancel_and_idempotency_conflict(store: HistoryStore, monkeypa
     assert error.value.status == 409
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 1400)
     path = f"/questions/{question['id']}"
-    assert call(store, a, "GET", path)[1]["status"] == "expired"
-    with pytest.raises(APIError) as error:
-        call(store, b, "POST", path + "/answer", {"text": "too late"})
-    assert error.value.status == 409
+    assert call(store, a, "GET", path)[1]["status"] == "queued"
+    assert call(store, a, "GET", path)[1]["overdue"] is True
+    assert (
+        call(store, b, "POST", path + "/answer", {"text": "late reply"})[1]["status"] == "answered"
+    )
     question = ask(store, a, "second")
     path = f"/questions/{question['id']}"
     assert call(store, a, "POST", path + "/cancel")[1]["status"] == "cancelled"
@@ -459,3 +460,56 @@ def test_owner_mailbox_directions_share_answer_status(store: HistoryStore) -> No
     assert store.session_api.pending_counts() == {}
     with pytest.raises(APIError):
         store.session_api.inbox("a", direction="sent")
+
+
+def test_overdue_requests_survive_and_each_recipient_can_answer(store, monkeypatch):
+    now = 1000
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: now)
+    store.set_meta("c", group="work/third")
+    a, b, c = enroll(store, "a"), enroll(store, "b"), enroll(store, "c")
+    first = ask(store, a)
+    second = call(
+        store,
+        {**a, "idempotency-key": "other-recipient"},
+        "POST",
+        "/questions",
+        {"target_session_id": "c", "question": first["question"]},
+    )[1]
+    assert first["id"] != second["id"]
+    call(store, b, "POST", f"/questions/{first['id']}/accept")
+    now += 9 * 86400
+    assert store.session_api.pending_counts() == {"b": 1, "c": 1}
+    for headers, q, answer in ((b, first, "B reply"), (c, second, "C reply")):
+        assert call(store, a, "GET", f"/questions/{q['id']}")[1]["overdue"] is True
+        result = call(store, headers, "POST", f"/questions/{q['id']}/answer", {"text": answer})[1]
+        assert result["status"] == "answered" and not result["overdue"]
+    assert {
+        m["answer"] for m in store.session_api.inbox("a", owner=True, direction="sent")["messages"]
+    } == {"B reply", "C reply"}
+    now += 6 * 86400
+    assert len(store.session_api.inbox("a", owner=True, direction="sent")["messages"]) == 2
+    now += 2 * 86400
+    assert store.session_api.inbox("a", owner=True, direction="sent")["messages"] == []
+
+
+def test_legacy_expired_request_reopens_once(store, tmp_path, monkeypatch):
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 1000)
+    a, b = enroll(store, "a"), enroll(store, "b")
+    q = ask(store, a)
+    conn = store.session_api.conn
+    conn.execute("UPDATE session_questions SET status='expired'")
+    conn.execute("ALTER TABLE session_questions DROP COLUMN closed_at")
+    conn.execute("PRAGMA user_version=3")
+    conn.commit()
+    store.close()
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 2000)
+    reopened = HistoryStore(tmp_path / "db.sqlite")
+    result = call(reopened, b, "GET", "/inbox")[1]["messages"][0]
+    assert result["id"] == q["id"] and result["status"] == "queued" and result["overdue"]
+    call(reopened, a, "POST", f"/questions/{q['id']}/cancel")
+    reopened.close()
+    again = HistoryStore(tmp_path / "db.sqlite")
+    assert call(again, a, "GET", f"/questions/{q['id']}")[1]["status"] == "cancelled"
+    with pytest.raises(APIError):
+        call(again, b, "POST", f"/questions/{q['id']}/answer", {"text": "not allowed"})
+    again.close()

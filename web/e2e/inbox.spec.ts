@@ -15,7 +15,7 @@ test("Inbox beside History shows real session questions and replies", async ({ p
       "Content-Type": "application/json",
       "Idempotency-Key": "inbox-e2e",
     },
-    body: JSON.stringify({ target_session_id: "inbox-recipient", question: "Which response fields does the client need?" }),
+    body: JSON.stringify({ target_session_id: "inbox-recipient", question: "Which response fields does the client need?", timeout_seconds: 1 }),
   });
   expect(created.status).toBe(202);
   const question = await created.json();
@@ -35,7 +35,7 @@ test("Inbox beside History shows real session questions and replies", async ({ p
   await expect(page.getByLabel("Introduction to paste into the agent")).toHaveValue(/Duckterm session capability:/);
   await expect(page.getByLabel("Introduction to paste into the agent")).toHaveValue(/collaboration\.md/);
   await expect(page.locator(".rd-inbox-message strong")).toHaveText("Request fromAPI implementation");
-  await expect(page.locator(".rd-inbox-status")).toHaveText("Pending");
+  await expect(page.locator(".rd-inbox-status")).toHaveText("Overdue · awaiting reply", { timeout: 8000 });
   await expect(page.getByText("This agent isn’t running in a terminal Duckterm owns.")).toHaveCount(0);
 
   const reply = await fetch(`${base()}/api/v1/session/questions/${question.id}/answer`, {

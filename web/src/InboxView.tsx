@@ -128,7 +128,7 @@ function InboxContents({ session, direction }: { session: SessionView; direction
                 </strong>
                 <span className="rd-inbox-preview">{message.question}</span>
                 <span className={`rd-inbox-status rd-inbox-status-${message.status}`}>
-                  {labels[message.status]}
+                  {message.overdue ? "Overdue · awaiting reply" : labels[message.status]}
                 </span>
                 <time dateTime={new Date(message.created_at).toISOString()}>
                   {new Date(message.created_at).toLocaleString()}

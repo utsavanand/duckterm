@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS session_questions (
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     answered_at INTEGER,
+    closed_at INTEGER,
     idempotency_key TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     UNIQUE(sender, idempotency_key)
@@ -88,7 +89,11 @@ def _public_question(row: dict[str, Any]) -> dict[str, Any]:
         "expires_at",
         "answered_at",
     )
-    return {field: row[field] for field in fields}
+    result = {field: row[field] for field in fields}
+    result["overdue"] = row["status"] in ("queued", "accepted") and row["expires_at"] <= int(
+        time.time() * 1000
+    )
+    return result
 
 
 class SessionAPI:
@@ -102,6 +107,27 @@ class SessionAPI:
                 "ALTER TABLE session_api_members "
                 "ADD COLUMN root_mode TEXT NOT NULL DEFAULT 'explicit'"
             )
+
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(session_questions)")}
+        if "closed_at" not in columns:
+            conn.execute("SAVEPOINT deadline_migration")
+            try:
+                conn.execute("ALTER TABLE session_questions ADD COLUMN closed_at INTEGER")
+                # A deadline is now advisory. Recover retained legacy expired requests.
+                conn.execute(
+                    "UPDATE session_questions SET status = 'queued' WHERE status = 'expired'"
+                )
+                conn.execute(
+                    "UPDATE session_questions SET closed_at = COALESCE(answered_at, ?) "
+                    "WHERE status IN ('answered', 'declined', 'cancelled')",
+                    (int(time.time() * 1000),),
+                )
+                self.sync_memberships()
+                conn.execute("RELEASE deadline_migration")
+            except Exception:
+                conn.execute("ROLLBACK TO deadline_migration")
+                conn.execute("RELEASE deadline_migration")
+                raise
 
     def _save_token(self, key: str, token: str) -> None:
         session_credentials.write_private(
@@ -223,11 +249,12 @@ class SessionAPI:
                     (source[1], question["id"]),
                 )
         self.conn.execute(
-            "UPDATE session_questions SET status = 'cancelled' "
+            "UPDATE session_questions SET status = 'cancelled', closed_at = ? "
             "WHERE status IN ('queued', 'accepted') "
             "AND NOT EXISTS (SELECT 1 FROM session_api_members a JOIN session_api_members b "
             "ON a.root = b.root WHERE a.session_key = sender AND b.session_key = recipient "
-            "AND a.root = session_questions.root AND a.root != '')"
+            "AND a.root = session_questions.root AND a.root != '')",
+            (int(time.time() * 1000),),
         )
 
     def pending_counts(self) -> dict[str, int]:
@@ -257,9 +284,9 @@ class SessionAPI:
             (secrets.token_hex(32), key),
         )
         self.conn.execute(
-            "UPDATE session_questions SET status = 'cancelled' "
+            "UPDATE session_questions SET status = 'cancelled', closed_at = ? "
             "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
-            (key, key),
+            (int(time.time() * 1000), key, key),
         )
 
     def enroll(self, key: str, req: dict[str, Any]) -> dict[str, Any]:
@@ -370,15 +397,13 @@ class SessionAPI:
         return target
 
     def _sweep(self) -> None:
-        now = int(time.time() * 1000)
+        # Open requests survive indefinitely; closed history lasts seven days
+        # from resolution, so a late answer is never immediately purged.
         with self.conn:
             self.conn.execute(
-                "UPDATE session_questions SET status = 'expired' "
-                "WHERE status IN ('queued', 'accepted') AND expires_at <= ?",
-                (now,),
-            )
-            self.conn.execute(
-                "DELETE FROM session_questions WHERE expires_at < ?", (now - 7 * 86400000,)
+                "DELETE FROM session_questions WHERE closed_at < ? "
+                "AND status IN ('answered', 'declined', 'cancelled')",
+                (int(time.time() * 1000) - 7 * 86400000,),
             )
 
     def folder_conversations(self, folder: str, *, before: int | None = None) -> dict[str, Any]:
@@ -651,11 +676,13 @@ class SessionAPI:
             raise APIError(409, "question is already closed")
         with self.conn:
             self.conn.execute(
-                "UPDATE session_questions SET status = ?, answer = ?, answered_at = ? WHERE id = ?",
+                "UPDATE session_questions SET status = ?, answer = ?, answered_at = ?, "
+                "closed_at = ? WHERE id = ?",
                 (
                     state,
                     answer,
                     int(time.time() * 1000) if answer is not None else None,
+                    int(time.time() * 1000) if state != "accepted" else None,
                     question["id"],
                 ),
             )

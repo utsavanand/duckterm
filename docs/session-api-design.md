@@ -19,7 +19,7 @@ SQLite. It does not start a server per session or scrape terminal screens.
 The dashboard highlights sessions with pending questions and displays an Inbox
 count. Clicking that badge opens the recipient's inbox. Counts include queued
 and accepted requests; merely viewing the inbox does not clear them. They clear
-on answer, decline, cancellation, or expiry. Polling refreshes inboxes and badges
+on answer, decline, or cancellation. Polling refreshes inboxes and badges
 about every three seconds. The agent decides when to respond; no automatic
 terminal input, interruption, or approval response is sent.
 
@@ -174,16 +174,19 @@ owner routes. Agent and inbox reads require credentials as well as writes.
 `session_api_members` stores capabilities and publications. `session_questions`
 stores attributed questions, deadlines, idempotency data, status, and complete
 answers. Both survive server restarts. Status is queued, accepted, answered,
-declined, cancelled, or expired. Cancellation stops the exchange; it does not
-interrupt the recipient's other work. Closed requests cannot accept late answers.
+declined, or cancelled. Overdue is a computed flag, not a closed state. Cancellation stops the exchange; it does not
+interrupt the recipient's other work. Only answered, declined, or cancelled requests reject further answers.
 
 Discovery and inbox pages contain at most 50 records. Questions allow 16 KiB and
 answers 256 KiB; oversized content is rejected instead of truncated. Deadlines
 default to five minutes and allow up to fifteen. A sender can create ten questions
 per minute. Creation is refused when the combined set of pending requests sent
-by that sender or addressed to that recipient reaches twenty. Records are swept
-after seven days beyond their deadline. Sweeps run on broker reads/operations;
-there is no always-running polling worker dedicated to expiry.
+by that sender or addressed to that recipient reaches twenty. Open requests do not expire or get swept. Closed records are swept
+seven days after resolution, including replies submitted after the deadline. Sweeps run on broker reads/operations;
+The legacy `expires_at` field now represents an advisory deadline; `overdue`
+indicates an open request past that deadline. Schema v4 adds `closed_at` and
+reopens retained legacy expired requests as queued, preserving IDs and content.
+Already deleted requests cannot be recovered. Existing cancelled requests stay closed.
 
 **Authorization is API-level, not OS/process isolation.** The scoped broker
 checks current membership on every request. However, agents running as the same
@@ -275,7 +278,7 @@ An exchange appears once even when both participants belong to the subtree.
 Moving sessions changes the folders that show their exchanges; this is not a
 snapshot of folder membership at send time. Stopped sessions remain represented,
 while existing session deletion and retention rules still apply: exchanges are
-removed seven days after their request expiry. No database migration is needed.
+removed seven days after resolution. Open overdue requests remain available.
 
 The dialog refreshes automatically and shows participant names, timestamps,
 full questions, full responses, and request status. Acceptance alone is shown as

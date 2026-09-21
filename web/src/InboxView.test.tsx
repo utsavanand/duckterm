@@ -91,3 +91,10 @@ describe("session inbox", () => {
     await waitFor(() => expect(screen.queryByText("Client implementation")).toBeNull());
   });
 });
+
+it("keeps overdue requests in the pending count", async () => {
+  vi.mocked(api.inbox).mockResolvedValue({ messages: [{ ...message, status: "accepted", answer: null, answered_at: null, overdue: true }], next_cursor: null });
+  render(<InboxView session={session} />);
+  expect(await screen.findByText("Overdue · awaiting reply")).toBeVisible();
+  expect(screen.getByText("1 pending · 0 answered · 0 closed")).toBeVisible();
+});

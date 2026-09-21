@@ -197,7 +197,7 @@ def main():
             for result in before.values():
                 os.kill(result["pid"], 0)
             start(sys.executable, True)
-            assert schema() == 3
+            assert schema() == 4
             for key, previous in before.items():
                 current = command(key)
                 assert current["pid"] == previous["pid"]
@@ -208,7 +208,7 @@ def main():
             request("POST", f"/approvals/{fresh}/decide", {"decision": "approve"})
             assert request("GET", f"/approvals/{fresh}/decision")["status"] == "approve"
             print(
-                f"PASS: schema {old_schema} → 3; both PIDs and in-memory histories survived",
+                f"PASS: schema {old_schema} → 4; both PIDs and in-memory histories survived",
                 flush=True,
             )
             print(
