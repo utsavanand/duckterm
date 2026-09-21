@@ -72,8 +72,10 @@ rejected. The browser tests verify the supported same-origin dashboard flow.
 
 ## CI/CD follow-up
 
-The isolated security/CI branch excludes the in-progress session API and passes
-444 Python tests, 48 frontend unit tests, and 5 browser tests. GitHub CI now
+The isolated security/CI branch originally passed 444 Python tests, 48 frontend
+unit tests, and 5 browser tests. After the session API landed on main, its changes
+were integrated while preserving the 2 MiB session request limit; the combined
+Python suite passes 470 tests. GitHub CI now
 includes a dedicated Chromium job for the browser regressions. The release
 script requires a clean main checkout and successful main push CI for the exact
 commit, checking both before building and immediately before tagging.
