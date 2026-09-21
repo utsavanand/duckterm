@@ -1,14 +1,15 @@
 import { SessionView } from "./types";
 
-// The rubber duck session mascot — the classic yellow bathtub duck, floating
-// on water, with one pose per live state (user-approved designs, see
-// scratch preview 2026-09-20):
-//   busy     — hunched over a laptop on a floating plank, wing typing
-//   waiting  — wings crossed, unimpressed brow, impatient shuffle
+// The rubber duck session mascot, v4 (user-approved 2026-09-20): no water —
+// the duck fills the frame over a soft ground shadow.
+//   busy     — faces the viewer (¾ view, big spectacles, pupils on the
+//              screen), leaning into the camera over a perspective laptop,
+//              wings hammering both sides, screen lines pulsing
+//   waiting  — level head, eye cast down at a big wristwatch held up on the
+//              wing (sweeping red second hand), glancing every ~3s
 //   idle     — lazy drift
 //   sleeping — eyes closed, head tucked, z's flowing (stopped/terminated/archived)
-// Pure inline SVG + CSS keyframes (theme.css): no image assets, no bundle
-// weight, honors prefers-reduced-motion.
+// Pure inline SVG + CSS keyframes (theme.css); honors prefers-reduced-motion.
 
 export type DuckPose = "busy" | "waiting" | "idle" | "sleeping";
 
@@ -28,7 +29,7 @@ export function duckPhrase(s: SessionView, state: string): string {
         ? `Right now: on the laptop, typing away — running ${s.lastTool}.`
         : "Right now: on the laptop, typing away.";
     case "waiting":
-      return `Right now: wings crossed, waiting on you — asked ${ago}.`;
+      return `Right now: checking its watch, waiting on you — asked ${ago}.`;
     case "idle":
       return `Right now: just floating — finished its last turn ${ago}.`;
     case "stopped":
@@ -49,28 +50,15 @@ function agoShort(ts: number): string {
   return `${Math.round(mins / 60)}h ago`;
 }
 
-const WATER = (
-  <g className="duck-water">
-    <path
-      d="M0 48 Q8 45.5 16 48 T32 48 T48 48 T66 48 L66 60 L0 60 Z"
-      fill="#3B82C4"
-      opacity=".35"
-    />
-    <path
-      d="M0 50 Q10 47.5 20 50 T40 50 T60 50 T74 50 L74 60 L0 60 Z"
-      fill="#2C6EA8"
-      opacity=".3"
-    />
-  </g>
+const SHADOW = (cx: number) => (
+  <ellipse className="duck-shadow" cx={cx} cy="56" rx="20" ry="2.6" fill="#000" />
 );
 
 export function Duck({ pose, size = 24 }: { pose: DuckPose; size?: number }) {
-  // Tight crop: the full 64x60 canvas left the duck ~half the box; cropping
-  // to the action nearly doubles the duck at the same rendered size.
   return (
     <svg
       className={`rd-duck rd-duck-${pose}`}
-      viewBox="4 12 60 46"
+      viewBox="2 4 60 56"
       width={size}
       height={size}
       aria-hidden="true"
@@ -78,182 +66,188 @@ export function Duck({ pose, size = 24 }: { pose: DuckPose; size?: number }) {
     >
       {pose === "busy" && (
         <>
-          <g className="duck-pose-work">
-            <path
-              d="M10 40 Q6 32 12 29 Q13 35 17 37 Z"
-              fill="#FFD32B"
-              stroke="#E0AD00"
-              strokeWidth="1"
-            />
+          {SHADOW(32)}
+          <g className="duck-p-work">
             <ellipse
-              cx="26"
-              cy="43"
-              rx="16"
-              ry="10.5"
+              cx="32"
+              cy="42"
+              rx="18"
+              ry="13"
               fill="#FFD32B"
               stroke="#E0AD00"
               strokeWidth="1.2"
             />
-            <g transform="rotate(14 38 28)">
+            <g transform="rotate(5 32 21)">
               <circle
-                cx="38"
-                cy="27"
-                r="10"
+                cx="32"
+                cy="20"
+                r="13"
                 fill="#FFD32B"
                 stroke="#E0AD00"
                 strokeWidth="1.2"
               />
               <path
-                d="M46 27 Q54 26.5 53.5 29 Q53 31.5 46 30.5 Q44.7 28.7 46 27 Z"
+                d="M26 27.5 Q32 32 38 27.5 Q35.5 24.5 32 24.5 Q28.5 24.5 26 27.5 Z"
                 fill="#FF8A00"
                 stroke="#D96F00"
                 strokeWidth=".8"
               />
-              <circle cx="41.5" cy="26" r="1.9" fill="#1a1a1a" />
-              <circle cx="42" cy="25.4" r="0.55" fill="#fff" />
+              <circle
+                cx="25.5"
+                cy="17.5"
+                r="5.4"
+                fill="#cfe3ff"
+                fillOpacity=".3"
+                stroke="#2b3344"
+                strokeWidth="1.9"
+              />
+              <circle
+                cx="38.5"
+                cy="17.5"
+                r="5.4"
+                fill="#cfe3ff"
+                fillOpacity=".3"
+                stroke="#2b3344"
+                strokeWidth="1.9"
+              />
+              <line x1="30.7" y1="17.5" x2="33.3" y2="17.5" stroke="#2b3344" strokeWidth="1.9" />
+              <circle cx="25.5" cy="19.4" r="2" fill="#1a1a1a" />
+              <circle cx="38.5" cy="19.4" r="2" fill="#1a1a1a" />
             </g>
-            <g className="duck-wing-typing">
-              <path
-                d="M30 38 Q40 36 44 42 Q36 46 30 42 Z"
+            <g className="duck-wing-l">
+              <ellipse
+                cx="11.5"
+                cy="46"
+                rx="5.5"
+                ry="3.8"
                 fill="#F2BE0A"
                 stroke="#E0AD00"
-                strokeWidth=".8"
+                strokeWidth=".9"
+              />
+            </g>
+            <g className="duck-wing-r">
+              <ellipse
+                cx="52.5"
+                cy="46"
+                rx="5.5"
+                ry="3.8"
+                fill="#F2BE0A"
+                stroke="#E0AD00"
+                strokeWidth=".9"
               />
             </g>
           </g>
-          <rect x="42" y="44" width="20" height="3" rx="1.5" fill="#8B5A2B" />
+          {/* perspective laptop: trapezoid lid, wider at the bottom */}
+          <path d="M19 34 L45 34 L48 52 L16 52 Z" fill="#2b3344" stroke="#0d0f14" strokeWidth="1" />
           <rect
-            x="46"
-            y="32"
-            width="13"
-            height="10"
-            rx="1"
-            fill="#2b3344"
-            stroke="#0d0f14"
-            strokeWidth=".8"
-          />
-          <rect
-            className="duck-screenline"
-            x="48"
-            y="34.5"
-            width="9"
-            height="1.5"
-            rx=".75"
+            className="duck-gl"
+            x="22"
+            y="39"
+            width="20"
+            height="2.2"
+            rx="1.1"
             fill="#22a06b"
+            opacity=".85"
           />
           <rect
-            className="duck-screenline duck-screenline-2"
-            x="48"
-            y="37"
-            width="6.5"
-            height="1.5"
-            rx=".75"
+            className="duck-gl duck-gl2"
+            x="23"
+            y="44"
+            width="14"
+            height="2.2"
+            rx="1.1"
             fill="#22a06b"
+            opacity=".85"
           />
-          <rect x="44.5" y="42" width="16" height="2.4" rx="1.2" fill="#454f63" />
-          {WATER}
+          <path d="M13 52 L51 52 L53 56 L11 56 Z" fill="#454f63" />
         </>
       )}
       {pose === "waiting" && (
         <>
-          <g className="duck-pose-wait">
+          {SHADOW(30)}
+          <g className="duck-p-watch">
             <path
-              d="M12 40 Q8 32 14 29 Q15 35 19 37 Z"
+              d="M10 42 Q6 34 12 31 Q13 37 17 39 Z"
               fill="#FFD32B"
               stroke="#E0AD00"
               strokeWidth="1"
             />
             <ellipse
-              cx="29"
-              cy="43"
-              rx="16.5"
-              ry="10.5"
+              cx="28"
+              cy="45"
+              rx="17"
+              ry="11.5"
               fill="#FFD32B"
               stroke="#E0AD00"
               strokeWidth="1.2"
             />
-            <circle
-              cx="40"
-              cy="25"
-              r="10.5"
-              fill="#FFD32B"
-              stroke="#E0AD00"
-              strokeWidth="1.2"
-            />
+            <g transform="rotate(6 40 24)">
+              <circle
+                cx="40"
+                cy="23"
+                r="11.5"
+                fill="#FFD32B"
+                stroke="#E0AD00"
+                strokeWidth="1.2"
+              />
+              <path
+                d="M49.5 23.5 Q58 23 57.5 25.8 Q57 28.5 49.5 27.3 Q48 25.4 49.5 23.5 Z"
+                fill="#FF8A00"
+                stroke="#D96F00"
+                strokeWidth=".8"
+              />
+              <circle cx="42.5" cy="22.5" r="2.6" fill="#fff" stroke="#E0AD00" strokeWidth=".5" />
+              <circle cx="41.8" cy="23.6" r="1.7" fill="#1a1a1a" />
+              <path
+                d="M39.5 17.8 Q42.5 16.6 45.3 17.9"
+                fill="none"
+                stroke="#B8860B"
+                strokeWidth="1.3"
+                strokeLinecap="round"
+              />
+            </g>
             <path
-              d="M49 24 Q57 23.5 56.5 26 Q56 28.5 49 27.5 Q47.5 25.7 49 24 Z"
-              fill="#FF8A00"
-              stroke="#D96F00"
-              strokeWidth=".8"
-            />
-            <circle cx="43.5" cy="22.5" r="1.9" fill="#1a1a1a" />
-            <line
-              x1="40.8"
-              y1="19.4"
-              x2="46.4"
-              y2="18.6"
-              stroke="#B8860B"
-              strokeWidth="1.3"
+              d="M20 47 Q26 40 32 37"
+              fill="none"
+              stroke="#F2BE0A"
+              strokeWidth="6"
               strokeLinecap="round"
             />
-            <path
-              d="M22 41 Q31 36 39 43 Q31 47 22 41 Z"
-              fill="#F2BE0A"
-              stroke="#E0AD00"
-              strokeWidth=".9"
+            <circle cx="30" cy="34.5" r="7.4" fill="#f5f5f6" stroke="#454f63" strokeWidth="2" />
+            <line
+              x1="30"
+              y1="34.5"
+              x2="30"
+              y2="30.2"
+              stroke="#1a1a1a"
+              strokeWidth="1.6"
+              strokeLinecap="round"
             />
-            <path
-              d="M37 41 Q28 37 21 44 Q29 47.5 37 41 Z"
-              fill="#EFB000"
-              stroke="#D99C00"
-              strokeWidth=".9"
+            <line
+              x1="30"
+              y1="34.5"
+              x2="33.2"
+              y2="35.6"
+              stroke="#1a1a1a"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+            />
+            <line
+              className="duck-sec"
+              x1="30"
+              y1="34.5"
+              x2="30"
+              y2="29.3"
+              stroke="#d92d20"
+              strokeWidth=".8"
             />
           </g>
-          {WATER}
         </>
       )}
       {pose === "idle" && (
         <>
-          <g className="duck-pose-idle">
-            <path
-              d="M12 40 Q8 32 14 29 Q15 35 19 37 Z"
-              fill="#FFD32B"
-              stroke="#E0AD00"
-              strokeWidth="1"
-            />
-            <ellipse
-              cx="29"
-              cy="43"
-              rx="16.5"
-              ry="10.5"
-              fill="#FFD32B"
-              stroke="#E0AD00"
-              strokeWidth="1.2"
-            />
-            <path d="M22 42 Q29 36 36 42 Q29 47.5 22 42 Z" fill="#F2BE0A" opacity=".7" />
-            <circle
-              cx="40"
-              cy="25"
-              r="10.5"
-              fill="#FFD32B"
-              stroke="#E0AD00"
-              strokeWidth="1.2"
-            />
-            <path
-              d="M49 24 Q57 23.5 56.5 26 Q56 28.5 49 27.5 Q47.5 25.7 49 24 Z"
-              fill="#FF8A00"
-              stroke="#D96F00"
-              strokeWidth=".8"
-            />
-            <circle cx="43.5" cy="22" r="1.9" fill="#1a1a1a" />
-            <circle cx="44.2" cy="21.3" r="0.6" fill="#fff" />
-          </g>
-          {WATER}
-        </>
-      )}
-      {pose === "sleeping" && (
-        <>
-          <g className="duck-pose-sleep">
+          {SHADOW(31)}
+          <g className="duck-p-idle">
             <path
               d="M12 42 Q8 34 14 31 Q15 37 19 39 Z"
               fill="#FFD32B"
@@ -261,44 +255,82 @@ export function Duck({ pose, size = 24 }: { pose: DuckPose; size?: number }) {
               strokeWidth="1"
             />
             <ellipse
-              cx="30"
-              cy="44"
+              cx="29"
+              cy="45"
               rx="17"
-              ry="10.5"
+              ry="11.5"
               fill="#FFD32B"
               stroke="#E0AD00"
               strokeWidth="1.2"
             />
-            <path d="M23 43 Q30 37.5 37 43 Q30 48.5 23 43 Z" fill="#F2BE0A" opacity=".7" />
+            <path d="M22 44 Q29 38 36 44 Q29 50 22 44 Z" fill="#F2BE0A" opacity=".7" />
             <circle
               cx="41"
-              cy="33"
-              r="9.5"
+              cy="25"
+              r="11.5"
               fill="#FFD32B"
               stroke="#E0AD00"
               strokeWidth="1.2"
             />
             <path
-              d="M49 33.5 Q56 33.5 55.5 35.5 Q55 37.5 49 36.5 Q47.8 35 49 33.5 Z"
+              d="M50.5 24.5 Q59 24 58.5 26.8 Q58 29.5 50.5 28.3 Q49 26.4 50.5 24.5 Z"
+              fill="#FF8A00"
+              stroke="#D96F00"
+              strokeWidth=".8"
+            />
+            <circle cx="44.5" cy="22" r="2" fill="#1a1a1a" />
+            <circle cx="45.2" cy="21.2" r="0.65" fill="#fff" />
+          </g>
+        </>
+      )}
+      {pose === "sleeping" && (
+        <>
+          {SHADOW(31)}
+          <g className="duck-p-sleep">
+            <path
+              d="M12 44 Q8 36 14 33 Q15 39 19 41 Z"
+              fill="#FFD32B"
+              stroke="#E0AD00"
+              strokeWidth="1"
+            />
+            <ellipse
+              cx="30"
+              cy="46"
+              rx="18"
+              ry="11.5"
+              fill="#FFD32B"
+              stroke="#E0AD00"
+              strokeWidth="1.2"
+            />
+            <path d="M23 45 Q30 39 37 45 Q30 51 23 45 Z" fill="#F2BE0A" opacity=".7" />
+            <circle
+              cx="42"
+              cy="34"
+              r="10.5"
+              fill="#FFD32B"
+              stroke="#E0AD00"
+              strokeWidth="1.2"
+            />
+            <path
+              d="M51 34.5 Q58.5 34.5 58 36.5 Q57.5 38.5 51 37.5 Q49.7 36 51 34.5 Z"
               fill="#FF8A00"
               stroke="#D96F00"
               strokeWidth=".8"
             />
             <path
-              d="M42 30.5 Q44.2 32.3 46.4 30.5"
+              d="M43 31 Q45.4 33 47.8 31"
               fill="none"
               stroke="#1a1a1a"
-              strokeWidth="1.4"
+              strokeWidth="1.5"
               strokeLinecap="round"
             />
           </g>
-          <text className="duck-z duck-z1" x="47" y="26" fontSize="10" fontWeight="800" fill="#a4a9b3">
+          <text className="duck-z duck-z1" x="50" y="22" fontSize="11" fontWeight="800" fill="#a4a9b3">
             z
           </text>
-          <text className="duck-z duck-z2" x="53" y="21" fontSize="12" fontWeight="800" fill="#8b93a1">
+          <text className="duck-z duck-z2" x="56" y="15" fontSize="13" fontWeight="800" fill="#8b93a1">
             z
           </text>
-          {WATER}
         </>
       )}
     </svg>
