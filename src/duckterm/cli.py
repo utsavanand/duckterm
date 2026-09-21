@@ -74,6 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("agent_args", nargs=argparse.REMAINDER, help="args passed to the agent")
 
     sub.add_parser("snapshot", help="bundle recently-active sessions to disk")
+    backup = sub.add_parser(
+        "backup", help="Archive the database, checkpoints, and agent transcripts"
+    )
+    backup.add_argument("--to", help="Local directory/archive.tar.gz or gs://BUCKET/prefix")
     sub.add_parser("dashboard", help="build (if needed) and open the dashboard in a browser")
     sub.add_parser("purge-test", help="delete all test/seed sessions and their data (test=1)")
     sub.add_parser("doctor", help="check deps, server, hooks, and trust; print what's missing")
@@ -105,6 +109,26 @@ def build_parser() -> argparse.ArgumentParser:
         "(written into harness MCP configs by the Connectors panel — not run by hand)",
     )
     crun.add_argument("name", help="connector name (e.g. github)")
+    auth = sub.add_parser("connector-auth", help="Sign in once on the connector host")
+    auth.add_argument("name", choices=("gmail", "gcp"))
+    broker = sub.add_parser(
+        "connector-serve",
+        aliases=["connector-service"],
+        help="Serve configured connectors over mutual TLS",
+    )
+    broker.add_argument("--config", default=Path("/etc/duckterm-broker/config.json"), type=Path)
+    attach = sub.add_parser(
+        "connector-attach", help="Enroll this machine with a shared connector host"
+    )
+    attach.add_argument("--config", required=True, type=Path)
+    admin = sub.add_parser(
+        "connector-admin", help="Manage a hosted connector's Secret Manager version"
+    )
+    admin.add_argument("name")
+    admin.add_argument("--config", required=True, type=Path)
+    admin.add_argument("--version", type=int)
+    admin.add_argument("--write-access", action="store_true")
+    admin.add_argument("--disable", action="store_true")
     from duckterm import session_client
 
     session_client.add_parser(sub)
@@ -447,6 +471,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _launch(args.agent_command, args.cwd, args.session_key, args.prompt)
     if args.command == "run":
         return _run(args.agent, args.agent_args, args.name)
+    if args.command == "backup":
+        import sqlite3
+
+        from duckterm.persistence import backup
+
+        try:
+            print(backup.create(args.to))
+            return 0
+        except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+            print(f"duckterm: {exc}", file=sys.stderr)
+            return 1
     if args.command == "snapshot":
         return _snapshot()
     if args.command == "dashboard":
@@ -459,6 +494,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _doctor()
     if args.command == "purge-test":
         return _purge_test()
+    if args.command in (
+        "connector-auth",
+        "connector-serve",
+        "connector-service",
+        "connector-attach",
+        "connector-admin",
+    ):
+        from duckterm import connector_broker, connector_client, google_connectors
+
+        try:
+            if args.command in ("connector-serve", "connector-service"):
+                asyncio.run(connector_broker.serve(args.config))
+            elif args.command == "connector-attach":
+                connector_client.attach(args.config)
+                print("Shared connectors registered for Claude Code and Codex; start new sessions")
+            elif args.command == "connector-admin":
+                connector_broker.admin(
+                    args.config, args.name, args.version, args.write_access, args.disable
+                )
+            elif connector_client.configured():
+                raise RuntimeError("Sign in on the shared connector host, not this relay client")
+            elif args.name == "gmail":
+                return google_connectors.authenticate_gmail()
+            else:
+                import shutil
+                import subprocess
+
+                cli = shutil.which("gcloud")
+                if not cli:
+                    raise RuntimeError("Install the Google Cloud CLI first")
+                return subprocess.run([cli, "auth", "login"]).returncode
+            return 0
+        except (OSError, ValueError, RuntimeError) as exc:
+            print(f"duckterm: {exc}", file=sys.stderr)
+            return 1
     if args.command == "connector-run":
         from duckterm import connectors
 

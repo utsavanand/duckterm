@@ -81,6 +81,40 @@ subscription** — RubberTerm never calls a model API itself.
   per-suite option pickers and compatibility declarations.
   Contract: [docs/harnesses.md](docs/harnesses.md).
 
+## Backups
+
+`duckterm backup` archives the database, checkpoints, and Claude/Codex transcripts.
+Use `--to PATH` for another local destination or `--to gs://BUCKET/prefix` for
+upload with your existing gcloud login. See [backup and restore](docs/backups.md).
+
+## Shared, Gmail, and Google Cloud connectors
+
+Connectors can run on one shared host for local and remote agents. Provider
+credentials stay on that host; each agent machine enrolls once with a workspace
+certificate. The dashboard also includes personal Gmail (read-only OAuth) and
+Google Cloud (an explicitly selected cloud identity).
+See [shared connector setup and enrollment](docs/shared-connectors.md).
+
+## Hugging Face connector
+
+In **Connectors**, select **Connect** beside **Hugging Face** to make model,
+dataset, and documentation discovery available to new Claude Code and Codex
+sessions. Public discovery needs no account. Install Node.js 22+ with npm first;
+the first agent connection downloads the pinned `mcp-remote` bridge via `npx`.
+
+For authenticated discovery, select **Add optional token** before connecting,
+or set `HF_TOKEN` in the environment inherited by Duckterm and its agent sessions.
+`HF_TOKEN` takes precedence over a saved token. Saved tokens use Duckterm's secret
+store (macOS Keychain, or a private file on other platforms) and are resolved at
+launch, never written into agent configs or command arguments. Disconnecting
+removes both agent registrations and the saved token; it leaves `HF_TOKEN` alone.
+To change a saved token, disconnect and reconnect with the new token.
+
+The connector uses the official hosted server's search preset:
+`https://huggingface.co/mcp?bouquet=search`. It advertises discovery tools without
+opting into Spaces execution or compute jobs. Tool selection is a discovery
+setting, not a permissions boundary; token permissions still apply.
+
 ## Mac app
 
 A WKWebView shell around the same dashboard, with native notifications:

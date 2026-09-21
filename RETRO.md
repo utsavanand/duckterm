@@ -3,6 +3,15 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-21 — A fresh browser hid a stale native dashboard
+**Broke:** the browser showed six connectors while the user's open native window
+still showed three. The file editor also sat below verbose metadata and branches.
+**Cause:** verification opened a fresh page instead of checking the existing
+native window; secondary details displaced the main file action.
+**Rule:** load the shipped assets in the native app as part of verification.
+Keep the main action above metadata, collapse secondary lists, and verify the
+committed build independently of concurrent work before installing it.
+
 ## 2026-09-20 — Masked a gate again, hours after writing the rule
 **Broke:** a commit gate ran `pytest | tail -1` — the pipeline reported
 tail's exit code, the failure scrolled past, and the commit landed anyway

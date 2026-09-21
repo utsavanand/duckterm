@@ -51,6 +51,7 @@ export interface LaunchRequest {
 }
 
 export interface Connector {
+  managed?: boolean;
   name: string;
   title: string;
   description: string;
