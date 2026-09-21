@@ -84,6 +84,11 @@ def test_github_enable_rejects_bad_token_before_storing(
         connectors.enable("github", token="ghp_bad", home=home)
     assert connectors.load_secret("github") is None  # bad token not persisted
 
+    connectors.save_secret("github", "ghp_existing")
+    with pytest.raises(RuntimeError, match="rejected"):
+        connectors.enable("github", token="ghp_bad", home=home)
+    assert connectors.load_secret("github") == "ghp_existing"  # good token not overwritten
+
 
 def test_railway_enable_requires_login_and_uses_cli_mcp(isolated_env: Path, tmp_path: Path) -> None:
     home = tmp_path / "home"
