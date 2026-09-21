@@ -73,16 +73,23 @@ def test_github_enable_without_credential_fails_clean(isolated_env: Path, tmp_pa
     assert not (home / ".claude.json").exists()  # nothing half-installed
 
 
+@pytest.mark.parametrize("previous_token", [None, "ghp_known_good"])
 def test_github_enable_rejects_bad_token_before_storing(
-    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    isolated_env: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    previous_token: str | None,
 ) -> None:
     _stub(isolated_env, "github-mcp-server", "exit 0")
     monkeypatch.setattr(connectors, "github_token_valid", lambda t: False)
     home = tmp_path / "home"
     home.mkdir()
+    if previous_token is not None:
+        connectors.save_secret("github", previous_token)
     with pytest.raises(RuntimeError, match="rejected"):
         connectors.enable("github", token="ghp_bad", home=home)
-    assert connectors.load_secret("github") is None  # bad token not persisted
+    # A rejected replacement must also preserve an already configured credential.
+    assert connectors.load_secret("github") == previous_token
 
 
 def test_railway_enable_requires_login_and_uses_cli_mcp(isolated_env: Path, tmp_path: Path) -> None:
