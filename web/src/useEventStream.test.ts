@@ -130,3 +130,36 @@ describe("seed keeps a saved rename authoritative", () => {
     expect(state.sessions.get("k")!.label).toBe("main-dev");
   });
 });
+
+describe("seed keeps ownership flags authoritative", () => {
+  it("a replayed hook event cannot flip an owned session to watched", () => {
+    let state: State = { sessions: new Map(), tombstoned: new Set() };
+    // A hook event (no `launched` marker) creates the live view first.
+    state = reduce(state, {
+      kind: "event",
+      event: {
+        event_type: "PreToolUse",
+        session_key: "k",
+        _ts: 1,
+      } as unknown as DucktermEvent,
+    });
+    expect(state.sessions.get("k")!.ptyOwned).toBeFalsy();
+    // The seed says the DB knows it's a duckterm-launched, pty-owned session.
+    state = reduce(state, {
+      kind: "seed",
+      sessions: [
+        {
+          session_key: "k",
+          launched: 1,
+          heartbeat: 0,
+          state: "busy",
+          event_count: 2,
+          started_at: 1,
+          updated_at: 1,
+        } as unknown as PersistedSession,
+      ],
+    });
+    expect(state.sessions.get("k")!.ptyOwned).toBe(true); // terminal stays attached
+    expect(state.sessions.get("k")!.launched).toBe(true);
+  });
+});
