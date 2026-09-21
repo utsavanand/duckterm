@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { AgentTree } from "./AgentTree";
 import { api } from "./api";
+import { desktop } from "./desktop";
 import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
 import { FleetChat } from "./FleetChat";
@@ -48,7 +49,7 @@ function Dashboard() {
 
   const [modal, setModal] = useState<
     "launch" | "agentsmd" | "folder" | "harnesses" | null
-  >(null);
+  >(desktop()?.draft ? "launch" : null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
@@ -442,6 +443,8 @@ function Dashboard() {
         <LaunchModal
           group={launchGroup}
           onClose={() => {
+            const native = desktop();
+            if (native) delete native.draft;
             setModal(null);
             setLaunchGroup(undefined);
           }}

@@ -4,10 +4,56 @@ import WebKit
 /// A single window hosting the dashboard in a WKWebView. Reused across opens —
 /// clicking the menu item brings the existing window forward rather than
 /// spawning duplicates.
-final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
+final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     private var window: NSWindow?
     private var web: WKWebView?
     private var url: URL
+    var desktopHosts: [RemoteHost] = []
+    var desktopTarget = "local"
+    var launchDraft: [String: String]?
+    var onChooseLaunchTarget: ((String, [String: String]) -> Void)?
+
+    private func desktopScript() -> WKUserScript {
+        var state: [String: Any] = [
+            "currentTarget": desktopTarget,
+            "targets": [["id": "local", "name": "This Mac"]] + desktopHosts.map {
+                ["id": $0.target, "name": "Remote — \($0.name)"]
+            }
+        ]
+        if let launchDraft { state["draft"] = launchDraft }
+        let data = try! JSONSerialization.data(withJSONObject: state)
+        return WKUserScript(source: "window.__rubbertermDesktop = \(String(decoding: data, as: UTF8.self));",
+                            injectionTime: .atDocumentStart, forMainFrameOnly: true)
+    }
+
+    private func configureDesktop(_ config: WKWebViewConfiguration) {
+        config.userContentController.addUserScript(desktopScript())
+        config.userContentController.add(self, name: "remoteSession")
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // Only the current dashboard's main frame may request a host change.
+        let origin = message.frameInfo.securityOrigin
+        guard message.webView === web, message.frameInfo.isMainFrame,
+              origin.protocol == url.scheme, origin.host == url.host,
+              origin.port == url.port,
+              let body = message.body as? [String: Any],
+              body["action"] as? String == "launch",
+              let target = body["target"] as? String,
+              target == "local" || target == "add" || desktopHosts.contains(where: { $0.target == target }),
+              let draft = body["draft"] as? [String: String],
+              Set(draft.keys).isSubset(of: ["agent", "command", "name", "prompt"]),
+              draft.values.allSatisfy({ $0.utf8.count <= 16384 }) else { return }
+        onChooseLaunchTarget?(target, draft)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard webView === web else { return }
+        // A host change carries form text once, never a machine-specific folder.
+        launchDraft = nil
+        webView.configuration.userContentController.removeAllUserScripts()
+        webView.configuration.userContentController.addUserScript(desktopScript())
+    }
 
     init(url: URL) {
         self.url = url
@@ -20,6 +66,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         // Remote sessions use an ephemeral browser store, never local cookies.
         guard let window else { return }
         let config = WKWebViewConfiguration()
+        configureDesktop(config)
         if remote { config.websiteDataStore = .nonPersistent() }
         let replacement = WKWebView(frame: window.contentView?.frame ?? .zero, configuration: config)
         replacement.navigationDelegate = self
@@ -43,7 +90,9 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
+        let config = WKWebViewConfiguration()
+        configureDesktop(config)
+        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760), configuration: config)
         if #available(macOS 13.3, *) {
             web.isInspectable = true  // debuggable from Safari's Develop menu
         }
@@ -62,7 +111,20 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             backing: .buffered,
             defer: false
         )
-        win.title = "RubberTerm"
+        win.title = AppIdentity.name
+        let computerButton = NSButton(
+            title: "Settings…",
+            target: nil,
+            action: #selector(AppDelegate.showSettings(_:))
+        )
+        computerButton.bezelStyle = .rounded
+        computerButton.frame = NSRect(x: 0, y: 2, width: 100, height: 26)
+        computerButton.toolTip = "Manage remote computers"
+        let computerControl = NSTitlebarAccessoryViewController()
+        computerControl.layoutAttribute = .right
+        computerControl.view = NSView(frame: NSRect(x: 0, y: 0, width: 110, height: 30))
+        computerControl.view.addSubview(computerButton)
+        win.addTitlebarAccessoryViewController(computerControl)
         win.contentView = web
         win.center()
         win.delegate = self

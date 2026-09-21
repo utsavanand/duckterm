@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, BrowseResult } from "./api";
+import { desktop, selectLaunchTarget } from "./desktop";
 import { Button, Field, inputStyle, Modal, useToast } from "./ui";
 
 // New session: a command (runtime is inferred from it), a path picked by
@@ -22,10 +23,11 @@ export function LaunchModal({
   group?: string; // pre-assign the new session to this folder (folder + button)
 }) {
   const toast = useToast();
-  const [agent, setAgent] = useState("claude");
-  const [command, setCommand] = useState("claude");
-  const [name, setName] = useState("");
-  const [prompt, setPrompt] = useState("");
+  const native = desktop();
+  const [agent, setAgent] = useState(native?.draft?.agent ?? "claude");
+  const [command, setCommand] = useState(native?.draft?.command ?? "claude");
+  const [name, setName] = useState(native?.draft?.name ?? "");
+  const [prompt, setPrompt] = useState(native?.draft?.prompt ?? "");
   const [picked, setPicked] = useState<BrowseResult | null>(null);
   const [browsing, setBrowsing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -106,6 +108,33 @@ export function LaunchModal({
 
   return (
     <Modal title={group ? `New session in ${group}` : "New session"} onClose={onClose}>
+      {native && (
+        <Field label="Run on">
+          <select
+            aria-label="Run on"
+            style={inputStyle}
+            value={native.currentTarget}
+            disabled={busy}
+            onChange={(event) => {
+              try {
+                selectLaunchTarget(event.target.value, { agent, command, name, prompt });
+              } catch (error) {
+                toast((error as Error).message, "err");
+              }
+            }}
+          >
+            {native.targets.map((target) => (
+              <option key={target.id} value={target.id}>{target.name}</option>
+            ))}
+            <option value="add">Connect a remote computer…</option>
+          </select>
+          <small style={{ color: "var(--muted)" }}>
+            {native.currentTarget === "local"
+              ? "Runs on this Mac."
+              : "Keeps running remotely when you close the app or your laptop."}
+          </small>
+        </Field>
+      )}
       <Field label="Agent">
         <div className="rd-agent-pick">
           {AGENTS.map((a) => (

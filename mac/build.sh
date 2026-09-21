@@ -9,17 +9,34 @@
 #   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 #
 # Usage:
-#   ./build.sh          # build build/Duckterm.app
-#   ./build.sh --run    # build, then open it
+#   ./build.sh --test --run  # build and open RubberTerm Test
+#   ./build.sh              # build the production RubberTerm bundle
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="build/RubberTerm.app"
+TEST_BUILD=0
+RUN_APP=0
+for arg in "$@"; do
+  case "$arg" in
+    --test) TEST_BUILD=1 ;;
+    --run) RUN_APP=1 ;;
+    *) echo "Usage: $0 [--test] [--run]" >&2; exit 2 ;;
+  esac
+done
+APP_NAME="RubberTerm"
+BUNDLE_ID="com.rubberduckhq.rubberterm"
+ICON_NAME="AppIcon"
+if [[ "$TEST_BUILD" == 1 ]]; then
+  APP_NAME="RubberTerm Test"
+  BUNDLE_ID="com.rubberduckhq.rubberterm.test"
+  ICON_NAME="AppIconTest"
+fi
+APP="build/$APP_NAME.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 
 echo "==> compiling"
-rm -rf build
+rm -rf "$APP"
 mkdir -p "$MACOS" "$CONTENTS/Resources"
 swiftc -O \
   -framework AppKit -framework WebKit -framework UserNotifications -framework Foundation \
@@ -31,9 +48,13 @@ echo "==> bundling app icon"
 # the brand mark. Skips if node/playwright isn't available (uses the checked-in
 # icns as-is). Needs web/node_modules (run `npm ci` in web/ once).
 if command -v node >/dev/null 2>&1 && [ -d ../web/node_modules/playwright ]; then
-  node make-icon.mjs || echo "   (icon regen failed; using existing AppIcon.icns)"
+  if [[ "$TEST_BUILD" == 1 ]]; then
+    node make-icon.mjs --test
+  else
+    node make-icon.mjs || echo "   (icon regen failed; using existing AppIcon.icns)"
+  fi
 fi
-cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
+cp "Resources/$ICON_NAME.icns" "$CONTENTS/Resources/AppIcon.icns"
 
 echo "==> writing Info.plist"
 # Bundle version tracks the Python package (single source of truth) so the
@@ -44,9 +65,9 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>RubberTerm</string>
-  <key>CFBundleDisplayName</key><string>RubberTerm</string>
-  <key>CFBundleIdentifier</key><string>com.rubberduckhq.rubberterm</string>
+  <key>CFBundleName</key><string>${APP_NAME}</string>
+  <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
+  <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleExecutable</key><string>RubberTerm</string>
@@ -58,10 +79,35 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </plist>
 PLIST
 
+if [[ "$TEST_BUILD" == 1 ]]; then
+  # Snapshot this worktree's backend; never fall back to the installed production CLI.
+  "${PYTHON:-../.venv/bin/python}" - "$CONTENTS" <<'PYBUILD'
+import os, plistlib, shutil, sys
+from pathlib import Path
+contents = Path(sys.argv[1])
+shutil.copytree('../src/duckterm', contents / 'Resources/backend/duckterm',
+                ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+with (contents / 'Info.plist').open('rb') as f:
+    info = plistlib.load(f)
+info['DucktermTestBuild'] = True
+if remote_host := os.environ.get('DUCKTERM_TEST_REMOTE_HOST'):
+    info['DucktermTestRemoteHost'] = remote_host
+info['DucktermTestPython'] = os.path.abspath(sys.executable)
+# Compute the existing instance scheme without inheriting per-facet overrides.
+for key in ('DUCKTERM_PORT', 'DUCKTERM_URL', 'DUCKTERM_HOME', 'DUCKTERM_TMUX_SOCKET'):
+    os.environ.pop(key, None)
+os.environ['DUCKTERM_INSTANCE'] = 'test'
+from duckterm.helpers import instance
+info['DucktermTestPort'] = instance.port()
+with (contents / 'Info.plist').open('wb') as f:
+    plistlib.dump(info, f)
+PYBUILD
+fi
+
 echo "==> ad-hoc signing (runs locally; not notarized for distribution)"
 codesign --force --deep --sign - "$APP"
 
 echo "==> done: $APP"
-if [[ "${1:-}" == "--run" ]]; then
+if [[ "$RUN_APP" == 1 ]]; then
   open "$APP"
 fi

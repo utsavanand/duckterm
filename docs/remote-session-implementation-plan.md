@@ -14,6 +14,11 @@ extended failure coverage, overnight verification, and main reconciliation
 remain. GitHub is the selected first live connector; Railway and Porkbun remain
 disconnected and are not claimed as live-validated.
 
+Latest product direction: launch destination belongs in **New session → Run on**;
+connection management belongs in **Settings → Remote computers**. The user also
+requested **Move to remote** on an existing session. That transfer/resume flow
+is now in scope and must preserve the local session until remote success.
+
 ## Outcome and scope
 
 Duckterm connects to a persistent Linux computer belonging to one user. The
@@ -22,8 +27,7 @@ to the same terminals. Each agent has its own conversation and optionally its
 own git worktree. All agents on that computer share the enabled integrations.
 
 This version includes remote connection management and the agreed connector
-security fixes. It does not include per-agent permissions, automatic migration
-of a running local session, team sharing, billing, a public relay, or a
+security fixes. It does not include per-agent permissions, team sharing, billing, a public relay, or a
 one-click cloud provisioning product. A reproducible Linux installation and
 service setup is included. Linux compute stays running while agents work;
 automatic suspension is deferred until its interaction with background jobs

@@ -3,8 +3,8 @@
   "project": "duckterm-20260920",
   "automated": {
     "python": 401,
-    "frontend": 51,
-    "playwright": 32,
+    "frontend": 53,
+    "playwright": 33,
     "nativeUnit": 2
   },
   "livePassed": [
@@ -16,14 +16,17 @@
     "GitHub disable closed live stream and rejected new stream",
     "GitHub re-enabled using pinned secret version 2",
     "native Keychain create/read/update/delete with synthetic credential",
-    "remote dashboard listed both completed coding sessions"
+    "remote dashboard listed both completed coding sessions",
+    "actual WKWebView Run on selection delivered correct draft to native bridge",
+    "Claude resumed a synthetic Mac transcript on Linux and recalled its exact marker"
   ],
   "pending": [
     "interactive native host switching",
     "VM reboot recovery after overnight test",
     "extended connector rotation/failure tests",
     "overnight persistence result",
-    "reconcile main checkout uncommitted work before merge"
+    "reconcile main checkout uncommitted work before merge",
+    "existing-session migration implementation and Codex portability"
   ],
   "deferred": [
     "Railway live provider QA: user selected GitHub first",

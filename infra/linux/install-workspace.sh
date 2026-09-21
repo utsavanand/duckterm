@@ -13,3 +13,21 @@ install -m 0644 "$SOURCE_DIR/infra/linux/duckterm.service" /etc/systemd/system/d
 systemctl daemon-reload
 systemctl enable duckterm.service
 systemctl restart duckterm.service
+# systemd Type=simple becomes active before the HTTP listener is ready.
+python3 - <<'PY'
+import time
+import urllib.error
+import urllib.request
+
+for _ in range(40):
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:4300/", timeout=1) as response:
+            if response.headers.get("X-Duckterm") == "1":
+                print("Workspace ready")
+                break
+    except (OSError, urllib.error.URLError):
+        pass
+    time.sleep(0.25)
+else:
+    raise SystemExit("Workspace did not become ready; inspect duckterm.service")
+PY

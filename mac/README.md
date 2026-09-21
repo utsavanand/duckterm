@@ -1,61 +1,82 @@
-# Duckterm.app (macOS menu-bar app)
+# RubberTerm for macOS
 
-A native menu-bar wrapper around the local Duckterm dashboard. The UI is the
-**same** dashboard you get in the browser — it's loaded in a `WKWebView` against
-`http://127.0.0.1:4300`, so there's one UI codebase, not a reimplementation.
+A native desktop window embeds the Duckterm dashboard. It owns a local backend
+or connects to a remote workspace through a managed SSH tunnel.
 
-## What it does
-- Lives in the menu bar (`🦆`), no Dock icon.
-- Starts `duckterm serve` on launch (or attaches to one already running) and
-  stops it on quit — `ServerProcess.swift`.
-- **Open dashboard** opens the dashboard in a native window — `DashboardWindow.swift`.
-- Polls `/sessions` for a menu-bar count (busy · waiting · idle) and fires a
-  native notification when a session starts waiting on you — `SessionPoller.swift`.
+## Test changes before promotion
 
-## Build
-Requires a working Swift toolchain with the macOS SDK. **Full Xcode is
-recommended.** The standalone CommandLineTools 16.4 SDK ships a broken module map
-(duplicate `SwiftBridging`) that fails to import AppKit; if you hit
-`redefinition of module 'SwiftBridging'`, install Xcode and point the toolchain
-at it:
+Build and open the test application from the feature worktree:
 
 ```sh
-sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
-sudo xcodebuild -license accept
+mac/build.sh --test --run
 ```
 
-Then:
+The result is `mac/build/RubberTerm Test.app`, with a purple duck and **TEST**
+badge. Its Dock name, app menu, and window titles identify it as RubberTerm Test.
+Its bundle ID is `com.rubberduckhq.rubberterm.test`, so it can run alongside
+RubberTerm with separate saved host preferences, notifications, and WebKit data.
+
+The test build snapshots this worktree's Python backend and built dashboard into
+the bundle. Build the dashboard first when changing frontend code (`scripts/check.sh`
+builds and verifies it). The local backend uses `DUCKTERM_INSTANCE=test`, with
+`~/.duckterm-test`, its own derived port, and the `duckterm-test` tmux socket.
+It never falls back to the installed production CLI. The build uses this Mac's
+Python interpreter and is for local QA, not redistribution.
+
+Model logins and provider CLI configuration remain those of the current Mac
+user. Connecting to a remote host shows that host's actual sessions and
+integrations; the Test badge does not create a separate remote environment.
+Use the development alias `duckterm-dev` for remote QA.
+
+1. Build RubberTerm Test from the feature worktree and run automated checks.
+2. Exercise the change in RubberTerm Test, including switching computers and
+   closing/reopening the app. Record failures and fix them in the worktree.
+3. After user acceptance and required QA pass, reconcile and merge into main.
+4. Build the normal app from validated main with `mac/build.sh`. Use the existing
+   release process to install/distribute it. Do not rename the test bundle into
+   production or replace the installed app during QA.
+
+Build outputs are separate: building Test preserves `RubberTerm.app`, and
+building production preserves `RubberTerm Test.app`.
+
+## Start a remote session
+
+Click **New session**, then choose the destination under **Run on**. Pick
+**This Mac** or a saved **Remote** computer. The agent, task name, and prompt
+carry over; choose a folder on the destination computer before launching.
+Folders and sidebar groups from one computer are not silently reused on another.
+
+For the configured development deployment, build with:
 
 ```sh
-./build.sh          # -> build/Duckterm.app
-./build.sh --run    # build and launch
+DUCKTERM_TEST_REMOTE_HOST=duckterm-dev mac/build.sh --test --run
 ```
 
-The build compiles the sources directly with `swiftc` (not SwiftPM) into an
-ad-hoc-signed `.app`. That runs on this machine; distributing to others needs
-code-signing + notarization with an Apple Developer account (not set up here).
+This seeds the development host when the Test app has no saved connections.
+Other hosts can be added directly from **Run on → Connect a remote computer…**
+or managed under **Settings → Remote computers**. Verify a new host's SSH key
+and authentication first. There is no Command-Shift-K shortcut; another app
+may register that key combination globally.
 
-## Verify (smoke test, once it builds)
-1. `./build.sh --run` — the `🦆` appears in the menu bar.
-2. The menu shows a live count; **Open dashboard** shows the three-panel UI.
-3. In the window: the **Pulse** feed streams live (SSE works in WKWebView), and a
-   row action (Stop / Checkpoint) succeeds (auth token + same-origin work in the
-   embedded web view).
-4. Make a session wait on input → a native notification fires.
+Closing the app disconnects its tunnel, not remote agents. Reopening remembers
+the last computer. **This Mac** in the Test build shows local test sessions.
+Existing-session migration is being implemented separately; it must not be
+claimed as available until exact conversation transfer and recovery are tested.
 
-## Status
-Menu-bar app + server lifecycle + dashboard window + notifications are
-implemented. Native (non-WebView) panels are intentionally out of scope — see
-the roadmap.
-
-## Remote workspaces
-
-The desktop app now offers **Computer → Connect to computer…**. Choose This Mac
-or save an SSH alias (for development, `duckterm-dev`). Authenticate and verify
-its host key in Terminal first. The app remembers the selected computer and
-reconnects its tunnel after connection failures; the title reports connectivity.
-Closing the window closes the tunnel, not remote agents.
-
-Remote servers must bind loopback and run under the persistent Linux service.
 See [remote workspace operations](../docs/remote-workspace-operations.md).
-Native validation: `swift test --package-path mac` from the repository root.
+
+## Build requirements and checks
+
+Use a Swift toolchain with the macOS SDK, preferably full Xcode. The build
+compiles with `swiftc` and ad-hoc signs the app. Distribution signing and
+notarization belong to the release process.
+
+```sh
+swift test --package-path mac
+mac/build.sh --test
+mac/build.sh
+```
+
+The icon generator requires Node and `web/node_modules/playwright`. Test icon
+rendering must succeed or have a previously generated `AppIconTest.icns`; the
+build must not silently use the production icon.

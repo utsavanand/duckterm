@@ -4,12 +4,17 @@ import Foundation
 /// lifecycle. Finds the binary on PATH (or common install dirs), spawns it, and
 /// polls until the dashboard answers.
 final class ServerProcess {
-    let url = URL(string: "http://127.0.0.1:4300")!
+    let url = URL(string: "http://127.0.0.1:\(AppIdentity.localPort)")!
     private var task: Process?
 
     /// Locate the `duckterm` executable. We can't rely on a GUI app inheriting
     /// the user's shell PATH, so check the usual install locations explicitly.
     private func findBinary() -> String? {
+        if AppIdentity.isTest {
+            guard let python = Bundle.main.object(forInfoDictionaryKey: "DucktermTestPython") as? String,
+                  FileManager.default.isExecutableFile(atPath: python) else { return nil }
+            return python
+        }
         let candidates = [
             "/opt/homebrew/bin/duckterm",
             "/usr/local/bin/duckterm",
@@ -44,10 +49,18 @@ final class ServerProcess {
         guard let bin = findBinary() else { return false }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bin)
-        proc.arguments = ["serve"]
+        proc.arguments = AppIdentity.isTest ? ["-m", "duckterm.cli", "serve"] : ["serve"]
         // The app IS the dashboard window — without this, serve would also
         // open the default browser on the same URL.
         var env = ProcessInfo.processInfo.environment
+        if AppIdentity.isTest {
+            for key in ["DUCKTERM_HOME", "DUCKTERM_TMUX_SOCKET", "DUCKTERM_URL", "DUCKTERM_PORT", "DUCKTERM_HOSTED"] {
+                env.removeValue(forKey: key)
+            }
+            env["DUCKTERM_INSTANCE"] = "test"
+            env["PYTHONPATH"] = Bundle.main.resourceURL!.appendingPathComponent("backend").path
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+        }
         env["DUCKTERM_NO_BROWSER"] = "1"
         proc.environment = env
         proc.standardOutput = FileHandle.nullDevice

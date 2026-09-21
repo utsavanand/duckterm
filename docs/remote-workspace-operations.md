@@ -1,10 +1,16 @@
 # Remote workspace operations
 
-The native app's **Computer → Connect to computer…** menu switches between this
-Mac and saved SSH hosts. Add the `duckterm-dev` alias configured in `~/.ssh/config`.
-Verify new hosts in Terminal first; the app never accepts unknown or changed
-host keys. SSH credentials remain in your SSH configuration/agent. The selected
-computer is remembered; notifications follow that computer.
+Use **RubberTerm Test** (`mac/build.sh --test --run`) for feature QA. Its purple
+duck and TEST badge distinguish it from the production app. Follow the
+[test-to-production workflow](../mac/README.md) before promotion.
+
+Choose **New session → Run on → This Mac / Remote** to start an agent on the
+selected computer. The form preserves its agent/name/prompt when switching;
+the folder picker always browses the destination. Manage saved connections
+under **Settings → Remote computers**. Verify new hosts in Terminal first;
+the app never accepts unknown or changed host keys. SSH credentials remain in
+SSH configuration/agent. The selected computer is remembered; notifications
+follow that computer.
 
 Closing the app disconnects SSH. It does not stop the remote service or agents.
 The title reports connection failure separately from agent state. Files and

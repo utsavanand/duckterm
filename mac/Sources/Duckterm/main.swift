@@ -19,6 +19,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         window = DashboardWindow(url: server.url)
+        if hosts.isEmpty, AppIdentity.isTest,
+           let alias = Bundle.main.object(forInfoDictionaryKey: "DucktermTestRemoteHost") as? String,
+           let host = try? RemoteHost(name: alias, target: alias) {
+            hosts.append(host)
+            RemoteHost.save(hosts)
+        }
+        window?.onChooseLaunchTarget = { [weak self] target, draft in
+            guard let self else { return }
+            if target == "add" { self.addHost(launchDraft: draft); return }
+            let host = self.hosts.first { $0.target == target }
+            guard target == "local" || host != nil else { return }
+            self.switchHost(host, launchDraft: draft)
+        }
         window?.show()  // open the dashboard window on launch
         NSApp.activate(ignoringOtherApps: true)
 
@@ -55,9 +68,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         poller = p
     }
 
+    @objc func showSettings(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = "Settings"
+        alert.informativeText = "Manage the computers available when you create a session."
+        alert.addButton(withTitle: "Remote computers…")
+        alert.addButton(withTitle: "Close")
+        if alert.runModal() == .alertFirstButtonReturn { chooseHost(sender) }
+    }
+
     @objc func chooseHost(_ sender: Any?) {
         let alert = NSAlert()
-        alert.messageText = "Connect to a computer"
+        alert.messageText = "Remote computers"
         alert.informativeText = "Remote agents keep running when you close Duckterm. SSH authentication must already be configured."
         let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 28))
         picker.addItems(withTitles: ["This Mac"] + hosts.map { $0.name })
@@ -81,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switchHost(picker.indexOfSelectedItem == 0 ? nil : hosts[picker.indexOfSelectedItem - 1])
     }
 
-    private func addHost() {
+    private func addHost(launchDraft: [String: String]? = nil) {
         let alert = NSAlert()
         alert.messageText = "Add remote host"
         alert.informativeText = "Enter an alias from ~/.ssh/config or user@hostname. Run ssh to this host in Terminal first to authorize access and verify its host key. Duckterm must be serving on remote port 4300."
@@ -95,11 +117,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let target = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             let host = try RemoteHost(name: target, target: target)
             if !hosts.contains(host) { hosts.append(host); RemoteHost.save(hosts) }
-            switchHost(host)
+            switchHost(host, launchDraft: launchDraft)
         } catch { showConnectionError(error) }
     }
 
-    private func switchHost(_ host: RemoteHost?) {
+    private func switchHost(_ host: RemoteHost?, launchDraft: [String: String]? = nil) {
+        window?.desktopHosts = hosts
+        window?.desktopTarget = host?.target ?? "local"
+        window?.launchDraft = launchDraft
         UserDefaults.standard.set(host?.target, forKey: "selectedRemoteHost")
         connectionGeneration += 1
         let generation = connectionGeneration
@@ -111,16 +136,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let connection = try RemoteConnection(host: host)
                 remote = connection
-                window?.connect(url: connection.url, remote: true, title: "Duckterm · \(host.name) · Connecting")
+                window?.connect(url: connection.url, remote: true, title: "\(AppIdentity.name) · \(host.name) · Connecting")
                 connection.onStatus = { [weak self] status, _ in
                     guard let self, self.connectionGeneration == generation else { return }
-                    self.window?.setTitle("Duckterm · \(host.name) · \(status)")
+                    self.window?.setTitle("\(AppIdentity.name) · \(host.name) · \(status)")
                 }
                 connection.start()
                 startPolling()
             } catch { showConnectionError(error) }
         } else {
-            window?.connect(url: server.url, remote: false, title: "Duckterm · This Mac")
+            window?.connect(url: server.url, remote: false, title: "\(AppIdentity.name) · This Mac")
             Task {
                 _ = await server.start()
                 guard self.connectionGeneration == generation else { return }
@@ -188,19 +213,15 @@ private func buildMainMenu() -> NSMenu {
     let appItem = NSMenuItem()
     main.addItem(appItem)
     let appMenu = NSMenu()
+    appMenu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
+    appMenu.addItem(.separator())
     appMenu.addItem(
-        withTitle: "Hide RubberTerm", action: #selector(NSApplication.hide(_:)),
+        withTitle: "Hide \(AppIdentity.name)", action: #selector(NSApplication.hide(_:)),
         keyEquivalent: "h")
     appMenu.addItem(
-        withTitle: "Quit RubberTerm", action: #selector(NSApplication.terminate(_:)),
+        withTitle: "Quit \(AppIdentity.name)", action: #selector(NSApplication.terminate(_:)),
         keyEquivalent: "q")
     appItem.submenu = appMenu
-
-    let hostItem = NSMenuItem()
-    main.addItem(hostItem)
-    let hostMenu = NSMenu(title: "Computer")
-    hostMenu.addItem(withTitle: "Connect to computer…", action: #selector(AppDelegate.chooseHost(_:)), keyEquivalent: "K")
-    hostItem.submenu = hostMenu
 
     let editItem = NSMenuItem()
     main.addItem(editItem)
