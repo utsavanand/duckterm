@@ -18,5 +18,15 @@ rm -rf dist build ./*.egg-info
 # activated venv, so this failed when run from a plain shell.
 "${PYTHON:-.venv/bin/python}" -m build
 
+echo "==> smoke check: the wheel's server module must import"
+# A hunk-filtered commit once shipped an import whose module stayed
+# uncommitted — the installed server crashed at startup. Import the server
+# from the built wheel in a scratch venv so a broken wheel can't be released.
+SMOKE=$(mktemp -d)
+"${PYTHON:-.venv/bin/python}" -m venv "$SMOKE/venv"
+"$SMOKE/venv/bin/pip" -q install dist/duckterm-*.whl
+"$SMOKE/venv/bin/python" -c "import duckterm.server, duckterm.cli"
+rm -rf "$SMOKE"
+
 echo "==> done. Artifacts in dist/:"
 ls -1 dist/

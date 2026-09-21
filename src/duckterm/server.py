@@ -55,7 +55,6 @@ from duckterm.core import events, progress
 from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
-from duckterm.core.session_api import MAX_BODY_BYTES, APIError
 from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
