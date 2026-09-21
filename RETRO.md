@@ -3,6 +3,19 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-20 — Two broken releases from one shared import hunk
+**Broke:** 0.4.17 and 0.4.18 both crashed at server startup (ModuleNotFound /
+ImportError) and had to be retracted; the app was down until rollback.
+**Cause:** committing "only my hunks" from a file another session was editing
+— but imports cluster, so one diff hunk carried my import AND two of theirs,
+whose modules stayed uncommitted. Twice. The wheel smoke check added after
+the first failure DID catch the second — and was defeated by piping the
+build script through grep, which reported grep's exit code, not the script's.
+**Rule:** after any selective staging, verify the COMMITTED tree, not the
+working tree: fresh worktree, pip install, import the entrypoints — before
+tagging. And never pipe a gating command through a filter; capture its exit
+code first, filter its saved output after.
+
 ## 2026-09-20 — Delete/rename dialogs silently dead in the Mac app
 **Broke:** the folder ✕ (window.confirm) and rename/new-folder prompts
 (window.prompt) did nothing in RubberTerm.app — confirm returned false,
