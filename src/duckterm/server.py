@@ -590,7 +590,6 @@ class Server:
         if screen and runtime.detect_state(screen) == "busy":
             row["state"] = "busy"
 
-
     def _transcript_stats_for(self, row: dict[str, Any]) -> dict[str, Any]:
         """Live transcript-tail stats for a claude-code session: current
         context size (the checkpoint/compact signal) and the model in use."""
