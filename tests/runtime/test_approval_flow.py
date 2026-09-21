@@ -138,3 +138,45 @@ def test_bad_decision_rejected(tmp_path: Path) -> None:
         return status
 
     assert asyncio.run(scenario()) == 400
+
+
+def test_stale_blocking_approvals_expire_at_listing_time(tmp_path: Path) -> None:
+    """A blocking approval past the hook's poll deadline is a zombie (the hook
+    stopped polling; the decision can never be consumed). Event-driven cleanup
+    starves during long tool runs, so the LISTING itself must expire it."""
+    import asyncio
+    import json as _json
+
+    from duckterm.server import Server, _BLOCKING_POLL_MS
+
+    class _W:
+        def __init__(self) -> None:
+            self.data = b""
+
+        def write(self, b: bytes) -> None:
+            self.data += b
+
+        async def drain(self) -> None:
+            pass
+
+    server = Server(history=HistoryStore(tmp_path / "db.sqlite"))
+    server.approvals.register(
+        "S",
+        "Bash",
+        {"command": "npm ci"},
+        int(__import__("time").time() * 1000) - _BLOCKING_POLL_MS - 1,
+        blocking=True,
+    )
+    server.approvals.register(
+        "S",
+        "Bash",
+        {"command": "fresh one"},
+        int(__import__("time").time() * 1000),
+        blocking=True,
+    )
+
+    w = _W()
+    asyncio.run(server._list_approvals(w))  # type: ignore[arg-type]
+    body = _json.loads(w.data.split(b"\r\n\r\n", 1)[1])
+    details = [a["detail"] for a in body["approvals"]]
+    assert details == ["fresh one"]  # zombie gone, live one stays
