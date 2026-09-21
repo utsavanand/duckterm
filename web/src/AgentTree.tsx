@@ -20,6 +20,7 @@ export function AgentTree({
   onSessionMoved,
   onRename,
   onOpenGrid,
+  onNewSessionIn,
   folderThemes,
   onSetFolderTheme,
   termMode,
@@ -36,6 +37,7 @@ export function AgentTree({
   onSessionMoved: (key: string, group: string) => void;
   onRename: (key: string, name: string) => void;
   onOpenGrid: (folder: string) => void;
+  onNewSessionIn: (folder: string) => void;
   folderThemes: Record<string, string>;
   onSetFolderTheme: (folder: string, theme: string | null) => void;
   termMode: TermMode;
@@ -188,6 +190,7 @@ export function AgentTree({
       onDelete={() => removeFolder(path)}
       onRename={() => renameFolder(path)}
       onNewSubfolder={() => createSubfolder(path)}
+      onNewSession={() => onNewSessionIn(path)}
       onOpenGrid={() => onOpenGrid(path)}
       theme={folderThemes[path]}
       onSetTheme={(t) => onSetFolderTheme(path, t)}
@@ -228,6 +231,7 @@ function GroupHeader({
   onDelete,
   onRename,
   onNewSubfolder,
+  onNewSession,
   onOpenGrid,
   theme,
   onSetTheme,
@@ -242,6 +246,7 @@ function GroupHeader({
   onDropSession: (key: string, group: string) => void;
   onDropFolder: (name: string, parent: string) => void;
   onNewSubfolder: () => void;
+  onNewSession: () => void;
   onOpenGrid: () => void;
   theme: string | undefined;
   onSetTheme: (theme: string | null) => void;
@@ -326,14 +331,34 @@ function GroupHeader({
           ⛶
         </button>
         <button
+          className="rd-group-rename"
+          title="Rename this folder (double-clicking the name works too)"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRename();
+          }}
+        >
+          ✎
+        </button>
+        <button
           className="rd-group-add"
+          title="New session in this folder"
+          onClick={(e) => {
+            e.stopPropagation();
+            onNewSession();
+          }}
+        >
+          +
+        </button>
+        <button
+          className="rd-group-subfolder"
           title="New folder inside this one"
           onClick={(e) => {
             e.stopPropagation();
             onNewSubfolder();
           }}
         >
-          +
+          ⊞
         </button>
         <button
           className="rd-group-del"
@@ -692,6 +717,16 @@ function TreeRow({
           </ul>
         )}
         <div className="rd-row-actions">
+          <button
+            className="rd-btn rd-btn-sm rd-btn-ghost"
+            title="Rename this session (double-clicking the name works too)"
+            onClick={() => {
+              setDraft(s.label);
+              setRenaming(true);
+            }}
+          >
+            Rename
+          </button>
           {/* One branching action: the modal offers a git worktree fork (or
               promotes an in-place session onto a branch) and, for claude-code,
               a conversation-only fork. */}

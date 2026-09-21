@@ -14,7 +14,13 @@ const AGENTS: { id: string; label: string; command: string }[] = [
   { id: "custom", label: "Custom…", command: "" },
 ];
 
-export function LaunchModal({ onClose }: { onClose: () => void }) {
+export function LaunchModal({
+  onClose,
+  group,
+}: {
+  onClose: () => void;
+  group?: string; // pre-assign the new session to this folder (folder + button)
+}) {
   const toast = useToast();
   const [agent, setAgent] = useState("claude");
   const [command, setCommand] = useState("claude");
@@ -74,7 +80,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
       const worktree = isGit && mode === "worktree";
       // Run the agent in a PTY Duckterm owns (in_terminal:false) so it renders
       // in the in-app terminal — no external iTerm/Terminal tab.
-      await api.launch({
+      const launched = await api.launch({
         command,
         name: name || undefined,
         prompt: prompt || undefined,
@@ -88,7 +94,8 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
             }
           : { cwd: path }),
       });
-      toast(`Started ${name || "session"}`);
+      if (group) await api.setGroup(launched.session_key, group);
+      toast(group ? `Started in ${group}` : `Started ${name || "session"}`);
       onClose();
     } catch (e) {
       toast(`Launch failed: ${(e as Error).message}`, "err");
@@ -98,7 +105,7 @@ export function LaunchModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <Modal title="New session" onClose={onClose}>
+    <Modal title={group ? `New session in ${group}` : "New session"} onClose={onClose}>
       <Field label="Agent">
         <div className="rd-agent-pick">
           {AGENTS.map((a) => (

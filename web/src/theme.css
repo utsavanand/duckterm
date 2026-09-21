@@ -2016,6 +2016,8 @@ select {
 }
 /* Folder header actions (grid / new subfolder) match the delete button. */
 .rd-group-grid,
+.rd-group-rename,
+.rd-group-subfolder,
 .rd-group-add {
   border: none;
   background: transparent;
@@ -2025,6 +2027,8 @@ select {
   padding: 0 4px;
 }
 .rd-group-grid:hover,
+.rd-group-rename:hover,
+.rd-group-subfolder:hover,
 .rd-group-add:hover {
   color: var(--text);
 }

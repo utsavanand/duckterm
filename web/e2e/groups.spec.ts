@@ -19,8 +19,9 @@ test("a grouped session shows under its folder header and collapses", async ({
   const groupBody = page.locator(".rd-group", { hasText: "Billing" });
   await expect(groupBody.locator(".rd-row", { hasText: key })).toBeVisible();
 
-  // Collapsing the header hides the rows.
-  await header.click();
+  // Collapsing the header hides the rows (click the name area — the header's
+  // geometric center may land on one of its action buttons).
+  await header.locator(".rd-group-caret").click();
   await expect(
     page.locator(".rd-group-body .rd-row", { hasText: key }),
   ).toHaveCount(0);

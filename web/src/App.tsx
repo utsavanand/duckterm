@@ -52,6 +52,8 @@ function Dashboard() {
   >(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [forkKey, setForkKey] = useState<string | null>(null);
+  // Folder the next launched session should land in (folder + button).
+  const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
   const [view, setView] = useState<"terminal" | "messages" | "history">(
     "terminal",
   );
@@ -337,6 +339,10 @@ function Dashboard() {
                 }
                 onRename={(key, name) => patchSession(key, { label: name })}
                 onOpenGrid={setGridFolder}
+                onNewSessionIn={(folder) => {
+                  setLaunchGroup(folder);
+                  setModal("launch");
+                }}
                 folderThemes={themeOverrides.folders}
                 onSetFolderTheme={setFolderTheme}
                 termMode={mode}
@@ -445,7 +451,15 @@ function Dashboard() {
         </div>
       )}
 
-      {modal === "launch" && <LaunchModal onClose={() => setModal(null)} />}
+      {modal === "launch" && (
+        <LaunchModal
+          group={launchGroup}
+          onClose={() => {
+            setModal(null);
+            setLaunchGroup(undefined);
+          }}
+        />
+      )}
       {modal === "agentsmd" && agentsMdDir && (
         <AgentsMdModal dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
