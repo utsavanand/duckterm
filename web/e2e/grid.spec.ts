@@ -36,6 +36,7 @@ test("folder grid: subtree tiles, resize, dock, exit", async ({ page }) => {
   await page.goto(base());
   const head = page.locator(".rd-group-head", { hasText: folder });
   await expect(head).toBeVisible();
+  await head.hover(); // grid button is hover-revealed
   await head.locator(".rd-group-grid").click();
 
   // Default: vertical sections with at most 3 expanded — the 4th starts in

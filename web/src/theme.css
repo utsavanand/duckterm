@@ -846,6 +846,10 @@ code,
 }
 .rd-group-name {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .rd-group-count {
   font-size: 11px;
@@ -1048,9 +1052,9 @@ code,
 }
 .rd-row:hover .rd-row-actions,
 .rd-row.expanded .rd-row-actions {
-  /* Fit two wrapped rows of action buttons (Fork/Notes/Checkpoint/Stop/
-     Archive/Delete) without clipping into the next agent row. */
-  max-height: 80px;
+  /* Fit three wrapped rows of action buttons (Rename/Fork/Notes/Checkpoint/
+     Stop/Archive/Delete) without clipping into the next agent row. */
+  max-height: 124px;
   opacity: 1;
 }
 .rd-row-notes-wrap {
@@ -2025,6 +2029,20 @@ select {
   cursor: pointer;
   font-size: 12px;
   padding: 0 4px;
+  flex-shrink: 0;
+}
+/* Secondary folder actions surface on hover (like ✕) — nine always-visible
+   controls overflowed the 240px-min panel and got clipped. + stays visible:
+   it's the primary action. */
+.rd-group-rename,
+.rd-group-subfolder,
+.rd-group-grid {
+  display: none;
+}
+.rd-group-head:hover .rd-group-rename,
+.rd-group-head:hover .rd-group-subfolder,
+.rd-group-head:hover .rd-group-grid {
+  display: inline-block;
 }
 .rd-group-grid:hover,
 .rd-group-rename:hover,
@@ -2173,6 +2191,12 @@ select {
   font-size: 12px;
   opacity: 0.45;
   cursor: pointer;
+  flex-shrink: 0;
+  display: none; /* hover-reveal with the other secondary folder actions */
+}
+.rd-group-head:hover .rd-group-theme-wrap,
+.rd-group-theme-wrap.set {
+  display: inline-block;
 }
 .rd-group-theme-wrap.set,
 .rd-group-theme-wrap:hover {
