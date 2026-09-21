@@ -34,7 +34,8 @@ Event = dict[str, Any]
 # column-adds are backward-compatible (old code ignores extra columns), so this
 # is a floor for "safe to open," not a hard per-version lock.
 # v3 keeps enrollment synchronized with folder moves and automatically enrolls sessions.
-_SCHEMA_VERSION = 3
+# v4 keeps deadlines advisory and retains closed exchanges from resolution time.
+_SCHEMA_VERSION = 4
 
 
 class SchemaTooNewError(RuntimeError):

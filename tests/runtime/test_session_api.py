@@ -150,10 +150,11 @@ def test_deadlines_cancel_and_idempotency_conflict(store: HistoryStore, monkeypa
     assert error.value.status == 409
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 1400)
     path = f"/questions/{question['id']}"
-    assert call(store, a, "GET", path)[1]["status"] == "expired"
-    with pytest.raises(APIError) as error:
-        call(store, b, "POST", path + "/answer", {"text": "too late"})
-    assert error.value.status == 409
+    assert call(store, a, "GET", path)[1]["status"] == "queued"
+    assert call(store, a, "GET", path)[1]["overdue"] is True
+    assert (
+        call(store, b, "POST", path + "/answer", {"text": "late reply"})[1]["status"] == "answered"
+    )
     question = ask(store, a, "second")
     path = f"/questions/{question['id']}"
     assert call(store, a, "POST", path + "/cancel")[1]["status"] == "cancelled"
@@ -365,3 +366,150 @@ def test_folder_names_with_sql_wildcards_do_not_move_other_trees(store: HistoryS
     store.delete_folder("moved")
     assert call(store, a, "GET", "/self")[1]["root"] == ""
     assert call(store, b, "GET", "/self")[1]["folder"] == "projectXone/child"
+
+
+def test_folder_conversation_history_membership_and_responses(store: HistoryStore) -> None:
+    a, b = enroll(store, "a"), enroll(store, "b")
+    q = ask(store, a)
+    path = f"/questions/{q['id']}"
+    call(store, b, "POST", path + "/accept")
+    pending = store.session_api.folder_conversations("work")["messages"]
+    assert len(pending) == 1  # both participants in the subtree, one exchange
+    assert pending[0]["status"] == "accepted" and pending[0]["answer"] is None
+    text = "Complete response\nSecond line 🦆"
+    call(store, b, "POST", path + "/answer", {"text": text})
+    for folder in ("work", "work/backend", "work/backend/a", "work/backend/b"):
+        message = store.session_api.folder_conversations(folder)["messages"][0]
+        assert (message["sender_name"], message["recipient_name"], message["answer"]) == (
+            "Session a",
+            "Session b",
+            text,
+        )
+    assert store.session_api.folder_conversations("other")["messages"] == []
+    store.set_state("b", "stopped")
+    assert store.session_api.folder_conversations("work")["messages"][0]["answer"] == text
+    store.move_folder("work", "renamed")
+    assert store.session_api.folder_conversations("renamed")["messages"][0]["id"] == q["id"]
+    store.set_meta("a", group="other")
+    store.set_meta("b", group="other")
+    assert store.session_api.folder_conversations("renamed")["messages"] == []
+    assert store.session_api.folder_conversations("other")["messages"][0]["id"] == q["id"]
+
+
+def test_folder_history_auth_cursor_and_literal_folder_names(store: HistoryStore) -> None:
+    a = enroll(store, "a")
+    enroll(store, "b")
+    ask(store, a)
+    server = Server(history=store)
+    url = "/folder-conversations?folder=work%2Fbackend"
+    assert dispatch(server, "GET", url, {})[0] == 401
+    assert dispatch(server, "GET", url, a)[0] == 403
+    owner = {"x-duckterm-token": server.token}
+    assert dispatch(server, "GET", url, owner)[1]["messages"][0]["recipient"] == "b"
+    for cursor in ("bad", "-1", "9" * 100):
+        assert dispatch(server, "GET", url + "&before=" + cursor, owner)[0] == 400
+    assert dispatch(server, "GET", "/folder-conversations?folder=missing", owner)[0] == 404
+    store.create_folder("wor%")
+    assert store.session_api.folder_conversations("wor%")["messages"] == []
+
+
+def test_folder_history_pagination_and_retention(store: HistoryStore, monkeypatch) -> None:
+    a, b = enroll(store, "a"), enroll(store, "b")
+    now = 1000
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: now)
+    for i in range(55):
+        now += 61
+        q = ask(store, a, str(i))
+        call(store, b, "POST", f"/questions/{q['id']}/answer", {"text": str(i)})
+    first = store.session_api.folder_conversations("work")
+    second = store.session_api.folder_conversations("work", before=first["next_cursor"])
+    assert len(first["messages"]) == 50 and len(second["messages"]) == 5
+    assert len({m["id"] for m in first["messages"] + second["messages"]}) == 55
+    assert second["next_cursor"] is None
+    now += 8 * 86400
+    assert store.session_api.folder_conversations("work")["messages"] == []
+
+
+def test_owner_mailbox_directions_share_answer_status(store: HistoryStore) -> None:
+    a, b = enroll(store, "a"), enroll(store, "b")
+    q = ask(store, a)
+    server = Server(history=store)
+    owner = {"x-duckterm-token": server.token}
+    sent_url = "/sessions/a/inbox?direction=sent"
+    assert dispatch(server, "GET", sent_url, {})[0] == 401
+    assert dispatch(server, "GET", sent_url, a)[0] == 403
+    sent = dispatch(server, "GET", sent_url, owner)[1]["messages"]
+    assert sent[0]["recipient_name"] == "Session b"
+    assert sent[0]["status"] == "queued"
+    assert store.session_api.inbox("a", owner=True)["messages"] == []
+    assert store.session_api.inbox("c", owner=True, direction="all")["messages"] == []
+    call(store, b, "POST", f"/questions/{q['id']}/answer", {"text": "Full reply 🦆"})
+    for key, direction in (
+        ("a", "sent"),
+        ("a", "all"),
+        ("b", "received"),
+        ("b", "all"),
+        ("b", "sent"),
+    ):
+        page = store.session_api.inbox(key, owner=True, direction=direction)
+        assert len(page["messages"]) == 1
+        assert page["messages"][0]["id"] == q["id"]
+        assert page["messages"][0]["status"] == "answered"
+        assert page["messages"][0]["answer"] == "Full reply 🦆"
+    assert dispatch(server, "GET", "/sessions/a/inbox?direction=invalid", owner)[0] == 400
+    assert store.session_api.pending_counts() == {}
+    with pytest.raises(APIError):
+        store.session_api.inbox("a", direction="sent")
+
+
+def test_overdue_requests_survive_and_each_recipient_can_answer(store, monkeypatch):
+    now = 1000
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: now)
+    store.set_meta("c", group="work/third")
+    a, b, c = enroll(store, "a"), enroll(store, "b"), enroll(store, "c")
+    first = ask(store, a)
+    second = call(
+        store,
+        {**a, "idempotency-key": "other-recipient"},
+        "POST",
+        "/questions",
+        {"target_session_id": "c", "question": first["question"]},
+    )[1]
+    assert first["id"] != second["id"]
+    call(store, b, "POST", f"/questions/{first['id']}/accept")
+    now += 9 * 86400
+    assert store.session_api.pending_counts() == {"b": 1, "c": 1}
+    for headers, q, answer in ((b, first, "B reply"), (c, second, "C reply")):
+        assert call(store, a, "GET", f"/questions/{q['id']}")[1]["overdue"] is True
+        result = call(store, headers, "POST", f"/questions/{q['id']}/answer", {"text": answer})[1]
+        assert result["status"] == "answered" and not result["overdue"]
+    assert {
+        m["answer"] for m in store.session_api.inbox("a", owner=True, direction="sent")["messages"]
+    } == {"B reply", "C reply"}
+    now += 6 * 86400
+    assert len(store.session_api.inbox("a", owner=True, direction="sent")["messages"]) == 2
+    now += 2 * 86400
+    assert store.session_api.inbox("a", owner=True, direction="sent")["messages"] == []
+
+
+def test_legacy_expired_request_reopens_once(store, tmp_path, monkeypatch):
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 1000)
+    a, b = enroll(store, "a"), enroll(store, "b")
+    q = ask(store, a)
+    conn = store.session_api.conn
+    conn.execute("UPDATE session_questions SET status='expired'")
+    conn.execute("ALTER TABLE session_questions DROP COLUMN closed_at")
+    conn.execute("PRAGMA user_version=3")
+    conn.commit()
+    store.close()
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 2000)
+    reopened = HistoryStore(tmp_path / "db.sqlite")
+    result = call(reopened, b, "GET", "/inbox")[1]["messages"][0]
+    assert result["id"] == q["id"] and result["status"] == "queued" and result["overdue"]
+    call(reopened, a, "POST", f"/questions/{q['id']}/cancel")
+    reopened.close()
+    again = HistoryStore(tmp_path / "db.sqlite")
+    assert call(again, a, "GET", f"/questions/{q['id']}")[1]["status"] == "cancelled"
+    with pytest.raises(APIError):
+        call(again, b, "POST", f"/questions/{q['id']}/answer", {"text": "not allowed"})
+    again.close()

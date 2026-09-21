@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS session_questions (
     created_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL,
     answered_at INTEGER,
+    closed_at INTEGER,
     idempotency_key TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     UNIQUE(sender, idempotency_key)
@@ -88,7 +89,11 @@ def _public_question(row: dict[str, Any]) -> dict[str, Any]:
         "expires_at",
         "answered_at",
     )
-    return {field: row[field] for field in fields}
+    result = {field: row[field] for field in fields}
+    result["overdue"] = row["status"] in ("queued", "accepted") and row["expires_at"] <= int(
+        time.time() * 1000
+    )
+    return result
 
 
 class SessionAPI:
@@ -102,6 +107,27 @@ class SessionAPI:
                 "ALTER TABLE session_api_members "
                 "ADD COLUMN root_mode TEXT NOT NULL DEFAULT 'explicit'"
             )
+
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(session_questions)")}
+        if "closed_at" not in columns:
+            conn.execute("SAVEPOINT deadline_migration")
+            try:
+                conn.execute("ALTER TABLE session_questions ADD COLUMN closed_at INTEGER")
+                # A deadline is now advisory. Recover retained legacy expired requests.
+                conn.execute(
+                    "UPDATE session_questions SET status = 'queued' WHERE status = 'expired'"
+                )
+                conn.execute(
+                    "UPDATE session_questions SET closed_at = COALESCE(answered_at, ?) "
+                    "WHERE status IN ('answered', 'declined', 'cancelled')",
+                    (int(time.time() * 1000),),
+                )
+                self.sync_memberships()
+                conn.execute("RELEASE deadline_migration")
+            except Exception:
+                conn.execute("ROLLBACK TO deadline_migration")
+                conn.execute("RELEASE deadline_migration")
+                raise
 
     def _save_token(self, key: str, token: str) -> None:
         session_credentials.write_private(
@@ -223,11 +249,12 @@ class SessionAPI:
                     (source[1], question["id"]),
                 )
         self.conn.execute(
-            "UPDATE session_questions SET status = 'cancelled' "
+            "UPDATE session_questions SET status = 'cancelled', closed_at = ? "
             "WHERE status IN ('queued', 'accepted') "
             "AND NOT EXISTS (SELECT 1 FROM session_api_members a JOIN session_api_members b "
             "ON a.root = b.root WHERE a.session_key = sender AND b.session_key = recipient "
-            "AND a.root = session_questions.root AND a.root != '')"
+            "AND a.root = session_questions.root AND a.root != '')",
+            (int(time.time() * 1000),),
         )
 
     def pending_counts(self) -> dict[str, int]:
@@ -257,9 +284,9 @@ class SessionAPI:
             (secrets.token_hex(32), key),
         )
         self.conn.execute(
-            "UPDATE session_questions SET status = 'cancelled' "
+            "UPDATE session_questions SET status = 'cancelled', closed_at = ? "
             "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
-            (key, key),
+            (int(time.time() * 1000), key, key),
         )
 
     def enroll(self, key: str, req: dict[str, Any]) -> dict[str, Any]:
@@ -370,27 +397,88 @@ class SessionAPI:
         return target
 
     def _sweep(self) -> None:
-        now = int(time.time() * 1000)
+        # Open requests survive indefinitely; closed history lasts seven days
+        # from resolution, so a late answer is never immediately purged.
         with self.conn:
             self.conn.execute(
-                "UPDATE session_questions SET status = 'expired' "
-                "WHERE status IN ('queued', 'accepted') AND expires_at <= ?",
-                (now,),
-            )
-            self.conn.execute(
-                "DELETE FROM session_questions WHERE expires_at < ?", (now - 7 * 86400000,)
+                "DELETE FROM session_questions WHERE closed_at < ? "
+                "AND status IN ('answered', 'declined', 'cancelled')",
+                (int(time.time() * 1000) - 7 * 86400000,),
             )
 
-    def inbox(self, key: str, *, owner: bool = False, before: int | None = None) -> dict[str, Any]:
+    def folder_conversations(self, folder: str, *, before: int | None = None) -> dict[str, Any]:
+        """Owner view of retained exchanges involving the current folder subtree."""
+        if not folder or any(part in ("", ".", "..") for part in folder.split("/")):
+            raise APIError(400, "invalid folder")
+        if before is not None and not 0 < before <= 9223372036854775807:
+            raise APIError(400, "invalid cursor")
+        prefix = folder + "/"
+        # Sidebar ancestors can be implicit: only their descendant is stored.
+        exists = self.conn.execute(
+            "SELECT 1 FROM folders WHERE name = ? OR substr(name, 1, ?) = ? LIMIT 1",
+            (folder, len(prefix), prefix),
+        ).fetchone()
+        if exists is None:
+            raise APIError(404, "folder not found")
+        self._sweep()
+        rows = self.conn.execute(
+            "SELECT q.rowid AS sequence, q.*, "
+            "COALESCE(NULLIF(r.name, ''), NULLIF(r.source_app, ''), q.recipient) "
+            "AS recipient_name FROM session_questions q "
+            "JOIN sessions s ON s.session_key = q.sender "
+            "JOIN sessions r ON r.session_key = q.recipient "
+            "WHERE q.rowid < ? AND (s.grp = ? OR substr(s.grp, 1, ?) = ? "
+            "OR r.grp = ? OR substr(r.grp, 1, ?) = ?) "
+            "ORDER BY q.rowid DESC LIMIT 51",
+            (
+                before if before is not None else 9223372036854775807,
+                folder,
+                len(prefix),
+                prefix,
+                folder,
+                len(prefix),
+                prefix,
+            ),
+        ).fetchall()
+        return {
+            "messages": [
+                {**_public_question(dict(row)), "recipient_name": row["recipient_name"]}
+                for row in rows[:50]
+            ],
+            "next_cursor": rows[49]["sequence"] if len(rows) > 50 else None,
+        }
+
+    def inbox(
+        self,
+        key: str,
+        *,
+        owner: bool = False,
+        before: int | None = None,
+        direction: str = "received",
+    ) -> dict[str, Any]:
         self._session(key, live=not owner)
+        if direction not in ("received", "sent", "all"):
+            raise APIError(400, "invalid direction")
+        if not owner and direction != "received":
+            raise APIError(403, "owner credential required")
         if before is not None and not 0 < before <= 9223372036854775807:
             raise APIError(400, "invalid cursor")
         self._sweep()
-        # Sequence cursor uses SQLite rowid, avoiding same-millisecond pagination gaps.
+        # Both participants view the same request row, including its answer status.
+        predicate = {
+            "received": "q.recipient = ?",
+            "sent": "(q.sender = ? OR (q.recipient = ? AND q.answer IS NOT NULL))",
+            "all": "(q.recipient = ? OR q.sender = ?)",
+        }[direction]
+        keys = (key, key) if direction in ("all", "sent") else (key,)
         rows = self.conn.execute(
-            "SELECT rowid AS sequence, * FROM session_questions WHERE recipient = ? "
-            "AND rowid < ? ORDER BY rowid DESC LIMIT 51",
-            (key, before if before is not None else 9223372036854775807),
+            "SELECT q.rowid AS sequence, q.*, "
+            "COALESCE(NULLIF(r.name, ''), NULLIF(r.source_app, ''), q.recipient) "
+            "AS recipient_name FROM session_questions q "
+            "JOIN sessions r ON r.session_key = q.recipient WHERE "
+            + predicate
+            + " AND q.rowid < ? ORDER BY q.rowid DESC LIMIT 51",
+            (*keys, before if before is not None else 9223372036854775807),
         ).fetchall()
         messages = []
         for row in rows[:50]:
@@ -401,7 +489,10 @@ class SessionAPI:
                         continue
                 except APIError:
                     continue
-            messages.append(_public_question(dict(row)))
+            message = _public_question(dict(row))
+            if owner:
+                message["recipient_name"] = row["recipient_name"]
+            messages.append(message)
         cursor = rows[49]["sequence"] if len(rows) > 50 else None
         result: dict[str, Any] = {"messages": messages, "next_cursor": cursor}
         if owner:
@@ -585,11 +676,13 @@ class SessionAPI:
             raise APIError(409, "question is already closed")
         with self.conn:
             self.conn.execute(
-                "UPDATE session_questions SET status = ?, answer = ?, answered_at = ? WHERE id = ?",
+                "UPDATE session_questions SET status = ?, answer = ?, answered_at = ?, "
+                "closed_at = ? WHERE id = ?",
                 (
                     state,
                     answer,
                     int(time.time() * 1000) if answer is not None else None,
+                    int(time.time() * 1000) if state != "accepted" else None,
                     question["id"],
                 ),
             )

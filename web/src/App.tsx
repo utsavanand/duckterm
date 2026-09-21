@@ -9,6 +9,7 @@ import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
+import { FolderConversations } from "./FolderConversations";
 import { InboxView } from "./InboxView";
 import { useInboxCounts } from "./useInboxCounts";
 import { LaunchModal } from "./LaunchModal";
@@ -54,6 +55,7 @@ function Dashboard() {
     "launch" | "agentsmd" | "folder" | "harnesses" | null
   >(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [conversationFolder, setConversationFolder] = useState<string | null>(null);
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
@@ -330,6 +332,7 @@ function Dashboard() {
                 folders={folders}
                 selectedKey={selectedKey}
                 onOpen={setSelectedKey}
+                onFolderConversations={setConversationFolder}
                 onOpenInbox={(key) => { setSelectedKey(key); setView("inbox"); }}
                 onFork={setForkKey}
                 onDelete={deleteSession}
@@ -476,6 +479,7 @@ function Dashboard() {
           onClose={() => setModal(null)}
         />
       )}
+      {conversationFolder !== null && <FolderConversations key={conversationFolder} folder={conversationFolder} onClose={() => setConversationFolder(null)} />}
       {forkSession && (
         <ForkModal session={forkSession} onClose={() => setForkKey(null)} />
       )}

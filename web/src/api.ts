@@ -78,11 +78,13 @@ export interface InboxMessage {
   sender: string;
   recipient: string;
   sender_name: string;
+  recipient_name?: string;
   question: string;
   status: "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled";
   answer: string | null;
   created_at: number;
   expires_at: number;
+  overdue?: boolean;
   answered_at: number | null;
 }
 
@@ -108,10 +110,20 @@ export interface InboxPage {
 }
 
 export const api = {
+  folderConversations: async (folder: string, before?: number): Promise<{ messages: (InboxMessage & { recipient_name: string })[]; next_cursor: number | null }> => {
+    const query = new URLSearchParams({ folder });
+    if (before !== undefined) query.set("before", String(before));
+    const res = await fetch(`/folder-conversations?${query}`, { cache: "no-store", headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Could not load conversations");
+    return data;
+  },
   collaborationInstructions: (key: string) => post<{ prompt: string }>(`/sessions/${encodeURIComponent(key)}/collaboration/instructions`),
   introduceCollaboration: (key: string) => post<{ sent: boolean }>(`/sessions/${encodeURIComponent(key)}/collaboration/introduce`),
-  inbox: async (key: string, before?: number): Promise<InboxPage> => {
-    const suffix = before === undefined ? "" : `?before=${before}`;
+  inbox: async (key: string, before?: number, direction: "all" | "received" | "sent" = "received"): Promise<InboxPage> => {
+    const query = new URLSearchParams({ direction });
+    if (before !== undefined) query.set("before", String(before));
+    const suffix = `?${query}`;
     const res = await fetch(`/sessions/${encodeURIComponent(key)}/inbox${suffix}`, {
       cache: "no-store",
       headers: authHeaders(),

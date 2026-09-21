@@ -20,6 +20,7 @@ describe("session inbox", () => {
     vi.mocked(api.inbox).mockResolvedValue({ messages: [], next_cursor: null });
     vi.mocked(api.collaborationInstructions).mockResolvedValue({ prompt: "Read collaboration.md" });
     render(<InboxView session={{ ...session, runtime: "codex", state: "busy" }} />);
+    fireEvent.click(screen.getByText("Agent setup and instructions"));
     fireEvent.click(screen.getByText("Show introduction to paste"));
     expect(await screen.findByLabelText("Introduction to paste into the agent")).toHaveValue("Read collaboration.md");
     expect(api.introduceCollaboration).not.toHaveBeenCalled();
@@ -29,6 +30,7 @@ describe("session inbox", () => {
     vi.mocked(api.introduceCollaboration).mockResolvedValue({ sent: true });
     render(<InboxView session={{ ...session, runtime: "codex", state: "idle" }} />);
     await screen.findByText("No messages yet");
+    fireEvent.click(screen.getByText("Agent setup and instructions"));
     expect(api.introduceCollaboration).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Introduce session collaboration" }));
     expect(await screen.findByText(/does not confirm the agent has read/)).toBeVisible();
@@ -40,6 +42,7 @@ describe("session inbox", () => {
     vi.mocked(api.inbox).mockResolvedValue({ messages: [], next_cursor: null });
     vi.mocked(api.introduceCollaboration).mockRejectedValue(new Error("Terminal unavailable"));
     const view = render(<InboxView session={{ ...session, runtime: "codex", state: "busy" }} />);
+    fireEvent.click(screen.getByText("Agent setup and instructions"));
     expect(screen.getByRole("button", { name: "Introduce session collaboration" })).toBeDisabled();
     view.rerender(<InboxView session={{ ...session, runtime: "codex", state: "idle" }} />);
     fireEvent.click(screen.getByRole("button", { name: "Introduce session collaboration" }));
@@ -51,9 +54,9 @@ describe("session inbox", () => {
     const sender = await screen.findByText("Client implementation");
     expect(screen.getByText("Answered")).toBeVisible();
     fireEvent.click(sender.closest("summary")!);
-    expect(screen.getByText("From session: a")).toBeVisible();
+    expect(screen.getByText("From session: a → To session: b")).toBeVisible();
     expect(screen.getByText(/Retry once/).textContent).toBe(message.answer);
-    expect(api.inbox).toHaveBeenCalledWith("b", undefined);
+    expect(api.inbox).toHaveBeenCalledWith("b", undefined, "all");
   });
 
   it("distinguishes an empty inbox from an API failure and supports retry", async () => {
@@ -74,7 +77,7 @@ describe("session inbox", () => {
     fireEvent.click(await screen.findByText("Load older messages"));
     expect(await screen.findByText("Older sender")).toBeVisible();
     expect(screen.getByText("Client implementation")).toBeVisible();
-    expect(api.inbox).toHaveBeenCalledWith("b", 12);
+    expect(api.inbox).toHaveBeenCalledWith("b", 12, "all");
   });
 
   it("does not leak a late response into the next selected session", async () => {
@@ -87,4 +90,11 @@ describe("session inbox", () => {
     resolve({ messages: [message], next_cursor: null });
     await waitFor(() => expect(screen.queryByText("Client implementation")).toBeNull());
   });
+});
+
+it("keeps overdue requests in the pending count", async () => {
+  vi.mocked(api.inbox).mockResolvedValue({ messages: [{ ...message, status: "accepted", answer: null, answered_at: null, overdue: true }], next_cursor: null });
+  render(<InboxView session={session} />);
+  expect(await screen.findByText("Overdue · awaiting reply")).toBeVisible();
+  expect(screen.getByText("1 pending · 0 answered · 0 closed")).toBeVisible();
 });

@@ -19,7 +19,7 @@ SQLite. It does not start a server per session or scrape terminal screens.
 The dashboard highlights sessions with pending questions and displays an Inbox
 count. Clicking that badge opens the recipient's inbox. Counts include queued
 and accepted requests; merely viewing the inbox does not clear them. They clear
-on answer, decline, cancellation, or expiry. Polling refreshes inboxes and badges
+on answer, decline, or cancellation. Polling refreshes inboxes and badges
 about every three seconds. The agent decides when to respond; no automatic
 terminal input, interruption, or approval response is sent.
 
@@ -174,16 +174,19 @@ owner routes. Agent and inbox reads require credentials as well as writes.
 `session_api_members` stores capabilities and publications. `session_questions`
 stores attributed questions, deadlines, idempotency data, status, and complete
 answers. Both survive server restarts. Status is queued, accepted, answered,
-declined, cancelled, or expired. Cancellation stops the exchange; it does not
-interrupt the recipient's other work. Closed requests cannot accept late answers.
+declined, or cancelled. Overdue is a computed flag, not a closed state. Cancellation stops the exchange; it does not
+interrupt the recipient's other work. Only answered, declined, or cancelled requests reject further answers.
 
 Discovery and inbox pages contain at most 50 records. Questions allow 16 KiB and
 answers 256 KiB; oversized content is rejected instead of truncated. Deadlines
 default to five minutes and allow up to fifteen. A sender can create ten questions
 per minute. Creation is refused when the combined set of pending requests sent
-by that sender or addressed to that recipient reaches twenty. Records are swept
-after seven days beyond their deadline. Sweeps run on broker reads/operations;
-there is no always-running polling worker dedicated to expiry.
+by that sender or addressed to that recipient reaches twenty. Open requests do not expire or get swept. Closed records are swept
+seven days after resolution, including replies submitted after the deadline. Sweeps run on broker reads/operations;
+The legacy `expires_at` field now represents an advisory deadline; `overdue`
+indicates an open request past that deadline. Schema v4 adds `closed_at` and
+reopens retained legacy expired requests as queued, preserving IDs and content.
+Already deleted requests cannot be recovered. Existing cancelled requests stay closed.
 
 **Authorization is API-level, not OS/process isolation.** The scoped broker
 checks current membership on every request. However, agents running as the same
@@ -243,6 +246,45 @@ Automatic terminal injection, automatic model invocation to answer questions,
 streamed partial answers, and cross-machine sharing are excluded. On-demand
 reading and explicit replies are the chosen workflow. UI viewing does not mark a
 question answered, and an idle session is never forced to process its inbox.
+
+The session Inbox prioritizes requests in compact From, Request, Status, and
+Received columns. Rows expand to show full questions and replies. Pending counts
+include queued and accepted requests; accepting does not mean answering. Counts
+cover loaded pages, with that limitation labeled when older pages remain. The
+session card and agent setup instructions are collapsed below the message list.
+
+The owner endpoint `GET /sessions/:id/inbox` accepts `direction=received|sent|all`
+(default `received`). Received includes requests addressed to the session. Sent
+includes requests it initiated and requests to which it has submitted a reply or
+decline reason. All includes both participants' exchanges once each. The UI
+starts on All and labels sent requests and sent replies separately. Direction
+changes reset pagination and discard late responses from the previous view.
+Both participants read the same persisted request and answer status; submitting
+a reply marks that request answered rather than creating a second pending item.
+Agent inbox access and received-pending sidebar counts remain unchanged.
+
+## Folder conversation history
+
+The telephone button beside a sidebar folder opens an owner-only conversation
+history dialog. `GET /folder-conversations?folder=<encoded-sidebar-path>` requires
+the owner `X-Duckterm-Token`; session bearer credentials cannot access it. The
+response contains `messages` and `next_cursor`; pass the latter as `before` to
+load another page of up to 50 exchanges, newest first. Each exchange includes
+the existing question/reply fields and a `recipient_name` display label.
+
+An exchange appears when either participant currently belongs to the selected
+folder or one of its descendants. Parent folders may be implicit in the sidebar.
+An exchange appears once even when both participants belong to the subtree.
+Moving sessions changes the folders that show their exchanges; this is not a
+snapshot of folder membership at send time. Stopped sessions remain represented,
+while existing session deletion and retention rules still apply: exchanges are
+removed seven days after resolution. Open overdue requests remain available.
+
+The dialog refreshes automatically and shows participant names, timestamps,
+full questions, full responses, and request status. Acceptance alone is shown as
+“Accepted · no response yet.” A client approval denial does not create a broker
+reply: only successfully submitted responses appear. This owner view neither
+widens agent discovery permissions nor overrides the client's approval checks.
 
 ## Isolated upgrade rehearsal
 

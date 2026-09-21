@@ -404,6 +404,9 @@ class Server:
             return
 
         inbox_path = urllib.parse.urlsplit(path)
+        if method == "GET" and inbox_path.path == "/folder-conversations":
+            await self._folder_conversations(writer, headers, inbox_path.query)
+            return
         inbox_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/inbox", inbox_path.path)
         if method == "GET" and inbox_match:
             await self._session_inbox(writer, inbox_match[1], headers, inbox_path.query)
@@ -544,6 +547,26 @@ class Server:
         across all sessions, so it can't back a per-session view.)"""
         await _write_json(writer, 200, {"events": self.history.events_for(session_key)})
 
+    async def _folder_conversations(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            params = urllib.parse.parse_qs(query)
+            before = int(params["before"][0]) if "before" in params else None
+            result = self.history.session_api.folder_conversations(
+                params.get("folder", [""])[0], before=before
+            )
+        except ValueError:
+            await _write_json(writer, 400, {"error": "invalid cursor"})
+            return
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
+
     async def _inbox_counts(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
         if not security.token_valid(headers, self.token):
             await _write_json(writer, 401, {"error": "owner credential required"})
@@ -559,7 +582,12 @@ class Server:
         try:
             params = urllib.parse.parse_qs(query)
             before = int(params["before"][0]) if "before" in params else None
-            result = self.history.session_api.inbox(session_key, owner=True, before=before)
+            result = self.history.session_api.inbox(
+                session_key,
+                owner=True,
+                before=before,
+                direction=params.get("direction", ["received"])[0],
+            )
         except ValueError:
             await _write_json(writer, 400, {"error": "invalid cursor"})
             return
