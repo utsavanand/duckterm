@@ -674,7 +674,7 @@ function TreeRow({
           ) : (
             depth > 0 && <span className="rd-row-twig">⑂</span>
           )}
-          <Duck pose={poseFor(effState)} size={32} />
+          <Duck pose={poseFor(effState)} size={24} />
           <span className="rd-row-click" onClick={() => onOpen(s.key)}>
             {s.branch && (
               <span
