@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { AgentTree } from "./AgentTree";
 import { api } from "./api";
-import { Approvals } from "./Approvals";
 import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
 import { FleetChat } from "./FleetChat";
@@ -205,10 +204,6 @@ function Dashboard() {
 
   const labels = useMemo(
     () => Object.fromEntries(sessions.map((s) => [s.key, s.label])),
-    [sessions],
-  );
-  const knownKeys = useMemo(
-    () => new Set(sessions.map((s) => s.key)),
     [sessions],
   );
   // The selected agent's working directory anchors AGENTS.md (per-folder file).
@@ -418,14 +413,6 @@ function Dashboard() {
               <span>{selected ? selected.label : "Context"}</span>
             </div>
             <div className="rd-context-body">
-              <Approvals
-                labels={labels}
-                pollKey={sessions.length}
-                onOpen={setSelectedKey}
-                knownKeys={knownKeys}
-                waiting={waiting}
-                selectedKey={selectedKey}
-              />
               {selected && <ContextPanel session={selected} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
