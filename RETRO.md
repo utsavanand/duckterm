@@ -3,6 +3,18 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-20 — Delete/rename dialogs silently dead in the Mac app
+**Broke:** the folder ✕ (window.confirm) and rename/new-folder prompts
+(window.prompt) did nothing in RubberTerm.app — confirm returned false,
+prompt returned null.
+**Cause:** WKWebView no-ops all JS dialogs unless the app implements
+WKUIDelegate. Third app-shell gap of this kind (menu key equivalents, copy
+validation, now dialogs) — and Chromium e2e can never catch any of them.
+**Rule:** a WKWebView shell needs the full trio wired on day one: main menu,
+clipboard bridge, WKUIDelegate dialogs. Browser-based e2e proves the PAGE,
+not the SHELL — after changing app-shell code, walk the dialog/clipboard/
+shortcut paths in the actual app.
+
 ## 2026-09-20 — Digest turned a one-off remark into a personality trait
 **Broke:** the "working together" digest characterized the user from single
 data points — one 'too wordy' comment became "iterates on naming rapidly,"
