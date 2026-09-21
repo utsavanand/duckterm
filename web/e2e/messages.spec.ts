@@ -83,7 +83,9 @@ test("annotating a span stores it and sends it back to the agent", async ({
   mkdirSync(cwd, { recursive: true });
   seedTranscript(cwd);
   const launch = await apiPost("/sessions/launch", {
-    command: "cat", // echoes the follow-up back, proving it reached stdin
+    // The Claude adapter passes an initial prompt. Ignore that argument while
+    // echoing follow-ups, as a real interactive agent would accept both.
+    command: "sh -c 'cat'",
     cwd,
     name: "annot-agent",
     runtime: "claude-code",

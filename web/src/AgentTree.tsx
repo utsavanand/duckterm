@@ -15,6 +15,7 @@ export function AgentTree({
   folders,
   selectedKey,
   onOpen,
+  onOpenInbox,
   onFork,
   onDelete,
   onFoldersChanged,
@@ -32,6 +33,7 @@ export function AgentTree({
   folders: string[];
   selectedKey: string | null;
   onOpen: (key: string) => void;
+  onOpenInbox?: (key: string) => void;
   onFork: (key: string) => void;
   onDelete: (key: string) => Promise<boolean>;
   onFoldersChanged: () => void;
@@ -160,6 +162,7 @@ export function AgentTree({
       labels={labels}
       selectedKey={selectedKey}
       onOpen={onOpen}
+      onOpenInbox={onOpenInbox}
       onFork={onFork}
       onDelete={onDelete}
       onRename={onRename}
@@ -482,6 +485,7 @@ function TreeRow({
   labels,
   selectedKey,
   onOpen,
+  onOpenInbox,
   onFork,
   onDelete,
   onRename,
@@ -494,6 +498,7 @@ function TreeRow({
   labels: Record<string, string>;
   selectedKey: string | null;
   onOpen: (key: string) => void;
+  onOpenInbox?: (key: string) => void;
   onFork: (key: string) => void;
   onDelete: (key: string) => Promise<boolean>;
   onRename: (key: string, name: string) => void;
@@ -641,7 +646,7 @@ function TreeRow({
   return (
     <>
       <div
-        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}`}
+        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.inboxPending ? " has-inbox" : ""}`}
         style={{ paddingLeft: 12 + indent * 16 + depth * 18 }}
         // Only root sessions are draggable into groups; forks follow their parent.
         draggable={depth === 0}
@@ -706,6 +711,14 @@ function TreeRow({
               </span>
             )}
             <span className={`rd-state st-${effState}`}>{stateLabel}</span>
+            {!!s.inboxPending && (
+              <button
+                className="rd-inbox-badge"
+                title={`${s.inboxPending} pending questions — answer when ready`}
+                aria-label={`Open ${s.label} inbox, ${s.inboxPending} pending`}
+                onClick={(event) => { event.stopPropagation(); (onOpenInbox ?? onOpen)(s.key); }}
+              >Inbox {s.inboxPending}</button>
+            )}
             {ctxLevel && (
               <span
                 className={`rd-ctx-chip ${ctxLevel}`}
@@ -907,6 +920,7 @@ function TreeRow({
             labels={labels}
             selectedKey={selectedKey}
             onOpen={onOpen}
+      onOpenInbox={onOpenInbox}
             onFork={onFork}
             onDelete={onDelete}
             onRename={onRename}

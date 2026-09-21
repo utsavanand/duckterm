@@ -73,7 +73,53 @@ export interface BrowseResult {
   entries: BrowseEntry[];
 }
 
+export interface InboxMessage {
+  id: string;
+  sender: string;
+  recipient: string;
+  sender_name: string;
+  question: string;
+  status: "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled";
+  answer: string | null;
+  created_at: number;
+  expires_at: number;
+  answered_at: number | null;
+}
+
+export interface SessionCard {
+  session_id: string;
+  api_name: string;
+  name: string;
+  purpose: string;
+  activity: string;
+  state: string;
+  folder: string;
+  root: string;
+  cwd: string | null;
+  next_actions: string[];
+  deliverables: string[];
+  updated_at: number;
+}
+
+export interface InboxPage {
+  card?: SessionCard | null;
+  messages: InboxMessage[];
+  next_cursor: number | null;
+}
+
 export const api = {
+  collaborationInstructions: (key: string) => post<{ prompt: string }>(`/sessions/${encodeURIComponent(key)}/collaboration/instructions`),
+  introduceCollaboration: (key: string) => post<{ sent: boolean }>(`/sessions/${encodeURIComponent(key)}/collaboration/introduce`),
+  inbox: async (key: string, before?: number): Promise<InboxPage> => {
+    const suffix = before === undefined ? "" : `?before=${before}`;
+    const res = await fetch(`/sessions/${encodeURIComponent(key)}/inbox${suffix}`, {
+      cache: "no-store",
+      headers: authHeaders(),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Could not load inbox");
+    return data as InboxPage;
+  },
   launch: (req: LaunchRequest) =>
     post<{ session_key: string; opened_in_terminal?: boolean }>(
       "/sessions/launch",

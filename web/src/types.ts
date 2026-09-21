@@ -28,6 +28,7 @@ export type SessionState =
   "idle" | "busy" | "waiting" | "terminated" | "stopped" | "archived";
 
 export interface SessionView {
+  inboxPending?: number;
   key: string;
   label: string;
   state: SessionState;

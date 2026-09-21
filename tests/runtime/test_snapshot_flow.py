@@ -81,7 +81,11 @@ def test_snapshot_list_and_restore(tmp_path: Path, monkeypatch) -> None:  # type
     assert snap["id"].startswith("snap-")  # type: ignore[union-attr]
     assert any(s["id"] == snap["id"] for s in listing["snapshots"])  # type: ignore[attr-defined]
     # Restore resolves the real conversation id (claude-conv), not the rd key (s1).
-    assert restore["command"] == "claude --resume claude-conv"
+    import shlex
+
+    argv = shlex.split(str(restore["command"]))
+    assert argv[:-1] == ["claude", "--resume", "claude-conv"]
+    assert argv[-1].startswith("Duckterm session capability:")
 
 
 def test_restore_resolves_copilot_conversation_id(tmp_path: Path) -> None:

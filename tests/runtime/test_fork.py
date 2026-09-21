@@ -190,7 +190,8 @@ def test_worktree_fork_carries_claude_conversation(
 
     body = asyncio.run(scenario())
     assert body["carried_context"] is True
-    assert opened["argv"] == ["claude", "--resume", "claude-sid", "--fork-session"]
+    assert opened["argv"][:-1] == ["claude", "--resume", "claude-sid", "--fork-session"]
+    assert opened["argv"][-1].startswith("Duckterm session capability:")
     # ...and it runs in the new worktree, not the parent's cwd.
     assert "ctx-fork" in opened["cwd"]
 
@@ -232,4 +233,5 @@ def test_worktree_fork_no_context_for_codex(git_repo: Path, tmp_path: Path, monk
 
     body = asyncio.run(scenario())
     assert body["carried_context"] is False
-    assert opened["argv"] == ["codex"]  # fresh, no resume
+    assert opened["argv"][:-1] == ["codex"]  # fresh, no resume
+    assert opened["argv"][-1].startswith("Duckterm session capability:")

@@ -624,7 +624,9 @@ def test_terminal_launch_passes_prompt_to_the_agent(
             "session_key": "p",
         },
     )
-    assert argv == ["claude", "add a healthcheck endpoint"]
+    assert argv[:-1] == ["claude"]
+    assert argv[-1].startswith("Duckterm session capability:")
+    assert argv[-1].endswith("User's task:\nadd a healthcheck endpoint")
 
 
 def test_terminal_launch_uses_copilot_prompt_flag(
@@ -646,16 +648,18 @@ def test_terminal_launch_uses_copilot_prompt_flag(
     assert argv == ["copilot", "-p", "fix the bug"]
 
 
-def test_terminal_launch_without_prompt_runs_bare_command(
+def test_terminal_launch_without_task_introduces_capability_then_waits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No prompt → the agent opens with just its command (no empty trailing arg)."""
+    """An empty task introduces collaboration without inventing user work."""
     argv = _launch_capturing_argv(
         tmp_path,
         monkeypatch,
         {"command": "claude", "runtime": "claude-code", "cwd": str(tmp_path), "session_key": "p"},
     )
-    assert argv == ["claude"]
+    assert argv[:-1] == ["claude"]
+    assert argv[-1].startswith("Duckterm session capability:")
+    assert argv[-1].endswith("await the user's task.")
 
 
 def _token() -> str:

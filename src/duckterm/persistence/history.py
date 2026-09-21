@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm.core import events
+from duckterm.core.session_api import SessionAPI
 from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
 from duckterm.runtimes.base import AT_REST_STATES, SessionState
@@ -32,7 +33,8 @@ Event = dict[str, Any]
 # guard, the old code would silently mis-read or clobber the newer data. Additive
 # column-adds are backward-compatible (old code ignores extra columns), so this
 # is a floor for "safe to open," not a hard per-version lock.
-_SCHEMA_VERSION = 1
+# v3 keeps enrollment synchronized with folder moves and automatically enrolls sessions.
+_SCHEMA_VERSION = 3
 
 
 class SchemaTooNewError(RuntimeError):
@@ -242,6 +244,8 @@ class HistoryStore:
             )
         self._conn.executescript(_SCHEMA)
         self._migrate()
+        self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
+        self.session_api.backfill()
         # Stamp the current version after migrating so a later older binary is
         # refused. (Can't parameterize a PRAGMA; the value is our own int.)
         self._conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
@@ -303,6 +307,12 @@ class HistoryStore:
             return
         if key is not None:
             self._upsert_session(key, event)
+            if etype == events.SESSION_END:
+                self.session_api.revoke(key)
+            else:
+                row = self.session(key)
+                if row and row["state"] not in AT_REST_STATES:
+                    self.session_api.ensure(key)
             kind = classify(event)
             if kind is not None:
                 self._bump_metric(key, kind)
@@ -500,6 +510,7 @@ class HistoryStore:
                 "UPDATE sessions SET grp = ? WHERE session_key = ?",
                 (group or None, key),  # "" -> NULL so ungrouped is consistently NULL
             )
+            self.session_api.sync_memberships()
             if group:  # moving into a folder also ensures the folder exists
                 self.create_folder(group)
         self._conn.commit()
@@ -552,11 +563,16 @@ class HistoryStore:
     def delete_folder(self, name: str) -> None:
         """Remove a folder AND its subfolders (path-nested, `a/b`); all their
         sessions return to Ungrouped."""
-        like = name + "/%"
-        self._conn.execute("DELETE FROM folders WHERE name = ? OR name LIKE ?", (name, like))
+        prefix = name + "/"
         self._conn.execute(
-            "UPDATE sessions SET grp = NULL WHERE grp = ? OR grp LIKE ?", (name, like)
+            "DELETE FROM folders WHERE name = ? OR substr(name, 1, ?) = ?",
+            (name, len(prefix), prefix),
         )
+        self._conn.execute(
+            "UPDATE sessions SET grp = NULL WHERE grp = ? OR substr(grp, 1, ?) = ?",
+            (name, len(prefix), prefix),
+        )
+        self.session_api.sync_memberships()
         self._conn.commit()
 
     def move_folder(self, old: str, new: str) -> bool:
@@ -573,13 +589,15 @@ class HistoryStore:
         cut = len(old) + 1  # substr() is 1-indexed: keep from the char AFTER old
         self._conn.execute(
             "UPDATE OR REPLACE folders SET name = ? || substr(name, ?) "
-            "WHERE name = ? OR name LIKE ?",
-            (new, cut, old, old + "/%"),
+            "WHERE name = ? OR substr(name, 1, ?) = ?",
+            (new, cut, old, len(old) + 1, old + "/"),
         )
         self._conn.execute(
-            "UPDATE sessions SET grp = ? || substr(grp, ?) WHERE grp = ? OR grp LIKE ?",
-            (new, cut, old, old + "/%"),
+            "UPDATE sessions SET grp = ? || substr(grp, ?) "
+            "WHERE grp = ? OR substr(grp, 1, ?) = ?",
+            (new, cut, old, len(old) + 1, old + "/"),
         )
+        self.session_api.sync_memberships(moved=(old, new))
         self._conn.commit()
         return True
 
@@ -603,6 +621,8 @@ class HistoryStore:
 
         Stamps ended_at when a session ends; keeps the existing ended_at when
         archiving an already-ended session; clears it when reviving (busy)."""
+        if state in AT_REST_STATES:
+            self.session_api.revoke(key)
         if state in ("stopped", "terminated"):
             cur = self._conn.execute(
                 "UPDATE sessions SET state = ?, ended_at = ? WHERE session_key = ?",
@@ -617,6 +637,8 @@ class HistoryStore:
             cur = self._conn.execute(
                 "UPDATE sessions SET state = ? WHERE session_key = ?", (state, key)
             )
+        if state not in AT_REST_STATES and cur.rowcount:
+            self.session_api.ensure(key)
         self._conn.commit()
         return cur.rowcount > 0
 
@@ -821,6 +843,11 @@ class HistoryStore:
         """Remove a session and everything attached to it (events, metrics,
         checkpoints). Tombstones the key so a still-running terminal's events
         can't resurrect the row. Returns whether a row was removed."""
+        self.session_api.revoke(key)
+        self._conn.execute("DELETE FROM session_api_members WHERE session_key = ?", (key,))
+        self._conn.execute(
+            "DELETE FROM session_questions WHERE sender = ? OR recipient = ?", (key, key)
+        )
         cur = self._conn.execute("DELETE FROM sessions WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM events WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
@@ -842,6 +869,11 @@ class HistoryStore:
             for r in self._conn.execute("SELECT session_key FROM sessions WHERE test = 1")
         ]
         for key in keys:
+            self.session_api.revoke(key)
+            self._conn.execute("DELETE FROM session_api_members WHERE session_key = ?", (key,))
+            self._conn.execute(
+                "DELETE FROM session_questions WHERE sender = ? OR recipient = ?", (key, key)
+            )
             self._conn.execute("DELETE FROM sessions WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM events WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))

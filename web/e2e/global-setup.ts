@@ -83,7 +83,7 @@ export default async function globalSetup() {
   }
 
   writeFileSync(
-    join(tmpdir(), "rd-e2e-state.json"),
+    process.env.RD_TEST_STATE_FILE || join(tmpdir(), "rd-e2e-state.json"),
     JSON.stringify({ home, pid: proc.pid, port: PORT, tmuxSocket }),
   );
 }

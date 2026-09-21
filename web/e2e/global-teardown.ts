@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 export default async function globalTeardown() {
-  const statePath = join(tmpdir(), "rd-e2e-state.json");
+  const statePath = process.env.RD_TEST_STATE_FILE || join(tmpdir(), "rd-e2e-state.json");
   try {
     const { home, pid, tmuxSocket } = JSON.parse(
       readFileSync(statePath, "utf8"),
