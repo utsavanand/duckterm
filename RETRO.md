@@ -3,6 +3,17 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-20 — Masked a gate again, hours after writing the rule
+**Broke:** a commit gate ran `pytest | tail -1` — the pipeline reported
+tail's exit code, the failure scrolled past, and the commit landed anyway
+(the failure was the parallel session's WIP, but the gate didn't know that).
+Same mistake as the 0.4.18 grep-mask, same day, same author.
+**Cause:** hand-composing gate pipelines ad hoc every time invites the same
+slip; a written rule doesn't change muscle memory.
+**Rule:** rules that fight muscle memory must become TOOLING. scripts/gate.sh
+now runs the whole gate with set -e and zero output filtering — call it bare,
+the exit code is the verdict. It caught a formatting drift on its first run.
+
 ## 2026-09-20 — Two broken releases from one shared import hunk
 **Broke:** 0.4.17 and 0.4.18 both crashed at server startup (ModuleNotFound /
 ImportError) and had to be retracted; the app was down until rollback.
