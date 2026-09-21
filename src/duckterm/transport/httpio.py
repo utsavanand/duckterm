@@ -14,14 +14,20 @@ from duckterm.core.eventbus import Event
 
 SELF_PROBE_HEADER = "X-Duckterm"
 KEEPALIVE_SECONDS = 15
+MAX_HEADER_BYTES = 32 * 1024
+MAX_REQUEST_BYTES = 8 * 1024 * 1024
+REQUEST_TIMEOUT_SECONDS = 10
 
 _REASON = {
     200: "OK",
+    202: "Accepted",
     400: "Bad Request",
     401: "Unauthorized",
     403: "Forbidden",
     404: "Not Found",
     409: "Conflict",
+    413: "Payload Too Large",
+    429: "Too Many Requests",
     500: "Internal Server Error",
 }
 
@@ -46,18 +52,34 @@ def parse_request_line(line: bytes) -> tuple[str, str]:
 async def read_headers(reader: asyncio.StreamReader) -> dict[str, str]:
     """Read headers up to the blank line. Names are lower-cased for lookup."""
     headers: dict[str, str] = {}
+    total = 0
     while True:
         line = await reader.readline()
+        total += len(line)
+        if total > MAX_HEADER_BYTES:
+            raise ValueError("request headers too large")
         if line in (b"\r\n", b"\n", b""):
             break
-        name, _, value = line.decode("latin-1").partition(":")
-        headers[name.strip().lower()] = value.strip()
+        name, separator, value = line.decode("latin-1").partition(":")
+        name = name.lower()
+        if not separator or not name or name.strip() != name:
+            raise ValueError("invalid request header")
+        if name in headers:
+            raise ValueError("duplicate request header")
+        headers[name] = value.strip()
     return headers
 
 
 async def read_body(reader: asyncio.StreamReader, headers: dict[str, str]) -> bytes:
     """Read exactly Content-Length bytes (empty when absent or zero)."""
-    length = int(headers.get("content-length", "0") or "0")
+    if "transfer-encoding" in headers:
+        raise ValueError("Transfer-Encoding is not supported")
+    raw = headers.get("content-length", "0")
+    if not raw.isascii() or not raw.isdecimal():
+        raise ValueError("invalid Content-Length")
+    length = int(raw)
+    if length > MAX_REQUEST_BYTES:
+        raise ValueError("request body too large")
     return await reader.readexactly(length) if length else b""
 
 

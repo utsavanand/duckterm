@@ -21,7 +21,8 @@ case "$CHANNEL" in
 esac
 
 PY="${PYTHON:-.venv/bin/python}"
-VERSION="$("$PY" -c 'import duckterm; print(duckterm.__version__)')"
+RELEASE_COMMIT="$("$PY" scripts/release_preflight.py)"
+VERSION="$(PYTHONPATH=src "$PY" -c 'import duckterm; print(duckterm.__version__)')"
 
 # A PEP 440 pre-release has a/b/rc; a final release has none. Match to channel.
 if echo "$VERSION" | grep -Eq '(a|b|rc)[0-9]+$'; then IS_PRE=1; else IS_PRE=0; fi
@@ -44,8 +45,10 @@ echo "==> building wheel for $VERSION ($CHANNEL)"
 scripts/build_package.sh
 
 WHEEL="$(ls -1 dist/duckterm-*.whl | head -1)"
+# The build may take minutes; don't tag if another process changed this checkout.
+"$PY" scripts/release_preflight.py --expected-commit "$RELEASE_COMMIT" >/dev/null
 echo "==> tagging $TAG"
-git tag -a "$TAG" -m "RubberTerm $VERSION ($CHANNEL)"
+git tag -a "$TAG" "$RELEASE_COMMIT" -m "RubberTerm $VERSION ($CHANNEL)"
 git push origin "$TAG"
 
 PRERELEASE_FLAG=""

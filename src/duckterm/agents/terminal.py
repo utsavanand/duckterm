@@ -12,6 +12,7 @@ On Linux it tries the common emulators. Falls back to printing the command.
 
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -171,7 +172,7 @@ def _open_iterm(command: str, title: str | None = None) -> bool:
 
 def _q(s: str) -> str:
     """Shell-quote a path/arg for the `cd && cmd` string."""
-    return "'" + s.replace("'", "'\\''") + "'" if (" " in s or "'" in s) else s
+    return shlex.quote(s)
 
 
 def _esc(s: str) -> str:

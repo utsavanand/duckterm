@@ -26,7 +26,7 @@ def test_post_event_reaches_sse_subscriber_with_no_agent() -> None:
         port = server.sockets[0].getsockname()[1]
         async with server:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(b"GET /stream HTTP/1.1\r\nHost: x\r\n\r\n")
+            writer.write(b"GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n")
             await writer.drain()
 
             await _read_sse_frame(reader)  # the {type:init} frame
@@ -538,7 +538,7 @@ def test_stream_init_omits_deleted_session(tmp_path: Path) -> None:
             store.delete_session("gone")
 
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(b"GET /stream HTTP/1.1\r\nHost: x\r\n\r\n")
+            writer.write(b"GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n")
             await writer.drain()
             init = await _read_sse_frame(reader)
             writer.close()
@@ -556,7 +556,7 @@ def test_root_carries_self_probe_header() -> None:
         port = server.sockets[0].getsockname()[1]
         async with server:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+            writer.write(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
             await writer.drain()
             head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 2)
             writer.close()

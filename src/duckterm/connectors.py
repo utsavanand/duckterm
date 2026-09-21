@@ -27,6 +27,7 @@ import urllib.request
 from pathlib import Path
 
 from duckterm.agents import mcp_install
+from duckterm.helpers.security import write_private_text
 
 _GITHUB_ENV = "GITHUB_PERSONAL_ACCESS_TOKEN"
 _GITHUB_IMAGE = "ghcr.io/github/github-mcp-server"
@@ -70,9 +71,7 @@ def save_secret(name: str, token: str) -> None:
         )
         return
     path = _secret_file(name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token)
-    path.chmod(0o600)
+    write_private_text(path, token)
 
 
 def load_secret(name: str) -> str | None:
@@ -146,7 +145,7 @@ def github_token_valid(token: str) -> bool:
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return resp.status == 200
+            return bool(resp.status == 200)
     except urllib.error.HTTPError:
         return False
     except OSError:
@@ -277,7 +276,7 @@ def porkbun_keys_valid(token: str, secret: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=6) as resp:
             body = json.loads(resp.read().decode())
-            return body.get("status") == "SUCCESS"
+            return bool(body.get("status") == "SUCCESS")
     except urllib.error.HTTPError:
         return False
     except OSError:

@@ -69,6 +69,8 @@ from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime
 from duckterm.transport.httpio import (
     KEEPALIVE_SECONDS,
+    MAX_REQUEST_BYTES,
+    REQUEST_TIMEOUT_SECONDS,
     SELF_PROBE_HEADER,
     dashboard_dir,
 )
@@ -329,13 +331,28 @@ class Server:
 
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         try:
-            request_line = await reader.readline()
-            if not request_line:
-                return
-            method, path = _parse_request_line(request_line)
-            headers = await _read_headers(reader)
-            body = await _read_body(reader, headers)
+            async with asyncio.timeout(REQUEST_TIMEOUT_SECONDS):
+                request_line = await reader.readline()
+                if not request_line:
+                    return
+                method, path = _parse_request_line(request_line)
+                headers = await _read_headers(reader)
+                if not security.host_allowed(headers.get("host", "")):
+                    await _write_response(writer, 403, "non-local Host refused")
+                    return
+                if not security.origin_allowed(headers):
+                    await _write_response(writer, 403, "cross-origin request refused")
+                    return
+                size = int(headers.get("content-length", "0"))
+                limit = MAX_REQUEST_BYTES
+                if size < 0 or size > limit:
+                    await _write_json(writer, 413, {"error": "request body too large"})
+                    return
+                body = await _read_body(reader, headers)
             await self._dispatch(method, path, reader, writer, headers, body)
+        except (ValueError, TimeoutError) as exc:
+            with contextlib.suppress(OSError):
+                await _write_json(writer, 400, {"error": str(exc) or "request timed out"})
         except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
             pass
         finally:
@@ -412,7 +429,7 @@ class Server:
             return
         rel = "index.html" if path == "/" else path.lstrip("/")
         target = (dist / rel).resolve()
-        if not str(target).startswith(str(dist.resolve())) or not target.is_file():
+        if not target.is_relative_to(dist.resolve()) or not target.is_file():
             target = dist / "index.html"  # SPA fallback
         if target.name == "index.html":
             # Inject the per-install token so the dashboard's fetches can send it.
@@ -423,7 +440,17 @@ class Server:
                 1,
             )
             await _write_response(
-                writer, 200, html, content_type="text/html", extra_headers={SELF_PROBE_HEADER: "1"}
+                writer,
+                200,
+                html,
+                content_type="text/html",
+                extra_headers={
+                    SELF_PROBE_HEADER: "1",
+                    "Cache-Control": "no-store",
+                    "X-Frame-Options": "DENY",
+                    "Content-Security-Policy": "frame-ancestors 'none'",
+                    "X-Content-Type-Options": "nosniff",
+                },
             )
             return
         await _write_file(writer, target)
@@ -1826,7 +1853,10 @@ class Server:
         if not self._agents_md_dir_allowed(directory):
             await _write_json(writer, 400, {"error": "dir outside the home tree"})
             return
-        path = Path(directory) / "AGENTS.md"
+        path = (Path(directory).expanduser() / "AGENTS.md").resolve()
+        if not self._agents_md_dir_allowed(str(path)):
+            await _write_json(writer, 400, {"error": "file outside the allowed roots"})
+            return
         text = path.read_text() if path.is_file() else ""
         await _write_json(writer, 200, {"dir": directory, "text": text, "exists": path.is_file()})
 
@@ -1844,8 +1874,11 @@ class Server:
         if not directory:
             await _write_json(writer, 400, {"error": "dir required"})
             return
+        path = (Path(str(directory)).expanduser() / "AGENTS.md").resolve()
+        if not self._agents_md_dir_allowed(str(path)):
+            await _write_json(writer, 400, {"error": "file outside the allowed roots"})
+            return
         corrections = self._corrections_for_dir(str(directory))
-        path = Path(str(directory)) / "AGENTS.md"
         current = path.read_text() if path.is_file() else ""
         rules = await asyncio.to_thread(suggest_rules, corrections, current)
         await _write_json(
@@ -1895,11 +1928,15 @@ class Server:
         if not self._agents_md_dir_allowed(str(directory)):
             await _write_json(writer, 400, {"error": "dir outside the home tree"})
             return
-        base = Path(directory)
+        base = Path(directory).expanduser().resolve()
         if not base.is_dir():
             await _write_json(writer, 400, {"error": f"no such directory: {directory}"})
             return
-        (base / "AGENTS.md").write_text(text)
+        path = (base / "AGENTS.md").resolve()
+        if not self._agents_md_dir_allowed(str(path)):
+            await _write_json(writer, 400, {"error": "file outside the allowed roots"})
+            return
+        path.write_text(text)
         await _write_json(writer, 200, {"dir": directory, "written": True})
 
     async def _branches(self, writer: asyncio.StreamWriter, seg: str) -> None:
@@ -2223,7 +2260,7 @@ class Server:
                     writer.write(encode_binary_frame(outgoing.result()))
                     await writer.drain()
                     outgoing = asyncio.ensure_future(feed.__anext__())
-        except (StopAsyncIteration, OSError):
+        except (StopAsyncIteration, OSError, ValueError, asyncio.IncompleteReadError):
             pass
         finally:
             outgoing.cancel()
@@ -2441,7 +2478,10 @@ class Server:
                     continue  # keepalive tick; nothing to send
                 writer.write(encode_text_frame(json.dumps(nxt.result())))
                 await writer.drain()
+        except (ValueError, asyncio.IncompleteReadError):
+            pass
         finally:
+            nxt.cancel()
             incoming.cancel()
             subscription.close()
             with contextlib.suppress(OSError):
@@ -2454,6 +2494,8 @@ class Server:
         port: int,
         on_listening: Callable[[str, int], None] | None = None,
     ) -> None:
+        if host not in {"127.0.0.1", "localhost", "::1"}:
+            raise ValueError("Duckterm must bind a loopback host (127.0.0.1, localhost, or ::1)")
         # Refuse to start if another live server already owns this DUCKTERM_HOME.
         # Two servers on one home share a DB and (via a shared tmux socket)
         # adopt each other's panes — a second instance can archive or kill the

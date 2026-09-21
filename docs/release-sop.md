@@ -50,6 +50,12 @@ one line to bump. PEP 440 suffixes mark pre-releases: `0.4.0b1` (beta),
 
 ## Guardrails (already built in)
 
+- Releases require a clean `main` checkout and a successful GitHub Actions `CI`
+  push run for that exact commit. After committing a version bump, push it and
+  wait for the Python, web, and browser jobs to finish before running
+  `scripts/release.sh`. Missing, pending, failed, or unavailable CI blocks release.
+- The script checks again after building and tags the verified commit explicitly.
+  A changed HEAD or modified source during the build blocks publication.
 - `scripts/release.sh` refuses a final version for `beta` or a pre-release for
   `prod`, so a beta can't accidentally ship as prod.
 - Schema-version guard: if a beta changes the DB shape, an older prod refuses to
