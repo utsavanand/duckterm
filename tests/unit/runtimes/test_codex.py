@@ -141,3 +141,16 @@ def test_latest_transcript_matches_cwd(tmp_path, monkeypatch):  # type: ignore[n
         day / "rollout-2026-09-20T11-00-00-bbb.jsonl"
     )
     assert CodexRuntime().latest_transcript(cwd=Path("/nowhere")) is None
+
+
+def test_detect_state_recognizes_real_codex_approval_prompt() -> None:
+    from duckterm.runtimes.codex import CodexRuntime
+
+    r = CodexRuntime()
+    assert r.detect_state("Would you like to run the following command?") == "waiting"
+    assert r.detect_state("Press enter to confirm or esc to cancel") == "waiting"
+    assert r.detect_state("Working (17m 36s • esc to interrupt)") == "busy"
+    # A live prompt below an older Working line wins (bottom-up scan).
+    assert r.detect_state("Working (2s)\nWould you like to run the following command?") == "waiting"
+    # And fresh work below an old prompt reads busy.
+    assert r.detect_state("Press enter to confirm\nWorking (17m 36s)") == "busy"

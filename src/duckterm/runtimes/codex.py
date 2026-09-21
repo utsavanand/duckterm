@@ -18,7 +18,15 @@ from duckterm.runtimes.base import Harness, HookSpec, SessionState
 
 # Codex prints a spinner/working line while busy and a prompt glyph when idle.
 _WORKING = re.compile(r"(working|thinking|running|applying patch)", re.IGNORECASE)
-_WAITING = re.compile(r"(allow|approve|\(y/n\)|continue\?)", re.IGNORECASE)
+# Codex's real approval prompt says "Would you like to run the following
+# command?" and ends with "Press enter to confirm" — neither matched the old
+# pattern, so the output detector never saw codex enter waiting, its cached
+# state diverged from the hook-driven DB state, and a terminal-approved long
+# command stayed "waiting" for its whole run.
+_WAITING = re.compile(
+    r"(allow|approve|\(y/n\)|continue\?|would you like to|press enter to confirm)",
+    re.IGNORECASE,
+)
 
 
 class CodexRuntime(Harness):

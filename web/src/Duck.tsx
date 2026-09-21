@@ -65,10 +65,12 @@ const WATER = (
 );
 
 export function Duck({ pose, size = 24 }: { pose: DuckPose; size?: number }) {
+  // Tight crop: the full 64x60 canvas left the duck ~half the box; cropping
+  // to the action nearly doubles the duck at the same rendered size.
   return (
     <svg
       className={`rd-duck rd-duck-${pose}`}
-      viewBox="0 0 64 60"
+      viewBox="4 12 60 46"
       width={size}
       height={size}
       aria-hidden="true"
@@ -290,10 +292,10 @@ export function Duck({ pose, size = 24 }: { pose: DuckPose; size?: number }) {
               strokeLinecap="round"
             />
           </g>
-          <text className="duck-z duck-z1" x="48" y="18" fontSize="10" fontWeight="800" fill="#a4a9b3">
+          <text className="duck-z duck-z1" x="47" y="26" fontSize="10" fontWeight="800" fill="#a4a9b3">
             z
           </text>
-          <text className="duck-z duck-z2" x="54" y="12" fontSize="12" fontWeight="800" fill="#8b93a1">
+          <text className="duck-z duck-z2" x="53" y="21" fontSize="12" fontWeight="800" fill="#8b93a1">
             z
           </text>
           {WATER}

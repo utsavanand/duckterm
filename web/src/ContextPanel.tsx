@@ -112,7 +112,7 @@ export function ContextPanel({ session }: { session: SessionView }) {
         </p>
       )}
       <div className="rd-rightnow">
-        <Duck pose={poseFor(session.state)} size={34} />
+        <Duck pose={poseFor(session.state)} size={48} />
         <span>{duckPhrase(session, session.state)}</span>
       </div>
       <div className="rd-context-meta">

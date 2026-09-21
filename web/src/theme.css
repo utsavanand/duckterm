@@ -642,7 +642,7 @@ code,
 @keyframes duck-water-drift { 0%{transform:translateX(0)} 50%{transform:translateX(-3px)} 100%{transform:translateX(0)} }
 @keyframes duck-tap { 0%,86%,100%{transform:rotate(0)} 90%{transform:rotate(-2.5deg)} 95%{transform:rotate(1.5deg)} }
 @keyframes duck-breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.025)} }
-@keyframes duck-zdrift { 0%{opacity:0; transform:translate(0,2px) scale(.8)} 25%{opacity:.95} 100%{opacity:0; transform:translate(8px,-14px) scale(1.25)} }
+@keyframes duck-zdrift { 0%{opacity:0; transform:translate(0,2px) scale(.8)} 25%{opacity:.95} 100%{opacity:0; transform:translate(5px,-8px) scale(1.2)} }
 .rd-duck { display:inline-block; vertical-align:middle; flex-shrink:0; }
 .duck-water { animation: duck-water-drift 3s ease-in-out infinite; }
 .duck-pose-work { animation: duck-bob-work 1.6s ease-in-out infinite; transform-origin:30px 42px; }

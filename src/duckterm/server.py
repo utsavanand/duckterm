@@ -568,7 +568,28 @@ class Server:
             s["context_tokens"] = stats.get("context_tokens")
             s["model"] = stats.get("model")
             s["suites"] = self._suites_for(s.get("worktree_path") or s.get("cwd"))
+            self._reconcile_waiting(s)
         await _write_json(writer, 200, {"sessions": sessions})
+
+    def _reconcile_waiting(self, row: dict[str, Any]) -> None:
+        """Before reporting a pty-owned session as 'waiting', glance at its
+        actual screen. Codex answers approvals IN the terminal without firing a
+        hook, so a PermissionRequest can stay the last event for the entire run
+        of the approved command — the DB says 'waiting' while the screen says
+        'Working (17m)'. Output-detected states are authoritative for output-
+        driven runtimes; claude-code is excluded (its hooks fire per tool, so
+        this bug can't happen, and its output detector is too coarse to trust)."""
+        if row.get("state") != "waiting" or (row.get("runtime") or "") == "claude-code":
+            return
+        key = str(row.get("session_key") or "")
+        sup = self.orchestrator.get(key)
+        if sup is None:
+            return
+        runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
+        screen = sup.screen_text(8)
+        if screen and runtime.detect_state(screen) == "busy":
+            row["state"] = "busy"
+
 
     def _transcript_stats_for(self, row: dict[str, Any]) -> dict[str, Any]:
         """Live transcript-tail stats for a claude-code session: current

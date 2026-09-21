@@ -514,7 +514,7 @@ function TreeRow({
   // would offer a Resume that can't fire. Keep watched sessions observe-only.
   const canStop = live && s.launched;
   const canArchive = !archived && s.launched;
-  const stateLabel = effState === "waiting" ? "waiting on you" : effState;
+  const stateLabel = effState; // "waiting" reads fine on its own
   const [notesOpen, setNotesOpen] = useState(false);
   const [notes, setNotes] = useState(s.notes ?? "");
   const [collapsed, setCollapsed] = useState(false);
@@ -665,6 +665,7 @@ function TreeRow({
           ) : (
             depth > 0 && <span className="rd-row-twig">⑂</span>
           )}
+          <Duck pose={poseFor(effState)} size={32} />
           <span className="rd-row-click" onClick={() => onOpen(s.key)}>
             {s.branch && (
               <span
@@ -704,10 +705,7 @@ function TreeRow({
                 {s.label}
               </span>
             )}
-            <span className={`rd-state st-${effState}`}>
-              <Duck pose={poseFor(effState)} size={22} />
-              {stateLabel}
-            </span>
+            <span className={`rd-state st-${effState}`}>{stateLabel}</span>
             {ctxLevel && (
               <span
                 className={`rd-ctx-chip ${ctxLevel}`}
