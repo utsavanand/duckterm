@@ -1,4 +1,10 @@
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -83,13 +89,30 @@ test("AGENTS.md suggests rules from observed corrections", async ({ page }) => {
   await page.getByRole("button", { name: "AGENTS.md" }).click();
   await page.getByRole("button", { name: "Suggest from corrections" }).click();
 
-  const editor = page.getByPlaceholder(/Shared instructions/);
-  await expect(editor).toHaveValue(/Suggested from corrections/, {
-    timeout: 10_000,
+  // Proposals arrive as typed candidates awaiting review.
+  const candidate = page.locator(".rd-rule-candidate", {
+    hasText: "Use rg, not grep",
   });
-  await expect(editor).toHaveValue(/- Use rg, not grep/);
+  await expect(candidate).toBeVisible({ timeout: 10_000 });
 
-  // Saving lands the reviewed rules in the folder's AGENTS.md.
+  // Accept one, reject the other; save. Only the accepted rule renders into
+  // AGENTS.md; the rejected one is kept as a tombstone in rules.json.
+  await candidate.getByRole("button", { name: "Accept" }).click();
+  await page
+    .locator(".rd-rule-candidate", { hasText: "No emoji" })
+    .getByRole("button", { name: "Reject" })
+    .click();
   await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByText("AGENTS.md saved")).toBeVisible();
+  await expect(page.getByText("Rules saved")).toBeVisible();
+
+  expect(readFileSync(join(dir, "AGENTS.md"), "utf8")).toContain(
+    "Use rg, not grep",
+  );
+  const rules = JSON.parse(
+    readFileSync(join(dir, ".duckterm-rules.json"), "utf8"),
+  ) as { rules: { text: string; status: string }[] };
+  expect(rules.rules.map((r) => r.status).sort()).toEqual([
+    "active",
+    "rejected",
+  ]);
 });
