@@ -115,6 +115,9 @@ def build_parser() -> argparse.ArgumentParser:
     admin.add_argument("--version", type=int)
     admin.add_argument("--write-access", action="store_true")
     admin.add_argument("--disable", action="store_true")
+    from duckterm import session_client
+
+    session_client.add_parser(sub)
     return parser
 
 
@@ -283,7 +286,9 @@ def _run(agent: str, agent_args: list[str], name: str | None = None) -> int:
     # Wrap with the heartbeat loop (current tab's tty), under the session key the
     # agent's hooks will also report against, then exec a shell so it owns the TTY.
     wrapped = with_heartbeat(agent_cmd, instance.heartbeat_url(), key)
-    os.environ["DUCKTERM_SESSION_KEY"] = key
+    from duckterm.helpers import session_credentials
+
+    os.environ.update(session_credentials.launch_env(key))
     os.execvp("sh", ["sh", "-c", wrapped])  # replaces this process; doesn't return
 
 
@@ -440,6 +445,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+    if args.command == "session":
+        from duckterm import session_client
+
+        return session_client.main(args)
     if args.command == "serve":
         return _serve(args.host, args.port, reload=args.reload)
     if args.command == "restart":

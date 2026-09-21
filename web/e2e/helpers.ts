@@ -6,7 +6,7 @@ import { join } from "node:path";
 // so a test can verify a click actually changed server state (not just the DOM).
 
 function state(): { home: string; port: string } {
-  return JSON.parse(readFileSync(join(tmpdir(), "rd-e2e-state.json"), "utf8"));
+  return JSON.parse(readFileSync(process.env.RD_TEST_STATE_FILE || join(tmpdir(), "rd-e2e-state.json"), "utf8"));
 }
 
 export function base(): string {

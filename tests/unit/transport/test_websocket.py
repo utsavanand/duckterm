@@ -1,11 +1,14 @@
 import asyncio
 import struct
 
+import pytest
+
 from duckterm.transport.websocket import (
     accept_key,
     encode_binary_frame,
     encode_text_frame,
     read_frame,
+    read_frame_opcode,
 )
 
 
@@ -77,3 +80,14 @@ def test_read_frame_signals_eof_distinctly_from_a_frame() -> None:
     on_frame = _read(_client_frame(0x2, b"x"))
     assert on_eof is None
     assert isinstance(on_frame, tuple) and on_frame == (0x2, b"x")
+
+
+@pytest.mark.parametrize("reader_fn", [read_frame, read_frame_opcode])
+def test_large_frame_is_rejected_before_payload_read(reader_fn) -> None:
+    async def scenario() -> None:
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"\x82\xff" + struct.pack(">Q", 2**40))
+        with pytest.raises(ValueError, match="frame too large"):
+            await asyncio.wait_for(reader_fn(reader), 0.2)
+
+    asyncio.run(scenario())

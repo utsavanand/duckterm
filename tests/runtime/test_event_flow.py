@@ -26,7 +26,7 @@ def test_post_event_reaches_sse_subscriber_with_no_agent() -> None:
         port = server.sockets[0].getsockname()[1]
         async with server:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(b"GET /stream HTTP/1.1\r\nHost: x\r\n\r\n")
+            writer.write(b"GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n")
             await writer.drain()
 
             await _read_sse_frame(reader)  # the {type:init} frame
@@ -538,7 +538,7 @@ def test_stream_init_omits_deleted_session(tmp_path: Path) -> None:
             store.delete_session("gone")
 
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(b"GET /stream HTTP/1.1\r\nHost: x\r\n\r\n")
+            writer.write(b"GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n")
             await writer.drain()
             init = await _read_sse_frame(reader)
             writer.close()
@@ -556,7 +556,7 @@ def test_root_carries_self_probe_header() -> None:
         port = server.sockets[0].getsockname()[1]
         async with server:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(b"GET / HTTP/1.1\r\nHost: x\r\n\r\n")
+            writer.write(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
             await writer.drain()
             head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 2)
             writer.close()
@@ -624,7 +624,9 @@ def test_terminal_launch_passes_prompt_to_the_agent(
             "session_key": "p",
         },
     )
-    assert argv == ["claude", "add a healthcheck endpoint"]
+    assert argv[:-1] == ["claude"]
+    assert argv[-1].startswith("Duckterm session capability:")
+    assert argv[-1].endswith("User's task:\nadd a healthcheck endpoint")
 
 
 def test_terminal_launch_uses_copilot_prompt_flag(
@@ -646,16 +648,18 @@ def test_terminal_launch_uses_copilot_prompt_flag(
     assert argv == ["copilot", "-p", "fix the bug"]
 
 
-def test_terminal_launch_without_prompt_runs_bare_command(
+def test_terminal_launch_without_task_introduces_capability_then_waits(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No prompt → the agent opens with just its command (no empty trailing arg)."""
+    """An empty task introduces collaboration without inventing user work."""
     argv = _launch_capturing_argv(
         tmp_path,
         monkeypatch,
         {"command": "claude", "runtime": "claude-code", "cwd": str(tmp_path), "session_key": "p"},
     )
-    assert argv == ["claude"]
+    assert argv[:-1] == ["claude"]
+    assert argv[-1].startswith("Duckterm session capability:")
+    assert argv[-1].endswith("await the user's task.")
 
 
 def _token() -> str:

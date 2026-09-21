@@ -20,13 +20,13 @@ class TestOriginAllowed:
         [
             "http://127.0.0.1:4300",
             "http://localhost:4300",
-            "https://localhost",
+            "http://[::1]:4300",
             "http://127.0.0.1",
-            "http://localhost:9999",  # any port — user may run --port
+            "http://localhost:9999",  # custom port with matching Host
         ],
     )
     def test_localhost_origins_pass(self, origin: str) -> None:
-        assert security.origin_allowed({"origin": origin}) is True
+        assert security.origin_allowed({"origin": origin, "host": origin[7:]}) is True
 
     @pytest.mark.parametrize(
         "origin",
@@ -43,7 +43,12 @@ class TestOriginAllowed:
         assert security.origin_allowed({"origin": origin}) is False
 
     def test_referer_prefix_is_checked_when_no_origin(self) -> None:
-        assert security.origin_allowed({"referer": "http://localhost:4300/dashboard"}) is True
+        assert (
+            security.origin_allowed(
+                {"referer": "http://localhost:4300/dashboard", "host": "localhost:4300"}
+            )
+            is True
+        )
         assert security.origin_allowed({"referer": "http://evil.test/x"}) is False
 
     def test_origin_wins_over_referer(self) -> None:
@@ -73,7 +78,7 @@ class TestValidators:
 
     @pytest.mark.parametrize(
         "key",
-        ["", None, "../etc", "a b", "a;rm -rf", "a/b", "x" * 129, "a$b", "a`b`"],
+        ["", None, ".", "..", "../etc", "a b", "a;rm -rf", "a/b", "x" * 129, "a$b", "a`b`"],
     )
     def test_invalid_session_keys_rejected(self, key: str | None) -> None:
         assert security.valid_session_key(key) is False
@@ -113,3 +118,35 @@ class TestToken:
         assert a.startswith("new-") and b.startswith("new-")
         assert a != b  # 64 bits of entropy — collisions don't happen
         assert security.valid_session_key(a)  # its own output passes the validator
+
+    def test_secret_write_rejects_symlink_without_overwriting_target(self, tmp_path) -> None:
+        target = tmp_path / "original"
+        target.write_text("untouched")
+        secret = tmp_path / "secret"
+        secret.symlink_to(target)
+        with pytest.raises(ValueError, match="symbolic link"):
+            security.write_private_text(secret, "new credential")
+        assert target.read_text() == "untouched"
+        assert secret.is_symlink()
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "",
+        "attacker.test",
+        "localhost.attacker.test",
+        "localhost:99999",
+        "localhost:0",
+        "localhost\n",
+    ],
+)
+def test_invalid_hosts_are_rejected(host: str) -> None:
+    assert security.host_allowed(host) is False
+
+
+@pytest.mark.parametrize(
+    "origin", ["http://localhost:8000", "https://localhost:4300", "http://127.0.0.1:4300", "null"]
+)
+def test_other_origins_are_rejected_even_when_local(origin: str) -> None:
+    assert security.origin_allowed({"host": "localhost:4300", "origin": origin}) is False

@@ -19,18 +19,16 @@ AppleScript.
 import re
 import secrets
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from duckterm.helpers import paths
-from duckterm.helpers.private_files import private_write
+from duckterm.helpers.private_files import private_read, private_write
 
 TOKEN_HEADER = "x-duckterm-token"
 
-# Origins the dashboard is actually served from. A request whose Origin/Referer
-# is anything else is cross-origin and refused. The server only binds
-# localhost, so a same-machine browser tab on its own port (any port — the user
-# may run --port 4300) is legitimate; a foreign website has a non-localhost
-# origin and is caught. Matches http/https on localhost/127.0.0.1 with any port.
-_LOCAL_ORIGIN_RE = re.compile(r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$")
+# Host validation prevents a rebound attacker domain from reading the dashboard
+# token. Browser origins must also match the requested host AND port.
+_LOCAL_HOST_RE = re.compile(r"(?:127\.0\.0\.1|localhost|\[::1\])(?::[0-9]{1,5})?")
 
 # session_key flows into shell strings (heartbeat) and DB rows. Constrain it to
 # characters that are inert in a shell and a path.
@@ -42,15 +40,15 @@ _SNAPSHOT_ID_RE = re.compile(r"^snap-[0-9]+$")
 
 
 def valid_session_key(key: str | None) -> bool:
-    return bool(key) and _SESSION_KEY_RE.match(key or "") is not None
+    return bool(key) and key not in {".", ".."} and _SESSION_KEY_RE.fullmatch(key or "") is not None
 
 
 def valid_tty(tty: str | None) -> bool:
-    return bool(tty) and _TTY_RE.match(tty or "") is not None
+    return bool(tty) and _TTY_RE.fullmatch(tty or "") is not None
 
 
 def valid_snapshot_id(snapshot_id: str | None) -> bool:
-    return bool(snapshot_id) and _SNAPSHOT_ID_RE.match(snapshot_id or "") is not None
+    return bool(snapshot_id) and _SNAPSHOT_ID_RE.fullmatch(snapshot_id or "") is not None
 
 
 def new_session_key(prefix: str) -> str:
@@ -59,35 +57,60 @@ def new_session_key(prefix: str) -> str:
     return f"{prefix}-{secrets.token_hex(8)}"
 
 
+def host_allowed(host: str) -> bool:
+    if _LOCAL_HOST_RE.fullmatch(host) is None:
+        return False
+    try:
+        port = urlsplit("http://" + host).port
+        return port is None or 0 < port <= 65535
+    except ValueError:
+        return False
+
+
 def origin_allowed(headers: dict[str, str]) -> bool:
-    """True unless the request carries a cross-origin Origin/Referer. Same-origin
-    requests (and tools like curl) send no Origin, so they pass; a browser on
-    another site always sends one, so it's caught."""
-    origin = headers.get("origin")
-    if origin is not None:
-        return _LOCAL_ORIGIN_RE.match(origin) is not None
-    referer = headers.get("referer")
-    if referer is not None:
-        # Referer carries a path; match just the scheme://host:port prefix.
-        m = re.match(r"^(https?://[^/]+)", referer)
-        return m is not None and _LOCAL_ORIGIN_RE.match(m.group(1)) is not None
-    return True
+    """Allow CLI requests without browser headers, or an exact HTTP origin."""
+    value = headers.get("origin", headers.get("referer"))
+    if value is None:
+        return True
+    host = headers.get("host", "")
+    if not host_allowed(host):
+        return False
+    try:
+        source = urlsplit(value)
+        target = urlsplit("http://" + host)
+        if "origin" in headers and (source.path or source.query or source.fragment):
+            return False
+        return (
+            source.scheme == "http"
+            and host_allowed(source.netloc)
+            and source.hostname == target.hostname
+            and (source.port or 80) == (target.port or 80)
+        )
+    except ValueError:
+        return False
 
 
 def load_or_create_token() -> str:
     """The per-install secret, created on first run and persisted 0600. Shared
     with the dashboard (injected into its HTML) and the hook script (via env)."""
     path = _token_path()
-    if path.exists():
-        return path.read_text().strip()
+    existing = (private_read(path) or "").strip()
+    if existing:
+        return existing
     token = secrets.token_urlsafe(32)
     path.parent.mkdir(parents=True, exist_ok=True)
     private_write(path, token)
     return token
 
 
+def write_private_text(path: Path, text: str) -> None:
+    """Publish a complete secret with 0600 permissions from its first write."""
+    private_write(path, text)
+
+
 def token_valid(headers: dict[str, str], token: str) -> bool:
-    return secrets.compare_digest(headers.get(TOKEN_HEADER, ""), token)
+    supplied = headers.get(TOKEN_HEADER, "")
+    return bool(token) and secrets.compare_digest(supplied.encode(), token.encode())
 
 
 def _token_path() -> Path:

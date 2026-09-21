@@ -28,7 +28,7 @@ from duckterm.agents import tmux
 from duckterm.core import events
 from duckterm.core.eventbus import EventBus
 from duckterm.git.worktrees import WorktreeManager
-from duckterm.helpers import paths
+from duckterm.helpers import paths, session_credentials, session_instructions
 from duckterm.helpers.private_files import private_write
 from duckterm.llm.summarizer import build_prompt, mechanical_summary, summarize
 from duckterm.persistence.history import HistoryStore
@@ -60,7 +60,7 @@ class SessionSupervisor:
         self.cwd = cwd
         self.initial_prompt = initial_prompt
         self._extra = extra or {}
-        self._env = env or {}
+        self._env = {**session_credentials.launch_env(session_key), **(env or {})}
         self._proc: asyncio.subprocess.Process | None = None
         self._state: SessionState = "busy"
         self._task: asyncio.Task[None] | None = None
@@ -96,15 +96,27 @@ class SessionSupervisor:
         )
 
     async def start(self) -> None:
-        if tmux.has_tmux():
-            await self._start_tmux()
-        else:
-            await self._start_pty()
-
-    async def _start_pty(self) -> None:
-        argv = self.runtime.launch_command(
-            cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=self.initial_prompt
+        prompt = session_instructions.launch_prompt(
+            self.runtime.name,
+            self.session_key,
+            self.initial_prompt,
+            home=Path(self._env["DUCKTERM_SESSION_TOKEN_FILE"]).parent.parent,
         )
+        argv = self.runtime.launch_command(
+            cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=prompt
+        )
+        # Register and enroll synchronously before the child can use its inbox.
+        self._emit(events.SESSION_START, command=shlex.join(argv))
+        try:
+            if tmux.has_tmux():
+                await self._start_tmux(argv)
+            else:
+                await self._start_pty(argv)
+        except BaseException:
+            self._emit(events.SESSION_END)
+            raise
+
+    async def _start_pty(self, argv: list[str]) -> None:
         primary, secondary = pty.openpty()
         try:
             self._proc = await asyncio.create_subprocess_exec(
@@ -128,17 +140,11 @@ class SessionSupervisor:
             raise ValueError(f"command not found: {argv[0]}") from e
         os.close(secondary)
         self._primary_fd = primary
-        # Record the exact launch command so Resume can relaunch it — agents
-        # with no native conversation resume have nothing else to go on.
-        self._emit(events.SESSION_START, command=shlex.join(argv))
         self._task = asyncio.create_task(self._pump(primary))
 
-    async def _start_tmux(self) -> None:
+    async def _start_tmux(self, argv: list[str]) -> None:
         """Run the agent inside tmux so it survives the server restarting. Output
         streams to a pipe file we tail; input goes via tmux send-keys."""
-        argv = self.runtime.launch_command(
-            cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=self.initial_prompt
-        )
         command = shlex.join(argv)
         self._pipe_path = str(paths.home() / "panes" / f"{self.session_key}.log")
         Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
@@ -150,7 +156,6 @@ class SessionSupervisor:
             self._pipe_path,
             env={"DUCKTERM_SESSION_KEY": self.session_key, **self._env},
         )
-        self._emit(events.SESSION_START, command=command)
         self._task = asyncio.create_task(self._tail_pipe())
 
     async def reattach(self) -> None:
@@ -563,6 +568,11 @@ class Orchestrator:
         if run_cwd is None:
             raise ValueError("launch requires either cwd or repo_path")
 
+        agent_env = dict(env or {})
+        if self.history is not None:
+            agent_env["DUCKTERM_SESSION_TOKEN_FILE"] = str(
+                session_credentials.credential_path(key, self.history.session_api.credential_dir)
+            )
         supervisor = SessionSupervisor(
             bus=self.bus,
             runtime=runtime,
@@ -570,7 +580,7 @@ class Orchestrator:
             cwd=run_cwd,
             initial_prompt=prompt,
             extra=extra,
-            env=env,
+            env=agent_env,
         )
         self._supervisors[key] = supervisor
         try:
