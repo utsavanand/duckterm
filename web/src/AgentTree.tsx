@@ -16,6 +16,7 @@ export function AgentTree({
   selectedKey,
   onOpen,
   onOpenInbox,
+  onFolderConversations,
   onFork,
   onDelete,
   onFoldersChanged,
@@ -34,6 +35,7 @@ export function AgentTree({
   selectedKey: string | null;
   onOpen: (key: string) => void;
   onOpenInbox?: (key: string) => void;
+  onFolderConversations?: (folder: string) => void;
   onFork: (key: string) => void;
   onDelete: (key: string) => Promise<boolean>;
   onFoldersChanged: () => void;
@@ -210,6 +212,7 @@ export function AgentTree({
       onNewSession={() => onNewSessionIn(path)}
       onUnnest={path.includes("/") ? () => moveFolder(path, "") : undefined}
       onOpenGrid={() => onOpenGrid(path)}
+      onConversations={onFolderConversations ? () => onFolderConversations(path) : undefined}
       theme={folderThemes[path]}
       onSetTheme={(t) => onSetFolderTheme(path, t)}
       termMode={termMode}
@@ -252,6 +255,7 @@ function GroupHeader({
   onNewSession,
   onUnnest,
   onOpenGrid,
+  onConversations,
   theme,
   onSetTheme,
   termMode,
@@ -268,6 +272,7 @@ function GroupHeader({
   onNewSession: () => void;
   onUnnest?: () => void; // set only for nested folders
   onOpenGrid: () => void;
+  onConversations?: () => void;
   theme: string | undefined;
   onSetTheme: (theme: string | null) => void;
   termMode: TermMode;
@@ -320,6 +325,9 @@ function GroupHeader({
         >
           {leaf}
         </span>
+        {onConversations && <button className="rd-group-call" title="Session conversation history" aria-label={`View conversations in ${name}`} onClick={(e) => { e.stopPropagation(); onConversations(); }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 2 .7 2.9a2 2 0 0 1-.5 2.1L8 10a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.9.6 2.9.7a2 2 0 0 1 1.7 2Z" /></svg>
+        </button>}
         <span className="rd-group-count">{count}</span>
         <span
           className={`rd-group-theme-wrap${theme ? " set" : ""}`}

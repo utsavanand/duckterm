@@ -381,6 +381,48 @@ class SessionAPI:
                 "DELETE FROM session_questions WHERE expires_at < ?", (now - 7 * 86400000,)
             )
 
+    def folder_conversations(self, folder: str, *, before: int | None = None) -> dict[str, Any]:
+        """Owner view of retained exchanges involving the current folder subtree."""
+        if not folder or any(part in ("", ".", "..") for part in folder.split("/")):
+            raise APIError(400, "invalid folder")
+        if before is not None and not 0 < before <= 9223372036854775807:
+            raise APIError(400, "invalid cursor")
+        prefix = folder + "/"
+        # Sidebar ancestors can be implicit: only their descendant is stored.
+        exists = self.conn.execute(
+            "SELECT 1 FROM folders WHERE name = ? OR substr(name, 1, ?) = ? LIMIT 1",
+            (folder, len(prefix), prefix),
+        ).fetchone()
+        if exists is None:
+            raise APIError(404, "folder not found")
+        self._sweep()
+        rows = self.conn.execute(
+            "SELECT q.rowid AS sequence, q.*, "
+            "COALESCE(NULLIF(r.name, ''), NULLIF(r.source_app, ''), q.recipient) "
+            "AS recipient_name FROM session_questions q "
+            "JOIN sessions s ON s.session_key = q.sender "
+            "JOIN sessions r ON r.session_key = q.recipient "
+            "WHERE q.rowid < ? AND (s.grp = ? OR substr(s.grp, 1, ?) = ? "
+            "OR r.grp = ? OR substr(r.grp, 1, ?) = ?) "
+            "ORDER BY q.rowid DESC LIMIT 51",
+            (
+                before if before is not None else 9223372036854775807,
+                folder,
+                len(prefix),
+                prefix,
+                folder,
+                len(prefix),
+                prefix,
+            ),
+        ).fetchall()
+        return {
+            "messages": [
+                {**_public_question(dict(row)), "recipient_name": row["recipient_name"]}
+                for row in rows[:50]
+            ],
+            "next_cursor": rows[49]["sequence"] if len(rows) > 50 else None,
+        }
+
     def inbox(self, key: str, *, owner: bool = False, before: int | None = None) -> dict[str, Any]:
         self._session(key, live=not owner)
         if before is not None and not 0 < before <= 9223372036854775807:

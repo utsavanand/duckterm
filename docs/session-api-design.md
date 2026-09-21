@@ -244,6 +244,29 @@ streamed partial answers, and cross-machine sharing are excluded. On-demand
 reading and explicit replies are the chosen workflow. UI viewing does not mark a
 question answered, and an idle session is never forced to process its inbox.
 
+## Folder conversation history
+
+The telephone button beside a sidebar folder opens an owner-only conversation
+history dialog. `GET /folder-conversations?folder=<encoded-sidebar-path>` requires
+the owner `X-Duckterm-Token`; session bearer credentials cannot access it. The
+response contains `messages` and `next_cursor`; pass the latter as `before` to
+load another page of up to 50 exchanges, newest first. Each exchange includes
+the existing question/reply fields and a `recipient_name` display label.
+
+An exchange appears when either participant currently belongs to the selected
+folder or one of its descendants. Parent folders may be implicit in the sidebar.
+An exchange appears once even when both participants belong to the subtree.
+Moving sessions changes the folders that show their exchanges; this is not a
+snapshot of folder membership at send time. Stopped sessions remain represented,
+while existing session deletion and retention rules still apply: exchanges are
+removed seven days after their request expiry. No database migration is needed.
+
+The dialog refreshes automatically and shows participant names, timestamps,
+full questions, full responses, and request status. Acceptance alone is shown as
+“Accepted · no response yet.” A client approval denial does not create a broker
+reply: only successfully submitted responses appear. This owner view neither
+widens agent discovery permissions nor overrides the client's approval checks.
+
 ## Isolated upgrade rehearsal
 
 `scripts/rehearse_session_upgrade.py --old-python /path/to/installed/python`

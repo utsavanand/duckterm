@@ -1,0 +1,24 @@
+.rd-folder-conversations { width: min(820px, calc(100vw - 48px)); max-height: 85vh; box-sizing: border-box; overflow-y: auto; border: 1px solid var(--border-strong); border-radius: 14px; padding: 26px; color: var(--text); background: var(--card); box-shadow: 0 20px 80px #0006; }
+.rd-folder-conversations::backdrop { background: #0008; }
+.rd-folder-conversations header { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
+.rd-folder-conversations h2 { margin: 3px 0 0; font-size: 21px; }
+.rd-conversations-folder { margin: 0; color: var(--text-soft); font-size: 12px; overflow-wrap: anywhere; }
+.rd-conversations-description { color: var(--text-soft); line-height: 1.6; font-size: 14px; }
+.rd-conversations-retention { color: var(--muted); line-height: 1.5; font-size: 12px; }
+.rd-conversations-empty { padding: 32px 0; color: var(--text-soft); line-height: 1.6; }
+.rd-conversations-list { display: grid; gap: 12px; margin: 22px 0; }
+.rd-conversation { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.rd-conversation summary { cursor: pointer; padding: 18px; }
+.rd-conversation-participants { display: inline-flex; gap: 9px; flex-wrap: wrap; font-size: 13px; overflow-wrap: anywhere; }
+.rd-conversation-status { display: block; color: var(--text-soft); font-size: 12px; margin-top: 8px; }
+.rd-conversation-status.status-answered { color: var(--brand-green-strong); }
+.rd-conversation-preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+.rd-conversation time { font-size: 11px; color: var(--muted); }
+.rd-conversation section { padding: 16px 18px; border-top: 1px solid var(--border); }
+.rd-conversation h3 { font-size: 12px; margin: 0 0 8px; color: var(--text-soft); }
+.rd-conversation section p { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.65; margin: 0 0 8px; }
+.rd-conversation-reply { background: var(--bg-soft); }
+.rd-conversation-no-reply { padding: 0 18px 12px; color: var(--muted); font-size: 12px; }
+.rd-group-call { border: 0; background: transparent; color: var(--text-soft); cursor: pointer; flex-shrink: 0; padding: 4px; border-radius: 4px; line-height: 0; }
+.rd-group-call:hover, .rd-group-call:focus-visible { color: var(--text); background: var(--bg-soft); }
+@media (max-width: 600px) { .rd-folder-conversations { padding: 18px; width: calc(100vw - 24px); } }

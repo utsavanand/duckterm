@@ -365,3 +365,65 @@ def test_folder_names_with_sql_wildcards_do_not_move_other_trees(store: HistoryS
     store.delete_folder("moved")
     assert call(store, a, "GET", "/self")[1]["root"] == ""
     assert call(store, b, "GET", "/self")[1]["folder"] == "projectXone/child"
+
+
+def test_folder_conversation_history_membership_and_responses(store: HistoryStore) -> None:
+    a, b = enroll(store, "a"), enroll(store, "b")
+    q = ask(store, a)
+    path = f"/questions/{q['id']}"
+    call(store, b, "POST", path + "/accept")
+    pending = store.session_api.folder_conversations("work")["messages"]
+    assert len(pending) == 1  # both participants in the subtree, one exchange
+    assert pending[0]["status"] == "accepted" and pending[0]["answer"] is None
+    text = "Complete response\nSecond line 🦆"
+    call(store, b, "POST", path + "/answer", {"text": text})
+    for folder in ("work", "work/backend", "work/backend/a", "work/backend/b"):
+        message = store.session_api.folder_conversations(folder)["messages"][0]
+        assert (message["sender_name"], message["recipient_name"], message["answer"]) == (
+            "Session a",
+            "Session b",
+            text,
+        )
+    assert store.session_api.folder_conversations("other")["messages"] == []
+    store.set_state("b", "stopped")
+    assert store.session_api.folder_conversations("work")["messages"][0]["answer"] == text
+    store.move_folder("work", "renamed")
+    assert store.session_api.folder_conversations("renamed")["messages"][0]["id"] == q["id"]
+    store.set_meta("a", group="other")
+    store.set_meta("b", group="other")
+    assert store.session_api.folder_conversations("renamed")["messages"] == []
+    assert store.session_api.folder_conversations("other")["messages"][0]["id"] == q["id"]
+
+
+def test_folder_history_auth_cursor_and_literal_folder_names(store: HistoryStore) -> None:
+    a = enroll(store, "a")
+    enroll(store, "b")
+    ask(store, a)
+    server = Server(history=store)
+    url = "/folder-conversations?folder=work%2Fbackend"
+    assert dispatch(server, "GET", url, {})[0] == 401
+    assert dispatch(server, "GET", url, a)[0] == 403
+    owner = {"x-duckterm-token": server.token}
+    assert dispatch(server, "GET", url, owner)[1]["messages"][0]["recipient"] == "b"
+    for cursor in ("bad", "-1", "9" * 100):
+        assert dispatch(server, "GET", url + "&before=" + cursor, owner)[0] == 400
+    assert dispatch(server, "GET", "/folder-conversations?folder=missing", owner)[0] == 404
+    store.create_folder("wor%")
+    assert store.session_api.folder_conversations("wor%")["messages"] == []
+
+
+def test_folder_history_pagination_and_retention(store: HistoryStore, monkeypatch) -> None:
+    a, b = enroll(store, "a"), enroll(store, "b")
+    now = 1000
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: now)
+    for i in range(55):
+        now += 61
+        q = ask(store, a, str(i))
+        call(store, b, "POST", f"/questions/{q['id']}/answer", {"text": str(i)})
+    first = store.session_api.folder_conversations("work")
+    second = store.session_api.folder_conversations("work", before=first["next_cursor"])
+    assert len(first["messages"]) == 50 and len(second["messages"]) == 5
+    assert len({m["id"] for m in first["messages"] + second["messages"]}) == 55
+    assert second["next_cursor"] is None
+    now += 8 * 86400
+    assert store.session_api.folder_conversations("work")["messages"] == []
