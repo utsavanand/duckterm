@@ -78,6 +78,7 @@ export interface InboxMessage {
   id: string;
   sender: string;
   recipient: string;
+  recipient_name?: string;
   sender_name: string;
   question: string;
   status: "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled";
@@ -119,6 +120,14 @@ export const api = {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? "Could not load inbox");
+    return data as InboxPage;
+  },
+  folderInbox: async (folder: string, before?: number): Promise<InboxPage> => {
+    const query = new URLSearchParams({ folder });
+    if (before !== undefined) query.set("before", String(before));
+    const res = await fetch(`/folder-interactions?${query}`, { cache: "no-store", headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Could not load folder interactions");
     return data as InboxPage;
   },
   launch: (req: LaunchRequest) =>
@@ -170,7 +179,11 @@ export const api = {
       method: "PATCH",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ group }),
-    }).then((r) => r.json() as Promise<{ updated: boolean }>),
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "Could not move session");
+      return data as { updated: boolean };
+    }),
   // Installable harnesses (suites of skills/hooks/sub-agents, e.g. uv-suite).
   harnesses: () =>
     get<{

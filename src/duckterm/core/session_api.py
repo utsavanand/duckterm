@@ -302,18 +302,19 @@ class SessionAPI:
             raise APIError(404, "session not available")
         return dict(row)
 
-    def revoke(self, key: str) -> None:
-        """Invalidate a stopped/deleted session credential and close pending requests."""
+    def revoke(self, key: str, *, cancel_pending: bool = True) -> None:
+        """Invalidate credentials; a resumable stop preserves request deadlines."""
         session_credentials.credential_path(key, self.credential_dir).unlink(missing_ok=True)
         self.conn.execute(
             "UPDATE session_api_members SET token_hash = ? WHERE session_key = ?",
             (secrets.token_hex(32), key),
         )
-        self.conn.execute(
-            "UPDATE session_questions SET status = 'cancelled' "
-            "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
-            (key, key),
-        )
+        if cancel_pending:
+            self.conn.execute(
+                "UPDATE session_questions SET status = 'cancelled' "
+                "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
+                (key, key),
+            )
 
     def enroll(self, key: str, req: dict[str, Any]) -> dict[str, Any]:
         session = self._session(key)
@@ -487,6 +488,35 @@ class SessionAPI:
             except APIError:
                 result["card"] = None
         return result
+
+    def folder_inbox(self, folder: str, *, before: int | None = None) -> dict[str, Any]:
+        """Owner-only history for either participant in a folder's current subtree.
+
+        Do not filter by live state or enrollment: completed interactions remain
+        useful after a session stops. Membership includes each exchange only once.
+        """
+        if before is not None and not 0 < before <= 9223372036854775807:
+            raise APIError(400, "invalid cursor")
+        self._sweep()
+        prefix = folder + "/"
+        rows = self.conn.execute(
+            "WITH members AS (SELECT session_key FROM sessions "
+            "WHERE grp = ? OR substr(grp, 1, ?) = ?) "
+            "SELECT q.rowid AS sequence, q.*, "
+            "COALESCE(r.name, r.session_key, q.recipient) AS recipient_name "
+            "FROM session_questions q LEFT JOIN sessions r ON r.session_key = q.recipient "
+            "WHERE q.rowid < ? AND (q.sender IN (SELECT session_key FROM members) "
+            "OR q.recipient IN (SELECT session_key FROM members)) "
+            "ORDER BY q.rowid DESC LIMIT 51",
+            (folder, len(prefix), prefix, before if before is not None else 9223372036854775807),
+        ).fetchall()
+        return {
+            "messages": [
+                {**_public_question(dict(row)), "recipient_name": row["recipient_name"]}
+                for row in rows[:50]
+            ],
+            "next_cursor": rows[49]["sequence"] if len(rows) > 50 else None,
+        }
 
     def _question(self, key: str, request_id: str) -> dict[str, Any]:
         row = self.conn.execute(

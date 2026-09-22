@@ -17,11 +17,16 @@ const AGENTS: { id: string; label: string; command: string }[] = [
 export function LaunchModal({
   onClose,
   group,
+  folders,
+  onCreated,
 }: {
   onClose: () => void;
+  folders: string[];
+  onCreated: (key: string, group: string) => void;
   group?: string; // pre-assign the new session to this folder (folder + button)
 }) {
   const toast = useToast();
+  const [selectedGroup, setSelectedGroup] = useState(group ?? "");
   const [agent, setAgent] = useState("claude");
   const [command, setCommand] = useState("claude");
   const [name, setName] = useState("");
@@ -116,8 +121,17 @@ export function LaunchModal({
             }
           : { cwd: path }),
       });
-      if (group) await api.setGroup(launched.session_key, group);
-      toast(group ? `Started in ${group}` : `Started ${name || "session"}`);
+      if (selectedGroup) {
+        try {
+          await api.setGroup(launched.session_key, selectedGroup);
+        } catch (e) {
+          toast(`Session started, but folder assignment failed: ${(e as Error).message}. Move it from Ungrouped.`, "err");
+          onClose();
+          return;
+        }
+      }
+      onCreated(launched.session_key, selectedGroup);
+      toast(selectedGroup ? `Started in ${selectedGroup}` : `Started ${name || "session"}`);
       onClose();
     } catch (e) {
       toast(`Launch failed: ${(e as Error).message}`, "err");
@@ -127,7 +141,7 @@ export function LaunchModal({
   }
 
   return (
-    <Modal title={group ? `New session in ${group}` : "New session"} onClose={onClose}>
+    <Modal title="New session" onClose={onClose}>
       <Field label="Agent">
         <div className="rd-agent-pick">
           {AGENTS.map((a) => (
@@ -157,6 +171,15 @@ export function LaunchModal({
           />
         </Field>
       )}
+
+      <Field label="Sidebar folder">
+        <select aria-label="Sidebar folder" style={inputStyle} value={selectedGroup} onChange={(e) => setSelectedGroup(e.target.value)}>
+          <option value="">Ungrouped</option>
+          {[...new Set([...folders, ...(group ? [group] : [])])].sort().map((folder) => (
+            <option key={folder} value={folder}>{folder}</option>
+          ))}
+        </select>
+      </Field>
 
       <Field label="Folder to work in">
         {path ? (

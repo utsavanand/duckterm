@@ -28,7 +28,7 @@ import {
   saveThemeOverrides,
   themesForMode,
 } from "./termThemes";
-import { ToastProvider, useToast } from "./ui";
+import { Modal, ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
 import { useTheme } from "./useTheme";
 
@@ -60,6 +60,7 @@ function Dashboard() {
   const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox">(
     "terminal",
   );
+  const [inboxFolder, setInboxFolder] = useState<string | null>(null);
   // The folder whose terminals are tiled fullscreen; null = grid closed.
   const [gridFolder, setGridFolder] = useState<string | null>(null);
   // Terminal color theme, per app mode: the terminal follows the light/dark
@@ -344,7 +345,7 @@ function Dashboard() {
             <div className="rd-panel-head">
               <span>Agents</span>
             </div>
-            {agents.length === 0 ? (
+            {agents.length === 0 && folders.length === 0 ? (
               <p className="rd-panel-empty">
                 No agents yet. Click New session to start one.
               </p>
@@ -365,6 +366,7 @@ function Dashboard() {
                 }
                 onRename={(key, name) => patchSession(key, { label: name })}
                 onOpenGrid={setGridFolder}
+                onOpenFolderInbox={setInboxFolder}
                 onNewSessionIn={(folder) => {
                   setLaunchGroup(folder);
                   setModal("launch");
@@ -484,9 +486,19 @@ function Dashboard() {
         </div>
       )}
 
+      {inboxFolder !== null && (
+        <Modal title={`${inboxFolder} · Interactions`} onClose={() => setInboxFolder(null)}>
+          <InboxView key={inboxFolder} folder={inboxFolder} />
+        </Modal>
+      )}
       {modal === "launch" && (
         <LaunchModal
           group={launchGroup}
+          folders={folders}
+          onCreated={(key, group) => {
+            patchSession(key, { group: group || undefined });
+            refreshFolders();
+          }}
           onClose={() => {
             setModal(null);
             setLaunchGroup(undefined);

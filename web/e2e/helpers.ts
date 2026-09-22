@@ -115,3 +115,8 @@ export async function checkpoints(key: string): Promise<Checkpoint[]> {
   const res = await fetch(`${base()}/sessions/${key}/checkpoints`);
   return (await res.json()).checkpoints;
 }
+
+export async function apiDelete(path: string): Promise<void> {
+  const res = await api(path, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) throw new Error(`Cleanup failed: ${res.status}`);
+}
