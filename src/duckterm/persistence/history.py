@@ -311,12 +311,13 @@ class HistoryStore:
             return
         if key is not None:
             self._upsert_session(key, event)
-            if etype == events.SESSION_END:
-                self.session_api.revoke(key)
-            else:
-                row = self.session(key)
-                if row and row["state"] not in AT_REST_STATES:
-                    self.session_api.ensure(key)
+            row = self.session(key)
+            if row and row["state"] in AT_REST_STATES:
+                # Use the folded state: late SessionEnd events after Stop must
+                # not cancel the suspended exchange. Archive remains final.
+                self.session_api.revoke(key, cancel_pending=row["state"] != "stopped")
+            elif row:
+                self.session_api.ensure(key)
             kind = classify(event)
             if kind is not None:
                 self._bump_metric(key, kind)
@@ -631,7 +632,7 @@ class HistoryStore:
         Stamps ended_at when a session ends; keeps the existing ended_at when
         archiving an already-ended session; clears it when reviving (busy)."""
         if state in AT_REST_STATES:
-            self.session_api.revoke(key)
+            self.session_api.revoke(key, cancel_pending=state != "stopped")
         if state in ("stopped", "terminated"):
             cur = self._conn.execute(
                 "UPDATE sessions SET state = ?, ended_at = ? WHERE session_key = ?",
