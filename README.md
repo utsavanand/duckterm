@@ -59,7 +59,7 @@ install Python 3.11+, pipx, and tmux using your distribution's package manager.
 Then install the published wheel:
 
 ```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.35/duckterm-0.4.35-py3-none-any.whl
+pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.36/duckterm-0.4.36-py3-none-any.whl
 duckterm serve
 ```
 
