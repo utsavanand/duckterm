@@ -91,7 +91,7 @@ PLIST
 if [[ "$TEST_BUILD" == 1 ]]; then
   # Snapshot this worktree's backend; never fall back to the installed production CLI.
   "${PYTHON:-../.venv/bin/python}" - "$CONTENTS" <<'PYBUILD'
-import os, plistlib, shutil, sys
+import os, plistlib, runpy, shutil, sys
 from pathlib import Path
 contents = Path(sys.argv[1])
 shutil.copytree('../src/duckterm', contents / 'Resources/backend/duckterm',
@@ -110,8 +110,9 @@ info['DucktermTestPython'] = os.path.abspath(sys.executable)
 for key in ('DUCKTERM_PORT', 'DUCKTERM_URL', 'DUCKTERM_HOME', 'DUCKTERM_TMUX_SOCKET'):
     os.environ.pop(key, None)
 os.environ['DUCKTERM_INSTANCE'] = 'test'
-from duckterm.helpers import instance
-info['DucktermTestPort'] = instance.port()
+# Read the stdlib-only helper from this checkout; no installed package is needed.
+instance = runpy.run_path('../src/duckterm/helpers/instance.py')
+info['DucktermTestPort'] = instance['port']()
 with (contents / 'Info.plist').open('wb') as f:
     plistlib.dump(info, f)
 PYBUILD

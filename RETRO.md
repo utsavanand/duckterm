@@ -3,6 +3,14 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-21 — Test app packaging assumed an editable installation
+**Broke:** the committed candidate imported correctly from source, but a fresh
+Test build failed while calculating its isolated port.
+**Cause:** the build imported the installed Duckterm package instead of reading
+the helper from its own checkout; the development venv hid that dependency.
+**Rule:** validate Test packaging in a fresh environment and load build metadata
+from checkout files without requiring an installed application package.
+
 ## 2026-09-21 — Remote transfer and connection lifecycle need durable ownership
 **Broke:** concurrent connector handshakes exceeded the connection limit; forgetting
 an inactive computer left its tunnel and picker entry alive. Project migration
