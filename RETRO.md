@@ -3,6 +3,18 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-21 — Native dialogs need their own clipboard and save lifecycle
+**Broke:** the handed-off report form inherited dashboard-only copy/paste actions
+and could open overlapping save operations or close while export used its files.
+**Cause:** adding a second WebView without routing Edit actions to the active
+window or holding a busy state across native file-picker callbacks.
+**Rule:** route clipboard actions to the active editor, guard the full picker and
+export lifecycle, and verify the real WKWebView form, cancellation, ZIP output,
+opt-outs, keyboard dismissal, and narrow-window layout before shipping. Successful
+Save closes the report and reveals the ZIP; failures keep the form available.
+Automate the destination callback rather than invoking unsupported NSSavePanel
+actions that can strand a test window.
+
 ## 2026-09-21 — Closing old persistent work needs its own timestamp
 **Broke:** cancelling a month-old persistent assignment made cleanup remove it
 before the cancellation response could be returned.

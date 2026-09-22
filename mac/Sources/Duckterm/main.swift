@@ -9,11 +9,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let server = ServerProcess()
     private var poller: SessionPoller?
     private var window: DashboardWindow?
+    private var bugReport: BugReportController?
+    private var capturingReport = false
     private var notified = Set<String>()  // waiting keys we've already alerted on
 
     func applicationDidFinishLaunching(_ note: Notification) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
+        AppDiagnostics.shared.record("Application launched")
         window = DashboardWindow(url: server.url)
         window?.show()  // open the dashboard window on launch
         NSApp.activate(ignoringOtherApps: true)
@@ -57,12 +60,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notified = current  // a session that waits again later re-notifies
     }
 
+    @objc func reportBug(_ sender: Any?) {
+        guard !capturingReport else { return }
+        if let bugReport, bugReport.isOpen { bugReport.show(); return }
+        capturingReport = true
+        window?.captureForReport { [weak self] image in
+            guard let self else { return }
+            self.capturingReport = false
+            self.bugReport = BugReportController(screenshot: image)
+            self.bugReport?.show()
+        }
+        if window == nil {
+            capturingReport = false
+            bugReport = BugReportController(screenshot: nil)
+            bugReport?.show()
+        }
+    }
+
     // ── Edit-menu clipboard bridge ──
     // WKWebView validates the standard copy:/paste: selectors against the DOM
     // (an xterm selection is canvas-rendered, so Copy stayed disabled and ⌘C
     // did nothing). These actions bypass that: ask the page for its selection
     // via the __rtCopy/__rtPaste globals the dashboard exposes.
     @objc func copyFromDashboard(_ sender: Any?) {
+        if bugReport?.isKeyWindow == true {
+            NSApp.sendAction(Selector(("copy:")), to: nil, from: sender)
+            return
+        }
         window?.evaluate("window.__rtCopy ? window.__rtCopy() : ''") { result in
             guard let text = result as? String, !text.isEmpty else { return }
             NSPasteboard.general.clearContents()
@@ -71,6 +95,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func pasteToDashboard(_ sender: Any?) {
+        if bugReport?.isKeyWindow == true {
+            NSApp.sendAction(Selector(("paste:")), to: nil, from: sender)
+            return
+        }
         let pasteboard = NSPasteboard.general
         if let text = pasteboard.string(forType: .string), !text.isEmpty {
             sendPaste(text)
@@ -163,6 +191,11 @@ private func buildMainMenu() -> NSMenu {
         withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)),
         keyEquivalent: "m")
     windowItem.submenu = windowMenu
+    let helpItem = NSMenuItem()
+    main.addItem(helpItem)
+    let helpMenu = NSMenu(title: "Help")
+    helpMenu.addItem(withTitle: "Report a bug…", action: #selector(AppDelegate.reportBug(_:)), keyEquivalent: "")
+    helpItem.submenu = helpMenu
     return main
 }
 

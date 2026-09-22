@@ -18,6 +18,19 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         web?.evaluateJavaScript(js) { result, _ in done?(result) }
     }
 
+    func captureForReport(_ done: @escaping (NSImage?) -> Void) {
+        guard let web else { done(nil); return }
+        // Capture only our dashboard, before the report UI opens. No desktop capture.
+        web.takeSnapshot(with: nil) { image, error in
+            if let error { AppDiagnostics.shared.record("Report screenshot failed", code: (error as NSError).code) }
+            done(image)
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        AppDiagnostics.shared.record("Dashboard loaded")
+    }
+
     func show() {
         if let window {
             window.makeKeyAndOrderFront(nil)
@@ -61,6 +74,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        AppDiagnostics.shared.record("Dashboard connection failed", code: (error as NSError).code)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
             guard let self else { return }
             webView.load(URLRequest(url: self.url))

@@ -9,7 +9,7 @@
 #   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 #
 # Usage:
-#   ./build.sh          # build build/Duckterm.app
+#   ./build.sh          # build build/RubberTerm.app
 #   ./build.sh --run    # build, then open it
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -61,6 +61,21 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </dict>
 </plist>
 PLIST
+
+# Optional support recipient is supplied at build time, never committed to source.
+# Read the environment directly so the address is never logged or parsed as code.
+if [[ -n "${RUBBERTERM_SUPPORT_EMAIL:-}" ]]; then
+  python3 - "$CONTENTS/Info.plist" <<'PYCONFIG'
+import os
+import plistlib
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+plist = plistlib.loads(path.read_bytes())
+plist["RubberTermSupportEmail"] = os.environ["RUBBERTERM_SUPPORT_EMAIL"]
+path.write_bytes(plistlib.dumps(plist))
+PYCONFIG
+fi
 
 echo "==> ad-hoc signing (runs locally; not notarized for distribution)"
 codesign --force --deep --sign - "$APP"
