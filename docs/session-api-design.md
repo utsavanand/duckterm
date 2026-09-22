@@ -46,9 +46,11 @@ without changing their environment or restarting them. `server.json` records the
 actual listening URL, including non-default ports. These files are never exposed
 through discovery or inbox responses. The CLI never falls back to the owner token.
 
-Stopping or ending a session invalidates its credential and cancels pending
-exchanges. Its card metadata remains for inspection. Resuming automatically
-issues a fresh credential. Deleting a session removes its membership, capability
+Stopping a session invalidates its credential but preserves queued and accepted
+exchanges under the durable session identity. Their original deadlines continue
+to run while stopped; resume does not extend them. Resuming automatically issues
+a fresh credential, and the old credential remains invalid. Terminating or
+archiving cancels pending exchanges. Its card metadata remains for inspection. Deleting a session removes its membership, capability
 file, and exchanges involving it. Forks receive distinct credentials.
 
 Schema version 3 prevents an older binary from opening the migrated database:

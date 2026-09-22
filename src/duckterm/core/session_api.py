@@ -249,18 +249,19 @@ class SessionAPI:
             raise APIError(404, "session not available")
         return dict(row)
 
-    def revoke(self, key: str) -> None:
-        """Invalidate a stopped/deleted session credential and close pending requests."""
+    def revoke(self, key: str, *, cancel_pending: bool = True) -> None:
+        """Invalidate credentials; a resumable stop preserves request deadlines."""
         session_credentials.credential_path(key, self.credential_dir).unlink(missing_ok=True)
         self.conn.execute(
             "UPDATE session_api_members SET token_hash = ? WHERE session_key = ?",
             (secrets.token_hex(32), key),
         )
-        self.conn.execute(
-            "UPDATE session_questions SET status = 'cancelled' "
-            "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
-            (key, key),
-        )
+        if cancel_pending:
+            self.conn.execute(
+                "UPDATE session_questions SET status = 'cancelled' "
+                "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
+                (key, key),
+            )
 
     def enroll(self, key: str, req: dict[str, Any]) -> dict[str, Any]:
         session = self._session(key)
