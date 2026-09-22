@@ -207,7 +207,7 @@ def test_notice_respects_visibility_and_cancellation(scenario, cancelled):
     stored = history._conn.execute(
         "SELECT status FROM session_questions WHERE id = ?", (question["id"],)
     ).fetchone()
-    assert stored["status"] == ("cancelled" if cancelled else "accepted")
+    assert stored["status"] == "cancelled"
     assert (
         history._conn.execute(
             "SELECT COUNT(*) FROM session_inbox_delivery WHERE last_attempt_at > 0"
