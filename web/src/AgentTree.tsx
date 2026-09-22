@@ -23,6 +23,7 @@ export function AgentTree({
   onRename,
   onOpenGrid,
   onNewSessionIn,
+  onOpenFolderInbox,
   folderThemes,
   onSetFolderTheme,
   termMode,
@@ -41,6 +42,7 @@ export function AgentTree({
   onRename: (key: string, name: string) => void;
   onOpenGrid: (folder: string) => void;
   onNewSessionIn: (folder: string) => void;
+  onOpenFolderInbox: (folder: string) => void;
   folderThemes: Record<string, string>;
   onSetFolderTheme: (folder: string, theme: string | null) => void;
   termMode: TermMode;
@@ -210,6 +212,7 @@ export function AgentTree({
       onNewSession={() => onNewSessionIn(path)}
       onUnnest={path.includes("/") ? () => moveFolder(path, "") : undefined}
       onOpenGrid={() => onOpenGrid(path)}
+      onOpenInbox={() => onOpenFolderInbox(path)}
       theme={folderThemes[path]}
       onSetTheme={(t) => onSetFolderTheme(path, t)}
       termMode={termMode}
@@ -252,6 +255,7 @@ function GroupHeader({
   onNewSession,
   onUnnest,
   onOpenGrid,
+  onOpenInbox,
   theme,
   onSetTheme,
   termMode,
@@ -268,6 +272,7 @@ function GroupHeader({
   onNewSession: () => void;
   onUnnest?: () => void; // set only for nested folders
   onOpenGrid: () => void;
+  onOpenInbox: () => void;
   theme: string | undefined;
   onSetTheme: (theme: string | null) => void;
   termMode: TermMode;
@@ -321,6 +326,16 @@ function GroupHeader({
           {leaf}
         </span>
         <span className="rd-group-count">{count}</span>
+        <button
+          className="rd-group-phone"
+          title="View folder interactions"
+          aria-label={`View interactions in ${name}`}
+          onClick={(e) => { e.stopPropagation(); onOpenInbox(); }}
+        >
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .3 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.4 1.8.6 2.8.7a2 2 0 0 1 1.8 2.1z" />
+          </svg>
+        </button>
         <span
           className={`rd-group-theme-wrap${theme ? " set" : ""}`}
           title={`Terminal theme for this folder: ${theme ?? "default"}`}

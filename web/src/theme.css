@@ -2687,3 +2687,9 @@ select {
   color: var(--muted);
   margin-bottom: 12px;
 }
+
+/* Keep folder history discoverable regardless of hover, collapse or pending count. */
+.rd-group-phone { flex: 0 0 24px; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 4px; padding: 3px; background: transparent; color: var(--idle); cursor: pointer; }
+.rd-group-phone:hover { background: var(--bg-soft); }
+.rd-group-phone:focus-visible { outline: 2px solid var(--idle); outline-offset: 2px; }
+.rd-folder-inbox { padding: 0; }

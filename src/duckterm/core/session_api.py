@@ -411,6 +411,35 @@ class SessionAPI:
                 result["card"] = None
         return result
 
+    def folder_inbox(self, folder: str, *, before: int | None = None) -> dict[str, Any]:
+        """Owner-only history for either participant in a folder's current subtree.
+
+        Do not filter by live state or enrollment: completed interactions remain
+        useful after a session stops. Membership includes each exchange only once.
+        """
+        if before is not None and not 0 < before <= 9223372036854775807:
+            raise APIError(400, "invalid cursor")
+        self._sweep()
+        prefix = folder + "/"
+        rows = self.conn.execute(
+            "WITH members AS (SELECT session_key FROM sessions "
+            "WHERE grp = ? OR substr(grp, 1, ?) = ?) "
+            "SELECT q.rowid AS sequence, q.*, "
+            "COALESCE(r.name, r.session_key, q.recipient) AS recipient_name "
+            "FROM session_questions q LEFT JOIN sessions r ON r.session_key = q.recipient "
+            "WHERE q.rowid < ? AND (q.sender IN (SELECT session_key FROM members) "
+            "OR q.recipient IN (SELECT session_key FROM members)) "
+            "ORDER BY q.rowid DESC LIMIT 51",
+            (folder, len(prefix), prefix, before if before is not None else 9223372036854775807),
+        ).fetchall()
+        return {
+            "messages": [
+                {**_public_question(dict(row)), "recipient_name": row["recipient_name"]}
+                for row in rows[:50]
+            ],
+            "next_cursor": rows[49]["sequence"] if len(rows) > 50 else None,
+        }
+
     def _question(self, key: str, request_id: str) -> dict[str, Any]:
         row = self.conn.execute(
             "SELECT * FROM session_questions WHERE id = ?", (request_id,)
