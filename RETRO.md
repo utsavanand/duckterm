@@ -3,6 +3,13 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-21 — Closing old persistent work needs its own timestamp
+**Broke:** cancelling a month-old persistent assignment made cleanup remove it
+before the cancellation response could be returned.
+**Cause:** cancellation had no closing timestamp, so retention used creation time.
+**Rule:** timestamp every closing transition and retain its history from closure.
+Cover aged requests, not only newly created ones.
+
 ## 2026-09-21 — Idle agents never saw short-lived inbox assignments
 **Broke:** QA and implementation handoffs expired before recipients read them.
 Acknowledging a request did not extend its deadline, and delivery only updated a

@@ -237,11 +237,12 @@ class SessionAPI:
                     (source[1], question["id"]),
                 )
         self.conn.execute(
-            "UPDATE session_questions SET status = 'cancelled' "
+            "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
             "WHERE status IN ('queued', 'accepted') "
             "AND NOT EXISTS (SELECT 1 FROM session_api_members a JOIN session_api_members b "
             "ON a.root = b.root WHERE a.session_key = sender AND b.session_key = recipient "
-            "AND a.root = session_questions.root AND a.root != '')"
+            "AND a.root = session_questions.root AND a.root != '')",
+            (int(time.time() * 1000),),
         )
 
     def pending_counts(self) -> dict[str, int]:
@@ -309,9 +310,9 @@ class SessionAPI:
         )
         if cancel_pending:
             self.conn.execute(
-                "UPDATE session_questions SET status = 'cancelled' "
+                "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
                 "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
-                (key, key),
+                (int(time.time() * 1000), key, key),
             )
 
     def enroll(self, key: str, req: dict[str, Any]) -> dict[str, Any]:
@@ -694,7 +695,7 @@ class SessionAPI:
                 (
                     state,
                     answer,
-                    int(time.time() * 1000) if answer is not None else None,
+                    int(time.time() * 1000) if state != "accepted" else None,
                     question["id"],
                 ),
             )

@@ -262,3 +262,18 @@ def test_stop_shell_forwards_only_hook_response_and_loop_guard(tmp_path):
     )
     assert json.loads(result.stdout) == response["hook_output"]
     assert json.loads(capture.read_text())["stop_hook_active"] is False
+
+
+def test_old_persistent_assignment_retained_for_seven_days_after_cancellation(
+    scenario, monkeypatch
+):
+    history, _, call, ask = scenario
+    question = ask()
+    future = time.time() + 30 * 86400
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: future)
+    result = call("sender", "POST", f"/questions/{question['id']}/cancel")
+    assert result["status"] == "cancelled"
+    assert result["answered_at"] == int(future * 1000)
+    assert len(history.session_api.inbox("recipient", owner=True)["messages"]) == 1
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: future + 8 * 86400)
+    assert history.session_api.inbox("recipient", owner=True)["messages"] == []
