@@ -54,6 +54,7 @@ from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events, progress
 from duckterm.core.approvals import ApprovalRegistry
+from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
@@ -61,7 +62,14 @@ from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
 from duckterm.harnesses import infer_runtime, runtime_for
-from duckterm.helpers import browse, instance, security, session_credentials, session_instructions
+from duckterm.helpers import (
+    browse,
+    instance,
+    paths,
+    security,
+    session_credentials,
+    session_instructions,
+)
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
@@ -291,6 +299,7 @@ class Server:
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
         self.snapshots = SnapshotManager(self.history)
+        self._backup_jobs: BackupJobs | None = None
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
@@ -415,6 +424,9 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        if path == "/backup" and method in {"GET", "PUT", "POST"}:
+            await self._backup(writer, headers, method, body)
+            return
         inbox_path = urllib.parse.urlsplit(path)
         if method == "GET" and inbox_path.path == "/folder-interactions":
             await self._folder_inbox(writer, headers, inbox_path.query)
@@ -2002,6 +2014,39 @@ class Server:
             await _write_json(writer, 404, {"error": str(e)})
             return
         await _write_json(writer, 200, result)
+
+    async def _backup(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], method: str, body: bytes
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            if self._backup_jobs is None:
+                self._backup_jobs = BackupJobs(paths.home() / "backup-state.json")
+            jobs = self._backup_jobs
+            if method == "GET":
+                await _write_json(writer, 200, jobs.snapshot())
+                return
+            if len(body) > 8192:
+                await _write_json(writer, 413, {"error": "request body too large"})
+                return
+            req = json.loads(body or b"{}")
+            if not isinstance(req, dict) or set(req) - {"destination"}:
+                raise ValueError("Expected an object with optional destination")
+            if method == "POST" and jobs.task and not jobs.task.done():
+                await _write_json(
+                    writer, 409, {**jobs.snapshot(), "error": "A backup is already running"}
+                )
+                return
+            if "destination" in req or method == "PUT":
+                jobs.configure(req.get("destination"))
+            result = jobs.start() if method == "POST" else jobs.snapshot()
+            await _write_json(writer, 202 if method == "POST" else 200, result)
+        except (ValueError, UnicodeError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+        except OSError as exc:
+            await _write_json(writer, 500, {"error": str(exc)})
 
     async def _folder_broadcast(
         self,

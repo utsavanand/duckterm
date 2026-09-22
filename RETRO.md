@@ -3,6 +3,14 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-21 — Manual backups must not block the dashboard
+**Broke:** the shipped backup CLI had no owner-controlled dashboard operation.
+**Cause:** archive creation and cloud upload are synchronous, while the dashboard
+needs a remembered destination and a visible outcome.
+**Rule:** run the existing archive operation in one background job, persist its
+configuration/result privately, reject overlap, and expose the retained local
+path on upload failure. Never silently choose a destination or retry on restart.
+
 ## 2026-09-21 — Owner notices need distinct lifecycle labels
 **Broke:** folder broadcasts inherited question labels and had no owner send UI.
 **Cause:** the inbox assumed every entry was a peer question awaiting a reply.

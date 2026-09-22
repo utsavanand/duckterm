@@ -40,6 +40,36 @@ Pause agents before backing up if the database and all transcripts must reflect
 one common quiet period. File read/truncation errors fail the backup rather
 than silently publishing an incomplete archive.
 
+## Manual dashboard API
+
+The topbar interface is owned by UI-dev. Its backend uses owner-authenticated
+routes; agent bearer credentials receive 403.
+
+- `GET /backup` returns `{destination, job}`. Both start as null.
+- `PUT /backup {destination}` remembers a local path or `gs://bucket/prefix`
+  without running a backup.
+- `POST /backup {destination?}` starts one background backup and returns 202
+  with the current state. An optional destination is remembered first.
+  No configured destination returns 400; an already-running backup returns 409
+  with the current job and does not change its destination.
+- Poll `GET /backup` while running. A job includes `id, status, destination,
+  started_at, finished_at, archive_path, result, error`; timestamps are
+  milliseconds. Status is `running, succeeded, failed,` or `interrupted`.
+  `archive_path` is the local archive, including after an upload failure;
+  `result` also identifies the GCS upload location on success.
+
+Configuration and the latest result are stored privately in
+`DUCKTERM_HOME/backup-state.json` with mode 0600. Changing configuration during
+a run affects the next backup; each job retains its own destination.
+A restart preserves completed results. A previously running job becomes
+`interrupted`, with advice to inspect the destination before retrying.
+It never resumes or schedules itself automatically.
+
+The API calls the same archive implementation as the CLI in a worker thread.
+It does not block dashboard requests, overwrite archives, create buckets,
+change permissions, or upload any data until the owner starts a backup.
+Missing `gcloud` or authorization errors are reported in the job result.
+
 ## Restore
 
 1. Install the recorded RubberTerm version or a newer compatible version.
