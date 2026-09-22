@@ -1300,6 +1300,10 @@ class Server:
         # An in-process supervised session has a PTY we can terminate directly.
         # A session running in the user's own terminal (duckterm run / a tab we
         # opened) isn't ours to kill — the user stops it there.
+        # Persist the pause before killing the child: its SessionEnd may arrive
+        # during stop(), and must not irreversibly cancel pending questions.
+        if self.orchestrator.get(session_key) is not None:
+            self._set_lifecycle(session_key, "stopped")
         stopped = await self.orchestrator.stop(session_key)
         # Mark it stopped (resumable) rather than terminated — Stop is a pause; the
         # worktree, branch, and conversation id are kept so Resume can continue it.

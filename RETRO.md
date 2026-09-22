@@ -14,6 +14,14 @@ collapse, or live-session filters. Land fixes on main before releasing so a
 later release cannot silently omit a feature branch. Cover folder selection and both directions
 of folder exchanges with end-to-end regression checks.
 
+## 2026-09-21 — Stop silently discarded pending collaboration
+**Broke:** stopping sessions during a restart cancelled owner work requests.
+**Cause:** credential revocation also cancelled durable questions, and the child's
+SessionEnd could arrive before the server recorded the resumable stop.
+**Rule:** persist Stop before terminating the child; revoke its credential while
+preserving pending questions and their original deadlines. Test late exit events,
+resume with a fresh credential, expiry while stopped, and final cancellation.
+
 ## 2026-09-21 — Installation docs advertised missing downloads
 **Broke:** the README recommended a nonexistent PyPI package and a Mac ZIP that
 was absent from the latest release; the release guide linked an older wheel.
