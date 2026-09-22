@@ -16,12 +16,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-SessionState = Literal["idle", "busy", "waiting", "terminated", "stopped", "archived"]
+SessionState = Literal[
+    "idle", "busy", "waiting", "terminated", "stopped", "interrupted", "archived"
+]
 
 # States that are "at rest" — the session is finished or put away, so the sweeps
 # and startup reconciliation skip it. Defined once here (beside SessionState);
-# both the history store and the server import it.
-AT_REST_STATES: tuple[SessionState, ...] = ("terminated", "stopped", "archived")
+# both the history store and the server import it. "interrupted" is the
+# involuntary sibling of "stopped": the backing terminal died (reboot, crash,
+# killed tmux) rather than the user pausing it — equally resumable, but the UI
+# should say what actually happened.
+AT_REST_STATES: tuple[SessionState, ...] = ("terminated", "stopped", "interrupted", "archived")
 
 
 @dataclass(frozen=True)
@@ -74,6 +79,13 @@ class Harness(ABC):
 
     @abstractmethod
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]: ...
+
+    def find_resumable_id(self, *, cwd: Path, recorded: str | None) -> str | None:
+        """A conversation id restore_command can actually resume: the recorded
+        one if its transcript still exists, else the harness's best fallback
+        (typically the newest transcript for this cwd). None — the default, for
+        harnesses with no native resume — means relaunch fresh."""
+        return None
 
     def messages(self, *, cwd: Path, session_id: str | None) -> list[dict[str, object]]:
         """Structured records for the Messages view: {id, role, blocks}, where a

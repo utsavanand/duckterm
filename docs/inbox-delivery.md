@@ -13,7 +13,8 @@ older servers; the API exposes them as `expires_at: 0`.
 ## Task-end notices
 
 Claude Code's synchronous Stop hook can return one line of additional context.
-RubberTerm uses this to mention accepted, unanswered assignments once per record.
+RubberTerm uses this to mention unread owner broadcasts and accepted, unanswered
+assignments once per record.
 A new accepted assignment makes another notice eligible. Brand-new peer questions
 wait for the agent's normal inbox check. Notices neither accept nor answer work.
 
@@ -32,7 +33,9 @@ New sessions receive instructions to check their inbox at idle-turn starts and
 suitable pauses. Existing Claude sessions may need their hooks reinstalled and
 a restart before the synchronous Stop configuration takes effect.
 
-The owner-broadcast backend described in `inbox-awareness-design.md` is separate
-follow-up work; this change covers peer assignments.
+Owner broadcasts are retained for seven days after delivery, require no reply,
+and are marked read when the recipient fetches its inbox. Owner dashboard reads
+do not mark notices read. The folder broadcast interface is delegated to UI-dev;
+see [backend contract](folder-broadcast.md).
 
 Runtime contract: [Claude Code Stop hooks](https://code.claude.com/docs/en/hooks#stop-decision-control).

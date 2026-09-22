@@ -1,6 +1,8 @@
 # Inbox awareness — how a session notices it has mail
 
-Status: designed 2026-09-21, not implemented. Owner-approved direction.
+Status: backend implemented for Claude Code task-end notices, including unread
+owner broadcasts and accepted peer assignments. Other runtimes remain unsupported.
+Folder broadcast UI is delegated to UI-dev. See [delivery details](inbox-delivery.md).
 Context: [session-api-design.md](session-api-design.md) and the folder
 broadcast feature (owner messages fan out to every session's inbox).
 
@@ -64,6 +66,57 @@ per-harness capability on the `Harness` contract, defaulting to unsupported
 (RETRO: per-harness behavior belongs on the contract, not behind
 `isinstance`).
 
+## Urgent messages
+
+An owner message can be marked **urgent**. What that does and does not mean
+matters, because the word promises speed we cannot deliver.
+
+**Urgent changes standing and persistence, not delivery speed.** Both normal
+and urgent mail land in the inbox at the same instant and both surface at
+the session's next turn boundary. Urgent inverts the three properties that
+make normal mail easy to skip:
+
+| | Normal | Urgent |
+| --- | --- | --- |
+| Notices while session is `waiting` | suppressed | yes |
+| Re-notices | only on new arrivals | every turn until handled |
+| Wording | passive ("you have 2 unread") | directive ("answer now, then resume") |
+| Inbox ordering | by arrival | pinned to top, flagged |
+
+The payload carries **anti-derail framing** so a quick answer does not
+become a new project: the urgent text is wrapped as *"Answer this quickly,
+then resume what you were doing. Do not restructure your work around it."*
+
+Honest limits, which the UI must state rather than imply otherwise:
+
+- It does not arrive sooner. A session 90 seconds into a tool call still
+  answers at the end of that turn.
+- It cannot force compliance. The notice is context the model reads;
+  repetition makes it very hard to ignore, not impossible.
+- Label it in the UI as "surfaces at the session's next pause and keeps
+  reminding until handled" — not the bare word "urgent".
+
+Trigger to revisit: if waiting for turn boundaries measurably costs minutes
+in practice, reconsider — but the only mechanism that beats it is the
+interrupt below, with its cost.
+
+## Interrupt session (separate owner control)
+
+True mid-turn interruption exists only as Ctrl-C to the agent, which
+duckterm can already send. It **aborts the turn's in-progress work** — a
+blunt and occasionally destructive instrument.
+
+Expose it as an explicit, separately-named owner action ("Interrupt
+session"), never as a side effect of marking a message urgent. The user
+should always be choosing that tradeoff deliberately. Confirm before
+sending, and state plainly that in-progress work is lost.
+
+Why mid-turn message injection is NOT the answer: a busy agent is consuming
+its own input stream; a paste arriving mid-turn lands in whatever input
+state the TUI happens to be in — queued at best, corrupting a partially
+typed line at worst (RETRO: the Shift+Enter class of bug). No message
+framing fixes a transport that does not deliver mid-turn.
+
 ## Tests
 
 - Turn end with an empty inbox produces an unchanged hook response (no
@@ -74,6 +127,11 @@ per-harness capability on the `Harness` contract, defaulting to unsupported
 - The same pending record does not generate a notice on every subsequent
   turn; a newly arrived one does.
 - A harness without turn-end support is unaffected.
+- An urgent item notices even when the session is `waiting`, and re-notices
+  on the next turn if still unhandled; a normal item does neither.
+- An urgent item's notice carries the directive wording and the
+  anti-derail framing; handling it clears the repeat.
+- Urgent items sort to the top of `duckterm session inbox` output.
 
 ## Not building
 

@@ -25,7 +25,13 @@ export interface DucktermEvent {
 }
 
 export type SessionState =
-  "idle" | "busy" | "waiting" | "terminated" | "stopped" | "archived";
+  | "idle"
+  | "busy"
+  | "waiting"
+  | "terminated"
+  | "stopped"
+  | "interrupted"
+  | "archived";
 
 export interface SessionView {
   inboxPending?: number;

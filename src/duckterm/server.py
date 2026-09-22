@@ -99,6 +99,16 @@ from duckterm.transport.websocket import (
 _BLOCKING_POLL_MS = 180_000
 
 
+# Sent with every native resume: the conversation survives a dead terminal but
+# out-of-band state (dev servers, background jobs) does not, and a resumed agent
+# otherwise assumes everything it started is still running.
+_RESUME_NUDGE = (
+    "This session was resumed after its terminal stopped. Anything running "
+    "outside the conversation (dev servers, watchers, background jobs) died "
+    "with it — re-verify before assuming, then continue where you left off."
+)
+
+
 def _build_runtime(name: str | None, command: str) -> AgentRuntime:
     # Resolve through the harness registry — the single source of truth for which
     # agents exist. infer_runtime() guesses from the command when name is unset.
@@ -412,6 +422,10 @@ class Server:
         inbox_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/inbox", inbox_path.path)
         if method == "GET" and inbox_match:
             await self._session_inbox(writer, inbox_match[1], headers, inbox_path.query)
+            return
+        broadcast_match = re.fullmatch(r"/folders/(.+)/broadcast", inbox_path.path)
+        if method in {"GET", "POST"} and broadcast_match:
+            await self._folder_broadcast(writer, headers, broadcast_match[1], method, body)
             return
         for route in self._routes():
             if route.matches(method, path):
@@ -1267,49 +1281,43 @@ class Server:
             sid = self._resumable_session_id(parent_key, cwd)
             # --fork-session branches the conversation so the parent isn't touched.
             return ["claude", "--resume", sid, "--fork-session"] if sid else None
+        if runtime == "codex":
+            from duckterm.runtimes.codex import CodexRuntime
+
+            sid = CodexRuntime().find_resumable_id(
+                cwd=Path(cwd), recorded=self.history.session_id_for(parent_key)
+            )
+            # `codex fork` branches the rollout so the parent isn't touched.
+            return ["codex", "fork", sid] if sid else None
         if runtime == "copilot":
             sid = self.history.session_id_for(parent_key)
             return [*shlex.split(command), f"--resume={sid}"] if sid else None
-        # codex / generic: no native conversation resume — can't carry context.
+        # generic: no native conversation resume — can't carry context.
         return None
 
     def _resumable_session_id(self, parent_key: str, cwd: str) -> str | None:
-        """A Claude conversation id that can actually be `--resume`d. The id from
-        the latest event isn't always valid (a forked/transient id, or its
-        transcript was deleted), so verify the transcript file exists. If the
-        recorded id is dead, fall back to the newest real conversation in this
-        cwd. Returns None if there's nothing resumable."""
-        from duckterm.runtimes.claude_code import ClaudeCodeRuntime, project_slug
+        """A Claude conversation id that can actually be `--resume`d, or None if
+        there's nothing resumable (see ClaudeCodeRuntime.find_resumable_id)."""
+        from duckterm.runtimes.claude_code import ClaudeCodeRuntime
 
-        rt = ClaudeCodeRuntime()
-        cwd_path = Path(cwd)
-        recorded = self.history.session_id_for(parent_key)
-        if recorded and rt.locate_transcript(cwd=cwd_path, session_id=recorded):
-            return recorded
-        # The recorded id has no transcript — use the most recent one for this
-        # project directory, if any.
-        slug = project_slug(cwd_path)
-        proj = Path.home() / ".claude" / "projects" / slug
-        if not proj.is_dir():
-            return None
-        transcripts = sorted(proj.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-        return transcripts[0].stem if transcripts else None
+        return ClaudeCodeRuntime().find_resumable_id(
+            cwd=Path(cwd), recorded=self.history.session_id_for(parent_key)
+        )
 
     def _restore_session_with_resume_id(self, session: dict[str, Any]) -> dict[str, Any]:
         """Return a copy of a snapshot session whose `session_key` is the harness's
-        resumable conversation id (so `--resume` works), or has `_no_resume` set
-        when nothing is resumable (restore then launches fresh). Codex/generic are
-        unchanged — they don't resume by id."""
+        resumable conversation id (so its resume command works), or has
+        `_no_resume` set when nothing is resumable (restore then launches
+        fresh). Generic is unchanged — it doesn't resume by id."""
         runtime = session.get("runtime") or "generic"
         key = str(session.get("session_key", ""))
         cwd = str(session.get("worktree_path") or session.get("cwd") or ".")
-        resume_id: str | None = None
-        if runtime == "claude-code":
-            resume_id = self._resumable_session_id(key, cwd)
-        elif runtime == "copilot":
-            resume_id = self.history.session_id_for(key)
-        else:
-            return session  # codex/generic: no id-based resume
+        binary = {"claude-code": "claude", "codex": "codex", "copilot": "copilot"}.get(runtime)
+        if binary is None:
+            return session  # generic: no id-based resume
+        resume_id = runtime_for(runtime, binary).find_resumable_id(
+            cwd=Path(cwd), recorded=self.history.session_id_for(key)
+        )
         out = dict(session)
         if resume_id:
             out["session_key"] = resume_id
@@ -1382,12 +1390,17 @@ class Server:
             )
             return
         runtime = row.get("runtime") or "generic"
-        argv = self._resume_argv(session_key, runtime, row)
-        # Only claude-code with a recorded conversation id actually continues the
-        # conversation; every other runtime (and claude with no id) starts fresh.
-        # Report it honestly so the UI can warn — before this, resume always
-        # claimed success even when it silently dropped all prior context.
-        carried = runtime == "claude-code" and bool(self.history.session_id_for(session_key))
+        argv, carried = self._resume_argv(session_key, runtime, row)
+        # Report honestly whether the conversation is carried, so the UI can
+        # warn — before this, resume always claimed success even when it
+        # silently dropped all prior context. When it can't be carried, a
+        # promptable harness at least gets reconstructed notes; and even a
+        # native resume gets a nudge, because out-of-band state (dev servers,
+        # background jobs) died with the terminal while the agent remembers
+        # starting it.
+        prompt = ""
+        if runtime in session_instructions.SUPPORTED_RUNTIMES:
+            prompt = _RESUME_NUDGE if carried else self._resume_brief(session_key, row)
         # Relaunch in a PTY Duckterm owns so the resumed session renders in the
         # browser terminal — even if it originally ran in the user's own tab
         # (duckterm run); clear the heartbeat flag so the row reads as
@@ -1398,6 +1411,8 @@ class Server:
             runtime=_build_runtime(runtime, shlex.join(argv)),
             cwd=cwd,
             session_key=session_key,
+            prompt=prompt,
+            record_intention=False,
         )
         self.history.clear_heartbeat(session_key)
         await _write_json(
@@ -1408,24 +1423,57 @@ class Server:
                 "session_key": session_key,
                 "command": argv,
                 "carried_conversation": carried,
+                "context": "native" if carried else ("brief" if prompt else "none"),
             },
         )
 
-    def _resume_argv(self, key: str, runtime: str, row: dict[str, Any]) -> list[str]:
-        """The command to relaunch a session. claude-code continues its
-        conversation if we recorded a session id; everything else relaunches the
-        command it was originally launched with (recorded on SessionStart —
-        a fresh conversation, since those agents have no native resume)."""
-        if runtime == "claude-code":
-            sid = self.history.session_id_for(key)
-            return ["claude", "--resume", sid] if sid else ["claude"]
-        recorded = row.get("command")
-        if recorded:
-            return shlex.split(str(recorded))
-        # No recorded command (a pre-migration row): the runtime name doubles
-        # as the default binary for the known agents.
-        binary = {"codex": "codex", "copilot": "copilot"}.get(runtime, "claude")
-        return [binary]
+    def _resume_argv(self, key: str, runtime: str, row: dict[str, Any]) -> tuple[list[str], bool]:
+        """The command to relaunch a session, and whether it carries the
+        conversation. Harnesses with a native resume (claude/codex/copilot)
+        continue the recorded conversation when its transcript still exists;
+        everything else relaunches the originally recorded command — a fresh
+        conversation."""
+        binary = {"claude-code": "claude", "codex": "codex", "copilot": "copilot"}.get(runtime)
+        if binary:
+            rt = runtime_for(runtime, binary)
+            cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
+            sid = rt.find_resumable_id(cwd=cwd, recorded=self.history.session_id_for(key))
+            if sid:
+                return rt.restore_command(cwd=cwd, session_key=sid), True
+        argv = shlex.split(str(row.get("command"))) if row.get("command") else []
+        if binary:
+            # The recorded command is the previous launch's full argv — binary,
+            # flags, and any initial prompt or resume id it started with. The
+            # positionals must not replay into the relaunch: a recorded prompt
+            # became argv again on the next revive and doubled every revive
+            # after that (seen in the wild: a command with the collaboration
+            # prompt accreted four times). Keep flags, drop positionals and any
+            # stale resume pointer.
+            flags = [a for a in argv[1:] if a.startswith("-") and not a.startswith("--resume")]
+            argv = [binary, *flags]
+        elif not argv:
+            argv = ["claude"]
+        return argv, False
+
+    def _resume_brief(self, key: str, row: dict[str, Any]) -> str:
+        """Reconstructed notes for a relaunch whose conversation can't be
+        natively resumed. Framed as notes about a previous session, never as
+        the agent's own memory — an agent handed fake memory hallucinates the
+        details it lacks."""
+        facts = []
+        if row.get("intention"):
+            facts.append(f"original task: {row['intention']}")
+        if row.get("branch"):
+            facts.append(f"branch: {row['branch']}")
+        if row.get("outcome_summary"):
+            facts.append(f"where it left off: {row['outcome_summary']}")
+        else:
+            facts.append(f"recorded activity: {self.history.events_summary(key)}")
+        return (
+            "You are taking over from a previous agent session in this "
+            "directory whose conversation could not be restored. Reconstructed "
+            "notes (verify before relying on them):\n- " + "\n- ".join(facts)
+        )
 
     async def _archive(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """Put a session away for good: history is kept, the row leaves the
@@ -1954,6 +2002,39 @@ class Server:
             await _write_json(writer, 404, {"error": str(e)})
             return
         await _write_json(writer, 200, result)
+
+    async def _folder_broadcast(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        folder: str,
+        method: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            folder = urllib.parse.unquote(folder)
+            if folder not in self.history.folders():
+                raise APIError(404, "folder not found")
+            if method == "GET":
+                result = {
+                    "folder": folder,
+                    "targets": self.history.session_api.broadcast_targets(folder),
+                }
+            else:
+                if len(body) > MAX_BODY_BYTES:
+                    raise APIError(413, "request body too large")
+                req = json.loads(body or b"{}")
+                if not isinstance(req, dict):
+                    raise APIError(400, "expected a JSON object")
+                result = self.history.session_api.broadcast(folder, req)
+            await _write_json(writer, 200 if method == "GET" else 202, result)
+        except (ValueError, UnicodeDecodeError):
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
 
     async def _list_folders(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"folders": self.history.folders()})

@@ -1976,6 +1976,14 @@ code,
 .st-stopped .dot {
   background: var(--term);
 }
+/* interrupted = died without a clean stop (reboot/crash) — amber, so it reads
+   as "needs attention" rather than "put away". */
+.st-interrupted {
+  color: var(--wait);
+}
+.st-interrupted .dot {
+  background: var(--wait);
+}
 .st-archived {
   color: var(--muted);
 }

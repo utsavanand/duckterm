@@ -296,7 +296,13 @@ export const api = {
     ),
   stop: (key: string) => post<{ stopped: boolean }>(`/sessions/${key}/stop`),
   resume: (key: string) =>
-    post<{ resumed: boolean }>(`/sessions/${key}/resume`),
+    post<{
+      resumed: boolean;
+      carried_conversation?: boolean;
+      // native: the harness resumed its own conversation; brief: fresh
+      // conversation seeded with reconstructed notes; none: fresh, no context.
+      context?: "native" | "brief" | "none";
+    }>(`/sessions/${key}/resume`),
   archive: (key: string) =>
     post<{ archived: boolean }>(`/sessions/${key}/archive`),
   remove: (key: string, force = false) =>

@@ -1,15 +1,28 @@
 # RubberTerm — Roadmap
 
-As of 2026-09-21, v0.4.27 shipped. Ordered by when work can land, not by
+As of 2026-09-22, **v0.4.39** shipped. Ordered by when work can land, not by
 importance. Sources: TODO.md, RETRO.md, design docs, and the active peer
-sessions (`duckterm-bugs`, `codex-remote-session`) via the session API.
+sessions (`main-dev`, `ui-dev`, `main-qa`, `feature-remote-session`) via the
+session API.
 
-Done since first draft (2026-09-20): **PR #3 merged** (merge `5a671d7` —
-security fixes from
-[security-review-2026-09-20.md](security-review-2026-09-20.md), browser-test
-CI job, npm audit to zero, release-script guards) and **v0.4.27 released**,
-carrying those fixes plus session collaboration
-([session-api-design.md](session-api-design.md)).
+Shipped since this doc was first written (2026-09-20 → 22):
+
+- **Security + CI** (PR #3, `5a671d7`) and session collaboration — v0.4.27.
+- **Backup CLI** — v0.4.34. `duckterm backup [--to PATH|gs://BUCKET]`:
+  SQLite online backup, checkpoints/snapshots, Claude+Codex transcripts,
+  credentials excluded, 0600 archive, GCS upload via the user's own gcloud;
+  a failed upload retains the local archive. [backups.md](backups.md).
+- **Q&A survives stop/resume** — v0.4.36.
+- **Folder sidebar dropdown + per-folder interaction history** — v0.4.37
+  (ui-dev, `4745d02`).
+- **Inbox persistence + task-end notices** — v0.4.38 (`5275197`):
+  assignments default persistent, closed history retained 7 days, Claude
+  accepted-work notices fire once and suppress waiting/approvals/loop
+  recursion, no terminal writes.
+- **Folder broadcast backend** — v0.4.39 (`80d94dc`): idempotent atomic
+  fan-out to durable inboxes, `sender_kind=owner`, optional reply, read
+  tracking, 7-day retention, excluded from peer quotas, owner-only auth.
+  [folder-broadcast.md](folder-broadcast.md).
 
 ## Now (this week)
 
@@ -56,16 +69,23 @@ carrying those fixes plus session collaboration
 
 ## Later (decided direction, not started)
 
-5. **Inbox awareness** (owner-approved 2026-09-21; design:
-   [inbox-awareness-design.md](inbox-awareness-design.md)). Sessions do not
-   notice their inbox today — deliberate, but folder broadcast changes it:
-   an owner message has standing a peer's does not. Stage 0 is zero code
-   (a session runs `/loop` with "check `duckterm session inbox`"). Stage 1
-   is a turn-end hook notice: one line naming the pending count, fired at a
-   pause not mid-work, suppressed while the session is `waiting`, scoped to
-   owner broadcasts and accepted-but-unanswered questions, noticed on
-   change rather than every turn. Invariant: a notice, never an
-   instruction; no injection, no auto-answering.
+5. **Folder broadcast + inbox awareness — UI half outstanding.** Backend
+   shipped (v0.4.38/39, above). Remaining, with `ui-dev`:
+   - "Message folder" interface (textarea, who-will-receive list, result
+     summary) and the owner-label treatment in InboxView.
+   - **Urgent messages** (owner-requested 2026-09-21, not built): urgency
+     changes standing and persistence — notices even while `waiting`,
+     re-notices every turn until handled, directive wording with
+     anti-derail framing, pinned in the inbox — but NOT delivery speed,
+     which the UI copy must state plainly.
+   - **"Interrupt session"** (not built): true mid-turn interruption ships
+     only as a separate, explicitly named Ctrl-C owner control that
+     confirms first and states that in-progress work is lost. Never a side
+     effect of marking a message urgent.
+   Design: [inbox-awareness-design.md](inbox-awareness-design.md),
+   [folder-broadcast.md](folder-broadcast.md). Known gaps carried from the
+   backend: queued peer questions and already-idle sessions still need a
+   manual check; Codex/Copilot notices unsupported.
 6. **PM routines and the approved backlog** (owner-requested 2026-09-20;
    design: [pm-routines-design.md](pm-routines-design.md)). Stage 0 builds
    nothing but a `pm-review` prompt: a long-lived PM session on Claude
@@ -75,18 +95,22 @@ carrying those fixes plus session collaboration
    Proposal-only invariant: work starts exclusively from owner approval.
    A Backlog tab (one table + approve/decline routes) is built only if
    terminal approval proves annoying in practice; no duckterm scheduler.
-7. **Backups** (owner-requested 2026-09-21; details in the data-locality
-   section of [architecture.md](architecture.md)). App side **shipped in
-   v0.4.34** (`persistence/backup.py`, [backups.md](backups.md)): SQLite
-   online backup + checkpoint/transcript archive, credentials excluded,
-   atomic private output, optional GCS upload via the user's own `gcloud`
-   auth. `main-dev` is verifying restore integrity, credential exclusion,
-   and failed-upload retention. Remaining:
-   - Schedule it (launchd/cron; Time Machine remains the baseline) — no
-     scheduled run exists yet.
-   - GCP side: scheduled persistent-disk snapshots for the remote
-     workspace VM — a resource policy, zero code, no VM credentials;
-     not yet provisioned.
+7. **"Back up to remote" button** (owner decision 2026-09-22: manual, not
+   scheduled). The CLI shipped in v0.4.34; the owner wants a topbar button
+   that runs it on demand rather than a cron/launchd schedule — backups
+   happen when the user decides, with visible progress and result.
+   - Topbar button ("Back up to remote"), owner-token POST that runs the
+     existing `backup.create(destination)`; destination configured once
+     (local path or `gs://bucket/prefix`) and remembered.
+   - It is a long operation (a real run: 242 MB, ~1 s, 0600, zero
+     credential files — verified 2026-09-22) — the button must show
+     in-progress state and report the resulting archive path, or the
+     error, without blocking the dashboard.
+   - No scheduler. Time Machine remains the baseline; a user who wants
+     automation can still cron the CLI.
+   - GCP side (separate, still open): scheduled persistent-disk snapshots
+     for the remote workspace VM — a resource policy, zero code, no VM
+     credentials; not yet provisioned.
 8. **Security follow-ups deferred from the 2026-09-20 review** (per the
    `duckterm-bugs` session):
    - Aggregate connection/resource quotas — per-request HTTP

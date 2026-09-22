@@ -523,11 +523,20 @@ function TreeRow({
   const s = node.session;
   const effState = effectiveState(s, now);
   const archived = effState === "archived";
-  // "live" = actively running (Stop applies). stopped/terminated are not live but
-  // are resumable for a launched session (we still have its worktree + id).
-  const live = effState !== "terminated" && effState !== "stopped" && !archived;
+  // "live" = actively running (Stop applies). stopped/interrupted/terminated
+  // are not live but are resumable for a launched session (we still have its
+  // worktree + id). interrupted = the terminal died under it (reboot/crash)
+  // rather than a deliberate stop.
+  const live =
+    effState !== "terminated" &&
+    effState !== "stopped" &&
+    effState !== "interrupted" &&
+    !archived;
   const resumable =
-    (effState === "stopped" || effState === "terminated") && s.launched;
+    (effState === "stopped" ||
+      effState === "interrupted" ||
+      effState === "terminated") &&
+    s.launched;
   // Stop and Archive only make sense for sessions Duckterm owns. A watched
   // session runs in a terminal we don't control, so Stop can't end it and
   // Archive would only hide a row whose agent keeps running — and unarchiving it
@@ -639,8 +648,16 @@ function TreeRow({
     setResuming(true);
     try {
       const r = await api.resume(s.key);
+      const label =
+        r.context === "native"
+          ? "Resumed — conversation carried"
+          : r.context === "brief"
+            ? "Resumed fresh — seeded with notes from the old session"
+            : r.context === "none"
+              ? "Resumed fresh — previous conversation couldn't be restored"
+              : "Resumed";
       toast(
-        r.resumed ? "Resumed" : "Couldn't open a terminal to resume",
+        r.resumed ? label : "Couldn't open a terminal to resume",
         r.resumed ? undefined : "err",
       );
     } catch (e) {
