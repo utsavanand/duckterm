@@ -157,9 +157,10 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
     # resumed-then-exited agent's SessionEnd — must NOT flip it (e.g. archived
     # -> terminated). This guard runs before the SessionEnd/terminated rule on
     # purpose.
-    if prev in ("stopped", "interrupted", "archived") and event.get(
-        "event_type"
-    ) != events.SESSION_START:
+    if (
+        prev in ("stopped", "interrupted", "archived")
+        and event.get("event_type") != events.SESSION_START
+    ):
         return prev
     if lifecycle == "terminated" or event.get("event_type") == events.SESSION_END:
         return "terminated"

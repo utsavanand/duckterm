@@ -36,9 +36,7 @@ _WAITING = re.compile(
     re.IGNORECASE,
 )
 
-_ROLLOUT_ID = re.compile(
-    r"-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$"
-)
+_ROLLOUT_ID = re.compile(r"-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$")
 
 
 class CodexRuntime(Harness):
