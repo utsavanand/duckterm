@@ -87,7 +87,7 @@ test("owner reviews folder recipients, sends once, and sees unread Owner notices
     await page.getByRole("button", { name: "View interactions in Message review", exact: true }).click();
     await page.getByRole("button", { name: "Message folder", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Message Message review", exact: true })).toBeVisible();
-    await expect(page.getByText("Eligible recipient", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Message folder", exact: true }).getByText("Eligible recipient", { exact: true })).toBeVisible();
     const send = page.getByRole("button", { name: "Send to 1 session", exact: true });
     await expect(send).toBeDisabled();
     await page.getByLabel("Message", { exact: true }).fill("Review this folder’s roadmap when ready.");
