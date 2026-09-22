@@ -1,6 +1,8 @@
 # Inbox awareness — how a session notices it has mail
 
-Status: designed 2026-09-21, not implemented. Owner-approved direction.
+Status: backend implemented for Claude Code task-end notices, including unread
+owner broadcasts and accepted peer assignments. Other runtimes remain unsupported.
+Folder broadcast UI is delegated to UI-dev. See [delivery details](inbox-delivery.md).
 Context: [session-api-design.md](session-api-design.md) and the folder
 broadcast feature (owner messages fan out to every session's inbox).
 

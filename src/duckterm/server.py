@@ -413,6 +413,10 @@ class Server:
         if method == "GET" and inbox_match:
             await self._session_inbox(writer, inbox_match[1], headers, inbox_path.query)
             return
+        broadcast_match = re.fullmatch(r"/folders/(.+)/broadcast", inbox_path.path)
+        if method in {"GET", "POST"} and broadcast_match:
+            await self._folder_broadcast(writer, headers, broadcast_match[1], method, body)
+            return
         for route in self._routes():
             if route.matches(method, path):
                 try:
@@ -1954,6 +1958,39 @@ class Server:
             await _write_json(writer, 404, {"error": str(e)})
             return
         await _write_json(writer, 200, result)
+
+    async def _folder_broadcast(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        folder: str,
+        method: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            folder = urllib.parse.unquote(folder)
+            if folder not in self.history.folders():
+                raise APIError(404, "folder not found")
+            if method == "GET":
+                result = {
+                    "folder": folder,
+                    "targets": self.history.session_api.broadcast_targets(folder),
+                }
+            else:
+                if len(body) > MAX_BODY_BYTES:
+                    raise APIError(413, "request body too large")
+                req = json.loads(body or b"{}")
+                if not isinstance(req, dict):
+                    raise APIError(400, "expected a JSON object")
+                result = self.history.session_api.broadcast(folder, req)
+            await _write_json(writer, 200 if method == "GET" else 202, result)
+        except (ValueError, UnicodeDecodeError):
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
 
     async def _list_folders(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"folders": self.history.folders()})

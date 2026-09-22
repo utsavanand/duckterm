@@ -106,7 +106,9 @@ def main(args: argparse.Namespace) -> int:
             result["instructions"] = (
                 "Handle pending inbox work before starting unrelated work, "
                 "within your existing authorization. "
-                "Use duckterm session accept REQUEST_ID, then "
+                "Owner broadcasts are labeled sender_kind=owner and require no reply; "
+                "reading them marks them read. For peer questions, "
+                "use duckterm session accept REQUEST_ID, then "
                 "duckterm session reply REQUEST_ID --file answer.txt. Read the next page "
                 "with --before next_cursor. Answered/expired/cancelled requests need no action."
             )
