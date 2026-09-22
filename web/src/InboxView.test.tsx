@@ -88,3 +88,17 @@ describe("session inbox", () => {
     await waitFor(() => expect(screen.queryByText("Client implementation")).toBeNull());
   });
 });
+
+it("labels authenticated owner notices without mistaking a peer named You for the owner", async () => {
+  vi.mocked(api.inbox).mockResolvedValue({ messages: [
+    { ...message, id: "owner", kind: "broadcast", sender_kind: "owner", requires_reply: false, status: "queued", answer: null, delivery: { outcome: "notified" } },
+    { ...message, id: "peer", sender_name: "You", sender_kind: "session" },
+  ], next_cursor: null });
+  render(<InboxView session={session} />);
+  expect(await screen.findByText("Owner")).toBeVisible();
+  expect(screen.getAllByText("Owner")).toHaveLength(1);
+  expect(screen.getByText("Unread")).toBeVisible();
+  fireEvent.click(screen.getByText("Owner").closest("summary")!);
+  expect(screen.getByText("Notice shown · Not yet read")).toBeVisible();
+  expect(screen.getByText("No reply required")).toBeVisible();
+});

@@ -10,6 +10,7 @@ import { GridView } from "./GridView";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
 import { InboxView } from "./InboxView";
+import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
 import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
@@ -60,6 +61,7 @@ function Dashboard() {
   const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox">(
     "terminal",
   );
+  const [messageFolder, setMessageFolder] = useState<string | null>(null);
   const [inboxFolder, setInboxFolder] = useState<string | null>(null);
   // The folder whose terminals are tiled fullscreen; null = grid closed.
   const [gridFolder, setGridFolder] = useState<string | null>(null);
@@ -486,9 +488,10 @@ function Dashboard() {
         </div>
       )}
 
-      {inboxFolder !== null && (
+      {messageFolder !== null && <MessageFolderModal key={messageFolder} folder={messageFolder} onClose={() => setMessageFolder(null)} />}
+      {inboxFolder !== null && messageFolder === null && (
         <Modal title={`${inboxFolder} · Interactions`} onClose={() => setInboxFolder(null)}>
-          <InboxView key={inboxFolder} folder={inboxFolder} />
+          <InboxView key={inboxFolder} folder={inboxFolder} onMessageFolder={() => setMessageFolder(inboxFolder)} />
         </Modal>
       )}
       {modal === "launch" && (

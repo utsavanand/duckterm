@@ -5,6 +5,7 @@ import "./inbox.css";
 
 const labels: Record<InboxMessage["status"], string> = {
   queued: "Awaiting response",
+  read: "Read",
   accepted: "Received by session",
   answered: "Answered",
   declined: "Declined",
@@ -12,7 +13,7 @@ const labels: Record<InboxMessage["status"], string> = {
   cancelled: "Cancelled",
 };
 
-export function InboxView({ session, folder }: { session: SessionView; folder?: never } | { session?: never; folder: string }) {
+export function InboxView({ session, folder, onMessageFolder }: ({ session: SessionView; folder?: never } | { session?: never; folder: string }) & { onMessageFolder?: () => void }) {
   const [card, setCard] = useState<SessionCard | null>(null);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -84,8 +85,9 @@ export function InboxView({ session, folder }: { session: SessionView; folder?: 
       <div className="rd-inbox-heading">
         <div>
           <h2>{folder !== undefined ? "Session interactions" : "Inbox"}</h2>
-          <p>{folder !== undefined ? "Sent and received questions and replies in this folder and its subfolders." : "Questions from other sessions, and the answers sent back."}</p>
+          <p>{folder !== undefined ? "Messages and replies in this folder and its subfolders." : "Messages from you and other sessions, and replies."}</p>
         </div>
+        {onMessageFolder && <button className="rd-btn rd-btn-primary rd-btn-sm" onClick={onMessageFolder}>Message folder</button>}
         {loaded && <span className="rd-inbox-count">{messages.length}{cursor !== null ? "+" : ""} {folder !== undefined ? (messages.length === 1 ? "interaction" : "interactions") : "received"}</span>}
       </div>
       {card && (
@@ -143,9 +145,9 @@ export function InboxView({ session, folder }: { session: SessionView; folder?: 
           <details className="rd-inbox-message" key={message.id}>
             <summary>
               <div className="rd-inbox-message-head">
-                <strong title={message.sender}>{message.sender_name}{folder !== undefined && ` → ${message.recipient_name ?? message.recipient}`}</strong>
+                <strong title={message.sender}>{message.sender_kind === "owner" ? "You" : message.sender_name}{message.sender_kind === "owner" && <span className="rd-owner-badge">Owner</span>}{folder !== undefined && ` → ${message.recipient_name ?? message.recipient}`}</strong>
                 <span className={`rd-inbox-status rd-inbox-status-${message.status}`}>
-                  {labels[message.status]}
+                  {message.kind === "broadcast" && message.status === "queued" ? "Unread" : labels[message.status]}
                 </span>
               </div>
               <p className="rd-inbox-preview">{message.question}</p>
@@ -154,8 +156,10 @@ export function InboxView({ session, folder }: { session: SessionView; folder?: 
               </time>
             </summary>
             <div className="rd-inbox-body">
-              <div className="rd-inbox-sender">From session: {message.sender}</div>
-              <h3>Question</h3>
+              <div className="rd-inbox-sender">{message.sender_kind === "owner" ? "From you" : `From session: ${message.sender}`}</div>
+              {message.delivery && <p>{message.delivery.last_read_at ? "Read by session" : message.delivery.outcome === "notified" ? "Notice shown · Not yet read" : "Not yet read"}</p>}
+              {message.requires_reply === false && <p>No reply required</p>}
+              <h3>{message.kind === "broadcast" ? "Message" : "Question"}</h3>
               <p>{message.question}</p>
               {message.answer !== null && (
                 <section className="rd-inbox-answer">

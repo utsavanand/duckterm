@@ -81,7 +81,11 @@ export interface InboxMessage {
   recipient_name?: string;
   sender_name: string;
   question: string;
-  status: "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled";
+  kind?: "question" | "broadcast";
+  sender_kind?: "session" | "owner";
+  requires_reply?: boolean;
+  delivery?: { outcome?: string; last_read_at?: number };
+  status: "read" | "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled";
   answer: string | null;
   created_at: number;
   expires_at: number;
@@ -109,7 +113,28 @@ export interface InboxPage {
   next_cursor: number | null;
 }
 
+export interface BroadcastTarget {
+  session_id: string;
+  name: string;
+  state: string;
+  eligible: boolean;
+  reason: string;
+}
+export interface BroadcastResult {
+  queued: number;
+  skipped: number;
+  results: (BroadcastTarget & { status: "queued" | "skipped" })[];
+}
+
 export const api = {
+  broadcastTargets: async (folder: string): Promise<{ targets: BroadcastTarget[] }> => {
+    const res = await fetch(`/folders/${encodeURIComponent(folder)}/broadcast`, { cache: "no-store", headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Could not load recipients");
+    return data;
+  },
+  broadcast: (folder: string, text: string, request_key: string) =>
+    post<BroadcastResult>(`/folders/${encodeURIComponent(folder)}/broadcast`, { text, request_key }),
   collaborationInstructions: (key: string) => post<{ prompt: string }>(`/sessions/${encodeURIComponent(key)}/collaboration/instructions`),
   introduceCollaboration: (key: string) => post<{ sent: boolean }>(`/sessions/${encodeURIComponent(key)}/collaboration/introduce`),
   inbox: async (key: string, before?: number): Promise<InboxPage> => {
