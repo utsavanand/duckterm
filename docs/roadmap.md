@@ -129,6 +129,34 @@ Shipped since this doc was first written (2026-09-20 → 22):
    ([terminal-forward-design.md](terminal-forward-design.md)); delete once
    no workflow depends on it (Rubberduck covers that use case).
 
+## Designed, not scheduled
+
+12. **Accounts and session sharing** (owner-requested 2026-09-22; design:
+    [accounts-and-handoff-design.md](accounts-and-handoff-design.md), with
+    live sharing already settled in
+    [session-sharing-design.md](session-sharing-design.md) v4). The largest
+    architectural shift proposed so far: everything shipped assumes one
+    machine, one human, loopback as the boundary. Four stages, in order:
+    - **Accounts** — GitHub OAuth on the relay (the only always-on service),
+      `users`/`devices` tables, a nullable `owner_user_id` where NULL means
+      "this machine's local user", and one principal resolver at dispatch
+      with default-deny. Hard constraint: a logged-out install keeps working
+      exactly as today — that is the acceptance test. No server-side storage
+      of user data; the account answers "who are you", nothing more.
+    - **Handoff sharing** (point-in-time, "from here on") — a scoped backup
+      of one session (transcript + metadata + checkpoints, credentials
+      never, working tree opt-in), client-side encrypted with a fragment
+      key, stored on the relay, reconstructed as an independent local
+      session on the recipient's machine. No sync after handoff. Requires a
+      pre-send preview: sharing a transcript is a disclosure act, and
+      pasted secrets are not scrubbed. Resumability is a per-harness
+      capability, default unsupported, proven by a real cross-machine test.
+    - **Live sharing v1 (watch)** — the relay design, but gated on the
+      remote workspace (item 3): a sleeping laptop kills a share, so live
+      sharing is only dependable for sessions running on the VM.
+    - **Write-capable sharing** — last, and only as owner-approved prompt
+      proposals, never raw keystrokes to a PTY.
+
 ## Triggers, not plans
 
 Documented upgrade paths we deliberately do not build yet:
