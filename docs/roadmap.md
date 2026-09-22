@@ -17,18 +17,13 @@ carrying those fixes plus session collaboration
    and passing Python, web, and browser checks. Verified 2026-09-20: no
    rulesets, main unprotected. The release-script guard does not enforce
    GitHub merge rules or prevent publishing outside the script.
-2. **Session Q&A must survive stop/resume** (owner-requested 2026-09-21,
-   asked to `main-qa`). Today stopping a session cancels its pending
-   exchanges (session-api-design.md); a fleet restart therefore silently
-   dropped an owner-relayed work request twice. Fix: stop/resume
-   *suspends* — queued/accepted questions are kept (still bounded by their
-   own ≤15-min deadlines) and continue after resume re-issues the
-   credential; cancel remains for terminate/archive/delete and scope-loss
-   moves. Tests: stop→resume within deadline preserves and answers a
-   queued question; terminate still cancels; expiry during the stopped
-   window behaves normally. No schema change. (Requests that must survive
-   *anything* remain the Stage 1 assignment concept in
-   [pm-routines-design.md](pm-routines-design.md) — still trigger-gated.)
+2. **Session Q&A survives stop/resume** — implemented for v0.4.36.
+   Stop revokes credentials while retaining queued/accepted questions and their
+   original ≤15-minute deadlines. Resume issues a fresh credential; terminate,
+   archive, deletion, and scope-loss moves still close exchanges. Regression
+   coverage includes late child exit events and expiry while stopped. No schema
+   change. Durable assignments remain the separate Stage 1 concept in
+   [pm-routines-design.md](pm-routines-design.md).
 
 ## Next (started, not yet mergeable)
 
