@@ -9,9 +9,9 @@ Acknowledging a request did not extend its deadline, and delivery only updated a
 badge; it never scheduled an agent turn.
 **Cause:** short-lived question semantics were used as a work queue, while agents
 were expected to notice and poll it themselves.
-**Rule:** retain assignments by default and make deadlines explicit. Wake only a
-verified idle, empty agent prompt; coalesce reminders, persist retry limits, and
-retain unhandled work rather than dropping it when delivery is uncertain.
+**Rule:** retain assignments by default and make deadlines explicit. Use supported
+turn-end hook feedback for reminders, with durable repeat suppression and no
+terminal writes. Retain unhandled work when notification is unavailable.
 
 ## 2026-09-21 — Folder actions were missing from session workflows
 **Broke:** creating a session from the global button offered no sidebar folder

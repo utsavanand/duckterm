@@ -124,7 +124,7 @@ See [installation, upgrades, and troubleshooting](docs/installation.md) for help
 ## Session inboxes
 
 Agents can send persistent assignments to other sessions in their shared folder.
-Idle agents receive an inbox reminder when their terminal is safe to use.
+Supported runtimes receive a task-end reminder for accepted, unanswered work.
 See [inbox delivery and safeguards](docs/inbox-delivery.md).
 
 ## Backups

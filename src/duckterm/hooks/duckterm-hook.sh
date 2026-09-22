@@ -44,6 +44,7 @@ if command -v jq >/dev/null 2>&1; then
       tool_name: (.tool_name // .toolName),
       tool_input: (.tool_input // .toolInput),
       prompt: .prompt,
+      stop_hook_active: .stop_hook_active,
       runtime: $rt,
       agent_pid: $apid,
       agent_id: .agent_id,
@@ -74,6 +75,15 @@ fi
 # rejected, which is correct (no server, or a server that predates the token).
 TOKEN_FILE="${DUCKTERM_HOME:-$HOME/.duckterm}/token"
 TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null)
+
+# A turn-end notice travels through the runtime hook response, never terminal input.
+# The server decides capability and eligibility. Bound failure to two seconds.
+if [ "$EVENT_TYPE" = "Stop" ] && command -v jq >/dev/null 2>&1; then
+  curl -s -m 2 -X POST "$URL/events" \
+    -H 'Content-Type: application/json' -H "X-Duckterm-Token: $TOKEN" \
+    -d "$PAYLOAD" 2>/dev/null | jq -c 'select(.hook_output | type == "object") | .hook_output' 2>/dev/null
+  exit 0
+fi
 
 # Record the event in the timeline (fire-and-forget) regardless of type.
 curl -s -X POST "$URL/events" \

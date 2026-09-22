@@ -38,6 +38,7 @@ def project_slug(cwd: Path) -> str:
 
 class ClaudeCodeRuntime(Harness):
     name = "claude-code"
+    turn_end_inbox_notice = True
     hook_spec = HookSpec(
         global_rel=Path(".claude") / "settings.json",
         repo_rel=Path(".claude") / "settings.json",

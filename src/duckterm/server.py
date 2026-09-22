@@ -55,7 +55,6 @@ from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events, progress
 from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.eventbus import EventBus
-from duckterm.core.inbox_delivery import InboxDelivery
 from duckterm.core.orchestrator import Orchestrator
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
 from duckterm.git import gitdetect
@@ -283,7 +282,6 @@ class Server:
         self.orchestrator = Orchestrator(self.bus, history=self.history)
         self.snapshots = SnapshotManager(self.history)
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
-        self.inbox_delivery = InboxDelivery(self.history, self.orchestrator, self.approvals)
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -315,7 +313,6 @@ class Server:
         self.history.record(event)
         self.approvals.from_event(event)
         if event.get("event_type") == events.STOP:
-            self.inbox_delivery.changed.set()
             key = event.get("session_key") or event.get("session_id")
             if key:
                 self._maybe_refresh_progress(str(key))
@@ -390,8 +387,6 @@ class Server:
         if path.startswith("/api/v1/session/"):
             try:
                 status, result = self.history.session_api.handle(method, path, headers, body)
-                if method == "POST" and path.endswith("/questions") and status == 202:
-                    self.inbox_delivery.changed.set()
             except APIError as exc:
                 status, result = exc.status, {"error": str(exc)}
             await _write_json(writer, status, result)
@@ -528,8 +523,29 @@ class Server:
         ):
             await _write_json(writer, 200, {"dropped": "not a Duckterm-launched session"})
             return
+        # Check before publishing Stop: folding that event changes waiting to idle.
+        hook_output = self._inbox_hook_output(raw, str(key or ""))
         event = self.bus.publish(raw)
-        await _write_json(writer, 200, event)
+        response = dict(event)
+        if hook_output:
+            response["hook_output"] = hook_output
+        await _write_json(writer, 200, response)
+
+    def _inbox_hook_output(self, raw: dict[str, Any], key: str) -> dict[str, Any] | None:
+        if raw.get("event_type") != events.STOP or raw.get("stop_hook_active") is not False:
+            return None
+        row = self.history.session(key)
+        if not row or row.get("state") in {"waiting", "stopped", "archived"}:
+            return None
+        if any(a.session_key == key for a in self.approvals.pending()):
+            return None
+        runtime = _build_runtime(row.get("runtime"), row.get("command") or "")
+        if not runtime.turn_end_inbox_notice:
+            return None
+        notice = self.history.session_api.turn_end_notice(key)
+        if not notice:
+            return None
+        return {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": notice}}
 
     async def _recent(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"events": self.bus.recent()})
@@ -2854,15 +2870,11 @@ class Server:
             if on_listening is not None:
                 on_listening(host, port)
             sweeper = asyncio.create_task(self._sweep_dead_loop())
-            inbox_worker = asyncio.create_task(self.inbox_delivery.run())
             async with server:
                 try:
                     await server.serve_forever()
                 finally:
                     sweeper.cancel()
-                    inbox_worker.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await inbox_worker
         finally:
             _release_home_lock(lock)
 

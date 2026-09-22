@@ -47,6 +47,7 @@ class HookSpec:
 
 class Harness(ABC):
     name: str
+    turn_end_inbox_notice = False
     # An agent's observe half; None for driven-only agents (no hook system).
     hook_spec: HookSpec | None = None
 

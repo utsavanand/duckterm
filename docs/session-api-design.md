@@ -286,6 +286,6 @@ override, the legacy shared state filename remains the default.
 ## Persistent delivery update
 
 Requests now persist by default (`timeout_seconds: 0`). Explicit deadlines are
-optional and may be up to seven days. The idle delivery worker and its
-conservative prompt checks are described in [inbox delivery](inbox-delivery.md).
+optional and may be up to seven days. Supported task-end notices and their limitations are described in
+[inbox delivery](inbox-delivery.md).
 This supersedes the original short-lived polling-only handoff design above.

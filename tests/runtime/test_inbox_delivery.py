@@ -1,13 +1,10 @@
 import asyncio
 import json
 import time
-from types import SimpleNamespace
 
 import pytest
 
-from duckterm.agents.inbox_prompt import Prompt, empty_prompt
 from duckterm.cli import build_parser
-from duckterm.core.inbox_delivery import REMINDER
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
 
@@ -19,28 +16,19 @@ def scenario(tmp_path, monkeypatch):
     tokens = {}
     for key in ("sender", "recipient"):
         history.record(
-            {"_id": key, "_ts": 1, "event_type": "SessionStart", "session_key": key, "test": True}
+            {
+                "_id": key,
+                "_ts": 1,
+                "event_type": "SessionStart",
+                "session_key": key,
+                "test": True,
+                "runtime": "claude-code",
+            }
         )
         history.set_meta(key, group="team")
         token = history.session_api.enroll(key, {"root": "team"})["token"]
         tokens[key] = {"authorization": "Bearer " + token}
     history.set_state("recipient", "idle")
-    sent = []
-    supervisor = SimpleNamespace(
-        running=True,
-        _tmux_target="rd_recipient",
-        _byte_subs=set(),
-        _last_input=0,
-        _last_output=0,
-        _input_queue=None,
-        runtime=SimpleNamespace(name="codex"),
-        write_bytes=lambda data: sent.append(data) or True,
-    )
-    monkeypatch.setattr(server.orchestrator, "get", lambda key: supervisor)
-    monkeypatch.setattr(
-        "duckterm.core.inbox_delivery.inbox_prompt.probe",
-        lambda *_: Prompt("codex", 2, 0, "stable"),
-    )
 
     def call(who, method, path, body=None, idem="one"):
         return history.session_api.handle(
@@ -63,14 +51,19 @@ def scenario(tmp_path, monkeypatch):
             idem,
         )
 
-    yield history, server, supervisor, sent, call, ask
+    yield history, server, call, ask
     history.close()
 
 
 def test_default_persistent_acceptance_and_restart(scenario, monkeypatch, tmp_path):
-    history, _, _, _, call, ask = scenario
+    history, _, call, ask = scenario
     question = ask()
     assert question["expires_at"] == 0
+    # Legacy servers use expires_at <= now without a persistence flag.
+    stored = history._conn.execute(
+        "SELECT expires_at FROM session_questions WHERE id = ?", (question["id"],)
+    ).fetchone()[0]
+    assert stored > (time.time() + 30 * 86400) * 1000
     call("recipient", "POST", f"/questions/{question['id']}/accept")
     future = time.time() + 30 * 86400
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: future)
@@ -84,7 +77,7 @@ def test_default_persistent_acceptance_and_restart(scenario, monkeypatch, tmp_pa
 
 
 def test_explicit_deadline_still_expires_after_acceptance(scenario, monkeypatch):
-    _, _, _, _, call, ask = scenario
+    _, _, call, ask = scenario
     question = ask(timeout=30)
     call("recipient", "POST", f"/questions/{question['id']}/accept")
     monkeypatch.setattr(
@@ -93,98 +86,73 @@ def test_explicit_deadline_still_expires_after_acceptance(scenario, monkeypatch)
     assert call("recipient", "GET", "/inbox")["messages"][0]["status"] == "expired"
 
 
-def test_idle_wake_coalesces_and_does_not_inject_peer_text(scenario):
-    history, server, supervisor, sent, _, ask = scenario
-    ask()
-    ask("two")
+def accept_question(call, ask, idem="one"):
+    question = ask(idem)
+    call("recipient", "POST", f"/questions/{question['id']}/accept")
+    return question
 
-    async def run():
-        await asyncio.gather(server.inbox_delivery.check(), server.inbox_delivery.check())
-        supervisor._last_input = 0
-        ask("arrived-after-wake")
-        await server.inbox_delivery.check()
 
-    asyncio.run(run())
-    assert sent == [b"\x1b[200~" + REMINDER.encode() + b"\x1b[201~\r"]
-    assert b"Peer-controlled" not in sent[0]
+def notice(server, **extra):
+    return server._inbox_hook_output(
+        {"event_type": "Stop", "stop_hook_active": False, **extra}, "recipient"
+    )
+
+
+def test_notice_once_per_accepted_assignment_and_survives_restart(scenario, tmp_path):
+    history, server, call, ask = scenario
+    assert notice(server) is None
+    ask("queued")
+    assert notice(server) is None
+    accept_question(call, ask)
+    output = notice(server)
+    assert output["hookSpecificOutput"]["hookEventName"] == "Stop"
+    assert "1 accepted" in output["hookSpecificOutput"]["additionalContext"]
+    assert "Peer-controlled" not in json.dumps(output)
+    assert notice(server) is None
+    reopened = HistoryStore(tmp_path / "db.sqlite")
+    assert reopened.session_api.turn_end_notice("recipient") is None
+    reopened.close()
+    accept_question(call, ask, "new")
+    assert notice(server) is not None
     assert history.session_api.pending_counts() == {"recipient": 3}
 
 
 @pytest.mark.parametrize(
     "reason",
-    [
-        "busy",
-        "waiting",
-        "approval",
-        "attached",
-        "input",
-        "output",
-        "stopped",
-        "no_prompt",
-        "no_terminal",
-        "queued_input",
-    ],
+    ["waiting", "stopped", "archived", "approval", "loop", "codex", "unknown", "other_event"],
 )
-def test_unsafe_session_is_never_typed_into(scenario, monkeypatch, reason):
-    history, server, supervisor, sent, _, ask = scenario
-    ask()
-    if reason in {"busy", "waiting"}:
+def test_notice_suppression_does_not_consume_assignment(scenario, reason):
+    history, server, call, ask = scenario
+    accept_question(call, ask)
+    extra = {}
+    if reason in {"waiting", "stopped", "archived"}:
         history.set_state("recipient", reason)
     elif reason == "approval":
         server.approvals.register("recipient", "Bash", {}, 1, blocking=True)
-    elif reason == "attached":
-        supervisor._byte_subs.add(object())
-    elif reason == "input":
-        supervisor._last_input = time.monotonic()
-    elif reason == "output":
-        supervisor._last_output = time.monotonic()
-    elif reason == "stopped":
-        supervisor.running = False
-    elif reason == "no_terminal":
-        supervisor._tmux_target = None
-    elif reason == "queued_input":
-        supervisor._input_queue = asyncio.Queue()
-        supervisor._input_queue.put_nowait(b"draft")
+    elif reason == "loop":
+        extra["stop_hook_active"] = True
+    elif reason == "other_event":
+        extra["event_type"] = "PostToolUse"
     else:
-        monkeypatch.setattr("duckterm.core.inbox_delivery.inbox_prompt.probe", lambda *_: None)
-    asyncio.run(server.inbox_delivery.check())
-    assert sent == []
-    assert history.session_api.pending_counts() == {"recipient": 1}
+        history._conn.execute(
+            "UPDATE sessions SET runtime = ? WHERE session_key = 'recipient'", (reason,)
+        )
+    assert notice(server, **extra) is None
+    assert (
+        history._conn.execute(
+            "SELECT COUNT(*) FROM session_inbox_delivery WHERE last_attempt_at > 0"
+        ).fetchone()[0]
+        == 0
+    )
 
 
-def test_prompt_change_or_cancel_during_probe_cannot_send(scenario, monkeypatch):
-    _, server, _, sent, call, ask = scenario
-    question = ask()
-    count = 0
-
-    def probe(*_):
-        nonlocal count
-        count += 1
-        if count == 2:
-            call("sender", "POST", f"/questions/{question['id']}/cancel")
-        return Prompt("codex", 2, 0, "stable")
-
-    # DB is deliberately only touched on the loop thread, never probe's worker.
-    async def in_loop(fn, *args):
-        return fn(*args)
-
-    monkeypatch.setattr("duckterm.core.inbox_delivery.asyncio.to_thread", in_loop)
-    monkeypatch.setattr("duckterm.core.inbox_delivery.inbox_prompt.probe", probe)
-    asyncio.run(server.inbox_delivery.check())
-    assert sent == []
-
-
-def test_retry_budget_survives_restart_and_owner_read_is_not_ack(scenario, tmp_path):
-    history, server, _, sent, call, ask = scenario
-    question = ask()
-    for _ in range(3):
-        history.session_api.mark_delivery([question["id"]], 1, "wake_requested", attempted=True)
-    reopened = HistoryStore(tmp_path / "db.sqlite")
-    assert reopened.session_api.delivery_candidates(int(time.time() * 1000)) == {}
-    message = reopened.session_api.inbox("recipient", owner=True)["messages"][0]
-    assert message["delivery"]["outcome"] == "needs_attention"
-    assert message["delivery"]["last_read_at"] == 0
-    reopened.close()
+def test_owner_view_is_not_agent_read(scenario):
+    history, _, call, ask = scenario
+    ask()
+    assert (
+        history.session_api.inbox("recipient", owner=True)["messages"][0]["delivery"]["attempts"]
+        == 0
+    )
     call("recipient", "GET", "/inbox")
     assert (
         history.session_api.inbox("recipient", owner=True)["messages"][0]["delivery"][
@@ -192,24 +160,95 @@ def test_retry_budget_survives_restart_and_owner_read_is_not_ack(scenario, tmp_p
         ]
         > 0
     )
-    asyncio.run(server.inbox_delivery.check())
-    assert sent == []
 
 
-@pytest.mark.parametrize(
-    "row,tail,expected",
-    [
-        ("›", "gpt-6-astra · project", True),
-        ("\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m", "gpt-6-astra · project", True),
-        ("› Ask Codex to do anything", "gpt-6-astra · project", False),
-        ("› unfinished draft", "gpt-6-astra · project", False),
-        ("›", "  continuation of draft\ngpt-6-astra · project", False),
-        ("›", "Press enter to confirm", False),
-        ("›", "esc to interrupt", False),
-        ("$", "gpt-6-astra · project", False),
-    ],
-)
-def test_codex_prompt_requires_empty_editor(row, tail, expected):
-    assert empty_prompt("codex", "codex", 2, 0, row + "\n" + tail) is expected
-    assert not empty_prompt("codex", "zsh", 2, 0, row + "\n" + tail)
-    assert not empty_prompt("codex", "codex", 5, 0, row + "\n" + tail)
+def test_turn_end_hook_is_synchronous_only_where_supported():
+    from duckterm.agents.hooks_install import claude_style_build
+
+    claude = claude_style_build({}, "/hook", "claude-code")["hooks"]
+    assert claude["Stop"][0]["hooks"][0]["async"] is False
+    assert claude["PostToolUse"][0]["hooks"][0]["async"] is True
+    codex = claude_style_build({}, "/hook", "codex")["hooks"]
+    assert "async" not in codex["Stop"][0]["hooks"][0]
+
+
+def test_ingest_checks_waiting_before_stop_fold(scenario, monkeypatch):
+    history, server, call, ask = scenario
+    accept_question(call, ask)
+    history.set_state("recipient", "waiting")
+    responses = []
+
+    async def capture(writer, status, body):
+        responses.append(body)
+
+    monkeypatch.setattr("duckterm.server._write_json", capture)
+    monkeypatch.setattr(server, "_maybe_refresh_progress", lambda key: None)
+    asyncio.run(
+        server._ingest(
+            None,
+            json.dumps(
+                {"event_type": "Stop", "session_key": "recipient", "stop_hook_active": False}
+            ).encode(),
+        )
+    )
+    assert "hook_output" not in responses[0]
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_notice_respects_visibility_and_cancellation(scenario, cancelled):
+    history, server, call, ask = scenario
+    question = accept_question(call, ask)
+    if cancelled:
+        call("sender", "POST", f"/questions/{question['id']}/cancel")
+    else:
+        history.set_meta("recipient", group="elsewhere")
+        history.session_api.enroll("recipient", {"root": "elsewhere"})
+    assert notice(server) is None
+
+
+def test_stop_shell_forwards_only_hook_response_and_loop_guard(tmp_path):
+    import os
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    if not shutil.which("jq"):
+        pytest.skip("jq unavailable")
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    capture = tmp_path / "payload"
+    curl = binary / "curl"
+    response = {
+        "hook_output": {
+            "hookSpecificOutput": {
+                "hookEventName": "Stop",
+                "additionalContext": "Inbox work exists",
+            }
+        },
+        "private_event": "must not reach agent",
+    }
+    curl.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['CAPTURE']).write_text(sys.argv[sys.argv.index('-d') + 1])\n"
+        f"print({json.dumps(response)!r})\n"
+    )
+    curl.chmod(0o700)
+    script = Path(__file__).parents[2] / "src/duckterm/hooks/duckterm-hook.sh"
+    result = subprocess.run(
+        ["bash", str(script), "Stop", "claude-code"],
+        input='{"session_id":"test","stop_hook_active":false}',
+        text=True,
+        capture_output=True,
+        check=True,
+        env={
+            **os.environ,
+            "PATH": str(binary) + os.pathsep + os.environ["PATH"],
+            "DUCKTERM_INTERNAL": "",
+            "DUCKTERM_HOME": str(tmp_path),
+            "CAPTURE": str(capture),
+        },
+    )
+    assert json.loads(result.stdout) == response["hook_output"]
+    assert json.loads(capture.read_text())["stop_hook_active"] is False

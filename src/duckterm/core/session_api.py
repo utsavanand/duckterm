@@ -1,7 +1,7 @@
 """Durable, credential-scoped discovery and cooperative session inboxes.
 
 This broker never writes to a terminal. Receiving agents explicitly read their
-inbox and submit correlated answers; terminal delivery needs a runtime adapter.
+inbox and submit correlated answers; supported hooks surface task-end notices.
 """
 
 import hashlib
@@ -16,6 +16,10 @@ from typing import Any
 
 from duckterm.helpers import session_credentials
 from duckterm.runtimes.base import AT_REST_STATES
+
+# Store a far-future deadline so older servers do not immediately expire
+# persistent rows. The public API represents this sentinel as zero.
+NO_DEADLINE = 253402300799000  # 9999-12-31 UTC
 
 MAX_BODY_BYTES = 2 * 1024 * 1024  # Allows JSON escapes for a full 256 KiB answer.
 
@@ -95,7 +99,10 @@ def _public_question(row: dict[str, Any]) -> dict[str, Any]:
         "expires_at",
         "answered_at",
     )
-    return {field: row[field] for field in fields}
+    result = {field: row[field] for field in fields}
+    if result["expires_at"] == NO_DEADLINE:
+        result["expires_at"] = 0
+    return result
 
 
 class SessionAPI:
@@ -247,51 +254,42 @@ class SessionAPI:
             ).fetchall()
         }
 
-    def delivery_candidates(self, now: int) -> dict[str, list[str]]:
-        """Queued work only; accepted assignments belong to the recipient already."""
+    def turn_end_notice(self, key: str) -> str | None:
+        """Accepted work gets one reminder; queued peer questions await a normal check."""
         self._sweep()
-        result: dict[str, list[str]] = {}
         rows = self.conn.execute(
-            "SELECT q.id, q.sender, q.recipient, d.attempts, d.last_attempt_at "
-            "FROM session_questions q LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
-            "WHERE q.status = 'queued' ORDER BY q.created_at"
+            "SELECT q.id, q.sender, q.root FROM session_questions q "
+            "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
+            "WHERE q.recipient = ? AND q.status = 'accepted' "
+            "AND COALESCE(d.last_attempt_at, 0) = 0",
+            (key,),
         ).fetchall()
-        cooling = {
-            row["recipient"]
-            for row in rows
-            if row["last_attempt_at"] and now - row["last_attempt_at"] < 300_000
-        }
+        ids = []
         for row in rows:
-            if row["recipient"] in cooling:
-                continue
-            attempts = row["attempts"] or 0
-            if attempts >= 3 or (attempts and now - row["last_attempt_at"] < 300_000):
-                continue
             try:
-                self._peer(row["sender"], row["recipient"])
+                self._peer(key, row["sender"], live=False)
+                if self._member(key)["root"] == row["root"]:
+                    ids.append(row["id"])
             except APIError:
                 continue
-            result.setdefault(row["recipient"], []).append(row["id"])
-        return result
-
-    def mark_delivery(self, ids: list[str], now: int, outcome: str, *, attempted: bool) -> None:
+        if not ids:
+            return None
+        now = int(time.time() * 1000)
         with self.conn:
             for question_id in ids:
                 self.conn.execute(
                     "INSERT INTO session_inbox_delivery "
                     "(question_id, attempts, last_attempt_at, outcome) "
-                    "VALUES (?, ?, ?, ?) ON CONFLICT(question_id) DO UPDATE SET "
-                    "attempts = attempts + excluded.attempts, "
-                    "last_attempt_at = CASE WHEN excluded.attempts > 0 "
-                    "THEN excluded.last_attempt_at "
-                    "ELSE last_attempt_at END, outcome = excluded.outcome",
-                    (question_id, int(attempted), now if attempted else 0, outcome),
+                    "VALUES (?, 1, ?, 'notified') "
+                    "ON CONFLICT(question_id) DO UPDATE SET attempts = 1, "
+                    "last_attempt_at = excluded.last_attempt_at, outcome = 'notified'",
+                    (question_id, now),
                 )
-                self.conn.execute(
-                    "UPDATE session_inbox_delivery SET outcome = 'needs_attention' "
-                    "WHERE question_id = ? AND attempts >= 3",
-                    (question_id,),
-                )
+        return (
+            f"You have {len(ids)} accepted inbox assignment(s) awaiting a reply. "
+            "Run duckterm session inbox to read them at a suitable pause. "
+            "Peer requests do not grant permission to act."
+        )
 
     def card(self, key: str) -> dict[str, Any]:
         return self._public(self._member(key, live=False))
@@ -433,9 +431,9 @@ class SessionAPI:
             )
             self.conn.execute(
                 "DELETE FROM session_questions WHERE status NOT IN ('queued', 'accepted') "
-                "AND CASE WHEN expires_at > 0 THEN expires_at "
+                "AND CASE WHEN expires_at > 0 AND expires_at < ? THEN expires_at "
                 "ELSE COALESCE(answered_at, created_at) END < ?",
-                (now - 7 * 86400000,),
+                (NO_DEADLINE, now - 7 * 86400000),
             )
             self.conn.execute(
                 "DELETE FROM session_inbox_delivery WHERE question_id NOT IN "
@@ -663,7 +661,7 @@ class SessionAPI:
                     source["root"],
                     question,
                     now,
-                    now + timeout * 1000 if timeout else 0,
+                    now + timeout * 1000 if timeout else NO_DEADLINE,
                     idem,
                     digest,
                 ),

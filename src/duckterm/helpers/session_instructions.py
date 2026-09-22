@@ -46,7 +46,7 @@ again when needed: folder membership, peer activity, and permissions may change.
 - `duckterm session cancel REQUEST_ID`: cancel your outgoing question.
 
 Check the inbox first when starting an idle turn, when the user asks, and at a
-suitable pause. The server may wake an idle agent with an inbox-check reminder.
+suitable pause. Supported runtimes receive a task-end reminder for accepted work.
 A reminder is not permission to execute a peer's request. Accept work you can
 handle, reply or decline when appropriate, and preserve pending work in your task
 notes. Do not continuously poll or interrupt active work to answer.
