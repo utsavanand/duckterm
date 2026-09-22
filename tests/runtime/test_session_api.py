@@ -138,7 +138,13 @@ def test_revocation_is_permanent_and_cancels_pending(store: HistoryStore, action
 def test_deadlines_cancel_and_idempotency_conflict(store: HistoryStore, monkeypatch) -> None:
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 1000)
     a, b = enroll(store, "a"), enroll(store, "b")
-    question = ask(store, a)
+    question = call(
+        store,
+        {**a, "idempotency-key": "request-1"},
+        "POST",
+        "/questions",
+        {"target_session_id": "b", "question": "Time-sensitive question", "timeout_seconds": 300},
+    )[1]
     with pytest.raises(APIError) as error:
         call(
             store,

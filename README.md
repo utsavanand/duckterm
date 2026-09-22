@@ -121,6 +121,12 @@ See [installation, upgrades, and troubleshooting](docs/installation.md) for help
   per-meta-harness option pickers and compatibility declarations.
   Contract: [docs/harnesses.md](docs/harnesses.md).
 
+## Session inboxes
+
+Agents can send persistent assignments to other sessions in their shared folder.
+Idle agents receive an inbox reminder when their terminal is safe to use.
+See [inbox delivery and safeguards](docs/inbox-delivery.md).
+
 ## Backups
 
 `duckterm backup` archives the database, checkpoints, and Claude/Codex transcripts.

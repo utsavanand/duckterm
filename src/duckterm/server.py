@@ -55,6 +55,7 @@ from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events, progress
 from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.eventbus import EventBus
+from duckterm.core.inbox_delivery import InboxDelivery
 from duckterm.core.orchestrator import Orchestrator
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
 from duckterm.git import gitdetect
@@ -282,6 +283,7 @@ class Server:
         self.orchestrator = Orchestrator(self.bus, history=self.history)
         self.snapshots = SnapshotManager(self.history)
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
+        self.inbox_delivery = InboxDelivery(self.history, self.orchestrator, self.approvals)
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -313,6 +315,7 @@ class Server:
         self.history.record(event)
         self.approvals.from_event(event)
         if event.get("event_type") == events.STOP:
+            self.inbox_delivery.changed.set()
             key = event.get("session_key") or event.get("session_id")
             if key:
                 self._maybe_refresh_progress(str(key))
@@ -387,6 +390,8 @@ class Server:
         if path.startswith("/api/v1/session/"):
             try:
                 status, result = self.history.session_api.handle(method, path, headers, body)
+                if method == "POST" and path.endswith("/questions") and status == 202:
+                    self.inbox_delivery.changed.set()
             except APIError as exc:
                 status, result = exc.status, {"error": str(exc)}
             await _write_json(writer, status, result)
@@ -2821,11 +2826,15 @@ class Server:
             if on_listening is not None:
                 on_listening(host, port)
             sweeper = asyncio.create_task(self._sweep_dead_loop())
+            inbox_worker = asyncio.create_task(self.inbox_delivery.run())
             async with server:
                 try:
                     await server.serve_forever()
                 finally:
                     sweeper.cancel()
+                    inbox_worker.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await inbox_worker
         finally:
             _release_home_lock(lock)
 

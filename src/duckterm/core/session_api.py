@@ -48,6 +48,13 @@ CREATE TABLE IF NOT EXISTS session_questions (
     content_hash TEXT NOT NULL,
     UNIQUE(sender, idempotency_key)
 );
+CREATE TABLE IF NOT EXISTS session_inbox_delivery (
+    question_id TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at INTEGER NOT NULL DEFAULT 0,
+    last_read_at INTEGER NOT NULL DEFAULT 0,
+    outcome TEXT NOT NULL DEFAULT 'pending'
+);
 CREATE INDEX IF NOT EXISTS questions_recipient ON session_questions(recipient, created_at);
 CREATE INDEX IF NOT EXISTS questions_sender ON session_questions(sender, created_at);
 """
@@ -240,6 +247,52 @@ class SessionAPI:
             ).fetchall()
         }
 
+    def delivery_candidates(self, now: int) -> dict[str, list[str]]:
+        """Queued work only; accepted assignments belong to the recipient already."""
+        self._sweep()
+        result: dict[str, list[str]] = {}
+        rows = self.conn.execute(
+            "SELECT q.id, q.sender, q.recipient, d.attempts, d.last_attempt_at "
+            "FROM session_questions q LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
+            "WHERE q.status = 'queued' ORDER BY q.created_at"
+        ).fetchall()
+        cooling = {
+            row["recipient"]
+            for row in rows
+            if row["last_attempt_at"] and now - row["last_attempt_at"] < 300_000
+        }
+        for row in rows:
+            if row["recipient"] in cooling:
+                continue
+            attempts = row["attempts"] or 0
+            if attempts >= 3 or (attempts and now - row["last_attempt_at"] < 300_000):
+                continue
+            try:
+                self._peer(row["sender"], row["recipient"])
+            except APIError:
+                continue
+            result.setdefault(row["recipient"], []).append(row["id"])
+        return result
+
+    def mark_delivery(self, ids: list[str], now: int, outcome: str, *, attempted: bool) -> None:
+        with self.conn:
+            for question_id in ids:
+                self.conn.execute(
+                    "INSERT INTO session_inbox_delivery "
+                    "(question_id, attempts, last_attempt_at, outcome) "
+                    "VALUES (?, ?, ?, ?) ON CONFLICT(question_id) DO UPDATE SET "
+                    "attempts = attempts + excluded.attempts, "
+                    "last_attempt_at = CASE WHEN excluded.attempts > 0 "
+                    "THEN excluded.last_attempt_at "
+                    "ELSE last_attempt_at END, outcome = excluded.outcome",
+                    (question_id, int(attempted), now if attempted else 0, outcome),
+                )
+                self.conn.execute(
+                    "UPDATE session_inbox_delivery SET outcome = 'needs_attention' "
+                    "WHERE question_id = ? AND attempts >= 3",
+                    (question_id,),
+                )
+
     def card(self, key: str) -> dict[str, Any]:
         return self._public(self._member(key, live=False))
 
@@ -374,11 +427,18 @@ class SessionAPI:
         with self.conn:
             self.conn.execute(
                 "UPDATE session_questions SET status = 'expired' "
-                "WHERE status IN ('queued', 'accepted') AND expires_at <= ?",
+                "WHERE status IN ('queued', 'accepted') AND expires_at > 0 AND expires_at <= ?",
                 (now,),
             )
             self.conn.execute(
-                "DELETE FROM session_questions WHERE expires_at < ?", (now - 7 * 86400000,)
+                "DELETE FROM session_questions WHERE status NOT IN ('queued', 'accepted') "
+                "AND CASE WHEN expires_at > 0 THEN expires_at "
+                "ELSE COALESCE(answered_at, created_at) END < ?",
+                (now - 7 * 86400000,),
+            )
+            self.conn.execute(
+                "DELETE FROM session_inbox_delivery WHERE question_id NOT IN "
+                "(SELECT id FROM session_questions)"
             )
 
     def inbox(self, key: str, *, owner: bool = False, before: int | None = None) -> dict[str, Any]:
@@ -401,7 +461,24 @@ class SessionAPI:
                         continue
                 except APIError:
                     continue
-            messages.append(_public_question(dict(row)))
+            message = _public_question(dict(row))
+            delivery = self.conn.execute(
+                "SELECT attempts, last_attempt_at, last_read_at, outcome "
+                "FROM session_inbox_delivery "
+                "WHERE question_id = ?",
+                (row["id"],),
+            ).fetchone()
+            message["delivery"] = (
+                dict(delivery) if delivery else {"attempts": 0, "outcome": "pending"}
+            )
+            messages.append(message)
+            if not owner and row["status"] in ("queued", "accepted"):
+                self.conn.execute(
+                    "INSERT INTO session_inbox_delivery (question_id, last_read_at) VALUES (?, ?) "
+                    "ON CONFLICT(question_id) DO UPDATE SET last_read_at = excluded.last_read_at",
+                    (row["id"], int(time.time() * 1000)),
+                )
+        self.conn.commit()
         cursor = rows[49]["sequence"] if len(rows) > 50 else None
         result: dict[str, Any] = {"messages": messages, "next_cursor": cursor}
         if owner:
@@ -515,9 +592,9 @@ class SessionAPI:
         target = _text(req.get("target_session_id"), "target_session_id", 128)
         question = _text(req.get("question"), "question", 16384)
         idem = _text(headers.get("idempotency-key"), "Idempotency-Key", 128)
-        timeout = req.get("timeout_seconds", 300)
-        if type(timeout) is not int or not 1 <= timeout <= 900:
-            raise APIError(400, "timeout_seconds must be an integer from 1 to 900")
+        timeout = req.get("timeout_seconds", 0)
+        if type(timeout) is not int or not 0 <= timeout <= 604800:
+            raise APIError(400, "timeout_seconds must be 0 (persistent) or 1 to 604800")
         if target == key:
             raise APIError(400, "cannot ask your own session")
         self._peer(key, target)
@@ -556,7 +633,7 @@ class SessionAPI:
                     source["root"],
                     question,
                     now,
-                    now + timeout * 1000,
+                    now + timeout * 1000 if timeout else 0,
                     idem,
                     digest,
                 ),

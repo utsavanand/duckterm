@@ -78,6 +78,7 @@ class SessionSupervisor:
         self._input_queue: asyncio.Queue[bytes] | None = None
         self._input_task: asyncio.Task[None] | None = None
         self._last_input = 0.0
+        self._last_output = 0.0
 
     def _emit(self, event_type: str, **fields: object) -> None:
         self.bus.publish(
@@ -304,6 +305,7 @@ class SessionSupervisor:
             self._output_subs.discard(queue)
 
     def _record_bytes(self, chunk: bytes) -> None:
+        self._last_output = time.monotonic()
         self._byte_tail.append(chunk)
         for queue in list(self._byte_subs):
             try:

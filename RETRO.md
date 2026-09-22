@@ -3,6 +3,16 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-21 — Idle agents never saw short-lived inbox assignments
+**Broke:** QA and implementation handoffs expired before recipients read them.
+Acknowledging a request did not extend its deadline, and delivery only updated a
+badge; it never scheduled an agent turn.
+**Cause:** short-lived question semantics were used as a work queue, while agents
+were expected to notice and poll it themselves.
+**Rule:** retain assignments by default and make deadlines explicit. Wake only a
+verified idle, empty agent prompt; coalesce reminders, persist retry limits, and
+retain unhandled work rather than dropping it when delivery is uncertain.
+
 ## 2026-09-21 — Installation docs advertised missing downloads
 **Broke:** the README recommended a nonexistent PyPI package and a Mac ZIP that
 was absent from the latest release; the release guide linked an older wheel.

@@ -114,7 +114,7 @@ duckterm session publish --purpose 'Implement billing authentication' \
   --activity 'Testing token expiration and refresh'
 duckterm session inbox
 duckterm session ask other-session-id 'Which fields does your client need?' \
-  --request-key client-contract-1 --timeout 900
+  --request-key client-contract-1
 ```
 
 The receiving agent can choose to act when idle, or the user can tell it:
@@ -280,3 +280,10 @@ Concurrent browser runs should each set a distinct `RD_TEST_PORT` and
 and teardown use that state path, preventing another worktree's run from
 redirecting test requests or cleanup to the wrong test server. Without an
 override, the legacy shared state filename remains the default.
+
+## Persistent delivery update
+
+Requests now persist by default (`timeout_seconds: 0`). Explicit deadlines are
+optional and may be up to seven days. The idle delivery worker and its
+conservative prompt checks are described in [inbox delivery](inbox-delivery.md).
+This supersedes the original short-lived polling-only handoff design above.
