@@ -56,7 +56,17 @@ carrying those fixes plus session collaboration
 
 ## Later (decided direction, not started)
 
-5. **PM routines and the approved backlog** (owner-requested 2026-09-20;
+5. **Inbox awareness** (owner-approved 2026-09-21; design:
+   [inbox-awareness-design.md](inbox-awareness-design.md)). Sessions do not
+   notice their inbox today — deliberate, but folder broadcast changes it:
+   an owner message has standing a peer's does not. Stage 0 is zero code
+   (a session runs `/loop` with "check `duckterm session inbox`"). Stage 1
+   is a turn-end hook notice: one line naming the pending count, fired at a
+   pause not mid-work, suppressed while the session is `waiting`, scoped to
+   owner broadcasts and accepted-but-unanswered questions, noticed on
+   change rather than every turn. Invariant: a notice, never an
+   instruction; no injection, no auto-answering.
+6. **PM routines and the approved backlog** (owner-requested 2026-09-20;
    design: [pm-routines-design.md](pm-routines-design.md)). Stage 0 builds
    nothing but a `pm-review` prompt: a long-lived PM session on Claude
    Code's `/loop` proposes items into `BACKLOG.md`, the owner approves in
@@ -65,7 +75,7 @@ carrying those fixes plus session collaboration
    Proposal-only invariant: work starts exclusively from owner approval.
    A Backlog tab (one table + approve/decline routes) is built only if
    terminal approval proves annoying in practice; no duckterm scheduler.
-6. **Backups** (owner-requested 2026-09-21; details in the data-locality
+7. **Backups** (owner-requested 2026-09-21; details in the data-locality
    section of [architecture.md](architecture.md)). App side **shipped in
    v0.4.34** (`persistence/backup.py`, [backups.md](backups.md)): SQLite
    online backup + checkpoint/transcript archive, credentials excluded,
@@ -77,21 +87,21 @@ carrying those fixes plus session collaboration
    - GCP side: scheduled persistent-disk snapshots for the remote
      workspace VM — a resource policy, zero code, no VM credentials;
      not yet provisioned.
-7. **Security follow-ups deferred from the 2026-09-20 review** (per the
+8. **Security follow-ups deferred from the 2026-09-20 review** (per the
    `duckterm-bugs` session):
    - Aggregate connection/resource quotas — per-request HTTP
      deadlines/body/header limits and WS frame limits exist, but global
      exhaustion controls are open.
    - Deeper native macOS WebView/bridge review, and a full git-history
      secret audit (the completed scan covered current tracked files only).
-8. **Copilot + `duckterm run` collaboration introductions** — both currently
+9. **Copilot + `duckterm run` collaboration introductions** — both currently
    rely on the manual "Show introduction to paste" path; Copilot's `-p`
    adapter would turn an empty interactive launch into a programmatic one.
    Needs an adapter change before automatic introductions.
-9. **Approvals durability** — pending approvals live in memory and return
+10. **Approvals durability** — pending approvals live in memory and return
    `gone` after a restart. Cheap option: persist the registry; decide when
    approval volume makes restart timing annoying in practice.
-10. **Watched-mode removal** — frozen and deprecated
+11. **Watched-mode removal** — frozen and deprecated
    ([terminal-forward-design.md](terminal-forward-design.md)); delete once
    no workflow depends on it (Rubberduck covers that use case).
 
@@ -126,10 +136,10 @@ Documented upgrade paths we deliberately do not build yet:
   real need, the build is: retention knobs first (events sweep at 30 days,
   inbox threads at 7 — extend/configure for archived sessions), then a
   per-folder Timeline view that queries tables already being written.
-  Depends on the backup story (item 6) — durable history on an
+  Depends on the backup story (item 7) — durable history on an
   unbacked-up disk isn't durable.
 - **Postgres / replication** — a single-user local tool does not have the
-  problem they solve; the backup story (item 6) covers durability.
+  problem they solve; the backup story (item 7) covers durability.
 - **Cross-machine session sharing** — excluded from the session API v1;
   revisit after the GCP remote workspace settles, since it changes the
   "one machine, loopback-only" trust model.
