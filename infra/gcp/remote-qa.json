@@ -2,9 +2,9 @@
   "checkedAtUtc": "2026-09-21T06:49:31.460451+00:00",
   "project": "duckterm-20260920",
   "automated": {
-    "python": 486,
-    "frontend": 61,
-    "playwright": 36,
+    "python": 561,
+    "frontend": 70,
+    "playwright": 39,
     "nativeUnit": 4
   },
   "livePassed": [
@@ -24,11 +24,10 @@
     "user confirmed Remote destination and Browse in New session"
   ],
   "pending": [
-    "approve and deploy candidate to an isolated remote QA service",
-    "live candidate project copy/clone and both-provider conversation migration",
-    "VM reboot recovery when the live Claude process can be interrupted",
-    "native Test user acceptance",
-    "merge into main after its overlapping uncommitted work is settled"
+    "full native Move acceptance and supported provider setup",
+    "private repository clone authorization",
+    "VM reboot when existing Claude process can be interrupted",
+    "merge after overlapping main work is settled"
   ],
   "deferred": [
     "Railway live provider QA: user selected GitHub first",
@@ -60,7 +59,7 @@
       "forgotten-host tunnel and picker cleanup"
     ],
     "localEvidence": [
-      "scripts/gate.sh passed: 560 Python, 70 frontend, 39 browser tests plus lint/types/format",
+      "Post-fix scripts/gate.sh passed: 561 Python, 70 frontend, 39 browser tests plus lint/types/format",
       "Black, mypy, and slop checks passed separately",
       "swift test: 4 passed",
       "RubberTerm Test app built successfully",
@@ -68,15 +67,33 @@
       "real tmux launch retry after simulated server restart preserved the process PID"
     ],
     "blocked": [
-      "candidate source/dashboard upload to duckterm-dev rejected by automatic approval review; explicit export approval required",
-      "VM reboot would interrupt a live Claude process",
-      "main checkout has unrelated uncommitted overlapping work"
+      "VM reboot would interrupt existing Claude PID 66209",
+      "main checkout has unrelated uncommitted overlapping work",
+      "full private repository clone rejected by automatic approval review; separate user approval pending"
     ],
     "notClaimed": [
-      "live candidate Mac-to-Linux conversation migration",
-      "live clone with private repository authorization",
+      "full native stopped-source Move acceptance",
+      "live private repository clone authorization",
       "candidate VM reboot recovery",
-      "manual native user acceptance"
+      "Claude interactive onboarding completion",
+      "Move from local unsupported Claude 2.1.232"
+    ],
+    "liveCandidateUtc": "2026-09-22",
+    "candidateBase": "5393304",
+    "livePassed": [
+      "real Swift Mac-to-Linux copy, repeated copy and launch, retry after service restart",
+      "Git HEAD/index/working diff, modes, links and selected ignored files preserved",
+      "interrupted chunk upload across service restart and duplicate chunk recovery",
+      "existing destination rejected; synthetic secret excluded",
+      "public octocat/Hello-World clone and retry",
+      "Claude 2.1.267 exact transferred synthetic transcript recalled marker in print mode",
+      "Codex 0.155.1 candidate-launched synthetic resume recalled marker in remote destination after --cd fix",
+      "all three synthetic provider pane PIDs survived restart; launch retries reused existing sessions"
+    ],
+    "liveFixes": [
+      "Codex resume explicitly passes reviewed remote directory with --cd",
+      "QA systemd unit corrected to match production KillMode=process",
+      "root-owned VM Codex sessions directory restored to duckterm ownership"
     ]
   }
 }

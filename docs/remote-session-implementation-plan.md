@@ -12,10 +12,12 @@ implements project copy/clone and exact-conversation handoff, integrates main
 through b458c63, and fixes the broker capacity race and forgotten-host cache.
 Local automated, native compilation, and synthetic native transfer checks pass.
 The prior persistence check's successful same-PID result was recovered from the VM
-journal. Candidate live migration, authorized reboot, and native user acceptance
-remain. Uploading the candidate requires explicit approval following an automatic
-approval-review rejection; no candidate deployment has occurred. GitHub remains
-the first live provider; Railway and Porkbun live checks are deferred.
+journal. The user approved isolated candidate deployment; live copy, interrupted
+upload, public clone, restart recovery, and synthetic conversation recall passed.
+QA found and fixed Codex resume choosing the old Mac directory. Full native Move
+acceptance, private Git authorization, and a safe reboot remain; details are in
+[the candidate record](remote-merge-candidate.md). GitHub remains the first live
+provider; Railway and Porkbun live checks are deferred.
 
 Latest product direction: launch destination belongs in **New session → Run on**;
 connection management belongs in **Settings → Remote computers**. The user also

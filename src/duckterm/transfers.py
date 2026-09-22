@@ -833,7 +833,7 @@ def claim_launch(identifier: str, command: str, name: str, prompt: str) -> dict[
                         "A different copy of this conversation already exists remotely"
                     )
                 private_write(target, data)
-                command = shlex.join(["codex", "resume", sid])
+                command = shlex.join(["codex", "resume", "--cd", state["destination"], sid])
         else:
             check_runtime(command)
         return save(

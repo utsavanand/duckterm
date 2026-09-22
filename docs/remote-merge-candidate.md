@@ -23,7 +23,7 @@ for main contains unrelated uncommitted changes; it has not been modified or mer
 
 ## Validation and practical limits
 
-Final local gate passed: 560 Python tests, 70 frontend tests, and 39 browser
+The post-fix local gate passed: 561 Python tests, 70 frontend tests, and 39 browser
 tests. Four native unit tests and the real Swift transfer rehearsal also passed.
 Python lint, formatting, types, and documentation checks passed.
 
@@ -44,13 +44,47 @@ The prior VM persistence verification succeeded with both PIDs unchanged, but it
 full duration and memory/log measurements were not recorded. That result does not
 validate this new migration implementation.
 
+## Isolated live candidate QA — 2026-09-22 UTC
+
+The user approved candidate source/dashboard and synthetic fixture uploads. The
+candidate runs on VM loopback port 4341 with a separate state directory and tmux
+socket. Its systemd unit uses production's `KillMode=process`. An initial QA unit
+omitted this setting and killed only its synthetic agent on restart; correcting
+the unit made restart recovery pass. Production Claude PID 66209 was preserved.
+
+Passed on the candidate:
+
+- Real Swift Mac-to-Linux copy, repeated copy and launch, and launch retry after
+  service restart. Source preserved and `.env` excluded.
+- Git HEAD, index and working diff preservation; executable bits, relative links,
+  and selected ignored files; existing destination rejection.
+- Interrupted chunk upload across service restart, duplicate chunks and finish.
+- Public `octocat/Hello-World` clone and retry.
+- All synthetic provider pane PIDs survived a service restart; launch retries
+  reused their existing sessions.
+- Synthetic Claude transcript transferred by the candidate and resumed by exact
+  path in Claude Code 2.1.267 print mode; it recalled the exact marker.
+- Synthetic Codex transcript transferred and launched by the candidate in Codex
+  0.155.1; it recalled the exact marker in the reviewed remote directory after
+  accepting the normal synthetic-project trust prompt.
+
+Live QA found and fixed a Codex resume bug: its recorded Mac cwd won over the
+child process cwd. The launch now passes `--cd` with the reviewed destination.
+The VM's Codex sessions directory was root-owned; ownership of that directory
+alone was corrected to duckterm. Claude's interactive onboarding remains
+incomplete; print-mode recall does not establish interactive acceptance. Local
+Claude 2.1.232 remains outside the supported source version; the synthetic
+transcript test does not claim an end-to-end Move from that installed version.
+The isolated service has no connector credentials; provider MCP startup warnings
+there do not validate or invalidate the separate live connector service.
+
 ## Remaining before merge
 
-1. Approve source and built-dashboard upload to `duckterm-dev` for an isolated QA
-   service. Automatic approval review rejected this export because general remote
-   QA authorization did not explicitly cover that payload.
-2. Validate the candidate on Linux: both supported provider migrations, actual
-   clone authorization, interrupted transfer/handoff, reconnect, and native UI.
+1. Finish native Test acceptance and provider setup, including the full stopped
+   source-session Move flow on supported versions.
+2. Private-repository clone authorization remains unvalidated. Automatic approval
+   review rejected cloning the full project history as outside the earlier export
+   approval; a separate user approval request is pending.
 3. Arrange a safe VM reboot. A live Claude process was observed on the workspace;
    it has not been interrupted.
 4. Complete user acceptance in RubberTerm Test, settle main's overlapping WIP,

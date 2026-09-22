@@ -3,6 +3,7 @@
 import base64
 import io
 import os
+import shlex
 import tarfile
 import uuid
 from pathlib import Path
@@ -170,6 +171,31 @@ def test_launch_claim_is_durable_and_cannot_be_replaced(tmp_path, homes, monkeyp
     second = t.claim_launch(identifier, "another", "changed", "bad")
     assert first == second
     assert t.status(identifier)["stage"] == "launching"
+
+
+def test_codex_resume_uses_reviewed_destination_instead_of_recorded_source(
+    tmp_path, homes, monkeypatch
+):
+    monkeypatch.setattr(t.Path, "home", lambda: tmp_path / "provider-home")
+    monkeypatch.setattr(t, "check_runtime", lambda *args: "codex")
+    identifier, sid = uuid.uuid4().hex, str(uuid.uuid4())
+    destination = str(tmp_path / "remote project 日本語")
+    with t.locked(identifier) as directory:
+        (directory / "conversation.jsonl").write_text("synthetic transcript")
+        t.save(
+            directory,
+            {
+                "id": identifier,
+                "stage": "ready",
+                "destination": destination,
+                "conversation": {"runtime": "codex", "id": sid},
+            },
+        )
+    state = t.claim_launch(identifier, "ignored", "Migration", "")
+    argv = shlex.split(state["command"])
+    assert argv[:2] == ["codex", "resume"]
+    assert argv[argv.index("--cd") + 1] == destination
+    assert argv[-1] == sid
 
 
 @pytest.mark.parametrize(

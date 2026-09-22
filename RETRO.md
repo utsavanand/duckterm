@@ -3,6 +3,14 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-21 — Codex resume defaulted to the source computer's directory
+**Broke:** a transferred Codex conversation prompted to use its old Mac directory
+on Linux, with that unavailable directory selected by default.
+**Cause:** setting the child process cwd does not override Codex's recorded resume
+directory; the launch command omitted its explicit directory option.
+**Rule:** pass the reviewed destination through Codex's `--cd` option and verify
+cross-platform resume against the actual supported provider version.
+
 ## 2026-09-21 — Test app packaging assumed an editable installation
 **Broke:** the committed candidate imported correctly from source, but a fresh
 Test build failed while calculating its isolated port.
