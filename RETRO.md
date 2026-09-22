@@ -6,10 +6,12 @@ and the rule that prevents the recurrence. Newest first.
 ## 2026-09-21 — Folder actions were missing from session workflows
 **Broke:** creating a session from the global button offered no sidebar folder
 choice, and folder headers had no control for interaction history.
-**Cause:** folder assignment existed only as an implicit launch preset; history
-was exposed only per recipient session, with no folder-level entry point.
+**Cause:** folder assignment existed only as an implicit launch preset. The old
+folder-history implementation remained on `feat/folder-conversations` and was
+not an ancestor of the current release; the release exposed only session inboxes.
 **Rule:** keep folder history visible independently of pending counts, hover,
-collapse, or live-session filters. Cover folder selection and both directions
+collapse, or live-session filters. Land fixes on main before releasing so a
+later release cannot silently omit a feature branch. Cover folder selection and both directions
 of folder exchanges with end-to-end regression checks.
 
 ## 2026-09-21 — Installation docs advertised missing downloads
