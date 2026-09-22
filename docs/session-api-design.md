@@ -117,7 +117,7 @@ duckterm session ask other-session-id 'Which fields does your client need?' \
   --request-key client-contract-1
 ```
 
-The receiving agent can choose to act when idle, or the user can tell it:
+The server can remind an eligible idle agent to check its inbox, or the user can tell it:
 “Run `duckterm session inbox` and answer the pending questions.” Then:
 
 ```sh
@@ -178,12 +178,12 @@ declined, cancelled, or expired. Cancellation stops the exchange; it does not
 interrupt the recipient's other work. Closed requests cannot accept late answers.
 
 Discovery and inbox pages contain at most 50 records. Questions allow 16 KiB and
-answers 256 KiB; oversized content is rejected instead of truncated. Deadlines
-default to five minutes and allow up to fifteen. A sender can create ten questions
+answers 256 KiB; oversized content is rejected instead of truncated. Requests
+persist by default; optional deadlines allow up to seven days. A sender can create ten questions
 per minute. Creation is refused when the combined set of pending requests sent
-by that sender or addressed to that recipient reaches twenty. Records are swept
-after seven days beyond their deadline. Sweeps run on broker reads/operations;
-there is no always-running polling worker dedicated to expiry.
+by that sender or addressed to that recipient reaches twenty. Closed records are
+swept after seven days beyond their deadline or completion/creation timestamp.
+Pending persistent requests are never removed by this retention sweep.
 
 **Authorization is API-level, not OS/process isolation.** The scoped broker
 checks current membership on every request. However, agents running as the same
