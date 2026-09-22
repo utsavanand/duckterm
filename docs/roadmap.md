@@ -95,14 +95,22 @@ Shipped since this doc was first written (2026-09-20 → 22):
    Proposal-only invariant: work starts exclusively from owner approval.
    A Backlog tab (one table + approve/decline routes) is built only if
    terminal approval proves annoying in practice; no duckterm scheduler.
-7. **Backup scheduling** — the CLI shipped in v0.4.34 (see the list above);
-   nothing runs it automatically yet. Remaining:
-   - A launchd/cron entry for a daily local run, plus `--to gs://…` once a
-     bucket is chosen. Time Machine remains the baseline.
-   - GCP side: scheduled persistent-disk snapshots for the remote
-     workspace VM — a resource policy, zero code, no VM credentials;
-     not yet provisioned. Verified 2026-09-22: a real run produced a
-     242 MB 0600 archive with zero credential files.
+7. **"Back up to remote" button** (owner decision 2026-09-22: manual, not
+   scheduled). The CLI shipped in v0.4.34; the owner wants a topbar button
+   that runs it on demand rather than a cron/launchd schedule — backups
+   happen when the user decides, with visible progress and result.
+   - Topbar button ("Back up to remote"), owner-token POST that runs the
+     existing `backup.create(destination)`; destination configured once
+     (local path or `gs://bucket/prefix`) and remembered.
+   - It is a long operation (a real run: 242 MB, ~1 s, 0600, zero
+     credential files — verified 2026-09-22) — the button must show
+     in-progress state and report the resulting archive path, or the
+     error, without blocking the dashboard.
+   - No scheduler. Time Machine remains the baseline; a user who wants
+     automation can still cron the CLI.
+   - GCP side (separate, still open): scheduled persistent-disk snapshots
+     for the remote workspace VM — a resource policy, zero code, no VM
+     credentials; not yet provisioned.
 8. **Security follow-ups deferred from the 2026-09-20 review** (per the
    `duckterm-bugs` session):
    - Aggregate connection/resource quotas — per-request HTTP
