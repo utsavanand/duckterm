@@ -118,7 +118,7 @@ export interface BroadcastTarget {
   name: string;
   state: string;
   eligible: boolean;
-  reason: string;
+  reason: string | null;
 }
 export interface BroadcastResult {
   queued: number;

@@ -80,7 +80,7 @@ test("new session lists empty and nested sidebar folders and sends the selected 
 
 test("owner reviews folder recipients, sends once, and sees unread Owner notices", async ({ page }) => {
   await seedSession("broadcast-ui-a", { name: "Eligible recipient", group: "Message review/Child" });
-  await seedSession("broadcast-ui-b", { name: "Unenrolled recipient", group: "Message review" });
+  await seedSession("broadcast-ui-b", { name: "Second recipient", group: "Message review" });
   try {
     await apiPost("/sessions/broadcast-ui-a/collaboration", { root: "Message review" });
     await page.goto("/");
@@ -88,18 +88,18 @@ test("owner reviews folder recipients, sends once, and sees unread Owner notices
     await page.getByRole("button", { name: "Message folder", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Message Message review", exact: true })).toBeVisible();
     await expect(page.getByRole("region", { name: "Message folder", exact: true }).getByText("Eligible recipient", { exact: true })).toBeVisible();
-    const send = page.getByRole("button", { name: "Send to 1 session", exact: true });
+    const send = page.getByRole("button", { name: "Send to 2 sessions", exact: true });
     await expect(send).toBeDisabled();
     await page.getByLabel("Message", { exact: true }).fill("Review this folder’s roadmap when ready.");
     await page.screenshot({ path: "/tmp/duckterm-message-folder.png" });
     await send.click();
-    await expect(page.getByRole("status")).toContainText("Message queued for 1 session. 1 skipped.");
+    await expect(page.getByRole("status")).toContainText("Message queued for 2 sessions.");
     await page.getByRole("button", { name: "Done", exact: true }).click();
-    await expect(page.locator(".rd-inbox-message")).toHaveCount(1);
-    await expect(page.locator(".rd-owner-badge")).toHaveText("Owner");
-    await expect(page.locator(".rd-inbox-status")).toHaveText("Unread");
-    await page.locator(".rd-inbox-message summary").click();
-    await expect(page.getByText("No reply required", { exact: true })).toBeVisible();
+    await expect(page.locator(".rd-inbox-message")).toHaveCount(2);
+    await expect(page.locator(".rd-owner-badge")).toHaveText(["Owner", "Owner"]);
+    await expect(page.locator(".rd-inbox-status")).toHaveText(["Unread", "Unread"]);
+    await page.locator(".rd-inbox-message summary").first().click();
+    await expect(page.getByText("No reply required", { exact: true }).first()).toBeVisible();
     await page.screenshot({ path: "/tmp/duckterm-owner-inbox.png" });
   } finally {
     await apiDelete("/sessions/broadcast-ui-a");
