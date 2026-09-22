@@ -204,6 +204,16 @@ def test_notice_respects_visibility_and_cancellation(scenario, cancelled):
         history.set_meta("recipient", group="elsewhere")
         history.session_api.enroll("recipient", {"root": "elsewhere"})
     assert notice(server) is None
+    stored = history._conn.execute(
+        "SELECT status FROM session_questions WHERE id = ?", (question["id"],)
+    ).fetchone()
+    assert stored["status"] == ("cancelled" if cancelled else "accepted")
+    assert (
+        history._conn.execute(
+            "SELECT COUNT(*) FROM session_inbox_delivery WHERE last_attempt_at > 0"
+        ).fetchone()[0]
+        == 0
+    )
 
 
 def test_stop_shell_forwards_only_hook_response_and_loop_guard(tmp_path):
