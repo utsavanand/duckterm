@@ -65,7 +65,13 @@ carrying those fixes plus session collaboration
    pause not mid-work, suppressed while the session is `waiting`, scoped to
    owner broadcasts and accepted-but-unanswered questions, noticed on
    change rather than every turn. Invariant: a notice, never an
-   instruction; no injection, no auto-answering.
+   instruction; no injection, no auto-answering. Includes **urgent**
+   messages (owner-requested 2026-09-21): urgency changes standing and
+   persistence — notices even while `waiting`, re-notices every turn until
+   handled, directive wording with anti-derail framing, pinned in the
+   inbox — but NOT delivery speed, which the UI must state. True mid-turn
+   interruption ships only as a separate, explicitly named "Interrupt
+   session" (Ctrl-C) owner control that aborts in-progress work.
 6. **PM routines and the approved backlog** (owner-requested 2026-09-20;
    design: [pm-routines-design.md](pm-routines-design.md)). Stage 0 builds
    nothing but a `pm-review` prompt: a long-lived PM session on Claude

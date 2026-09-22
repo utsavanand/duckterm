@@ -79,3 +79,8 @@ class CopilotRuntime(Harness):
 
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return [*self._argv, f"--resume={session_key}"]
+
+    def find_resumable_id(self, *, cwd: Path, recorded: str | None) -> str | None:
+        # Copilot resumes only by its own session id; the session-store has no
+        # per-cwd index to fall back on.
+        return recorded or None

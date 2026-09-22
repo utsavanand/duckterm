@@ -28,7 +28,37 @@ def test_launch_appends_prompt() -> None:
 def test_codex_has_no_transcript_yet() -> None:
     rt = CodexRuntime()
     assert rt.locate_transcript(cwd=Path("/x"), session_id="s") is None
-    assert rt.restore_command(cwd=Path("/x"), session_key="s") == ["codex"]
+    assert rt.restore_command(cwd=Path("/x"), session_key="abc-123") == [
+        "codex",
+        "resume",
+        "abc-123",
+    ]
+
+
+def test_codex_find_resumable_id_from_rollout_filename(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """In-process launches never report Codex's session_id, so with nothing
+    recorded the id must come from the newest rollout whose session_meta names
+    this cwd — the UUID is in the filename."""
+    import json
+
+    uuid = "0192b256-a4a4-435c-b154-a9fe4be2c2a8"
+    day = tmp_path / "home" / ".codex" / "sessions" / "2026" / "09" / "21"
+    day.mkdir(parents=True)
+    meta = {"type": "session_meta", "payload": {"cwd": str(tmp_path / "repo")}}
+    (day / f"rollout-2026-09-21T10-00-00-{uuid}.jsonl").write_text(json.dumps(meta) + "\n")
+    # A newer rollout for a DIFFERENT cwd must not win.
+    other = {"type": "session_meta", "payload": {"cwd": str(tmp_path / "elsewhere")}}
+    (day / "rollout-2026-09-21T11-00-00-ffffffff-ffff-ffff-ffff-ffffffffffff.jsonl").write_text(
+        json.dumps(other) + "\n"
+    )
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+
+    rt = CodexRuntime()
+    assert rt.find_resumable_id(cwd=tmp_path / "repo", recorded=None) == uuid
+    # A recorded id whose rollout exists wins over the filename fallback.
+    assert rt.find_resumable_id(cwd=tmp_path / "repo", recorded=uuid) == uuid
+    # Nothing for an unknown cwd.
+    assert rt.find_resumable_id(cwd=tmp_path / "nowhere", recorded=None) is None
 
 
 def test_parse_codex_transcript_extracts_messages(tmp_path):  # type: ignore[no-untyped-def]

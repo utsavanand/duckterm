@@ -235,6 +235,16 @@ def test_resume_relaunches_a_stopped_session(
     from pathlib import Path as P
 
     from duckterm.persistence.history import HistoryStore
+    from duckterm.runtimes.claude_code import project_slug
+
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    # Resume validates the transcript exists before pointing --resume at the
+    # recorded id, so give it one under a fake home.
+    proj = tmp_path / "home" / ".claude" / "projects" / project_slug(cwd)
+    proj.mkdir(parents=True)
+    (proj / "claude-sid-123.jsonl").write_text("{}\n")
+    monkeypatch.setattr(P, "home", lambda: tmp_path / "home")
 
     store = HistoryStore(tmp_path / "db.sqlite")
     store.record(
@@ -243,7 +253,7 @@ def test_resume_relaunches_a_stopped_session(
             "session_key": "resumable",
             "session_id": "claude-sid-123",
             "runtime": "claude-code",
-            "cwd": str(tmp_path),
+            "cwd": str(cwd),
             "_ts": 1,
             "_id": "a",
         }
@@ -258,6 +268,7 @@ def test_resume_relaunches_a_stopped_session(
 
         async def fake_launch(*, runtime, cwd, session_key, **kw):  # type: ignore[no-untyped-def]
             launched["cwd"] = cwd
+            launched["prompt"] = kw.get("prompt", "")
             launched["argv"] = runtime.launch_command(
                 cwd=P(cwd), session_key=session_key, initial_prompt=""
             )
@@ -272,9 +283,13 @@ def test_resume_relaunches_a_stopped_session(
 
     result = asyncio.run(scenario())
     assert result["resumed"] is True
-    assert launched["cwd"] == str(tmp_path)
+    assert launched["cwd"] == str(cwd)
     assert result["carried_conversation"] is True  # claude-code + recorded sid
+    assert result["context"] == "native"
     assert launched["argv"] == ["claude", "--resume", "claude-sid-123"]
+    # A native resume still gets the hygiene nudge: out-of-band state (servers,
+    # background jobs) died with the terminal while the agent remembers it.
+    assert "resumed after its terminal stopped" in launched["prompt"]
     # The PTY relaunch supersedes the old tab tracking.
     assert store.session("resumable")["heartbeat"] == 0
 
@@ -323,6 +338,61 @@ def test_resume_relaunches_generic_agent_with_its_recorded_command(
 
     asyncio.run(scenario())
     assert launched["argv"] == ["sh", "-c", "echo READY; exec cat"]
+
+
+def test_resume_does_not_replay_prompt_positionals_from_recorded_command(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The recorded command is the previous launch's full argv — including any
+    initial prompt it was started with. Replaying it verbatim re-records the
+    prompt as argv, which then doubles on every revive (seen in the wild: a
+    codex session whose command had the collaboration prompt accreted four
+    times). With no resumable rollout, the relaunch must keep the binary and
+    flags but drop the positionals."""
+    from pathlib import Path as P
+
+    from duckterm.persistence.history import HistoryStore
+
+    # Empty fake home: no rollout to resume, so the recorded command is the
+    # only fallback.
+    (tmp_path / "home").mkdir()
+    monkeypatch.setattr(P, "home", lambda: tmp_path / "home")
+
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.record(
+        {
+            "event_type": "SessionStart",
+            "session_key": "cx",
+            "runtime": "codex",
+            "command": "codex --full-auto 'Duckterm session capability: ...' "
+            "'Duckterm session capability: ...'",
+            "cwd": str(tmp_path),
+            "launched": True,
+            "_ts": 1,
+            "_id": "a",
+        }
+    )
+    store.set_state("cx", "stopped", now=2)
+
+    launched: dict = {}
+
+    async def scenario() -> None:
+        srv = Server(history=store)
+
+        async def fake_launch(*, runtime, cwd, session_key, **kw):  # type: ignore[no-untyped-def]
+            launched["argv"] = runtime.launch_command(
+                cwd=P(cwd), session_key=session_key, initial_prompt=""
+            )
+            return session_key
+
+        monkeypatch.setattr(srv.orchestrator, "launch", fake_launch)
+        server = await asyncio.start_server(srv.handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        async with server:
+            await asyncio.to_thread(_post, port, "/sessions/cx/resume")
+
+    asyncio.run(scenario())
+    assert launched["argv"] == ["codex", "--full-auto"]
 
 
 def test_resume_reports_carried_conversation_false_for_generic(

@@ -98,6 +98,17 @@ class ClaudeCodeRuntime(Harness):
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return [*self._argv, "--resume", session_key]
 
+    def find_resumable_id(self, *, cwd: Path, recorded: str | None) -> str | None:
+        # The recorded id isn't always valid (a forked/transient id, or its
+        # transcript was deleted) — verify the file exists. Falling back to the
+        # newest transcript in the project dir matches what the Messages view
+        # and snapshot restore already do for in-process launches, which never
+        # report Claude's own session_id.
+        if recorded and self.locate_transcript(cwd=cwd, session_id=recorded):
+            return recorded
+        latest = self.latest_transcript(cwd=cwd)
+        return latest.stem if latest else None
+
 
 def parse_transcript(path: Path) -> list[dict[str, str]]:
     """Yield {role, text} records from a Claude JSONL transcript. Tolerates the

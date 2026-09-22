@@ -14,12 +14,13 @@ function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
   // An explicit lifecycle marker (deliberate stop/archive/sweep) always wins.
   if (e.lifecycle === "archived") return "archived";
   if (e.lifecycle === "stopped") return "stopped";
-  // A stopped/archived session is at rest: only an explicit resume
+  if (e.lifecycle === "interrupted") return "interrupted";
+  // A stopped/interrupted/archived session is at rest: only an explicit resume
   // (SessionStart) revives it. A stray late event — including a resumed-then-
   // exited agent's SessionEnd — must not flip it. This runs before the
   // terminated rule on purpose (mirrors the server).
   if (
-    (prev === "stopped" || prev === "archived") &&
+    (prev === "stopped" || prev === "interrupted" || prev === "archived") &&
     e.event_type !== "SessionStart"
   )
     return prev;
@@ -50,6 +51,7 @@ export function effectiveState(s: SessionView, now: number): SessionState {
   if (
     s.state === "terminated" ||
     s.state === "stopped" ||
+    s.state === "interrupted" ||
     s.state === "archived" ||
     s.state === "waiting"
   )

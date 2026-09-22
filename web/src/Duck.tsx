@@ -34,6 +34,8 @@ export function duckPhrase(s: SessionView, state: string): string {
       return `Right now: just floating — finished its last turn ${ago}.`;
     case "stopped":
       return "Right now: fast asleep — stopped, resumable anytime.";
+    case "interrupted":
+      return "Right now: knocked out — its terminal died (crash or reboot); resumable anytime.";
     case "terminated":
       return "Right now: fast asleep — the session ended.";
     case "archived":

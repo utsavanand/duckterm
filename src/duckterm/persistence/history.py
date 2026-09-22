@@ -150,11 +150,16 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
         return "archived"
     if lifecycle == "stopped":
         return "stopped"
-    # A stopped or archived session is at rest: only an explicit resume
-    # (SessionStart) revives it. A stray late event — including the resumed-then-
-    # exited agent's SessionEnd — must NOT flip it (e.g. archived -> terminated).
-    # This guard runs before the SessionEnd/terminated rule on purpose.
-    if prev in ("stopped", "archived") and event.get("event_type") != events.SESSION_START:
+    if lifecycle == "interrupted":
+        return "interrupted"
+    # A stopped, interrupted, or archived session is at rest: only an explicit
+    # resume (SessionStart) revives it. A stray late event — including the
+    # resumed-then-exited agent's SessionEnd — must NOT flip it (e.g. archived
+    # -> terminated). This guard runs before the SessionEnd/terminated rule on
+    # purpose.
+    if prev in ("stopped", "interrupted", "archived") and event.get(
+        "event_type"
+    ) != events.SESSION_START:
         return prev
     if lifecycle == "terminated" or event.get("event_type") == events.SESSION_END:
         return "terminated"
@@ -633,7 +638,7 @@ class HistoryStore:
         archiving an already-ended session; clears it when reviving (busy)."""
         if state in AT_REST_STATES:
             self.session_api.revoke(key, cancel_pending=state != "stopped")
-        if state in ("stopped", "terminated"):
+        if state in ("stopped", "interrupted", "terminated"):
             cur = self._conn.execute(
                 "UPDATE sessions SET state = ?, ended_at = ? WHERE session_key = ?",
                 (state, now, key),

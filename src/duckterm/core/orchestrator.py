@@ -503,11 +503,11 @@ class Orchestrator:
             live = set(adopted) | set(self._supervisors)
             reconciled = self.history.stale_launched(live)
             for key in reconciled:
-                self.history.set_state(key, "stopped", now=int(time.time() * 1000))
+                self.history.set_state(key, "interrupted", now=int(time.time() * 1000))
             if reconciled:
                 print(
                     f"reconciled {len(reconciled)} session(s) whose backing died "
-                    f"(marked stopped, resumable): {', '.join(reconciled)}"
+                    f"(marked interrupted, resumable): {', '.join(reconciled)}"
                 )
         return adopted
 
@@ -525,6 +525,7 @@ class Orchestrator:
         compare_group: str | None = None,
         name: str | None = None,
         env: dict[str, str] | None = None,
+        record_intention: bool = True,
     ) -> str:
         """Launch a supervised agent. If repo_path is given, the agent runs in a
         fresh git worktree on `branch` (default: a branch named for the session),
@@ -582,7 +583,9 @@ class Orchestrator:
                 with contextlib.suppress(Exception):
                     self.worktrees.remove_by_worktree(worktree.path, delete_branch=True)
             raise
-        if self.history is not None and prompt:
+        # A resume's synthetic prompt (nudge / reconstructed notes) must not
+        # overwrite the session's original intention on its card.
+        if self.history is not None and prompt and record_intention:
             self.history.set_intention(key, prompt)
         if self.history is not None and supervisor._task is not None:
 
