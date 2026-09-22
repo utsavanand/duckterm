@@ -70,16 +70,18 @@ carrying those fixes plus session collaboration
    Proposal-only invariant: work starts exclusively from owner approval.
    A Backlog tab (one table + approve/decline routes) is built only if
    terminal approval proves annoying in practice; no duckterm scheduler.
-6. **Backups** (owner-requested and asked to `main-dev` 2026-09-21; details in the data-locality
-   section of [architecture.md](architecture.md)). Build both halves, each
-   minimal:
-   - App side: `duckterm backup [--to PATH|gs://BUCKET]` — SQLite
-     `.backup` + checkpoints + agent transcript dirs into one archive;
-     GCS upload rides the user's own `gcloud` auth (the GCP project
-     already exists from the remote work); secrets excluded. Scheduling
-     via launchd/cron; Time Machine remains the baseline.
+6. **Backups** (owner-requested 2026-09-21; details in the data-locality
+   section of [architecture.md](architecture.md)). App side **shipped in
+   v0.4.34** (`persistence/backup.py`, [backups.md](backups.md)): SQLite
+   online backup + checkpoint/transcript archive, credentials excluded,
+   atomic private output, optional GCS upload via the user's own `gcloud`
+   auth. `main-dev` is verifying restore integrity, credential exclusion,
+   and failed-upload retention. Remaining:
+   - Schedule it (launchd/cron; Time Machine remains the baseline) — no
+     scheduled run exists yet.
    - GCP side: scheduled persistent-disk snapshots for the remote
-     workspace VM — a resource policy, zero code, no VM credentials.
+     workspace VM — a resource policy, zero code, no VM credentials;
+     not yet provisioned.
 7. **Security follow-ups deferred from the 2026-09-20 review** (per the
    `duckterm-bugs` session):
    - Aggregate connection/resource quotas — per-request HTTP
