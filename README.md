@@ -59,7 +59,7 @@ install Python 3.11+, pipx, and tmux using your distribution's package manager.
 Then install the published wheel:
 
 ```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.42/duckterm-0.4.42-py3-none-any.whl
+pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.43/duckterm-0.4.43-py3-none-any.whl
 duckterm serve
 ```
 
@@ -152,7 +152,7 @@ and the [shared connector guide](docs/shared-connectors.md) for central hosting.
 ## Mac app
 
 On **Apple Silicon Macs running macOS 13+**, install the CLI above, then download
-[RubberTerm-0.4.42-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.42/RubberTerm-0.4.42-macos-arm64.zip),
+[RubberTerm-0.4.43-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.43/RubberTerm-0.4.43-macos-arm64.zip),
 unzip it, and move **RubberTerm.app** to **Applications**.
 
 The app opens the dashboard in a native window with a Dock icon and notifications.
