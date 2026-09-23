@@ -99,31 +99,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.sendAction(Selector(("paste:")), to: nil, from: sender)
             return
         }
-        let pasteboard = NSPasteboard.general
-        if let text = pasteboard.string(forType: .string), !text.isEmpty {
-            sendPaste(text)
-            return
-        }
-        // No text — an IMAGE on the clipboard (screenshot, browser Copy Image).
-        // Save it and paste the file PATH: claude and codex both read image
-        // paths as attachments, which is what iTerm-style image paste does.
-        let types: [NSPasteboard.PasteboardType] = [.png, .tiff]
-        for type in types {
-            guard var data = pasteboard.data(forType: type) else { continue }
-            if type == .tiff, let rep = NSBitmapImageRep(data: data),
-                let png = rep.representation(using: .png, properties: [:])
-            {
-                data = png
+        window?.evaluate("window.__rtPasteTarget ? window.__rtPasteTarget() : null") { [weak self] result in
+            guard let self, let target = result as? String else { return }
+            if target == "field" {
+                NSApp.sendAction(Selector(("paste:")), to: nil, from: sender)
+                return
             }
-            let home = ProcessInfo.processInfo.environment["DUCKTERM_HOME"]
-                ?? (NSHomeDirectory() + "/.duckterm")
-            let dir = URL(fileURLWithPath: home).appendingPathComponent("pastes")
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let file = dir.appendingPathComponent("paste-\(UUID().uuidString.prefix(12)).png")
-            guard (try? data.write(to: file)) != nil else { return }
-            sendPaste(file.path + " ")
-            return
+            let pasteboard = NSPasteboard.general
+            do {
+                if let png = try ClipboardImage.png(from: pasteboard) {
+                    let home = ProcessInfo.processInfo.environment["DUCKTERM_HOME"] ?? (NSHomeDirectory() + "/.duckterm")
+                    let path = try ClipboardImage.save(png, in: URL(fileURLWithPath: home).appendingPathComponent("pastes"))
+                    let data = try JSONSerialization.data(withJSONObject: [path.path, target])
+                    let json = String(decoding: data, as: UTF8.self)
+                    self.window?.evaluate("window.__rtPasteImage && window.__rtPasteImage(...\(json))") { accepted in
+                        if accepted as? Bool != true {
+                            try? FileManager.default.removeItem(at: path)
+                            self.pasteError(ClipboardImage.Failure.changedTarget)
+                        }
+                    }
+                } else if let text = pasteboard.string(forType: .string), !text.isEmpty {
+                    self.sendPaste(text)
+                }
+            } catch { self.pasteError(error) }
         }
+    }
+
+    private func pasteError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could not paste image"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 
     private func sendPaste(_ text: String) {

@@ -3,6 +3,22 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-22 — Clipboard filename text is not the copied image
+**Broke:** pasting screenshots could insert only a filename, leaving agents unable
+to read the image. Native paste preferred text and ignored Finder file URLs;
+browser handling ran after xterm's text paste handler.
+**Rule:** resolve image/file representations first only for terminal targets,
+capture browser image paste before text handlers, and report save/decode errors.
+Check readable bytes, mixed clipboard data, normal editor paste, and actual
+Claude Code/Codex image reads. A local path does not prove remote attachment support.
+
+## 2026-09-22 — Completed helper history must not crowd out active work
+**Broke:** completed helpers accumulated as permanently expanded sidebar rows.
+**Cause:** active and completed helpers shared one unconditional list.
+**Rule:** leave active helpers visible and retain completed rows behind an
+accessible per-session count, collapsed by default. Check independent keyboard
+expansion with real counts and preserve prompts when running helpers finish.
+
 ## 2026-09-22 — Manual backup UI must keep job state separate from a click
 **Broke:** the released backup API had no owner-facing controls or visible result.
 **Cause:** backend delivery was treated as the feature while its approved UI waited.

@@ -142,3 +142,37 @@ test("terminal: attach lands at the bottom and later output preserves scrollback
     await apiDelete(`/sessions/${key}`);
   }
 });
+
+test("terminal: mixed image paste sends a readable saved image path without filename text", async ({ page }) => {
+  const key = await launchCat("image-paste-check");
+  try {
+    await page.goto(base());
+    await page.locator(".rd-row-name", { hasText: "image-paste-check" }).click();
+    await waitTerminalReady(page);
+    const response = page.waitForResponse((r) => r.url().endsWith("/paste-image") && r.request().method() === "POST");
+    await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").evaluate((el) => {
+      const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "FILENAME_MUST_NOT_LEAK.png");
+      clipboardData.items.add(new File([bytes], "FILENAME_MUST_NOT_LEAK.png", { type: "image/png" }));
+      el.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+    });
+    const saved = await response;
+    expect(saved.status()).toBe(200);
+    const { path } = await saved.json() as { path: string };
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(path).subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+    await expect(visibleRows(page)).toContainText("paste-");
+    expect((await visibleRows(page).allTextContents()).join("")).not.toContain("FILENAME_MUST_NOT_LEAK");
+    // Native bridge must target the focused terminal and reject a changed target.
+    expect(await page.evaluate((session) => window.__rtPasteTarget?.() === session, key)).toBe(true);
+    expect(await page.evaluate(() => window.__rtPasteImage?.("/tmp/WRONG_TARGET.png", "other-session"))).toBe(false);
+    await page.evaluate(() => {
+      const input = document.createElement("input"); input.id = "paste-field-check";
+      document.body.append(input); input.focus();
+      window.__rtPaste?.("plain field text");
+    });
+    expect(await page.evaluate(() => window.__rtPasteTarget?.())).toBe("field");
+    await expect(page.locator("#paste-field-check")).toHaveValue("plain field text");
+  } finally { await apiDelete(`/sessions/${key}`); }
+});

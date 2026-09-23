@@ -1,3 +1,4 @@
+import { HelperAgents } from "./HelperAgents";
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
 import { Duck, poseFor } from "./Duck";
@@ -774,26 +775,7 @@ function TreeRow({
           {" · "}
           {s.eventCount} ev
         </div>
-        {s.subagents && s.subagents.length > 0 && (
-          <ul className="rd-subagents">
-            {s.subagents.map((sa) => (
-              <li
-                key={sa.agent_id}
-                className={`rd-subagent st-${sa.state}`}
-                title={sa.agent_prompt ?? undefined}
-              >
-                <span className="rd-subagent-twig">↳</span>
-                <span className={`dot ${sa.state === "running" ? "on" : ""}`} />
-                <span className="rd-subagent-type">
-                  {sa.agent_type ?? "subagent"}
-                </span>
-                {sa.agent_prompt && (
-                  <span className="rd-subagent-task">{sa.agent_prompt}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+        {s.subagents && <HelperAgents agents={s.subagents} sessionKey={s.key} />}
         <div className="rd-row-actions">
           {!ended && (
             <button

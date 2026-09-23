@@ -3,7 +3,8 @@ import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { authHeaders } from "./api";
-import { bindClipboardBridge, releaseClipboardBridge } from "./clipboardBridge";
+import { bindClipboardBridge, imagePathText, releaseClipboardBridge } from "./clipboardBridge";
+import { useToast } from "./ui";
 import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 
 // A real terminal for a launched session: xterm.js over the
@@ -22,6 +23,9 @@ export function Terminal({
   sessionKey: string;
   theme?: string;
 }) {
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Xterm | null>(null);
 
@@ -54,7 +58,7 @@ export function Terminal({
     term.loadAddon(fit);
     term.open(host);
     fit.fit();
-    bindClipboardBridge(term); // Mac-app Edit menu targets the focused terminal
+    bindClipboardBridge(term, sessionKey); // Mac-app Edit menu targets the focused terminal
     // Focus xterm's hidden input directly. term.focus() alone proved unreliable
     // on mount (after selecting an agent, focus stayed on <body>, so keystrokes
     // went nowhere and you had to click the terminal first). Targeting the
@@ -155,31 +159,29 @@ export function Terminal({
         ws.send(new TextEncoder().encode(data));
     });
 
-    // Pasting an IMAGE (screenshot, browser "Copy Image") carries no text —
-    // xterm would silently drop it. Save it server-side and type the file
-    // path instead: both claude and codex read image paths as attachments
-    // (the iTerm paste-an-image experience). Text pastes proceed untouched.
-    const onPasteImage = (e: ClipboardEvent) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      const image = [...items].find((i) => i.type.startsWith("image/"));
-      if (!image) return; // plain text — xterm's normal paste handles it
-      e.preventDefault();
+    // Capture image paste before xterm's normal text handler. Many clipboard
+    // entries carry both image bytes and a filename; only send the saved image.
+    const onPasteImage = (event: ClipboardEvent) => {
+      const image = [...(event.clipboardData?.items ?? [])].find((item) => item.kind === "file" && item.type.startsWith("image/"));
+      if (!image) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
       const blob = image.getAsFile();
-      if (!blob) return;
-      fetch("/paste-image", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": blob.type }),
-        body: blob,
-      })
-        .then((r) => r.json())
-        .then((d: { path?: string }) => {
-          if (d.path && ws?.readyState === WebSocket.OPEN)
-            ws.send(new TextEncoder().encode(d.path + " "));
-        })
-        .catch(() => undefined);
+      const socket = ws;
+      if (!blob || !socket || socket.readyState !== WebSocket.OPEN) {
+        toastRef.current("Image paste failed: select a connected terminal and try again.", "err");
+        return;
+      }
+      void fetch("/paste-image", {
+        method: "POST", headers: authHeaders({ "Content-Type": blob.type }), body: blob,
+      }).then(async (response) => {
+        const data = await response.json() as { path?: string; error?: string };
+        if (!response.ok || !data.path) throw new Error(data.error ?? "Could not save clipboard image");
+        if (disposed || ws !== socket || socket.readyState !== WebSocket.OPEN) throw new Error("Terminal reconnected. Paste the image again.");
+        term.paste(imagePathText(data.path));
+      }).catch((error: Error) => toastRef.current(`Image paste failed: ${error.message}`, "err"));
     };
-    term.textarea?.addEventListener("paste", onPasteImage);
+    host.addEventListener("paste", onPasteImage, true);
 
     // Shift+Enter inserts a newline instead of submitting. xterm would send
     // plain \r for it — indistinguishable from Enter — so intercept and send
@@ -212,7 +214,7 @@ export function Terminal({
       host.removeEventListener("pointerdown", cancelAttachScroll);
       host.removeEventListener("touchstart", cancelAttachScroll);
       host.removeEventListener("keydown", cancelForNavigation);
-      term.textarea?.removeEventListener("paste", onPasteImage);
+      host.removeEventListener("paste", onPasteImage, true);
       onData.dispose();
       if (ws) {
         ws.onclose = null;

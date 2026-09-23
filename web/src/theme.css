@@ -2711,3 +2711,8 @@ select {
 @keyframes duck-ready-bounce { 0%,50%,100% { transform: translateY(0); } 25% { transform: translateY(-4px); } }
 @keyframes duck-badge-fade { 0%,85% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .rd-duck-celebrating > .rd-duck { animation: none; } }
+
+.rd-completed-helpers { margin: 4px 0 4px 30px; }
+.rd-completed-helpers > summary { color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 4px 0; width: fit-content; }
+.rd-completed-helpers > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+.rd-completed-helpers .rd-subagents { margin-left: 0; }
