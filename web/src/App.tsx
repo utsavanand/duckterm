@@ -195,21 +195,6 @@ function Dashboard() {
     [agents],
   );
 
-  // Terminals stay mounted, so switching agents only flips which slot is shown —
-  // the Terminal's own mount-focus doesn't fire. Focus the newly-visible slot's
-  // input so you can type into it right after switching.
-  useEffect(() => {
-    if (!selectedKey) return;
-    const focus = () => {
-      const ta = document.querySelector<HTMLTextAreaElement>(
-        `.rd-terminal-slot[data-key="${selectedKey}"] .xterm-helper-textarea`,
-      );
-      ta?.focus();
-    };
-    const t = setTimeout(focus, 0);
-    return () => clearTimeout(t);
-  }, [selectedKey]);
-
   const labels = useMemo(
     () => Object.fromEntries(sessions.map((s) => [s.key, s.label])),
     [sessions],
@@ -447,7 +432,7 @@ function Dashboard() {
                       : "none",
                 }}
               >
-                <Terminal sessionKey={s.key} theme={themeFor(s)} />
+                <Terminal sessionKey={s.key} active={view === "terminal" && s.key === selectedKey} theme={themeFor(s)} />
               </div>
             ))}
             {view === "terminal" && selected && !selected.ptyOwned && !selected.worktreePath && (

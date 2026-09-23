@@ -3,6 +3,15 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-22 — Attach scrolling misses terminals opened from hidden slots
+**Broke:** opening an existing session still displayed old scrollback after the
+first-frame scroll fix. Sessions stay mounted while hidden, so switching sessions
+or returning to Terminal does not trigger another attachment.
+**Rule:** treat visible activation separately from connection. Fit the visible
+pane, wait for parser/layout, then scroll once; invalidate stale callbacks and
+cancel on user navigation. Never fit hidden slots or scroll on ordinary output
+or resize. Test hidden-session switching and Messages-to-Terminal reopening.
+
 ## 2026-09-22 — Clipboard filename text is not the copied image
 **Broke:** pasting screenshots could insert only a filename, leaving agents unable
 to read the image. Native paste preferred text and ignored Finder file URLs;

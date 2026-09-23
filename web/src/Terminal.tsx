@@ -18,9 +18,11 @@ import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 // the GET API — no token needed (only state-changing POSTs are token-gated).
 export function Terminal({
   sessionKey,
+  active = true,
   theme = DEFAULT_TERM_THEME,
 }: {
   sessionKey: string;
+  active?: boolean;
   theme?: string;
 }) {
   const toast = useToast();
@@ -28,6 +30,7 @@ export function Terminal({
   toastRef.current = toast;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Xterm | null>(null);
+  const activateRef = useRef<((visible: boolean) => void) | null>(null);
 
   // Live theme switch (e.g. toggling the app light/dark): set the new palette
   // and force a full repaint so already-rendered rows recolor immediately,
@@ -57,7 +60,8 @@ export function Terminal({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
-    fit.fit();
+    let visible = active;
+    if (visible) fit.fit();
     bindClipboardBridge(term, sessionKey); // Mac-app Edit menu targets the focused terminal
     // Focus xterm's hidden input directly. term.focus() alone proved unreliable
     // on mount (after selecting an agent, focus stayed on <body>, so keystrokes
@@ -68,7 +72,7 @@ export function Terminal({
       const ta = host.querySelector<HTMLTextAreaElement>(
         ".xterm-helper-textarea",
       );
-      if (ta && document.activeElement !== ta) ta.focus();
+      if (visible && ta && document.activeElement !== ta) ta.focus({ preventScroll: true });
     };
     // Keep the terminal focused so you can type the moment you select an agent.
     // Two things fight us: (1) selecting an agent is a row click that settles
@@ -96,8 +100,15 @@ export function Terminal({
     let attempts = 0; // consecutive failures — drives the backoff
     let disposed = false;
     let attachGeneration = 0;
-    let attachScrollCancelled = false;
-    const cancelAttachScroll = () => { attachScrollCancelled = true; };
+    let replayReady = false;
+    let pendingOpenScroll = false;
+    let openGeneration = 0;
+    let scrollFrame: number | undefined;
+    const cancelAttachScroll = () => {
+      pendingOpenScroll = false;
+      ++openGeneration;
+      window.cancelAnimationFrame(scrollFrame ?? 0);
+    };
     const cancelForNavigation = (event: KeyboardEvent) => {
       if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown"].includes(event.key)) cancelAttachScroll();
     };
@@ -112,18 +123,46 @@ export function Terminal({
       ws.send(JSON.stringify({ resize: { cols: term.cols, rows: term.rows } }));
     };
 
+    // Hidden terminals have no usable dimensions. Fit only after activation,
+    // then wait for queued parser work and the browser layout before scrolling.
+    // Ordinary output and visible resizes must not interrupt scrollback reading.
+    const settleOpening = () => {
+      if (!visible || !host.clientWidth || !host.clientHeight) return;
+      fit.fit();
+      sendResize();
+      if (!pendingOpenScroll || !replayReady) return;
+      const generation = ++openGeneration;
+      term.write("", () => {
+        if (disposed || generation !== openGeneration) return;
+        window.cancelAnimationFrame(scrollFrame ?? 0);
+        scrollFrame = window.requestAnimationFrame(() => {
+          if (disposed || !visible || !pendingOpenScroll || generation !== openGeneration) return;
+          term.scrollToBottom();
+          pendingOpenScroll = false;
+          focusTerm();
+        });
+      });
+    };
+    activateRef.current = (nextVisible) => {
+      visible = nextVisible;
+      cancelAttachScroll();
+      pendingOpenScroll = visible;
+      if (visible) { settleOpening(); focusTerm(); }
+    };
+
     const connect = () => {
       const generation = ++attachGeneration;
       let firstFrame = true;
-      attachScrollCancelled = false;
+      replayReady = false;
+      cancelAttachScroll();
+      pendingOpenScroll = visible;
       ws = new WebSocket(
         `${proto}://${location.host}/sessions/${sessionKey}/terminal`,
       );
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
         attempts = 0; // live again — future retries start fast
-        fit.fit();
-        sendResize();
+        settleOpening();
         focusTerm();
       };
       ws.onmessage = (ev) => {
@@ -135,7 +174,9 @@ export function Terminal({
           // subscribe_bytes sends the complete attach snapshot as its first
           // frame. Wait for xterm's parser, not a timer or later live writes.
           term.write(new Uint8Array(ev.data as ArrayBuffer), () => {
-            if (!disposed && generation === attachGeneration && !attachScrollCancelled) term.scrollToBottom();
+            if (disposed || generation !== attachGeneration) return;
+            replayReady = true;
+            settleOpening();
           });
         } else {
           term.write(new Uint8Array(ev.data as ArrayBuffer));
@@ -198,14 +239,13 @@ export function Terminal({
     });
 
     // Reflow the agent's TUI when the pane resizes.
-    const observer = new ResizeObserver(() => {
-      fit.fit();
-      sendResize();
-    });
+    const observer = new ResizeObserver(settleOpening);
     observer.observe(host);
 
     return () => {
       disposed = true;
+      activateRef.current = null;
+      cancelAttachScroll();
       window.clearTimeout(retry);
       observer.disconnect();
       host.removeEventListener("focusout", refocusOnBlur);
@@ -228,6 +268,8 @@ export function Terminal({
     // rebuild the terminal on every theme switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionKey]);
+
+  useEffect(() => { activateRef.current?.(active); }, [active, sessionKey]);
 
   // height:0 + flex:1 makes the host fill the pane with a DEFINITE height, so
   // xterm scrolls its buffer internally instead of growing the page. (A

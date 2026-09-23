@@ -176,3 +176,30 @@ test("terminal: mixed image paste sends a readable saved image path without file
     await expect(page.locator("#paste-field-check")).toHaveValue("plain field text");
   } finally { await apiDelete(`/sessions/${key}`); }
 });
+
+test("terminal: opening a hidden session and returning from another view lands at the latest output", async ({ page }) => {
+  const keys: string[] = [];
+  try {
+    for (const name of ["reopen-one", "reopen-two"]) {
+      const result = await apiPost("/sessions/launch", {
+        command: "sh -c 'i=0; while [ \"$i\" -lt 250 ]; do echo HISTORY_$i; i=$((i+1)); done; echo REOPEN_LAST_LINE; exec cat'",
+        cwd: "/tmp", name, in_terminal: false, test: true,
+      });
+      expect(result.status).toBe(200); keys.push(result.body.session_key as string);
+    }
+    await page.goto(base());
+    const viewport = page.locator(".rd-terminal-slot:visible .xterm-viewport");
+    for (const name of ["reopen-one", "reopen-two", "reopen-one"]) {
+      await page.locator(".rd-row-name", { hasText: name }).click();
+      await expect(visibleRows(page)).toContainText("REOPEN_LAST_LINE");
+      await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(3);
+      await page.locator(".rd-terminal-slot:visible .xterm-screen").hover();
+      await page.mouse.wheel(0, -1500);
+      await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeGreaterThan(300);
+    }
+    await page.getByRole("button", { name: "Messages", exact: true }).click();
+    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    await expect(visibleRows(page)).toContainText("REOPEN_LAST_LINE");
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(3);
+  } finally { for (const key of keys) await apiDelete(`/sessions/${key}`); }
+});
