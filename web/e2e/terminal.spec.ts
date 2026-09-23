@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiPost, base } from "./helpers";
+import { apiDelete, apiPost, base } from "./helpers";
 
 // Drives the REAL terminal in a REAL browser: launches PTY sessions, opens the
 // terminal tab, types into xterm, and switches between agents. Catches the
@@ -109,4 +109,36 @@ test("terminal: Shift+Enter sends a newline, not a submit", async ({ page }) => 
   await expect(visibleRows(page)).toContainText("BBB", { timeout: 5_000 });
   const joined = (await visibleRows(page).allTextContents()).join("\n");
   expect(joined.split("AAA").length - 1).toBe(2);
+});
+
+
+test("terminal: attach lands at the bottom and later output preserves scrollback reading", async ({ page }) => {
+  const launched = await apiPost("/sessions/launch", {
+    command: "sh -c 'i=0; while [ \"$i\" -lt 250 ]; do echo HISTORY_$i; i=$((i+1)); done; echo ATTACH_LAST_LINE; exec cat'",
+    cwd: "/tmp", name: "scroll-review", in_terminal: false, test: true,
+  });
+  expect(launched.status).toBe(200);
+  const key = launched.body.session_key as string;
+  try {
+    await page.goto(base());
+    await page.locator(".rd-row-name", { hasText: "scroll-review" }).click();
+    await expect(visibleRows(page)).toContainText("ATTACH_LAST_LINE");
+    const viewport = page.locator(".rd-terminal-slot:visible .xterm-viewport");
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(3);
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(500);
+    await page.locator(".rd-terminal-slot:visible .xterm-screen").hover();
+    await page.mouse.wheel(0, -1500);
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeGreaterThan(300);
+    const before = await viewport.evaluate((el) => el.scrollTop);
+    // Server-side input produces real output without a browser keystroke,
+    // which xterm intentionally treats as a request to return to the prompt.
+    const height = await viewport.evaluate((el) => el.scrollHeight);
+    expect((await apiPost(`/sessions/${key}/input`, { text: "LATER_OUTPUT\n" })).status).toBe(200);
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight)).toBeGreaterThan(height);
+    expect(Math.abs(await viewport.evaluate((el) => el.scrollTop) - before)).toBeLessThan(3);
+    await page.setViewportSize({ width: 1250, height: 760 });
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeGreaterThan(300);
+  } finally {
+    await apiDelete(`/sessions/${key}`);
+  }
 });

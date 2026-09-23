@@ -91,6 +91,17 @@ export function Terminal({
     let retry: number | undefined;
     let attempts = 0; // consecutive failures — drives the backoff
     let disposed = false;
+    let attachGeneration = 0;
+    let attachScrollCancelled = false;
+    const cancelAttachScroll = () => { attachScrollCancelled = true; };
+    const cancelForNavigation = (event: KeyboardEvent) => {
+      if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown"].includes(event.key)) cancelAttachScroll();
+    };
+    host.addEventListener("wheel", cancelAttachScroll, { passive: true });
+    host.addEventListener("pointerdown", cancelAttachScroll);
+    host.addEventListener("touchstart", cancelAttachScroll, { passive: true });
+    host.addEventListener("keydown", cancelForNavigation);
+
 
     const sendResize = () => {
       if (ws?.readyState !== WebSocket.OPEN) return;
@@ -98,6 +109,9 @@ export function Terminal({
     };
 
     const connect = () => {
+      const generation = ++attachGeneration;
+      let firstFrame = true;
+      attachScrollCancelled = false;
       ws = new WebSocket(
         `${proto}://${location.host}/sessions/${sessionKey}/terminal`,
       );
@@ -112,7 +126,16 @@ export function Terminal({
         // Raw PTY bytes. xterm's write() takes a Uint8Array and decodes UTF-8
         // itself — passing bytes (not a decoded string) keeps multi-byte
         // sequences split across frames intact.
-        term.write(new Uint8Array(ev.data as ArrayBuffer));
+        if (firstFrame) {
+          firstFrame = false;
+          // subscribe_bytes sends the complete attach snapshot as its first
+          // frame. Wait for xterm's parser, not a timer or later live writes.
+          term.write(new Uint8Array(ev.data as ArrayBuffer), () => {
+            if (!disposed && generation === attachGeneration && !attachScrollCancelled) term.scrollToBottom();
+          });
+        } else {
+          term.write(new Uint8Array(ev.data as ArrayBuffer));
+        }
       };
       ws.onclose = () => {
         if (disposed) return;
@@ -185,6 +208,10 @@ export function Terminal({
       observer.disconnect();
       host.removeEventListener("focusout", refocusOnBlur);
       host.removeEventListener("mousedown", focusOnClick);
+      host.removeEventListener("wheel", cancelAttachScroll);
+      host.removeEventListener("pointerdown", cancelAttachScroll);
+      host.removeEventListener("touchstart", cancelAttachScroll);
+      host.removeEventListener("keydown", cancelForNavigation);
       term.textarea?.removeEventListener("paste", onPasteImage);
       onData.dispose();
       if (ws) {

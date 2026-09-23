@@ -3,6 +3,21 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-22 — Attach positioning must not become continuous auto-scroll
+**Broke:** attaching to a terminal could leave its viewport above the latest output.
+**Cause:** xterm parsed the replay asynchronously with no explicit attach position.
+**Rule:** scroll once after the first replay frame is parsed, cancel if the user
+starts navigating, and reject callbacks from old connections. Never scroll on
+ordinary writes or resize. Verify long history, manual scrolling, and later output.
+
+## 2026-09-22 — Completion feedback must distinguish live transitions from replay
+**Broke:** session ducks had no completion feedback; naive animation on idle state
+would celebrate historical sessions every time the page loaded.
+**Cause:** persisted state and SSE replay are not newly witnessed turn completion.
+**Rule:** detect live turn transitions centrally, suppress seeds/replay/repeated
+states, expire feedback after four seconds, and disable jumps for reduced motion.
+Stop ends the turn immediately even while the existing busy display grace settles.
+
 ## 2026-09-21 — Manual backups must not block the dashboard
 **Broke:** the shipped backup CLI had no owner-controlled dashboard operation.
 **Cause:** archive creation and cloud upload are synchronous, while the dashboard

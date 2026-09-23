@@ -1,4 +1,5 @@
-import { SessionView } from "./types";
+import { useEffect, useState } from "react";
+import { DuckCelebration, SessionView } from "./types";
 
 // The rubber duck session mascot, v4 (user-approved 2026-09-20): no water —
 // the duck fills the frame over a soft ground shadow.
@@ -56,8 +57,18 @@ const SHADOW = (cx: number) => (
   <ellipse className="duck-shadow" cx={cx} cy="56" rx="20" ry="2.6" fill="#000" />
 );
 
-export function Duck({ pose, size = 24 }: { pose: DuckPose; size?: number }) {
+export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: number; celebrating?: DuckCelebration }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!celebrating) return;
+    setNow(Date.now());
+    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, celebrating.startedAt + 4000 - Date.now()));
+    return () => clearTimeout(timer);
+  }, [celebrating]);
+  const active = celebrating && celebrating.startedAt + 4000 > now ? celebrating : undefined;
   return (
+    <span className={`rd-duck-wrap${active ? ` rd-duck-celebrating rd-duck-celebrating-${active.kind}` : ""}`} style={{ width: size, height: size }}>
+
     <svg
       className={`rd-duck rd-duck-${pose}`}
       viewBox="2 4 60 56"
@@ -336,5 +347,7 @@ export function Duck({ pose, size = 24 }: { pose: DuckPose; size?: number }) {
         </>
       )}
     </svg>
+    {active && <span key={active.startedAt} className="rd-duck-celebration-badge" role="img" aria-label={active.kind === "done" ? "Turn complete" : "Ready for you"}>{active.kind === "done" ? "✅" : "👋"}</span>}
+    </span>
   );
 }

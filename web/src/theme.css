@@ -2701,3 +2701,13 @@ select {
 .rd-group-phone:hover { background: var(--bg-soft); }
 .rd-group-phone:focus-visible { outline: 2px solid var(--idle); outline-offset: 2px; }
 .rd-folder-inbox { padding: 0; }
+
+/* Transient feedback for a turn witnessed finishing in this browser. */
+.rd-duck-wrap { display: inline-block; position: relative; flex-shrink: 0; vertical-align: middle; }
+.rd-duck-celebrating > .rd-duck { animation: duck-complete-jump .8s ease-in-out 5; }
+.rd-duck-celebrating-ready > .rd-duck { animation-name: duck-ready-bounce; }
+.rd-duck-celebration-badge { position: absolute; right: -6px; top: -7px; font-size: 12px; line-height: 1; pointer-events: none; animation: duck-badge-fade 4s linear both; }
+@keyframes duck-complete-jump { 0%,45%,100% { transform: translateY(0) rotate(0); } 22% { transform: translateY(-7px) rotate(-8deg); } }
+@keyframes duck-ready-bounce { 0%,50%,100% { transform: translateY(0); } 25% { transform: translateY(-4px); } }
+@keyframes duck-badge-fade { 0%,85% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .rd-duck-celebrating > .rd-duck { animation: none; } }

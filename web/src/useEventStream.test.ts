@@ -163,3 +163,31 @@ describe("seed keeps ownership flags authoritative", () => {
     expect(state.sessions.get("k")!.launched).toBe(true);
   });
 });
+
+describe("witnessed turn celebrations", () => {
+  const act = (state: State, type: string, ts: number, replay = false) => reduce(state, {
+    kind: "event", event: ev({ event_type: type, _ts: ts, _id: String(ts) }), replay, receivedAt: ts,
+  });
+  it("celebrates a busy turn finishing once, without waiting for the display grace", () => {
+    const busy = act(emptyState(), "PreToolUse", 10);
+    const done = act(busy, "Stop", 20);
+    expect(done.sessions.get("s1")?.celebration).toEqual({ kind: "done", startedAt: 20 });
+    expect(act(done, "Stop", 30).sessions.get("s1")?.celebration).toEqual({ kind: "done", startedAt: 20 });
+    expect(act(done, "UserPromptSubmit", 40).sessions.get("s1")?.celebration).toBeUndefined();
+  });
+  it("celebrates busy to waiting only once", () => {
+    const busy = act(emptyState(), "UserPromptSubmit", 10);
+    const ready = act(busy, "PermissionRequest", 20);
+    expect(ready.sessions.get("s1")?.celebration).toEqual({ kind: "ready", startedAt: 20 });
+    expect(act(ready, "Notification", 30).sessions.get("s1")?.celebration).toEqual({ kind: "ready", startedAt: 20 });
+  });
+  it("never celebrates initial state, historical replay, reload, or idle-to-idle", () => {
+    expect(act(emptyState(), "Stop", 10).sessions.get("s1")?.celebration).toBeUndefined();
+    const replayBusy = act(emptyState(), "SessionStart", 10, true);
+    const replayDone = act(replayBusy, "Stop", 20, true);
+    expect(replayDone.sessions.get("s1")?.celebration).toBeUndefined();
+    expect(act(replayDone, "Stop", 30).sessions.get("s1")?.celebration).toBeUndefined();
+    const seed = reduce(emptyState(), { kind: "seed", sessions: [{ session_key: "s1", state: "idle", event_count: 5, started_at: 1, updated_at: 20 }] });
+    expect(act(seed, "Stop", 30).sessions.get("s1")?.celebration).toBeUndefined();
+  });
+});

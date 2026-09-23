@@ -33,7 +33,13 @@ export type SessionState =
   | "interrupted"
   | "archived";
 
+export interface DuckCelebration {
+  kind: "done" | "ready";
+  startedAt: number;
+}
+
 export interface SessionView {
+  celebration?: DuckCelebration; // browser-only; never restored from persisted rows
   inboxPending?: number;
   key: string;
   label: string;

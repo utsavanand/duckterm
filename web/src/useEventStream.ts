@@ -12,7 +12,7 @@ type InitFrame = { type: "init"; events: DucktermEvent[] };
 
 export type Action =
   | { kind: "seed"; sessions: PersistedSession[] }
-  | { kind: "event"; event: DucktermEvent }
+  | { kind: "event"; event: DucktermEvent; replay?: boolean; receivedAt?: number }
   | { kind: "remove"; keys: string[] }
   | { kind: "patch"; key: string; fields: Partial<SessionView> };
 
@@ -98,7 +98,23 @@ export function reduce(state: State, action: Action): State {
     tombstoned.delete(key);
     return { sessions: applyEvent(state.sessions, action.event), tombstoned };
   }
-  return { ...state, sessions: applyEvent(state.sessions, action.event) };
+  const sessions = applyEvent(state.sessions, action.event);
+  const previous = key ? state.sessions.get(key) : undefined;
+  const current = key ? sessions.get(key) : undefined;
+  if (previous && current) {
+    // Stop completes a turn immediately even though the displayed busy label
+    // has a settling grace. Celebrate the witnessed turn transition once,
+    // never historical SSE replay, seeds, or the later grace-period expiry.
+    const activity = (session: SessionView) => session.state === "busy" && session.idleSince !== undefined ? "idle" : session.state;
+    const before = activity(previous);
+    const after = activity(current);
+    if (!action.replay && before === "busy" && (after === "idle" || after === "waiting") && action.event._ts >= previous.updatedAt) {
+      current.celebration = { kind: after === "idle" ? "done" : "ready", startedAt: action.receivedAt ?? action.event._ts };
+    } else if (after === "busy" || action.replay) {
+      current.celebration = undefined;
+    }
+  }
+  return { ...state, sessions };
 }
 
 export function useEventStream(): {
@@ -142,13 +158,13 @@ export function useEventStream(): {
     source.onmessage = (msg) => {
       const data: unknown = JSON.parse(msg.data);
       if (isInit(data)) {
-        data.events.forEach((event) => dispatch({ kind: "event", event }));
+        data.events.forEach((event) => dispatch({ kind: "event", event, replay: true }));
         setRecentEvents((prev) =>
           [...data.events].reverse().concat(prev).slice(0, 100),
         );
       } else {
         const event = data as DucktermEvent;
-        dispatch({ kind: "event", event });
+        dispatch({ kind: "event", event, receivedAt: Date.now() });
         setRecentEvents((prev) => [event, ...prev].slice(0, 100));
         // Sub-agents are embedded in the /sessions payload, not folded in by
         // applyEvent (which only tracks SessionStart). A sub-agent lifecycle
