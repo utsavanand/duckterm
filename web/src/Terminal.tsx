@@ -138,8 +138,19 @@ export function Terminal({
         scrollFrame = window.requestAnimationFrame(() => {
           if (disposed || !visible || !pendingOpenScroll || generation !== openGeneration) return;
           term.scrollToBottom();
-          pendingOpenScroll = false;
-          focusTerm();
+          // xterm synchronizes its DOM viewport on its next render frame.
+          // Finish after that frame so a hidden-pane reflow cannot restore an
+          // older scrollbar position after our first scroll.
+          scrollFrame = window.requestAnimationFrame(() => {
+            if (disposed || !visible || !pendingOpenScroll || generation !== openGeneration) return;
+            // At the buffer bottom xterm skips its scroll event, even when
+            // the DOM scrollbar still holds the pre-reflow height. Moving one
+            // line and back in this frame forces its public scroll API to sync.
+            term.scrollLines(-1);
+            term.scrollToBottom();
+            pendingOpenScroll = false;
+            focusTerm();
+          });
         });
       });
     };

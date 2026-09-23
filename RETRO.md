@@ -9,7 +9,10 @@ first-frame scroll fix. Sessions stay mounted while hidden, so switching session
 or returning to Terminal does not trigger another attachment.
 **Rule:** treat visible activation separately from connection. Fit the visible
 pane, wait for parser/layout, then scroll once; invalidate stale callbacks and
-cancel on user navigation. Never fit hidden slots or scroll on ordinary output
+cancel on user navigation. xterm skips scroll events at an unchanged buffer
+bottom: explicitly synchronize its public scroll API after the reflow frame so
+the DOM scrollbar cannot retain an older buffer height. Never fit hidden slots
+or scroll on ordinary output
 or resize. Test hidden-session switching and Messages-to-Terminal reopening.
 
 ## 2026-09-22 — Clipboard filename text is not the copied image
