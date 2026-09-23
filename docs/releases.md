@@ -7,7 +7,7 @@ says what's on each tier, how to install it, and what to test. Pair it with
 <!-- CURRENT-VERSIONS:START (auto-updated by scripts/release.sh — do not edit by hand) -->
 | Tier | Version | Install from |
 |---|---|---|
-| **prod** (stable, daily) | `v0.4.41` | https://github.com/utsavanand/duckterm/releases/tag/v0.4.41 |
+| **prod** (stable, daily) | `v0.4.42` | https://github.com/utsavanand/duckterm/releases/tag/v0.4.42 |
 | **beta** (staging, testing) | `v0.4.0b1` | https://github.com/utsavanand/duckterm/releases/tag/v0.4.0b1 |
 | **dev** (source) | `main` | git checkout |
 <!-- CURRENT-VERSIONS:END -->
