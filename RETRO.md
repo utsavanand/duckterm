@@ -3,6 +3,14 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-22 — Manual backup UI must keep job state separate from a click
+**Broke:** the released backup API had no owner-facing controls or visible result.
+**Cause:** backend delivery was treated as the feature while its approved UI waited.
+**Rule:** expose the remembered destination and actual background-job result;
+never start on open, guard duplicate clicks, and confirm status after a lost POST
+response. Exercise local archives with isolated transcript roots, never real
+transcripts or a cloud upload in browser tests.
+
 ## 2026-09-22 — Attach positioning must not become continuous auto-scroll
 **Broke:** attaching to a terminal could leave its viewport above the latest output.
 **Cause:** xterm parsed the replay asynchronously with no explicit attach position.

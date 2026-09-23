@@ -126,7 +126,28 @@ export interface BroadcastResult {
   results: (BroadcastTarget & { status: "queued" | "skipped" })[];
 }
 
+export interface BackupState {
+  destination: string | null;
+  job: {
+    id: string;
+    status: "running" | "succeeded" | "failed" | "interrupted";
+    destination: string;
+    started_at: number;
+    finished_at: number | null;
+    archive_path: string | null;
+    result: string | null;
+    error: string | null;
+  } | null;
+}
+
 export const api = {
+  backupStatus: async (): Promise<BackupState> => {
+    const res = await fetch("/backup", { cache: "no-store", headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Could not load backup status");
+    return data;
+  },
+  startBackup: (destination: string) => post<BackupState>("/backup", { destination }),
   broadcastTargets: async (folder: string): Promise<{ targets: BroadcastTarget[] }> => {
     const res = await fetch(`/folders/${encodeURIComponent(folder)}/broadcast`, { cache: "no-store", headers: authHeaders() });
     const data = await res.json();

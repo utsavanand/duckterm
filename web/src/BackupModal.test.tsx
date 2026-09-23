@@ -1,0 +1,43 @@
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { api, BackupState } from "./api";
+import { BackupModal } from "./BackupModal";
+vi.mock("./api", () => ({ api: { backupStatus: vi.fn(), startBackup: vi.fn() } }));
+afterEach(() => { cleanup(); vi.resetAllMocks(); });
+const state: BackupState = { destination: "gs://example/backups", job: null };
+const running: BackupState = { ...state, job: { id: "1", status: "running", destination: state.destination!, started_at: 1, finished_at: null, archive_path: null, result: null, error: null } };
+it("loads the remembered destination without starting a backup and prevents duplicate starts", async () => {
+  vi.mocked(api.backupStatus).mockResolvedValue(state);
+  let finish!: (value: BackupState) => void;
+  vi.mocked(api.startBackup).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  render(<BackupModal onClose={() => {}} />);
+  const field = await screen.findByLabelText("Backup destination");
+  await screen.findByDisplayValue(state.destination!);
+  expect(api.startBackup).not.toHaveBeenCalled();
+  const button = screen.getByRole("button", { name: "Back up now" });
+  fireEvent.click(button); fireEvent.click(button);
+  expect(api.startBackup).toHaveBeenCalledTimes(1);
+  await act(async () => { finish(running); });
+  expect(field).toBeDisabled();
+  expect(screen.getByText(/continues if you close/)).toBeVisible();
+});
+it("shows the retained local archive after cloud failure", async () => {
+  vi.mocked(api.backupStatus).mockResolvedValue({ ...running, job: { ...running.job!, status: "failed", error: "Upload failed", archive_path: "/private/backup.tar.gz" } });
+  render(<BackupModal onClose={() => {}} />);
+  expect(await screen.findByText("Backup failed")).toBeVisible();
+  expect(screen.getByText("Local archive retained at /private/backup.tar.gz")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Back up now" })).toBeEnabled();
+});
+it("does not retry a start whose outcome cannot be confirmed", async () => {
+  vi.mocked(api.backupStatus).mockResolvedValueOnce(state).mockRejectedValue(new Error("offline"));
+  vi.mocked(api.startBackup).mockRejectedValue(new Error("Response lost"));
+  render(<BackupModal onClose={() => {}} />);
+  await screen.findByDisplayValue(state.destination!);
+  fireEvent.click(screen.getByRole("button", { name: "Back up now" }));
+  expect(await screen.findByText(/Confirm the current backup status/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Back up now" })).toBeDisabled();
+  vi.mocked(api.backupStatus).mockResolvedValue(running);
+  fireEvent.click(screen.getByRole("button", { name: "Refresh status" }));
+  expect(await screen.findByText(/continues if you close/)).toBeVisible();
+  expect(api.startBackup).toHaveBeenCalledTimes(1);
+});

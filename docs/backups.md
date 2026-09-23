@@ -42,8 +42,12 @@ than silently publishing an incomplete archive.
 
 ## Manual dashboard API
 
-The topbar interface is owned by UI-dev. Its backend uses owner-authenticated
-routes; agent bearer credentials receive 403.
+Use **Back up to remote** in the topbar to review the remembered destination and
+start a backup explicitly. The dialog shows progress, the archive/upload result,
+and errors. Closing it does not cancel an active job; reopen it to see the result.
+Opening the dialog alone never starts a backup.
+
+The backend uses owner-authenticated routes; agent bearer credentials receive 403.
 
 - `GET /backup` returns `{destination, job}`. Both start as null.
 - `PUT /backup {destination}` remembers a local path or `gs://bucket/prefix`

@@ -7,6 +7,7 @@ import { ContextPanel } from "./ContextPanel";
 import { FleetChat } from "./FleetChat";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
+import { BackupModal } from "./BackupModal";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
 import { InboxView } from "./InboxView";
@@ -52,7 +53,7 @@ function Dashboard() {
   const { theme, resolved: mode, cycle: cycleTheme } = useTheme();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
   >(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [forkKey, setForkKey] = useState<string | null>(null);
@@ -312,6 +313,9 @@ function Dashboard() {
         >
           Harnesses
         </button>
+        <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setModal("backup")}>
+          Back up to remote
+        </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
           onClick={() => setModal("folder")}
@@ -511,6 +515,7 @@ function Dashboard() {
       {modal === "agentsmd" && agentsMdDir && (
         <AgentsMdModal dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
+      {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal
           defaultDir={agentsMdDir}
