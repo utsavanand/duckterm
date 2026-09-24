@@ -1,4 +1,4 @@
-"""One DUCKTERM_INSTANCE isolates a whole RubberTerm instance: home, tmux
+"""One DUCKTERM_INSTANCE isolates a whole DuckTerm instance: home, tmux
 socket, port, and callback URL all derive from it, distinctly per id, while an
 explicit per-facet env var still wins (tests/e2e depend on that)."""
 

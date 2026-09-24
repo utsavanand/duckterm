@@ -481,7 +481,7 @@ class Server:
             else:
                 msg = (
                     "Duckterm server is running, but this install is missing its "
-                    "dashboard — reinstall RubberTerm (pipx reinstall duckterm)."
+                    "dashboard — reinstall DuckTerm (pipx reinstall duckterm)."
                 )
             await _write_response(writer, 200, msg, extra_headers={SELF_PROBE_HEADER: "1"})
             return
@@ -3095,7 +3095,7 @@ def _acquire_home_lock() -> Path:
             other = 0
         if other and other != os.getpid() and _pid_alive(other):
             raise SystemExit(
-                f"another RubberTerm server (pid {other}) already owns "
+                f"another DuckTerm server (pid {other}) already owns "
                 f"{home} — run it with a distinct DUCKTERM_INSTANCE, or stop that one."
             )
         # Stale pidfile (process gone / crashed): reclaim it.

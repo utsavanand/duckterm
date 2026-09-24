@@ -1,4 +1,4 @@
-"""One instance id isolates a whole RubberTerm instance.
+"""One instance id isolates a whole DuckTerm instance.
 
 Before this, four independent env vars (DUCKTERM_HOME, DUCKTERM_TMUX_SOCKET,
 DUCKTERM_PORT, DUCKTERM_URL) each isolated one facet, and getting any one wrong

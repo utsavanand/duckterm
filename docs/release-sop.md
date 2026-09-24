@@ -1,4 +1,4 @@
-# RubberTerm release SOP
+# DuckTerm release SOP
 
 **Three tiers of one product. A fix is written once and flows downhill as it
 earns trust — never rewritten per tier.**

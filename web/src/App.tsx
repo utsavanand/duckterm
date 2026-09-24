@@ -155,8 +155,8 @@ function Dashboard() {
   );
   useEffect(() => {
     document.title = waiting.length
-      ? `(${waiting.length}) RubberTerm`
-      : "RubberTerm";
+      ? `(${waiting.length}) DuckTerm`
+      : "DuckTerm";
     const current = new Set(waiting.map((s) => s.key));
     if (notifyOn) {
       for (const s of waiting) {

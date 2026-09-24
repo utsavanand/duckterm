@@ -2,9 +2,9 @@
 
 ```sh
 duckterm backup
-duckterm backup --to /Volumes/Backup/rubberterm/
-duckterm backup --to ~/Desktop/rubberterm-backup.tar.gz
-duckterm backup --to gs://YOUR_BUCKET/rubberterm/
+duckterm backup --to /Volumes/Backup/duckterm/
+duckterm backup --to ~/Desktop/duckterm-backup.tar.gz
+duckterm backup --to gs://YOUR_BUCKET/duckterm/
 ```
 
 The default destination is `DUCKTERM_HOME/backups` (normally
@@ -76,8 +76,8 @@ Missing `gcloud` or authorization errors are reported in the job result.
 
 ## Restore
 
-1. Install the recorded RubberTerm version or a newer compatible version.
-2. Stop RubberTerm and the agents whose state is being restored. Preserve the
+1. Install the recorded DuckTerm version or a newer compatible version.
+2. Stop DuckTerm and the agents whose state is being restored. Preserve the
    existing data directories before replacing anything.
 3. Extract your own trusted archive into a new private directory. Inspect its
    `manifest.json` and contents before copying them into place.
@@ -85,7 +85,7 @@ Missing `gcloud` or authorization errors are reported in the job result.
    `DUCKTERM_HOME`. Never combine the restored DB with old `db.sqlite-wal` or
    `db.sqlite-shm` files. Put `claude/projects/` back under `~/.claude/projects/`
    and the archived Codex paths back under `~/.codex/` (or your configured roots).
-5. Start RubberTerm with that `DUCKTERM_HOME`. Reauthenticate agent/provider
+5. Start DuckTerm with that `DUCKTERM_HOME`. Reauthenticate agent/provider
    accounts as needed. Session credentials are reissued by normal enrollment.
    Resume conversations individually; processes cannot be restored from a backup.
 

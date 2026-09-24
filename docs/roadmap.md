@@ -1,4 +1,4 @@
-# RubberTerm — Roadmap
+# DuckTerm — Roadmap
 
 As of 2026-09-22, **v0.4.39** shipped. Ordered by when work can land, not by
 importance. Sources: TODO.md, RETRO.md, design docs, and the active peer
@@ -87,7 +87,7 @@ B3. **Folder-rename scope bug in v0.4.39** — reproduced by main-qa in the
      (transfer project changes + supported conversation history, resume
      remotely, keep the local session until success) — newly requested,
      not implemented or proven.
-   - Interactive Mac acceptance in the **RubberTerm Test app** (purple TEST
+   - Interactive Mac acceptance in the **DuckTerm Test app** (purple TEST
      icon, separate bundle identity and local instance; built, branding
      changes uncommitted), then promote.
    - Reboot/failure/TLS-rotation QA and the overnight persistence result
@@ -168,18 +168,30 @@ B3. **Folder-rename scope bug in v0.4.39** — reproduced by main-qa in the
 
 ## Feature requests (user, 2026-09-23)
 
-F1. **Branding consistency.** The web UI and Mac app title say
-    "RubberTerm" (App.tsx:156-157, web/index.html:8); the repo/CLI is
-    `duckterm`; the user asked the UI to read "DuckTerm". **Needs an owner
-    decision on the canonical product name before anyone edits strings** —
-    it appears in the dashboard title, the Mac bundle, README, PyPI package
-    name, and the share domain in
-    [session-sharing-design.md](session-sharing-design.md). One name, then
-    a single sweep.
+F1. **Branding: DuckTerm is canonical** (owner decision 2026-09-23).
+    Dashboard strings done in `6360437` (tab/browser title, backup
+    placeholder). 93 occurrences across 30 files remain, in three tiers —
+    do them in this order, not as one blind sed:
+    - **Safe text**: README, docs/*, AGENTS.md, RETRO.md, code comments.
+      Mechanical; no behavior.
+    - **Mac app**: `mac/build.sh` (APP name, binary name, `CFBundleName`),
+      menu strings in `main.swift`. Renaming the bundle changes install
+      identity — an existing `DuckTerm.app` will not be replaced by a
+      `DuckTerm.app`, so the release notes must tell users to delete the
+      old one. Coordinate with the release SOP and the artifact names in
+      [artifacts-and-releases.md](artifacts-and-releases.md).
+    - **Do not rename**: the `duckterm` PyPI package, the `duckterm` CLI,
+      `DUCKTERM_*` env vars, `~/.duckterm`, and the GitHub repo — these are
+      already "duckterm" and renaming them breaks installs, configs, and
+      hook paths wired to absolute locations (RETRO 2026-09-20).
+    - Settled: the share domain is `share.duckterm.com`
+      ([session-sharing-design.md](session-sharing-design.md)); nothing has
+      been shared publicly, so no migration is owed. The domain still needs
+      registering before the relay is built.
 
 F2. **Settings button (web + Mac app).** A top-level Settings surface; the
     first item is "update the software" (self-update to the latest
-    RubberTerm release). Related to but distinct from the harness Agents
+    DuckTerm release). Related to but distinct from the harness Agents
     tab, which updates the *agent CLIs* — this updates duckterm itself.
 
 F3. **Folder artifacts.** Attach artifacts (markdown/HTML) to a folder, and
@@ -285,5 +297,5 @@ Documented upgrade paths we deliberately do not build yet:
 - Verify the committed tree (fresh worktree, wheel install, import
   entrypoints) after any selective staging, before tagging.
 - App-shell changes get a manual walk of dialogs/clipboard/shortcuts in
-  RubberTerm.app — Chromium e2e cannot see the shell.
+  DuckTerm.app — Chromium e2e cannot see the shell.
 - Interaction-bug fixes ship with a test at the outermost broken layer.

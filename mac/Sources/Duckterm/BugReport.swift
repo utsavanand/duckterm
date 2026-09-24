@@ -15,11 +15,11 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
     private let onSaved: (URL) -> Void
     private let chooseSaveDestination: (NSWindow, @escaping (URL?) -> Void) -> Void
     private let temporary = FileManager.default.temporaryDirectory
-        .appendingPathComponent("RubberTerm-report-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("DuckTerm-report-\(UUID().uuidString)", isDirectory: true)
 
     init(screenshot: NSImage?, chooseSaveDestination: @escaping (NSWindow, @escaping (URL?) -> Void) -> Void = { panel, completion in
         let picker = NSSavePanel()
-        picker.nameFieldStringValue = "RubberTerm-bug-report.zip"
+        picker.nameFieldStringValue = "DuckTerm-bug-report.zip"
         picker.beginSheetModal(for: panel) { response in
             completion(response == .OK ? picker.url : nil)
         }
@@ -29,7 +29,7 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
         self.onSaved = onSaved
         self.chooseSaveDestination = chooseSaveDestination
         recipient = UserDefaults.standard.string(forKey: "SupportEmail")
-            ?? Bundle.main.object(forInfoDictionaryKey: "RubberTermSupportEmail") as? String ?? ""
+            ?? Bundle.main.object(forInfoDictionaryKey: "DuckTermSupportEmail") as? String ?? ""
         if let tiff = screenshot?.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff) {
             self.screenshot = bitmap.representation(using: .png, properties: [:])
         }
@@ -39,7 +39,7 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
         #else
         let architecture = "x86_64"
         #endif
-        diagnostics = "RubberTerm \(version)\n\(ProcessInfo.processInfo.operatingSystemVersionString)\nArchitecture: \(architecture)\n\nRecent app events (up to 100):\n\(AppDiagnostics.shared.text())\n"
+        diagnostics = "DuckTerm \(version)\n\(ProcessInfo.processInfo.operatingSystemVersionString)\nArchitecture: \(architecture)\n\nRecent app events (up to 100):\n\(AppDiagnostics.shared.text())\n"
         super.init()
     }
 
@@ -55,7 +55,7 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
         let view = WKWebView(frame: NSRect(x: 0, y: 0, width: 760, height: 820), configuration: config)
         view.navigationDelegate = self
         let panel = NSPanel(contentRect: view.frame, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        panel.title = "Report a bug — RubberTerm"
+        panel.title = "Report a bug — DuckTerm"
         panel.contentMinSize = NSSize(width: 440, height: 460)
         panel.contentView = view
         panel.isReleasedWhenClosed = false
@@ -166,10 +166,10 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
                     return
                 }
                 service.recipients = [recipient]
-                service.subject = "[RubberTerm bug] " + summary.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
+                service.subject = "[DuckTerm bug] " + summary.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
                 share = service
-                service.perform(withItems: ["RubberTerm bug report\n\n\(summary)\n\n\(details)"] + files.map { $0 as Any })
-                update(status: "Email draft requested. Review the attachments and click Send in your email app. Nothing has been sent by RubberTerm.")
+                service.perform(withItems: ["DuckTerm bug report\n\n\(summary)\n\n\(details)"] + files.map { $0 as Any })
+                update(status: "Email draft requested. Review the attachments and click Send in your email app. Nothing has been sent by DuckTerm.")
             } else { save(directory) }
         } catch { update(status: error.localizedDescription) }
     }
@@ -221,7 +221,7 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
     private static let html = #"""
 <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'"><style>
 *{box-sizing:border-box}body{margin:0;padding:24px;background:#15191f;color:#e4e7eb;font:14px -apple-system,BlinkMacSystemFont,sans-serif}h1{font-size:24px;margin:0 0 8px}p{color:#a8afbc;line-height:1.5;margin:0 0 18px}label{display:block;font-weight:600;margin:14px 0 7px}small{color:#98a2b1;font-weight:400}input,textarea{width:100%;font:inherit;color:#e0e5ed;background:#0d1117;border:1px solid #414a56;border-radius:7px;padding:10px}textarea{height:88px;resize:vertical}input::placeholder,textarea::placeholder{color:#8993a2}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.card{border:1px solid #3d4653;border-radius:8px;padding:12px}.card label{margin:0 0 10px}.card input{width:auto;accent-color:#2dc590;margin-right:7px}.thumb{width:100%;height:105px;object-fit:cover;object-position:top;cursor:pointer;border-radius:4px;background:#0d1117}button{padding:9px 13px;border-radius:6px;border:1px solid #4a5665;background:#202630;color:#e0e6ef;font:inherit;cursor:pointer}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid #36d9a5;outline-offset:2px}button:disabled{opacity:.5;cursor:default}.primary{background:#2cc68f;color:#061810;border-color:#2cc68f;font-weight:600}.link{border:0;background:none;color:#46d9ae;padding:6px 0}.upload{border:1px dashed #556170;border-radius:7px;padding:10px;margin-top:15px}footer{display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #343d48;padding-top:16px;margin-top:15px}pre{font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;background:#0d1117;padding:12px;max-height:180px;overflow:auto}.file{display:flex;align-items:center;gap:8px;padding:6px 0}.file span{flex:1;overflow-wrap:anywhere}#status{color:#ffd18b;line-height:1.5;margin:12px 0}#privacy{display:block;margin-top:14px;line-height:1.5}@media(max-width:560px){body{padding:18px}.grid{grid-template-columns:1fr}footer{flex-wrap:wrap}h1{font-size:22px}}
-</style></head><body><h1>Report a bug</h1><p>Tell us what went wrong. Review what’s included before creating an email.</p><form id="report"><label for="summary">Summary</label><input id="summary" required maxlength="200" placeholder="For example: the terminal does not respond after resuming"><label for="details">What happened? <small>Optional</small></label><textarea id="details" maxlength="20000" placeholder="What were you doing, what did you expect, and what happened instead? Add steps to reproduce if you have them."></textarea><label for="reply">Your email <small>Optional · so we can reply</small></label><input id="reply" type="email" maxlength="254" placeholder="you@example.com"><label>Included with your report</label><div class="grid"><div class="card"><label><input id="screenshot" type="checkbox" checked>Current window screenshot</label><button type="button" class="link" id="preview" aria-label="Preview screenshot"><img class="thumb" id="image" alt="Screenshot of your current RubberTerm window"></button><small id="captureNote">Captured before this form opened · Click to preview</small></div><div class="card"><label><input id="diagnostics" type="checkbox" checked>App diagnostics</label><p>App and macOS versions<br>Recent app event log<br>Connection status</p><button type="button" class="link" id="review">Review diagnostics</button><small style="display:block">No credentials or agent conversations collected in diagnostics</small></div></div><pre id="logs" hidden></pre><div class="upload"><button type="button" class="link" id="add">＋ Add files</button> <small>Optional · up to 5 files, 5 MB each, 15 MB total</small><div id="files"></div></div><small id="privacy">Your screenshot and added files may contain private information. Review them before sending. Nothing is uploaded by this form.</small><div id="status" role="status" aria-live="polite"></div><footer><button type="button" id="cancel">Cancel</button><button type="submit" id="save" value="save">Save ZIP</button><button type="submit" class="primary" id="email" value="email">Create email</button></footer></form><script>
+</style></head><body><h1>Report a bug</h1><p>Tell us what went wrong. Review what’s included before creating an email.</p><form id="report"><label for="summary">Summary</label><input id="summary" required maxlength="200" placeholder="For example: the terminal does not respond after resuming"><label for="details">What happened? <small>Optional</small></label><textarea id="details" maxlength="20000" placeholder="What were you doing, what did you expect, and what happened instead? Add steps to reproduce if you have them."></textarea><label for="reply">Your email <small>Optional · so we can reply</small></label><input id="reply" type="email" maxlength="254" placeholder="you@example.com"><label>Included with your report</label><div class="grid"><div class="card"><label><input id="screenshot" type="checkbox" checked>Current window screenshot</label><button type="button" class="link" id="preview" aria-label="Preview screenshot"><img class="thumb" id="image" alt="Screenshot of your current DuckTerm window"></button><small id="captureNote">Captured before this form opened · Click to preview</small></div><div class="card"><label><input id="diagnostics" type="checkbox" checked>App diagnostics</label><p>App and macOS versions<br>Recent app event log<br>Connection status</p><button type="button" class="link" id="review">Review diagnostics</button><small style="display:block">No credentials or agent conversations collected in diagnostics</small></div></div><pre id="logs" hidden></pre><div class="upload"><button type="button" class="link" id="add">＋ Add files</button> <small>Optional · up to 5 files, 5 MB each, 15 MB total</small><div id="files"></div></div><small id="privacy">Your screenshot and added files may contain private information. Review them before sending. Nothing is uploaded by this form.</small><div id="status" role="status" aria-live="polite"></div><footer><button type="button" id="cancel">Cancel</button><button type="submit" id="save" value="save">Save ZIP</button><button type="submit" class="primary" id="email" value="email">Create email</button></footer></form><script>
 const el=id=>document.getElementById(id);const send=(action,data={})=>window.webkit.messageHandlers.bugReport.postMessage({action,...data});
 el('add').onclick=()=>send('add');el('preview').onclick=()=>send('preview');el('cancel').onclick=()=>send('cancel');el('review').onclick=()=>{el('logs').hidden=!el('logs').hidden};
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();send('cancel')}});

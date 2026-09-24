@@ -1,4 +1,4 @@
-# RubberTerm.app for macOS
+# DuckTerm.app for macOS
 
 A native desktop window around the local dashboard, using WKWebView. It appears
 in the Dock and supports standard macOS clipboard shortcuts and notifications.
@@ -19,12 +19,12 @@ Tools). From the repository root:
 
 ```sh
 ./mac/build.sh
-open mac/build/RubberTerm.app
+open mac/build/DuckTerm.app
 ```
 
 The build uses `swiftc` for the current machine's architecture and reads its
 version from `src/duckterm/__init__.py`. It produces an ad-hoc-signed app at
-`mac/build/RubberTerm.app`. Building on Intel produces an Intel app; the
+`mac/build/DuckTerm.app`. Building on Intel produces an Intel app; the
 published arm64 archive is for Apple Silicon only.
 
 If the SDK reports duplicate `SwiftBridging` modules, select a compatible Xcode
