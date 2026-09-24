@@ -3,6 +3,13 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-23 — Terminal attachment must preserve menu focus
+**Broke:** a terminal finishing its connection stole focus from Settings and
+closed the menu before its action could be clicked.
+**Rule:** asynchronous terminal attach/replay may focus an unoccupied page or
+the terminal itself, but must preserve focus in other controls. Only explicit
+terminal selection or clicks may take focus from another control.
+
 ## 2026-09-23 — Connector status must not block the dashboard
 **Broke:** backup settings intermittently stayed disabled during initial loading
 in CI. Connector status ran credential and CLI probes on the server event loop.

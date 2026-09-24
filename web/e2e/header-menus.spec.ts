@@ -1,4 +1,31 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type WebSocketRoute } from "@playwright/test";
+import { apiDelete, apiPost } from "./helpers";
+
+test("terminal replay does not steal focus from an open header menu", async ({ page }) => {
+  const result = await apiPost("/sessions/launch", {
+    command: "cat", cwd: "/tmp", name: "menu-focus-probe", in_terminal: false, test: true,
+  });
+  expect(result.status).toBe(200);
+  const key = result.body.session_key as string;
+  let terminal: WebSocketRoute | undefined;
+  await page.routeWebSocket(`**/sessions/${key}/terminal`, (socket) => { terminal = socket; });
+  try {
+    await page.goto("/");
+    await page.locator(".rd-row-name", { hasText: "menu-focus-probe" }).click();
+    await expect.poll(() => !!terminal).toBe(true);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const theme = page.getByRole("combobox", { name: "Theme", exact: true });
+    await expect(theme).toBeFocused();
+    terminal!.send(Buffer.from("DELAYED_REPLAY\r\n"));
+    await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("DELAYED_REPLAY");
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))));
+    await expect(theme).toBeFocused();
+    await page.getByRole("button", { name: "Back up to remote", exact: true }).click();
+    await expect(page.getByLabel("Backup destination", { exact: true })).toBeEnabled();
+  } finally {
+    await apiDelete(`/sessions/${key}`);
+  }
+});
 
 test("header menus support keyboard navigation, dismissal, and separate rules", async ({ page }) => {
   await page.goto("/");
