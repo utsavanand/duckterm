@@ -73,7 +73,7 @@ export function BackupModal({ onClose }: { onClose: () => void }) {
       <p>Create a backup now. Choose a local folder or a Google Cloud Storage destination.</p>
       {!state && !error && <p role="status">Loading backup settings…</p>}
       <label htmlFor="backup-destination">Backup destination</label>
-      <input id="backup-destination" style={inputStyle} value={destination} disabled={!state || starting || running || uncertain} onChange={(e) => setDestination(e.target.value)} placeholder="/Volumes/Backup/RubberTerm or gs://bucket/prefix" />
+      <input id="backup-destination" style={inputStyle} value={destination} disabled={!state || starting || running || uncertain} onChange={(e) => setDestination(e.target.value)} placeholder="/Volumes/Backup/DuckTerm or gs://bucket/prefix" />
       <p className="rd-backup-note">This destination is remembered for the next backup.</p>
       <p>Includes the database, checkpoints, snapshots, and Claude/Codex transcripts. Excludes code, uncommitted files, and credential files.</p>
       <p className="rd-backup-note">Conversation text is preserved as written. Review your destination before uploading.</p>
