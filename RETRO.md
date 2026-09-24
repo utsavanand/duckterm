@@ -3,6 +3,14 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-23 — Header actions need clear grouping and labels
+**Broke:** separate creation, theme, backup, and harness controls crowded the
+header, and an unexplained bell concealed the notification setting.
+**Rule:** group creation under New and preferences under Settings; retain the
+owner-requested AGENTS.md shortcut separately. Use a labelled notification
+control, preserve existing actions and theme persistence, and verify keyboard
+focus, dismissal, and menu bounds alongside each relocated browser flow.
+
 ## 2026-09-23 — Idle Claude sessions reported as waiting
 **Broke:** 8 of 19 sessions showed "waiting", some for 50+ hours, and the tab
 title counted them as needing an answer. Most were idle at the prompt.

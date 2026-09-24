@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-type Theme = "light" | "dark" | "system";
+export type Theme = "light" | "dark" | "system";
 
 function resolve(theme: Theme): "light" | "dark" {
   if (theme === "system") {
@@ -16,7 +16,7 @@ function resolve(theme: Theme): "light" | "dark" {
 export function useTheme(): {
   theme: Theme;
   resolved: "light" | "dark";
-  cycle: () => void;
+  setTheme: (theme: Theme) => void;
 } {
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem("rd-theme") as Theme) ?? "system",
@@ -47,10 +47,5 @@ export function useTheme(): {
     return () => mq.removeEventListener("change", onChange);
   }, [theme]);
 
-  const cycle = () =>
-    setTheme((t) =>
-      t === "light" ? "dark" : t === "dark" ? "system" : "light",
-    );
-
-  return { theme, resolved, cycle };
+  return { theme, resolved, setTheme };
 }

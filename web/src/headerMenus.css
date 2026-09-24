@@ -1,0 +1,22 @@
+.rd-header-menus { display: flex; gap: 14px; align-items: center; margin-left: auto; }
+.rd-header-dropdown { position: relative; }
+.rd-header-dropdown > button { display: flex; align-items: center; justify-content: center; gap: 12px; white-space: nowrap; }
+.rd-header-dropdown > button:not(.rd-btn-primary) { background: var(--card); color: var(--text); border-color: var(--border-strong); }
+.rd-header-new > button { min-width: 90px; }
+.rd-header-popup { position: absolute; top: calc(100% + 9px); right: 0; width: 180px; padding: 7px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--card); color: var(--text); box-shadow: 0 12px 32px #0002; z-index: 40; max-height: calc(100dvh - 160px); overflow-y: auto; }
+.rd-settings-popup { width: 300px; max-width: calc(100vw - 32px); }
+.rd-header-menu-item { display: flex; justify-content: space-between; align-items: center; width: 100%; padding: 10px; border: 0; border-radius: 6px; background: transparent; color: inherit; text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
+.rd-header-menu-item:hover { background: var(--bg-soft); }
+.rd-header-menu-group { padding: 7px 10px; color: var(--muted); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.rd-header-menu-field { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 10px; font-size: 13px; }
+.rd-header-menu-field select { max-width: 145px; padding: 5px; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--bg-soft); color: var(--text); font: inherit; }
+.rd-header-menu-divider { border-top: 1px solid var(--border); margin: 6px -7px; }
+.rd-header-notifications { padding: 8px 10px; font-size: 13px; }
+.rd-header-notifications label { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.rd-header-notifications input { accent-color: var(--brand-green); }
+.rd-header-notifications p { margin: 5px 20px 0 0; font-size: 11px; color: var(--text-soft); line-height: 1.5; }
+.rd-header-menus :is(button, select, input):focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
+@media (max-width: 650px) {
+  .rd-header-menus { gap: 14px; }
+  .rd-settings-popup { right: -104px; }
+}

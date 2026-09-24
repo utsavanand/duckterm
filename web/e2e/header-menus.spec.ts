@@ -1,0 +1,38 @@
+import { expect, test } from "@playwright/test";
+
+test("header menus support keyboard navigation, dismissal, and separate rules", async ({ page }) => {
+  await page.goto("/");
+  const header = page.locator(".rd-topbar");
+  const create = header.getByRole("button", { name: "New", exact: true });
+  const settings = header.getByRole("button", { name: "Settings", exact: true });
+  await expect(header.getByRole("button", { name: "AGENTS.md" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New session", exact: true })).toHaveCount(0);
+  await create.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "New session", exact: true })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("button", { name: "New folder", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(create).toBeFocused();
+  await expect(create).toHaveAttribute("aria-expanded", "false");
+  await create.click();
+  await settings.click();
+  await expect(create).toHaveAttribute("aria-expanded", "false");
+  const panel = page.getByRole("region", { name: "Settings", exact: true });
+  await expect(panel.getByRole("combobox", { name: "Theme", exact: true })).toBeFocused();
+  await expect(panel.getByRole("checkbox", { name: "Desktop notifications" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "AGENTS.md" })).toHaveCount(0);
+  await panel.getByRole("combobox", { name: "Theme", exact: true }).selectOption("dark");
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  await page.keyboard.press("Escape");
+  await expect(settings).toBeFocused();
+  await settings.click();
+  await header.locator(".rd-brand").click();
+  await expect(panel).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await settings.click();
+  const box = await panel.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+});
