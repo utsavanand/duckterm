@@ -50,7 +50,8 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key><string>DuckTerm</string>
   <key>CFBundleDisplayName</key><string>DuckTerm</string>
-  <key>CFBundleIdentifier</key><string>com.rubberduckhq.duckterm</string>
+  <!-- Stable installed identity preserves preferences and WebKit data across display-name changes. -->
+  <key>CFBundleIdentifier</key><string>com.rubberduckhq.rubberterm</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleExecutable</key><string>DuckTerm</string>

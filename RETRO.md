@@ -3,6 +3,14 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-23 — Product renames must preserve the installed application identity
+**Broke:** the pending native rename changed the bundle identifier, leaving the
+configured support preference behind in the old defaults domain.
+**Cause:** a display-name rename also replaced the persistent application ID.
+**Rule:** keep the installed bundle identifier stable while changing app,
+executable, and display names. Verify existing local preferences remain available
+and never embed private support configuration in published release assets.
+
 ## 2026-09-23 — Header actions need clear grouping and labels
 **Broke:** separate creation, theme, backup, and harness controls crowded the
 header, and an unexplained bell concealed the notification setting.
