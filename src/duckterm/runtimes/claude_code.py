@@ -23,7 +23,7 @@ import shlex
 from pathlib import Path
 
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
-from duckterm.runtimes.base import Harness, HookSpec, SessionState
+from duckterm.runtimes.base import Harness, HookSpec, SessionState, prompt_line_rest
 
 
 def project_slug(cwd: Path) -> str:
@@ -64,6 +64,11 @@ class ClaudeCodeRuntime(Harness):
 
     def tool_in(self, recent_output: str) -> str | None:
         return None
+
+    def prompt_is_empty(self, screen: str) -> bool:
+        # The input box is a line starting with "❯" between two rules. Any text
+        # after it, including a dimmed suggestion, counts as not empty.
+        return prompt_line_rest(screen, "❯", ignore_dim=False) == ""
 
     def locate_transcript(self, *, cwd: Path, session_id: str) -> Path | None:
         slug = project_slug(cwd)

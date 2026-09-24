@@ -143,6 +143,13 @@ def session_key_of(event: Event) -> str | None:
     return str(key) if key else None
 
 
+def _is_idle_notice(event: Event) -> bool:
+    # Older Claude Code builds send only the message text, not notification_type.
+    return event.get("notification_type") == "idle_prompt" or str(
+        event.get("message") or ""
+    ).startswith("Claude is waiting for your input")
+
+
 def derive_state(event: Event, prev: SessionState | None) -> SessionState:
     # An explicit lifecycle marker (a deliberate stop/archive/sweep) always wins.
     lifecycle = event.get("lifecycle")
@@ -165,6 +172,13 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
     if lifecycle == "terminated" or event.get("event_type") == events.SESSION_END:
         return "terminated"
     match event.get("event_type"):
+        case "Notification" if _is_idle_notice(event):
+            # Claude Code notifies ~60s after a turn ends with nothing to answer.
+            # Counting that as waiting flooded the "needs you" count with idle
+            # sessions and hid the real permission prompts among them.
+            return "idle"
+        case "Notification" if event.get("notification_type") == "auth_success":
+            return prev or "busy"
         case "PermissionRequest" | "Notification":
             return "waiting"
         case "PreToolUse" | "PostToolUse" | "UserPromptSubmit" | "SessionStart":
@@ -531,6 +545,13 @@ class HistoryStore:
                 self.create_folder(group)
         self._conn.commit()
         return self.session(key) is not None
+
+    def last_event_ts(self, session_key: str, event_type: str) -> int:
+        row = self._conn.execute(
+            "SELECT MAX(ts) FROM events WHERE session_key = ? AND event_type = ?",
+            (session_key, event_type),
+        ).fetchone()
+        return int(row[0] or 0)
 
     def folders(self) -> list[str]:
         """Folder names: those explicitly created plus any referenced by a

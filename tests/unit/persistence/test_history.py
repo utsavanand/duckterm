@@ -24,6 +24,16 @@ def test_derive_state_transitions() -> None:
     assert derive_state({"event_type": "PostToolUse"}, "busy") == "busy"
     assert derive_state({"event_type": "Stop"}, "busy") == "idle"
     assert derive_state({"event_type": "PermissionRequest"}, "busy") == "waiting"
+    # Claude's idle-at-prompt notice is not a question for the owner.
+    idle = {"event_type": "Notification", "notification_type": "idle_prompt"}
+    assert derive_state(idle, "idle") == "idle"
+    old_idle = {"event_type": "Notification", "message": "Claude is waiting for your input"}
+    assert derive_state(old_idle, "idle") == "idle"
+    perm = {"event_type": "Notification", "notification_type": "permission_prompt"}
+    assert derive_state(perm, "busy") == "waiting"
+    assert derive_state({"event_type": "Notification"}, "busy") == "waiting"
+    auth = {"event_type": "Notification", "notification_type": "auth_success"}
+    assert derive_state(auth, "busy") == "busy"
     assert derive_state({"event_type": "SessionEnd"}, "busy") == "terminated"
     assert derive_state({"lifecycle": "terminated"}, "busy") == "terminated"
     # Unknown event keeps the previous state.

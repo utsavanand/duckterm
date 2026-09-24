@@ -14,7 +14,7 @@ import shlex
 from pathlib import Path
 
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
-from duckterm.runtimes.base import Harness, HookSpec, SessionState
+from duckterm.runtimes.base import Harness, HookSpec, SessionState, prompt_line_rest
 
 # Codex prints a spinner/working line while busy and a prompt glyph when idle.
 # "esc to interrupt" appears on every interruptible-active line (including
@@ -58,6 +58,11 @@ class CodexRuntime(Harness):
         if initial_prompt:
             argv += [initial_prompt]
         return argv
+
+    def prompt_is_empty(self, screen: str) -> bool:
+        # Codex shows "›" plus a dimmed placeholder ("Ask Codex to do anything")
+        # when empty; typed text renders undimmed.
+        return prompt_line_rest(screen, "›", ignore_dim=True) == ""
 
     def detect_state(self, recent_output: str) -> SessionState:
         for line in reversed(recent_output.splitlines()):

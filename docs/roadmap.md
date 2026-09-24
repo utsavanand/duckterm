@@ -38,6 +38,16 @@ Shipped since this doc was first written (2026-09-20 → 22):
    change. Durable assignments remain the separate Stage 1 concept in
    [pm-routines-design.md](pm-routines-design.md).
 
+## Oracle (owner-requested 2026-09-23, branch `oracle`)
+
+Design: [oracle-design.md](oracle-design.md). Stage 1 implemented, not yet
+merged or released: the Ask Oracle topbar button replaces the fleet question
+bar; idle agents with pending mail get one fixed reminder pasted into an empty
+prompt, on in every folder (kill switch `DUCKTERM_ORACLE=off`); idle Claude
+sessions no longer show as waiting. Copilot nudges need its prompt layout
+implemented. Later rules (needs-you queue, stale state, file collisions,
+scheduled AGENTS.md suggestions) are listed with triggers in the design doc.
+
 ## Bugs (user-reported 2026-09-23, fix before new features)
 
 B1. **Messages panel shows the previous session's transcript.** Reported:

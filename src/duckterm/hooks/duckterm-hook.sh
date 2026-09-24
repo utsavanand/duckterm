@@ -45,6 +45,8 @@ if command -v jq >/dev/null 2>&1; then
       tool_input: (.tool_input // .toolInput),
       prompt: .prompt,
       stop_hook_active: .stop_hook_active,
+      notification_type: .notification_type,
+      message: (if .message | type == "string" then .message[0:200] else null end),
       runtime: $rt,
       agent_pid: $apid,
       agent_id: .agent_id,

@@ -2519,63 +2519,40 @@ select {
   padding: 3px 6px;
 }
 
-/* Fleet chat: an input field under the topbar; answers drop below. Styled as
-   an obvious bordered pill (the borderless flat bar read as static text, not
-   a place you could type). */
-.rd-fleetchat {
-  padding: 8px 16px;
-  border-bottom: 1px solid var(--border);
-}
-.rd-fleetchat-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: var(--bg-soft);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-}
-.rd-fleetchat-bar:focus-within {
-  border-color: var(--brand-green);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-green) 18%, transparent);
-}
-.rd-fleetchat-prompt {
-  color: var(--idle);
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 13px;
-}
-.rd-fleetchat-bar input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  color: var(--text);
-  font-size: 13px;
-}
-.rd-fleetchat-bar input::placeholder {
-  color: var(--muted);
-}
-.rd-fleetchat-log {
-  max-height: 40vh;
+/* Ask Oracle modal: the exchange log scrolls above the question field. */
+.rd-oracle-log {
+  max-height: 45vh;
   overflow-y: auto;
-  margin-top: 6px;
+  margin-bottom: 12px;
   padding: 4px 12px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-soft);
 }
-.rd-fleetchat-exchange {
+.rd-oracle-exchange {
   padding: 6px 0;
 }
-.rd-fleetchat-q {
+.rd-oracle-q {
   font-family: ui-monospace, Menlo, monospace;
   font-size: 12px;
   color: var(--text-soft);
 }
-.rd-fleetchat-a {
+.rd-oracle-a {
   font-size: 13px;
   white-space: pre-wrap;
   padding: 4px 0 0 14px;
+}
+.rd-oracle-label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-soft);
+  margin-bottom: 4px;
+}
+.rd-oracle-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 /* ── Typed AGENTS.md rules editor ── */

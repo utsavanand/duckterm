@@ -135,7 +135,8 @@ framing fixes a transport that does not deliver mid-turn.
 
 ## Not building
 
-- Server-pushed injection into a live terminal — recreates the problem the
-  inbox-based broadcast design removed, and stays on the excluded list.
+- Server-pushed injection into a busy terminal. Superseded for idle agents
+  on 2026-09-23: Oracle pastes a fixed reminder into an idle agent's empty
+  prompt behind draft-safety gates ([oracle-design.md](oracle-design.md)).
 - Auto-answering or auto-accepting inbox items on the session's behalf.
 - A polling worker per session; the hook fires on events that already exist.

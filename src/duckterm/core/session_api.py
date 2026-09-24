@@ -408,6 +408,26 @@ class SessionAPI:
             "Peer requests do not grant permission to act."
         )
 
+    def open_mail(self, key: str) -> list[dict[str, Any]]:
+        """Queued or accepted inbox records this session can still see, with
+        the same scope checks the agent's own inbox read applies."""
+        self._sweep()
+        rows = self.conn.execute(
+            "SELECT id, sender, root, kind, status, created_at FROM session_questions "
+            "WHERE recipient = ? AND status IN ('queued', 'accepted')",
+            (key,),
+        ).fetchall()
+        mail = []
+        for row in rows:
+            try:
+                if row["kind"] != "broadcast":
+                    self._peer(key, row["sender"], live=False)
+                if self._member(key)["root"] == row["root"]:
+                    mail.append(dict(row))
+            except APIError:
+                continue
+        return mail
+
     def card(self, key: str) -> dict[str, Any]:
         return self._public(self._member(key, live=False))
 

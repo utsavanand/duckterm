@@ -52,7 +52,7 @@ from typing import Any
 from duckterm import connectors, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
-from duckterm.core import events, progress
+from duckterm.core import events, oracle, progress
 from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -301,6 +301,7 @@ class Server:
         self.snapshots = SnapshotManager(self.history)
         self._backup_jobs: BackupJobs | None = None
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
+        self._oracle_nudges: dict[str, oracle.Nudge] = {}
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -3009,14 +3010,56 @@ class Server:
         20s; we archive after 60s of silence. Watched sessions (no heartbeat) are
         archived when their recorded agent pid is no longer alive. Archived keeps
         everything (resumable) — it's not delete."""
+        ticks = 0
         while True:
             await asyncio.sleep(20)
+            ticks += 1
+            if ticks % 3 == 0 and os.environ.get("DUCKTERM_ORACLE") != "off":
+                await self._oracle_tick()
             now = int(time.time() * 1000)
             for key in self.history.sweep_dead(now, stale_after_ms=60_000):
                 self._archive_swept(key)
             for w in self.history.live_watched():
                 if not _pid_alive(int(w["agent_pid"])):
                     self._archive_swept(str(w["session_key"]))
+
+    async def _oracle_tick(self) -> None:
+        """Paste an inbox reminder into idle agents whose mail would otherwise
+        wait until the owner happens to look. Gates live in core/oracle.py."""
+        now = int(time.time() * 1000)
+        for row in self.history.sessions():
+            key = str(row["session_key"])
+            sup = self.orchestrator.get(key)
+            if row.get("state") != "idle" or sup is None or not sup.running:
+                continue
+            try:
+                mail = self.history.session_api.open_mail(key)
+            except APIError:
+                continue
+            if not mail:
+                continue
+            screen = await asyncio.to_thread(sup.visible_screen)
+            picked = oracle.should_nudge(
+                state="idle",
+                turn_ended_ms=self.history.last_event_ts(key, events.STOP),
+                observed_since_ms=sup.observed_since_ms,
+                last_owner_input_ms=sup.last_owner_input_ms,
+                prompt_empty=sup.runtime.prompt_is_empty(screen),
+                mail=mail,
+                previous=self._oracle_nudges.get(key),
+                now_ms=now,
+            )
+            if not picked:
+                continue
+            text = oracle.reminder(picked, now)
+            # Bracketed paste so a multi-word line lands as one input, as the
+            # Introduce button does.
+            if not await asyncio.to_thread(
+                sup.write_bytes, b"\x1b[200~" + text.encode() + b"\x1b[201~\r"
+            ):
+                continue
+            self._oracle_nudges[key] = oracle.Nudge(frozenset(str(m["id"]) for m in picked), now)
+            self.bus.publish({"event_type": "OracleNudge", "session_key": key, "text": text})
 
     def _archive_swept(self, key: str) -> None:
         """Archive a session whose terminal is gone (auto-sweep)."""

@@ -3,6 +3,16 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-23 — Idle Claude sessions reported as waiting
+**Broke:** 8 of 19 sessions showed "waiting", some for 50+ hours, and the tab
+title counted them as needing an answer. Most were idle at the prompt.
+**Cause:** Claude Code sends a Notification about 60 seconds after a turn ends
+with nothing to answer. The hook dropped `notification_type`, and every
+Notification derived `waiting`.
+**Rule:** forward the fields that tell event subtypes apart before deriving
+state from an event type. Check the live DB against the dashboard when a badge
+count looks too high to be true.
+
 ## 2026-09-22 — Attach scrolling misses terminals opened from hidden slots
 **Broke:** opening an existing session still displayed old scrollback after the
 first-frame scroll fix. Sessions stay mounted while hidden, so switching sessions

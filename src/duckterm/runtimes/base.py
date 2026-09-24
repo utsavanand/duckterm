@@ -10,6 +10,7 @@ declares, via the registry in harnesses.py. The legacy alias `AgentRuntime` is
 kept so existing drive-only callers don't need to change.
 """
 
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -50,6 +51,22 @@ class HookSpec:
         return project_dir / self.repo_rel
 
 
+_DIM_SPAN = re.compile(r"\x1b\[2m.*?(?:\x1b\[(?:0|22)?m|$)")
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def prompt_line_rest(screen: str, marker: str, *, ignore_dim: bool) -> str | None:
+    """Text typed after the last prompt marker on screen, or None when no
+    prompt line is visible. With ignore_dim, dimmed spans (placeholders) are
+    dropped before comparing."""
+    for raw in reversed(screen.splitlines()):
+        line = _DIM_SPAN.sub("", raw) if ignore_dim else raw
+        plain = _ANSI.sub("", line).replace("\xa0", " ")
+        if plain.lstrip().startswith(marker):
+            return plain.lstrip()[len(marker) :].strip()
+    return None
+
+
 class Harness(ABC):
     name: str
     turn_end_inbox_notice = False
@@ -58,6 +75,12 @@ class Harness(ABC):
 
     @abstractmethod
     def __init__(self, command: str) -> None: ...
+
+    def prompt_is_empty(self, screen: str) -> bool:
+        """Whether the visible screen (ANSI escapes intact) shows the agent's
+        input box with nothing typed in it. Oracle pastes an inbox reminder
+        only when this is True, so an unknown prompt layout must return False."""
+        return False
 
     @abstractmethod
     def launch_command(self, *, cwd: Path, session_key: str, initial_prompt: str) -> list[str]: ...

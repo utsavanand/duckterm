@@ -4,7 +4,7 @@ import { AgentTree } from "./AgentTree";
 import { api } from "./api";
 import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
-import { FleetChat } from "./FleetChat";
+import { OracleExchange, OracleModal } from "./OracleModal";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
@@ -53,8 +53,9 @@ function Dashboard() {
   const { theme, resolved: mode, cycle: cycleTheme } = useTheme();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "oracle" | null
   >(null);
+  const [oracleLog, setOracleLog] = useState<OracleExchange[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
@@ -243,6 +244,13 @@ function Dashboard() {
         <span className="rd-spacer" />
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
+          onClick={() => setModal("oracle")}
+          title="Ask questions about your running sessions"
+        >
+          Ask Oracle
+        </button>
+        <button
+          className="rd-btn rd-btn-ghost rd-btn-sm"
           onClick={() => setModal("agentsmd")}
           disabled={!agentsMdDir}
           title={
@@ -315,7 +323,6 @@ function Dashboard() {
           New session
         </button>
       </header>
-      <FleetChat />
 
       {gridFolder !== null ? (
         <GridView
@@ -501,6 +508,13 @@ function Dashboard() {
         <AgentsMdModal dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
+      {modal === "oracle" && (
+        <OracleModal
+          log={oracleLog}
+          onLog={(x) => setOracleLog((l) => [...l, x])}
+          onClose={() => setModal(null)}
+        />
+      )}
       {modal === "harnesses" && (
         <HarnessesModal
           defaultDir={agentsMdDir}

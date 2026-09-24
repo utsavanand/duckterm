@@ -78,6 +78,11 @@ class SessionSupervisor:
         self._input_queue: asyncio.Queue[bytes] | None = None
         self._input_task: asyncio.Task[None] | None = None
         self._last_input = 0.0
+        # Wall-clock ms, for Oracle: a keystroke after the turn ended may be an
+        # unsent draft. Only trustworthy for turns that ended after we started
+        # watching, hence observed_since_ms.
+        self.observed_since_ms = int(time.time() * 1000)
+        self.last_owner_input_ms = 0
 
     def _emit(self, event_type: str, **fields: object) -> None:
         self.bus.publish(
@@ -375,6 +380,13 @@ class SessionSupervisor:
                 return "\n".join(rows[-lines:])
         return "".join(self.output_tail(lines)).strip()
 
+    def visible_screen(self) -> str:
+        """The visible tmux screen with escapes intact, or "" for PTY-backed
+        sessions, whose raw byte stream is not a screen."""
+        if self._tmux_target is None or not self.running:
+            return ""
+        return tmux.capture_screen(self._tmux_target, history_lines=0).decode(errors="replace")
+
     def resize(self, cols: int, rows: int) -> bool:
         """Resize the agent's terminal so its TUI reflows to the pane. PTY: set
         the window size on the master fd (TIOCSWINSZ). tmux: resize the window."""
@@ -409,6 +421,7 @@ class SessionSupervisor:
         does the writes off-loop, one at a time, so ordering is exact ('ab'
         can never land as 'ba', which a thread pool wouldn't guarantee)."""
         self._last_input = time.monotonic()
+        self.last_owner_input_ms = int(time.time() * 1000)
         if self._input_queue is None:
             self._input_queue = asyncio.Queue()
             self._input_task = asyncio.create_task(self._drain_input())
@@ -423,6 +436,7 @@ class SessionSupervisor:
     def write_input(self, text: str) -> bool:
         """Write to the agent's stdin (terminal-attach / approvals). Routes to
         tmux send-keys or the PTY depending on how the session is backed."""
+        self.last_owner_input_ms = int(time.time() * 1000)
         if self._tmux_target is not None and self.running:
             stripped = text.rstrip("\r\n")
             enter = text.endswith(("\r", "\n"))

@@ -14,7 +14,7 @@ their own hook systems.
 ```
 ┌────────────────────────── browser / Mac WKWebView ─────────────────────────┐
 │  React dashboard: GridView · Terminal (xterm.js) · Messages · AgentTree    │
-│  Approvals · FleetChat · InboxView · Connectors · Harnesses               │
+│  Approvals · Ask Oracle · InboxView · Connectors · Harnesses              │
 └───────▲───────────────────────▲───────────────────────────▲───────────────┘
         │ binary WS (PTY bytes, │ HTTP JSON (loopback-gated  │ SSE events
         │ keystrokes, resize)   │ GET, token-gated POST)     │

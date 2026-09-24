@@ -32,7 +32,7 @@ viewer. Around the terminals it shows what a terminal can't:
 - **context pressure** per session — tokens used, model, and a "checkpoint or
   compact" warning before the window fills
 - **approvals as buttons** — permission prompts resolve from the dashboard
-- a **fleet chat bar** — ask questions about all running sessions at once
+- an **Ask Oracle** button — ask questions about all running sessions at once
   ("who's stuck?", "what has refactor-auth done so far?")
 
 Sessions survive server restarts (tmux), run in isolated git worktrees when you
@@ -104,7 +104,7 @@ See [installation, upgrades, and troubleshooting](docs/installation.md) for help
   collapsed sessions, a folder switcher.
 - Stop is a pause (Resume relaunches — continuing the conversation for Claude
   Code); Archive is final; Delete requires a second click.
-- Fleet chat: one question, answered from a digest of every running session's
+- Ask Oracle: one question, answered from a digest of every running session's
   state, goal, and screen.
 
 **The structured layer**
