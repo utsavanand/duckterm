@@ -1,6 +1,6 @@
 # DuckTerm — Roadmap
 
-As of 2026-09-22, **v0.4.39** shipped. Ordered by when work can land, not by
+As of 2026-09-24, **v0.4.45** shipped. Ordered by when work can land, not by
 importance. Sources: TODO.md, RETRO.md, design docs, and the active peer
 sessions (`main-dev`, `ui-dev`, `main-qa`, `feature-remote-session`) via the
 session API.
@@ -48,20 +48,45 @@ sessions no longer show as waiting. Copilot nudges need its prompt layout
 implemented. Later rules (needs-you queue, stale state, file collisions,
 scheduled AGENTS.md suggestions) are listed with triggers in the design doc.
 
+Shipped 2026-09-23/24 (v0.4.40 → v0.4.45):
+
+- **Message folder UI + owner inbox labels** — v0.4.40 (`91c4ab2`).
+- **Manual backup backend** — v0.4.41 (`a1e662d`): owner-only
+  GET/PUT/POST `/backup`, remembered private destination, worker-thread job
+  with progress, 409 on overlap, 400 on missing destination, local
+  `archive_path` retained on GCS failure, restart recovery without
+  automatic retry.
+- **Terminal scroll-to-bottom + duck celebration + backup UI** — v0.4.42
+  (`9218189`). Attach scrolls once after the first replay frame parses;
+  wheel/pointer/navigation cancels it so ordinary output and resize never
+  yank the user down. Ducks celebrate only on witnessed live transitions —
+  seeds, SSE replay, and reload do not retrigger; reduced motion keeps the
+  badge without the jump.
+- **Completed-helper UI** — v0.4.43; **terminal-top regression fix** for
+  hidden-but-mounted terminals — v0.4.44.
+- **New / Settings menu grouping** — v0.4.45 (PR #6, `a2fa35a`): New
+  groups session/folder; Settings groups theme, terminal colors, desktop
+  notifications, backup, harnesses (AGENTS.md deliberately separate). Also
+  fixed connector probes blocking the dashboard and attach/replay stealing
+  menu focus.
+- **Branch protection on `main`** — enabled 2026-09-24 (ruleset 23921834):
+  PRs required, `python`/`web`/`browser` checks required, deletion and
+  force-push blocked, **no bypass actors** (owner decision — sessions open
+  PRs like anyone else; verified a direct push is rejected, not warned).
+- **Backup cloud infrastructure** — dedicated GCP project
+  `rubberterm-20260922`, private `gs://rubberterm-20260922-backups`
+  (us-west1, uniform access, public-access prevention), upload/read/delete
+  verified with non-sensitive data. No real backup uploaded yet.
+
 ## Bugs (user-reported 2026-09-23, fix before new features)
 
-B1. **Messages panel shows the previous session's transcript.** Reported:
-    "if I switch back to a previous session the messages window should show
-    things corresponding to that". Root cause found: `<Messages>` is
-    rendered without a React `key` in SessionDetail, so React reuses the
-    component instance across session switches. Its fetch effect does
-    depend on `sessionKey` and re-fires, but `messages` state (and the
-    `back`/turn cursor) survive the switch, so the old transcript renders
-    until the new fetch resolves — and the turn cursor can point into the
-    wrong session's turns. Fix: `key={sessionKey}` on the component (forces
-    a fresh instance), and clear `messages`/`loaded`/cursor at the top of
-    the effect so no stale frame is ever shown. Test: switch A→B→A and
-    assert the panel never displays A's turns while B is selected.
+B1. ~~Messages panel shows the previous session's transcript.~~ **Fixed**
+    2026-09-24 (`5a40863`). Root cause: `<Messages>` rendered without a
+    React key in App.tsx:403, so one instance was reused across switches
+    and `messages`/`loaded` survived. Fixed at both ends (key + clear state
+    before the first fetch). The regression test switches sessions WITHOUT
+    a changing key — the genuinely broken path — and was verified to fail
+    on the unfixed code.
 
 B2. **Connectors are configured but not usable.** Reported: "I have
     multiple connectors but I don't know if I can really use them." Needs
@@ -132,22 +157,15 @@ B3. **Folder-rename scope bug in v0.4.39** — reproduced by main-qa in the
    Proposal-only invariant: work starts exclusively from owner approval.
    A Backlog tab (one table + approve/decline routes) is built only if
    terminal approval proves annoying in practice; no duckterm scheduler.
-7. **"Back up to remote" button** (owner decision 2026-09-22: manual, not
-   scheduled). The CLI shipped in v0.4.34; the owner wants a topbar button
-   that runs it on demand rather than a cron/launchd schedule — backups
-   happen when the user decides, with visible progress and result.
-   - Topbar button ("Back up to remote"), owner-token POST that runs the
-     existing `backup.create(destination)`; destination configured once
-     (local path or `gs://bucket/prefix`) and remembered.
-   - It is a long operation (a real run: 242 MB, ~1 s, 0600, zero
-     credential files — verified 2026-09-22) — the button must show
-     in-progress state and report the resulting archive path, or the
-     error, without blocking the dashboard.
-   - No scheduler. Time Machine remains the baseline; a user who wants
-     automation can still cron the CLI.
-   - GCP side (separate, still open): scheduled persistent-disk snapshots
-     for the remote workspace VM — a resource policy, zero code, no VM
-     credentials; not yet provisioned.
+7. **Backup — end-to-end acceptance is what remains.** Backend shipped
+   (v0.4.41), UI shipped (v0.4.42), cloud bucket provisioned. Outstanding:
+   point the app's destination at
+   `gs://rubberterm-20260922-backups/mac/`, run one real backup through the
+   button, and verify a restore from that archive. **No real backup has
+   been uploaded yet** — until a restore is proven, this feature is
+   untested where it matters. GCP disk snapshots for the remote workspace
+   VM remain unprovisioned.
+
 8. **Security follow-ups deferred from the 2026-09-20 review** (per the
    `duckterm-bugs` session):
    - Aggregate connection/resource quotas — per-request HTTP
