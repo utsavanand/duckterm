@@ -3,6 +3,13 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-23 — Connector status must not block the dashboard
+**Broke:** backup settings intermittently stayed disabled during initial loading
+in CI. Connector status ran credential and CLI probes on the server event loop.
+**Rule:** run synchronous connector probes in a worker thread. A regression must
+hold a probe open and verify another dashboard request completes before it does;
+increasing the browser timeout would leave the responsiveness bug intact.
+
 ## 2026-09-23 — Product renames must preserve the installed application identity
 **Broke:** the pending native rename changed the bundle identifier, leaving the
 configured support preference behind in the old defaults domain.
