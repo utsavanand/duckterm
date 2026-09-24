@@ -34,6 +34,7 @@ wants direct control of the response stream. Zero runtime dependencies.
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -428,6 +429,10 @@ class Server:
         if path == "/backup" and method in {"GET", "PUT", "POST"}:
             await self._backup(writer, headers, method, body)
             return
+        pin_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/pins(?:/([a-f0-9]{64}))?", path)
+        if pin_match and method in {"GET", "POST", "DELETE"}:
+            await self._message_pins(writer, headers, pin_match[1], pin_match[2], method, body)
+            return
         inbox_path = urllib.parse.urlsplit(path)
         if method == "GET" and inbox_path.path == "/folder-interactions":
             await self._folder_inbox(writer, headers, inbox_path.query)
@@ -709,23 +714,100 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
-    async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
-        """Structured conversation records for the HTML / pagination views: the
-        agent's messages parsed from its transcript into ordered content blocks
-        (text / tool_use / tool_result). Each harness with a structured
-        transcript (claude-code, codex) implements messages(); the rest return
-        an empty list. See docs/structured-render-design.md."""
+    def _session_messages(self, session_key: str) -> list[dict[str, object]]:
         row = self.history.session(session_key)
         if row is None:
-            await _write_json(writer, 404, {"error": "no such session"})
-            return
+            return []
         session_id = self.history.session_id_for(session_key)
         cwd = row.get("worktree_path") or row.get("cwd")
-        runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
-        messages: list[dict[str, object]] = []
-        if cwd:
-            messages = runtime.messages(cwd=Path(str(cwd)), session_id=session_id)
+        runtime_name = str(row.get("runtime") or "generic")
+        runtime = _build_runtime(runtime_name, "")
+        messages = runtime.messages(cwd=Path(str(cwd)), session_id=session_id) if cwd else []
+        for message in messages:
+            # Line numbers alone can silently point elsewhere after a rewrite.
+            # Include contents and conversation scope; stale pins use their snapshot.
+            identity = json.dumps(
+                [runtime_name, session_id, message], sort_keys=True, ensure_ascii=True
+            ).encode()
+            message["message_key"] = hashlib.sha256(identity).hexdigest()
+        return messages
+
+    async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        if self.history.session(session_key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        messages = await asyncio.to_thread(self._session_messages, session_key)
         await _write_json(writer, 200, {"messages": messages})
+
+    async def _message_pins(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        session_key: str,
+        message_key: str | None,
+        method: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        if self.history.session(session_key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        if method == "DELETE" and message_key:
+            self.history.remove_message_pin(session_key, message_key)
+            await _write_json(writer, 200, {"removed": True})
+            return
+        if message_key or method == "DELETE":
+            await _write_json(writer, 400, {"error": "invalid pin endpoint"})
+            return
+        if method == "GET":
+            await _write_json(writer, 200, {"pins": self.history.message_pins(session_key)})
+            return
+        if len(body) > 4096:
+            await _write_json(writer, 413, {"error": "pin request too large"})
+            return
+        try:
+            req = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            req = None
+        key = req.get("message_key") if isinstance(req, dict) else None
+        if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key):
+            await _write_json(writer, 400, {"error": "message_key is required"})
+            return
+        pins = self.history.message_pins(session_key)
+        existing = next((pin for pin in pins if pin["message_key"] == key), None)
+        if existing:
+            await _write_json(writer, 200, {"pin": existing})
+            return
+        if len(pins) >= 100:
+            await _write_json(
+                writer, 409, {"error": "unpin a message before adding more (limit 100)"}
+            )
+            return
+        messages = await asyncio.to_thread(self._session_messages, session_key)
+        message = next((m for m in messages if m["message_key"] == key), None)
+        if message is None:
+            await _write_json(
+                writer, 409, {"error": "message changed or is unavailable; refresh Messages"}
+            )
+            return
+        # Recheck after the transcript read yields, including session deletion.
+        if self.history.session(session_key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        if len(json.dumps(message).encode()) > 1024 * 1024:
+            await _write_json(writer, 413, {"error": "message is too large to pin (limit 1 MiB)"})
+            return
+        pins = self.history.message_pins(session_key)
+        if len(pins) >= 100 and not any(pin["message_key"] == key for pin in pins):
+            await _write_json(
+                writer, 409, {"error": "unpin a message before adding more (limit 100)"}
+            )
+            return
+        self.history.add_message_pin(session_key, message)
+        pin = next(p for p in self.history.message_pins(session_key) if p["message_key"] == key)
+        await _write_json(writer, 200, {"pin": pin})
 
     async def _list_annotations(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         await _write_json(writer, 200, {"annotations": self.history.annotations(session_key)})

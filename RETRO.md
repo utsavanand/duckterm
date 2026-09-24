@@ -3,6 +3,15 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-24 — Saved messages need content checks and retained copies
+**Found:** Messages uses transcript line positions, which can point to different
+content after a transcript rewrite. Persisting that position alone would make
+a bookmark silently jump to another message.
+**Rule:** verify the content and conversation as well as the position. Retain a
+snapshot at pin time; when the exact reference disappears, show the saved copy
+rather than reusing the old line number. Test rewrites, repeated text, restarts,
+and session-scoped removal.
+
 ## 2026-09-23 — Terminal attachment must preserve menu focus
 **Broke:** a terminal finishing its connection stole focus from Settings and
 closed the menu before its action could be clicked.
