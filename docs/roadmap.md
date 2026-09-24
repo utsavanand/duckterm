@@ -38,6 +38,33 @@ Shipped since this doc was first written (2026-09-20 → 22):
    change. Durable assignments remain the separate Stage 1 concept in
    [pm-routines-design.md](pm-routines-design.md).
 
+## Bugs (user-reported 2026-09-23, fix before new features)
+
+B1. **Messages panel shows the previous session's transcript.** Reported:
+    "if I switch back to a previous session the messages window should show
+    things corresponding to that". Root cause found: `<Messages>` is
+    rendered without a React `key` in SessionDetail, so React reuses the
+    component instance across session switches. Its fetch effect does
+    depend on `sessionKey` and re-fires, but `messages` state (and the
+    `back`/turn cursor) survive the switch, so the old transcript renders
+    until the new fetch resolves — and the turn cursor can point into the
+    wrong session's turns. Fix: `key={sessionKey}` on the component (forces
+    a fresh instance), and clear `messages`/`loaded`/cursor at the top of
+    the effect so no stale frame is ever shown. Test: switch A→B→A and
+    assert the panel never displays A's turns while B is selected.
+
+B2. **Connectors are configured but not usable.** Reported: "I have
+    multiple connectors but I don't know if I can really use them." Needs
+    diagnosis before a fix: is the MCP server registered but not reaching
+    the agent, is the state unclear in the UI (available vs configured vs
+    connected — already on connectors-dev's list), or do connectors only
+    reach local claude-code/codex and not remote/other harnesses (a known
+    gap main-dev raised)? Assign diagnosis to connectors-dev.
+
+B3. **Folder-rename scope bug in v0.4.39** — reproduced by main-qa in the
+    folder-broadcast/session-API area; findings sent to main-dev. Blocking:
+    more features are landing on top of this code.
+
 ## Next (started, not yet mergeable)
 
 3. **Remote workspace on GCP** (branch `remote-session`, latest `250db8b`).
@@ -128,6 +155,51 @@ Shipped since this doc was first written (2026-09-20 → 22):
 11. **Watched-mode removal** — frozen and deprecated
    ([terminal-forward-design.md](terminal-forward-design.md)); delete once
    no workflow depends on it (Rubberduck covers that use case).
+
+## Feature requests (user, 2026-09-23)
+
+F1. **Branding consistency.** The web UI and Mac app title say
+    "RubberTerm" (App.tsx:156-157, web/index.html:8); the repo/CLI is
+    `duckterm`; the user asked the UI to read "DuckTerm". **Needs an owner
+    decision on the canonical product name before anyone edits strings** —
+    it appears in the dashboard title, the Mac bundle, README, PyPI package
+    name, and the share domain in
+    [session-sharing-design.md](session-sharing-design.md). One name, then
+    a single sweep.
+
+F2. **Settings button (web + Mac app).** A top-level Settings surface; the
+    first item is "update the software" (self-update to the latest
+    RubberTerm release). Related to but distinct from the harness Agents
+    tab, which updates the *agent CLIs* — this updates duckterm itself.
+
+F3. **Folder artifacts.** Attach artifacts (markdown/HTML) to a folder, and
+    let an agent that generates one *recommend associating it* with the
+    folder. Mac app renders markdown at minimum, HTML if cheap. Design
+    question to settle first: is an artifact a file reference on disk
+    (cheap, always current, dies if the file moves) or a stored copy
+    (durable, snapshot semantics, needs storage + retention)? Recommend
+    file reference in v1.
+
+F4. **Migrate a running session to another harness** (e.g. Claude Code →
+    Codex). Hard constraint from
+    [accounts-and-handoff-design.md](accounts-and-handoff-design.md): a
+    transcript is harness-specific, so this is *not* a resume — it is a
+    new session seeded with a summary of the old one. Must be described
+    honestly as such; silently implying conversation continuity across
+    harnesses would be a lie the user discovers later.
+
+F5. **Meta-harness vocabulary and composition** — the largest item here.
+    The user wants installable best-practice suites for SDLC work (e.g.
+    "how docs are generated"), and raised that suites may be compatible or
+    incompatible with each other, and may include a model router ("for
+    these questions use this model"). Requires, in order: (a) a written
+    nomenclature — harness (agent CLI) vs meta-harness (suite) vs skill vs
+    hook vs router, extending [harnesses.md](harnesses.md)'s existing
+    two-meaning definition; (b) a composition/compatibility model for
+    installing several suites at once (the existing
+    `duckterm-harness.json` already declares compatibility — extend rather
+    than replace); (c) only then, the model-router concept, which is the
+    least proven piece. Do not build (c) before (a) and (b).
 
 ## Designed, not scheduled
 
