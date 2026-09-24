@@ -158,14 +158,26 @@ B3. **Folder-rename scope bug in v0.4.39** — reproduced by main-qa in the
 
 ## Feature requests (user, 2026-09-23)
 
-F1. **Branding consistency.** The web UI and Mac app title say
-    "RubberTerm" (App.tsx:156-157, web/index.html:8); the repo/CLI is
-    `duckterm`; the user asked the UI to read "DuckTerm". **Needs an owner
-    decision on the canonical product name before anyone edits strings** —
-    it appears in the dashboard title, the Mac bundle, README, PyPI package
-    name, and the share domain in
-    [session-sharing-design.md](session-sharing-design.md). One name, then
-    a single sweep.
+F1. **Branding: DuckTerm is canonical** (owner decision 2026-09-23).
+    Dashboard strings done in `6360437` (tab/browser title, backup
+    placeholder). 93 occurrences across 30 files remain, in three tiers —
+    do them in this order, not as one blind sed:
+    - **Safe text**: README, docs/*, AGENTS.md, RETRO.md, code comments.
+      Mechanical; no behavior.
+    - **Mac app**: `mac/build.sh` (APP name, binary name, `CFBundleName`),
+      menu strings in `main.swift`. Renaming the bundle changes install
+      identity — an existing `RubberTerm.app` will not be replaced by a
+      `DuckTerm.app`, so the release notes must tell users to delete the
+      old one. Coordinate with the release SOP and the artifact names in
+      [artifacts-and-releases.md](artifacts-and-releases.md).
+    - **Do not rename**: the `duckterm` PyPI package, the `duckterm` CLI,
+      `DUCKTERM_*` env vars, `~/.duckterm`, and the GitHub repo — these are
+      already "duckterm" and renaming them breaks installs, configs, and
+      hook paths wired to absolute locations (RETRO 2026-09-20).
+    - Open: the share domain in
+      [session-sharing-design.md](session-sharing-design.md) says
+      `share.rubberterm.com` — pick the DuckTerm equivalent before the
+      relay is built, since it is baked into share URLs.
 
 F2. **Settings button (web + Mac app).** A top-level Settings surface; the
     first item is "update the software" (self-update to the latest
