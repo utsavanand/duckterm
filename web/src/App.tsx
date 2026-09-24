@@ -355,7 +355,7 @@ function Dashboard() {
               select-to-annotate. */}
             {view === "messages" && selected && (
               <div className="rd-messages-wrap">
-                <Messages sessionKey={selected.key} />
+                <Messages key={selected.key} sessionKey={selected.key} />
               </div>
             )}
             {view === "history" && selected && (

@@ -138,6 +138,11 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
 
   useEffect(() => {
     let live = true;
+    // Drop the previous session's turns before the first fetch resolves —
+    // otherwise switching sessions renders the old transcript for up to a
+    // poll interval.
+    setMessages([]);
+    setLoaded(false);
     const load = () =>
       fetch(`/sessions/${sessionKey}/messages`)
         .then((r) => r.json())
