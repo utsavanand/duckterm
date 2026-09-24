@@ -38,6 +38,34 @@ async def request(server, owner, method, body=None, path="/backup"):
     return int(headers.split()[1]), json.loads(data)
 
 
+def test_slow_connector_probe_does_not_block_backup_settings(scenario, monkeypatch):
+    from duckterm import connectors
+
+    server, owner, _ = scenario
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow_status():
+        started.set()
+        release.wait(2)
+        return []
+
+    monkeypatch.setattr(connectors, "list_status", slow_status)
+
+    async def run():
+        probe = asyncio.create_task(request(server, owner, "GET", path="/connectors"))
+        try:
+            assert await asyncio.to_thread(started.wait, 1)
+            status, body = await request(server, owner, "GET")
+            assert status == 200 and "destination" in body
+            assert not probe.done(), "Connector probes blocked the dashboard event loop"
+        finally:
+            release.set()
+            assert await probe == (200, {"connectors": []})
+
+    asyncio.run(run())
+
+
 def test_auth_validation_and_remembered_destination(scenario, tmp_path):
     server, owner, root = scenario
     assert dispatch(server, "GET", "/backup", {})[0] == 401

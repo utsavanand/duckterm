@@ -7,6 +7,7 @@ test("manual backup remembers destination, reports a real local archive, and rec
   const directory = mkdtempSync(join(tmpdir(), "rd-backup-ui-"));
   try {
     await page.goto("/");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Back up to remote", exact: true }).click();
     const destination = page.getByLabel("Backup destination", { exact: true });
     await expect(destination).toBeEnabled();
@@ -21,6 +22,7 @@ test("manual backup remembers destination, reports a real local archive, and rec
     expect(original.length).toBeGreaterThan(100);
     await page.screenshot({ path: "/tmp/backup-ui-complete.png" });
     await page.reload();
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Back up to remote", exact: true }).click();
     await expect(destination).toHaveValue(directory);
     await expect(page.getByRole("status")).toHaveText("Backup complete");

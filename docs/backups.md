@@ -42,7 +42,7 @@ than silently publishing an incomplete archive.
 
 ## Manual dashboard API
 
-Use **Back up to remote** in the topbar to review the remembered destination and
+Use **Settings → Back up to remote** in the header to review the remembered destination and
 start a backup explicitly. The dialog shows progress, the archive/upload result,
 and errors. Closing it does not cancel an active job; reopen it to see the result.
 Opening the dialog alone never starts a backup.

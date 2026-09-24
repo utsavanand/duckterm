@@ -31,6 +31,7 @@ test("a grouped session shows under its folder header and collapses", async ({
 // left panel before any session is moved into it.
 test("New folder button creates an empty folder", async ({ page }) => {
   await page.goto("/");
+  await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByRole("button", { name: "New folder" }).click();
   const name = `Folder-${Date.now()}`;
   await page.getByPlaceholder("e.g. payments").fill(name);

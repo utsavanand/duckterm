@@ -3,6 +3,36 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-23 — Terminal attachment must preserve menu focus
+**Broke:** a terminal finishing its connection stole focus from Settings and
+closed the menu before its action could be clicked.
+**Rule:** asynchronous terminal attach/replay may focus an unoccupied page or
+the terminal itself, but must preserve focus in other controls. Only explicit
+terminal selection or clicks may take focus from another control.
+
+## 2026-09-23 — Connector status must not block the dashboard
+**Broke:** backup settings intermittently stayed disabled during initial loading
+in CI. Connector status ran credential and CLI probes on the server event loop.
+**Rule:** run synchronous connector probes in a worker thread. A regression must
+hold a probe open and verify another dashboard request completes before it does;
+increasing the browser timeout would leave the responsiveness bug intact.
+
+## 2026-09-23 — Product renames must preserve the installed application identity
+**Broke:** the pending native rename changed the bundle identifier, leaving the
+configured support preference behind in the old defaults domain.
+**Cause:** a display-name rename also replaced the persistent application ID.
+**Rule:** keep the installed bundle identifier stable while changing app,
+executable, and display names. Verify existing local preferences remain available
+and never embed private support configuration in published release assets.
+
+## 2026-09-23 — Header actions need clear grouping and labels
+**Broke:** separate creation, theme, backup, and harness controls crowded the
+header, and an unexplained bell concealed the notification setting.
+**Rule:** group creation under New and preferences under Settings; retain the
+owner-requested AGENTS.md shortcut separately. Use a labelled notification
+control, preserve existing actions and theme persistence, and verify keyboard
+focus, dismissal, and menu bounds alongside each relocated browser flow.
+
 ## 2026-09-23 — Idle Claude sessions reported as waiting
 **Broke:** 8 of 19 sessions showed "waiting", some for 50+ hours, and the tab
 title counted them as needing an answer. Most were idle at the prompt.

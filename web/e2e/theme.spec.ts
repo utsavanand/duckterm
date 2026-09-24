@@ -34,6 +34,7 @@ test("terminal palette follows the app light/dark toggle", async ({ page }) => {
     .poll(async () => brightness(await shownTermBg(page)), { timeout: 8000 })
     .toBeLessThan(200); // dark terminal background
 
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   const picker = page.locator(".rd-term-theme");
   await expect(picker.locator("option", { hasText: "paper" })).toHaveCount(0);
   await expect(picker.locator("option", { hasText: "duck" })).toHaveCount(1);
@@ -46,6 +47,7 @@ test("terminal palette follows the app light/dark toggle", async ({ page }) => {
     .poll(async () => brightness(await shownTermBg(page)), { timeout: 8000 })
     .toBeGreaterThan(600); // near-white terminal background
 
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await expect(picker.locator("option", { hasText: "paper" })).toHaveCount(1);
   await expect(picker.locator("option", { hasText: "duck" })).toHaveCount(0);
 });

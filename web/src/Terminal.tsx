@@ -68,7 +68,11 @@ export function Terminal({
     // went nowhere and you had to click the terminal first). Targeting the
     // helper textarea after the row-click settles makes the terminal typeable
     // the moment you select an agent.
-    const focusTerm = () => {
+    const focusTerm = (explicit = false) => {
+      // Async attach/replay must not steal focus from a menu or dialog opened
+      // while the terminal was connecting. Explicit terminal selection can.
+      const focused = document.activeElement;
+      if (!explicit && focused && focused !== document.body && !host.contains(focused)) return;
       const ta = host.querySelector<HTMLTextAreaElement>(
         ".xterm-helper-textarea",
       );
@@ -87,7 +91,7 @@ export function Terminal({
       if (leftToNowhere) setTimeout(focusTerm, 0);
     };
     host.addEventListener("focusout", refocusOnBlur);
-    const focusOnClick = () => focusTerm();
+    const focusOnClick = () => focusTerm(true);
     host.addEventListener("mousedown", focusOnClick);
 
     // The WS dies whenever the session's PTY goes away — Stop, a server
@@ -158,7 +162,7 @@ export function Terminal({
       visible = nextVisible;
       cancelAttachScroll();
       pendingOpenScroll = visible;
-      if (visible) { settleOpening(); focusTerm(); }
+      if (visible) { settleOpening(); focusTerm(true); }
     };
 
     const connect = () => {

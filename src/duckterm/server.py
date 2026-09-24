@@ -1988,7 +1988,10 @@ class Server:
         await _write_json(writer, 200 if removed else 404, {"removed": removed, "harness": name})
 
     async def _list_connectors(self, writer: asyncio.StreamWriter) -> None:
-        await _write_json(writer, 200, {"connectors": connectors.list_status()})
+        # Credential/CLI probes can take seconds. Keep other dashboard requests
+        # and terminal traffic responsive while they finish.
+        statuses = await asyncio.to_thread(connectors.list_status)
+        await _write_json(writer, 200, {"connectors": statuses})
 
     async def _enable_connector(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
         try:

@@ -11,6 +11,7 @@ test("new session: agent picker + launch creates a session", async ({
   const before = (await sessions()).length;
 
   await page.goto("/");
+  await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByRole("button", { name: "New session" }).click();
 
   // The agent picker offers all known agents plus a custom escape hatch.

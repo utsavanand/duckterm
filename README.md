@@ -59,7 +59,7 @@ install Python 3.11+, pipx, and tmux using your distribution's package manager.
 Then install the published wheel:
 
 ```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.44/duckterm-0.4.44-py3-none-any.whl
+pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.45/duckterm-0.4.45-py3-none-any.whl
 duckterm serve
 ```
 
@@ -69,7 +69,7 @@ not currently PyPI; `pipx install duckterm` is not a supported installation path
 
 ## Your first session
 
-1. In the dashboard, choose **New session**.
+1. In the dashboard, choose **New → New session**.
 2. Choose an installed agent and the project directory you want it to work in.
 3. Launch the session and type your task into its terminal.
 4. Use folders to organize agents, **Edit file** for project files, and
@@ -152,7 +152,7 @@ and the [shared connector guide](docs/shared-connectors.md) for central hosting.
 ## Mac app
 
 On **Apple Silicon Macs running macOS 13+**, install the CLI above, then download
-[DuckTerm-0.4.44-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.44/DuckTerm-0.4.44-macos-arm64.zip),
+[DuckTerm-0.4.45-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.45/DuckTerm-0.4.45-macos-arm64.zip),
 unzip it, and move **DuckTerm.app** to **Applications**.
 
 The app opens the dashboard in a native window with a Dock icon and notifications.

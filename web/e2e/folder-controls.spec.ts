@@ -48,6 +48,7 @@ test("new session lists empty and nested sidebar folders and sends the selected 
   try {
     await page.goto("/");
     await expect(page.getByRole("button", { name: "View interactions in Launch review", exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "New", exact: true }).click();
     await page.getByRole("button", { name: "New session", exact: true }).click();
     const select = page.getByLabel("Sidebar folder", { exact: true });
     await expect(select).toHaveValue("");

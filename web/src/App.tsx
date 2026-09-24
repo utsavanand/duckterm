@@ -8,6 +8,7 @@ import { OracleExchange, OracleModal } from "./OracleModal";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
+import { HeaderMenus } from "./HeaderMenus";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
 import { InboxView } from "./InboxView";
@@ -20,7 +21,6 @@ import { Terminal } from "./Terminal";
 import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
 import {
-  AUTO,
   TermMode,
   ThemeOverrides,
   loadTermThemes,
@@ -50,7 +50,7 @@ function Dashboard() {
   const sessions = sourceSessions.map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 }));
   const toast = useToast();
   const now = useNow(1000);
-  const { theme, resolved: mode, cycle: cycleTheme } = useTheme();
+  const { theme, resolved: mode, setTheme } = useTheme();
 
   const [modal, setModal] = useState<
     "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "oracle" | null
@@ -235,7 +235,7 @@ function Dashboard() {
             width={22}
             height={22}
           />
-          Rubber<span className="rd-brand-term">Term</span>
+          Duck<span className="rd-brand-term">Term</span>
         </span>
         <span className="rd-live">
           <span className={`dot ${connected ? "on" : "off"}`} />
@@ -266,62 +266,10 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
-          title={
-            notifyOn
-              ? "Desktop notifications on (click to mute)"
-              : "Notify me when an agent needs an answer"
-          }
-          onClick={toggleNotify}
-          aria-label="Toggle notifications"
-        >
-          {notifyOn ? "🔔" : "🔕"}
-        </button>
-        <select
-          className="rd-term-theme"
-          title={`Terminal color theme (${mode} mode)`}
-          value={termTheme}
-          onChange={(e) => setTermTheme(e.target.value)}
-        >
-          <option value={AUTO}>auto ({mode})</option>
-          {themesForMode(mode).map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-        <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
-          title={`Theme: ${theme} (click to change)`}
-          onClick={cycleTheme}
-          aria-label="Toggle theme"
-        >
-          {theme === "light" ? "☀︎" : theme === "dark" ? "☾" : "◐"}
-        </button>
-        <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
-          onClick={() => setModal("harnesses")}
-          title="Install suites of skills/hooks/sub-agents (like uv-suite) into a project"
-        >
-          Harnesses
-        </button>
-        <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setModal("backup")}>
-          Back up to remote
-        </button>
-        <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
-          onClick={() => setModal("folder")}
-          title="Create a folder to group agents"
-        >
-          New folder
-        </button>
-        <button
-          className="rd-btn rd-btn-primary"
-          onClick={() => setModal("launch")}
-        >
-          New session
-        </button>
+        <HeaderMenus theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} onAction={(action) => {
+          if (action === "launch") setLaunchGroup(undefined);
+          setModal(action);
+        }} />
       </header>
 
       {gridFolder !== null ? (
@@ -345,7 +293,7 @@ function Dashboard() {
             </div>
             {agents.length === 0 && folders.length === 0 ? (
               <p className="rd-panel-empty">
-                No agents yet. Click New session to start one.
+                No agents yet. Choose New → New session to start one.
               </p>
             ) : (
               <AgentTree
