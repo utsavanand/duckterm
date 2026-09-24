@@ -13,7 +13,7 @@ older servers; the API exposes them as `expires_at: 0`.
 ## Task-end notices
 
 Claude Code's synchronous Stop hook can return one line of additional context.
-RubberTerm uses this to mention unread owner broadcasts and accepted, unanswered
+DuckTerm uses this to mention unread owner broadcasts and accepted, unanswered
 assignments once per record.
 A new accepted assignment makes another notice eligible. Brand-new peer questions
 wait for the agent's normal inbox check. Notices neither accept nor answer work.

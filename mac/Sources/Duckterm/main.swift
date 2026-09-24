@@ -162,10 +162,10 @@ private func buildMainMenu() -> NSMenu {
     main.addItem(appItem)
     let appMenu = NSMenu()
     appMenu.addItem(
-        withTitle: "Hide RubberTerm", action: #selector(NSApplication.hide(_:)),
+        withTitle: "Hide DuckTerm", action: #selector(NSApplication.hide(_:)),
         keyEquivalent: "h")
     appMenu.addItem(
-        withTitle: "Quit RubberTerm", action: #selector(NSApplication.terminate(_:)),
+        withTitle: "Quit DuckTerm", action: #selector(NSApplication.terminate(_:)),
         keyEquivalent: "q")
     appItem.submenu = appMenu
 

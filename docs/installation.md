@@ -1,14 +1,14 @@
-# Install RubberTerm
+# Install DuckTerm
 
-RubberTerm runs locally on macOS or Linux. The dashboard needs Python 3.11+,
+DuckTerm runs locally on macOS or Linux. The dashboard needs Python 3.11+,
 tmux, and an installed, signed-in coding agent. Node.js is only needed for
 source development and connectors that use it, not the packaged dashboard.
 
 ## Install and launch
 
 Follow the [README quick start](../README.md#install) for the current release
-wheel and Mac app download. Install with pipx to keep RubberTerm isolated from
-other Python packages. The command is `duckterm`; the product is RubberTerm.
+wheel and Mac app download. Install with pipx to keep DuckTerm isolated from
+other Python packages. The command is `duckterm`; the product is DuckTerm.
 
 `duckterm serve` runs in the foreground and opens http://127.0.0.1:4300.
 Keep its terminal open while using the browser. The optional Mac app can start
@@ -70,6 +70,6 @@ relevant `duckterm doctor` output. Remove private project paths and account deta
 pipx uninstall duckterm
 ```
 
-Remove RubberTerm.app from Applications if installed. Data under `~/.duckterm`
+Remove DuckTerm.app from Applications if installed. Data under `~/.duckterm`
 is retained. To remove hooks, run `duckterm uninstall-hooks --agent AGENT --global`
 for each configured agent **before** uninstalling the CLI.

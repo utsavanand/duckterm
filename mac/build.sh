@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build RubberTerm.app — the desktop shell around the local dashboard.
+# Build DuckTerm.app — the desktop shell around the local dashboard.
 #
 # Compiles the Swift sources directly (not via SwiftPM) into a .app bundle and
 # ad-hoc signs it so it runs on this machine. Requires a working Swift toolchain
@@ -9,12 +9,12 @@
 #   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 #
 # Usage:
-#   ./build.sh          # build build/RubberTerm.app
+#   ./build.sh          # build build/DuckTerm.app
 #   ./build.sh --run    # build, then open it
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="build/RubberTerm.app"
+APP="build/DuckTerm.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 
@@ -23,7 +23,7 @@ rm -rf build
 mkdir -p "$MACOS" "$CONTENTS/Resources"
 swiftc -O \
   -framework AppKit -framework WebKit -framework UserNotifications -framework Foundation \
-  -o "$MACOS/RubberTerm" \
+  -o "$MACOS/DuckTerm" \
   Sources/Duckterm/*.swift
 
 echo "==> bundling app icon"
@@ -37,7 +37,7 @@ cp Resources/AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 
 echo "==> writing Info.plist"
 # Bundle version tracks the Python package (single source of truth) so the
-# app's About/Get Info never claims an older RubberTerm than the one it runs.
+# app's About/Get Info never claims an older DuckTerm than the one it runs.
 # Read the version from the source file directly — importing duckterm needs
 # an installed venv, which a fresh release worktree doesn't have (that
 # dependency once aborted the build MID-BUNDLE, shipping a partial .app).
@@ -48,12 +48,12 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>RubberTerm</string>
-  <key>CFBundleDisplayName</key><string>RubberTerm</string>
-  <key>CFBundleIdentifier</key><string>com.rubberduckhq.rubberterm</string>
+  <key>CFBundleName</key><string>DuckTerm</string>
+  <key>CFBundleDisplayName</key><string>DuckTerm</string>
+  <key>CFBundleIdentifier</key><string>com.rubberduckhq.duckterm</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
-  <key>CFBundleExecutable</key><string>RubberTerm</string>
+  <key>CFBundleExecutable</key><string>DuckTerm</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
@@ -64,7 +64,7 @@ PLIST
 
 # Optional support recipient is supplied at build time, never committed to source.
 # Read the environment directly so the address is never logged or parsed as code.
-if [[ -n "${RUBBERTERM_SUPPORT_EMAIL:-}" ]]; then
+if [[ -n "${DUCKTERM_SUPPORT_EMAIL:-}" ]]; then
   python3 - "$CONTENTS/Info.plist" <<'PYCONFIG'
 import os
 import plistlib
@@ -72,7 +72,7 @@ import sys
 from pathlib import Path
 path = Path(sys.argv[1])
 plist = plistlib.loads(path.read_bytes())
-plist["RubberTermSupportEmail"] = os.environ["RUBBERTERM_SUPPORT_EMAIL"]
+plist["DuckTermSupportEmail"] = os.environ["DUCKTERM_SUPPORT_EMAIL"]
 path.write_bytes(plistlib.dumps(plist))
 PYCONFIG
 fi

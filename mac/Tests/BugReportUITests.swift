@@ -54,7 +54,7 @@ struct BugReportUITests {
             }
         }, onSaved: { savedURL = $0 })
         report.show()
-        guard let panel = NSApp.windows.first(where: { $0.title == "Report a bug — RubberTerm" }),
+        guard let panel = NSApp.windows.first(where: { $0.title == "Report a bug — DuckTerm" }),
               let web = panel.contentView as? WKWebView else { fatalError("Missing report window") }
         try await wait { try await js(web, "typeof window.updateReport === 'function'") as? Bool == true }
         try await wait { try await js(web, "document.activeElement.id === 'summary'") as? Bool == true }

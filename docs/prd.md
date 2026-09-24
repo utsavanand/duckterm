@@ -1,4 +1,4 @@
-# RubberTerm — Product Release Document (PRD)
+# DuckTerm — Product Release Document (PRD)
 
 Status: current as of v0.4.27 (2026-09-21). Repo: `duckterm`. Companion docs:
 [architecture.md](architecture.md), [roadmap.md](roadmap.md).
@@ -13,12 +13,12 @@ context-window pressure, or a sub-agent tree.
 
 ## Product
 
-RubberTerm launches each agent CLI into a tmux-backed PTY it owns and renders
+DuckTerm launches each agent CLI into a tmux-backed PTY it owns and renders
 it in the browser with xterm.js — a real terminal you type into, not a
 transcript viewer — with a structured layer beside it driven by the agents'
 own hook systems.
 
-Agents run under the **user's own subscription**; RubberTerm never calls a
+Agents run under the **user's own subscription**; DuckTerm never calls a
 model API for the agents themselves. Everything runs on `127.0.0.1`.
 
 ## Users
@@ -96,7 +96,7 @@ model API for the agents themselves. Everything runs on `127.0.0.1`.
   see the data-locality section of [architecture.md](architecture.md).
 - Cross-machine session sharing, automatic terminal injection, or
   auto-answering inboxes with a model.
-- Watched mode (observing agents launched outside RubberTerm) is frozen and
+- Watched mode (observing agents launched outside DuckTerm) is frozen and
   on the deprecation path; it lives on in the sibling project Rubberduck.
 
 ## Approved direction, not yet built

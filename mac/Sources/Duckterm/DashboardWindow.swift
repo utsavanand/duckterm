@@ -56,7 +56,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             backing: .buffered,
             defer: false
         )
-        win.title = "RubberTerm"
+        win.title = "DuckTerm"
         win.contentView = web
         win.center()
         win.delegate = self

@@ -25,7 +25,7 @@ acquire. Sequencing below is built around that fact.
 
 ### The decision that shapes everything: local-first stays
 
-RubberTerm is a downloaded app that runs the user's own agent CLIs on their
+DuckTerm is a downloaded app that runs the user's own agent CLIs on their
 own machine. Accounts must **not** turn it into a hosted product with a
 mandatory login. Concretely:
 
@@ -130,7 +130,7 @@ writing a second archiver.
    revocable, size-capped. It is a dumb store; it cannot read the contents.
 4. **Recipient**: authenticated with a GitHub account (a handoff carries
    conversation history — this is not a "link is the credential" case),
-   downloads, and RubberTerm reconstructs a **new local session** with the
+   downloads, and DuckTerm reconstructs a **new local session** with the
    transcript in place, resumable so the agent continues with full context.
 5. From that moment the two sessions are independent. **No sync, ever.**
 

@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="web/public/favicon.svg" width="72" alt="RubberTerm logo" />
+<img src="web/public/favicon.svg" width="72" alt="DuckTerm logo" />
 
-# RubberTerm
+# DuckTerm
 
 **One workspace for your coding agents: live terminals, nested sessions, shared connectors, and project files.**
 
@@ -13,7 +13,7 @@
 
 [Install](#install) · [First session](#your-first-session) · [Features](#features) · [Mac app](#mac-app) · [How it works](#how-it-works) · [Development](#development)
 
-<img src="docs/screenshot.png" alt="RubberTerm dashboard with nested coding agents, a live terminal, the Edit file action, and the connectors panel" width="100%" />
+<img src="docs/screenshot.png" alt="DuckTerm dashboard with nested coding agents, a live terminal, the Edit file action, and the connectors panel" width="100%" />
 
 </div>
 
@@ -24,7 +24,7 @@ means alt-tabbing to find the one that's waiting on you, losing track of which
 branch each is on, and having no way to ask "what has that session actually
 done?"
 
-RubberTerm launches each agent into a tmux-backed PTY it owns and renders it in
+DuckTerm launches each agent into a tmux-backed PTY it owns and renders it in
 the browser with xterm.js — a real terminal you type into, not a transcript
 viewer. Around the terminals it shows what a terminal can't:
 
@@ -64,7 +64,7 @@ duckterm serve
 ```
 
 The dashboard opens at **http://127.0.0.1:4300**. Leave that terminal running.
-RubberTerm is distributed through [GitHub Releases](https://github.com/utsavanand/duckterm/releases),
+DuckTerm is distributed through [GitHub Releases](https://github.com/utsavanand/duckterm/releases),
 not currently PyPI; `pipx install duckterm` is not a supported installation path.
 
 ## Your first session
@@ -152,8 +152,8 @@ and the [shared connector guide](docs/shared-connectors.md) for central hosting.
 ## Mac app
 
 On **Apple Silicon Macs running macOS 13+**, install the CLI above, then download
-[RubberTerm-0.4.44-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.44/RubberTerm-0.4.44-macos-arm64.zip),
-unzip it, and move **RubberTerm.app** to **Applications**.
+[DuckTerm-0.4.44-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.44/DuckTerm-0.4.44-macos-arm64.zip),
+unzip it, and move **DuckTerm.app** to **Applications**.
 
 The app opens the dashboard in a native window with a Dock icon and notifications.
 It starts the local server when needed, or connects to one already running.
@@ -172,7 +172,7 @@ WebSocket carrying raw PTY bytes to xterm.js; context-pressure numbers are read
 from the agent's transcript on disk. Everything runs on 127.0.0.1: GETs are
 loopback-gated, state-changing POSTs are token-gated.
 
-RubberTerm is the terminal-forward sibling of
+DuckTerm is the terminal-forward sibling of
 [Rubberduck](https://github.com/utsavanand/rubber-duck), which *watches* agents
 you run in your own terminal tabs instead of owning the PTY. Install either or
 both.
@@ -202,6 +202,6 @@ Design docs: [terminal-forward-design.md](docs/terminal-forward-design.md),
 ## License
 
 [FSL-1.1-MIT](LICENSE) — the Functional Source License. You can read, run,
-modify, and redistribute RubberTerm for any purpose except offering a
+modify, and redistribute DuckTerm for any purpose except offering a
 competing product; each release automatically becomes plain MIT two years
 after it ships.

@@ -404,7 +404,7 @@ def test_schema_version_is_stamped_on_a_fresh_db(tmp_path: Path) -> None:
 
 
 def test_refuses_to_open_a_newer_schema(tmp_path: Path) -> None:
-    """A DB migrated forward by a newer RubberTerm (higher user_version) must be
+    """A DB migrated forward by a newer DuckTerm (higher user_version) must be
     refused, not silently mis-read — the prod-opens-beta's-DB data-loss case."""
     import sqlite3
 

@@ -35,7 +35,7 @@ editing three copies.
 
 ## Running them side by side, safely
 
-Each tier is a separate RubberTerm **instance**. Set `DUCKTERM_INSTANCE` and the
+Each tier is a separate DuckTerm **instance**. Set `DUCKTERM_INSTANCE` and the
 data dir, tmux socket, port, and hook callback URL all derive from it — so the
 three never share a database or fight over tmux panes (a shared socket used to
 let one instance kill another's live agents; see docs/production-audit.md

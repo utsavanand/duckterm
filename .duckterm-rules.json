@@ -13,7 +13,7 @@
     },
     {
       "id": "ship-end-to-end",
-      "text": "A fix isn't done until shipped end-to-end: commit \u2192 gate \u2192 bump version \u2192 tag \u2192 fresh-worktree build (`scripts/build_package.sh`) \u2192 GitHub release with ABSOLUTE asset paths \u2192 `pipx install --force` \u2192 relaunch RubberTerm.app \u2192 curl the dashboard for 200.",
+      "text": "A fix isn't done until shipped end-to-end: commit \u2192 gate \u2192 bump version \u2192 tag \u2192 fresh-worktree build (`scripts/build_package.sh`) \u2192 GitHub release with ABSOLUTE asset paths \u2192 `pipx install --force` \u2192 relaunch DuckTerm.app \u2192 curl the dashboard for 200.",
       "scope": "all",
       "status": "active",
       "source": "manual",

@@ -38,7 +38,7 @@ _SCHEMA_VERSION = 3
 
 
 class SchemaTooNewError(RuntimeError):
-    """The database was written by a newer RubberTerm than this one."""
+    """The database was written by a newer DuckTerm than this one."""
 
 
 _SCHEMA = """
@@ -242,14 +242,14 @@ class HistoryStore:
         # locked" at random.
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
-        # Refuse a DB written by a newer RubberTerm — opening it with older code
+        # Refuse a DB written by a newer DuckTerm — opening it with older code
         # would silently mis-read or clobber the newer schema (the prod-opens-a-
         # beta-migrated-DB case). A fresh DB reports user_version 0, which passes.
         db_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
         if db_version > _SCHEMA_VERSION:
             raise SchemaTooNewError(
-                f"database at {path} is schema v{db_version}, but this RubberTerm "
-                f"supports up to v{_SCHEMA_VERSION} — upgrade RubberTerm, or point "
+                f"database at {path} is schema v{db_version}, but this DuckTerm "
+                f"supports up to v{_SCHEMA_VERSION} — upgrade DuckTerm, or point "
                 f"DUCKTERM_HOME/DUCKTERM_INSTANCE at a matching data dir."
             )
         self._conn.executescript(_SCHEMA)

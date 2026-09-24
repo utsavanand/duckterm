@@ -3,7 +3,7 @@ import Foundation
 @main
 struct BugReportDataTests {
     static func main() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("RubberTerm-report-test-\(UUID().uuidString)")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("DuckTerm-report-test-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         func write(_ name: String, _ data: Data) throws -> URL {

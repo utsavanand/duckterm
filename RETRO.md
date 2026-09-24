@@ -175,7 +175,7 @@ code first, filter its saved output after.
 
 ## 2026-09-20 — Delete/rename dialogs silently dead in the Mac app
 **Broke:** the folder ✕ (window.confirm) and rename/new-folder prompts
-(window.prompt) did nothing in RubberTerm.app — confirm returned false,
+(window.prompt) did nothing in DuckTerm.app — confirm returned false,
 prompt returned null.
 **Cause:** WKWebView no-ops all JS dialogs unless the app implements
 WKUIDelegate. Third app-shell gap of this kind (menu key equivalents, copy
@@ -210,7 +210,7 @@ trust what's lying around. Never judge a test run from truncated output —
 read the pass/fail summary line itself.
 
 ## 2026-09-20 — Copy/paste still dead in the Mac app after adding menus
-**Broke:** ⌘C/⌘V did nothing in RubberTerm.app even with a proper Edit menu.
+**Broke:** ⌘C/⌘V did nothing in DuckTerm.app even with a proper Edit menu.
 **Cause:** WKWebView enables the standard `copy:` menu item only when the DOM
 has a selection — xterm renders selection on canvas, so the item stayed
 disabled and the key equivalent was inert. Fixed by bridging Copy/Paste menu

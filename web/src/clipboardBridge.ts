@@ -1,6 +1,6 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 
-// Clipboard bridge for the Mac app (RubberTerm.app). WKWebView validates the
+// Clipboard bridge for the Mac app (DuckTerm.app). WKWebView validates the
 // standard Edit-menu Copy item against the DOM selection — an xterm selection
 // is canvas-rendered and has none, so Cmd+C stayed disabled forever. The app's
 // Copy/Paste menu items call these globals instead; browsers never use them
