@@ -2,6 +2,7 @@
 draft can be sitting in their input box."""
 
 import asyncio
+import json
 import time
 
 import pytest
@@ -142,3 +143,62 @@ def test_tick_leaves_a_draft_alone(idle_recipient) -> None:
     sup.screen = CODEX_DRAFT
     asyncio.run(server._oracle_tick())
     assert sup.pasted == []
+
+
+def test_ask_oracle_conversation_is_stored_and_feeds_follow_ups(tmp_path, monkeypatch) -> None:
+    from tests.runtime.test_session_api import dispatch
+
+    from duckterm.llm.summarizer import Summary
+
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path))
+    history = HistoryStore(tmp_path / "db.sqlite")
+    history.record(
+        {"_id": "s", "_ts": 1, "event_type": "SessionStart", "session_key": "s", "test": True}
+    )
+    server = Server(history=history)
+    owner = {"x-duckterm-token": server.token}
+    prompts: list[str] = []
+
+    def fake(prompt: str) -> Summary:
+        prompts.append(prompt)
+        return Summary(text=f"**answer {len(prompts)}**", backend="cli")
+
+    monkeypatch.setattr("duckterm.server.summarize", fake)
+
+    def ask(q: str) -> tuple:
+        return dispatch(server, "POST", "/fleet/ask", owner, json.dumps({"question": q}).encode())
+
+    assert ask("who's stuck?")[0] == 200
+    body = ask("and now?")[1]
+    assert body["exchange"]["q"] == "and now?"
+    assert "Q: who's stuck?\nA: **answer 1**" in prompts[1]
+
+    stored = dispatch(server, "GET", "/oracle/chat", {})[1]["messages"]
+    assert [(m["q"], m["a"]) for m in stored] == [
+        ("who's stuck?", "**answer 1**"),
+        ("and now?", "**answer 2**"),
+    ]
+    assert dispatch(server, "DELETE", "/oracle/chat", {})[0] == 401
+    assert dispatch(server, "DELETE", "/oracle/chat", owner)[1] == {"messages": []}
+    assert dispatch(server, "GET", "/oracle/chat", {})[1] == {"messages": []}
+    history.close()
+
+
+@pytest.mark.parametrize(
+    ("data", "report"),
+    [
+        (b"\x1b[I", True),  # focus in: clicking into a Codex pane
+        (b"\x1b[O", True),  # focus out
+        (b"\x1b[I\x1b[O", True),
+        (b"\x1b[<64;10;5M", True),  # SGR wheel scroll
+        (b"\x1b[M ab", True),  # X10 mouse click
+        (b"a", False),
+        (b"\x1b[Ifix it", False),  # typing right after focusing
+        (b"\x1b[A", False),  # arrow keys stay conservative
+        (b"\r", False),
+    ],
+)
+def test_terminal_reports_are_not_typing(data, report) -> None:
+    from duckterm.core.orchestrator import is_terminal_report
+
+    assert is_terminal_report(data) is report

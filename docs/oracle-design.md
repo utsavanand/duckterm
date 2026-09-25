@@ -19,10 +19,14 @@ check even when nothing changed.
 
 ## Ask Oracle
 
-The topbar button replaces the old question bar under the topbar. It opens a
-modal backed by `POST /fleet/ask`: one summarizer call over a digest of every
-running session. The exchange log lives in the dashboard for the page's
-lifetime; the last two exchanges ride along for follow-ups.
+The topbar button toggles a chat panel docked to the right of the panes, so
+sessions stay usable while it is open. Each question is one summarizer call
+over a digest of every running session (`POST /fleet/ask`). Answers render as
+markdown. The server stores the conversation in `oracle-chat.json` (0600,
+last 200 exchanges) beside the database, so it survives reloads and every
+client sees the same one; `GET /oracle/chat` reads it and an owner-token
+`DELETE /oracle/chat` clears it. The last two stored exchanges are sent as
+follow-up context.
 
 ## Idle-inbox nudges
 
@@ -46,7 +50,7 @@ pass, and together they answer that objection:
 | --- | --- |
 | State is `idle` | `waiting` means a question for the owner; that takes precedence |
 | Idle 10+ minutes since the last Stop event | The owner may be about to type |
-| No owner keystroke since the turn ended | Duckterm carries every keystroke; a later one may be an unsent draft |
+| No owner keystroke since the turn ended | Duckterm carries every keystroke; a later one may be an unsent draft. Focus and mouse reports the terminal sends by itself do not count: Codex enables focus reporting, so just clicking its pane used to block nudges |
 | The harness sees an empty input box on screen | Covers typing duckterm never saw, and turns that ended before a server restart |
 | Mail is an owner broadcast, accepted work, or an unread peer question 10+ minutes old | Fresh peer mail gives an active recipient time to check itself; a question the agent read and left queued was its choice, often a status update needing no answer |
 | New mail since the last nudge, and at most one nudge per hour | A session that chooses not to act is not nagged |
