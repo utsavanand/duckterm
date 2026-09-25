@@ -133,6 +133,28 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
     is user input and must be escaped. Every previously-left comment
     lights up as soon as this ships.
 
+## Bugs — open
+
+B5. **Opening Oracle corrupts terminal wrapping irreversibly** (owner-
+    reported 2026-09-25, `ui-dev`, prioritized). Opening Oracle narrows the
+    terminal pane; closing it never restores the PTY geometry, so the agent
+    keeps rendering to the narrow width, and a long unsubmitted draft loses
+    its suffix.
+    Root cause (architect, verified in code): `settleOpening` in
+    Terminal.tsx early-returns `if (!visible || !host.clientWidth ||
+    !host.clientHeight)` — before `fit.fit()` and `sendResize()`. The
+    ResizeObserver is wired to it, so any callback that fires while the
+    host is unmeasurable **drops the resize permanently**; nothing retries.
+    The lost draft is a consequence, not a separate bug: the TUI re-wraps
+    the input line to the cols it believes are current.
+    Fix the resize path (retry rather than silently drop — same class as
+    the RETRO blank-Mac-window bug, where a failed load had no retry), not
+    just the Oracle layout. Moving Oracle into the right context pane is a
+    reasonable product change but would leave the defect latent, and the
+    same path serves grid splits, folder-grid open/close, tab switches, and
+    window resize. Regression test: open Oracle, close it, assert the PTY
+    received a resize back to the original cols.
+
 ## In flight (2026-09-25)
 
 - **Public website + custom domain** — **shipped**:
