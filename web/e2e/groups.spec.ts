@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { postEvent, seedSession } from "./helpers";
+import { apiDelete, expandFolder, postEvent, seedSession } from "./helpers";
 
 // A session with a `group` renders under a collapsible folder header in the left
 // panel, and clicking the header collapses/expands it. (Drag-and-drop assignment
@@ -13,9 +13,11 @@ test("a grouped session shows under its folder header and collapses", async ({
 
   await page.goto("/");
 
-  // The folder header appears, with the session nested in its body.
+  // Folders start collapsed; expanding reveals the nested session.
   const header = page.locator(".rd-group-head", { hasText: "Billing" });
   await expect(header).toBeVisible();
+  await expect(header.locator(".rd-group-caret")).toHaveText("▸");
+  await expandFolder(page, "Billing");
   const groupBody = page.locator(".rd-group", { hasText: "Billing" });
   await expect(groupBody.locator(".rd-row", { hasText: key })).toBeVisible();
 
@@ -51,6 +53,7 @@ test("a session in a nested folder renders indented under it", async ({
   await seedSession(key, { name: key, group: "Parent/Child" });
 
   await page.goto("/");
+  await expandFolder(page, "Parent/Child");
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
   const childHead = page.locator(".rd-group-head", { hasText: "Child" });
@@ -77,6 +80,7 @@ test("double-click renames a folder and its session follows", async ({
   await seedSession(key, { name: key, group: from });
 
   await page.goto("/");
+  await expandFolder(page, from);
   // Wait until the session has settled INSIDE the folder before renaming —
   // the rename handler re-groups known sessions, so it must know this one.
   await expect(
@@ -95,6 +99,7 @@ test("double-click renames a folder and its session follows", async ({
   const renamed = page.locator(".rd-group-head", { hasText: to });
   await expect(renamed).toBeVisible();
   await expect(page.locator(".rd-group-head", { hasText: from })).toHaveCount(0);
+  await expandFolder(page, to);
   const body = page.locator(".rd-group", { hasText: to });
   await expect(body.locator(".rd-row", { hasText: key })).toBeVisible();
 });
@@ -103,9 +108,11 @@ test("double-click renames a folder and its session follows", async ({
 // visible control is the discoverable path).
 test("Ungroup button moves a session out of its folder", async ({ page }) => {
   const key = `e2e-ung-${Date.now()}`;
-  await seedSession(key, { name: key, group: `Grp-${Date.now()}` });
+  const folder = `Grp-${Date.now()}`;
+  await seedSession(key, { name: key, group: folder });
 
   await page.goto("/");
+  await expandFolder(page, folder);
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
   await row.hover();
@@ -127,6 +134,7 @@ test("nested folder moves to top level via the unnest button", async ({
   await seedSession(key, { name: key, group: `${parent}/Inner` });
 
   await page.goto("/");
+  await expandFolder(page, parent);
   const inner = page.locator(".rd-group-head", { hasText: "Inner" });
   await expect(inner).toBeVisible();
   await inner.hover();
@@ -141,6 +149,7 @@ test("nested folder moves to top level via the unnest button", async ({
     )
     .toBe(14);
   // Its session followed the move.
+  await expandFolder(page, "Inner");
   const body = page.locator(".rd-group", { hasText: "Inner" });
   await expect(body.locator(".rd-row", { hasText: key })).toBeVisible();
 });
@@ -162,5 +171,33 @@ test("terminated session rows show only end-state actions", async ({
   await expect(row.getByRole("button", { name: "Delete" })).toBeVisible();
   for (const gone of ["Rename", "Notes", "Checkpoint", "Fork", "Stop watching"]) {
     await expect(row.getByRole("button", { name: gone })).toHaveCount(0);
+  }
+});
+
+// A reload models the new dashboard mount after a native app restart.
+test("restart collapses parent and nested folders without losing sessions", async ({ page }) => {
+  const key = `e2e-restart-folder-${Date.now()}`;
+  const parent = `Restart-${Date.now()}`;
+  await seedSession(key, { name: key, group: `${parent}/Child` });
+  try {
+    await page.goto("/");
+    const parentHead = page.locator(".rd-group-head", { hasText: parent });
+    const row = page.locator(".rd-row", { hasText: key });
+    await expect(parentHead.locator(".rd-group-caret")).toHaveText("▸");
+    await expect(row).toHaveCount(0);
+    await expandFolder(page, `${parent}/Child`);
+    await expect(row).toBeVisible();
+    await page.reload();
+    await expect(parentHead.locator(".rd-group-caret")).toHaveText("▸");
+    await expect(row).toHaveCount(0);
+    await expandFolder(page, parent);
+    const childHead = page.locator(".rd-group-head", { hasText: "Child" }).filter({ has: page.getByRole("button", { name: `View interactions in ${parent}/Child`, exact: true }) });
+    await expect(childHead.locator(".rd-group-caret")).toHaveText("▸");
+    await expect(row).toHaveCount(0);
+    await expandFolder(page, `${parent}/Child`);
+    await expect(row).toBeVisible();
+  } finally {
+    await apiDelete(`/sessions/${key}`);
+    await apiDelete(`/folders/${encodeURIComponent(parent)}`);
   }
 });

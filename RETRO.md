@@ -3,6 +3,13 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-25 — Restart should not expand every folder
+**Broke:** every dashboard mount initialized folders as expanded, so restarting
+filled the sidebar with all sessions.
+**Rule:** initialize folder headers collapsed, including nested folders. Verify
+reload closes previously opened folders and that reopening still reveals their
+sessions; keep header actions available while collapsed.
+
 ## 2026-09-25 — Changed-file backups need filtered staging and restore checks
 **Found:** syncing raw agent directories bypasses archive exclusions, and size or
 mtime alone can miss a same-size transcript rewrite. A mutable remote tree also

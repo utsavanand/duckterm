@@ -279,7 +279,8 @@ function GroupHeader({
   termMode: TermMode;
   children: ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Start every folder closed when the dashboard opens or restarts.
+  const [collapsed, setCollapsed] = useState(true);
   const [over, setOver] = useState(false);
   const leaf = name.split("/").pop();
   return (
