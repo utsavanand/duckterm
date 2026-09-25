@@ -133,6 +133,17 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
     is user input and must be escaped. Every previously-left comment
     lights up as soon as this ships.
 
+## In flight (2026-09-25)
+
+- **Public website + custom domain** — **shipped**:
+  https://duckterm.utsava.xyz/ (verified HTTP 200, title "DuckTerm — One
+  place for your coding agents", no RubberTerm leakage). Demo uses the
+  actual UI with fictional data. Source lives in the `rubber-duck` repo
+  (PR #26), not this one — worth knowing when looking for it.
+- **Compact sidebar, bolder folder/session names** (`ui-dev`, owner-
+  requested) — preview prepared, awaiting the owner's visual approval
+  before implementation.
+
 ## Designed 2026-09-25, awaiting owner review
 
 F7. **Plan hand-off** — plan with one agent/model, implement with another
