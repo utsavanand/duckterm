@@ -112,6 +112,13 @@ CREATE INDEX IF NOT EXISTS idx_subagents_session ON subagents(session_key);
 -- mode): a quoted span + the user's note. Stored so they persist and so the
 -- note can be sent back to the agent as a follow-up. See
 -- docs/structured-render-design.md.
+CREATE TABLE IF NOT EXISTS message_pins (
+    session_key TEXT NOT NULL,
+    message_key TEXT NOT NULL,
+    message_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (session_key, message_key)
+);
 CREATE TABLE IF NOT EXISTS annotations (
     id          TEXT PRIMARY KEY,
     session_key TEXT NOT NULL,
@@ -385,6 +392,37 @@ class HistoryStore:
             "INSERT INTO annotations (id, session_key, quote, note, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (ann_id, session_key, quote, note, ts),
+        )
+        self._conn.commit()
+
+    def message_pins(self, session_key: str) -> list[dict[str, Any]]:
+        """Saved messages remain readable even after their transcript disappears."""
+        rows = self._conn.execute(
+            "SELECT message_key, message_json, created_at FROM message_pins "
+            "WHERE session_key = ? ORDER BY created_at, message_key",
+            (session_key,),
+        )
+        return [
+            {
+                "message_key": row["message_key"],
+                "message": json.loads(row["message_json"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def add_message_pin(self, session_key: str, message: dict[str, object]) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO message_pins "
+            "(session_key, message_key, message_json, created_at) VALUES (?, ?, ?, ?)",
+            (session_key, message["message_key"], json.dumps(message), int(time.time() * 1000)),
+        )
+        self._conn.commit()
+
+    def remove_message_pin(self, session_key: str, message_key: str) -> None:
+        self._conn.execute(
+            "DELETE FROM message_pins WHERE session_key = ? AND message_key = ?",
+            (session_key, message_key),
         )
         self._conn.commit()
 
@@ -889,6 +927,7 @@ class HistoryStore:
         self._conn.execute("DELETE FROM events WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
+        self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
         self._conn.execute(
             "INSERT OR REPLACE INTO tombstones (session_key, deleted_at) VALUES (?, ?)",
             (key, now),
@@ -915,6 +954,7 @@ class HistoryStore:
             self._conn.execute("DELETE FROM events WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
+            self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM tombstones WHERE session_key = ?", (key,))
             _remove_checkpoint_dir(key)  # leave zero trace, including on disk
         self._conn.commit()
