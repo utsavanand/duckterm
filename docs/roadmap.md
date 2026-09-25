@@ -84,6 +84,29 @@ Shipped 2026-09-23–25 (v0.4.40 → v0.4.47):
   (us-west1, uniform access, public-access prevention), upload/read/delete
   verified with non-sensitive data. No real backup uploaded yet.
 
+## Shipped without a roadmap entry (recorded 2026-09-25)
+
+Found by reconciling `main` against this document. Each is released and
+documented; none was tracked here while it was being built. Listed so the
+roadmap reflects the product, and as evidence for the process note below.
+
+- **Message bookmarks** — v0.4.46/v0.4.47 (PRs #8, #10, #11). Pin/unpin a
+  conversation message, compact strip above the terminal, click jumps to
+  the exact message, saved-copy fallback if the transcript is rewritten,
+  persists across restart. [message-pins.md](message-pins.md).
+- **Message folder UI** — [message-folder-ui.md](message-folder-ui.md).
+- **Inbox delivery semantics** — [inbox-delivery.md](inbox-delivery.md).
+- **Hugging Face connector** — [hugging-face.md](hugging-face.md).
+- **Shared connectors** — [shared-connectors.md](shared-connectors.md).
+- **AGENTS.md template** — [agents-template.md](agents-template.md).
+- **Installation guide** — [installation.md](installation.md).
+
+**Process note.** The owner steers by this roadmap, so work that is
+designed, built, and released without an entry is invisible when priorities
+are set — bookmarks reached the architect session only after shipping. A
+one-line heads-up when a feature *starts* is sufficient; no design review is
+needed. Asked of `main-dev` and `ui-dev` 2026-09-24.
+
 ## Bugs (user-reported 2026-09-23, fix before new features)
 
 B1. ~~Messages panel shows the previous session's transcript.~~ **Fixed**
@@ -230,10 +253,12 @@ F1. **Branding: DuckTerm is canonical** (owner decision 2026-09-23).
       been shared publicly, so no migration is owed. The domain still needs
       registering before the relay is built.
 
-F2. **Settings button (web + Mac app).** A top-level Settings surface; the
-    first item is "update the software" (self-update to the latest
-    DuckTerm release). Related to but distinct from the harness Agents
-    tab, which updates the *agent CLIs* — this updates duckterm itself.
+F2. **Settings button** — the *surface* shipped in v0.4.45 (header Settings
+    groups theme, terminal colors, desktop notifications, backup,
+    harnesses). What remains is the item it was asked for: **self-update
+    to the latest DuckTerm release**, still unbuilt. Distinct from the
+    harness Agents tab, which updates the *agent CLIs*; this updates
+    DuckTerm itself, and the two should not be conflated in the UI.
 
 F3. **Folder artifacts.** Attach artifacts (markdown/HTML) to a folder, and
     let an agent that generates one *recommend associating it* with the
