@@ -16,6 +16,8 @@ from duckterm.server import Server
 HOUR = 3_600_000
 CLAUDE_EMPTY = "\x1b[38;5;244m────\n\x1b[39m❯\xa0\n\x1b[38;5;244m────\n  status line"
 CLAUDE_DRAFT = "\x1b[38;5;244m────\n\x1b[39m❯\xa0fix the flaky test\n────"
+# Captured from a live idle session: Claude's suggested next prompt, dimmed.
+CLAUDE_SUGGESTION = "────\n\x1b[39m❯\xa0\x1b[2mcheck inbox\x1b[0m\n────"
 CODEX_EMPTY = "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n  gpt model · ~/repo"
 CODEX_DRAFT = "\x1b[1m›\x1b[0m ship the release\n  gpt model · ~/repo"
 
@@ -25,6 +27,7 @@ CODEX_DRAFT = "\x1b[1m›\x1b[0m ship the release\n  gpt model · ~/repo"
     [
         (ClaudeCodeRuntime(), CLAUDE_EMPTY, True),
         (ClaudeCodeRuntime(), CLAUDE_DRAFT, False),
+        (ClaudeCodeRuntime(), CLAUDE_SUGGESTION, True),
         (ClaudeCodeRuntime(), "no prompt visible", False),
         (CodexRuntime(), CODEX_EMPTY, True),
         (CodexRuntime(), CODEX_DRAFT, False),
@@ -59,6 +62,8 @@ GATES = dict(
         # Turn ended before this server watched: keystroke memory is blank, screen decides.
         ({"observed_since_ms": NOW - 30 * 60_000, "last_owner_input_ms": 0}, True),
         ({"mail": [{**OLD_PEER, "created_at": NOW - 60_000}]}, False),  # fresh peer mail
+        ({"mail": [{**OLD_PEER, "last_read_at": NOW - HOUR}]}, False),  # read, left queued
+        ({"mail": [{**OLD_PEER, "status": "accepted", "last_read_at": NOW - HOUR}]}, True),
         ({"mail": [{**OLD_PEER, "kind": "broadcast", "created_at": NOW - 60_000}]}, True),
         ({"previous": oracle.Nudge(frozenset({"q1"}), NOW - 5 * HOUR)}, False),  # same mail
         ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000)}, False),  # rate limit
@@ -123,6 +128,13 @@ def test_tick_pastes_fixed_reminder_once_without_peer_text(idle_recipient) -> No
     assert text.startswith("\x1b[200~Duckterm Oracle: you have 1 inbox item waiting")
     assert text.endswith("\x1b[201~\r")
     assert "What contract should I use?" not in text
+
+
+def test_tick_skips_mail_the_agent_already_read(idle_recipient) -> None:
+    server, sup = idle_recipient
+    server.history.session_api.inbox("b")
+    asyncio.run(server._oracle_tick())
+    assert sup.pasted == []
 
 
 def test_tick_leaves_a_draft_alone(idle_recipient) -> None:

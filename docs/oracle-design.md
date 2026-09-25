@@ -48,7 +48,7 @@ pass, and together they answer that objection:
 | Idle 10+ minutes since the last Stop event | The owner may be about to type |
 | No owner keystroke since the turn ended | Duckterm carries every keystroke; a later one may be an unsent draft |
 | The harness sees an empty input box on screen | Covers typing duckterm never saw, and turns that ended before a server restart |
-| Mail is an owner broadcast, accepted work, or a peer question 10+ minutes old | Fresh peer mail gives an active recipient time to check itself |
+| Mail is an owner broadcast, accepted work, or an unread peer question 10+ minutes old | Fresh peer mail gives an active recipient time to check itself; a question the agent read and left queued was its choice, often a status update needing no answer |
 | New mail since the last nudge, and at most one nudge per hour | A session that chooses not to act is not nagged |
 
 The reminder never quotes the mail, so a peer cannot steer another agent
@@ -56,8 +56,10 @@ through Oracle. Each nudge is recorded as an `OracleNudge` event in the
 session's history.
 
 **Runtimes.** Nudging applies to every coding agent whose empty prompt
-duckterm can recognise, through `Harness.prompt_is_empty`. Claude Code (a line
-holding only `❯`) and Codex (`›` plus a dimmed placeholder) implement it.
+duckterm can recognise, through `Harness.prompt_is_empty`. Claude Code (`❯`)
+and Codex (`›`) implement it. Both ignore dimmed text after the marker:
+Codex shows a placeholder and Claude a suggested next prompt, while typed text
+is never dim.
 Copilot returns False until its prompt layout is captured and implemented.
 The generic runtime stays False on purpose, because it may be a plain shell.
 PTY-backed sessions without tmux have no screen to read and are skipped.

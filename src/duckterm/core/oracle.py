@@ -26,13 +26,15 @@ class Nudge:
 
 def pick_mail(mail: list[dict[str, Any]], now_ms: int) -> list[dict[str, Any]]:
     """Mail worth waking an agent for: owner broadcasts, accepted work, and
-    peer questions that have waited PEER_WAIT_MS."""
+    peer questions that have waited PEER_WAIT_MS. A peer question the agent
+    already read and left queued was a choice (often a status update that
+    needs no answer), so it no longer wakes the agent."""
     return [
         m
         for m in mail
         if m["kind"] == "broadcast"
         or m["status"] == "accepted"
-        or now_ms - int(m["created_at"]) >= PEER_WAIT_MS
+        or (not m.get("last_read_at") and now_ms - int(m["created_at"]) >= PEER_WAIT_MS)
     ]
 
 
