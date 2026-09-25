@@ -2519,10 +2519,11 @@ select {
   padding: 3px 6px;
 }
 
-/* Ask Oracle: a chat docked to the right of the panes. It sits in the
-   workspace row instead of floating, so the sessions stay usable while it
-   is open. */
+/* Oracle covers the context pane without resizing live terminals. Narrowing
+   xterm can truncate the cursor line permanently; closing a chat must not
+   damage an agent's draft or trigger a TUI reflow. */
 .rd-workspace {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -2536,7 +2537,11 @@ select {
   border-color: var(--brand-green);
 }
 .rd-oracle {
+  position: absolute;
+  inset: 0 0 0 auto;
+  z-index: 20;
   width: 420px;
+  max-width: 100%;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
@@ -2544,9 +2549,18 @@ select {
   border-left: 1px solid var(--border);
   background: var(--bg);
 }
+/* Match the existing context column (1 of 3.9 grid fractions). Grid view
+   keeps its full tile dimensions and uses the default 420px chat drawer. */
+.rd-workspace:has(> .rd-panels-3) > .rd-oracle {
+  width: calc(100% / 3.9);
+}
+.rd-workspace:has(> .rd-oracle) .rd-context-pane {
+  visibility: hidden;
+}
 @media (max-width: 1100px) {
   /* The panes stack into one column here; the chat covers them instead. */
-  .rd-oracle {
+  .rd-oracle,
+  .rd-workspace:has(> .rd-panels-3) > .rd-oracle {
     position: fixed;
     inset: 0;
     width: auto;
