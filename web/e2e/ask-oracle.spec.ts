@@ -4,7 +4,7 @@ import { apiPost, base } from "./helpers";
 // Ask Oracle: one question about the running fleet -> one answer from the
 // summarizer backend (the fake LLM here, which always prints its canned
 // rules — asserting them proves the round trip through /fleet/ask). The
-// answer must survive closing and reopening the modal.
+// conversation must survive a page reload.
 test("Ask Oracle answers a question about running sessions", async ({ page }) => {
   const r = await apiPost("/sessions/launch", {
     command: "sh -c 'echo FLEETREADY; exec cat'",
@@ -17,18 +17,22 @@ test("Ask Oracle answers a question about running sessions", async ({ page }) =>
 
   await page.goto(base());
   await page.getByRole("button", { name: "Ask Oracle" }).click();
-  const input = page.getByLabel("Question");
-  await input.fill("what is fleetbot doing?");
-  await input.press("Enter");
+  const panel = page.getByRole("complementary", { name: "Oracle chat" });
+  const box = panel.getByLabel("Message Oracle");
+  await box.fill("what is fleetbot doing?");
+  await box.press("Enter");
 
-  await expect(page.locator(".rd-oracle-q").last()).toContainText(
+  await expect(panel.locator(".rd-oracle-q").last()).toHaveText(
     "what is fleetbot doing?",
   );
-  await expect(page.locator(".rd-oracle-a").last()).toContainText(
+  await expect(panel.locator(".rd-oracle-a").last()).toContainText(
     "Use rg, not grep",
     { timeout: 15_000 },
   );
-  await page.getByRole("button", { name: "Close" }).click();
-  await page.getByRole("button", { name: "Ask Oracle" }).click();
-  await expect(page.locator(".rd-oracle-a").last()).toContainText("Use rg, not grep");
+
+  // The conversation lives on the server and the panel remembers it was open.
+  await page.reload();
+  await expect(panel.locator(".rd-oracle-a").last()).toContainText("Use rg, not grep");
+  await panel.getByRole("button", { name: "Close Oracle" }).click();
+  await expect(panel).toBeHidden();
 });

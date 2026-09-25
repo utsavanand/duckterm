@@ -218,6 +218,8 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/launch", lambda s, r, w, h, b, seg: s._launch(w, b)),
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
+    Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
+    Route("DELETE", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w, clear=True)),
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
     Route("GET", "/zsh-themes", lambda s, r, w, h, b, seg: s._list_zsh_themes(w)),
@@ -1908,15 +1910,16 @@ class Server:
             for r in self.history.sessions()
             if str(r.get("state") or "") not in self._FLEET_STATES_DONE
         ]
+        chat_path = paths.home() / "oracle-chat.json"
         if not running:
-            await _write_json(
-                writer, 200, {"answer": "No sessions are running right now.", "sessions": []}
-            )
+            answer = "No sessions are running right now."
+            exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+            await _write_json(writer, 200, {"answer": answer, "exchange": exchange, "sessions": []})
             return
         digests = "\n\n".join(self._fleet_digest(r, question) for r in running)
         history = [
             f"Q: {h.get('q')}\nA: {h.get('a')}"
-            for h in (req.get("history") or [])[-2:]
+            for h in oracle.load_chat(chat_path)[-2:]
             if isinstance(h, dict)
         ]
         prompt = (
@@ -1940,15 +1943,23 @@ class Server:
                 },
             )
             return
+        exchange = oracle.append_chat(chat_path, question, result.text, int(time.time() * 1000))
         await _write_json(
             writer,
             200,
             {
                 "answer": result.text,
+                "exchange": exchange,
                 "sessions": [str(r.get("session_key")) for r in running],
                 "backend": result.backend,
             },
         )
+
+    async def _oracle_chat(self, writer: asyncio.StreamWriter, *, clear: bool = False) -> None:
+        path = paths.home() / "oracle-chat.json"
+        if clear:
+            oracle.clear_chat(path)
+        await _write_json(writer, 200, {"messages": oracle.load_chat(path)})
 
     async def _list_zsh_themes(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"themes": zsh_themes.list_themes()})
@@ -3105,7 +3116,12 @@ class Server:
             await asyncio.sleep(20)
             ticks += 1
             if ticks % 3 == 0 and os.environ.get("DUCKTERM_ORACLE") != "off":
-                await self._oracle_tick()
+                # An exception here would end this loop, silently stopping both
+                # Oracle and the dead-session sweep below.
+                try:
+                    await self._oracle_tick()
+                except Exception:
+                    traceback.print_exc()
             now = int(time.time() * 1000)
             for key in self.history.sweep_dead(now, stale_after_ms=60_000):
                 self._archive_swept(key)

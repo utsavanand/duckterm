@@ -4,7 +4,7 @@ import { AgentTree } from "./AgentTree";
 import { api } from "./api";
 import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
-import { OracleExchange, OracleModal } from "./OracleModal";
+import { OracleChat } from "./OracleChat";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
@@ -54,9 +54,22 @@ function Dashboard() {
   const { theme, resolved: mode, setTheme } = useTheme();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "oracle" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
   >(null);
-  const [oracleLog, setOracleLog] = useState<OracleExchange[]>([]);
+  const [oracleOpen, setOracleOpen] = useState(() => {
+    try {
+      return localStorage.getItem("rd.oracleOpen") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("rd.oracleOpen", oracleOpen ? "1" : "0");
+    } catch {
+      /* private window or blocked storage: the panel just starts closed */
+    }
+  }, [oracleOpen]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const messagePins = useMessagePins(selectedKey);
   const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
@@ -247,8 +260,9 @@ function Dashboard() {
         </span>
         <span className="rd-spacer" />
         <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
-          onClick={() => setModal("oracle")}
+          className={`rd-btn rd-btn-ghost rd-btn-sm${oracleOpen ? " rd-btn-active" : ""}`}
+          aria-pressed={oracleOpen}
+          onClick={() => setOracleOpen((o) => !o)}
           title="Ask questions about your running sessions"
         >
           Ask Oracle
@@ -276,6 +290,7 @@ function Dashboard() {
         }} />
       </header>
 
+      <div className="rd-workspace">
       {gridFolder !== null ? (
         <GridView
           key={gridFolder}
@@ -445,6 +460,8 @@ function Dashboard() {
           </section>
         </div>
       )}
+      {oracleOpen && <OracleChat onClose={() => setOracleOpen(false)} />}
+      </div>
 
       {messageFolder !== null && <MessageFolderModal key={messageFolder} folder={messageFolder} onClose={() => setMessageFolder(null)} />}
       {inboxFolder !== null && messageFolder === null && (
@@ -470,13 +487,6 @@ function Dashboard() {
         <AgentsMdModal dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
-      {modal === "oracle" && (
-        <OracleModal
-          log={oracleLog}
-          onLog={(x) => setOracleLog((l) => [...l, x])}
-          onClose={() => setModal(null)}
-        />
-      )}
       {modal === "harnesses" && (
         <HarnessesModal
           defaultDir={agentsMdDir}

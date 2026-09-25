@@ -13,6 +13,13 @@ export function authHeaders(extra?: Record<string, string>): HeadersInit {
   return { "X-Duckterm-Token": TOKEN, ...extra };
 }
 
+// One Ask Oracle exchange, as stored server-side (at = epoch ms).
+export interface OracleExchange {
+  q: string;
+  a: string;
+  at: number;
+}
+
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
@@ -196,11 +203,16 @@ export const api = {
     }),
   disableConnector: (name: string) =>
     post<Connector>(`/connectors/${name}/disable`),
-  fleetAsk: (question: string, history: { q: string; a: string }[]) =>
-    post<{ answer: string; sessions: string[] }>("/fleet/ask", {
-      question,
-      history,
-    }),
+  fleetAsk: (question: string) =>
+    post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
+      "/fleet/ask",
+      { question },
+    ),
+  oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
+  clearOracleChat: () =>
+    fetch("/oracle/chat", { method: "DELETE", headers: authHeaders() }).then(
+      (r) => r.json() as Promise<{ messages: OracleExchange[] }>,
+    ),
   promote: (key: string, opts: { branch?: string; base?: string }) =>
     post<{ worktree: string; branch: string }>(
       `/sessions/${key}/promote`,

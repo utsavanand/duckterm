@@ -15,6 +15,7 @@ import contextlib
 import errno
 import os
 import pty
+import re
 import shlex
 import signal
 import sys
@@ -39,6 +40,17 @@ _STATE_EVENT = {
     "idle": events.STOP,
     "waiting": events.NOTIFICATION,
 }
+
+
+# Focus (CSI I / CSI O) and mouse reports that xterm.js sends on its own when
+# an agent enables those modes. Codex enables focus reporting, so merely
+# clicking into or away from its pane emitted input; Oracle read that as
+# possible typing and never nudged a session the owner had looked at.
+_TERMINAL_REPORTS = re.compile(rb"\x1b\[(?:[IO]|<[\d;]*[Mm]|M[\s\S]{3})")
+
+
+def is_terminal_report(data: bytes) -> bool:
+    return not _TERMINAL_REPORTS.sub(b"", data)
 
 
 class SessionSupervisor:
@@ -421,7 +433,8 @@ class SessionSupervisor:
         does the writes off-loop, one at a time, so ordering is exact ('ab'
         can never land as 'ba', which a thread pool wouldn't guarantee)."""
         self._last_input = time.monotonic()
-        self.last_owner_input_ms = int(time.time() * 1000)
+        if not is_terminal_report(data):
+            self.last_owner_input_ms = int(time.time() * 1000)
         if self._input_queue is None:
             self._input_queue = asyncio.Queue()
             self._input_task = asyncio.create_task(self._drain_input())

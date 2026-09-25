@@ -2519,40 +2519,124 @@ select {
   padding: 3px 6px;
 }
 
-/* Ask Oracle modal: the exchange log scrolls above the question field. */
-.rd-oracle-log {
-  max-height: 45vh;
-  overflow-y: auto;
-  margin-bottom: 12px;
-  padding: 4px 12px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
+/* Ask Oracle: a chat docked to the right of the panes. It sits in the
+   workspace row instead of floating, so the sessions stay usable while it
+   is open. */
+.rd-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.rd-workspace > .rd-panels-3 {
+  flex: 1;
+  min-width: 0;
+}
+.rd-btn-active {
   background: var(--bg-soft);
+  border-color: var(--brand-green);
+}
+.rd-oracle {
+  width: 420px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+}
+@media (max-width: 1100px) {
+  /* The panes stack into one column here; the chat covers them instead. */
+  .rd-oracle {
+    position: fixed;
+    inset: 0;
+    width: auto;
+    z-index: 70;
+  }
+}
+.rd-oracle-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.rd-oracle-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.rd-oracle-log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px;
+}
+.rd-oracle-empty {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
 }
 .rd-oracle-exchange {
-  padding: 6px 0;
+  margin-bottom: 20px;
 }
 .rd-oracle-q {
-  font-family: ui-monospace, Menlo, monospace;
-  font-size: 12px;
-  color: var(--text-soft);
-}
-.rd-oracle-a {
-  font-size: 13px;
+  margin: 0 0 10px auto;
+  width: fit-content;
+  max-width: 85%;
+  padding: 8px 12px;
+  border-radius: 12px 12px 4px 12px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  font-size: 14px;
+  line-height: 1.5;
   white-space: pre-wrap;
-  padding: 4px 0 0 14px;
+  overflow-wrap: anywhere;
 }
-.rd-oracle-label {
-  display: block;
-  font-size: 13px;
-  color: var(--text-soft);
-  margin-bottom: 4px;
+.rd-oracle-a.rd-msg-text {
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
-.rd-oracle-footer {
+.rd-oracle-a > :last-child {
+  margin-bottom: 0;
+}
+.rd-oracle-a pre {
+  overflow-x: auto;
+}
+.rd-oracle-thinking {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 8px;
-  margin-top: 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.rd-oracle-error {
+  color: var(--danger, #c0392b);
+  font-size: 13px;
+}
+.rd-oracle-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.rd-oracle-compose textarea {
+  flex: 1;
+  resize: none;
+  max-height: 160px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.rd-oracle-compose textarea:focus {
+  outline: none;
+  border-color: var(--brand-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-green) 18%, transparent);
 }
 
 /* ── Typed AGENTS.md rules editor ── */
