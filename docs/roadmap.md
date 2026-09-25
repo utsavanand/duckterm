@@ -135,25 +135,25 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
 
 ## Bugs — open
 
-B5. **Opening Oracle corrupts terminal wrapping irreversibly** (owner-
-    reported 2026-09-25, `ui-dev`, prioritized). Opening Oracle narrows the
-    terminal pane; closing it never restores the PTY geometry, so the agent
-    keeps rendering to the narrow width, and a long unsubmitted draft loses
-    its suffix.
-    Root cause (architect, verified in code): `settleOpening` in
-    Terminal.tsx early-returns `if (!visible || !host.clientWidth ||
-    !host.clientHeight)` — before `fit.fit()` and `sendResize()`. The
-    ResizeObserver is wired to it, so any callback that fires while the
-    host is unmeasurable **drops the resize permanently**; nothing retries.
-    The lost draft is a consequence, not a separate bug: the TUI re-wraps
-    the input line to the cols it believes are current.
-    Fix the resize path (retry rather than silently drop — same class as
-    the RETRO blank-Mac-window bug, where a failed load had no retry), not
-    just the Oracle layout. Moving Oracle into the right context pane is a
-    reasonable product change but would leave the defect latent, and the
-    same path serves grid splits, folder-grid open/close, tab switches, and
-    window resize. Regression test: open Oracle, close it, assert the PTY
-    received a resize back to the original cols.
+B5. ~~Opening Oracle corrupts terminal wrapping irreversibly.~~ **Fixed by
+    layout** in v0.4.51 (PRs #27/#28): Oracle now occupies the right
+    context pane without narrowing the terminal, so the geometry that used
+    to be lost is never disturbed. Regression test
+    `web/e2e/oracle-terminal-resize.spec.ts` drives a real terminal and
+    asserts both the reported size and the rendered rows survive
+    open/close. Owner's bug no longer reproduces.
+    **Latent defect retained, deliberately recorded:** the underlying cause
+    is untouched — `settleOpening` in Terminal.tsx still early-returns
+    `if (!visible || !host.clientWidth || !host.clientHeight)` *before*
+    `fit.fit()`/`sendResize()`, and the ResizeObserver is wired to it, so a
+    callback firing while the host is unmeasurable still drops a resize
+    with nothing to retry. Not triggered by Oracle any more; still reachable
+    from grid splits, folder-grid open/close, Messages/History tab
+    switches, window resize, or any future pane. If terminal geometry goes
+    wrong again, start here rather than re-deriving it. Cheap hardening
+    whenever that function is next touched: schedule a retry instead of
+    returning silently (RETRO precedent: the blank Mac window, where a
+    failed load had no retry).
 
 ## In flight (2026-09-25)
 
@@ -162,9 +162,10 @@ B5. **Opening Oracle corrupts terminal wrapping irreversibly** (owner-
   place for your coding agents", no RubberTerm leakage). Demo uses the
   actual UI with fictional data. Source lives in the `rubber-duck` repo
   (PR #26), not this one — worth knowing when looking for it.
-- **Compact sidebar, bolder folder/session names** (`ui-dev`, owner-
-  requested) — preview prepared, awaiting the owner's visual approval
-  before implementation.
+- **Sidebar density** — **shipped** v0.4.51: Compact / Standard / Relaxed
+  in Settings with the choice remembered, distinct detail and action
+  layouts, regular-weight session names. (A density row wrapper stealing
+  terminal focus was caught by ui-dev's own browser suite before release.)
 
 ## Designed 2026-09-25, awaiting owner review
 
