@@ -413,8 +413,10 @@ class SessionAPI:
         the same scope checks the agent's own inbox read applies."""
         self._sweep()
         rows = self.conn.execute(
-            "SELECT id, sender, root, kind, status, created_at FROM session_questions "
-            "WHERE recipient = ? AND status IN ('queued', 'accepted')",
+            "SELECT q.id, q.sender, q.root, q.kind, q.status, q.created_at, "
+            "COALESCE(d.last_read_at, 0) AS last_read_at FROM session_questions q "
+            "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
+            "WHERE q.recipient = ? AND q.status IN ('queued', 'accepted')",
             (key,),
         ).fetchall()
         mail = []

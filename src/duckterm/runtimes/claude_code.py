@@ -66,9 +66,9 @@ class ClaudeCodeRuntime(Harness):
         return None
 
     def prompt_is_empty(self, screen: str) -> bool:
-        # The input box is a line starting with "❯" between two rules. Any text
-        # after it, including a dimmed suggestion, counts as not empty.
-        return prompt_line_rest(screen, "❯", ignore_dim=False) == ""
+        # The input box is a line starting with "❯" between two rules. Claude
+        # often shows a dimmed suggested next prompt there; typed text is not dim.
+        return prompt_line_rest(screen, "❯", ignore_dim=True) == ""
 
     def locate_transcript(self, *, cwd: Path, session_id: str) -> Path | None:
         slug = project_slug(cwd)
