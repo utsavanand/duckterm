@@ -205,3 +205,22 @@ def test_terminal_reports_are_not_typing(data, report) -> None:
     from duckterm.core.orchestrator import is_terminal_report
 
     assert is_terminal_report(data) is report
+
+
+def test_digest_screen_drops_prompt_suggestions_but_keeps_drafts_and_output() -> None:
+    from duckterm.runtimes.base import plain_screen
+
+    screen = "\n".join(
+        [
+            "\x1b[2m  Worked for 1m 7s\x1b[0m",  # dim output stays
+            CLAUDE_SUGGESTION,
+            CODEX_EMPTY,
+            CLAUDE_DRAFT,
+        ]
+    )
+    text = plain_screen(screen)
+    assert "Worked for 1m 7s" in text
+    assert "check inbox" not in text
+    assert "Ask Codex to do anything" not in text
+    assert "❯ fix the flaky test" in text
+    assert "\x1b" not in text

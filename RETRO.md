@@ -3,6 +3,15 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-25 — Ask Oracle reported prompt suggestions as the owner's instructions
+**Broke:** Oracle told the owner that qa and bugs-dev were both "told to
+deploy the fixes to production" and warned they might deploy twice, and that
+architect was sitting on "approve the VM testing". Nobody sent those.
+**Cause:** the fleet digest read tmux panes without escapes. Claude's dimmed
+suggested next prompt and Codex's placeholder then looked like typed input.
+**Rule:** anything that reads an agent's screen for meaning must drop dimmed
+text on the input line, the same way Oracle's empty-prompt check does.
+
 ## 2026-09-25 — Oracle never nudged a session that existed before a restart
 **Broke:** zero nudges in two days, while main-qa sat idle with five unread
 peer messages and an empty prompt.

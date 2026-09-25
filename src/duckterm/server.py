@@ -1928,6 +1928,15 @@ class Server:
             "output). Answer the user's question about them, concise and "
             "concrete — name sessions by their name. If the digests don't hold "
             "the answer, say what to open instead of guessing.\n\n"
+            "The answer renders as Markdown in a narrow chat panel. Open with a "
+            "one-sentence direct answer. Then use a bulleted list with one "
+            "session per bullet, the session name in bold followed by its folder, "
+            "and one or two short sentences each. Group bullets under short bold "
+            "labels only when there are distinct groups. No tables, no headings "
+            "larger than bold text, no preamble, and no closing offer.\n\n"
+            "Terminal output ends at each agent's input line. That line holds "
+            "nothing the user sent: a finished turn with an empty-looking input "
+            "means the session is idle, not that it received an instruction.\n\n"
             + digests
             + ("\n\nEarlier exchanges:\n" + "\n".join(history) if history else "")
             + f"\n\nQuestion: {question}\nAnswer:"
