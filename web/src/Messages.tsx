@@ -2,22 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { api, authHeaders } from "./api";
 import { html } from "./render";
 import { useToast } from "./ui";
+import { Message, MessagePin, PinTarget } from "./MessagePins";
 
 // Structured view of an agent's latest reply (HTML-annotation mode,
 // docs/structured-render-design.md). Renders the response as HTML; select any
 // span to attach a note, which is stored AND sent back to the agent as a
 // follow-up prompt.
-
-type Block =
-  | { type: "text"; text: string }
-  | { type: "tool_use"; name: string; input?: unknown }
-  | { type: "tool_result"; text: string };
-
-interface Message {
-  id: number;
-  role: "user" | "assistant";
-  blocks: Block[];
-}
 
 let mermaidSeq = 0; // unique ids for mermaid.render across re-renders
 
@@ -27,10 +17,19 @@ interface Selection {
   y: number;
 }
 
-export function Messages({ sessionKey }: { sessionKey: string }) {
+export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePin, target, onClearTarget }: {
+  sessionKey: string;
+  pins?: MessagePin[];
+  pinPending?: boolean;
+  onTogglePin?: (message: Message) => void;
+  target?: PinTarget | null;
+  onClearTarget?: () => void;
+}) {
   const toast = useToast();
   const [messages, setMessages] = useState<Message[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const jumped = useRef<number | null>(null);
   // How many turns BACK from the newest we're viewing (0 = latest).
   const [back, setBack] = useState(0);
   useEffect(() => {
@@ -143,16 +142,22 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
     // poll interval.
     setMessages([]);
     setLoaded(false);
+    setLoadError("");
+    jumped.current = null;
     const load = () =>
       fetch(`/sessions/${sessionKey}/messages`)
-        .then((r) => r.json())
+        .then(async (r) => {
+          if (r.ok === false) throw new Error("Could not load messages");
+          return r.json();
+        })
         .then((d: { messages?: Message[] }) => {
           if (live) {
             setMessages(d.messages ?? []);
             setLoaded(true);
+            setLoadError("");
           }
         })
-        .catch(() => undefined);
+        .catch(() => { if (live) setLoadError("Could not load messages. Retrying…"); });
     load();
     // The transcript grows as the agent works; refresh on a light interval.
     const t = setInterval(load, 3000);
@@ -166,73 +171,81 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
   // turns from the end, so while you're on the latest (back=0) new turns keep
   // appearing in place; while browsing older ones your position holds steady.
   const turns = turnsOf(messages);
-  const latest = turns.length ? turns[Math.max(0, turns.length - 1 - back)] : null;
-
-  if (loaded && !latest) {
-    return (
-      <div className="rd-panel-empty">
-        No agent reply yet (claude-code and codex sessions only).
-      </div>
-    );
+  const targetIndex = target ? turns.findIndex((t) =>
+    t.messages.some((m) => m.message_key === target.pin.message_key)) : -1;
+  const savedCopy = !!target && (loaded || !!loadError) && targetIndex < 0;
+  const currentIndex = targetIndex >= 0 ? targetIndex : Math.max(0, turns.length - 1 - back);
+  const latest = savedCopy ? turnsOf([target!.pin.message])[0] : turns[currentIndex];
+  useEffect(() => {
+    if (!target || (!loaded && !loadError) || jumped.current === target.request) return;
+    const node = [...(wrapRef.current?.querySelectorAll<HTMLElement>("[data-message-key]") ?? [])]
+      .find((el) => el.dataset.messageKey === target.pin.message_key);
+    if (node) {
+      node.scrollIntoView?.({ block: "nearest" });
+      jumped.current = target.request;
+    }
+  }, [target, messages, loaded, loadError]);
+  if (!latest) return <div className="rd-panel-empty">{loadError || (loaded
+    ? "No agent reply yet (claude-code and codex sessions only)." : "Loading messages…")}</div>;
+  const showingLatest = currentIndex === turns.length - 1;
+  function navigate(index: number) {
+    onClearTarget?.();
+    setBack(turns.length - 1 - index);
   }
-  if (!latest) return <div className="rd-messages" />;
-  const showingLatest = back === 0;
 
   return (
     <div className="rd-messages" ref={wrapRef} onMouseUp={onMouseUp}>
       {/* Step through interaction turns; ‹ goes to the previous exchange. */}
-      {turns.length > 1 && (
+      {!savedCopy && turns.length > 1 && (
         <div className="rd-turn-nav">
           <button
             aria-label="Previous turn"
-            disabled={back >= turns.length - 1}
-            onClick={() => setBack((b) => Math.min(b + 1, turns.length - 1))}
+            disabled={currentIndex <= 0}
+            onClick={() => navigate(currentIndex - 1)}
           >
             ‹
           </button>
           <span>
-            turn {turns.length - back} / {turns.length}
+            turn {currentIndex + 1} / {turns.length}
           </span>
           <button
             aria-label="Next turn"
-            disabled={back === 0}
-            onClick={() => setBack((b) => Math.max(b - 1, 0))}
+            disabled={showingLatest}
+            onClick={() => navigate(currentIndex + 1)}
           >
             ›
           </button>
         </div>
       )}
-      {/* One exchange, typeset like the tool it lives in: the prompt
-          as a shell line, the reply as plain prose. No chat bubbles. */}
-      {latest.prompt && (
-        <div className="rd-turn-user">
-          <span className="rd-prompt-mark">❯</span>
-          <span className="rd-turn-prompt">{latest.prompt}</span>
-        </div>
-      )}
-      {latest.tools.length > 0 && (
-        <div className="rd-msg-tools">
-          {toolCounts(latest.tools).map(([name, n]) => (
-            <span key={name} className="rd-tool-chip">
-              {name}
-              {n > 1 ? ` ×${n}` : ""}
-            </span>
-          ))}
-        </div>
-      )}
-      {latest.texts.length === 0 && (latest.prompt || latest.tools.length) ? (
-        <div className="rd-msg-pending">
-          {showingLatest ? "working — no reply yet" : "no reply in this turn"}
-        </div>
-      ) : (
-        latest.texts.map((t, i) => (
-          <div
-            key={i}
-            className="rd-msg-text"
-            dangerouslySetInnerHTML={{ __html: html(t) }}
-          />
-        ))
-      )}
+      {loadError && <div role="alert">{loadError}</div>}
+      {savedCopy && <div className="rd-pin-saved" role="status">
+        Saved copy · The original message is no longer available in this transcript.
+        <button onClick={() => { onClearTarget?.(); setBack(0); }}>Back to latest</button>
+      </div>}
+      {latest.tools.length > 0 && <div className="rd-msg-tools">
+        {toolCounts(latest.tools).map(([name, n]) => <span key={name} className="rd-tool-chip">
+          {name}{n > 1 ? ` ×${n}` : ""}</span>)}
+      </div>}
+      {latest.messages.map((message) => {
+        const pinned = pins.some((p) => p.message_key === message.message_key);
+        return <article key={message.message_key ?? message.id} data-message-key={message.message_key}
+          className={`rd-message${target?.pin.message_key === message.message_key ? " rd-message-target" : ""}`}>
+          {onTogglePin && message.message_key && <div className="rd-message-head">
+            <span>{message.role === "user" ? "You" : "Assistant"}</span>
+            <button className="rd-btn rd-btn-sm" disabled={pinPending}
+              aria-pressed={pinned} onClick={() => onTogglePin(message)}>{pinned ? "Unpin" : "Pin"}</button>
+          </div>}
+          {message.blocks.map((block, i) => block.type === "tool_use"
+            ? <div key={i} className="rd-message-tool">Tool: {block.name}</div>
+            : message.role === "user" && block.type === "text"
+              ? <div key={i} className="rd-turn-user"><span className="rd-prompt-mark">❯</span>
+                <span className="rd-turn-prompt">{block.text}</span></div>
+              : <div key={i} className="rd-msg-text" dangerouslySetInnerHTML={{ __html: html(block.text) }} />)}
+        </article>;
+      })}
+      {latest.texts.length === 0 && (latest.prompt || latest.tools.length) && <div className="rd-msg-pending">
+        {showingLatest ? "working — no reply yet" : "no reply in this turn"}
+      </div>}
       <div className="rd-followup">
         <span className="rd-prompt-mark">❯</span>
         <input
@@ -284,6 +297,7 @@ export function Messages({ sessionKey }: { sessionKey: string }) {
 }
 
 interface Reply {
+  messages: Message[];
   prompt: string | null; // the user prompt that started this turn
   texts: string[]; // assistant prose blocks in the turn
   tools: string[]; // tool names the agent ran in the turn
@@ -299,9 +313,10 @@ function turnsOf(messages: Message[]): Reply[] {
     const isPrompt =
       m.role === "user" && m.blocks.some((b) => b.type === "text");
     if (isPrompt || cur === null) {
-      cur = { prompt: null, texts: [], tools: [] };
+      cur = { prompt: null, texts: [], tools: [], messages: [] };
       turns.push(cur);
     }
+    cur.messages.push(m);
     for (const b of m.blocks) {
       if (b.type === "text") {
         if (m.role === "user" && cur.prompt === null) cur.prompt = b.text;
@@ -311,7 +326,7 @@ function turnsOf(messages: Message[]): Reply[] {
       }
     }
   }
-  return turns.filter((t) => t.prompt || t.texts.length || t.tools.length);
+  return turns.filter((t) => t.messages.length > 0);
 }
 
 // Tool usage as (name, count) pairs, most-used first — rendered as chips.

@@ -2693,3 +2693,17 @@ select {
 .rd-completed-helpers > summary { color: var(--text-muted); cursor: pointer; font-size: 11px; padding: 4px 0; width: fit-content; }
 .rd-completed-helpers > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
 .rd-completed-helpers .rd-subagents { margin-left: 0; }
+
+/* Session message bookmarks; the terminal stays mounted while pins are browsed. */
+.rd-pin-strip { display:flex; align-items:center; gap:8px; padding:9px 14px; border-bottom:1px solid var(--border); min-height:49px; flex-shrink:0; min-width:0; }
+.rd-pin-label, .rd-pin-empty { color:var(--muted); font-size:11px; white-space:nowrap; }
+.rd-pin-chips { display:flex; gap:7px; overflow-x:auto; min-width:0; align-items:center; }
+.rd-pin-chip { flex-shrink:0; max-width:260px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px; padding:5px 9px; text-align:left; border:1px solid var(--border); border-radius:6px; background:var(--bg-soft); color:var(--text); cursor:pointer; }
+.rd-pin-chip:focus-visible { outline:2px solid var(--brand-green); outline-offset:-2px; }
+.rd-message { padding:12px 14px; border-bottom:1px solid var(--border); scroll-margin-top:12px; min-width:0; overflow-wrap:anywhere; }
+.rd-message-target { outline:1px solid var(--brand-green); border-radius:7px; background:color-mix(in srgb, var(--brand-green) 7%, transparent); }
+.rd-message-head { display:flex; align-items:center; gap:12px; color:var(--muted); font-size:11px; margin-bottom:12px; }
+.rd-message-head button { margin-left:auto; }
+.rd-message-tool { color:var(--muted); font-size:12px; }
+.rd-pin-saved { border:1px solid var(--border); border-radius:6px; padding:10px 13px; margin-bottom:10px; color:var(--text); }
+.rd-pin-saved button { margin-left:12px; }

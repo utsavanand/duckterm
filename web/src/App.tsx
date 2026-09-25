@@ -16,6 +16,7 @@ import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
 import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
+import { MessagePinStrip, PinTarget, useMessagePins } from "./MessagePins";
 import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
 import { effectiveState } from "./sessions";
@@ -57,6 +58,9 @@ function Dashboard() {
   >(null);
   const [oracleLog, setOracleLog] = useState<OracleExchange[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const messagePins = useMessagePins(selectedKey);
+  const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
+  const pinSequence = useRef(0);
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
@@ -351,11 +355,21 @@ function Dashboard() {
                 Inbox{selected && inboxCounts[selected.key] ? ` (${inboxCounts[selected.key]})` : ""}
               </button>
             </div>
+            {selected && (view === "terminal" || view === "messages") && (
+              <MessagePinStrip pins={messagePins.pins} error={messagePins.error} onOpen={(pin) => {
+                setPinTarget({ sessionKey: selected.key, pin, request: ++pinSequence.current });
+                setView("messages");
+              }} />
+            )}
             {/* Messages view: structured HTML render of the latest reply, with
               select-to-annotate. */}
             {view === "messages" && selected && (
               <div className="rd-messages-wrap">
-                <Messages key={selected.key} sessionKey={selected.key} />
+                <Messages key={selected.key} sessionKey={selected.key}
+                  pins={messagePins.pins} pinPending={messagePins.pending || !!messagePins.error}
+                  onTogglePin={messagePins.toggle}
+                  target={pinTarget?.sessionKey === selected.key ? pinTarget : null}
+                  onClearTarget={() => setPinTarget(null)} />
               </div>
             )}
             {view === "history" && selected && (
