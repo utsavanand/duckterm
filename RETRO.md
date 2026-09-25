@@ -3,6 +3,17 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-25 — Oracle never nudged a session that existed before a restart
+**Broke:** zero nudges in two days, while main-qa sat idle with five unread
+peer messages and an empty prompt.
+**Cause:** reconcile() re-adopts surviving tmux panes with GenericRuntime, and
+Oracle asked the supervisor's runtime whether the prompt was empty. Generic
+always says no. Tests used a fake supervisor carrying the real runtime, so they
+never saw what a restarted server holds.
+**Rule:** per-harness behavior for a session resolves from its DB row's
+runtime, not the supervisor's. Test fakes should mirror the adopted state,
+not the freshly launched one.
+
 ## 2026-09-25 — Restart should not expand every folder
 **Broke:** every dashboard mount initialized folders as expanded, so restarting
 filled the sidebar with all sessions.
