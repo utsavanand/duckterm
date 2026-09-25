@@ -30,8 +30,9 @@ Deleting a session, or purging a test session, removes its pins.
 
 ## Using pins
 
-Use the Pin/Unpin action per message and the compact strip above Terminal with
-short text excerpts. Clicking switches to Messages, finds the exact
+Use the Pin/Unpin action per message and the compact strip above Terminal.
+The strip uses neutral SVG icons, up to six words in each hover preview, and
+descriptive accessible names (v0.4.47). Clicking switches to Messages, finds the exact
 `message_key`, selects the containing turn and scrolls to that message. Never
 navigate by the old numeric ID alone. If the key is absent, display the saved
 message with an explicit saved-copy label rather than jumping elsewhere.
@@ -40,3 +41,8 @@ running without stealing terminal focus or submitting terminal input.
 
 Pins refresh after mutation and when the selected session changes. The approved
 preview is recorded in docs/previews/message-bookmarks.html.
+
+Independent acceptance on installed v0.4.47 verified pin persistence, exact
+older-message navigation, transcript-rewrite fallback, unpin, and unsubmitted
+terminal-draft preservation. See [QA report](qa-2026-09-25.md) for evidence,
+limits, and unrelated open release defects.
