@@ -157,14 +157,20 @@ B3. **Folder-rename scope bug in v0.4.39** — reproduced by main-qa in the
    Proposal-only invariant: work starts exclusively from owner approval.
    A Backlog tab (one table + approve/decline routes) is built only if
    terminal approval proves annoying in practice; no duckterm scheduler.
-7. **Backup — end-to-end acceptance is what remains.** Backend shipped
-   (v0.4.41), UI shipped (v0.4.42), cloud bucket provisioned. Outstanding:
-   point the app's destination at
-   `gs://rubberterm-20260922-backups/mac/`, run one real backup through the
-   button, and verify a restore from that archive. **No real backup has
-   been uploaded yet** — until a restore is proven, this feature is
-   untested where it matters. GCP disk snapshots for the remote workspace
-   VM remain unprovisioned.
+7. **Backup — acceptance PASSED 2026-09-24.** Backend v0.4.41, UI
+   v0.4.42, cloud bucket provisioned, and the full loop is now verified
+   against a real archive, not a fixture:
+   - 269 MB uploaded to `gs://rubberterm-20260922-backups/mac/`; archive
+     re-downloaded **from GCS** (not the local copy) and restored.
+   - `PRAGMA integrity_check` ok, schema v3; 19 sessions / 8 folders / 88
+     inbox threads match live (events differed by 8 rows — writes during
+     the backup window, as expected); 869 Claude transcript files present;
+     **zero credential files** in the archive.
+   - The restored DB was opened with the real `HistoryStore` server code
+     and sessions came back identifiable by name.
+   Remaining, both deliberate or small: nothing runs the backup
+   automatically (owner chose a manual button over a schedule), and GCP
+   disk snapshots for the remote workspace VM are still unprovisioned.
 
 8. **Security follow-ups deferred from the 2026-09-20 review** (per the
    `duckterm-bugs` session):
