@@ -3,6 +3,13 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-24 — Bookmark shortcuts should stay compact
+**Broke:** bookmark excerpts filled the terminal strip instead of the owner's
+requested pin-only links; a colored emoji also ignored the neutral-color request.
+**Rule:** use a monochrome SVG that inherits theme text color, keep the visible
+shortcut icon-only, and put a short excerpt in the hover label. Retain a descriptive
+accessible name and exact-message navigation.
+
 ## 2026-09-24 — Message bookmarks must preserve message boundaries
 **Found:** the Messages turn view flattened assistant messages into text blocks,
 losing the identities needed to pin one response or jump back to it.

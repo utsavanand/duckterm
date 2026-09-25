@@ -110,7 +110,8 @@ See [installation, upgrades, and troubleshooting](docs/installation.md) for help
 **The structured layer**
 - **Messages view** — the conversation rendered as HTML; select any span of a
   reply, attach a note, and it's sent back to the agent as a follow-up turn.
-  Pin individual messages to revisit them from the strip above the terminal;
+  Pin individual messages to revisit them from the strip above the terminal.
+  Hover a pin icon for a short excerpt; click it to open the message. These
   pins survive restarts and retain a saved copy if the transcript changes.
 - **Sub-agent tree** — Task-tool sub-agents nested under their parent, live.
 - **Worktrees & forks** — launch into an isolated worktree per attempt; fork a
