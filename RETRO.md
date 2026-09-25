@@ -3,6 +3,16 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-24 — Message bookmarks must preserve message boundaries
+**Found:** the Messages turn view flattened assistant messages into text blocks,
+losing the identities needed to pin one response or jump back to it.
+**Rule:** retain message records inside each turn. Resolve a pin by its checked
+key on every refresh, keep the selected turn stable as new turns arrive, and
+render its saved snapshot if the original changes. Browser acceptance must
+exercise real transcript rewrites, reload, removal, and an unsubmitted terminal
+draft, not just button visibility. Keep internal tool records in their compact
+summary; adding bookmarks must not expand every tool call into another row.
+
 ## 2026-09-24 — Saved messages need content checks and retained copies
 **Found:** Messages uses transcript line positions, which can point to different
 content after a transcript rewrite. Persisting that position alone would make

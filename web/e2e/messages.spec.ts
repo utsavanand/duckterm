@@ -70,6 +70,8 @@ test("messages view renders structured conversation as HTML", async ({
     timeout: 8_000,
   });
   await expect(page.locator(".rd-msg-text li").first()).toContainText("one");
+  // Tool records remain compact rather than becoming extra pin rows.
+  await expect(page.locator(".rd-message")).toHaveCount(2);
   // Tools the agent ran collapse into one compact line, not a row each.
   await expect(page.locator(".rd-msg-tools")).toContainText("Bash");
   // The prompt that started the turn shows as context.

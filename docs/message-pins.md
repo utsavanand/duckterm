@@ -28,9 +28,9 @@ session allows 100 pins (409 at the limit); one snapshot may be at most 1 MiB
 (413). Saved pins remain available when their source transcript is unavailable.
 Deleting a session, or purging a test session, removes its pins.
 
-## UI handoff (not implemented here)
+## Using pins
 
-Show a Pin/Unpin action per message and a compact strip above Terminal with
+Use the Pin/Unpin action per message and the compact strip above Terminal with
 short text excerpts. Clicking switches to Messages, finds the exact
 `message_key`, selects the containing turn and scrolls to that message. Never
 navigate by the old numeric ID alone. If the key is absent, display the saved
@@ -38,5 +38,5 @@ message with an explicit saved-copy label rather than jumping elsewhere.
 Render snapshots through the same safe message renderer. Pin and unpin while
 running without stealing terminal focus or submitting terminal input.
 
-Refresh pins after mutation and when the selected session changes; use the
-existing stale-response guards. A visual preview is required before UI work.
+Pins refresh after mutation and when the selected session changes. The approved
+preview is recorded in docs/previews/message-bookmarks.html.

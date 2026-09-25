@@ -59,7 +59,7 @@ install Python 3.11+, pipx, and tmux using your distribution's package manager.
 Then install the published wheel:
 
 ```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.45/duckterm-0.4.45-py3-none-any.whl
+pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.46/duckterm-0.4.46-py3-none-any.whl
 duckterm serve
 ```
 
@@ -110,6 +110,8 @@ See [installation, upgrades, and troubleshooting](docs/installation.md) for help
 **The structured layer**
 - **Messages view** — the conversation rendered as HTML; select any span of a
   reply, attach a note, and it's sent back to the agent as a follow-up turn.
+  Pin individual messages to revisit them from the strip above the terminal;
+  pins survive restarts and retain a saved copy if the transcript changes.
 - **Sub-agent tree** — Task-tool sub-agents nested under their parent, live.
 - **Worktrees & forks** — launch into an isolated worktree per attempt; fork a
   session's git state or (Claude Code) its conversation; compare branches.
@@ -152,7 +154,7 @@ and the [shared connector guide](docs/shared-connectors.md) for central hosting.
 ## Mac app
 
 On **Apple Silicon Macs running macOS 13+**, install the CLI above, then download
-[DuckTerm-0.4.45-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.45/DuckTerm-0.4.45-macos-arm64.zip),
+[DuckTerm-0.4.46-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.46/DuckTerm-0.4.46-macos-arm64.zip),
 unzip it, and move **DuckTerm.app** to **Applications**.
 
 The app opens the dashboard in a native window with a Dock icon and notifications.
