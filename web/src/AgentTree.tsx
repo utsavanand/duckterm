@@ -551,6 +551,7 @@ function TreeRow({
   const ended = effState === "terminated";
   const stateLabel = effState; // "waiting" reads fine on its own
   const [notesOpen, setNotesOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [notes, setNotes] = useState(s.notes ?? "");
   const [collapsed, setCollapsed] = useState(false);
   const [capturing, setCapturing] = useState(false);
@@ -684,7 +685,12 @@ function TreeRow({
   return (
     <>
       <div
-        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.inboxPending ? " has-inbox" : ""}`}
+        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${actionsOpen ? " actions-open" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.inboxPending ? " has-inbox" : ""}`}
+        title={`${s.label} · ${s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")} · ${s.runtime ?? "agent"} · ${stateLabel} · ${s.eventCount} events`}
+        onKeyDown={(event) => { if (event.key === "Escape") setActionsOpen(false); }}
+        onBlur={(event) => {
+          if (!(event.relatedTarget instanceof HTMLElement) || !event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false);
+        }}
         style={{ paddingLeft: 12 + indent * 16 + depth * 18 }}
         // Only root sessions are draggable into groups; forks follow their parent.
         draggable={depth === 0}
@@ -748,7 +754,7 @@ function TreeRow({
                 {s.label}
               </span>
             )}
-            <span className={`rd-state st-${effState}`}>{stateLabel}</span>
+            <span className={`rd-state st-${effState}`} title={stateLabel} aria-label={stateLabel}>{stateLabel}</span>
             {!!s.inboxPending && (
               <button
                 className="rd-inbox-badge"
@@ -770,11 +776,16 @@ function TreeRow({
               </span>
             )}
           </span>
+          <button className="rd-density-actions" aria-label={`Actions for ${s.label}`} aria-expanded={actionsOpen}
+            onClick={() => setActionsOpen((open) => !open)}>⋯</button>
         </div>
         <div className="rd-row-meta" onClick={() => onOpen(s.key)}>
           {s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")}
           {" · "}
           {s.eventCount} ev
+        </div>
+        <div className="rd-row-density-detail">
+          {s.runtime ?? "agent"} · {effState === "waiting" ? "Waiting for input" : s.lastTool && effState === "busy" ? `Running ${s.lastTool}` : stateLabel}
         </div>
         {s.subagents && <HelperAgents agents={s.subagents} sessionKey={s.key} />}
         <div className="rd-row-actions">

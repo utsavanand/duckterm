@@ -34,6 +34,8 @@ import {
 import { Modal, ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
 import { useTheme } from "./useTheme";
+import { useSidebarDensity } from "./useSidebarDensity";
+import "./sidebarDensity.css";
 
 function useNow(intervalMs: number): number {
   const [now, setNow] = useState(Date.now());
@@ -52,6 +54,7 @@ function Dashboard() {
   const toast = useToast();
   const now = useNow(1000);
   const { theme, resolved: mode, setTheme } = useTheme();
+  const { density, setDensity } = useSidebarDensity();
 
   const [modal, setModal] = useState<
     "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
@@ -242,7 +245,7 @@ function Dashboard() {
   }, [agentsMdDir, modal]);
 
   return (
-    <div className="rd-app">
+    <div className="rd-app" data-density={density}>
       <header className="rd-topbar">
         <span className="rd-brand">
           <img
@@ -284,7 +287,7 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <HeaderMenus theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} onAction={(action) => {
+        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} onAction={(action) => {
           if (action === "launch") setLaunchGroup(undefined);
           setModal(action);
         }} />
