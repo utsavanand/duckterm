@@ -2575,6 +2575,30 @@ select {
   font-size: 13px;
   line-height: 1.6;
 }
+.rd-oracle-empty p {
+  margin: 0 0 12px;
+}
+.rd-oracle-suggestions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.rd-oracle-suggestion {
+  padding: 7px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.rd-oracle-suggestion:hover {
+  background: var(--bg-soft);
+  border-color: var(--brand-green);
+}
 .rd-oracle-exchange {
   margin-bottom: 20px;
 }
@@ -2613,30 +2637,35 @@ select {
   color: var(--danger, #c0392b);
   font-size: 13px;
 }
+/* One bordered box holding the growing textarea and Send, so the button
+   always sits level with the last line instead of floating below a taller
+   field. */
 .rd-oracle-compose {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 12px;
-  border-top: 1px solid var(--border);
+  margin: 12px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-soft);
+}
+.rd-oracle-compose:focus-within {
+  border-color: var(--brand-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-green) 18%, transparent);
 }
 .rd-oracle-compose textarea {
   flex: 1;
   resize: none;
   max-height: 160px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--bg-soft);
+  padding: 5px 0;
+  border: none;
+  outline: none;
+  background: transparent;
   color: var(--text);
   font: inherit;
   font-size: 14px;
-  line-height: 1.5;
-}
-.rd-oracle-compose textarea:focus {
-  outline: none;
-  border-color: var(--brand-green);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-green) 18%, transparent);
+  line-height: 20px;
 }
 
 /* ── Typed AGENTS.md rules editor ── */

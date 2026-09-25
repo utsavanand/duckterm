@@ -67,6 +67,19 @@ def prompt_line_rest(screen: str, marker: str, *, ignore_dim: bool) -> str | Non
     return None
 
 
+def plain_screen(screen: str) -> str:
+    """A screen captured with escapes, as plain text, minus the dimmed text on
+    an agent's input line. That dim text is a placeholder or a suggested next
+    prompt; as plain text it read like an instruction the owner had typed."""
+    rows = []
+    for raw in screen.splitlines():
+        plain = _ANSI.sub("", raw).replace("\xa0", " ")
+        if plain.lstrip().startswith(("❯", "›")):
+            plain = _ANSI.sub("", _DIM_SPAN.sub("", raw)).replace("\xa0", " ")
+        rows.append(plain.rstrip())
+    return "\n".join(rows)
+
+
 class Harness(ABC):
     name: str
     turn_end_inbox_notice = False

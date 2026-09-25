@@ -32,7 +32,7 @@ from duckterm.git.worktrees import WorktreeManager
 from duckterm.helpers import paths, session_credentials, session_instructions
 from duckterm.llm.summarizer import build_prompt, mechanical_summary, summarize
 from duckterm.persistence.history import HistoryStore
-from duckterm.runtimes.base import AgentRuntime, SessionState
+from duckterm.runtimes.base import AgentRuntime, SessionState, plain_screen
 
 # State -> the event_type whose derive_state yields that state. One vocabulary.
 _STATE_EVENT = {
@@ -385,9 +385,10 @@ class SessionSupervisor:
         live pane — the pipe tail misses output that raced pipe-pane's attach;
         PTY: the decoded output tail."""
         if self._tmux_target is not None and tmux.session_exists(self._tmux_target):
-            rows = [
-                r.rstrip() for r in tmux.capture_pane(self._tmux_target).splitlines() if r.strip()
-            ]
+            screen = tmux.capture_screen(self._tmux_target, history_lines=0).decode(
+                errors="replace"
+            )
+            rows = [r for r in plain_screen(screen).splitlines() if r.strip()]
             if rows:
                 return "\n".join(rows[-lines:])
         return "".join(self.output_tail(lines)).strip()

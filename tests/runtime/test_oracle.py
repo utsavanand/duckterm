@@ -68,7 +68,16 @@ GATES = dict(
         ({"mail": [{**OLD_PEER, "status": "accepted", "last_read_at": NOW - HOUR}]}, True),
         ({"mail": [{**OLD_PEER, "kind": "broadcast", "created_at": NOW - 60_000}]}, True),
         ({"previous": oracle.Nudge(frozenset({"q1"}), NOW - 5 * HOUR)}, False),  # same mail
-        ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000)}, False),  # rate limit
+        # New mail, earlier nudged mail handled: no need to wait out the hour.
+        ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000)}, True),
+        # New mail while earlier nudged mail is still open: wait out the hour.
+        (
+            {
+                "previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000),
+                "mail": [OLD_PEER, {**OLD_PEER, "id": "q0"}],
+            },
+            False,
+        ),
         ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 2 * HOUR)}, True),  # new mail
     ],
 )
@@ -205,3 +214,22 @@ def test_terminal_reports_are_not_typing(data, report) -> None:
     from duckterm.core.orchestrator import is_terminal_report
 
     assert is_terminal_report(data) is report
+
+
+def test_digest_screen_drops_prompt_suggestions_but_keeps_drafts_and_output() -> None:
+    from duckterm.runtimes.base import plain_screen
+
+    screen = "\n".join(
+        [
+            "\x1b[2m  Worked for 1m 7s\x1b[0m",  # dim output stays
+            CLAUDE_SUGGESTION,
+            CODEX_EMPTY,
+            CLAUDE_DRAFT,
+        ]
+    )
+    text = plain_screen(screen)
+    assert "Worked for 1m 7s" in text
+    assert "check inbox" not in text
+    assert "Ask Codex to do anything" not in text
+    assert "❯ fix the flaky test" in text
+    assert "\x1b" not in text
