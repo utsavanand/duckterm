@@ -68,7 +68,16 @@ GATES = dict(
         ({"mail": [{**OLD_PEER, "status": "accepted", "last_read_at": NOW - HOUR}]}, True),
         ({"mail": [{**OLD_PEER, "kind": "broadcast", "created_at": NOW - 60_000}]}, True),
         ({"previous": oracle.Nudge(frozenset({"q1"}), NOW - 5 * HOUR)}, False),  # same mail
-        ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000)}, False),  # rate limit
+        # New mail, earlier nudged mail handled: no need to wait out the hour.
+        ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000)}, True),
+        # New mail while earlier nudged mail is still open: wait out the hour.
+        (
+            {
+                "previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000),
+                "mail": [OLD_PEER, {**OLD_PEER, "id": "q0"}],
+            },
+            False,
+        ),
         ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 2 * HOUR)}, True),  # new mail
     ],
 )

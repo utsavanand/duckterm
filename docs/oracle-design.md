@@ -53,7 +53,7 @@ pass, and together they answer that objection:
 | No owner keystroke since the turn ended | Duckterm carries every keystroke; a later one may be an unsent draft. Focus and mouse reports the terminal sends by itself do not count: Codex enables focus reporting, so just clicking its pane used to block nudges |
 | The harness sees an empty input box on screen | Covers typing duckterm never saw, and turns that ended before a server restart |
 | Mail is an owner broadcast, accepted work, or an unread peer question 10+ minutes old | Fresh peer mail gives an active recipient time to check itself; a question the agent read and left queued was its choice, often a status update needing no answer |
-| New mail since the last nudge, and at most one nudge per hour | A session that chooses not to act is not nagged |
+| New mail since the last nudge; if mail from that nudge is still open, wait an hour | A session that chose not to act is not nagged, while one that handled its last reminder is woken for new mail right away |
 
 The reminder never quotes the mail, so a peer cannot steer another agent
 through Oracle. Each nudge is recorded as an `OracleNudge` event in the
