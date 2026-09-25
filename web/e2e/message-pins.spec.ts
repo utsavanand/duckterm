@@ -37,7 +37,11 @@ test("pins persist, open the exact older message, preserve terminal drafts, and 
     await expect(message.getByRole("button", { name: "Unpin", exact: true })).toBeEnabled();
     await page.locator(".rd-view-toggle button", { hasText: "Terminal" }).click();
     await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("UNSUBMITTED_DRAFT");
-    const chip = page.getByRole("button", { name: "Use the existing project for this test.", exact: true });
+    const chip = page.getByRole("button", { name: "Open pinned message: Use the existing project for this test.", exact: true });
+    await expect(chip).toHaveText("");
+    await expect(chip.locator("svg")).toHaveAttribute("stroke", "currentColor");
+    await chip.hover();
+    await expect(chip).toHaveAttribute("title", "Use the existing project for this");
     await chip.click();
     await expect(page.locator(".rd-message-target")).toContainText("Use the existing project for this test.");
     await expect(page.locator(".rd-turn-nav")).toContainText("turn 1 / 2");
