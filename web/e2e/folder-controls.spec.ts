@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiDelete, apiPost, base, seedSession } from "./helpers";
+import { apiDelete, apiPost, base, expandFolder, seedSession } from "./helpers";
 
 test("folder phone survives collapse and reload and shows answered exchanges", async ({ page }) => {
   await seedSession("folder-phone-a", { name: "Folder sender", group: "Phone review/backend" });
@@ -21,7 +21,6 @@ test("folder phone survives collapse and reload and shows answered exchanges", a
     });
     expect(reply.status).toBe(200);
     await page.goto("/");
-    await page.locator(".rd-group-name").filter({ hasText: /^Phone review$/ }).click();
     const phone = page.getByRole("button", { name: "View interactions in Phone review", exact: true });
     await expect(phone).toBeVisible();
     await phone.click();
@@ -34,6 +33,7 @@ test("folder phone survives collapse and reload and shows answered exchanges", a
     await page.screenshot({ path: "/tmp/duckterm-folder-interactions.png" });
     await page.reload();
     await expect(phone).toBeVisible();
+    await expandFolder(page, "Phone review");
     await page.getByRole("button", { name: "View interactions in Phone review/backend", exact: true }).click();
     await expect(page.locator(".rd-inbox-message")).toHaveCount(1); // outgoing from this child
   } finally {
@@ -67,6 +67,7 @@ test("new session lists empty and nested sidebar folders and sends the selected 
     expect(response.ok()).toBeTruthy();
     expect(response.request().postDataJSON()).toEqual({ group: "Launch review/Child" });
     await page.reload();
+    await expandFolder(page, "Launch review/Child");
     const child = page.locator(".rd-group").filter({ has: page.locator('.rd-group-name', { hasText: /^Child$/ }) }).last();
     await expect(child).toContainText("Folder launch");
     await child.getByTitle("New session in this folder", { exact: true }).click();
