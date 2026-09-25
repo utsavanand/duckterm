@@ -191,3 +191,48 @@ def test_no_overwrite_and_interrupted_job_does_not_restart(scenario, tmp_path, m
     assert restored["job"]["status"] == "interrupted"
     assert restored["job"]["finished_at"] > 0
     assert restored["destination"] == str(existing)
+
+
+def test_sync_mode_is_explicit_validated_and_retains_local_archive_on_failure(
+    scenario, monkeypatch
+):
+    from duckterm.persistence import backup_sync
+
+    server, owner, root = scenario
+    assert dispatch(server, "PUT", "/backup", owner, b'{"destination":"/local"}')[0] == 200
+    before = server._backup_jobs.snapshot()
+    for payload in [{"mode": "unknown"}, {"mode": []}, {"mode": "sync", "destination": "/new"}]:
+        assert dispatch(server, "POST", "/backup", owner, json.dumps(payload).encode())[0] == 400
+        assert server._backup_jobs.snapshot() == before
+    assert dispatch(server, "PUT", "/backup", owner, b'{"mode":"sync"}')[0] == 400
+    local = root / "retained.tar.gz"
+
+    def fail(destination):
+        assert destination == "gs://test-bucket/mac"
+        raise backup_sync.SyncUploadError(local)
+
+    monkeypatch.setattr(backup_sync, "create", fail)
+
+    async def run():
+        status, state = await request(
+            server, owner, "POST", {"mode": "sync", "destination": "gs://test-bucket/mac"}
+        )
+        assert status == 202 and state["job"]["mode"] == "sync"
+        await server._backup_jobs.task
+        job = server._backup_jobs.snapshot()["job"]
+        assert job["status"] == "failed"
+        assert job["archive_path"] == str(local)
+        assert "remote current tree may be incomplete" in job["error"]
+        restored = BackupJobs(root / "backup-state.json").snapshot()
+        assert restored["job"] == job
+        monkeypatch.setattr(
+            backup,
+            "create",
+            lambda destination: str(local) + "\nUploaded to gs://test-bucket/archive",
+        )
+        status, state = await request(server, owner, "POST")
+        assert status == 202 and state["job"]["mode"] == "archive"
+        await server._backup_jobs.task
+        assert server._backup_jobs.snapshot()["job"]["status"] == "succeeded"
+
+    asyncio.run(run())
