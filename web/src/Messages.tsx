@@ -226,7 +226,8 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
         {toolCounts(latest.tools).map(([name, n]) => <span key={name} className="rd-tool-chip">
           {name}{n > 1 ? ` ×${n}` : ""}</span>)}
       </div>}
-      {latest.messages.map((message) => {
+      {latest.messages.filter((message) => message.blocks.some((block) => block.type === "text")
+        || target?.pin.message_key === message.message_key).map((message) => {
         const pinned = pins.some((p) => p.message_key === message.message_key);
         return <article key={message.message_key ?? message.id} data-message-key={message.message_key}
           className={`rd-message${target?.pin.message_key === message.message_key ? " rd-message-target" : ""}`}>
