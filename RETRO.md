@@ -2,7 +2,7 @@
 
 ## 2026-09-25 — Density is information structure, not just font size
 
-The first Compact/Standard/Relaxed preview only varied padding and type size, so the modes looked alike. The approved design changes one-line versus two-line rows, hover details, and persistent selected-session controls. Keep session names regular-weight in every mode, remember the choice, and test both geometry and access to hidden actions.
+The first Compact/Standard/Relaxed preview only varied padding and type size, so the modes looked alike. The approved design changes one-line versus two-line rows, hover details, and persistent selected-session controls. Keep session names regular-weight in every mode, remember the choice, and test both geometry and access to hidden actions. Preserve the existing row-selection focus behavior: adding a focusable wrapper stole focus from the newly opened terminal, caught by the full browser suite.
 
 
 ## 2026-09-25 — Opening Oracle must not resize a live terminal

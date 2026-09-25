@@ -715,11 +715,7 @@ function TreeRow({
             depth > 0 && <span className="rd-row-twig">⑂</span>
           )}
           <Duck key={s.key} pose={poseFor(effState)} size={24} celebrating={s.celebration} />
-          <span className="rd-row-click" role="button" tabIndex={0} onClick={() => onOpen(s.key)} onKeyDown={(event) => {
-            if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
-              event.preventDefault(); onOpen(s.key);
-            }
-          }}>
+          <span className="rd-row-click" onClick={() => onOpen(s.key)}>
             {s.branch && (
               <span
                 className="rd-row-git"
