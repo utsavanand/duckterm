@@ -57,5 +57,5 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: web
       - name: Verify security rendering and terminal access
-        run: npm run e2e -- security-render.spec.ts terminal.spec.ts new-session.spec.ts
+        run: npm run e2e -- security-render.spec.ts terminal.spec.ts new-session.spec.ts folder-controls.spec.ts groups.spec.ts header-menus.spec.ts message-pins.spec.ts duck-celebration.spec.ts backup.spec.ts
         working-directory: web

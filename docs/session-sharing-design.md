@@ -9,7 +9,7 @@ with a second user. Decision below.
 
 **Build a small relay we run, addressing shares by PATH under one domain.**
 The session keeps running on the owner's laptop; the laptop dials the relay
-outbound; viewers connect to `https://share.rubberterm.com/s/<id>`. This is
+outbound; viewers connect to `https://share.duckterm.com/s/<id>`. This is
 the model tmate/sshx/upterm converged on and it dissolves every objection the
 earlier drafts wrestled with:
 
@@ -44,7 +44,7 @@ arbitrary local ports (previews), not terminal frames.
 
 ## The ask
 
-Share a running RubberTerm session with another person over email so they can:
+Share a running DuckTerm session with another person over email so they can:
 
 1. **View** the live terminal (read-only), from any browser, no install.
 2. **Ask questions** about the session (a new session-scoped digest — NOT the
@@ -69,7 +69,7 @@ reach the session.
 
 ## Constraints that shape the design
 
-- RubberTerm today is localhost-first: one asyncio server on the owner's Mac,
+- DuckTerm today is localhost-first: one asyncio server on the owner's Mac,
   loopback-gated GETs, token-gated POSTs, tmux-backed PTYs. That server is
   already the host-side anchor every sharing tool has to invent.
 - Terminal input = arbitrary code execution on the owner's machine. Write
@@ -138,7 +138,7 @@ implementation detail.
   stays local, a cloud relay (SSE + persisted transcript + push notifications)
   provides remote view and control from web/mobile — but single-user only;
   they never shipped teammate sharing. Cautionary tales: Omnara's v1
-  terminal-parsing wrapper was abandoned as unmaintainable (RubberTerm's
+  terminal-parsing wrapper was abandoned as unmaintainable (DuckTerm's
   hook-based integration doesn't have that fragility); Terragon (pure cloud)
   shut down Jan 2026.
 - **Sharing is the paid tier** across the market: Conductor Pro $50/mo, Devin
@@ -219,7 +219,7 @@ A small always-on service under one domain we own. Deliberately dumb:
   (`/agent/<id>` + a device bearer token). Outbound works through every NAT and
   corporate firewall — it's ordinary HTTPS. The laptop pushes exactly the same
   binary xterm frames it already streams to the local browser.
-- Serves the viewer page + read-only stream at `https://share.rubberterm.com/s/<id>`.
+- Serves the viewer page + read-only stream at `https://share.duckterm.com/s/<id>`.
   **Path-based, not per-user hostname** — one domain, one cert, no DNS
   automation. Fans frames to N viewer sockets; presence and (v2) prompt
   proposals flow back on the same socket.
@@ -236,7 +236,7 @@ A small always-on service under one domain we own. Deliberately dumb:
 and can ask questions about that one session.** Genuinely multiplayer (live,
 not a transcript), and the read path has no way to touch the machine.
 
-- **Device→relay auth (ngrok model):** `rubberterm login` mints a 256-bit
+- **Device→relay auth (ngrok model):** `duckterm login` mints a 256-bit
   random opaque device token, stored in the macOS keychain (not a dotfile),
   presented as `Authorization: Bearer` on the outbound dial. Relay stores only
   a hash. Revoke = delete the row (the "laptop stolen" recovery path); a device
@@ -300,7 +300,7 @@ terminal is exactly a live/reviewing state, and the presence layer is:
 **The design rule: B never gets a keyboard — B gets a suggestion box.** A prompt
 into an agent with shell/file/git tools is arbitrary code execution as the
 owner, so the write primitive is a *proposal the owner approves*, injected by
-RubberTerm's own code on the owner's Mac. This is stricter than Omnara (which
+DuckTerm's own code on the owner's Mac. This is stricter than Omnara (which
 types remote text straight into stdin, and has no notion of a second person)
 and mirrors Live Share (identity → host approval → per-resource grant →
 host-side enforcement → host can always see/intervene/eject).
@@ -332,7 +332,7 @@ Must be true before write-sharing ships:
    never while a permission prompt is showing — else the text could be eaten as
    a "1" that approves a tool). Inject via `tmux load-buffer` + bracketed
    `paste-buffer` (literal), then one Enter, prefixed
-   `[Prompt from remote collaborator Bala via RubberTerm]:` so agent and
+   `[Prompt from remote collaborator Bala via DuckTerm]:` so agent and
    transcript know it wasn't the owner.
 7. **Permission-mode cap while shared:** refuse write-sharing on any session
    running `--dangerously-skip-permissions`/`bypassPermissions` or `acceptEdits`;
@@ -483,7 +483,7 @@ and how the proposal changed:
 
 ## Open questions for the owner
 
-1. **Domain + relay host.** v1 needs one domain (e.g. `share.rubberterm.com`)
+1. **Domain + relay host.** v1 needs one domain (e.g. `share.duckterm.com`)
    and one small always-on box (Fly.io ~$3–5/mo or a Hetzner CX22). That's the
    only infra we operate. Ready to stand that up, or want it spec'd so someone
    else can?

@@ -41,6 +41,7 @@ test("register, install with a picker choice, then uninstall", async ({
   const target = mkdtempSync(join(tmpdir(), "rd-e2e-target-"));
 
   await page.goto("/");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Harnesses" }).click();
 
   await page.getByPlaceholder("~/ws-my-projects/uv-suite").fill(suite);

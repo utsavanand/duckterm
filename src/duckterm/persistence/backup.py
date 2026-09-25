@@ -19,6 +19,24 @@ from duckterm import __version__
 from duckterm.helpers import paths
 
 
+class BackupUploadError(RuntimeError):
+    """Upload failed after a complete local archive was published."""
+
+    def __init__(self, archive_path: Path) -> None:
+        self.archive_path = str(archive_path)
+        super().__init__(f"GCS upload failed; complete local backup retained at {archive_path}")
+
+
+def validate_destination(destination: str | None) -> None:
+    remote = destination if destination and destination.startswith("gs://") else None
+    if remote and (not remote[5:].split("/", 1)[0] or any(c in remote for c in "*?#[\r\n")):
+        raise ValueError("Use a GCS bucket or prefix without wildcards")
+    if destination and "://" in destination and remote is None:
+        raise ValueError("Backup destinations must be local paths or gs:// bucket prefixes")
+    if destination and "\x00" in destination:
+        raise ValueError("Backup destination must not contain NUL characters")
+
+
 def _database(source: Path, target: Path) -> None:
     if not source.is_file():
         raise RuntimeError(f"No Duckterm database at {source}")
@@ -97,10 +115,7 @@ def create(destination: str | None = None) -> str:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     filename = f"duckterm-backup-{stamp}-{uuid.uuid4().hex[:8]}.tar.gz"
     remote = destination if destination and destination.startswith("gs://") else None
-    if remote and (not remote[5:].split("/", 1)[0] or any(c in remote for c in "*?#[\r\n")):
-        raise ValueError("Use a GCS bucket or prefix without wildcards")
-    if destination and "://" in destination and remote is None:
-        raise ValueError("Backup destinations must be local paths or gs:// bucket prefixes")
+    validate_destination(destination)
     cli = shutil.which("gcloud") if remote else None
     if remote and not cli:
         raise RuntimeError("Install and sign in to gcloud before uploading a backup")
@@ -169,8 +184,6 @@ def create(destination: str | None = None) -> str:
         try:
             subprocess.run([cli, "storage", "cp", "--no-clobber", str(output), uri], check=True)
         except (OSError, subprocess.SubprocessError) as exc:
-            raise RuntimeError(
-                f"GCS upload failed; complete local backup retained at {output}"
-            ) from exc
+            raise BackupUploadError(output) from exc
         return f"{output}\nUploaded to {uri}"
     return str(output)

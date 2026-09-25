@@ -1,7 +1,7 @@
 # Remote-session merge candidate
 
-The remote-session branch integrates main through `b458c63`. The source checkout
-for main contains unrelated uncommitted changes; it has not been modified or merged.
+The remote-session candidate now integrates main through `d1c0512`. The main
+checkout is clean. The feature has not yet been merged into main.
 
 ## Behavior
 
@@ -23,7 +23,7 @@ for main contains unrelated uncommitted changes; it has not been modified or mer
 
 ## Validation and practical limits
 
-The post-fix local gate passed: 561 Python tests, 70 frontend tests, and 39 browser
+The post-fix local gate passed: 649 Python tests, 87 frontend tests, and 51 browser
 tests. Four native unit tests and the real Swift transfer rehearsal also passed.
 Python lint, formatting, types, and documentation checks passed.
 
@@ -78,14 +78,25 @@ transcript test does not claim an end-to-end Move from that installed version.
 The isolated service has no connector credentials; provider MCP startup warnings
 there do not validate or invalidate the separate live connector service.
 
+## Integration validation — 2026-09-25
+
+Main through `d1c0512` is integrated and the full gate passes. Native unit,
+clipboard, report-data, and actual WKWebView report UI checks pass. Both the local
+Swift transfer rehearsal and the updated isolated Linux copy/restart-retry check
+pass; the latter's test-flagged session was deleted. DuckTerm Test is built and
+open, with its separate saved host pointing to QA port 4341. The owner has been
+asked to check the integrated New Session form. Production Claude PID 66209 is
+still running and has not been stopped. Main's prior uncommitted-work blocker is
+resolved; the feature remains separate pending acceptance.
+
 ## Remaining before merge
 
 1. Finish native Test acceptance and provider setup, including the full stopped
    source-session Move flow on supported versions.
-2. Private-repository clone authorization remains unvalidated. Automatic approval
-   review rejected cloning the full project history as outside the earlier export
-   approval; a separate user approval request is pending.
+2. Private-repository clone authorization remains unvalidated. This optional
+   check is skipped; public clone and retry passed. No full private history was
+   copied to the VM.
 3. Arrange a safe VM reboot. A live Claude process was observed on the workspace;
    it has not been interrupted.
-4. Complete user acceptance in RubberTerm Test, settle main's overlapping WIP,
-   integrate any newer commits, and merge. No production release is included.
+4. Complete user acceptance in DuckTerm Test and merge the validated integration.
+   Main's overlapping work is now committed. No production release is included.

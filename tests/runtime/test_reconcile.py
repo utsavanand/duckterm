@@ -1,6 +1,6 @@
 """Startup reconciliation: after a reboot (which kills tmux), a launched session
 the DB thinks is running has no live pane, and event-driven state can never flip
-it — so it would show 'busy'/'idle' forever. reconcile() marks those stopped
+it — so it would show 'busy'/'idle' forever. reconcile() marks those interrupted
 (resumable, honest) while leaving genuinely-live sessions alone."""
 
 import asyncio
@@ -29,9 +29,9 @@ def _seed_launched_running(store: HistoryStore, key: str) -> None:
     )
 
 
-def test_reboot_zombie_is_marked_stopped(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reboot_zombie_is_marked_interrupted(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """tmux is gone (reboot) → no live sessions → a launched 'busy' row is
-    reconciled to 'stopped', not left claiming it's running."""
+    reconciled to 'interrupted' (died without a clean stop), not left claiming it's running."""
     monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: False)
     store = HistoryStore(tmp_path / "db.sqlite")
     _seed_launched_running(store, "zombie")
@@ -41,7 +41,7 @@ def test_reboot_zombie_is_marked_stopped(tmp_path, monkeypatch: pytest.MonkeyPat
     adopted = asyncio.run(orch.reconcile())
 
     assert adopted == []
-    assert store.session("zombie")["state"] == "stopped"  # honest, and resumable
+    assert store.session("zombie")["state"] == "interrupted"  # honest, and resumable
 
 
 def test_live_tmux_session_is_adopted_not_swept(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -65,7 +65,7 @@ def test_live_tmux_session_is_adopted_not_swept(tmp_path, monkeypatch: pytest.Mo
 
     assert adopted == ["alive"]
     assert store.session("alive")["state"] == "busy"  # adopted, still running
-    assert store.session("dead")["state"] == "stopped"  # no live pane → reconciled
+    assert store.session("dead")["state"] == "interrupted"  # no live pane → reconciled
 
 
 def test_at_rest_and_watched_sessions_are_untouched(

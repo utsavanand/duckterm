@@ -5,6 +5,7 @@ import "./inbox.css";
 
 const labels: Record<InboxMessage["status"], string> = {
   queued: "Awaiting response",
+  read: "Read",
   accepted: "Received by session",
   answered: "Answered",
   declined: "Declined",
@@ -12,7 +13,7 @@ const labels: Record<InboxMessage["status"], string> = {
   cancelled: "Cancelled",
 };
 
-export function InboxView({ session }: { session: SessionView }) {
+export function InboxView({ session, folder, onMessageFolder }: ({ session: SessionView; folder?: never } | { session?: never; folder: string }) & { onMessageFolder?: () => void }) {
   const [card, setCard] = useState<SessionCard | null>(null);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -25,13 +26,14 @@ export function InboxView({ session }: { session: SessionView }) {
   const [introduced, setIntroduced] = useState(false);
   const [introductionError, setIntroductionError] = useState("");
   const [introductionText, setIntroductionText] = useState("");
-  const supported = ["codex", "claude-code"].includes(session.runtime ?? "");
+  const sessionKey = session?.key;
+  const supported = ["codex", "claude-code"].includes(session?.runtime ?? "");
 
   async function introduce() {
     setIntroducing(true);
     setIntroductionError("");
     try {
-      const result = await api.introduceCollaboration(session.key);
+      const result = await api.introduceCollaboration(session!.key);
       if (!result.sent) throw new Error("Could not send the introduction. Open the agent's terminal and try again.");
       setIntroduced(true);
     } catch (e) {
@@ -50,7 +52,7 @@ export function InboxView({ session }: { session: SessionView }) {
         let before: number | undefined;
         let next: number | null = null;
         for (let i = 0; i < pageCount; i++) {
-          const page = await api.inbox(session.key, before);
+          const page = folder !== undefined ? await api.folderInbox(folder, before) : await api.inbox(sessionKey!, before);
           if (cancelled) return;
           if (i === 0) setCard(page.card ?? null);
           incoming.push(...page.messages);
@@ -76,16 +78,17 @@ export function InboxView({ session }: { session: SessionView }) {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [session.key, retry, pageCount]);
+  }, [sessionKey, folder, retry, pageCount]);
 
   return (
-    <div className="rd-inbox" aria-label={`${session.label} inbox`}>
+    <div className={`rd-inbox${folder !== undefined ? " rd-folder-inbox" : ""}`} aria-label={`${folder ?? session?.label} ${folder !== undefined ? "interactions" : "inbox"}`}>
       <div className="rd-inbox-heading">
         <div>
-          <h2>Inbox</h2>
-          <p>Questions from other sessions, and the answers sent back.</p>
+          <h2>{folder !== undefined ? "Session interactions" : "Inbox"}</h2>
+          <p>{folder !== undefined ? "Messages and replies in this folder and its subfolders." : "Messages from you and other sessions, and replies."}</p>
         </div>
-        {loaded && <span className="rd-inbox-count">{messages.length}{cursor !== null ? "+" : ""} received</span>}
+        {onMessageFolder && <button className="rd-btn rd-btn-primary rd-btn-sm" onClick={onMessageFolder}>Message folder</button>}
+        {loaded && <span className="rd-inbox-count">{messages.length}{cursor !== null ? "+" : ""} {folder !== undefined ? (messages.length === 1 ? "interaction" : "interactions") : "received"}</span>}
       </div>
       {card && (
         <details className="rd-session-card" open>
@@ -101,19 +104,19 @@ export function InboxView({ session }: { session: SessionView }) {
           <time dateTime={new Date(card.updated_at).toISOString()}>Updated {new Date(card.updated_at).toLocaleString()}</time>
         </details>
       )}
-      <p className="rd-inbox-help">The agent can check its inbox when ready with <code>duckterm session inbox</code>. You can ask it to run this in its terminal.</p>
+      {folder === undefined && <p className="rd-inbox-help">The agent can check its inbox when ready with <code>duckterm session inbox</code>. You can ask it to run this in its terminal.</p>}
       {supported && (
         <div className="rd-inbox-introduction">
           <p>For an existing session, send the agent a guide to discovery, its inbox, and card updates. Use this at an idle prompt with no draft input.</p>
-          <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={introducing || introduced || session.state !== "idle"} onClick={() => void introduce()}>
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={introducing || introduced || session?.state !== "idle"} onClick={() => void introduce()}>
             {introduced ? "Introduction sent" : introducing ? "Sending…" : "Introduce session collaboration"}
           </button>
-          {session.state !== "idle" && <p>Available when the session is idle.</p>}
+          {session?.state !== "idle" && <p>Available when the session is idle.</p>}
           {introduced && <p role="status">Sent to the terminal. This does not confirm the agent has read it yet.</p>}
           {introductionError && <p role="alert">{introductionError}</p>}
           <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => {
             setIntroductionError("");
-            void api.collaborationInstructions(session.key)
+            void api.collaborationInstructions(session!.key)
               .then((result) => setIntroductionText(result.prompt))
               .catch((e: Error) => setIntroductionError(e.message));
           }}>Show introduction to paste</button>
@@ -122,7 +125,7 @@ export function InboxView({ session }: { session: SessionView }) {
       )}
       {error && (
         <div className="rd-inbox-error" role="alert">
-          <span>Could not refresh inbox: {error}</span>
+          <span>Could not refresh {folder !== undefined ? "interactions" : "inbox"}: {error}</span>
           <button onClick={() => setRetry((n) => n + 1)}>Retry</button>
         </div>
       )}
@@ -142,9 +145,9 @@ export function InboxView({ session }: { session: SessionView }) {
           <details className="rd-inbox-message" key={message.id}>
             <summary>
               <div className="rd-inbox-message-head">
-                <strong title={message.sender}>{message.sender_name}</strong>
+                <strong title={message.sender}>{message.sender_kind === "owner" ? "You" : message.sender_name}{message.sender_kind === "owner" && <span className="rd-owner-badge">Owner</span>}{folder !== undefined && ` → ${message.recipient_name ?? message.recipient}`}</strong>
                 <span className={`rd-inbox-status rd-inbox-status-${message.status}`}>
-                  {labels[message.status]}
+                  {message.kind === "broadcast" && message.status === "queued" ? "Unread" : labels[message.status]}
                 </span>
               </div>
               <p className="rd-inbox-preview">{message.question}</p>
@@ -153,8 +156,10 @@ export function InboxView({ session }: { session: SessionView }) {
               </time>
             </summary>
             <div className="rd-inbox-body">
-              <div className="rd-inbox-sender">From session: {message.sender}</div>
-              <h3>Question</h3>
+              <div className="rd-inbox-sender">{message.sender_kind === "owner" ? "From you" : `From session: ${message.sender}`}</div>
+              {message.delivery && <p>{message.delivery.last_read_at ? "Read by session" : message.delivery.outcome === "notified" ? "Notice shown · Not yet read" : "Not yet read"}</p>}
+              {message.requires_reply === false && <p>No reply required</p>}
+              <h3>{message.kind === "broadcast" ? "Message" : "Question"}</h3>
               <p>{message.question}</p>
               {message.answer !== null && (
                 <section className="rd-inbox-answer">

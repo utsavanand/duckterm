@@ -1,13 +1,13 @@
-# RubberTerm releases & testing
+# DuckTerm releases & testing
 
-The one page to share with anyone who's installing or testing RubberTerm. It
+The one page to share with anyone who's installing or testing DuckTerm. It
 says what's on each tier, how to install it, and what to test. Pair it with
 [release-sop.md](release-sop.md) (how releases are cut).
 
 <!-- CURRENT-VERSIONS:START (auto-updated by scripts/release.sh — do not edit by hand) -->
 | Tier | Version | Install from |
 |---|---|---|
-| **prod** (stable, daily) | `v0.4.35` | https://github.com/utsavanand/duckterm/releases/tag/v0.4.35 |
+| **prod** (stable, daily) | `v0.4.49` | https://github.com/utsavanand/duckterm/releases/tag/v0.4.49 |
 | **beta** (staging, testing) | `v0.4.0b1` | https://github.com/utsavanand/duckterm/releases/tag/v0.4.0b1 |
 | **dev** (source) | `main` | git checkout |
 <!-- CURRENT-VERSIONS:END -->
@@ -38,7 +38,7 @@ DUCKTERM_INSTANCE=beta duckterm@beta install-hooks
 ```
 
 > ⚠️ `install-hooks` writes to `~/.claude/settings.json`, which is **shared
-> across every RubberTerm/Claude Code setup on the machine** — it is NOT isolated
+> across every DuckTerm/Claude Code setup on the machine** — it is NOT isolated
 > per instance. On a fresh/dedicated test machine it's harmless. On your daily
 > machine, skip it unless you specifically want to exercise approvals, since it
 > can route your agent's events to the beta instance.
@@ -88,7 +88,7 @@ Copy this into your report; note pass/fail + notes per item.
 - [ ] **Resume:** resume that session → for Claude Code it continues the
       conversation; for other agents the response says the conversation was NOT
       carried (starts fresh) rather than pretending it resumed.
-- [ ] **Isolation:** running the beta doesn't disturb any other RubberTerm on
+- [ ] **Isolation:** running the beta doesn't disturb any other DuckTerm on
       the machine (separate port/home/socket); starting a second server on the
       same home is refused with a clear message.
 

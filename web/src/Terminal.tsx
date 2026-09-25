@@ -3,7 +3,8 @@ import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { authHeaders } from "./api";
-import { bindClipboardBridge, releaseClipboardBridge } from "./clipboardBridge";
+import { bindClipboardBridge, imagePathText, releaseClipboardBridge } from "./clipboardBridge";
+import { useToast } from "./ui";
 import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 
 // A real terminal for a launched session: xterm.js over the
@@ -17,13 +18,19 @@ import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 // the GET API — no token needed (only state-changing POSTs are token-gated).
 export function Terminal({
   sessionKey,
+  active = true,
   theme = DEFAULT_TERM_THEME,
 }: {
   sessionKey: string;
+  active?: boolean;
   theme?: string;
 }) {
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Xterm | null>(null);
+  const activateRef = useRef<((visible: boolean) => void) | null>(null);
 
   // Live theme switch (e.g. toggling the app light/dark): set the new palette
   // and force a full repaint so already-rendered rows recolor immediately,
@@ -53,18 +60,23 @@ export function Terminal({
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
-    fit.fit();
-    bindClipboardBridge(term); // Mac-app Edit menu targets the focused terminal
+    let visible = active;
+    if (visible) fit.fit();
+    bindClipboardBridge(term, sessionKey); // Mac-app Edit menu targets the focused terminal
     // Focus xterm's hidden input directly. term.focus() alone proved unreliable
     // on mount (after selecting an agent, focus stayed on <body>, so keystrokes
     // went nowhere and you had to click the terminal first). Targeting the
     // helper textarea after the row-click settles makes the terminal typeable
     // the moment you select an agent.
-    const focusTerm = () => {
+    const focusTerm = (explicit = false) => {
+      // Async attach/replay must not steal focus from a menu or dialog opened
+      // while the terminal was connecting. Explicit terminal selection can.
+      const focused = document.activeElement;
+      if (!explicit && focused && focused !== document.body && !host.contains(focused)) return;
       const ta = host.querySelector<HTMLTextAreaElement>(
         ".xterm-helper-textarea",
       );
-      if (ta && document.activeElement !== ta) ta.focus();
+      if (visible && ta && document.activeElement !== ta) ta.focus({ preventScroll: true });
     };
     // Keep the terminal focused so you can type the moment you select an agent.
     // Two things fight us: (1) selecting an agent is a row click that settles
@@ -79,7 +91,7 @@ export function Terminal({
       if (leftToNowhere) setTimeout(focusTerm, 0);
     };
     host.addEventListener("focusout", refocusOnBlur);
-    const focusOnClick = () => focusTerm();
+    const focusOnClick = () => focusTerm(true);
     host.addEventListener("mousedown", focusOnClick);
 
     // The WS dies whenever the session's PTY goes away — Stop, a server
@@ -91,28 +103,99 @@ export function Terminal({
     let retry: number | undefined;
     let attempts = 0; // consecutive failures — drives the backoff
     let disposed = false;
+    let attachGeneration = 0;
+    let replayReady = false;
+    let pendingOpenScroll = false;
+    let openGeneration = 0;
+    let scrollFrame: number | undefined;
+    const cancelAttachScroll = () => {
+      pendingOpenScroll = false;
+      ++openGeneration;
+      window.cancelAnimationFrame(scrollFrame ?? 0);
+    };
+    const cancelForNavigation = (event: KeyboardEvent) => {
+      if (["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown"].includes(event.key)) cancelAttachScroll();
+    };
+    host.addEventListener("wheel", cancelAttachScroll, { passive: true });
+    host.addEventListener("pointerdown", cancelAttachScroll);
+    host.addEventListener("touchstart", cancelAttachScroll, { passive: true });
+    host.addEventListener("keydown", cancelForNavigation);
+
 
     const sendResize = () => {
       if (ws?.readyState !== WebSocket.OPEN) return;
       ws.send(JSON.stringify({ resize: { cols: term.cols, rows: term.rows } }));
     };
 
+    // Hidden terminals have no usable dimensions. Fit only after activation,
+    // then wait for queued parser work and the browser layout before scrolling.
+    // Ordinary output and visible resizes must not interrupt scrollback reading.
+    const settleOpening = () => {
+      if (!visible || !host.clientWidth || !host.clientHeight) return;
+      fit.fit();
+      sendResize();
+      if (!pendingOpenScroll || !replayReady) return;
+      const generation = ++openGeneration;
+      term.write("", () => {
+        if (disposed || generation !== openGeneration) return;
+        window.cancelAnimationFrame(scrollFrame ?? 0);
+        scrollFrame = window.requestAnimationFrame(() => {
+          if (disposed || !visible || !pendingOpenScroll || generation !== openGeneration) return;
+          term.scrollToBottom();
+          // xterm synchronizes its DOM viewport on its next render frame.
+          // Finish after that frame so a hidden-pane reflow cannot restore an
+          // older scrollbar position after our first scroll.
+          scrollFrame = window.requestAnimationFrame(() => {
+            if (disposed || !visible || !pendingOpenScroll || generation !== openGeneration) return;
+            // At the buffer bottom xterm skips its scroll event, even when
+            // the DOM scrollbar still holds the pre-reflow height. Moving one
+            // line and back in this frame forces its public scroll API to sync.
+            term.scrollLines(-1);
+            term.scrollToBottom();
+            pendingOpenScroll = false;
+            focusTerm();
+          });
+        });
+      });
+    };
+    activateRef.current = (nextVisible) => {
+      visible = nextVisible;
+      cancelAttachScroll();
+      pendingOpenScroll = visible;
+      if (visible) { settleOpening(); focusTerm(true); }
+    };
+
     const connect = () => {
+      const generation = ++attachGeneration;
+      let firstFrame = true;
+      replayReady = false;
+      cancelAttachScroll();
+      pendingOpenScroll = visible;
       ws = new WebSocket(
         `${proto}://${location.host}/sessions/${sessionKey}/terminal`,
       );
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
         attempts = 0; // live again — future retries start fast
-        fit.fit();
-        sendResize();
+        settleOpening();
         focusTerm();
       };
       ws.onmessage = (ev) => {
         // Raw PTY bytes. xterm's write() takes a Uint8Array and decodes UTF-8
         // itself — passing bytes (not a decoded string) keeps multi-byte
         // sequences split across frames intact.
-        term.write(new Uint8Array(ev.data as ArrayBuffer));
+        if (firstFrame) {
+          firstFrame = false;
+          // subscribe_bytes sends the complete attach snapshot as its first
+          // frame. Wait for xterm's parser, not a timer or later live writes.
+          term.write(new Uint8Array(ev.data as ArrayBuffer), () => {
+            if (disposed || generation !== attachGeneration) return;
+            replayReady = true;
+            settleOpening();
+          });
+        } else {
+          term.write(new Uint8Array(ev.data as ArrayBuffer));
+        }
       };
       ws.onclose = () => {
         if (disposed) return;
@@ -132,31 +215,29 @@ export function Terminal({
         ws.send(new TextEncoder().encode(data));
     });
 
-    // Pasting an IMAGE (screenshot, browser "Copy Image") carries no text —
-    // xterm would silently drop it. Save it server-side and type the file
-    // path instead: both claude and codex read image paths as attachments
-    // (the iTerm paste-an-image experience). Text pastes proceed untouched.
-    const onPasteImage = (e: ClipboardEvent) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      const image = [...items].find((i) => i.type.startsWith("image/"));
-      if (!image) return; // plain text — xterm's normal paste handles it
-      e.preventDefault();
+    // Capture image paste before xterm's normal text handler. Many clipboard
+    // entries carry both image bytes and a filename; only send the saved image.
+    const onPasteImage = (event: ClipboardEvent) => {
+      const image = [...(event.clipboardData?.items ?? [])].find((item) => item.kind === "file" && item.type.startsWith("image/"));
+      if (!image) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
       const blob = image.getAsFile();
-      if (!blob) return;
-      fetch("/paste-image", {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": blob.type }),
-        body: blob,
-      })
-        .then((r) => r.json())
-        .then((d: { path?: string }) => {
-          if (d.path && ws?.readyState === WebSocket.OPEN)
-            ws.send(new TextEncoder().encode(d.path + " "));
-        })
-        .catch(() => undefined);
+      const socket = ws;
+      if (!blob || !socket || socket.readyState !== WebSocket.OPEN) {
+        toastRef.current("Image paste failed: select a connected terminal and try again.", "err");
+        return;
+      }
+      void fetch("/paste-image", {
+        method: "POST", headers: authHeaders({ "Content-Type": blob.type }), body: blob,
+      }).then(async (response) => {
+        const data = await response.json() as { path?: string; error?: string };
+        if (!response.ok || !data.path) throw new Error(data.error ?? "Could not save clipboard image");
+        if (disposed || ws !== socket || socket.readyState !== WebSocket.OPEN) throw new Error("Terminal reconnected. Paste the image again.");
+        term.paste(imagePathText(data.path));
+      }).catch((error: Error) => toastRef.current(`Image paste failed: ${error.message}`, "err"));
     };
-    term.textarea?.addEventListener("paste", onPasteImage);
+    host.addEventListener("paste", onPasteImage, true);
 
     // Shift+Enter inserts a newline instead of submitting. xterm would send
     // plain \r for it — indistinguishable from Enter — so intercept and send
@@ -173,19 +254,22 @@ export function Terminal({
     });
 
     // Reflow the agent's TUI when the pane resizes.
-    const observer = new ResizeObserver(() => {
-      fit.fit();
-      sendResize();
-    });
+    const observer = new ResizeObserver(settleOpening);
     observer.observe(host);
 
     return () => {
       disposed = true;
+      activateRef.current = null;
+      cancelAttachScroll();
       window.clearTimeout(retry);
       observer.disconnect();
       host.removeEventListener("focusout", refocusOnBlur);
       host.removeEventListener("mousedown", focusOnClick);
-      term.textarea?.removeEventListener("paste", onPasteImage);
+      host.removeEventListener("wheel", cancelAttachScroll);
+      host.removeEventListener("pointerdown", cancelAttachScroll);
+      host.removeEventListener("touchstart", cancelAttachScroll);
+      host.removeEventListener("keydown", cancelForNavigation);
+      host.removeEventListener("paste", onPasteImage, true);
       onData.dispose();
       if (ws) {
         ws.onclose = null;
@@ -199,6 +283,8 @@ export function Terminal({
     // rebuild the terminal on every theme switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionKey]);
+
+  useEffect(() => { activateRef.current?.(active); }, [active, sessionKey]);
 
   // height:0 + flex:1 makes the host fill the pane with a DEFINITE height, so
   // xterm scrolls its buffer internally instead of growing the page. (A

@@ -1,4 +1,4 @@
-# RubberTerm — Architecture
+# DuckTerm — Architecture
 
 Status: current as of v0.4.27 (2026-09-21). What runs today, not a proposal.
 Origin decisions: [terminal-forward-design.md](terminal-forward-design.md).
@@ -14,7 +14,7 @@ their own hook systems.
 ```
 ┌────────────────────────── browser / Mac WKWebView ─────────────────────────┐
 │  React dashboard: GridView · Terminal (xterm.js) · Messages · AgentTree    │
-│  Approvals · FleetChat · InboxView · Connectors · Harnesses               │
+│  Approvals · Ask Oracle · InboxView · Connectors · Harnesses              │
 └───────▲───────────────────────▲───────────────────────────▲───────────────┘
         │ binary WS (PTY bytes, │ HTTP JSON (loopback-gated  │ SSE events
         │ keystrokes, resize)   │ GET, token-gated POST)     │
@@ -99,7 +99,7 @@ idempotency keys, 16 KiB / 256 KiB size caps, 10 questions/min per sender,
 behavior, folder-move semantics, and the upgrade rehearsal:
 [session-api-design.md](session-api-design.md).
 
-**LLM layer (`llm/`)** — the only place RubberTerm itself calls a model:
+**LLM layer (`llm/`)** — the only place DuckTerm itself calls a model:
 fleet-chat answers, AGENTS.md rule suggestions, digest summarization.
 Prompts making claims about a person carry an explicit evidence bar
 (RETRO: the digest-personality incident).

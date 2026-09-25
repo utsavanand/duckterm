@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build RubberTerm.app — the desktop shell around the local dashboard.
+# Build DuckTerm.app — the desktop shell around the local dashboard.
 #
 # Compiles the Swift sources directly (not via SwiftPM) into a .app bundle and
 # ad-hoc signs it so it runs on this machine. Requires a working Swift toolchain
@@ -9,8 +9,8 @@
 #   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
 #
 # Usage:
-#   ./build.sh --test --run  # build and open RubberTerm Test
-#   ./build.sh              # build the production RubberTerm bundle
+#   ./build.sh --test --run  # build and open DuckTerm Test
+#   ./build.sh              # build the production DuckTerm bundle
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -23,11 +23,11 @@ for arg in "$@"; do
     *) echo "Usage: $0 [--test] [--run]" >&2; exit 2 ;;
   esac
 done
-APP_NAME="RubberTerm"
+APP_NAME="DuckTerm"
 BUNDLE_ID="com.rubberduckhq.rubberterm"
 ICON_NAME="AppIcon"
 if [[ "$TEST_BUILD" == 1 ]]; then
-  APP_NAME="RubberTerm Test"
+  APP_NAME="DuckTerm Test"
   BUNDLE_ID="com.rubberduckhq.rubberterm.test"
   ICON_NAME="AppIconTest"
 fi
@@ -45,7 +45,7 @@ rm -rf "$APP"
 mkdir -p "$MACOS" "$CONTENTS/Resources"
 swiftc -O \
   -framework AppKit -framework WebKit -framework UserNotifications -framework Foundation \
-  -o "$MACOS/RubberTerm" \
+  -o "$MACOS/DuckTerm" \
   Sources/Duckterm/*.swift
 
 echo "==> bundling app icon"
@@ -63,7 +63,7 @@ cp "Resources/$ICON_NAME.icns" "$CONTENTS/Resources/AppIcon.icns"
 
 echo "==> writing Info.plist"
 # Bundle version tracks the Python package (single source of truth) so the
-# app's About/Get Info never claims an older RubberTerm than the one it runs.
+# app's About/Get Info never claims an older DuckTerm than the one it runs.
 # Read the version from the source file directly — importing duckterm needs
 # an installed venv, which a fresh release worktree doesn't have (that
 # dependency once aborted the build MID-BUNDLE, shipping a partial .app).
@@ -79,7 +79,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
-  <key>CFBundleExecutable</key><string>RubberTerm</string>
+  <key>CFBundleExecutable</key><string>DuckTerm</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
@@ -116,6 +116,21 @@ info['DucktermTestPort'] = instance['port']()
 with (contents / 'Info.plist').open('wb') as f:
     plistlib.dump(info, f)
 PYBUILD
+fi
+
+# Optional support recipient is supplied at build time, never committed to source.
+# Read the environment directly so the address is never logged or parsed as code.
+if [[ -n "${DUCKTERM_SUPPORT_EMAIL:-}" ]]; then
+  python3 - "$CONTENTS/Info.plist" <<'PYCONFIG'
+import os
+import plistlib
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+plist = plistlib.loads(path.read_bytes())
+plist["DuckTermSupportEmail"] = os.environ["DUCKTERM_SUPPORT_EMAIL"]
+path.write_bytes(plistlib.dumps(plist))
+PYCONFIG
 fi
 
 echo "==> ad-hoc signing (runs locally; not notarized for distribution)"

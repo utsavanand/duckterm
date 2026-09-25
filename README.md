@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="web/public/favicon.svg" width="72" alt="RubberTerm logo" />
+<img src="web/public/favicon.svg" width="72" alt="DuckTerm logo" />
 
-# RubberTerm
+# DuckTerm
 
 **One workspace for your coding agents: live terminals, nested sessions, shared connectors, and project files.**
 
@@ -13,7 +13,7 @@
 
 [Install](#install) · [First session](#your-first-session) · [Features](#features) · [Mac app](#mac-app) · [How it works](#how-it-works) · [Development](#development)
 
-<img src="docs/screenshot.png" alt="RubberTerm dashboard with nested coding agents, a live terminal, the Edit file action, and the connectors panel" width="100%" />
+<img src="docs/screenshot.png" alt="DuckTerm dashboard with nested coding agents, a live terminal, the Edit file action, and the connectors panel" width="100%" />
 
 </div>
 
@@ -24,7 +24,7 @@ means alt-tabbing to find the one that's waiting on you, losing track of which
 branch each is on, and having no way to ask "what has that session actually
 done?"
 
-RubberTerm launches each agent into a tmux-backed PTY it owns and renders it in
+DuckTerm launches each agent into a tmux-backed PTY it owns and renders it in
 the browser with xterm.js — a real terminal you type into, not a transcript
 viewer. Around the terminals it shows what a terminal can't:
 
@@ -32,7 +32,7 @@ viewer. Around the terminals it shows what a terminal can't:
 - **context pressure** per session — tokens used, model, and a "checkpoint or
   compact" warning before the window fills
 - **approvals as buttons** — permission prompts resolve from the dashboard
-- a **fleet chat bar** — ask questions about all running sessions at once
+- an **Ask Oracle** button — ask questions about all running sessions at once
   ("who's stuck?", "what has refactor-auth done so far?")
 
 Sessions survive server restarts (tmux), run in isolated git worktrees when you
@@ -59,17 +59,17 @@ install Python 3.11+, pipx, and tmux using your distribution's package manager.
 Then install the published wheel:
 
 ```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.35/duckterm-0.4.35-py3-none-any.whl
+pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.49/duckterm-0.4.49-py3-none-any.whl
 duckterm serve
 ```
 
 The dashboard opens at **http://127.0.0.1:4300**. Leave that terminal running.
-RubberTerm is distributed through [GitHub Releases](https://github.com/utsavanand/duckterm/releases),
+DuckTerm is distributed through [GitHub Releases](https://github.com/utsavanand/duckterm/releases),
 not currently PyPI; `pipx install duckterm` is not a supported installation path.
 
 ## Your first session
 
-1. In the dashboard, choose **New session**.
+1. In the dashboard, choose **New → New session**.
 2. Choose an installed agent and the project directory you want it to work in.
 3. Launch the session and type your task into its terminal.
 4. Use folders to organize agents, **Edit file** for project files, and
@@ -104,12 +104,15 @@ See [installation, upgrades, and troubleshooting](docs/installation.md) for help
   collapsed sessions, a folder switcher.
 - Stop is a pause (Resume relaunches — continuing the conversation for Claude
   Code); Archive is final; Delete requires a second click.
-- Fleet chat: one question, answered from a digest of every running session's
+- Ask Oracle: one question, answered from a digest of every running session's
   state, goal, and screen.
 
 **The structured layer**
 - **Messages view** — the conversation rendered as HTML; select any span of a
   reply, attach a note, and it's sent back to the agent as a follow-up turn.
+  Pin individual messages to revisit them from the strip above the terminal.
+  Hover a pin icon for a short excerpt; click it to open the message. These
+  pins survive restarts and retain a saved copy if the transcript changes.
 - **Sub-agent tree** — Task-tool sub-agents nested under their parent, live.
 - **Worktrees & forks** — launch into an isolated worktree per attempt; fork a
   session's git state or (Claude Code) its conversation; compare branches.
@@ -120,6 +123,12 @@ See [installation, upgrades, and troubleshooting](docs/installation.md) for help
   (e.g. uv-suite) and install it into any project from the dashboard, with
   per-meta-harness option pickers and compatibility declarations.
   Contract: [docs/harnesses.md](docs/harnesses.md).
+
+## Session inboxes
+
+Agents can send persistent assignments to other sessions in their shared folder.
+Supported runtimes receive a task-end reminder for accepted, unanswered work.
+See [inbox delivery and safeguards](docs/inbox-delivery.md).
 
 ## Backups
 
@@ -146,8 +155,8 @@ and the [shared connector guide](docs/shared-connectors.md) for central hosting.
 ## Mac app
 
 On **Apple Silicon Macs running macOS 13+**, install the CLI above, then download
-[RubberTerm-0.4.35-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.35/RubberTerm-0.4.35-macos-arm64.zip),
-unzip it, and move **RubberTerm.app** to **Applications**.
+[DuckTerm-0.4.49-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.49/DuckTerm-0.4.49-macos-arm64.zip),
+unzip it, and move **DuckTerm.app** to **Applications**.
 
 The app opens the dashboard in a native window with a Dock icon and notifications.
 It starts the local server when needed, or connects to one already running.
@@ -166,7 +175,7 @@ WebSocket carrying raw PTY bytes to xterm.js; context-pressure numbers are read
 from the agent's transcript on disk. Everything runs on 127.0.0.1: GETs are
 loopback-gated, state-changing POSTs are token-gated.
 
-RubberTerm is the terminal-forward sibling of
+DuckTerm is the terminal-forward sibling of
 [Rubberduck](https://github.com/utsavanand/rubber-duck), which *watches* agents
 you run in your own terminal tabs instead of owning the PTY. Install either or
 both.
@@ -196,6 +205,6 @@ Design docs: [terminal-forward-design.md](docs/terminal-forward-design.md),
 ## License
 
 [FSL-1.1-MIT](LICENSE) — the Functional Source License. You can read, run,
-modify, and redistribute RubberTerm for any purpose except offering a
+modify, and redistribute DuckTerm for any purpose except offering a
 competing product; each release automatically becomes plain MIT two years
 after it ships.

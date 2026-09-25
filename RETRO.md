@@ -3,6 +3,225 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-25 — Remote-session integration must preserve newer native and launch behavior
+**Broke:** both branches added the same navigation delegate callback; newer launch
+properties also left the feature's tests stale, and standalone native tests lacked
+remote-host dependencies.
+**Rule:** combine callbacks, preserve folder-assignment and launch-selection behavior,
+keep the stable installed bundle IDs, and run both full application and native UI
+checks after integrating main. Test builds must retain their isolated identity.
+
+## 2026-09-25 — Restart should not expand every folder
+**Broke:** every dashboard mount initialized folders as expanded, so restarting
+filled the sidebar with all sessions.
+**Rule:** initialize folder headers collapsed, including nested folders. Verify
+reload closes previously opened folders and that reopening still reveals their
+sessions; keep header actions available while collapsed.
+
+## 2026-09-25 — Changed-file backups need filtered staging and restore checks
+**Found:** syncing raw agent directories bypasses archive exclusions, and size or
+mtime alone can miss a same-size transcript rewrite. A mutable remote tree also
+cannot promise historical recovery with an older database snapshot.
+**Rule:** stage the existing filtered archive, compare checksums, retain whole
+uniquely named SQLite copies and local archives, and publish completion last.
+Keep full archives as the default historical backup. Verify unchanged and changed
+uploads, excluded secrets, retained deleted paths, and a real cloud restore.
+
+## 2026-09-24 — Bookmark shortcuts should stay compact
+**Broke:** bookmark excerpts filled the terminal strip instead of the owner's
+requested pin-only links; a colored emoji also ignored the neutral-color request.
+**Rule:** use a monochrome SVG that inherits theme text color, keep the visible
+shortcut icon-only, and put a short excerpt in the hover label. Retain a descriptive
+accessible name and exact-message navigation.
+
+## 2026-09-24 — Message bookmarks must preserve message boundaries
+**Found:** the Messages turn view flattened assistant messages into text blocks,
+losing the identities needed to pin one response or jump back to it.
+**Rule:** retain message records inside each turn. Resolve a pin by its checked
+key on every refresh, keep the selected turn stable as new turns arrive, and
+render its saved snapshot if the original changes. Browser acceptance must
+exercise real transcript rewrites, reload, removal, and an unsubmitted terminal
+draft, not just button visibility. Keep internal tool records in their compact
+summary; adding bookmarks must not expand every tool call into another row.
+
+## 2026-09-24 — Saved messages need content checks and retained copies
+**Found:** Messages uses transcript line positions, which can point to different
+content after a transcript rewrite. Persisting that position alone would make
+a bookmark silently jump to another message.
+**Rule:** verify the content and conversation as well as the position. Retain a
+snapshot at pin time; when the exact reference disappears, show the saved copy
+rather than reusing the old line number. Test rewrites, repeated text, restarts,
+and session-scoped removal.
+
+## 2026-09-23 — Terminal attachment must preserve menu focus
+**Broke:** a terminal finishing its connection stole focus from Settings and
+closed the menu before its action could be clicked.
+**Rule:** asynchronous terminal attach/replay may focus an unoccupied page or
+the terminal itself, but must preserve focus in other controls. Only explicit
+terminal selection or clicks may take focus from another control.
+
+## 2026-09-23 — Connector status must not block the dashboard
+**Broke:** backup settings intermittently stayed disabled during initial loading
+in CI. Connector status ran credential and CLI probes on the server event loop.
+**Rule:** run synchronous connector probes in a worker thread. A regression must
+hold a probe open and verify another dashboard request completes before it does;
+increasing the browser timeout would leave the responsiveness bug intact.
+
+## 2026-09-23 — Product renames must preserve the installed application identity
+**Broke:** the pending native rename changed the bundle identifier, leaving the
+configured support preference behind in the old defaults domain.
+**Cause:** a display-name rename also replaced the persistent application ID.
+**Rule:** keep the installed bundle identifier stable while changing app,
+executable, and display names. Verify existing local preferences remain available
+and never embed private support configuration in published release assets.
+
+## 2026-09-23 — Header actions need clear grouping and labels
+**Broke:** separate creation, theme, backup, and harness controls crowded the
+header, and an unexplained bell concealed the notification setting.
+**Rule:** group creation under New and preferences under Settings; retain the
+owner-requested AGENTS.md shortcut separately. Use a labelled notification
+control, preserve existing actions and theme persistence, and verify keyboard
+focus, dismissal, and menu bounds alongside each relocated browser flow.
+
+## 2026-09-23 — Idle Claude sessions reported as waiting
+**Broke:** 8 of 19 sessions showed "waiting", some for 50+ hours, and the tab
+title counted them as needing an answer. Most were idle at the prompt.
+**Cause:** Claude Code sends a Notification about 60 seconds after a turn ends
+with nothing to answer. The hook dropped `notification_type`, and every
+Notification derived `waiting`.
+**Rule:** forward the fields that tell event subtypes apart before deriving
+state from an event type. Check the live DB against the dashboard when a badge
+count looks too high to be true.
+
+## 2026-09-22 — Attach scrolling misses terminals opened from hidden slots
+**Broke:** opening an existing session still displayed old scrollback after the
+first-frame scroll fix. Sessions stay mounted while hidden, so switching sessions
+or returning to Terminal does not trigger another attachment.
+**Rule:** treat visible activation separately from connection. Fit the visible
+pane, wait for parser/layout, then scroll once; invalidate stale callbacks and
+cancel on user navigation. xterm skips scroll events at an unchanged buffer
+bottom: explicitly synchronize its public scroll API after the reflow frame so
+the DOM scrollbar cannot retain an older buffer height. Never fit hidden slots
+or scroll on ordinary output
+or resize. Test hidden-session switching and Messages-to-Terminal reopening.
+
+## 2026-09-22 — Clipboard filename text is not the copied image
+**Broke:** pasting screenshots could insert only a filename, leaving agents unable
+to read the image. Native paste preferred text and ignored Finder file URLs;
+browser handling ran after xterm's text paste handler.
+**Rule:** resolve image/file representations first only for terminal targets,
+capture browser image paste before text handlers, and report save/decode errors.
+Check readable bytes, mixed clipboard data, normal editor paste, and actual
+Claude Code/Codex image reads. A local path does not prove remote attachment support.
+
+## 2026-09-22 — Completed helper history must not crowd out active work
+**Broke:** completed helpers accumulated as permanently expanded sidebar rows.
+**Cause:** active and completed helpers shared one unconditional list.
+**Rule:** leave active helpers visible and retain completed rows behind an
+accessible per-session count, collapsed by default. Check independent keyboard
+expansion with real counts and preserve prompts when running helpers finish.
+
+## 2026-09-22 — Manual backup UI must keep job state separate from a click
+**Broke:** the released backup API had no owner-facing controls or visible result.
+**Cause:** backend delivery was treated as the feature while its approved UI waited.
+**Rule:** expose the remembered destination and actual background-job result;
+never start on open, guard duplicate clicks, and confirm status after a lost POST
+response. Exercise local archives with isolated transcript roots, never real
+transcripts or a cloud upload in browser tests.
+
+## 2026-09-22 — Attach positioning must not become continuous auto-scroll
+**Broke:** attaching to a terminal could leave its viewport above the latest output.
+**Cause:** xterm parsed the replay asynchronously with no explicit attach position.
+**Rule:** scroll once after the first replay frame is parsed, cancel if the user
+starts navigating, and reject callbacks from old connections. Never scroll on
+ordinary writes or resize. Verify long history, manual scrolling, and later output.
+
+## 2026-09-22 — Completion feedback must distinguish live transitions from replay
+**Broke:** session ducks had no completion feedback; naive animation on idle state
+would celebrate historical sessions every time the page loaded.
+**Cause:** persisted state and SSE replay are not newly witnessed turn completion.
+**Rule:** detect live turn transitions centrally, suppress seeds/replay/repeated
+states, expire feedback after four seconds, and disable jumps for reduced motion.
+Stop ends the turn immediately even while the existing busy display grace settles.
+
+## 2026-09-21 — Manual backups must not block the dashboard
+**Broke:** the shipped backup CLI had no owner-controlled dashboard operation.
+**Cause:** archive creation and cloud upload are synchronous, while the dashboard
+needs a remembered destination and a visible outcome.
+**Rule:** run the existing archive operation in one background job, persist its
+configuration/result privately, reject overlap, and expose the retained local
+path on upload failure. Never silently choose a destination or retry on restart.
+
+## 2026-09-21 — Owner notices need distinct lifecycle labels
+**Broke:** folder broadcasts inherited question labels and had no owner send UI.
+**Cause:** the inbox assumed every entry was a peer question awaiting a reply.
+**Rule:** derive Owner from server sender kind, distinguish unread from notice
+shown, review eligible recipients, and preserve the request key on send retries.
+
+## 2026-09-21 — Native dialogs need their own clipboard and save lifecycle
+**Broke:** the handed-off report form inherited dashboard-only copy/paste actions
+and could open overlapping save operations or close while export used its files.
+**Cause:** adding a second WebView without routing Edit actions to the active
+window or holding a busy state across native file-picker callbacks.
+**Rule:** route clipboard actions to the active editor, guard the full picker and
+export lifecycle, and verify the real WKWebView form, cancellation, ZIP output,
+opt-outs, keyboard dismissal, and narrow-window layout before shipping. Successful
+Save closes the report and reveals the ZIP; failures keep the form available.
+Automate the destination callback rather than invoking unsupported NSSavePanel
+actions that can strand a test window.
+
+## 2026-09-21 — Folder messages need an owner identity and inbox delivery
+**Broke:** a folder message had no durable owner-to-session delivery path.
+**Cause:** peer questions require a sending session and terminal input can race
+drafts or running work.
+**Rule:** authenticate the owner at the route, fan out durable notices with an
+explicit sender kind, and keep peer quotas and unread state separate. Retrying
+a send must return the original delivery result without duplicating notices.
+
+## 2026-09-21 — Closing old persistent work needs its own timestamp
+**Broke:** cancelling a month-old persistent assignment made cleanup remove it
+before the cancellation response could be returned.
+**Cause:** cancellation had no closing timestamp, so retention used creation time.
+**Rule:** timestamp every closing transition and retain its history from closure.
+Cover aged requests, not only newly created ones.
+
+## 2026-09-21 — Idle agents never saw short-lived inbox assignments
+**Broke:** QA and implementation handoffs expired before recipients read them.
+Acknowledging a request did not extend its deadline, and delivery only updated a
+badge; it never scheduled an agent turn.
+**Cause:** short-lived question semantics were used as a work queue, while agents
+were expected to notice and poll it themselves.
+**Rule:** retain assignments by default and make deadlines explicit. Use supported
+turn-end hook feedback for reminders, with durable repeat suppression and no
+terminal writes. Retain unhandled work when notification is unavailable.
+
+## 2026-09-21 — Folder actions were missing from session workflows
+**Broke:** creating a session from the global button offered no sidebar folder
+choice, and folder headers had no control for interaction history.
+**Cause:** folder assignment existed only as an implicit launch preset. The old
+folder-history implementation remained on `feat/folder-conversations` and was
+not an ancestor of the current release; the release exposed only session inboxes.
+**Rule:** keep folder history visible independently of pending counts, hover,
+collapse, or live-session filters. Land fixes on main before releasing so a
+later release cannot silently omit a feature branch. Cover folder selection and both directions
+of folder exchanges with end-to-end regression checks.
+
+## 2026-09-21 — Stop silently discarded pending collaboration
+**Broke:** stopping sessions during a restart cancelled owner work requests.
+**Cause:** credential revocation also cancelled durable questions, and the child's
+SessionEnd could arrive before the server recorded the resumable stop.
+**Rule:** persist Stop before terminating the child; revoke its credential while
+preserving pending questions and their original deadlines. Test late exit events,
+resume with a fresh credential, expiry while stopped, and final cancellation.
+
+## 2026-09-21 — Report attachments must match what the user reviewed
+**Broke:** the first report collector checked a file's size and then performed an
+unbounded read; an attachment could grow or be replaced after selection.
+**Cause:** treating a selected filesystem path as an immutable attachment.
+**Rule:** open without following symlinks, verify the opened file, bound the read,
+and retain the selected bytes for export. Test size/count limits, opt-outs,
+duplicate names, and private output permissions before wiring up delivery.
+
 ## 2026-09-21 — Codex resume defaulted to the source computer's directory
 **Broke:** a transferred Codex conversation prompted to use its old Mac directory
 on Linux, with that unavailable directory selected by default.
@@ -72,7 +291,7 @@ code first, filter its saved output after.
 
 ## 2026-09-20 — Delete/rename dialogs silently dead in the Mac app
 **Broke:** the folder ✕ (window.confirm) and rename/new-folder prompts
-(window.prompt) did nothing in RubberTerm.app — confirm returned false,
+(window.prompt) did nothing in DuckTerm.app — confirm returned false,
 prompt returned null.
 **Cause:** WKWebView no-ops all JS dialogs unless the app implements
 WKUIDelegate. Third app-shell gap of this kind (menu key equivalents, copy
@@ -107,7 +326,7 @@ trust what's lying around. Never judge a test run from truncated output —
 read the pass/fail summary line itself.
 
 ## 2026-09-20 — Copy/paste still dead in the Mac app after adding menus
-**Broke:** ⌘C/⌘V did nothing in RubberTerm.app even with a proper Edit menu.
+**Broke:** ⌘C/⌘V did nothing in DuckTerm.app even with a proper Edit menu.
 **Cause:** WKWebView enables the standard `copy:` menu item only when the DOM
 has a selection — xterm renders selection on canvas, so the item stayed
 disabled and the key equivalent was inert. Fixed by bridging Copy/Paste menu

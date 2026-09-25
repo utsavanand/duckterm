@@ -14,7 +14,7 @@ import shlex
 from pathlib import Path
 
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
-from duckterm.runtimes.base import Harness, HookSpec, SessionState
+from duckterm.runtimes.base import Harness, HookSpec, SessionState, prompt_line_rest
 
 # Codex prints a spinner/working line while busy and a prompt glyph when idle.
 # "esc to interrupt" appears on every interruptible-active line (including
@@ -36,6 +36,8 @@ _WAITING = re.compile(
     re.IGNORECASE,
 )
 
+_ROLLOUT_ID = re.compile(r"-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$")
+
 
 class CodexRuntime(Harness):
     name = "codex"
@@ -56,6 +58,11 @@ class CodexRuntime(Harness):
         if initial_prompt:
             argv += [initial_prompt]
         return argv
+
+    def prompt_is_empty(self, screen: str) -> bool:
+        # Codex shows "›" plus a dimmed placeholder ("Ask Codex to do anything")
+        # when empty; typed text renders undimmed.
+        return prompt_line_rest(screen, "›", ignore_dim=True) == ""
 
     def detect_state(self, recent_output: str) -> SessionState:
         for line in reversed(recent_output.splitlines()):
@@ -101,7 +108,22 @@ class CodexRuntime(Harness):
         return None
 
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
-        return list(self._argv)
+        # `codex resume <uuid>` continues the recorded conversation (rollout).
+        # Global [OPTIONS] are accepted before the subcommand, so extra flags in
+        # the configured command survive.
+        return [*self._argv, "resume", session_key]
+
+    def find_resumable_id(self, *, cwd: Path, recorded: str | None) -> str | None:
+        if recorded and self.locate_transcript(cwd=cwd, session_id=recorded):
+            return recorded
+        # In-process launches never report Codex's session_id, but the newest
+        # rollout whose session_meta names this cwd carries the id in its
+        # filename (rollout-<timestamp>-<uuid>.jsonl).
+        latest = self.latest_transcript(cwd=cwd)
+        if latest is None:
+            return None
+        m = _ROLLOUT_ID.search(latest.name)
+        return m.group(1) if m else None
 
 
 def _rollout_cwd(path: Path) -> str | None:

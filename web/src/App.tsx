@@ -5,22 +5,25 @@ import { api } from "./api";
 import { desktop } from "./desktop";
 import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
-import { FleetChat } from "./FleetChat";
+import { OracleChat } from "./OracleChat";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
+import { BackupModal } from "./BackupModal";
+import { HeaderMenus } from "./HeaderMenus";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
 import { InboxView } from "./InboxView";
+import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
 import { MoveRemoteModal } from "./RemoteProject";
 import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
+import { MessagePinStrip, PinTarget, useMessagePins } from "./MessagePins";
 import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
 import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
 import {
-  AUTO,
   TermMode,
   ThemeOverrides,
   loadTermThemes,
@@ -30,7 +33,7 @@ import {
   saveThemeOverrides,
   themesForMode,
 } from "./termThemes";
-import { ToastProvider, useToast } from "./ui";
+import { Modal, ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
 import { useTheme } from "./useTheme";
 
@@ -50,12 +53,29 @@ function Dashboard() {
   const sessions = sourceSessions.map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 }));
   const toast = useToast();
   const now = useNow(1000);
-  const { theme, resolved: mode, cycle: cycleTheme } = useTheme();
+  const { theme, resolved: mode, setTheme } = useTheme();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
   >(desktop()?.draft ? "launch" : null);
+  const [oracleOpen, setOracleOpen] = useState(() => {
+    try {
+      return localStorage.getItem("rd.oracleOpen") === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("rd.oracleOpen", oracleOpen ? "1" : "0");
+    } catch {
+      /* private window or blocked storage: the panel just starts closed */
+    }
+  }, [oracleOpen]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const messagePins = useMessagePins(selectedKey);
+  const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
+  const pinSequence = useRef(0);
   const [moveKey, setMoveKey] = useState<string | null>(null);
   useEffect(() => {
     const move = (event: Event) => setMoveKey((event as CustomEvent<string>).detail);
@@ -69,6 +89,8 @@ function Dashboard() {
   const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox">(
     "terminal",
   );
+  const [messageFolder, setMessageFolder] = useState<string | null>(null);
+  const [inboxFolder, setInboxFolder] = useState<string | null>(null);
   // The folder whose terminals are tiled fullscreen; null = grid closed.
   const [gridFolder, setGridFolder] = useState<string | null>(null);
   // Terminal color theme, per app mode: the terminal follows the light/dark
@@ -159,8 +181,8 @@ function Dashboard() {
   );
   useEffect(() => {
     document.title = waiting.length
-      ? `(${waiting.length}) RubberTerm`
-      : "RubberTerm";
+      ? `(${waiting.length}) DuckTerm`
+      : "DuckTerm";
     const current = new Set(waiting.map((s) => s.key));
     if (notifyOn) {
       for (const s of waiting) {
@@ -199,21 +221,6 @@ function Dashboard() {
     () => agents.filter((s) => s.ptyOwned),
     [agents],
   );
-
-  // Terminals stay mounted, so switching agents only flips which slot is shown —
-  // the Terminal's own mount-focus doesn't fire. Focus the newly-visible slot's
-  // input so you can type into it right after switching.
-  useEffect(() => {
-    if (!selectedKey) return;
-    const focus = () => {
-      const ta = document.querySelector<HTMLTextAreaElement>(
-        `.rd-terminal-slot[data-key="${selectedKey}"] .xterm-helper-textarea`,
-      );
-      ta?.focus();
-    };
-    const t = setTimeout(focus, 0);
-    return () => clearTimeout(t);
-  }, [selectedKey]);
 
   const labels = useMemo(
     () => Object.fromEntries(sessions.map((s) => [s.key, s.label])),
@@ -254,13 +261,21 @@ function Dashboard() {
             width={22}
             height={22}
           />
-          Rubber<span className="rd-brand-term">Term</span>
+          Duck<span className="rd-brand-term">Term</span>
         </span>
         <span className="rd-live">
           <span className={`dot ${connected ? "on" : "off"}`} />
           {connected ? "Live" : "Disconnected"}
         </span>
         <span className="rd-spacer" />
+        <button
+          className={`rd-btn rd-btn-ghost rd-btn-sm${oracleOpen ? " rd-btn-active" : ""}`}
+          aria-pressed={oracleOpen}
+          onClick={() => setOracleOpen((o) => !o)}
+          title="Ask questions about your running sessions"
+        >
+          Ask Oracle
+        </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
           onClick={() => setModal("agentsmd")}
@@ -278,62 +293,13 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
-          title={
-            notifyOn
-              ? "Desktop notifications on (click to mute)"
-              : "Notify me when an agent needs an answer"
-          }
-          onClick={toggleNotify}
-          aria-label="Toggle notifications"
-        >
-          {notifyOn ? "🔔" : "🔕"}
-        </button>
-        <select
-          className="rd-term-theme"
-          title={`Terminal color theme (${mode} mode)`}
-          value={termTheme}
-          onChange={(e) => setTermTheme(e.target.value)}
-        >
-          <option value={AUTO}>auto ({mode})</option>
-          {themesForMode(mode).map((t) => (
-            <option key={t} value={t}>
-              {t}
-            </option>
-          ))}
-        </select>
-        <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
-          title={`Theme: ${theme} (click to change)`}
-          onClick={cycleTheme}
-          aria-label="Toggle theme"
-        >
-          {theme === "light" ? "☀︎" : theme === "dark" ? "☾" : "◐"}
-        </button>
-        <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
-          onClick={() => setModal("harnesses")}
-          title="Install suites of skills/hooks/sub-agents (like uv-suite) into a project"
-        >
-          Harnesses
-        </button>
-        <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
-          onClick={() => setModal("folder")}
-          title="Create a folder to group agents"
-        >
-          New folder
-        </button>
-        <button
-          className="rd-btn rd-btn-primary"
-          onClick={() => setModal("launch")}
-        >
-          New session
-        </button>
+        <HeaderMenus theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} onAction={(action) => {
+          if (action === "launch") setLaunchGroup(undefined);
+          setModal(action);
+        }} />
       </header>
-      <FleetChat />
 
+      <div className="rd-workspace">
       {gridFolder !== null ? (
         <GridView
           key={gridFolder}
@@ -353,9 +319,9 @@ function Dashboard() {
             <div className="rd-panel-head">
               <span>Agents</span>
             </div>
-            {agents.length === 0 ? (
+            {agents.length === 0 && folders.length === 0 ? (
               <p className="rd-panel-empty">
-                No agents yet. Click New session to start one.
+                No agents yet. Choose New → New session to start one.
               </p>
             ) : (
               <AgentTree
@@ -374,6 +340,7 @@ function Dashboard() {
                 }
                 onRename={(key, name) => patchSession(key, { label: name })}
                 onOpenGrid={setGridFolder}
+                onOpenFolderInbox={setInboxFolder}
                 onNewSessionIn={(folder) => {
                   setLaunchGroup(folder);
                   setModal("launch");
@@ -412,11 +379,21 @@ function Dashboard() {
                 Inbox{selected && inboxCounts[selected.key] ? ` (${inboxCounts[selected.key]})` : ""}
               </button>
             </div>
+            {selected && (view === "terminal" || view === "messages") && (
+              <MessagePinStrip pins={messagePins.pins} error={messagePins.error} onOpen={(pin) => {
+                setPinTarget({ sessionKey: selected.key, pin, request: ++pinSequence.current });
+                setView("messages");
+              }} />
+            )}
             {/* Messages view: structured HTML render of the latest reply, with
               select-to-annotate. */}
             {view === "messages" && selected && (
               <div className="rd-messages-wrap">
-                <Messages sessionKey={selected.key} />
+                <Messages key={selected.key} sessionKey={selected.key}
+                  pins={messagePins.pins} pinPending={messagePins.pending || !!messagePins.error}
+                  onTogglePin={messagePins.toggle}
+                  target={pinTarget?.sessionKey === selected.key ? pinTarget : null}
+                  onClearTarget={() => setPinTarget(null)} />
               </div>
             )}
             {view === "history" && selected && (
@@ -448,7 +425,7 @@ function Dashboard() {
                       : "none",
                 }}
               >
-                <Terminal sessionKey={s.key} theme={themeFor(s)} />
+                <Terminal sessionKey={s.key} active={view === "terminal" && s.key === selectedKey} theme={themeFor(s)} />
               </div>
             ))}
             {view === "terminal" && selected && !selected.ptyOwned && !selected.worktreePath && (
@@ -492,10 +469,23 @@ function Dashboard() {
           </section>
         </div>
       )}
+      {oracleOpen && <OracleChat onClose={() => setOracleOpen(false)} />}
+      </div>
 
+      {messageFolder !== null && <MessageFolderModal key={messageFolder} folder={messageFolder} onClose={() => setMessageFolder(null)} />}
+      {inboxFolder !== null && messageFolder === null && (
+        <Modal title={`${inboxFolder} · Interactions`} onClose={() => setInboxFolder(null)}>
+          <InboxView key={inboxFolder} folder={inboxFolder} onMessageFolder={() => setMessageFolder(inboxFolder)} />
+        </Modal>
+      )}
       {modal === "launch" && (
         <LaunchModal
           group={launchGroup}
+          folders={folders}
+          onCreated={(key, group) => {
+            patchSession(key, { group: group || undefined });
+            refreshFolders();
+          }}
           onClose={() => {
             const native = desktop();
             if (native) delete native.draft;
@@ -507,6 +497,7 @@ function Dashboard() {
       {modal === "agentsmd" && agentsMdDir && (
         <AgentsMdModal dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
+      {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal
           defaultDir={agentsMdDir}

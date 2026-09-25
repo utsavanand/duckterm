@@ -34,7 +34,7 @@ it("keeps the same form and dashboard until a remote launch succeeds", async () 
   });
   const switchHost = setup(request);
   const close = vi.fn();
-  await act(async () => { render(<LaunchModal onClose={close} group="local-folder" />); });
+  await act(async () => { render(<LaunchModal folders={[]} onCreated={vi.fn()} onClose={close} group="local-folder" />); });
   const name = screen.getByPlaceholderText("e.g. login refactor");
   fireEvent.change(name, { target: { value: "My task" } });
   fireEvent.click(screen.getByText("Codex"));
@@ -60,7 +60,7 @@ it("ignores remote folder replies after returning to This Mac and lets Cancel cl
     return await new Promise((resolve) => { resolveBrowse = resolve; });
   });
   const close = vi.fn();
-  await act(async () => { render(<LaunchModal onClose={close} />); });
+  await act(async () => { render(<LaunchModal folders={[]} onCreated={vi.fn()} onClose={close} />); });
   await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Run on" }), { target: { value: "dev" } }); });
   fireEvent.click(screen.getByText("Browse…"));
   await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Run on" }), { target: { value: "local" } }); });
@@ -75,7 +75,7 @@ it("ignores remote folder replies after returning to This Mac and lets Cancel cl
 
 it("shows a connection error inside the form without changing dashboards", async () => {
   const switchHost = setup(async () => { throw new Error("SSH unavailable"); });
-  await act(async () => { render(<LaunchModal onClose={() => undefined} />); });
+  await act(async () => { render(<LaunchModal folders={[]} onCreated={vi.fn()} onClose={() => undefined} />); });
   await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Run on" }), { target: { value: "dev" } }); });
   fireEvent.click(screen.getByText("Browse…"));
   expect(await screen.findByText("SSH unavailable")).toBeVisible();

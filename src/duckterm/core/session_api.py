@@ -1,7 +1,7 @@
 """Durable, credential-scoped discovery and cooperative session inboxes.
 
 This broker never writes to a terminal. Receiving agents explicitly read their
-inbox and submit correlated answers; terminal delivery needs a runtime adapter.
+inbox and submit correlated answers; supported hooks surface task-end notices.
 """
 
 import hashlib
@@ -16,6 +16,10 @@ from typing import Any
 
 from duckterm.helpers import session_credentials
 from duckterm.runtimes.base import AT_REST_STATES
+
+# Store a far-future deadline so older servers do not immediately expire
+# persistent rows. The public API represents this sentinel as zero.
+NO_DEADLINE = 253402300799000  # 9999-12-31 UTC
 
 MAX_BODY_BYTES = 2 * 1024 * 1024  # Allows JSON escapes for a full 256 KiB answer.
 
@@ -46,7 +50,21 @@ CREATE TABLE IF NOT EXISTS session_questions (
     answered_at INTEGER,
     idempotency_key TEXT NOT NULL,
     content_hash TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'question',
     UNIQUE(sender, idempotency_key)
+);
+CREATE TABLE IF NOT EXISTS session_broadcasts (
+    request_key TEXT PRIMARY KEY,
+    content_hash TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    result TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_inbox_delivery (
+    question_id TEXT PRIMARY KEY,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_attempt_at INTEGER NOT NULL DEFAULT 0,
+    last_read_at INTEGER NOT NULL DEFAULT 0,
+    outcome TEXT NOT NULL DEFAULT 'pending'
 );
 CREATE INDEX IF NOT EXISTS questions_recipient ON session_questions(recipient, created_at);
 CREATE INDEX IF NOT EXISTS questions_sender ON session_questions(sender, created_at);
@@ -87,8 +105,14 @@ def _public_question(row: dict[str, Any]) -> dict[str, Any]:
         "created_at",
         "expires_at",
         "answered_at",
+        "kind",
     )
-    return {field: row[field] for field in fields}
+    result = {field: row[field] for field in fields}
+    result["sender_kind"] = "owner" if row["kind"] == "broadcast" else "session"
+    result["requires_reply"] = row["kind"] != "broadcast"
+    if result["expires_at"] == NO_DEADLINE:
+        result["expires_at"] = 0
+    return result
 
 
 class SessionAPI:
@@ -96,6 +120,13 @@ class SessionAPI:
         self.conn = conn
         self.credential_dir = credential_dir
         conn.executescript(SCHEMA)
+        question_columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(session_questions)")
+        }
+        if "kind" not in question_columns:
+            conn.execute(
+                "ALTER TABLE session_questions ADD COLUMN kind TEXT NOT NULL DEFAULT 'question'"
+            )
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(session_api_members)")}
         if "root_mode" not in columns:
             conn.execute(
@@ -207,10 +238,17 @@ class SessionAPI:
         # Preserve a thread only when both of its original authorized participants
         # still move together into the same scope. Moving just one never leaks it.
         for question in self.conn.execute(
-            "SELECT id, sender, recipient, root FROM session_questions"
+            "SELECT id, sender, recipient, root, kind FROM session_questions"
         ).fetchall():
-            source = roots.get(question["sender"])
             target = roots.get(question["recipient"])
+            if question["kind"] == "broadcast":
+                if moved and target and _inside(question["root"], moved[0]):
+                    self.conn.execute(
+                        "UPDATE session_questions SET root = ? WHERE id = ?",
+                        (target[1], question["id"]),
+                    )
+                continue
+            source = roots.get(question["sender"])
             if (
                 source
                 and target
@@ -223,12 +261,100 @@ class SessionAPI:
                     (source[1], question["id"]),
                 )
         self.conn.execute(
-            "UPDATE session_questions SET status = 'cancelled' "
-            "WHERE status IN ('queued', 'accepted') "
+            "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
+            "WHERE kind = 'question' AND status IN ('queued', 'accepted') "
             "AND NOT EXISTS (SELECT 1 FROM session_api_members a JOIN session_api_members b "
             "ON a.root = b.root WHERE a.session_key = sender AND b.session_key = recipient "
-            "AND a.root = session_questions.root AND a.root != '')"
+            "AND a.root = session_questions.root AND a.root != '')",
+            (int(time.time() * 1000),),
         )
+
+        self.conn.execute(
+            "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
+            "WHERE kind = 'broadcast' AND status = 'queued' AND NOT EXISTS "
+            "(SELECT 1 FROM session_api_members m WHERE m.session_key = recipient "
+            "AND m.root = session_questions.root AND m.root != '')",
+            (now,),
+        )
+
+    def broadcast_targets(self, folder: str) -> list[dict[str, Any]]:
+        """Owner preview: include stopped/busy sessions; enrollment controls delivery."""
+        prefix = folder + "/"
+        rows = self.conn.execute(
+            "SELECT s.session_key, s.name, s.grp, s.state, m.root "
+            "FROM sessions s LEFT JOIN session_api_members m ON m.session_key = s.session_key "
+            "WHERE s.grp = ? OR substr(s.grp, 1, ?) = ? ORDER BY s.session_key",
+            (folder, len(prefix), prefix),
+        ).fetchall()
+        targets = []
+        for row in rows:
+            eligible = bool(row["root"] and _inside(row["grp"], row["root"]))
+            targets.append(
+                {
+                    "session_id": row["session_key"],
+                    "name": row["name"] or row["session_key"],
+                    "state": row["state"],
+                    "eligible": eligible,
+                    "reason": None if eligible else "not enrolled in a shared folder",
+                }
+            )
+        return targets
+
+    def broadcast(self, folder: str, req: dict[str, Any]) -> dict[str, Any]:
+        if set(req) - {"text", "request_key"}:
+            raise APIError(400, "unknown broadcast fields")
+        message = _text(req.get("text"), "text", 16384)
+        request_key = _text(req.get("request_key", secrets.token_hex(16)), "request_key", 128)
+        digest = hashlib.sha256(json.dumps([folder, message]).encode()).hexdigest()
+        self._sweep()
+        old = self.conn.execute(
+            "SELECT content_hash, result FROM session_broadcasts WHERE request_key = ?",
+            (request_key,),
+        ).fetchone()
+        if old:
+            if old["content_hash"] != digest:
+                raise APIError(409, "request_key already used for different content")
+            return json.loads(old["result"])  # type: ignore[no-any-return]
+        now = int(time.time() * 1000)
+        results = []
+        with self.conn:
+            for target in self.broadcast_targets(folder):
+                result = dict(target)
+                result["status"] = "queued" if target["eligible"] else "skipped"
+                if target["eligible"]:
+                    key = target["session_id"]
+                    member = self._member(key, live=False)
+                    notice_id = "b-" + secrets.token_hex(16)
+                    self.conn.execute(
+                        "INSERT INTO session_questions "
+                        "(id, sender, recipient, sender_name, root, question, created_at, "
+                        "expires_at, idempotency_key, content_hash, kind) "
+                        "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, 'broadcast')",
+                        (
+                            notice_id,
+                            key,
+                            member["root"],
+                            message,
+                            now,
+                            NO_DEADLINE,
+                            request_key + ":" + key,
+                            digest,
+                        ),
+                    )
+                    result["message_id"] = notice_id
+                results.append(result)
+            response = {
+                "folder": folder,
+                "request_key": request_key,
+                "results": results,
+                "queued": sum(r["status"] == "queued" for r in results),
+                "skipped": sum(r["status"] == "skipped" for r in results),
+            }
+            self.conn.execute(
+                "INSERT INTO session_broadcasts VALUES (?, ?, ?, ?)",
+                (request_key, digest, now, json.dumps(response)),
+            )
+        return response
 
     def pending_counts(self) -> dict[str, int]:
         self._sweep()
@@ -240,6 +366,70 @@ class SessionAPI:
             ).fetchall()
         }
 
+    def turn_end_notice(self, key: str) -> str | None:
+        """Unread owner notices and accepted peer work get one task-end reminder."""
+        self._sweep()
+        rows = self.conn.execute(
+            "SELECT q.id, q.sender, q.root, q.kind FROM session_questions q "
+            "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
+            "WHERE q.recipient = ? AND (q.status = 'accepted' "
+            "OR (q.kind = 'broadcast' AND q.status = 'queued')) "
+            "AND COALESCE(d.last_attempt_at, 0) = 0",
+            (key,),
+        ).fetchall()
+        ids = []
+        owners = 0
+        for row in rows:
+            try:
+                if row["kind"] != "broadcast":
+                    self._peer(key, row["sender"], live=False)
+                if self._member(key)["root"] == row["root"]:
+                    ids.append(row["id"])
+                    owners += row["kind"] == "broadcast"
+            except APIError:
+                continue
+        if not ids:
+            return None
+        now = int(time.time() * 1000)
+        with self.conn:
+            for question_id in ids:
+                self.conn.execute(
+                    "INSERT INTO session_inbox_delivery "
+                    "(question_id, attempts, last_attempt_at, outcome) "
+                    "VALUES (?, 1, ?, 'notified') "
+                    "ON CONFLICT(question_id) DO UPDATE SET attempts = 1, "
+                    "last_attempt_at = excluded.last_attempt_at, outcome = 'notified'",
+                    (question_id, now),
+                )
+        return (
+            f"You have {owners} unread owner message(s) and "
+            f"{len(ids) - owners} accepted inbox assignment(s) awaiting a reply. "
+            "Run duckterm session inbox to read them at a suitable pause. "
+            "Peer requests do not grant permission to act."
+        )
+
+    def open_mail(self, key: str) -> list[dict[str, Any]]:
+        """Queued or accepted inbox records this session can still see, with
+        the same scope checks the agent's own inbox read applies."""
+        self._sweep()
+        rows = self.conn.execute(
+            "SELECT q.id, q.sender, q.root, q.kind, q.status, q.created_at, "
+            "COALESCE(d.last_read_at, 0) AS last_read_at FROM session_questions q "
+            "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
+            "WHERE q.recipient = ? AND q.status IN ('queued', 'accepted')",
+            (key,),
+        ).fetchall()
+        mail = []
+        for row in rows:
+            try:
+                if row["kind"] != "broadcast":
+                    self._peer(key, row["sender"], live=False)
+                if self._member(key)["root"] == row["root"]:
+                    mail.append(dict(row))
+            except APIError:
+                continue
+        return mail
+
     def card(self, key: str) -> dict[str, Any]:
         return self._public(self._member(key, live=False))
 
@@ -249,18 +439,19 @@ class SessionAPI:
             raise APIError(404, "session not available")
         return dict(row)
 
-    def revoke(self, key: str) -> None:
-        """Invalidate a stopped/deleted session credential and close pending requests."""
+    def revoke(self, key: str, *, cancel_pending: bool = True) -> None:
+        """Invalidate credentials; a resumable stop preserves request deadlines."""
         session_credentials.credential_path(key, self.credential_dir).unlink(missing_ok=True)
         self.conn.execute(
             "UPDATE session_api_members SET token_hash = ? WHERE session_key = ?",
             (secrets.token_hex(32), key),
         )
-        self.conn.execute(
-            "UPDATE session_questions SET status = 'cancelled' "
-            "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
-            (key, key),
-        )
+        if cancel_pending:
+            self.conn.execute(
+                "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
+                "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
+                (int(time.time() * 1000), key, key),
+            )
 
     def enroll(self, key: str, req: dict[str, Any]) -> dict[str, Any]:
         session = self._session(key)
@@ -374,11 +565,25 @@ class SessionAPI:
         with self.conn:
             self.conn.execute(
                 "UPDATE session_questions SET status = 'expired' "
-                "WHERE status IN ('queued', 'accepted') AND expires_at <= ?",
+                "WHERE status IN ('queued', 'accepted') AND expires_at > 0 AND expires_at <= ?",
                 (now,),
             )
             self.conn.execute(
-                "DELETE FROM session_questions WHERE expires_at < ?", (now - 7 * 86400000,)
+                "DELETE FROM session_questions WHERE status NOT IN ('queued', 'accepted') "
+                "AND CASE WHEN expires_at > 0 AND expires_at < ? THEN expires_at "
+                "ELSE COALESCE(answered_at, created_at) END < ?",
+                (NO_DEADLINE, now - 7 * 86400000),
+            )
+            self.conn.execute(
+                "DELETE FROM session_questions WHERE kind = 'broadcast' AND created_at < ?",
+                (now - 7 * 86400000,),
+            )
+            self.conn.execute(
+                "DELETE FROM session_broadcasts WHERE created_at < ?", (now - 7 * 86400000,)
+            )
+            self.conn.execute(
+                "DELETE FROM session_inbox_delivery WHERE question_id NOT IN "
+                "(SELECT id FROM session_questions)"
             )
 
     def inbox(self, key: str, *, owner: bool = False, before: int | None = None) -> dict[str, Any]:
@@ -396,12 +601,35 @@ class SessionAPI:
         for row in rows[:50]:
             if not owner:
                 try:
-                    self._peer(key, row["sender"], live=False)
+                    if row["kind"] != "broadcast":
+                        self._peer(key, row["sender"], live=False)
                     if self._member(key)["root"] != row["root"]:
                         continue
                 except APIError:
                     continue
-            messages.append(_public_question(dict(row)))
+            message = _public_question(dict(row))
+            delivery = self.conn.execute(
+                "SELECT attempts, last_attempt_at, last_read_at, outcome "
+                "FROM session_inbox_delivery "
+                "WHERE question_id = ?",
+                (row["id"],),
+            ).fetchone()
+            message["delivery"] = (
+                dict(delivery) if delivery else {"attempts": 0, "outcome": "pending"}
+            )
+            messages.append(message)
+            if not owner and row["status"] in ("queued", "accepted"):
+                self.conn.execute(
+                    "INSERT INTO session_inbox_delivery (question_id, last_read_at) VALUES (?, ?) "
+                    "ON CONFLICT(question_id) DO UPDATE SET last_read_at = excluded.last_read_at",
+                    (row["id"], int(time.time() * 1000)),
+                )
+            if not owner and row["kind"] == "broadcast" and row["status"] == "queued":
+                self.conn.execute(
+                    "UPDATE session_questions SET status = 'read' WHERE id = ?", (row["id"],)
+                )
+                message["status"] = "read"
+        self.conn.commit()
         cursor = rows[49]["sequence"] if len(rows) > 50 else None
         result: dict[str, Any] = {"messages": messages, "next_cursor": cursor}
         if owner:
@@ -411,13 +639,48 @@ class SessionAPI:
                 result["card"] = None
         return result
 
+    def folder_inbox(self, folder: str, *, before: int | None = None) -> dict[str, Any]:
+        """Owner-only history for either participant in a folder's current subtree.
+
+        Do not filter by live state or enrollment: completed interactions remain
+        useful after a session stops. Membership includes each exchange only once.
+        """
+        if before is not None and not 0 < before <= 9223372036854775807:
+            raise APIError(400, "invalid cursor")
+        self._sweep()
+        prefix = folder + "/"
+        rows = self.conn.execute(
+            "WITH members AS (SELECT session_key FROM sessions "
+            "WHERE grp = ? OR substr(grp, 1, ?) = ?) "
+            "SELECT q.rowid AS sequence, q.*, "
+            "COALESCE(r.name, r.session_key, q.recipient) AS recipient_name "
+            "FROM session_questions q LEFT JOIN sessions r ON r.session_key = q.recipient "
+            "WHERE q.rowid < ? AND (q.sender IN (SELECT session_key FROM members) "
+            "OR q.recipient IN (SELECT session_key FROM members)) "
+            "ORDER BY q.rowid DESC LIMIT 51",
+            (folder, len(prefix), prefix, before if before is not None else 9223372036854775807),
+        ).fetchall()
+        return {
+            "messages": [
+                {**_public_question(dict(row)), "recipient_name": row["recipient_name"]}
+                for row in rows[:50]
+            ],
+            "next_cursor": rows[49]["sequence"] if len(rows) > 50 else None,
+        }
+
     def _question(self, key: str, request_id: str) -> dict[str, Any]:
         row = self.conn.execute(
             "SELECT * FROM session_questions WHERE id = ?", (request_id,)
         ).fetchone()
-        if row is None or key not in (row["sender"], row["recipient"]):
+        if row is None:
             raise APIError(404, "question not found")
-        self._peer(row["sender"], row["recipient"], live=False)
+        participants = {row["recipient"]}
+        if row["kind"] != "broadcast":
+            participants.add(row["sender"])
+        if key not in participants:
+            raise APIError(404, "question not found")
+        if row["kind"] != "broadcast":
+            self._peer(row["sender"], row["recipient"], live=False)
         if self._member(key)["root"] != row["root"]:
             raise APIError(404, "question not found")
         return _public_question(dict(row))
@@ -515,9 +778,9 @@ class SessionAPI:
         target = _text(req.get("target_session_id"), "target_session_id", 128)
         question = _text(req.get("question"), "question", 16384)
         idem = _text(headers.get("idempotency-key"), "Idempotency-Key", 128)
-        timeout = req.get("timeout_seconds", 300)
-        if type(timeout) is not int or not 1 <= timeout <= 900:
-            raise APIError(400, "timeout_seconds must be an integer from 1 to 900")
+        timeout = req.get("timeout_seconds", 0)
+        if type(timeout) is not int or not 0 <= timeout <= 604800:
+            raise APIError(400, "timeout_seconds must be 0 (persistent) or 1 to 604800")
         if target == key:
             raise APIError(400, "cannot ask your own session")
         self._peer(key, target)
@@ -532,11 +795,12 @@ class SessionAPI:
         now = int(time.time() * 1000)
         pending = self.conn.execute(
             "SELECT COUNT(*) FROM session_questions WHERE (sender = ? OR recipient = ?) "
-            "AND status IN ('queued', 'accepted')",
+            "AND kind = 'question' AND status IN ('queued', 'accepted')",
             (key, target),
         ).fetchone()[0]
         recent = self.conn.execute(
-            "SELECT COUNT(*) FROM session_questions WHERE sender = ? AND created_at > ?",
+            "SELECT COUNT(*) FROM session_questions WHERE sender = ? "
+            "AND kind = 'question' AND created_at > ?",
             (key, now - 60000),
         ).fetchone()[0]
         if pending >= 20 or recent >= 10:
@@ -556,7 +820,7 @@ class SessionAPI:
                     source["root"],
                     question,
                     now,
-                    now + timeout * 1000,
+                    now + timeout * 1000 if timeout else NO_DEADLINE,
                     idem,
                     digest,
                 ),
@@ -572,6 +836,8 @@ class SessionAPI:
             "decline": "declined",
             "cancel": "cancelled",
         }
+        if question["kind"] == "broadcast" and action != "answer":
+            raise APIError(400, "owner notices need no acceptance; replying is optional")
         if action not in states:
             raise APIError(404, "endpoint not found")
         actor = question["sender"] if action == "cancel" else question["recipient"]
@@ -581,7 +847,8 @@ class SessionAPI:
         state = states[action]
         if question["status"] == state and question["answer"] == answer:
             return 200, question
-        if question["status"] not in ("queued", "accepted"):
+        allowed = ("queued", "read") if question["kind"] == "broadcast" else ("queued", "accepted")
+        if question["status"] not in allowed:
             raise APIError(409, "question is already closed")
         with self.conn:
             self.conn.execute(
@@ -589,7 +856,7 @@ class SessionAPI:
                 (
                     state,
                     answer,
-                    int(time.time() * 1000) if answer is not None else None,
+                    int(time.time() * 1000) if state != "accepted" else None,
                     question["id"],
                 ),
             )

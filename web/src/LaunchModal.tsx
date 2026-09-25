@@ -19,11 +19,16 @@ const AGENTS: { id: string; label: string; command: string }[] = [
 export function LaunchModal({
   onClose,
   group,
+  folders,
+  onCreated,
 }: {
   onClose: () => void;
+  folders: string[];
+  onCreated: (key: string, group: string) => void;
   group?: string; // pre-assign the new session to this folder (folder + button)
 }) {
   const toast = useToast();
+  const [selectedGroup, setSelectedGroup] = useState(group ?? "");
   const native = desktop();
   const [, refreshTargets] = useState(0);
   useEffect(() => {
@@ -145,8 +150,17 @@ export function LaunchModal({
             }
           : { cwd: path }),
       });
-      if (group && !elsewhere) await api.setGroup(launched.session_key, group);
-      toast(group && !elsewhere ? `Started in ${group}` : `Started ${name || "session"}`);
+      if (selectedGroup && !elsewhere) {
+        try {
+          await api.setGroup(launched.session_key, selectedGroup);
+        } catch (e) {
+          toast(`Session started, but folder assignment failed: ${(e as Error).message}. Move it from Ungrouped.`, "err");
+          onClose();
+          return;
+        }
+      }
+      if (!elsewhere) onCreated(launched.session_key, selectedGroup);
+      toast(selectedGroup && !elsewhere ? `Started in ${selectedGroup}` : `Started ${name || "session"}`);
       if (elsewhere) selectLaunchTarget(target, {});
       onClose();
     } catch (e) {
@@ -157,7 +171,7 @@ export function LaunchModal({
   }
 
   return (
-    <Modal title={group && !elsewhere ? `New session in ${group}` : "New session"} onClose={() => { if (!busy && !transferBusy) onClose(); }}>
+    <Modal title="New session" onClose={() => { if (!busy && !transferBusy) onClose(); }}>
       {native && (
         <Field label="Run on">
           <select
@@ -217,6 +231,15 @@ export function LaunchModal({
           />
         </Field>
       )}
+
+      {!elsewhere && <Field label="Sidebar folder">
+        <select aria-label="Sidebar folder" style={inputStyle} value={selectedGroup} onChange={(e) => setSelectedGroup(e.target.value)}>
+          <option value="">Ungrouped</option>
+          {[...new Set([...folders, ...(group ? [group] : [])])].sort().map((folder) => (
+            <option key={folder} value={folder}>{folder}</option>
+          ))}
+        </select>
+      </Field>}
 
       {native && target !== "local" && <Field label="Project source">
         <select aria-label="Project source" style={inputStyle} value={projectKind} disabled={busy || transferBusy} onChange={e => { setProjectKind(e.target.value as "existing" | "copy" | "clone"); setPicked(null); setPrepared(null); setMode(null); }}>

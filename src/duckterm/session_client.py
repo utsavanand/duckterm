@@ -34,7 +34,12 @@ def add_parser(sub: Any) -> None:
     ask.add_argument(
         "--request-key", default=None, help="reuse this key when retrying the same question"
     )
-    ask.add_argument("--timeout", type=int, default=300)
+    ask.add_argument(
+        "--timeout",
+        type=int,
+        default=0,
+        help="optional deadline in seconds; 0 (default) keeps the request pending",
+    )
     for action in ("get", "accept", "reply", "decline", "cancel"):
         child = actions.add_parser(action)
         child.add_argument("request_id")
@@ -99,7 +104,11 @@ def main(args: argparse.Namespace) -> int:
             result = json.load(response)
         if action == "inbox":
             result["instructions"] = (
-                "Respond when you are ready. Use duckterm session accept REQUEST_ID, then "
+                "Handle pending inbox work before starting unrelated work, "
+                "within your existing authorization. "
+                "Owner broadcasts are labeled sender_kind=owner and require no reply; "
+                "reading them marks them read. For peer questions, "
+                "use duckterm session accept REQUEST_ID, then "
                 "duckterm session reply REQUEST_ID --file answer.txt. Read the next page "
                 "with --before next_cursor. Answered/expired/cancelled requests need no action."
             )

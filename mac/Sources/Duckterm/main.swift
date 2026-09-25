@@ -17,11 +17,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var localStart: Task<Bool, Never>?
     private var poller: SessionPoller?
     private var window: DashboardWindow?
+    private var bugReport: BugReportController?
+    private var capturingReport = false
     private var notified = Set<String>()  // waiting keys we've already alerted on
 
     func applicationDidFinishLaunching(_ note: Notification) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
+        AppDiagnostics.shared.record("Application launched")
         window = DashboardWindow(url: server.url)
         if hosts.isEmpty, AppIdentity.isTest,
            let alias = Bundle.main.object(forInfoDictionaryKey: "DucktermTestRemoteHost") as? String,
@@ -230,12 +233,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notified = current  // a session that waits again later re-notifies
     }
 
+    @objc func reportBug(_ sender: Any?) {
+        guard !capturingReport else { return }
+        if let bugReport, bugReport.isOpen { bugReport.show(); return }
+        capturingReport = true
+        window?.captureForReport { [weak self] image in
+            guard let self else { return }
+            self.capturingReport = false
+            self.bugReport = BugReportController(screenshot: image)
+            self.bugReport?.show()
+        }
+        if window == nil {
+            capturingReport = false
+            bugReport = BugReportController(screenshot: nil)
+            bugReport?.show()
+        }
+    }
+
     // ── Edit-menu clipboard bridge ──
     // WKWebView validates the standard copy:/paste: selectors against the DOM
     // (an xterm selection is canvas-rendered, so Copy stayed disabled and ⌘C
     // did nothing). These actions bypass that: ask the page for its selection
     // via the __rtCopy/__rtPaste globals the dashboard exposes.
     @objc func copyFromDashboard(_ sender: Any?) {
+        if bugReport?.isKeyWindow == true {
+            NSApp.sendAction(Selector(("copy:")), to: nil, from: sender)
+            return
+        }
         window?.evaluate("window.__rtCopy ? window.__rtCopy() : ''") { result in
             guard let text = result as? String, !text.isEmpty else { return }
             NSPasteboard.general.clearContents()
@@ -244,31 +268,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func pasteToDashboard(_ sender: Any?) {
-        let pasteboard = NSPasteboard.general
-        if let text = pasteboard.string(forType: .string), !text.isEmpty {
-            sendPaste(text)
+        if bugReport?.isKeyWindow == true {
+            NSApp.sendAction(Selector(("paste:")), to: nil, from: sender)
             return
         }
-        // No text — an IMAGE on the clipboard (screenshot, browser Copy Image).
-        // Save it and paste the file PATH: claude and codex both read image
-        // paths as attachments, which is what iTerm-style image paste does.
-        let types: [NSPasteboard.PasteboardType] = [.png, .tiff]
-        for type in types {
-            guard var data = pasteboard.data(forType: type) else { continue }
-            if type == .tiff, let rep = NSBitmapImageRep(data: data),
-                let png = rep.representation(using: .png, properties: [:])
-            {
-                data = png
+        window?.evaluate("window.__rtPasteTarget ? window.__rtPasteTarget() : null") { [weak self] result in
+            guard let self, let target = result as? String else { return }
+            if target == "field" {
+                NSApp.sendAction(Selector(("paste:")), to: nil, from: sender)
+                return
             }
-            let home = ProcessInfo.processInfo.environment["DUCKTERM_HOME"]
-                ?? (NSHomeDirectory() + "/.duckterm")
-            let dir = URL(fileURLWithPath: home).appendingPathComponent("pastes")
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-            let file = dir.appendingPathComponent("paste-\(UUID().uuidString.prefix(12)).png")
-            guard (try? data.write(to: file)) != nil else { return }
-            sendPaste(file.path + " ")
-            return
+            let pasteboard = NSPasteboard.general
+            do {
+                if let png = try ClipboardImage.png(from: pasteboard) {
+                    let home = ProcessInfo.processInfo.environment["DUCKTERM_HOME"] ?? (NSHomeDirectory() + "/.duckterm")
+                    let path = try ClipboardImage.save(png, in: URL(fileURLWithPath: home).appendingPathComponent("pastes"))
+                    let data = try JSONSerialization.data(withJSONObject: [path.path, target])
+                    let json = String(decoding: data, as: UTF8.self)
+                    self.window?.evaluate("window.__rtPasteImage && window.__rtPasteImage(...\(json))") { accepted in
+                        if accepted as? Bool != true {
+                            try? FileManager.default.removeItem(at: path)
+                            self.pasteError(ClipboardImage.Failure.changedTarget)
+                        }
+                    }
+                } else if let text = pasteboard.string(forType: .string), !text.isEmpty {
+                    self.sendPaste(text)
+                }
+            } catch { self.pasteError(error) }
         }
+    }
+
+    private func pasteError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could not paste image"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
     }
 
     private func sendPaste(_ text: String) {
@@ -339,6 +373,11 @@ private func buildMainMenu() -> NSMenu {
         withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)),
         keyEquivalent: "m")
     windowItem.submenu = windowMenu
+    let helpItem = NSMenuItem()
+    main.addItem(helpItem)
+    let helpMenu = NSMenu(title: "Help")
+    helpMenu.addItem(withTitle: "Report a bug…", action: #selector(AppDelegate.reportBug(_:)), keyEquivalent: "")
+    helpItem.submenu = helpMenu
     return main
 }
 

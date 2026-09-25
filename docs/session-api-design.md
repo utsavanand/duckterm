@@ -46,9 +46,11 @@ without changing their environment or restarting them. `server.json` records the
 actual listening URL, including non-default ports. These files are never exposed
 through discovery or inbox responses. The CLI never falls back to the owner token.
 
-Stopping or ending a session invalidates its credential and cancels pending
-exchanges. Its card metadata remains for inspection. Resuming automatically
-issues a fresh credential. Deleting a session removes its membership, capability
+Stopping a session invalidates its credential but preserves queued and accepted
+exchanges under the durable session identity. Their original deadlines continue
+to run while stopped; resume does not extend them. Resuming automatically issues
+a fresh credential, and the old credential remains invalid. Terminating or
+archiving cancels pending exchanges. Its card metadata remains for inspection. Deleting a session removes its membership, capability
 file, and exchanges involving it. Forks receive distinct credentials.
 
 Schema version 3 prevents an older binary from opening the migrated database:
@@ -114,10 +116,10 @@ duckterm session publish --purpose 'Implement billing authentication' \
   --activity 'Testing token expiration and refresh'
 duckterm session inbox
 duckterm session ask other-session-id 'Which fields does your client need?' \
-  --request-key client-contract-1 --timeout 900
+  --request-key client-contract-1
 ```
 
-The receiving agent can choose to act when idle, or the user can tell it:
+The server can remind an eligible idle agent to check its inbox, or the user can tell it:
 “Run `duckterm session inbox` and answer the pending questions.” Then:
 
 ```sh
@@ -178,12 +180,12 @@ declined, cancelled, or expired. Cancellation stops the exchange; it does not
 interrupt the recipient's other work. Closed requests cannot accept late answers.
 
 Discovery and inbox pages contain at most 50 records. Questions allow 16 KiB and
-answers 256 KiB; oversized content is rejected instead of truncated. Deadlines
-default to five minutes and allow up to fifteen. A sender can create ten questions
+answers 256 KiB; oversized content is rejected instead of truncated. Requests
+persist by default; optional deadlines allow up to seven days. A sender can create ten questions
 per minute. Creation is refused when the combined set of pending requests sent
-by that sender or addressed to that recipient reaches twenty. Records are swept
-after seven days beyond their deadline. Sweeps run on broker reads/operations;
-there is no always-running polling worker dedicated to expiry.
+by that sender or addressed to that recipient reaches twenty. Closed records are
+swept after seven days beyond their deadline or completion/creation timestamp.
+Pending persistent requests are never removed by this retention sweep.
 
 **Authorization is API-level, not OS/process isolation.** The scoped broker
 checks current membership on every request. However, agents running as the same
@@ -280,3 +282,10 @@ Concurrent browser runs should each set a distinct `RD_TEST_PORT` and
 and teardown use that state path, preventing another worktree's run from
 redirecting test requests or cleanup to the wrong test server. Without an
 override, the legacy shared state filename remains the default.
+
+## Persistent delivery update
+
+Requests now persist by default (`timeout_seconds: 0`). Explicit deadlines are
+optional and may be up to seven days. Supported task-end notices and their limitations are described in
+[inbox delivery](inbox-delivery.md).
+This supersedes the original short-lived polling-only handoff design above.

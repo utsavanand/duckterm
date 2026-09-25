@@ -1,4 +1,5 @@
 import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
+import { HelperAgents } from "./HelperAgents";
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
 import { Duck, poseFor } from "./Duck";
@@ -24,6 +25,7 @@ export function AgentTree({
   onRename,
   onOpenGrid,
   onNewSessionIn,
+  onOpenFolderInbox,
   folderThemes,
   onSetFolderTheme,
   termMode,
@@ -42,6 +44,7 @@ export function AgentTree({
   onRename: (key: string, name: string) => void;
   onOpenGrid: (folder: string) => void;
   onNewSessionIn: (folder: string) => void;
+  onOpenFolderInbox: (folder: string) => void;
   folderThemes: Record<string, string>;
   onSetFolderTheme: (folder: string, theme: string | null) => void;
   termMode: TermMode;
@@ -211,6 +214,7 @@ export function AgentTree({
       onNewSession={() => onNewSessionIn(path)}
       onUnnest={path.includes("/") ? () => moveFolder(path, "") : undefined}
       onOpenGrid={() => onOpenGrid(path)}
+      onOpenInbox={() => onOpenFolderInbox(path)}
       theme={folderThemes[path]}
       onSetTheme={(t) => onSetFolderTheme(path, t)}
       termMode={termMode}
@@ -253,6 +257,7 @@ function GroupHeader({
   onNewSession,
   onUnnest,
   onOpenGrid,
+  onOpenInbox,
   theme,
   onSetTheme,
   termMode,
@@ -269,12 +274,14 @@ function GroupHeader({
   onNewSession: () => void;
   onUnnest?: () => void; // set only for nested folders
   onOpenGrid: () => void;
+  onOpenInbox: () => void;
   theme: string | undefined;
   onSetTheme: (theme: string | null) => void;
   termMode: TermMode;
   children: ReactNode;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  // Start every folder closed when the dashboard opens or restarts.
+  const [collapsed, setCollapsed] = useState(true);
   const [over, setOver] = useState(false);
   const leaf = name.split("/").pop();
   return (
@@ -322,6 +329,16 @@ function GroupHeader({
           {leaf}
         </span>
         <span className="rd-group-count">{count}</span>
+        <button
+          className="rd-group-phone"
+          title="View folder interactions"
+          aria-label={`View interactions in ${name}`}
+          onClick={(e) => { e.stopPropagation(); onOpenInbox(); }}
+        >
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .3 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.4 1.8.6 2.8.7a2 2 0 0 1 1.8 2.1z" />
+          </svg>
+        </button>
         <span
           className={`rd-group-theme-wrap${theme ? " set" : ""}`}
           title={`Terminal theme for this folder: ${theme ?? "default"}`}
@@ -509,11 +526,20 @@ function TreeRow({
   const s = node.session;
   const effState = effectiveState(s, now);
   const archived = effState === "archived";
-  // "live" = actively running (Stop applies). stopped/terminated are not live but
-  // are resumable for a launched session (we still have its worktree + id).
-  const live = effState !== "terminated" && effState !== "stopped" && !archived;
+  // "live" = actively running (Stop applies). stopped/interrupted/terminated
+  // are not live but are resumable for a launched session (we still have its
+  // worktree + id). interrupted = the terminal died under it (reboot/crash)
+  // rather than a deliberate stop.
+  const live =
+    effState !== "terminated" &&
+    effState !== "stopped" &&
+    effState !== "interrupted" &&
+    !archived;
   const resumable =
-    (effState === "stopped" || effState === "terminated") && s.launched;
+    (effState === "stopped" ||
+      effState === "interrupted" ||
+      effState === "terminated") &&
+    s.launched;
   // Stop and Archive only make sense for sessions Duckterm owns. A watched
   // session runs in a terminal we don't control, so Stop can't end it and
   // Archive would only hide a row whose agent keeps running — and unarchiving it
@@ -625,8 +651,16 @@ function TreeRow({
     setResuming(true);
     try {
       const r = await api.resume(s.key);
+      const label =
+        r.context === "native"
+          ? "Resumed — conversation carried"
+          : r.context === "brief"
+            ? "Resumed fresh — seeded with notes from the old session"
+            : r.context === "none"
+              ? "Resumed fresh — previous conversation couldn't be restored"
+              : "Resumed";
       toast(
-        r.resumed ? "Resumed" : "Couldn't open a terminal to resume",
+        r.resumed ? label : "Couldn't open a terminal to resume",
         r.resumed ? undefined : "err",
       );
     } catch (e) {
@@ -675,7 +709,7 @@ function TreeRow({
           ) : (
             depth > 0 && <span className="rd-row-twig">⑂</span>
           )}
-          <Duck pose={poseFor(effState)} size={24} />
+          <Duck key={s.key} pose={poseFor(effState)} size={24} celebrating={s.celebration} />
           <span className="rd-row-click" onClick={() => onOpen(s.key)}>
             {s.branch && (
               <span
@@ -743,26 +777,7 @@ function TreeRow({
           {" · "}
           {s.eventCount} ev
         </div>
-        {s.subagents && s.subagents.length > 0 && (
-          <ul className="rd-subagents">
-            {s.subagents.map((sa) => (
-              <li
-                key={sa.agent_id}
-                className={`rd-subagent st-${sa.state}`}
-                title={sa.agent_prompt ?? undefined}
-              >
-                <span className="rd-subagent-twig">↳</span>
-                <span className={`dot ${sa.state === "running" ? "on" : ""}`} />
-                <span className="rd-subagent-type">
-                  {sa.agent_type ?? "subagent"}
-                </span>
-                {sa.agent_prompt && (
-                  <span className="rd-subagent-task">{sa.agent_prompt}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+        {s.subagents && <HelperAgents agents={s.subagents} sessionKey={s.key} />}
         <div className="rd-row-actions">
           {!ended && (
             <button

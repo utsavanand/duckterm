@@ -25,10 +25,22 @@ export interface DucktermEvent {
 }
 
 export type SessionState =
-  "idle" | "busy" | "waiting" | "terminated" | "stopped" | "archived";
+  | "idle"
+  | "busy"
+  | "waiting"
+  | "terminated"
+  | "stopped"
+  | "interrupted"
+  | "archived";
+
+export interface DuckCelebration {
+  kind: "done" | "ready";
+  startedAt: number;
+}
 
 export interface SessionView {
   remoteTransfer?: { id: string; stage: string; target?: string; session_key?: string };
+  celebration?: DuckCelebration; // browser-only; never restored from persisted rows
   inboxPending?: number;
   key: string;
   label: string;

@@ -24,6 +24,16 @@ def test_derive_state_transitions() -> None:
     assert derive_state({"event_type": "PostToolUse"}, "busy") == "busy"
     assert derive_state({"event_type": "Stop"}, "busy") == "idle"
     assert derive_state({"event_type": "PermissionRequest"}, "busy") == "waiting"
+    # Claude's idle-at-prompt notice is not a question for the owner.
+    idle = {"event_type": "Notification", "notification_type": "idle_prompt"}
+    assert derive_state(idle, "idle") == "idle"
+    old_idle = {"event_type": "Notification", "message": "Claude is waiting for your input"}
+    assert derive_state(old_idle, "idle") == "idle"
+    perm = {"event_type": "Notification", "notification_type": "permission_prompt"}
+    assert derive_state(perm, "busy") == "waiting"
+    assert derive_state({"event_type": "Notification"}, "busy") == "waiting"
+    auth = {"event_type": "Notification", "notification_type": "auth_success"}
+    assert derive_state(auth, "busy") == "busy"
     assert derive_state({"event_type": "SessionEnd"}, "busy") == "terminated"
     assert derive_state({"lifecycle": "terminated"}, "busy") == "terminated"
     # Unknown event keeps the previous state.
@@ -404,7 +414,7 @@ def test_schema_version_is_stamped_on_a_fresh_db(tmp_path: Path) -> None:
 
 
 def test_refuses_to_open_a_newer_schema(tmp_path: Path) -> None:
-    """A DB migrated forward by a newer RubberTerm (higher user_version) must be
+    """A DB migrated forward by a newer DuckTerm (higher user_version) must be
     refused, not silently mis-read — the prod-opens-beta's-DB data-loss case."""
     import sqlite3
 

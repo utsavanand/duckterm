@@ -23,7 +23,7 @@ import shlex
 from pathlib import Path
 
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
-from duckterm.runtimes.base import Harness, HookSpec, SessionState
+from duckterm.runtimes.base import Harness, HookSpec, SessionState, prompt_line_rest
 
 
 def project_slug(cwd: Path) -> str:
@@ -38,6 +38,7 @@ def project_slug(cwd: Path) -> str:
 
 class ClaudeCodeRuntime(Harness):
     name = "claude-code"
+    turn_end_inbox_notice = True
     hook_spec = HookSpec(
         global_rel=Path(".claude") / "settings.json",
         repo_rel=Path(".claude") / "settings.json",
@@ -63,6 +64,11 @@ class ClaudeCodeRuntime(Harness):
 
     def tool_in(self, recent_output: str) -> str | None:
         return None
+
+    def prompt_is_empty(self, screen: str) -> bool:
+        # The input box is a line starting with "❯" between two rules. Claude
+        # often shows a dimmed suggested next prompt there; typed text is not dim.
+        return prompt_line_rest(screen, "❯", ignore_dim=True) == ""
 
     def locate_transcript(self, *, cwd: Path, session_id: str) -> Path | None:
         slug = project_slug(cwd)
@@ -96,6 +102,17 @@ class ClaudeCodeRuntime(Harness):
 
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return [*self._argv, "--resume", session_key]
+
+    def find_resumable_id(self, *, cwd: Path, recorded: str | None) -> str | None:
+        # The recorded id isn't always valid (a forked/transient id, or its
+        # transcript was deleted) — verify the file exists. Falling back to the
+        # newest transcript in the project dir matches what the Messages view
+        # and snapshot restore already do for in-process launches, which never
+        # report Claude's own session_id.
+        if recorded and self.locate_transcript(cwd=cwd, session_id=recorded):
+            return recorded
+        latest = self.latest_transcript(cwd=cwd)
+        return latest.stem if latest else None
 
 
 def parse_transcript(path: Path) -> list[dict[str, str]]:

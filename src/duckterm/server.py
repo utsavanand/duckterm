@@ -34,6 +34,7 @@ wants direct control of the response stream. Zero runtime dependencies.
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -52,8 +53,9 @@ from typing import Any
 from duckterm import connectors, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
-from duckterm.core import events, progress
+from duckterm.core import events, oracle, progress
 from duckterm.core.approvals import ApprovalRegistry
+from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
@@ -61,9 +63,17 @@ from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
 from duckterm.harnesses import infer_runtime, runtime_for
-from duckterm.helpers import browse, instance, security, session_credentials, session_instructions
+from duckterm.helpers import (
+    browse,
+    instance,
+    paths,
+    security,
+    session_credentials,
+    session_instructions,
+)
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
+from duckterm.persistence import backup_sync
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
 from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.history import HistoryStore
@@ -97,6 +107,16 @@ from duckterm.transport.websocket import (
 # duckterm-hook.sh DEADLINE). A blocking approval older than this whose session
 # has moved on is abandoned and gets swept from "Needs human".
 _BLOCKING_POLL_MS = 180_000
+
+
+# Sent with every native resume: the conversation survives a dead terminal but
+# out-of-band state (dev servers, background jobs) does not, and a resumed agent
+# otherwise assumes everything it started is still running.
+_RESUME_NUDGE = (
+    "This session was resumed after its terminal stopped. Anything running "
+    "outside the conversation (dev servers, watchers, background jobs) died "
+    "with it — re-verify before assuming, then continue where you left off."
+)
 
 
 def _build_runtime(name: str | None, command: str) -> AgentRuntime:
@@ -199,6 +219,8 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/launch", lambda s, r, w, h, b, seg: s._launch(w, b)),
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
+    Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
+    Route("DELETE", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w, clear=True)),
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
     Route("GET", "/zsh-themes", lambda s, r, w, h, b, seg: s._list_zsh_themes(w)),
@@ -286,7 +308,9 @@ class Server:
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
         self.snapshots = SnapshotManager(self.history)
+        self._backup_jobs: BackupJobs | None = None
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
+        self._oracle_nudges: dict[str, oracle.Nudge] = {}
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -410,10 +434,24 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        if path == "/backup" and method in {"GET", "PUT", "POST"}:
+            await self._backup(writer, headers, method, body)
+            return
+        pin_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/pins(?:/([a-f0-9]{64}))?", path)
+        if pin_match and method in {"GET", "POST", "DELETE"}:
+            await self._message_pins(writer, headers, pin_match[1], pin_match[2], method, body)
+            return
         inbox_path = urllib.parse.urlsplit(path)
+        if method == "GET" and inbox_path.path == "/folder-interactions":
+            await self._folder_inbox(writer, headers, inbox_path.query)
+            return
         inbox_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/inbox", inbox_path.path)
         if method == "GET" and inbox_match:
             await self._session_inbox(writer, inbox_match[1], headers, inbox_path.query)
+            return
+        broadcast_match = re.fullmatch(r"/folders/(.+)/broadcast", inbox_path.path)
+        if method in {"GET", "POST"} and broadcast_match:
+            await self._folder_broadcast(writer, headers, broadcast_match[1], method, body)
             return
         for route in self._routes():
             if route.matches(method, path):
@@ -456,7 +494,7 @@ class Server:
             else:
                 msg = (
                     "Duckterm server is running, but this install is missing its "
-                    "dashboard — reinstall RubberTerm (pipx reinstall duckterm)."
+                    "dashboard — reinstall DuckTerm (pipx reinstall duckterm)."
                 )
             await _write_response(writer, 200, msg, extra_headers={SELF_PROBE_HEADER: "1"})
             return
@@ -525,8 +563,29 @@ class Server:
         ):
             await _write_json(writer, 200, {"dropped": "not a Duckterm-launched session"})
             return
+        # Check before publishing Stop: folding that event changes waiting to idle.
+        hook_output = self._inbox_hook_output(raw, str(key or ""))
         event = self.bus.publish(raw)
-        await _write_json(writer, 200, event)
+        response = dict(event)
+        if hook_output:
+            response["hook_output"] = hook_output
+        await _write_json(writer, 200, response)
+
+    def _inbox_hook_output(self, raw: dict[str, Any], key: str) -> dict[str, Any] | None:
+        if raw.get("event_type") != events.STOP or raw.get("stop_hook_active") is not False:
+            return None
+        row = self.history.session(key)
+        if not row or row.get("state") in {"waiting", "stopped", "archived"}:
+            return None
+        if any(a.session_key == key for a in self.approvals.pending()):
+            return None
+        runtime = _build_runtime(row.get("runtime"), row.get("command") or "")
+        if not runtime.turn_end_inbox_notice:
+            return None
+        notice = self.history.session_api.turn_end_notice(key)
+        if not notice:
+            return None
+        return {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": notice}}
 
     async def _recent(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"events": self.bus.recent()})
@@ -567,6 +626,27 @@ class Server:
             params = urllib.parse.parse_qs(query)
             before = int(params["before"][0]) if "before" in params else None
             result = self.history.session_api.inbox(session_key, owner=True, before=before)
+        except ValueError:
+            await _write_json(writer, 400, {"error": "invalid cursor"})
+            return
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
+
+    async def _folder_inbox(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            params = urllib.parse.parse_qs(query, keep_blank_values=True)
+            folder = params.get("folder", [""])[0]
+            if folder not in self.history.folders():
+                raise APIError(404, "folder not found")
+            before = int(params["before"][0]) if "before" in params else None
+            result = self.history.session_api.folder_inbox(folder, before=before)
         except ValueError:
             await _write_json(writer, 400, {"error": "invalid cursor"})
             return
@@ -642,23 +722,100 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
-    async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
-        """Structured conversation records for the HTML / pagination views: the
-        agent's messages parsed from its transcript into ordered content blocks
-        (text / tool_use / tool_result). Each harness with a structured
-        transcript (claude-code, codex) implements messages(); the rest return
-        an empty list. See docs/structured-render-design.md."""
+    def _session_messages(self, session_key: str) -> list[dict[str, object]]:
         row = self.history.session(session_key)
         if row is None:
-            await _write_json(writer, 404, {"error": "no such session"})
-            return
+            return []
         session_id = self.history.session_id_for(session_key)
         cwd = row.get("worktree_path") or row.get("cwd")
-        runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
-        messages: list[dict[str, object]] = []
-        if cwd:
-            messages = runtime.messages(cwd=Path(str(cwd)), session_id=session_id)
+        runtime_name = str(row.get("runtime") or "generic")
+        runtime = _build_runtime(runtime_name, "")
+        messages = runtime.messages(cwd=Path(str(cwd)), session_id=session_id) if cwd else []
+        for message in messages:
+            # Line numbers alone can silently point elsewhere after a rewrite.
+            # Include contents and conversation scope; stale pins use their snapshot.
+            identity = json.dumps(
+                [runtime_name, session_id, message], sort_keys=True, ensure_ascii=True
+            ).encode()
+            message["message_key"] = hashlib.sha256(identity).hexdigest()
+        return messages
+
+    async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        if self.history.session(session_key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        messages = await asyncio.to_thread(self._session_messages, session_key)
         await _write_json(writer, 200, {"messages": messages})
+
+    async def _message_pins(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        session_key: str,
+        message_key: str | None,
+        method: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        if self.history.session(session_key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        if method == "DELETE" and message_key:
+            self.history.remove_message_pin(session_key, message_key)
+            await _write_json(writer, 200, {"removed": True})
+            return
+        if message_key or method == "DELETE":
+            await _write_json(writer, 400, {"error": "invalid pin endpoint"})
+            return
+        if method == "GET":
+            await _write_json(writer, 200, {"pins": self.history.message_pins(session_key)})
+            return
+        if len(body) > 4096:
+            await _write_json(writer, 413, {"error": "pin request too large"})
+            return
+        try:
+            req = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            req = None
+        key = req.get("message_key") if isinstance(req, dict) else None
+        if not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key):
+            await _write_json(writer, 400, {"error": "message_key is required"})
+            return
+        pins = self.history.message_pins(session_key)
+        existing = next((pin for pin in pins if pin["message_key"] == key), None)
+        if existing:
+            await _write_json(writer, 200, {"pin": existing})
+            return
+        if len(pins) >= 100:
+            await _write_json(
+                writer, 409, {"error": "unpin a message before adding more (limit 100)"}
+            )
+            return
+        messages = await asyncio.to_thread(self._session_messages, session_key)
+        message = next((m for m in messages if m["message_key"] == key), None)
+        if message is None:
+            await _write_json(
+                writer, 409, {"error": "message changed or is unavailable; refresh Messages"}
+            )
+            return
+        # Recheck after the transcript read yields, including session deletion.
+        if self.history.session(session_key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        if len(json.dumps(message).encode()) > 1024 * 1024:
+            await _write_json(writer, 413, {"error": "message is too large to pin (limit 1 MiB)"})
+            return
+        pins = self.history.message_pins(session_key)
+        if len(pins) >= 100 and not any(pin["message_key"] == key for pin in pins):
+            await _write_json(
+                writer, 409, {"error": "unpin a message before adding more (limit 100)"}
+            )
+            return
+        self.history.add_message_pin(session_key, message)
+        pin = next(p for p in self.history.message_pins(session_key) if p["message_key"] == key)
+        await _write_json(writer, 200, {"pin": pin})
 
     async def _list_annotations(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         await _write_json(writer, 200, {"annotations": self.history.annotations(session_key)})
@@ -1235,49 +1392,43 @@ class Server:
             sid = self._resumable_session_id(parent_key, cwd)
             # --fork-session branches the conversation so the parent isn't touched.
             return ["claude", "--resume", sid, "--fork-session"] if sid else None
+        if runtime == "codex":
+            from duckterm.runtimes.codex import CodexRuntime
+
+            sid = CodexRuntime().find_resumable_id(
+                cwd=Path(cwd), recorded=self.history.session_id_for(parent_key)
+            )
+            # `codex fork` branches the rollout so the parent isn't touched.
+            return ["codex", "fork", sid] if sid else None
         if runtime == "copilot":
             sid = self.history.session_id_for(parent_key)
             return [*shlex.split(command), f"--resume={sid}"] if sid else None
-        # codex / generic: no native conversation resume — can't carry context.
+        # generic: no native conversation resume — can't carry context.
         return None
 
     def _resumable_session_id(self, parent_key: str, cwd: str) -> str | None:
-        """A Claude conversation id that can actually be `--resume`d. The id from
-        the latest event isn't always valid (a forked/transient id, or its
-        transcript was deleted), so verify the transcript file exists. If the
-        recorded id is dead, fall back to the newest real conversation in this
-        cwd. Returns None if there's nothing resumable."""
-        from duckterm.runtimes.claude_code import ClaudeCodeRuntime, project_slug
+        """A Claude conversation id that can actually be `--resume`d, or None if
+        there's nothing resumable (see ClaudeCodeRuntime.find_resumable_id)."""
+        from duckterm.runtimes.claude_code import ClaudeCodeRuntime
 
-        rt = ClaudeCodeRuntime()
-        cwd_path = Path(cwd)
-        recorded = self.history.session_id_for(parent_key)
-        if recorded and rt.locate_transcript(cwd=cwd_path, session_id=recorded):
-            return recorded
-        # The recorded id has no transcript — use the most recent one for this
-        # project directory, if any.
-        slug = project_slug(cwd_path)
-        proj = Path.home() / ".claude" / "projects" / slug
-        if not proj.is_dir():
-            return None
-        transcripts = sorted(proj.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
-        return transcripts[0].stem if transcripts else None
+        return ClaudeCodeRuntime().find_resumable_id(
+            cwd=Path(cwd), recorded=self.history.session_id_for(parent_key)
+        )
 
     def _restore_session_with_resume_id(self, session: dict[str, Any]) -> dict[str, Any]:
         """Return a copy of a snapshot session whose `session_key` is the harness's
-        resumable conversation id (so `--resume` works), or has `_no_resume` set
-        when nothing is resumable (restore then launches fresh). Codex/generic are
-        unchanged — they don't resume by id."""
+        resumable conversation id (so its resume command works), or has
+        `_no_resume` set when nothing is resumable (restore then launches
+        fresh). Generic is unchanged — it doesn't resume by id."""
         runtime = session.get("runtime") or "generic"
         key = str(session.get("session_key", ""))
         cwd = str(session.get("worktree_path") or session.get("cwd") or ".")
-        resume_id: str | None = None
-        if runtime == "claude-code":
-            resume_id = self._resumable_session_id(key, cwd)
-        elif runtime == "copilot":
-            resume_id = self.history.session_id_for(key)
-        else:
-            return session  # codex/generic: no id-based resume
+        binary = {"claude-code": "claude", "codex": "codex", "copilot": "copilot"}.get(runtime)
+        if binary is None:
+            return session  # generic: no id-based resume
+        resume_id = runtime_for(runtime, binary).find_resumable_id(
+            cwd=Path(cwd), recorded=self.history.session_id_for(key)
+        )
         out = dict(session)
         if resume_id:
             out["session_key"] = resume_id
@@ -1289,6 +1440,10 @@ class Server:
         # An in-process supervised session has a PTY we can terminate directly.
         # A session running in the user's own terminal (duckterm run / a tab we
         # opened) isn't ours to kill — the user stops it there.
+        # Persist the pause before killing the child: its SessionEnd may arrive
+        # during stop(), and must not irreversibly cancel pending questions.
+        if self.orchestrator.get(session_key) is not None:
+            self._set_lifecycle(session_key, "stopped")
         stopped = await self.orchestrator.stop(session_key)
         # Mark it stopped (resumable) rather than terminated — Stop is a pause; the
         # worktree, branch, and conversation id are kept so Resume can continue it.
@@ -1363,12 +1518,17 @@ class Server:
             )
             return
         runtime = row.get("runtime") or "generic"
-        argv = self._resume_argv(session_key, runtime, row)
-        # Only claude-code with a recorded conversation id actually continues the
-        # conversation; every other runtime (and claude with no id) starts fresh.
-        # Report it honestly so the UI can warn — before this, resume always
-        # claimed success even when it silently dropped all prior context.
-        carried = runtime == "claude-code" and bool(self.history.session_id_for(session_key))
+        argv, carried = self._resume_argv(session_key, runtime, row)
+        # Report honestly whether the conversation is carried, so the UI can
+        # warn — before this, resume always claimed success even when it
+        # silently dropped all prior context. When it can't be carried, a
+        # promptable harness at least gets reconstructed notes; and even a
+        # native resume gets a nudge, because out-of-band state (dev servers,
+        # background jobs) died with the terminal while the agent remembers
+        # starting it.
+        prompt = ""
+        if runtime in session_instructions.SUPPORTED_RUNTIMES:
+            prompt = _RESUME_NUDGE if carried else self._resume_brief(session_key, row)
         # Relaunch in a PTY Duckterm owns so the resumed session renders in the
         # browser terminal — even if it originally ran in the user's own tab
         # (duckterm run); clear the heartbeat flag so the row reads as
@@ -1379,6 +1539,8 @@ class Server:
             runtime=_build_runtime(runtime, shlex.join(argv)),
             cwd=cwd,
             session_key=session_key,
+            prompt=prompt,
+            record_intention=False,
         )
         self.history.clear_heartbeat(session_key)
         await _write_json(
@@ -1389,24 +1551,57 @@ class Server:
                 "session_key": session_key,
                 "command": argv,
                 "carried_conversation": carried,
+                "context": "native" if carried else ("brief" if prompt else "none"),
             },
         )
 
-    def _resume_argv(self, key: str, runtime: str, row: dict[str, Any]) -> list[str]:
-        """The command to relaunch a session. claude-code continues its
-        conversation if we recorded a session id; everything else relaunches the
-        command it was originally launched with (recorded on SessionStart —
-        a fresh conversation, since those agents have no native resume)."""
-        if runtime == "claude-code":
-            sid = self.history.session_id_for(key)
-            return ["claude", "--resume", sid] if sid else ["claude"]
-        recorded = row.get("command")
-        if recorded:
-            return shlex.split(str(recorded))
-        # No recorded command (a pre-migration row): the runtime name doubles
-        # as the default binary for the known agents.
-        binary = {"codex": "codex", "copilot": "copilot"}.get(runtime, "claude")
-        return [binary]
+    def _resume_argv(self, key: str, runtime: str, row: dict[str, Any]) -> tuple[list[str], bool]:
+        """The command to relaunch a session, and whether it carries the
+        conversation. Harnesses with a native resume (claude/codex/copilot)
+        continue the recorded conversation when its transcript still exists;
+        everything else relaunches the originally recorded command — a fresh
+        conversation."""
+        binary = {"claude-code": "claude", "codex": "codex", "copilot": "copilot"}.get(runtime)
+        if binary:
+            rt = runtime_for(runtime, binary)
+            cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
+            sid = rt.find_resumable_id(cwd=cwd, recorded=self.history.session_id_for(key))
+            if sid:
+                return rt.restore_command(cwd=cwd, session_key=sid), True
+        argv = shlex.split(str(row.get("command"))) if row.get("command") else []
+        if binary:
+            # The recorded command is the previous launch's full argv — binary,
+            # flags, and any initial prompt or resume id it started with. The
+            # positionals must not replay into the relaunch: a recorded prompt
+            # became argv again on the next revive and doubled every revive
+            # after that (seen in the wild: a command with the collaboration
+            # prompt accreted four times). Keep flags, drop positionals and any
+            # stale resume pointer.
+            flags = [a for a in argv[1:] if a.startswith("-") and not a.startswith("--resume")]
+            argv = [binary, *flags]
+        elif not argv:
+            argv = ["claude"]
+        return argv, False
+
+    def _resume_brief(self, key: str, row: dict[str, Any]) -> str:
+        """Reconstructed notes for a relaunch whose conversation can't be
+        natively resumed. Framed as notes about a previous session, never as
+        the agent's own memory — an agent handed fake memory hallucinates the
+        details it lacks."""
+        facts = []
+        if row.get("intention"):
+            facts.append(f"original task: {row['intention']}")
+        if row.get("branch"):
+            facts.append(f"branch: {row['branch']}")
+        if row.get("outcome_summary"):
+            facts.append(f"where it left off: {row['outcome_summary']}")
+        else:
+            facts.append(f"recorded activity: {self.history.events_summary(key)}")
+        return (
+            "You are taking over from a previous agent session in this "
+            "directory whose conversation could not be restored. Reconstructed "
+            "notes (verify before relying on them):\n- " + "\n- ".join(facts)
+        )
 
     async def _archive(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """Put a session away for good: history is kept, the row leaves the
@@ -1745,15 +1940,16 @@ class Server:
             for r in self.history.sessions()
             if str(r.get("state") or "") not in self._FLEET_STATES_DONE
         ]
+        chat_path = paths.home() / "oracle-chat.json"
         if not running:
-            await _write_json(
-                writer, 200, {"answer": "No sessions are running right now.", "sessions": []}
-            )
+            answer = "No sessions are running right now."
+            exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+            await _write_json(writer, 200, {"answer": answer, "exchange": exchange, "sessions": []})
             return
         digests = "\n\n".join(self._fleet_digest(r, question) for r in running)
         history = [
             f"Q: {h.get('q')}\nA: {h.get('a')}"
-            for h in (req.get("history") or [])[-2:]
+            for h in oracle.load_chat(chat_path)[-2:]
             if isinstance(h, dict)
         ]
         prompt = (
@@ -1777,15 +1973,23 @@ class Server:
                 },
             )
             return
+        exchange = oracle.append_chat(chat_path, question, result.text, int(time.time() * 1000))
         await _write_json(
             writer,
             200,
             {
                 "answer": result.text,
+                "exchange": exchange,
                 "sessions": [str(r.get("session_key")) for r in running],
                 "backend": result.backend,
             },
         )
+
+    async def _oracle_chat(self, writer: asyncio.StreamWriter, *, clear: bool = False) -> None:
+        path = paths.home() / "oracle-chat.json"
+        if clear:
+            oracle.clear_chat(path)
+        await _write_json(writer, 200, {"messages": oracle.load_chat(path)})
 
     async def _list_zsh_themes(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"themes": zsh_themes.list_themes()})
@@ -1908,9 +2112,10 @@ class Server:
         await _write_json(writer, 200 if removed else 404, {"removed": removed, "harness": name})
 
     async def _list_connectors(self, writer: asyncio.StreamWriter) -> None:
-        await _write_json(
-            writer, 200, {"connectors": await asyncio.to_thread(connectors.list_status)}
-        )
+        # Credential/CLI probes can take seconds. Keep other dashboard requests
+        # and terminal traffic responsive while they finish.
+        statuses = await asyncio.to_thread(connectors.list_status)
+        await _write_json(writer, 200, {"connectors": statuses})
 
     async def _enable_connector(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
         try:
@@ -1965,6 +2170,76 @@ class Server:
             await _write_json(writer, 400, {"error": str(e)})
             return
         await _write_json(writer, 200, result)
+
+    async def _backup(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], method: str, body: bytes
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            if self._backup_jobs is None:
+                self._backup_jobs = BackupJobs(paths.home() / "backup-state.json")
+            jobs = self._backup_jobs
+            if method == "GET":
+                await _write_json(writer, 200, jobs.snapshot())
+                return
+            if len(body) > 8192:
+                await _write_json(writer, 413, {"error": "request body too large"})
+                return
+            req = json.loads(body or b"{}")
+            allowed = {"destination", "mode"} if method == "POST" else {"destination"}
+            if not isinstance(req, dict) or set(req) - allowed:
+                raise ValueError("Expected an object with destination and optional POST mode")
+            if method == "POST" and jobs.task and not jobs.task.done():
+                await _write_json(
+                    writer, 409, {**jobs.snapshot(), "error": "A backup is already running"}
+                )
+                return
+            mode = req.get("mode", "archive")
+            if method == "POST":
+                backup_sync.validate_mode(req.get("destination", jobs.state["destination"]), mode)
+            if "destination" in req or method == "PUT":
+                jobs.configure(req.get("destination"))
+            result = jobs.start(mode) if method == "POST" else jobs.snapshot()
+            await _write_json(writer, 202 if method == "POST" else 200, result)
+        except (ValueError, UnicodeError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+        except OSError as exc:
+            await _write_json(writer, 500, {"error": str(exc)})
+
+    async def _folder_broadcast(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        folder: str,
+        method: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            folder = urllib.parse.unquote(folder)
+            if folder not in self.history.folders():
+                raise APIError(404, "folder not found")
+            if method == "GET":
+                result = {
+                    "folder": folder,
+                    "targets": self.history.session_api.broadcast_targets(folder),
+                }
+            else:
+                if len(body) > MAX_BODY_BYTES:
+                    raise APIError(413, "request body too large")
+                req = json.loads(body or b"{}")
+                if not isinstance(req, dict):
+                    raise APIError(400, "expected a JSON object")
+                result = self.history.session_api.broadcast(folder, req)
+            await _write_json(writer, 200 if method == "GET" else 202, result)
+        except (ValueError, UnicodeDecodeError):
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
 
     async def _list_folders(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"folders": self.history.folders()})
@@ -2894,14 +3169,61 @@ class Server:
         20s; we archive after 60s of silence. Watched sessions (no heartbeat) are
         archived when their recorded agent pid is no longer alive. Archived keeps
         everything (resumable) — it's not delete."""
+        ticks = 0
         while True:
             await asyncio.sleep(20)
+            ticks += 1
+            if ticks % 3 == 0 and os.environ.get("DUCKTERM_ORACLE") != "off":
+                # An exception here would end this loop, silently stopping both
+                # Oracle and the dead-session sweep below.
+                try:
+                    await self._oracle_tick()
+                except Exception:
+                    traceback.print_exc()
             now = int(time.time() * 1000)
             for key in self.history.sweep_dead(now, stale_after_ms=60_000):
                 self._archive_swept(key)
             for w in self.history.live_watched():
                 if not _pid_alive(int(w["agent_pid"])):
                     self._archive_swept(str(w["session_key"]))
+
+    async def _oracle_tick(self) -> None:
+        """Paste an inbox reminder into idle agents whose mail would otherwise
+        wait until the owner happens to look. Gates live in core/oracle.py."""
+        now = int(time.time() * 1000)
+        for row in self.history.sessions():
+            key = str(row["session_key"])
+            sup = self.orchestrator.get(key)
+            if row.get("state") != "idle" or sup is None or not sup.running:
+                continue
+            try:
+                mail = self.history.session_api.open_mail(key)
+            except APIError:
+                continue
+            if not mail:
+                continue
+            screen = await asyncio.to_thread(sup.visible_screen)
+            picked = oracle.should_nudge(
+                state="idle",
+                turn_ended_ms=self.history.last_event_ts(key, events.STOP),
+                observed_since_ms=sup.observed_since_ms,
+                last_owner_input_ms=sup.last_owner_input_ms,
+                prompt_empty=sup.runtime.prompt_is_empty(screen),
+                mail=mail,
+                previous=self._oracle_nudges.get(key),
+                now_ms=now,
+            )
+            if not picked:
+                continue
+            text = oracle.reminder(picked, now)
+            # Bracketed paste so a multi-word line lands as one input, as the
+            # Introduce button does.
+            if not await asyncio.to_thread(
+                sup.write_bytes, b"\x1b[200~" + text.encode() + b"\x1b[201~\r"
+            ):
+                continue
+            self._oracle_nudges[key] = oracle.Nudge(frozenset(str(m["id"]) for m in picked), now)
+            self.bus.publish({"event_type": "OracleNudge", "session_key": key, "text": text})
 
     def _archive_swept(self, key: str) -> None:
         """Archive a session whose terminal is gone (auto-sweep)."""
@@ -2937,7 +3259,7 @@ def _acquire_home_lock() -> Path:
             other = 0
         if other and other != os.getpid() and _pid_alive(other):
             raise SystemExit(
-                f"another RubberTerm server (pid {other}) already owns "
+                f"another DuckTerm server (pid {other}) already owns "
                 f"{home} — run it with a distinct DUCKTERM_INSTANCE, or stop that one."
             )
         # Stale pidfile (process gone / crashed): reclaim it.

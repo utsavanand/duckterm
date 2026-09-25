@@ -16,6 +16,7 @@ test("copy review shows source, destination and exclusions before transfer", asy
     } };
   });
   await page.goto("/");
+  await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByRole("button", { name: "New session", exact: true }).click();
   await page.getByRole("combobox", { name: "Run on" }).selectOption("dev");
   await page.getByRole("combobox", { name: "Project source" }).selectOption("copy");

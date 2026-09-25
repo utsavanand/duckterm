@@ -25,7 +25,7 @@ Every mechanism the feature needs already ships:
 
 | Need | Existing mechanism |
 | --- | --- |
-| Scheduling | Claude Code's own `/loop` (interval or self-paced) in a long-lived RubberTerm session; tmux persistence keeps the loop alive across server restarts. OS cron + `claude -p` as the non-interactive fallback, and the path for runtimes without self-scheduling. |
+| Scheduling | Claude Code's own `/loop` (interval or self-paced) in a long-lived DuckTerm session; tmux persistence keeps the loop alive across server restarts. OS cron + `claude -p` as the non-interactive fallback, and the path for runtimes without self-scheduling. |
 | Proposal storage | `BACKLOG.md` in the repo — durable, diffable, git-historied, natively read/written by owner and agents alike. No expiry problem: pending state lives in the file, not in 15-minute session questions. |
 | Approval + notification | The PM session asks and goes to **waiting**; the Mac app already raises a native notification for a waiting session. The owner approves by replying in the session's terminal — which is the owner's real approval workflow anyway (see TODO.md on the removed approvals box). |
 | Dispatch | `duckterm session ask` to an ongoing worker session, or the owner launches a worktree session from the dashboard with the approved plan as its task. |
@@ -42,7 +42,7 @@ file or skill), roughly:
    *Approved* and dispatch (`duckterm session ask`, or name the worktree
    session to launch). Never start work yourself.
 
-Run it: launch a `pm` session in RubberTerm, start `/loop` with the prompt,
+Run it: launch a `pm` session in DuckTerm, start `/loop` with the prompt,
 answer its notifications. That is the whole feature. Note: `BACKLOG.md`
 should be committed, not left untracked — a `git clean` from any session
 deletes untracked files (it deleted this doc set once already).

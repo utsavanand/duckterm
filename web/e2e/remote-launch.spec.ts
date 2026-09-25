@@ -14,6 +14,7 @@ test("remote destination reopens New Session with the carried task", async ({ pa
   await expect(page.getByPlaceholder("add a healthcheck endpoint")).toHaveValue("Check the build");
   await expect(page.getByText("Browse…", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByRole("button", { name: "New session", exact: true }).click();
   await expect(page.getByPlaceholder("e.g. login refactor")).toHaveValue("");
   await expect(page.getByRole("combobox", { name: "Run on" })).toHaveValue("dev");
@@ -34,6 +35,7 @@ test("choosing Remote keeps the current page and form mounted", async ({ page })
     } };
   });
   await page.goto("/");
+  await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByRole("button", { name: "New session", exact: true }).click();
   const name = page.getByPlaceholder("e.g. login refactor");
   await name.fill("Keep my draft");

@@ -15,6 +15,7 @@ import contextlib
 import errno
 import os
 import pty
+import re
 import shlex
 import signal
 import sys
@@ -40,6 +41,17 @@ _STATE_EVENT = {
     "idle": events.STOP,
     "waiting": events.NOTIFICATION,
 }
+
+
+# Focus (CSI I / CSI O) and mouse reports that xterm.js sends on its own when
+# an agent enables those modes. Codex enables focus reporting, so merely
+# clicking into or away from its pane emitted input; Oracle read that as
+# possible typing and never nudged a session the owner had looked at.
+_TERMINAL_REPORTS = re.compile(rb"\x1b\[(?:[IO]|<[\d;]*[Mm]|M[\s\S]{3})")
+
+
+def is_terminal_report(data: bytes) -> bool:
+    return not _TERMINAL_REPORTS.sub(b"", data)
 
 
 class SessionSupervisor:
@@ -79,6 +91,11 @@ class SessionSupervisor:
         self._input_queue: asyncio.Queue[bytes] | None = None
         self._input_task: asyncio.Task[None] | None = None
         self._last_input = 0.0
+        # Wall-clock ms, for Oracle: a keystroke after the turn ended may be an
+        # unsent draft. Only trustworthy for turns that ended after we started
+        # watching, hence observed_since_ms.
+        self.observed_since_ms = int(time.time() * 1000)
+        self.last_owner_input_ms = 0
 
     def _emit(self, event_type: str, **fields: object) -> None:
         self.bus.publish(
@@ -389,6 +406,13 @@ class SessionSupervisor:
                 return "\n".join(rows[-lines:])
         return "".join(self.output_tail(lines)).strip()
 
+    def visible_screen(self) -> str:
+        """The visible tmux screen with escapes intact, or "" for PTY-backed
+        sessions, whose raw byte stream is not a screen."""
+        if self._tmux_target is None or not self.running:
+            return ""
+        return tmux.capture_screen(self._tmux_target, history_lines=0).decode(errors="replace")
+
     def resize(self, cols: int, rows: int) -> bool:
         """Resize the agent's terminal so its TUI reflows to the pane. PTY: set
         the window size on the master fd (TIOCSWINSZ). tmux: resize the window."""
@@ -423,6 +447,8 @@ class SessionSupervisor:
         does the writes off-loop, one at a time, so ordering is exact ('ab'
         can never land as 'ba', which a thread pool wouldn't guarantee)."""
         self._last_input = time.monotonic()
+        if not is_terminal_report(data):
+            self.last_owner_input_ms = int(time.time() * 1000)
         if self._input_queue is None:
             self._input_queue = asyncio.Queue()
             self._input_task = asyncio.create_task(self._drain_input())
@@ -437,6 +463,7 @@ class SessionSupervisor:
     def write_input(self, text: str) -> bool:
         """Write to the agent's stdin (terminal-attach / approvals). Routes to
         tmux send-keys or the PTY depending on how the session is backed."""
+        self.last_owner_input_ms = int(time.time() * 1000)
         if self._tmux_target is not None and self.running:
             stripped = text.rstrip("\r\n")
             enter = text.endswith(("\r", "\n"))
@@ -517,11 +544,11 @@ class Orchestrator:
             live = set(adopted) | set(self._supervisors)
             reconciled = self.history.stale_launched(live)
             for key in reconciled:
-                self.history.set_state(key, "stopped", now=int(time.time() * 1000))
+                self.history.set_state(key, "interrupted", now=int(time.time() * 1000))
             if reconciled:
                 print(
                     f"reconciled {len(reconciled)} session(s) whose backing died "
-                    f"(marked stopped, resumable): {', '.join(reconciled)}"
+                    f"(marked interrupted, resumable): {', '.join(reconciled)}"
                 )
         return adopted
 
@@ -540,6 +567,7 @@ class Orchestrator:
         name: str | None = None,
         env: dict[str, str] | None = None,
         test: bool = False,
+        record_intention: bool = True,
     ) -> str:
         """Launch a supervised agent. If repo_path is given, the agent runs in a
         fresh git worktree on `branch` (default: a branch named for the session),
@@ -597,7 +625,9 @@ class Orchestrator:
                 with contextlib.suppress(Exception):
                     self.worktrees.remove_by_worktree(worktree.path, delete_branch=True)
             raise
-        if self.history is not None and prompt:
+        # A resume's synthetic prompt (nudge / reconstructed notes) must not
+        # overwrite the session's original intention on its card.
+        if self.history is not None and prompt and record_intention:
             self.history.set_intention(key, prompt)
         if self.history is not None and supervisor._task is not None:
 

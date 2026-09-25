@@ -38,7 +38,7 @@ _SCHEMA_VERSION = 3
 
 
 class SchemaTooNewError(RuntimeError):
-    """The database was written by a newer RubberTerm than this one."""
+    """The database was written by a newer DuckTerm than this one."""
 
 
 _SCHEMA = """
@@ -112,6 +112,13 @@ CREATE INDEX IF NOT EXISTS idx_subagents_session ON subagents(session_key);
 -- mode): a quoted span + the user's note. Stored so they persist and so the
 -- note can be sent back to the agent as a follow-up. See
 -- docs/structured-render-design.md.
+CREATE TABLE IF NOT EXISTS message_pins (
+    session_key TEXT NOT NULL,
+    message_key TEXT NOT NULL,
+    message_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (session_key, message_key)
+);
 CREATE TABLE IF NOT EXISTS annotations (
     id          TEXT PRIMARY KEY,
     session_key TEXT NOT NULL,
@@ -143,6 +150,13 @@ def session_key_of(event: Event) -> str | None:
     return str(key) if key else None
 
 
+def _is_idle_notice(event: Event) -> bool:
+    # Older Claude Code builds send only the message text, not notification_type.
+    return event.get("notification_type") == "idle_prompt" or str(
+        event.get("message") or ""
+    ).startswith("Claude is waiting for your input")
+
+
 def derive_state(event: Event, prev: SessionState | None) -> SessionState:
     # An explicit lifecycle marker (a deliberate stop/archive/sweep) always wins.
     lifecycle = event.get("lifecycle")
@@ -150,15 +164,28 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
         return "archived"
     if lifecycle == "stopped":
         return "stopped"
-    # A stopped or archived session is at rest: only an explicit resume
-    # (SessionStart) revives it. A stray late event — including the resumed-then-
-    # exited agent's SessionEnd — must NOT flip it (e.g. archived -> terminated).
-    # This guard runs before the SessionEnd/terminated rule on purpose.
-    if prev in ("stopped", "archived") and event.get("event_type") != events.SESSION_START:
+    if lifecycle == "interrupted":
+        return "interrupted"
+    # A stopped, interrupted, or archived session is at rest: only an explicit
+    # resume (SessionStart) revives it. A stray late event — including the
+    # resumed-then-exited agent's SessionEnd — must NOT flip it (e.g. archived
+    # -> terminated). This guard runs before the SessionEnd/terminated rule on
+    # purpose.
+    if (
+        prev in ("stopped", "interrupted", "archived")
+        and event.get("event_type") != events.SESSION_START
+    ):
         return prev
     if lifecycle == "terminated" or event.get("event_type") == events.SESSION_END:
         return "terminated"
     match event.get("event_type"):
+        case "Notification" if _is_idle_notice(event):
+            # Claude Code notifies ~60s after a turn ends with nothing to answer.
+            # Counting that as waiting flooded the "needs you" count with idle
+            # sessions and hid the real permission prompts among them.
+            return "idle"
+        case "Notification" if event.get("notification_type") == "auth_success":
+            return prev or "busy"
         case "PermissionRequest" | "Notification":
             return "waiting"
         case "PreToolUse" | "PostToolUse" | "UserPromptSubmit" | "SessionStart":
@@ -236,14 +263,14 @@ class HistoryStore:
         # locked" at random.
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
-        # Refuse a DB written by a newer RubberTerm — opening it with older code
+        # Refuse a DB written by a newer DuckTerm — opening it with older code
         # would silently mis-read or clobber the newer schema (the prod-opens-a-
         # beta-migrated-DB case). A fresh DB reports user_version 0, which passes.
         db_version = int(self._conn.execute("PRAGMA user_version").fetchone()[0])
         if db_version > _SCHEMA_VERSION:
             raise SchemaTooNewError(
-                f"database at {path} is schema v{db_version}, but this RubberTerm "
-                f"supports up to v{_SCHEMA_VERSION} — upgrade RubberTerm, or point "
+                f"database at {path} is schema v{db_version}, but this DuckTerm "
+                f"supports up to v{_SCHEMA_VERSION} — upgrade DuckTerm, or point "
                 f"DUCKTERM_HOME/DUCKTERM_INSTANCE at a matching data dir."
             )
         self._conn.executescript(_SCHEMA)
@@ -311,12 +338,13 @@ class HistoryStore:
             return
         if key is not None:
             self._upsert_session(key, event)
-            if etype == events.SESSION_END:
-                self.session_api.revoke(key)
-            else:
-                row = self.session(key)
-                if row and row["state"] not in AT_REST_STATES:
-                    self.session_api.ensure(key)
+            row = self.session(key)
+            if row and row["state"] in AT_REST_STATES:
+                # Use the folded state: late SessionEnd events after Stop must
+                # not cancel the suspended exchange. Archive remains final.
+                self.session_api.revoke(key, cancel_pending=row["state"] != "stopped")
+            elif row:
+                self.session_api.ensure(key)
             kind = classify(event)
             if kind is not None:
                 self._bump_metric(key, kind)
@@ -364,6 +392,37 @@ class HistoryStore:
             "INSERT INTO annotations (id, session_key, quote, note, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
             (ann_id, session_key, quote, note, ts),
+        )
+        self._conn.commit()
+
+    def message_pins(self, session_key: str) -> list[dict[str, Any]]:
+        """Saved messages remain readable even after their transcript disappears."""
+        rows = self._conn.execute(
+            "SELECT message_key, message_json, created_at FROM message_pins "
+            "WHERE session_key = ? ORDER BY created_at, message_key",
+            (session_key,),
+        )
+        return [
+            {
+                "message_key": row["message_key"],
+                "message": json.loads(row["message_json"]),
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def add_message_pin(self, session_key: str, message: dict[str, object]) -> None:
+        self._conn.execute(
+            "INSERT OR IGNORE INTO message_pins "
+            "(session_key, message_key, message_json, created_at) VALUES (?, ?, ?, ?)",
+            (session_key, message["message_key"], json.dumps(message), int(time.time() * 1000)),
+        )
+        self._conn.commit()
+
+    def remove_message_pin(self, session_key: str, message_key: str) -> None:
+        self._conn.execute(
+            "DELETE FROM message_pins WHERE session_key = ? AND message_key = ?",
+            (session_key, message_key),
         )
         self._conn.commit()
 
@@ -525,6 +584,13 @@ class HistoryStore:
         self._conn.commit()
         return self.session(key) is not None
 
+    def last_event_ts(self, session_key: str, event_type: str) -> int:
+        row = self._conn.execute(
+            "SELECT MAX(ts) FROM events WHERE session_key = ? AND event_type = ?",
+            (session_key, event_type),
+        ).fetchone()
+        return int(row[0] or 0)
+
     def folders(self) -> list[str]:
         """Folder names: those explicitly created plus any referenced by a
         session's group (so a folder never silently disappears), plus every
@@ -631,8 +697,8 @@ class HistoryStore:
         Stamps ended_at when a session ends; keeps the existing ended_at when
         archiving an already-ended session; clears it when reviving (busy)."""
         if state in AT_REST_STATES:
-            self.session_api.revoke(key)
-        if state in ("stopped", "terminated"):
+            self.session_api.revoke(key, cancel_pending=state != "stopped")
+        if state in ("stopped", "interrupted", "terminated"):
             cur = self._conn.execute(
                 "UPDATE sessions SET state = ?, ended_at = ? WHERE session_key = ?",
                 (state, now, key),
@@ -861,6 +927,7 @@ class HistoryStore:
         self._conn.execute("DELETE FROM events WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
+        self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
         self._conn.execute(
             "INSERT OR REPLACE INTO tombstones (session_key, deleted_at) VALUES (?, ?)",
             (key, now),
@@ -887,6 +954,7 @@ class HistoryStore:
             self._conn.execute("DELETE FROM events WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
+            self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM tombstones WHERE session_key = ?", (key,))
             _remove_checkpoint_dir(key)  # leave zero trace, including on disk
         self._conn.commit()

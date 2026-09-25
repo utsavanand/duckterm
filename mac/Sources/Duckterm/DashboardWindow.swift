@@ -74,6 +74,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard webView === web else { return }
+        AppDiagnostics.shared.record("Dashboard loaded")
         // A host change carries form text once, never a machine-specific folder.
         launchDraft = nil
         webView.configuration.userContentController.removeAllUserScripts()
@@ -116,6 +117,16 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         web?.evaluateJavaScript(js) { result, _ in done?(result) }
     }
 
+    func captureForReport(_ done: @escaping (NSImage?) -> Void) {
+        guard let web else { done(nil); return }
+        // Capture only our dashboard, before the report UI opens. No desktop capture.
+        web.takeSnapshot(with: nil) { image, error in
+            if let error { AppDiagnostics.shared.record("Report screenshot failed", code: (error as NSError).code) }
+            done(image)
+        }
+    }
+
+
     func show() {
         if let window {
             window.makeKeyAndOrderFront(nil)
@@ -147,7 +158,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         let computerButton = NSButton(
             title: "Settings…",
             target: nil,
-            action: #selector(AppDelegate.showSettings(_:))
+            action: NSSelectorFromString("showSettings:")
         )
         computerButton.bezelStyle = .rounded
         computerButton.frame = NSRect(x: 0, y: 2, width: 100, height: 26)
@@ -175,6 +186,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         withError error: Error
     ) {
         let failedURL = url
+        AppDiagnostics.shared.record("Dashboard connection failed", code: (error as NSError).code)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
             guard let self, self.url == failedURL, self.web === webView else { return }
             webView.load(URLRequest(url: self.url))

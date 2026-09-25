@@ -15,7 +15,9 @@ from duckterm.server import Server
 def store(tmp_path: Path) -> HistoryStore:
     history = HistoryStore(tmp_path / "db.sqlite")
     for key, folder in [("a", "work/backend/a"), ("b", "work/backend/b"), ("c", "other")]:
-        history.record({"_id": key, "_ts": 1, "event_type": "SessionStart", "session_key": key})
+        history.record(
+            {"_id": key, "_ts": 1, "event_type": "SessionStart", "session_key": key, "test": True}
+        )
         history.set_meta(key, name=f"Session {key}", group=folder, notes="private notes")
         history.set_intention(key, "private initial prompt")
     return history
@@ -115,13 +117,24 @@ def test_forged_sender_wrong_recipient_and_outside_root(store: HistoryStore) -> 
     assert error.value.status == 404
 
 
-@pytest.mark.parametrize("action", ["stop", "end", "delete"])
+@pytest.mark.parametrize("action", ["terminate", "archive", "end", "delete"])
 def test_revocation_is_permanent_and_cancels_pending(store: HistoryStore, action: str) -> None:
     a = enroll(store, "a")
     b = enroll(store, "b")
     ask(store, a)
-    if action == "stop":
-        store.set_state("a", "stopped")
+    if action == "terminate":
+        store.set_state("a", "terminated")
+        store.set_state("a", "busy")
+    elif action == "archive":
+        store.record(
+            {
+                "_id": "archive",
+                "_ts": 2,
+                "event_type": "Notification",
+                "session_key": "a",
+                "lifecycle": "archived",
+            }
+        )
         store.set_state("a", "busy")
     elif action == "end":
         store.record({"_id": "end", "_ts": 2, "event_type": "SessionEnd", "session_key": "a"})
@@ -135,10 +148,116 @@ def test_revocation_is_permanent_and_cancels_pending(store: HistoryStore, action
     assert not visible or visible[0]["status"] == "cancelled"
 
 
+@pytest.mark.parametrize("participant", ["a", "b"])
+@pytest.mark.parametrize("accepted", [False, True])
+def test_stop_resume_preserves_exchange_and_rotates_credential(
+    store: HistoryStore, tmp_path: Path, participant: str, accepted: bool
+) -> None:
+    from duckterm.helpers.session_credentials import credential_path
+
+    headers = {key: enroll(store, key) for key in ("a", "b")}
+    question = ask(store, headers["a"])
+    path = f"/questions/{question['id']}"
+    if accepted:
+        call(store, headers["b"], "POST", path + "/accept")
+    old = headers[participant]
+    store.set_state(participant, "stopped")
+    # The child exit can follow the explicit stop; it must remain a pause.
+    store.record({"_id": "exit", "_ts": 2, "event_type": "SessionEnd", "session_key": participant})
+    assert not credential_path(participant, store.session_api.credential_dir).exists()
+    with pytest.raises(APIError) as error:
+        call(store, old, "GET", "/self")
+    assert error.value.status == 401
+    assert store.session_api.pending_counts() == {"b": 1}
+    store.close()
+    reopened = HistoryStore(tmp_path / "db.sqlite")
+    try:
+        assert not credential_path(participant, reopened.session_api.credential_dir).exists()
+        reopened.record(
+            {
+                "_id": "resume",
+                "_ts": 3,
+                "event_type": "SessionStart",
+                "session_key": participant,
+                "test": True,
+            }
+        )
+        token = json.loads(
+            credential_path(participant, reopened.session_api.credential_dir).read_text()
+        )["token"]
+        headers[participant] = {"authorization": f"Bearer {token}"}
+        with pytest.raises(APIError) as error:
+            call(reopened, old, "GET", "/self")
+        assert error.value.status == 401
+        saved = call(reopened, headers["b"], "GET", path)[1]
+        assert saved["status"] == ("accepted" if accepted else "queued")
+        assert saved["expires_at"] == question["expires_at"]
+        call(reopened, headers["b"], "POST", path + "/answer", {"text": "resumed reply"})
+        assert call(reopened, headers["a"], "GET", path)[1]["answer"] == "resumed reply"
+    finally:
+        reopened.close()
+
+
+def test_question_expires_while_stopped(store: HistoryStore, monkeypatch) -> None:
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 1000)
+    a, b = enroll(store, "a"), enroll(store, "b")
+    question = call(
+        store,
+        {**a, "idempotency-key": "explicit-deadline"},
+        "POST",
+        "/questions",
+        {"target_session_id": "b", "question": "Timed question", "timeout_seconds": 300},
+    )[1]
+    store.set_state("b", "stopped")
+    monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 1400)
+    assert store.session_api.pending_counts() == {}
+    store.set_state("b", "busy")
+    b = enroll(store, "b")
+    path = f"/questions/{question['id']}"
+    assert call(store, a, "GET", path)[1]["status"] == "expired"
+    with pytest.raises(APIError) as error:
+        call(store, b, "POST", path + "/answer", {"text": "too late"})
+    assert error.value.status == 409
+
+
+def test_scope_loss_cancels_suspended_question(store: HistoryStore) -> None:
+    a = enroll(store, "a")
+    enroll(store, "b")
+    ask(store, a)
+    store.set_state("b", "stopped")
+    store.set_meta("b", group="other")
+    assert store.session_api.inbox("b", owner=True)["messages"][0]["status"] == "cancelled"
+
+
+def test_stop_handler_suspends_before_child_exit(store: HistoryStore, monkeypatch) -> None:
+    server = Server(history=store)
+    a = enroll(store, "a")
+    enroll(store, "b")
+    ask(store, a)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: object())
+
+    async def stop(key: str) -> bool:
+        assert store.session(key)["state"] == "stopped"
+        server.bus.publish({"event_type": "SessionEnd", "session_key": key})
+        return True
+
+    monkeypatch.setattr(server.orchestrator, "stop", stop)
+    writer = Writer()
+    asyncio.run(server._stop(writer, "b"))
+    assert store.session_api.inbox("b", owner=True)["messages"][0]["status"] == "queued"
+    assert store.session("b")["state"] == "stopped"
+
+
 def test_deadlines_cancel_and_idempotency_conflict(store: HistoryStore, monkeypatch) -> None:
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 1000)
     a, b = enroll(store, "a"), enroll(store, "b")
-    question = ask(store, a)
+    question = call(
+        store,
+        {**a, "idempotency-key": "request-1"},
+        "POST",
+        "/questions",
+        {"target_session_id": "b", "question": "Time-sensitive question", "timeout_seconds": 300},
+    )[1]
     with pytest.raises(APIError) as error:
         call(
             store,

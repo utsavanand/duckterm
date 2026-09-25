@@ -2,9 +2,9 @@
   "checkedAtUtc": "2026-09-21T06:49:31.460451+00:00",
   "project": "duckterm-20260920",
   "automated": {
-    "python": 561,
-    "frontend": 70,
-    "playwright": 39,
+    "python": 649,
+    "frontend": 87,
+    "playwright": 51,
     "nativeUnit": 4
   },
   "livePassed": [
@@ -25,13 +25,13 @@
   ],
   "pending": [
     "full native Move acceptance and supported provider setup",
-    "private repository clone authorization",
     "VM reboot when existing Claude process can be interrupted",
-    "merge after overlapping main work is settled"
+    "merge validated integration after native acceptance"
   ],
   "deferred": [
     "Railway live provider QA: user selected GitHub first",
-    "Porkbun live provider QA: user selected GitHub first"
+    "Porkbun live provider QA: user selected GitHub first",
+    "private repository clone authorization: optional check skipped; public clone verified"
   ],
   "overnight": {
     "status": "process-continuity check passed; duration and memory/log measurements unavailable",
@@ -49,7 +49,7 @@
   "mergedToMain": false,
   "candidateReview": {
     "date": "2026-09-21",
-    "integratedMain": "b458c63838b7cb9cf886491df25c30101556427a",
+    "integratedMain": "d1c0512",
     "implemented": [
       "copy local folder or Git worktree with HEAD/index/working-tree verification",
       "clone repository using destination authorization",
@@ -59,17 +59,18 @@
       "forgotten-host tunnel and picker cleanup"
     ],
     "localEvidence": [
-      "Post-fix scripts/gate.sh passed: 561 Python, 70 frontend, 39 browser tests plus lint/types/format",
+      "Integrated gate passed: 649 Python, 87 frontend, 51 browser tests plus lint/types/format",
       "Black, mypy, and slop checks passed separately",
       "swift test: 4 passed",
       "RubberTerm Test app built successfully",
       "real Swift bridge rehearsal: copy, repeated copy, repeated launch same session, secret exclusion and source preservation",
-      "real tmux launch retry after simulated server restart preserved the process PID"
+      "real tmux launch retry after simulated server restart preserved the process PID",
+      "native clipboard, report-data and actual WKWebView report UI passed after integration",
+      "updated isolated Linux native copy and restart retry passed; synthetic session deleted"
     ],
     "blocked": [
       "VM reboot would interrupt existing Claude PID 66209",
-      "main checkout has unrelated uncommitted overlapping work",
-      "full private repository clone rejected by automatic approval review; separate user approval pending"
+      "native Test acceptance pending"
     ],
     "notClaimed": [
       "full native stopped-source Move acceptance",
@@ -94,6 +95,7 @@
       "Codex resume explicitly passes reviewed remote directory with --cd",
       "QA systemd unit corrected to match production KillMode=process",
       "root-owned VM Codex sessions directory restored to duckterm ownership"
-    ]
+    ],
+    "integrationDate": "2026-09-25"
   }
 }

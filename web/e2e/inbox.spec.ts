@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiPost, base, seedSession } from "./helpers";
+import { apiPost, base, seedSession, expandFolder } from "./helpers";
 
 test("Inbox beside History shows real session questions and replies", async ({ page }) => {
   await seedSession("inbox-sender", { name: "API implementation", group: "inbox-test/backend" });
@@ -21,6 +21,7 @@ test("Inbox beside History shows real session questions and replies", async ({ p
   const question = await created.json();
 
   await page.goto(base());
+  await expandFolder(page, "inbox-test/frontend");
   await page.locator(".rd-row-name", { hasText: "Client implementation" }).click();
   const tabs = page.locator(".rd-view-toggle button");
   await expect(page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" })).toBeVisible();
@@ -47,6 +48,7 @@ test("Inbox beside History shows real session questions and replies", async ({ p
   await expect(page.locator(".rd-inbox-answer p")).toHaveText("Include id, status, and updated_at.\nKeep the request ID stable.");
   await page.screenshot({ path: "/tmp/duckterm-inbox.png" });
   await page.reload();
+  await expandFolder(page, "inbox-test/frontend");
   await page.locator(".rd-row-name", { hasText: "Client implementation" }).click();
   await page.locator(".rd-view-toggle button", { hasText: "Inbox" }).click();
   await expect(page.locator(".rd-inbox-status")).toHaveText("Answered");

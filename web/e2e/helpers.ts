@@ -1,3 +1,4 @@
+import { expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -117,6 +118,18 @@ export async function checkpoints(key: string): Promise<Checkpoint[]> {
 }
 
 export async function apiDelete(path: string): Promise<void> {
-  const response = await api(path, { method: "DELETE" });
-  if (!response.ok) throw new Error(`DELETE ${path}: ${response.status}`);
+  const res = await api(path, { method: "DELETE" });
+  if (!res.ok && res.status !== 404) throw new Error(`Cleanup failed: ${res.status}`);
+}
+
+export async function expandFolder(page: Page, path: string) {
+  const parts = path.split("/");
+  for (let i = 0; i < parts.length; i++) {
+    const name = parts.slice(0, i + 1).join("/");
+    const head = page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `View interactions in ${name}`, exact: true }) });
+    const caret = head.locator(".rd-group-caret");
+    await expect(caret).toBeVisible();
+    if (await caret.textContent() === "▸") await caret.click();
+    await expect(caret).toHaveText("▾");
+  }
 }

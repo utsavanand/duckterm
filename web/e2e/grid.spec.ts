@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiPatch, apiPost, base } from "./helpers";
+import { apiPatch, apiPost, base, expandFolder } from "./helpers";
 
 // The grid opens from a FOLDER's ⛶ (scoped to it and its subfolders): tiles
 // arrange 2D via the columns control, resize via the bars between tiles,
@@ -145,6 +145,7 @@ test("folders nest: subfolder renders inside, session moves into it", async ({
   await page.goto(base());
   const parentHead = page.locator(".rd-group-head", { hasText: parent });
   await expect(parentHead).toBeVisible();
+  await expandFolder(page, parent);
   // The nested folder renders inside the parent's body, by its leaf name.
   const nested = page
     .locator(".rd-group", { hasText: parent })

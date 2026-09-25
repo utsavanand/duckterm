@@ -54,8 +54,9 @@ def test_restore_command_per_runtime() -> None:
     claude = restore_command_for({"runtime": "claude-code", "session_key": "k", "cwd": "/r"})
     assert claude == ["claude", "--resume", "k"]
 
+    # Codex resumes its rollout via the `resume` subcommand.
     codex = restore_command_for({"runtime": "codex", "session_key": "k", "cwd": "/r"})
-    assert codex == ["codex"]
+    assert codex == ["codex", "resume", "k"]
 
     # Copilot resumes via --resume=<id>; previously it fell through to a no-op.
     copilot = restore_command_for({"runtime": "copilot", "session_key": "k", "cwd": "/r"})

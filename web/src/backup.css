@@ -1,0 +1,7 @@
+.rd-backup p { font-size: 13px; line-height: 1.5; color: var(--text-muted); }
+.rd-backup label { display: block; margin: 20px 0 8px; font-size: 13px; font-weight: 600; }
+.rd-backup .rd-backup-note { font-size: 12px; }
+.rd-backup-result { padding: 14px; margin-top: 18px; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.rd-backup-result p { white-space: pre-wrap; }
+.rd-backup-succeeded strong { color: var(--accent); }
+.rd-backup footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 24px; }

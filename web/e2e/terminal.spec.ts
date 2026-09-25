@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiPost, base } from "./helpers";
+import { apiDelete, apiPost, base } from "./helpers";
 
 // Drives the REAL terminal in a REAL browser: launches PTY sessions, opens the
 // terminal tab, types into xterm, and switches between agents. Catches the
@@ -109,4 +109,97 @@ test("terminal: Shift+Enter sends a newline, not a submit", async ({ page }) => 
   await expect(visibleRows(page)).toContainText("BBB", { timeout: 5_000 });
   const joined = (await visibleRows(page).allTextContents()).join("\n");
   expect(joined.split("AAA").length - 1).toBe(2);
+});
+
+
+test("terminal: attach lands at the bottom and later output preserves scrollback reading", async ({ page }) => {
+  const launched = await apiPost("/sessions/launch", {
+    command: "sh -c 'i=0; while [ \"$i\" -lt 250 ]; do echo HISTORY_$i; i=$((i+1)); done; echo ATTACH_LAST_LINE; exec cat'",
+    cwd: "/tmp", name: "scroll-review", in_terminal: false, test: true,
+  });
+  expect(launched.status).toBe(200);
+  const key = launched.body.session_key as string;
+  try {
+    await page.goto(base());
+    await page.locator(".rd-row-name", { hasText: "scroll-review" }).click();
+    await expect(visibleRows(page)).toContainText("ATTACH_LAST_LINE");
+    const viewport = page.locator(".rd-terminal-slot:visible .xterm-viewport");
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(3);
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight)).toBeGreaterThan(500);
+    await page.locator(".rd-terminal-slot:visible .xterm-screen").hover();
+    await page.mouse.wheel(0, -1500);
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeGreaterThan(300);
+    const before = await viewport.evaluate((el) => el.scrollTop);
+    // Server-side input produces real output without a browser keystroke,
+    // which xterm intentionally treats as a request to return to the prompt.
+    const height = await viewport.evaluate((el) => el.scrollHeight);
+    expect((await apiPost(`/sessions/${key}/input`, { text: "LATER_OUTPUT\n" })).status).toBe(200);
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight)).toBeGreaterThan(height);
+    expect(Math.abs(await viewport.evaluate((el) => el.scrollTop) - before)).toBeLessThan(3);
+    await page.setViewportSize({ width: 1250, height: 760 });
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeGreaterThan(300);
+  } finally {
+    await apiDelete(`/sessions/${key}`);
+  }
+});
+
+test("terminal: mixed image paste sends a readable saved image path without filename text", async ({ page }) => {
+  const key = await launchCat("image-paste-check");
+  try {
+    await page.goto(base());
+    await page.locator(".rd-row-name", { hasText: "image-paste-check" }).click();
+    await waitTerminalReady(page);
+    const response = page.waitForResponse((r) => r.url().endsWith("/paste-image") && r.request().method() === "POST");
+    await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").evaluate((el) => {
+      const bytes = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="), (c) => c.charCodeAt(0));
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", "FILENAME_MUST_NOT_LEAK.png");
+      clipboardData.items.add(new File([bytes], "FILENAME_MUST_NOT_LEAK.png", { type: "image/png" }));
+      el.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData }));
+    });
+    const saved = await response;
+    expect(saved.status()).toBe(200);
+    const { path } = await saved.json() as { path: string };
+    const { readFileSync } = await import("node:fs");
+    expect(readFileSync(path).subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+    await expect(visibleRows(page)).toContainText("paste-");
+    expect((await visibleRows(page).allTextContents()).join("")).not.toContain("FILENAME_MUST_NOT_LEAK");
+    // Native bridge must target the focused terminal and reject a changed target.
+    expect(await page.evaluate((session) => window.__rtPasteTarget?.() === session, key)).toBe(true);
+    expect(await page.evaluate(() => window.__rtPasteImage?.("/tmp/WRONG_TARGET.png", "other-session"))).toBe(false);
+    await page.evaluate(() => {
+      const input = document.createElement("input"); input.id = "paste-field-check";
+      document.body.append(input); input.focus();
+      window.__rtPaste?.("plain field text");
+    });
+    expect(await page.evaluate(() => window.__rtPasteTarget?.())).toBe("field");
+    await expect(page.locator("#paste-field-check")).toHaveValue("plain field text");
+  } finally { await apiDelete(`/sessions/${key}`); }
+});
+
+test("terminal: opening a hidden session and returning from another view lands at the latest output", async ({ page }) => {
+  const keys: string[] = [];
+  try {
+    for (const name of ["reopen-one", "reopen-two"]) {
+      const result = await apiPost("/sessions/launch", {
+        command: "sh -c 'i=0; while [ \"$i\" -lt 250 ]; do echo HISTORY_$i; i=$((i+1)); done; echo REOPEN_LAST_LINE; exec cat'",
+        cwd: "/tmp", name, in_terminal: false, test: true,
+      });
+      expect(result.status).toBe(200); keys.push(result.body.session_key as string);
+    }
+    await page.goto(base());
+    const viewport = page.locator(".rd-terminal-slot:visible .xterm-viewport");
+    for (const name of ["reopen-one", "reopen-two", "reopen-one"]) {
+      await page.locator(".rd-row-name", { hasText: name }).click();
+      await expect(visibleRows(page)).toContainText("REOPEN_LAST_LINE");
+      await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(3);
+      await page.locator(".rd-terminal-slot:visible .xterm-screen").hover();
+      await page.mouse.wheel(0, -1500);
+      await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeGreaterThan(300);
+    }
+    await page.getByRole("button", { name: "Messages", exact: true }).click();
+    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    await expect(visibleRows(page)).toContainText("REOPEN_LAST_LINE");
+    await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(3);
+  } finally { for (const key of keys) await apiDelete(`/sessions/${key}`); }
 });

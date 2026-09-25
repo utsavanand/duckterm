@@ -1,4 +1,4 @@
-# RubberTerm for macOS
+# DuckTerm.app for macOS
 
 A native desktop window embeds the Duckterm dashboard. It owns a local backend
 or connects to a remote workspace through a managed SSH tunnel.
@@ -11,10 +11,10 @@ Build and open the test application from the feature worktree:
 mac/build.sh --test --run
 ```
 
-The result is `mac/build/RubberTerm Test.app`, with a purple duck and **TEST**
-badge. Its Dock name, app menu, and window titles identify it as RubberTerm Test.
+The result is `mac/build/DuckTerm Test.app`, with a purple duck and **TEST**
+badge. Its Dock name, app menu, and window titles identify it as DuckTerm Test.
 Its bundle ID is `com.rubberduckhq.rubberterm.test`, so it can run alongside
-RubberTerm with separate saved host preferences, notifications, and WebKit data.
+DuckTerm with separate saved host preferences, notifications, and WebKit data.
 
 The test build snapshots this worktree's Python backend and built dashboard into
 the bundle. Build the dashboard first when changing frontend code (`scripts/check.sh`
@@ -28,16 +28,16 @@ user. Connecting to a remote host shows that host's actual sessions and
 integrations; the Test badge does not create a separate remote environment.
 Use the development alias `duckterm-dev` for remote QA.
 
-1. Build RubberTerm Test from the feature worktree and run automated checks.
-2. Exercise the change in RubberTerm Test, including switching computers and
+1. Build DuckTerm Test from the feature worktree and run automated checks.
+2. Exercise the change in DuckTerm Test, including switching computers and
    closing/reopening the app. Record failures and fix them in the worktree.
 3. After user acceptance and required QA pass, reconcile and merge into main.
 4. Build the normal app from validated main with `mac/build.sh`. Use the existing
    release process to install/distribute it. Do not rename the test bundle into
    production or replace the installed app during QA.
 
-Build outputs are separate: building Test preserves `RubberTerm.app`, and
-building production preserves `RubberTerm Test.app`.
+Build outputs are separate: building Test preserves `DuckTerm.app`, and
+building production preserves `DuckTerm Test.app`.
 
 ## Start a remote session
 
@@ -96,12 +96,12 @@ Tools). From the repository root:
 
 ```sh
 ./mac/build.sh
-open mac/build/RubberTerm.app
+open mac/build/DuckTerm.app
 ```
 
 The build uses `swiftc` for the current machine's architecture and reads its
 version from `src/duckterm/__init__.py`. It produces an ad-hoc-signed app at
-`mac/build/RubberTerm.app`. Building on Intel produces an Intel app; the
+`mac/build/DuckTerm.app`. Building on Intel produces an Intel app; the
 published arm64 archive is for Apple Silicon only.
 
 If the SDK reports duplicate `SwiftBridging` modules, select a compatible Xcode

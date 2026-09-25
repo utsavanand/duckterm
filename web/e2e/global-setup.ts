@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +35,11 @@ export default async function globalSetup() {
   });
 
   const home = mkdtempSync(join(tmpdir(), "rd-e2e-"));
+  // Backup UI tests must never collect the developer's actual agent transcripts.
+  const testClaudeRoot = join(home, "test-claude");
+  const testCodexRoot = join(home, "test-codex");
+  mkdirSync(join(testClaudeRoot, "projects"), { recursive: true });
+  mkdirSync(join(testCodexRoot, "sessions"), { recursive: true });
 
   // A deterministic stand-in for the LLM backend: the observation-loop spec
   // asserts these exact rules come back as AGENTS.md suggestions. (It also
@@ -58,6 +63,8 @@ export default async function globalSetup() {
       env: {
         ...process.env,
         DUCKTERM_HOME: home,
+        CLAUDE_CONFIG_DIR: testClaudeRoot,
+        CODEX_HOME: testCodexRoot,
         DUCKTERM_SUMMARIZER_CMD: fakeLlm,
         DUCKTERM_NO_TERMINAL: "1",
         DUCKTERM_NO_BROWSER: "1",

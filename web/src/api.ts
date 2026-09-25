@@ -13,6 +13,13 @@ export function authHeaders(extra?: Record<string, string>): HeadersInit {
   return { "X-Duckterm-Token": TOKEN, ...extra };
 }
 
+// One Ask Oracle exchange, as stored server-side (at = epoch ms).
+export interface OracleExchange {
+  q: string;
+  a: string;
+  at: number;
+}
+
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
@@ -83,9 +90,14 @@ export interface InboxMessage {
   id: string;
   sender: string;
   recipient: string;
+  recipient_name?: string;
   sender_name: string;
   question: string;
-  status: "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled";
+  kind?: "question" | "broadcast";
+  sender_kind?: "session" | "owner";
+  requires_reply?: boolean;
+  delivery?: { outcome?: string; last_read_at?: number };
+  status: "read" | "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled";
   answer: string | null;
   created_at: number;
   expires_at: number;
@@ -113,7 +125,49 @@ export interface InboxPage {
   next_cursor: number | null;
 }
 
+export interface BroadcastTarget {
+  session_id: string;
+  name: string;
+  state: string;
+  eligible: boolean;
+  reason: string | null;
+}
+export interface BroadcastResult {
+  queued: number;
+  skipped: number;
+  results: (BroadcastTarget & { status: "queued" | "skipped" })[];
+}
+
+export interface BackupState {
+  destination: string | null;
+  job: {
+    id: string;
+    status: "running" | "succeeded" | "failed" | "interrupted";
+    destination: string;
+    started_at: number;
+    finished_at: number | null;
+    archive_path: string | null;
+    result: string | null;
+    error: string | null;
+  } | null;
+}
+
 export const api = {
+  backupStatus: async (): Promise<BackupState> => {
+    const res = await fetch("/backup", { cache: "no-store", headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Could not load backup status");
+    return data;
+  },
+  startBackup: (destination: string) => post<BackupState>("/backup", { destination }),
+  broadcastTargets: async (folder: string): Promise<{ targets: BroadcastTarget[] }> => {
+    const res = await fetch(`/folders/${encodeURIComponent(folder)}/broadcast`, { cache: "no-store", headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Could not load recipients");
+    return data;
+  },
+  broadcast: (folder: string, text: string, request_key: string) =>
+    post<BroadcastResult>(`/folders/${encodeURIComponent(folder)}/broadcast`, { text, request_key }),
   collaborationInstructions: (key: string) => post<{ prompt: string }>(`/sessions/${encodeURIComponent(key)}/collaboration/instructions`),
   introduceCollaboration: (key: string) => post<{ sent: boolean }>(`/sessions/${encodeURIComponent(key)}/collaboration/introduce`),
   inbox: async (key: string, before?: number): Promise<InboxPage> => {
@@ -124,6 +178,14 @@ export const api = {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error ?? "Could not load inbox");
+    return data as InboxPage;
+  },
+  folderInbox: async (folder: string, before?: number): Promise<InboxPage> => {
+    const query = new URLSearchParams({ folder });
+    if (before !== undefined) query.set("before", String(before));
+    const res = await fetch(`/folder-interactions?${query}`, { cache: "no-store", headers: authHeaders() });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Could not load folder interactions");
     return data as InboxPage;
   },
   launch: (req: LaunchRequest) =>
@@ -148,11 +210,16 @@ export const api = {
   forgetConnector: (name: string) => post<Connector>(`/connectors/${name}/forget`),
   disableConnector: (name: string) =>
     post<Connector>(`/connectors/${name}/disable`),
-  fleetAsk: (question: string, history: { q: string; a: string }[]) =>
-    post<{ answer: string; sessions: string[] }>("/fleet/ask", {
-      question,
-      history,
-    }),
+  fleetAsk: (question: string) =>
+    post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
+      "/fleet/ask",
+      { question },
+    ),
+  oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
+  clearOracleChat: () =>
+    fetch("/oracle/chat", { method: "DELETE", headers: authHeaders() }).then(
+      (r) => r.json() as Promise<{ messages: OracleExchange[] }>,
+    ),
   promote: (key: string, opts: { branch?: string; base?: string }) =>
     post<{ worktree: string; branch: string }>(
       `/sessions/${key}/promote`,
@@ -177,7 +244,11 @@ export const api = {
       method: "PATCH",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ group }),
-    }).then((r) => r.json() as Promise<{ updated: boolean }>),
+    }).then(async (r) => {
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "Could not move session");
+      return data as { updated: boolean };
+    }),
   // Installable harnesses (suites of skills/hooks/sub-agents, e.g. uv-suite).
   harnesses: () =>
     get<{
@@ -265,7 +336,13 @@ export const api = {
     ),
   stop: (key: string) => post<{ stopped: boolean }>(`/sessions/${key}/stop`),
   resume: (key: string) =>
-    post<{ resumed: boolean }>(`/sessions/${key}/resume`),
+    post<{
+      resumed: boolean;
+      carried_conversation?: boolean;
+      // native: the harness resumed its own conversation; brief: fresh
+      // conversation seeded with reconstructed notes; none: fresh, no context.
+      context?: "native" | "brief" | "none";
+    }>(`/sessions/${key}/resume`),
   archive: (key: string) =>
     post<{ archived: boolean }>(`/sessions/${key}/archive`),
   remove: (key: string, force = false) =>
