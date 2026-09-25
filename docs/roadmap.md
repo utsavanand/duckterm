@@ -1,6 +1,6 @@
 # DuckTerm — Roadmap
 
-As of 2026-09-24, **v0.4.45** shipped. Ordered by when work can land, not by
+As of 2026-09-25, **v0.4.47** shipped. Ordered by when work can land, not by
 importance. Sources: TODO.md, RETRO.md, design docs, and the active peer
 sessions (`main-dev`, `ui-dev`, `main-qa`, `feature-remote-session`) via the
 session API.
@@ -12,7 +12,10 @@ Shipped since this doc was first written (2026-09-20 → 22):
   SQLite online backup, checkpoints/snapshots, Claude+Codex transcripts,
   credentials excluded, 0600 archive, GCS upload via the user's own gcloud;
   a failed upload retains the local archive. [backups.md](backups.md).
-- **Q&A survives stop/resume** — v0.4.36.
+- **Q&A survives stop/resume** — v0.4.36, independently tested: queued and
+  accepted requests survive credential rotation and late child exit events;
+  explicit deadlines continue running. Default persistent assignments arrived
+  in v0.4.38. Termination, archive, deletion, and scope loss remain final.
 - **Folder sidebar dropdown + per-folder interaction history** — v0.4.37
   (ui-dev, `4745d02`).
 - **Inbox persistence + task-end notices** — v0.4.38 (`5275197`):
@@ -26,17 +29,14 @@ Shipped since this doc was first written (2026-09-20 → 22):
 
 ## Now (this week)
 
-1. **Enable branch protection / rulesets on `main`** requiring pull requests
-   and passing Python, web, and browser checks. Verified 2026-09-20: no
-   rulesets, main unprotected. The release-script guard does not enforce
-   GitHub merge rules or prevent publishing outside the script.
-2. **Session Q&A survives stop/resume** — implemented for v0.4.36.
-   Stop revokes credentials while retaining queued/accepted questions and their
-   original ≤15-minute deadlines. Resume issues a fresh credential; terminate,
-   archive, deletion, and scope-loss moves still close exchanges. Regression
-   coverage includes late child exit events and expiry while stopped. No schema
-   change. Durable assignments remain the separate Stage 1 concept in
-   [pm-routines-design.md](pm-routines-design.md).
+1. **Fix the folder-broadcast scope regression (B3)** — reproduced again
+   against installed v0.4.47; original report and regression sent to main-dev.
+2. **Package the missing header icon/favicons (B4)** — independently found
+   in v0.4.47; packaging and installed-asset validation need correction.
+
+Branch protection and stop/resume are complete (see shipped items). PR #1 is
+closed. Independent bookmark, backup, and menu acceptance results, including
+open defects and test limits: [QA report](qa-2026-09-25.md).
 
 ## Oracle (owner-requested 2026-09-23, branch `oracle`)
 
@@ -48,7 +48,7 @@ sessions no longer show as waiting. Copilot nudges need its prompt layout
 implemented. Later rules (needs-you queue, stale state, file collisions,
 scheduled AGENTS.md suggestions) are listed with triggers in the design doc.
 
-Shipped 2026-09-23/24 (v0.4.40 → v0.4.45):
+Shipped 2026-09-23–25 (v0.4.40 → v0.4.47):
 
 - **Message folder UI + owner inbox labels** — v0.4.40 (`91c4ab2`).
 - **Manual backup backend** — v0.4.41 (`a1e662d`): owner-only
@@ -69,10 +69,16 @@ Shipped 2026-09-23/24 (v0.4.40 → v0.4.45):
   notifications, backup, harnesses (AGENTS.md deliberately separate). Also
   fixed connector probes blocking the dashboard and attach/replay stealing
   menu focus.
+- **Message bookmarks** — v0.4.46 (PRs #8/#10), refined in v0.4.47
+  (PR #11): persistent per-message pins, exact-message navigation/highlight,
+  saved-copy fallback, neutral icon-only strip with six-word hover previews
+  and accessible names. Independent installed-package acceptance passed
+  2026-09-25, including unsubmitted terminal-draft preservation.
 - **Branch protection on `main`** — enabled 2026-09-24 (ruleset 23921834):
   PRs required, `python`/`web`/`browser` checks required, deletion and
   force-push blocked, **no bypass actors** (owner decision — sessions open
   PRs like anyone else; verified a direct push is rejected, not warned).
+  Read back independently on 2026-09-25; PR #1 is already closed.
 - **Backup cloud infrastructure** — dedicated GCP project
   `rubberterm-20260922`, private `gs://rubberterm-20260922-backups`
   (us-west1, uniform access, public-access prevention), upload/read/delete
@@ -96,9 +102,17 @@ B2. **Connectors are configured but not usable.** Reported: "I have
     reach local claude-code/codex and not remote/other harnesses (a known
     gap main-dev raised)? Assign diagnosis to connectors-dev.
 
-B3. **Folder-rename scope bug in v0.4.39** — reproduced by main-qa in the
-    folder-broadcast/session-API area; findings sent to main-dev. Blocking:
-    more features are landing on top of this code.
+B3. **Folder-rename scope bug, still present in v0.4.47** — originally
+    reproduced in v0.4.39; independent regression failed again on 2026-09-25.
+    Moving a recipient away cancels and hides its broadcast; renaming the old
+    folder then wrongly makes that cancelled message readable in the new
+    scope. Findings sent to main-dev. **Blocking**, not completed.
+
+B4. **Packaged header icon/favicons missing in v0.4.47** — independent
+    screenshot review found the broken header image. The wheel excludes
+    dashboard-root favicon.svg/favicon.ico; their URLs return fallback HTML
+    with HTTP 200. Include the assets and validate installed image content,
+    not only HTTP status. Findings sent to ui-dev.
 
 ## Next (started, not yet mergeable)
 
@@ -131,10 +145,9 @@ B3. **Folder-rename scope bug in v0.4.39** — reproduced by main-qa in the
 
 ## Later (decided direction, not started)
 
-5. **Folder broadcast + inbox awareness — UI half outstanding.** Backend
-   shipped (v0.4.38/39, above). Remaining, with `ui-dev`:
-   - "Message folder" interface (textarea, who-will-receive list, result
-     summary) and the owner-label treatment in InboxView.
+5. **Urgent inbox messages and explicit interruption remain outstanding.**
+   The folder-broadcast backend shipped in v0.4.39; Message folder and owner
+   inbox labels shipped in v0.4.40. Remaining, with `ui-dev`:
    - **Urgent messages** (owner-requested 2026-09-21, not built): urgency
      changes standing and persistence — notices even while `waiting`,
      re-notices every turn until handled, directive wording with
@@ -168,6 +181,10 @@ B3. **Folder-rename scope bug in v0.4.39** — reproduced by main-qa in the
      **zero credential files** in the archive.
    - The restored DB was opened with the real `HistoryStore` server code
      and sessions came back identifiable by name.
+   Independent manual API/UI acceptance also passed on installed v0.4.47
+   (2026-09-25), using synthetic data and a real local archive; cloud upload
+   was not repeated. The earlier intermittent initial-load timeout did not
+   reproduce in this run; that does not establish its root cause.
    Remaining, both deliberate or small: nothing runs the backup
    automatically (owner chose a manual button over a schedule), and GCP
    disk snapshots for the remote workspace VM are still unprovisioned.
