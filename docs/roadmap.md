@@ -107,6 +107,32 @@ are set — bookmarks reached the architect session only after shipping. A
 one-line heads-up when a feature *starts* is sufficient; no design review is
 needed. Asked of `main-dev` and `ui-dev` 2026-09-24.
 
+## Now (owner-prioritized 2026-09-25)
+
+F6. **Show where comments were left in the Messages tab** (owner-requested
+    and prioritized 2026-09-25; sent to `ui-dev`). Owner: "when I'm on the
+    messages tab and I highlight and leave a comment, that text should be
+    highlighted to show a comment was left there. Otherwise it's difficult
+    to read where I left comments previously."
+    Small, because the data already exists and is merely never read back:
+    the `annotations` table already stores each note with its quoted text
+    verbatim (history.py:122) and `GET /sessions/:key/annotations` is
+    already routed (server.py:209); Messages.tsx only ever POSTs, so
+    annotations are write-only in the UI today. Build: fetch alongside the
+    transcript, refetch after submit, and mark quoted spans via a
+    post-render DOM pass (replies render through `dangerouslySetInnerHTML`,
+    so string-replacing the markup risks injecting inside a tag — the
+    component already does a post-render walk for mermaid, so the pattern
+    exists). Hover reveals the note; styling subtle and theme-aware.
+    Edge cases that must be handled explicitly: a stored quote may no
+    longer appear after a transcript rewrite (follow the bookmarks
+    saved-copy precedent, and count unlocated comments rather than
+    silently dropping them); short quotes match many times (highlight all,
+    or document the choice); a quote spanning inline markup crosses DOM
+    text nodes (degrade gracefully, never emit broken markup); quoted text
+    is user input and must be escaped. Every previously-left comment
+    lights up as soon as this ships.
+
 ## Bugs (user-reported 2026-09-23, fix before new features)
 
 B1. ~~Messages panel shows the previous session's transcript.~~ **Fixed**
