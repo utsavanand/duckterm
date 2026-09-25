@@ -12,6 +12,7 @@ from duckterm.core import oracle
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.claude_code import ClaudeCodeRuntime
 from duckterm.runtimes.codex import CodexRuntime
+from duckterm.runtimes.generic import GenericRuntime
 from duckterm.server import Server
 
 HOUR = 3_600_000
@@ -78,7 +79,9 @@ def test_should_nudge_gates(change, nudges) -> None:
 class FakeSupervisor:
     def __init__(self, screen: str) -> None:
         self.running = True
-        self.runtime = CodexRuntime()
+        # What reconcile() gives a pane re-adopted after a server restart; the
+        # session's real runtime is only on its DB row.
+        self.runtime = GenericRuntime("true")
         self.screen = screen
         self.observed_since_ms = 0
         self.last_owner_input_ms = 0

@@ -3150,7 +3150,11 @@ class Server:
                 turn_ended_ms=self.history.last_event_ts(key, events.STOP),
                 observed_since_ms=sup.observed_since_ms,
                 last_owner_input_ms=sup.last_owner_input_ms,
-                prompt_empty=sup.runtime.prompt_is_empty(screen),
+                # Not sup.runtime: sessions re-adopted after a restart run
+                # under GenericRuntime, which never reports an empty prompt.
+                prompt_empty=_build_runtime(
+                    row.get("runtime"), str(row.get("command") or "")
+                ).prompt_is_empty(screen),
                 mail=mail,
                 previous=self._oracle_nudges.get(key),
                 now_ms=now,
