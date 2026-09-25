@@ -31,7 +31,12 @@ def _post(port: int, path: str, payload: dict[str, object]) -> dict[str, object]
         },
         method="POST",
     )
-    return json.loads(urllib.request.urlopen(req, timeout=5).read())  # type: ignore[no-any-return]
+    try:
+        response = urllib.request.urlopen(req, timeout=5).read()
+    except urllib.error.HTTPError as exc:
+        exc.add_note(f"{path}: {exc.read().decode()}")
+        raise
+    return json.loads(response)  # type: ignore[no-any-return]
 
 
 def _get(port: int, path: str) -> dict[str, object]:
