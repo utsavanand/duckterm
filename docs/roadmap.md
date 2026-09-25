@@ -133,6 +133,38 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
     is user input and must be escaped. Every previously-left comment
     lights up as soon as this ships.
 
+## Designed 2026-09-25, awaiting owner review
+
+F7. **Plan hand-off** — plan with one agent/model, implement with another
+    (owner wants it soon; Conductor has it). Design:
+    [plan-handoff-design.md](plan-handoff-design.md). Decisions: same
+    worktree (not a fork — fork is for parallel attempts and creates
+    immediate divergence, wrong shape here); seed from the planner's last
+    assistant message, user-editable (not Claude's plan-mode file, which
+    would make the feature Claude-only); implementer recorded as a child of
+    the planner. Not a conversation transfer — transcripts are
+    harness-specific, so the implementer is *seeded*, not resumed. Needs a
+    UI preview before build. Open question for the owner: expose a model
+    field per harness at hand-off, or agent-choice only (recommended).
+
+F8. **DuckCloud** — product name for the `remote-session` work plus the
+    setup experience. Design: [duckcloud-design.md](duckcloud-design.md).
+    Bring-your-own-cloud; **GCP and AWS both at launch** (owner decision).
+    Sign-in rides the user's existing `gcloud`/`aws` CLI login — no OAuth
+    app, no stored cloud credentials — the same reasoning as connectors and
+    `backup --to gs://`. Setup replaces "have a project" with cloud /
+    account / size, sizes quoted with hourly price, every resource named
+    `duckterm-` so the user can clean up in their own console. Cost
+    estimate before provisioning and a running estimate in the dashboard;
+    **idle shutdown on by default**, with honest warnings that stopping a
+    VM terminates its processes and that disk still bills while stopped.
+    Does NOT reorder B2: `remote-session` already rewrote `connectors.py`
+    (689 lines), so the connector wizard should be designed against that
+    branch, making connectors and the merge one sequenced piece of work.
+    **The branch is the long pole and the main risk** — it carries remote
+    workspace, session migration, and the connector rewrite while five
+    sessions push to main daily.
+
 ## Bugs (user-reported 2026-09-23, fix before new features)
 
 B1. ~~Messages panel shows the previous session's transcript.~~ **Fixed**
