@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm.helpers.private_files import private_read, private_write
-from duckterm.persistence import backup
+from duckterm.persistence import backup, backup_sync
 
 
 class BackupJobs:
@@ -52,13 +52,15 @@ class BackupJobs:
             self.state["destination"] = previous
             raise
 
-    def start(self) -> dict[str, Any]:
+    def start(self, mode: str = "archive") -> dict[str, Any]:
         if self.task and not self.task.done():
             raise RuntimeError("A backup is already running")
         destination = self.state["destination"]
         if not destination:
             raise ValueError("Configure a local path or gs:// bucket prefix before backing up")
+        backup_sync.validate_mode(destination, mode)
         job = {
+            "mode": mode,
             "id": uuid.uuid4().hex,
             "status": "running",
             "destination": destination,
@@ -75,15 +77,21 @@ class BackupJobs:
         except (OSError, ValueError):
             self.state["job"] = previous
             raise
-        self.task = asyncio.create_task(self._run(job, destination))
+        self.task = asyncio.create_task(self._run(job, destination, mode))
         return self.snapshot()
 
-    async def _run(self, job: dict[str, Any], destination: str) -> None:
+    async def _run(self, job: dict[str, Any], destination: str, mode: str) -> None:
         try:
-            result = await asyncio.to_thread(backup.create, destination)
-            archive_path = (
-                result.rsplit("\nUploaded to ", 1)[0] if destination.startswith("gs://") else result
-            )
+            if mode == "sync":
+                synced = await asyncio.to_thread(backup_sync.create, destination)
+                result, archive_path = synced.result, synced.archive_path
+            else:
+                result = await asyncio.to_thread(backup.create, destination)
+                archive_path = (
+                    result.rsplit("\nUploaded to ", 1)[0]
+                    if destination.startswith("gs://")
+                    else result
+                )
             job.update(status="succeeded", result=result, archive_path=archive_path)
         except backup.BackupUploadError as exc:
             job.update(status="failed", error=str(exc), archive_path=exc.archive_path)

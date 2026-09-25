@@ -73,6 +73,7 @@ from duckterm.helpers import (
 )
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
+from duckterm.persistence import backup_sync
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
 from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.history import HistoryStore
@@ -2118,16 +2119,20 @@ class Server:
                 await _write_json(writer, 413, {"error": "request body too large"})
                 return
             req = json.loads(body or b"{}")
-            if not isinstance(req, dict) or set(req) - {"destination"}:
-                raise ValueError("Expected an object with optional destination")
+            allowed = {"destination", "mode"} if method == "POST" else {"destination"}
+            if not isinstance(req, dict) or set(req) - allowed:
+                raise ValueError("Expected an object with destination and optional POST mode")
             if method == "POST" and jobs.task and not jobs.task.done():
                 await _write_json(
                     writer, 409, {**jobs.snapshot(), "error": "A backup is already running"}
                 )
                 return
+            mode = req.get("mode", "archive")
+            if method == "POST":
+                backup_sync.validate_mode(req.get("destination", jobs.state["destination"]), mode)
             if "destination" in req or method == "PUT":
                 jobs.configure(req.get("destination"))
-            result = jobs.start() if method == "POST" else jobs.snapshot()
+            result = jobs.start(mode) if method == "POST" else jobs.snapshot()
             await _write_json(writer, 202 if method == "POST" else 200, result)
         except (ValueError, UnicodeError) as exc:
             await _write_json(writer, 400, {"error": str(exc)})

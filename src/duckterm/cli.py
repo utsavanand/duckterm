@@ -78,6 +78,9 @@ def build_parser() -> argparse.ArgumentParser:
         "backup", help="Archive the database, checkpoints, and agent transcripts"
     )
     backup.add_argument("--to", help="Local directory/archive.tar.gz or gs://BUCKET/prefix")
+    backup.add_argument(
+        "--sync", action="store_true", help="Sync changed files to GCS; retain a full local archive"
+    )
     sub.add_parser("dashboard", help="build (if needed) and open the dashboard in a browser")
     sub.add_parser("purge-test", help="delete all test/seed sessions and their data (test=1)")
     sub.add_parser("doctor", help="check deps, server, hooks, and trust; print what's missing")
@@ -474,10 +477,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "backup":
         import sqlite3
 
-        from duckterm.persistence import backup
+        from duckterm.persistence import backup, backup_sync
 
         try:
-            print(backup.create(args.to))
+            if args.sync:
+                backup_sync.validate_mode(args.to, "sync")
+                print(backup_sync.create(args.to).result)
+            else:
+                print(backup.create(args.to))
             return 0
         except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
             print(f"duckterm: {exc}", file=sys.stderr)

@@ -3,6 +3,15 @@
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-25 — Changed-file backups need filtered staging and restore checks
+**Found:** syncing raw agent directories bypasses archive exclusions, and size or
+mtime alone can miss a same-size transcript rewrite. A mutable remote tree also
+cannot promise historical recovery with an older database snapshot.
+**Rule:** stage the existing filtered archive, compare checksums, retain whole
+uniquely named SQLite copies and local archives, and publish completion last.
+Keep full archives as the default historical backup. Verify unchanged and changed
+uploads, excluded secrets, retained deleted paths, and a real cloud restore.
+
 ## 2026-09-24 — Bookmark shortcuts should stay compact
 **Broke:** bookmark excerpts filled the terminal strip instead of the owner's
 requested pin-only links; a colored emoji also ignored the neutral-color request.
