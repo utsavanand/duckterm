@@ -72,3 +72,23 @@ def test_spawn_capture_kill_roundtrip() -> None:
     finally:
         assert tmux.kill_session(target)
         assert not tmux.session_exists(target)
+
+
+@pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
+def test_private_server_survives_last_agent_exit(monkeypatch, tmp_path) -> None:
+    # Use our own socket so another live fixture cannot hide exit-empty races.
+    monkeypatch.setenv("DUCKTERM_TMUX_SOCKET", f"fork-exit-{tmp_path.name}")
+    try:
+        target = tmux.spawn("quick", "true", cwd=str(tmp_path))
+        deadline = time.monotonic() + 5
+        while tmux.session_exists(target) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not tmux.session_exists(target)
+        ok, before = tmux._tmux("display-message", "-p", "#{pid}")
+        assert ok and before.strip().isdigit()  # Server survived its last child.
+        second = tmux.spawn("next", "sleep 5", cwd=str(tmp_path))
+        assert tmux.session_exists(second)
+        ok, after = tmux._tmux("display-message", "-p", "#{pid}")
+        assert ok and after == before  # No shutdown/restart gap between agents.
+    finally:
+        tmux._tmux("kill-server")

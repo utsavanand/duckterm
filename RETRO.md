@@ -1,5 +1,16 @@
 # Retro — lessons from real breakage
 
+## 2026-09-25 — Last-agent exit raced the next tmux launch
+
+Linux fork-chain CI intermittently returned HTTP 400 because tmux reported
+`server exited unexpectedly`, reproduced after 30 passing repetitions. Its
+last short-lived agent could exit while the next launch connected. Configure
+`exit-empty off` on DuckTerm's private server before launching the child in
+the same tmux command queue. Preserve HTTP error bodies in fork tests: a
+passing retry is not diagnosis. Test that the server PID survives an empty
+interval and the next launch, and stress the real Linux fork chain.
+
+
 ## 2026-09-25 — Density is information structure, not just font size
 
 The first Compact/Standard/Relaxed preview only varied padding and type size, so the modes looked alike. The approved design changes one-line versus two-line rows, hover details, and persistent selected-session controls. Keep session names regular-weight in every mode, remember the choice, and test both geometry and access to hidden actions. Preserve the existing row-selection focus behavior: adding a focusable wrapper stole focus from the newly opened terminal, caught by the full browser suite.
