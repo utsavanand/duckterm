@@ -242,9 +242,9 @@ export function LaunchModal({
         </select>
       </Field>}
 
-      {native && target !== "local" && <Field label="Project source">
+      {native && <Field label="Project source">
         <select aria-label="Project source" style={inputStyle} value={projectKind} disabled={busy || transferBusy} onChange={e => { setProjectKind(e.target.value as "existing" | "copy" | "clone"); setPicked(null); setPrepared(null); setMode(null); }}>
-          <option value="existing">Existing remote folder</option><option value="copy">Copy local project</option><option value="clone">Clone Git repository</option>
+          <option value="existing">{target === "local" ? "Existing folder" : "Existing remote folder"}</option>{target !== "local" && <option value="copy">Copy local project</option>}<option value="clone">Clone Git repository</option>
         </select>
       </Field>}
       {projectKind !== "existing" && !prepared && <RemoteProject key={target + projectKind} target={target} kind={projectKind} command={command} onBusy={setTransferBusy} onPrepared={p => { setPrepared(p); setPicked({ path: p.destination, parent: null, is_git: false, entries: [] }); setMode("in-place"); }} />}

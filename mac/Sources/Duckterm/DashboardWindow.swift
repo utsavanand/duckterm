@@ -77,7 +77,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
               let target = body["target"] as? String,
               target == "local" || desktopHosts.contains(where: { $0.target == target }),
               let operation = body["operation"] as? String,
-              ["browse", "branches", "themes", "launch", "project-preview", "project-transfer", "project-clone", "project-launch", "project-status", "project-pause", "project-preflight", "project-continue"].contains(operation),
+              ["browse", "branches", "themes", "launch", "project-repositories", "project-preview", "project-transfer", "project-clone", "project-launch", "project-status", "project-pause", "project-preflight", "project-continue"].contains(operation),
               let params = body["params"] as? [String: Any],
               let encoded = try? JSONSerialization.data(withJSONObject: params), encoded.count <= 65536,
               let handler = onLaunchRequest else {

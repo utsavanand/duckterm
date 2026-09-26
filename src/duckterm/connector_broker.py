@@ -10,6 +10,7 @@ import json
 import os
 import signal
 import ssl
+import sys
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -190,6 +191,9 @@ class Broker:
                 writer.write(json.dumps({"connectors": self.statuses(workspace)}).encode() + b"\n")
                 await writer.drain()
                 return
+            github_projects = name == "github-projects"
+            if github_projects:
+                name = "github"
             entry = self.permitted(workspace, name)
             # Reserve without awaiting: simultaneous handshakes share this limit.
             if self.active >= MAX_CONNECTIONS:
@@ -208,6 +212,15 @@ class Broker:
                     provider_command(name, credential, bool(entry.get("write_access")))
                 )
                 del credential
+            if github_projects:
+                # The same GitHub grant controls repository reads and clones.
+                # Provider tokens remain in this broker-side worker only.
+                argv = [sys.executable, "-m", "duckterm.github_projects"]
+                env["DUCKTERM_GITHUB_IDENTITY"] = str(entry.get("identity") or "")
+                # The broker owns cleanup even when revocation kills the worker.
+                env["TMPDIR"] = resources.enter_context(
+                    tempfile.TemporaryDirectory(prefix="duckterm-github-request-")
+                )
             # Disable or rotation must win races while credentials are fetched.
             if self.permitted(workspace, name) != entry:
                 raise ValueError("Connector configuration changed")

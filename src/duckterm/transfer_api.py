@@ -95,6 +95,10 @@ async def dispatch(server: "Server", operation: str, req: dict[str, Any]) -> dic
         )
     if operation == "finish":
         return await asyncio.to_thread(transfers.finish, identifier)
+    if operation == "repositories":
+        from duckterm import github_projects
+
+        return await asyncio.to_thread(github_projects.list_repositories, int(req.get("page", 1)))
     if operation == "clone":
         return await asyncio.to_thread(
             transfers.clone,
@@ -102,6 +106,7 @@ async def dispatch(server: "Server", operation: str, req: dict[str, Any]) -> dic
             str(req["url"]),
             str(req.get("branch") or ""),
             str(req["destination"]),
+            str(req.get("github_repository") or ""),
         )
     if operation == "status":
         return await asyncio.to_thread(transfers.status, identifier)

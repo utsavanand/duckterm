@@ -732,8 +732,16 @@ def finish(identifier: str) -> dict[str, Any]:
             raise
 
 
-def clone(identifier: str, url: str, branch: str, destination: str) -> dict[str, Any]:
+def clone(
+    identifier: str, url: str, branch: str, destination: str, github_repository: str = ""
+) -> dict[str, Any]:
     check_url(url)
+    if github_repository:
+        from duckterm import github_projects
+
+        github_projects.repository_name(github_repository)
+        if url != f"https://github.com/{github_repository}.git":
+            raise ValueError("Selected GitHub repository does not match the clone URL")
     destination = str(Path(destination).expanduser().resolve())
     with locked(identifier) as directory:
         previous = read_state(directory)
@@ -742,6 +750,7 @@ def clone(identifier: str, url: str, branch: str, destination: str) -> dict[str,
                 previous.get("url") != url
                 or previous.get("destination") != str(Path(destination).expanduser().resolve())
                 or previous.get("branch") != branch
+                or previous.get("github_repository", "") != github_repository
             ):
                 raise ValueError("Operation belongs to another repository")
             if previous["stage"] in ("ready", "launching", "launched"):
@@ -764,6 +773,7 @@ def clone(identifier: str, url: str, branch: str, destination: str) -> dict[str,
             {
                 "id": identifier,
                 "stage": "cloning",
+                "github_repository": github_repository,
                 "url": url,
                 "branch": branch,
                 "destination": destination,
@@ -779,13 +789,16 @@ def clone(identifier: str, url: str, branch: str, destination: str) -> dict[str,
             "GIT_TERMINAL_PROMPT": "0",
             "GIT_SSH_COMMAND": "ssh -oBatchMode=yes -oStrictHostKeyChecking=yes",
         }
-        proc = subprocess.run(
-            [*args, "--", url, str(stage)], env=env, capture_output=True, timeout=180
-        )
-        if proc.returncode:
-            raise ValueError(
-                "Clone failed; check repository URL and the remote computer's Git authorization"
+        if github_repository:
+            github_projects.clone(github_repository, branch, stage)
+        else:
+            proc = subprocess.run(
+                [*args, "--", url, str(stage)], env=env, capture_output=True, timeout=180
             )
+            if proc.returncode:
+                raise ValueError(
+                    "Clone failed; check repository URL and this computer's Git authorization"
+                )
         # Apply the same unsupported-project checks; no repository hooks are run.
         compatibility = scan(stage, [])
         check_requirements(compatibility["requirements"], compatibility["linux_compatible"])
