@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiDelete, expandFolder, postEvent, seedSession } from "./helpers";
+import { apiDelete, apiPatch, apiPost, expandFolder, postEvent, seedSession } from "./helpers";
 
 // A session with a `group` renders under a collapsible folder header in the left
 // panel, and clicking the header collapses/expands it. (Drag-and-drop assignment
@@ -199,5 +199,57 @@ test("restart collapses parent and nested folders without losing sessions", asyn
   } finally {
     await apiDelete(`/sessions/${key}`);
     await apiDelete(`/folders/${encodeURIComponent(parent)}`);
+  }
+});
+
+// Empty folders have no session events/count change to refresh the sidebar.
+test("empty folders created and moved elsewhere appear without reloading", async ({ page }) => {
+  const root = `Empty-sync-${Date.now()}`;
+  const child = `${root}/Child`;
+  const source = `Empty-source-${Date.now()}`;
+  await apiPost("/folders", { name: root });
+  await apiPost("/folders", { name: source });
+  try {
+    await page.goto("/");
+    const rootPhone = page.getByRole("button", { name: `View interactions in ${root}`, exact: true });
+    await expect(rootPhone).toBeVisible();
+    await expandFolder(page, root);
+    await apiPost("/folders", { name: child });
+    const childPhone = page.getByRole("button", { name: `View interactions in ${child}`, exact: true });
+    await expect(childPhone).toBeVisible({ timeout: 8000 });
+    await expect(childPhone.locator("..").locator(".rd-group-count")).toHaveText("0");
+    expect((await apiPatch(`/folders/${encodeURIComponent(source)}`, { parent: root })).status).toBe(200);
+    const moved = page.getByRole("button", { name: `View interactions in ${root}/${source}`, exact: true });
+    await expect(moved).toBeVisible({ timeout: 8000 });
+    await expect(page.getByRole("button", { name: `View interactions in ${source}`, exact: true })).toHaveCount(0);
+    await expect(moved.locator("..").locator(".rd-group-count")).toHaveText("0");
+    await page.reload();
+    await expandFolder(page, root);
+    await expect(childPhone).toBeVisible();
+    await expect(moved).toBeVisible();
+  } finally {
+    await apiDelete(`/folders/${encodeURIComponent(root)}`);
+    await apiDelete(`/folders/${encodeURIComponent(source)}`);
+  }
+});
+
+test("folder remains visible after its last session is ungrouped", async ({ page }) => {
+  const folder = `Empty-after-move-${Date.now()}`;
+  const key = await seedSession(`empty-last-${Date.now()}`, { name: "Last session", group: folder });
+  try {
+    await page.goto("/");
+    await expandFolder(page, folder);
+    const row = page.locator(".rd-row", { has: page.getByText("Last session", { exact: true }) });
+    await row.hover();
+    await row.getByRole("button", { name: "Ungroup", exact: true }).click();
+    const header = page.getByRole("button", { name: `View interactions in ${folder}`, exact: true }).locator("..");
+    await expect(header).toBeVisible();
+    await expect(header.locator(".rd-group-count")).toHaveText("0");
+    await page.reload();
+    await expect(header).toBeVisible();
+    await expect(header.locator(".rd-group-count")).toHaveText("0");
+  } finally {
+    await apiDelete(`/sessions/${key}`);
+    await apiDelete(`/folders/${encodeURIComponent(folder)}`);
   }
 });
