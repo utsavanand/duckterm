@@ -3,8 +3,11 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, TowerInsights } from "./api";
 import { ControlTower } from "./ControlTower";
 import { TowerAgent } from "./tower";
-vi.mock("./api", () => ({ api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn() } }));
-beforeEach(() => { vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] }); });
+vi.mock("./api", () => ({ api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn() } }));
+beforeEach(() => {
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
+  vi.mocked(api.relay).mockResolvedValue({ notes: [{ id: "n1", session_key: "qa", name: "qa", folder: "Nourish", runtime: "claude-code", kind: "question", status: "open", created_at: NOW - 4 * 86_400_000, question: "Deploy now?" }], rules: [], open: 1 });
+});
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 const NOW = 10_000_000_000;
@@ -32,7 +35,7 @@ it("shows fleet tiles with the cache share and a missing backup as a warning", a
   expect(await screen.findByText("1k")).toBeVisible();
   expect(screen.getByText(/95% read from cache/)).toBeVisible();
   expect(screen.getByText(/Destination set \(Google Cloud Storage\), no completed backup/)).toBeVisible();
-  expect(screen.getByText("Oldest: qa (Nourish), waiting 4 days")).toBeVisible();
+  expect(await screen.findByText("Oldest: qa (Nourish), 4 days ago")).toBeVisible();
 });
 
 it("shows what an agent is working on when hovered, and sends a pinned message to its inbox", async () => {

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, TowerInsights } from "./api";
 import { Duck, poseFor } from "./Duck";
 import { OracleChat } from "./OracleChat";
+import { useRelay } from "./relay";
 import {
   TowerAgent,
   ago,
@@ -80,9 +81,9 @@ export function ControlTower({
 
   const active = pinned ?? hover;
   const activeAgent = active ? agents.find((a) => a.key === active.key) : undefined;
-  const waiting = agents
-    .filter((a) => a.shownState === "waiting")
-    .sort((a, b) => a.updatedAt - b.updatedAt);
+  const relay = useRelay();
+  // Oldest first: the longest wait is the most urgent.
+  const needs = relay.notes.filter((n) => n.status === "open").sort((a, b) => a.created_at - b.created_at);
   const count = (s: string) => agents.filter((a) => a.shownState === s).length;
   const live = count("busy") + count("waiting") + count("idle");
   const resting = agents.length - live;
@@ -112,10 +113,10 @@ export function ControlTower({
           <br />
           across {teamList.length} team{teamList.length === 1 ? "" : "s"}
         </Tile>
-        <Tile label="Needs you" value={String(waiting.length)} warn={waiting.length > 0}>
-          {waiting.length
-            ? `Oldest: ${waiting[0].label} (${teamOf(waiting[0])}), waiting ${ago(now - waiting[0].updatedAt)}`
-            : "Nothing is waiting on you"}
+        <Tile label="Needs you" value={String(needs.length)} warn={needs.length > 0}>
+          {needs.length
+            ? `Oldest: ${needs[0].name}${needs[0].folder ? ` (${needs[0].folder.split("/")[0]})` : ""}, ${ago(now - needs[0].created_at)} ago`
+            : "Nothing needs you"}
         </Tile>
         <TokensTile insights={insights} />
         <Tile label="Agent mail · 24h" value={insights ? String(insights.mail.sent) : "…"}>
@@ -138,28 +139,20 @@ export function ControlTower({
         ))}
       </section>
 
-      {waiting.length > 0 && (
+      {needs.length > 0 && (
         <section className="rd-tower-needs" aria-label="Needs you">
           <h2>
-            Needs you <span>{waiting.length} waiting, longest first</span>
+            Needs you <span>{needs.length} open, oldest first. Answer in the chat.</span>
           </h2>
           <div className="rd-tower-needs-list">
-            {waiting.map((a) => (
-              <button
-                key={a.key}
-                className="rd-tower-need"
-                onClick={(e) => {
-                  const duck = document.querySelector<HTMLElement>(`[data-duck="${CSS.escape(a.key)}"]`);
-                  duck?.scrollIntoView({ block: "center", behavior: "smooth" });
-                  setPinned({ key: a.key, el: duck ?? e.currentTarget });
-                }}
-              >
+            {needs.map((n) => (
+              <button key={n.id} className="rd-tower-need" onClick={() => showNote(n.id)}>
                 <Duck pose="waiting" size={28} />
                 <span className="rd-tower-need-who">
-                  <b>{a.label}</b> · {teamOf(a)}
-                  <small>{a.progress?.summary ? firstSentence(a.progress.summary) : a.intention || "No summary yet"}</small>
+                  <b>{n.name}</b>{n.folder ? ` · ${n.folder.split("/")[0]}` : ""}
+                  <small>{n.kind === "approval" ? `Wants to run ${n.detail || n.tool}` : n.question}</small>
                 </span>
-                <span className="rd-tower-need-age">{ago(now - a.updatedAt)}</span>
+                <span className="rd-tower-need-age">{ago(now - n.created_at)}</span>
               </button>
             ))}
           </div>
@@ -199,7 +192,7 @@ export function ControlTower({
       </div>
 
       <aside className="rd-tower-oracle" aria-label="Ask Oracle">
-        <OracleChat />
+        <OracleChat relay={relay} onRelayChange={relay.refresh} />
       </aside>
 
       {active && activeAgent && (
@@ -473,6 +466,18 @@ function AgentCard({
       )}
     </div>
   );
+}
+
+// Scroll the chat's own list to a note. scrollIntoView would also scroll the
+// tower around it (the bug that hid the header).
+function showNote(id: string) {
+  const note = document.querySelector<HTMLElement>(`[data-note="${CSS.escape(id)}"]`);
+  const log = note?.closest<HTMLElement>(".rd-oracle-log");
+  if (!note || !log) return;
+  log.scrollTop = note.offsetTop - log.offsetTop - 16;
+  note.classList.add("flash");
+  setTimeout(() => note.classList.remove("flash"), 1200);
+  note.querySelector<HTMLElement>("textarea, button")?.focus({ preventScroll: true });
 }
 
 function firstSentence(text: string): string {

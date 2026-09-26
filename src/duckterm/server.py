@@ -58,6 +58,14 @@ from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
+from duckterm.core.relay import (
+    RULE_PROMPT,
+    Relay,
+    choice_from,
+    parse_rule_reply,
+    question_from,
+    validate_rule,
+)
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
 from duckterm.core.tokens import TokenLedger
 from duckterm.git import gitdetect
@@ -82,7 +90,7 @@ from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
 from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
-from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime
+from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
 from duckterm.transport.httpio import (
     KEEPALIVE_SECONDS,
     MAX_REQUEST_BYTES,
@@ -225,6 +233,14 @@ _ROUTES: list[Route] = [
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
     Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
     Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
+    Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
+    Route("GET", "/relay/count", lambda s, r, w, h, b, seg: s._relay_count(w)),
+    Route("POST", "/relay/rules/propose", lambda s, r, w, h, b, seg: s._relay_propose(w, b)),
+    Route("POST", "/relay/rules", lambda s, r, w, h, b, seg: s._relay_create_rule(w, b)),
+    Route("DELETE", "", lambda s, r, w, h, b, seg: s._relay_delete_rule(w, seg),
+          prefix="/relay/rules/"),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._relay_answer(w, seg, b),
+          **_mid("/relay/", "/answer")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._session_message(w, seg, b),
           **_mid("/sessions/", "/message")),
     Route("DELETE", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w, clear=True)),
@@ -323,6 +339,7 @@ class Server:
         )
         # The ledger isn't thread-safe; one scan at a time.
         self._tokens_lock = asyncio.Lock()
+        self.relay = Relay(paths.home() / "relay.json")
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -366,6 +383,7 @@ class Server:
                 # session has since moved on is abandoned — the hook stopped
                 # polling. Clear it so it doesn't linger in "Needs human".
                 self.approvals.drop_abandoned_blocking(str(key), ts, _BLOCKING_POLL_MS)
+        self._relay_observe(event)
 
     def _enrich_git(self, event: dict[str, Any]) -> None:
         """If an event has a cwd but no repo/branch yet (a watched session),
@@ -2127,6 +2145,300 @@ class Server:
             },
         )
 
+    # ── Oracle Relay: notes for what needs the owner (core/relay.py) ──
+
+    _RELAY_RUNTIMES = {"claude-code", "codex", "copilot"}
+
+    def _relay_session_fields(self, key: str) -> dict[str, Any]:
+        row = self.history.session(key) or {}
+        return {
+            "session_key": key,
+            "name": row.get("name") or row.get("source_app") or key[:8],
+            "folder": row.get("grp") or "",
+            "runtime": row.get("runtime") or "",
+        }
+
+    def _relay_observe(self, event: dict[str, Any]) -> None:
+        key = str(event.get("session_key") or event.get("session_id") or "")
+        et = event.get("event_type")
+        if not key or event.get("reconciled"):
+            return
+        now = int(event.get("_ts") or time.time() * 1000)
+        if et == events.PERMISSION_REQUEST and event.get("tool_name") == "AskUserQuestion":
+            choice = choice_from(event.get("tool_input") or {})
+            open_choice = any(
+                n["session_key"] == key and n["kind"] == "choice" for n in self.relay.open_notes()
+            )
+            if choice and not open_choice:
+                question, options = choice
+                self.relay.add(
+                    {
+                        **self._relay_session_fields(key),
+                        "kind": "choice",
+                        "created_at": now,
+                        "question": question,
+                        "options": options,
+                    }
+                )
+        elif et in (events.PRE_TOOL_USE, events.POST_TOOL_USE, events.STOP, events.SESSION_END):
+            self.relay.close_for_session(key, {"choice"}, "handled", now)
+        if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END):
+            self.relay.close_for_session(key, {"question", "choice"}, "handled", now)
+        if et == events.STOP:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                loop.create_task(self._relay_detect_question(key, now))
+        self._relay_sync_approvals()
+
+    def _relay_sync_approvals(self) -> None:
+        """Keep approval notes in step with the approval registry, and let
+        approval rules answer blocking requests."""
+        pending = [a for a in self.approvals.pending() if a.tool_name != "AskUserQuestion"]
+        pending_ids = {a.id for a in pending}
+        tracked = {n.get("approval_id") for n in self.relay.notes if n["kind"] == "approval"}
+        now = int(time.time() * 1000)
+        for n in self.relay.open_notes():
+            if n["kind"] == "approval" and n.get("approval_id") not in pending_ids:
+                self.relay.close(n, "handled", closed_at=now)
+        for a in pending:
+            if a.id in tracked:
+                continue
+            fields = self._relay_session_fields(a.session_key)
+            note = self.relay.add(
+                {
+                    **fields,
+                    "kind": "approval",
+                    "created_at": a.created_at or now,
+                    "approval_id": a.id,
+                    "tool": a.tool_name,
+                    "detail": a.detail,
+                    "blocking": a.blocking,
+                }
+            )
+            rule = (
+                self.relay.approval_rule_for(a.tool_name, a.detail, fields["folder"])
+                if a.blocking
+                else None
+            )
+            if rule and self.approvals.set_decision(a.id, rule["action"]):
+                self.relay.close(
+                    note, "answered", answer=rule["action"], answered_by=rule["id"], closed_at=now
+                )
+
+    async def _relay_detect_question(self, key: str, at: int) -> None:
+        row = self.history.session(key)
+        if row is None or (row.get("runtime") or "") not in self._RELAY_RUNTIMES:
+            return
+        messages = await asyncio.to_thread(self._session_messages, key)
+        last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
+        if last is None:
+            return
+        blocks = last.get("blocks")
+        if not isinstance(blocks, list):
+            return
+        text = "\n\n".join(
+            str(b.get("text") or "")
+            for b in blocks
+            if isinstance(b, dict) and b.get("type") == "text"
+        )
+        question = question_from(text)
+        if not question:
+            return
+        if any(
+            n["session_key"] == key and n["kind"] == "question" for n in self.relay.open_notes()
+        ):
+            return
+        note = self.relay.add(
+            {
+                **self._relay_session_fields(key),
+                "kind": "question",
+                "created_at": at,
+                "question": question,
+            }
+        )
+        rule = self.relay.answer_rule_for(question)
+        if rule is None:
+            return
+        self.relay.update(note, suggestion={"rule_id": rule["id"], "reply": rule["reply"]})
+        if rule.get("mode") == "live":
+            await self._relay_deliver_question(note, rule["reply"], answered_by=rule["id"])
+
+    async def _relay_deliver_question(
+        self, note: dict[str, Any], text: str, *, answered_by: str
+    ) -> dict[str, Any]:
+        """Type the answer into the session's prompt when Oracle's paste checks
+        allow it; otherwise put it in the session's inbox for a nudge."""
+        key = note["session_key"]
+        now = int(time.time() * 1000)
+        refusal = await self._typing_refusal(key)
+        if refusal is None:
+            sup = self.orchestrator.get(key)
+            assert sup is not None
+            sent = await asyncio.to_thread(
+                sup.write_bytes, b"\x1b[200~" + text.encode() + b"\x1b[201~\r"
+            )
+            if sent:
+                self.relay.close(
+                    note,
+                    "answered",
+                    answer=text,
+                    answered_by=answered_by,
+                    route="prompt",
+                    closed_at=now,
+                )
+                return note
+        self.history.session_api.owner_message(key, text)  # raises APIError if no inbox
+        self.relay.close(
+            note,
+            "answered",
+            answer=text,
+            answered_by=answered_by,
+            route="inbox",
+            closed_at=now,
+            route_reason=refusal,
+        )
+        return note
+
+    async def _relay_list(self, writer: asyncio.StreamWriter) -> None:
+        self._relay_sync_approvals()
+        await _write_json(
+            writer,
+            200,
+            {
+                "notes": self.relay.notes[-200:],
+                "rules": self.relay.rules,
+                "open": len(self.relay.open_notes()),
+            },
+        )
+
+    async def _relay_count(self, writer: asyncio.StreamWriter) -> None:
+        self._relay_sync_approvals()
+        await _write_json(writer, 200, {"open": len(self.relay.open_notes())})
+
+    async def _relay_answer(self, writer: asyncio.StreamWriter, note_id: str, body: bytes) -> None:
+        try:
+            req = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        note = self.relay.get(note_id)
+        if note is None:
+            await _write_json(writer, 404, {"error": "no such note"})
+            return
+        if note["status"] != "open":
+            await _write_json(writer, 409, {"error": "This was already handled.", "note": note})
+            return
+        now = int(time.time() * 1000)
+        if note["kind"] == "approval":
+            decision = req.get("answer")
+            if decision not in ("approve", "deny"):
+                await _write_json(writer, 400, {"error": "answer must be approve or deny"})
+                return
+            if not self.approvals.set_decision(str(note.get("approval_id")), decision):
+                self.relay.close(note, "handled", closed_at=now)
+                await _write_json(
+                    writer, 409, {"error": "The request is gone; the agent moved on.", "note": note}
+                )
+                return
+            self.relay.close(
+                note,
+                "answered",
+                answer=decision,
+                answered_by="owner",
+                closed_at=now,
+                route="approval" if note.get("blocking") else "keystroke",
+            )
+        elif note["kind"] == "choice":
+            index = req.get("answer")
+            options = note.get("options") or []
+            if not isinstance(index, int) or not 0 <= index < len(options) or index > 8:
+                await _write_json(writer, 400, {"error": "answer must be an option number"})
+                return
+            sup = self.orchestrator.get(note["session_key"])
+            screen = await asyncio.to_thread(sup.visible_screen) if sup and sup.running else ""
+            if f"{index + 1}. {options[index]}" not in plain_screen(screen):
+                self.relay.close(note, "handled", closed_at=now)
+                await _write_json(
+                    writer, 409, {"error": "Its menu isn't on screen anymore.", "note": note}
+                )
+                return
+            assert sup is not None
+            await asyncio.to_thread(sup.write_bytes, str(index + 1).encode())
+            self.relay.close(
+                note,
+                "answered",
+                answer=options[index],
+                answered_by="owner",
+                route="keystroke",
+                closed_at=now,
+            )
+        else:
+            text = str(req.get("answer") or "").strip()
+            if not text or len(text.encode()) > 16384:
+                await _write_json(writer, 400, {"error": "Write an answer first."})
+                return
+            suggestion = note.get("suggestion")
+            try:
+                await self._relay_deliver_question(note, text, answered_by="owner")
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            if suggestion:
+                self.relay.record_send(suggestion["rule_id"], unchanged=text == suggestion["reply"])
+        await _write_json(writer, 200, {"note": note})
+
+    async def _relay_propose(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            text = str(json.loads(body or b"{}").get("text") or "").strip()
+        except (json.JSONDecodeError, AttributeError):
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not text:
+            await _write_json(writer, 400, {"error": "Describe the rule first."})
+            return
+        folders = (
+            ", ".join(sorted({f.split("/")[0] for f in self.history.folders() if f})) or "none"
+        )
+        prompt = RULE_PROMPT.replace("{folders}", folders).replace("{text}", text)
+        result = await asyncio.to_thread(summarize, prompt)
+        raw = parse_rule_reply(result.text)
+        if raw is None:
+            await _write_json(
+                writer,
+                422,
+                {
+                    "error": "That doesn't read as a rule I can apply. Try \"always "
+                    'approve …" or "when an agent asks …, reply …".'
+                },
+            )
+            return
+        try:
+            rule = validate_rule(raw)
+        except ValueError as exc:
+            await _write_json(writer, 422, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, {"rule": rule})
+
+    async def _relay_create_rule(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            rule = validate_rule(json.loads(body or b"{}").get("rule"))
+        except (json.JSONDecodeError, AttributeError):
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        except ValueError as exc:
+            await _write_json(writer, 422, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, {"rule": self.relay.add_rule(rule, int(time.time() * 1000))})
+
+    async def _relay_delete_rule(self, writer: asyncio.StreamWriter, rule_id: str) -> None:
+        if not self.relay.delete_rule(rule_id):
+            await _write_json(writer, 404, {"error": f"No rule {rule_id}."})
+            return
+        await _write_json(writer, 200, {"deleted": rule_id})
+
     async def _control_tower(self, writer: asyncio.StreamWriter) -> None:
         """Fleet insights for the control tower page. Session states and
         folders come from the dashboard's own event stream, not from here."""
@@ -2852,6 +3164,7 @@ class Server:
             int(time.time() * 1000),
             blocking=True,
         )
+        self._relay_sync_approvals()
         await _write_json(writer, 200, {"id": approval.id})
 
     async def _approval_decision(self, writer: asyncio.StreamWriter, approval_id: str) -> None:

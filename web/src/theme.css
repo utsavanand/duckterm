@@ -2758,6 +2758,33 @@ select {
 .rd-tower-need-who small { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rd-tower-need-age { font-size: 12px; color: var(--amber-text); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
+/* Oracle Relay: notes for what needs the owner, inside the Oracle chat.
+   Open notes are amber; closed ones go neutral but stay as a record. */
+.rd-relay-count { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: var(--amber-bg); border: 1px solid var(--amber-border); color: var(--amber-text); }
+.rd-relay-note { display: grid; gap: 7px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); font-size: 13.5px; }
+.rd-relay-note.open { border-color: var(--amber-border); background: var(--amber-bg); }
+.rd-relay-note.flash { box-shadow: 0 0 0 3px color-mix(in srgb, var(--wait) 40%, transparent); }
+.rd-relay-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 12.5px; }
+.rd-relay-head b { font-size: 13.5px; }
+.rd-relay-kind { font-size: 11px; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.rd-relay-note.open .rd-relay-kind { color: var(--amber-text); }
+.rd-relay-kind.rule { color: var(--busy); }
+.rd-relay-meta { font-size: 12px; color: var(--muted); }
+.rd-relay-quote { margin: 0; padding: 6px 10px; border-left: 2px solid var(--border-strong); border-radius: 0 6px 6px 0; background: var(--card); white-space: pre-wrap; overflow-wrap: anywhere; }
+.rd-relay-note code, .rd-relay-fields code { font-size: 12px; overflow-wrap: anywhere; }
+.rd-relay-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.rd-relay-reply { display: flex; gap: 6px; align-items: flex-end; }
+.rd-relay-reply textarea { flex: 1; resize: vertical; min-height: 34px; max-height: 160px; padding: 6px 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--card); color: var(--text); font: inherit; font-size: 13px; }
+.rd-relay-reply textarea:focus { outline: none; border-color: var(--brand-green); }
+.rd-relay-status { margin: 0 0 14px; font-size: 12.5px; color: var(--brand-green); }
+.rd-relay-note .rd-relay-status { margin: 0; }
+.rd-relay-rule { display: grid; gap: 6px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--busy) 30%, var(--border)); border-radius: 10px; background: color-mix(in srgb, var(--busy) 6%, var(--card)); font-size: 13px; }
+.rd-relay-fields { display: grid; grid-template-columns: max-content 1fr; gap: 3px 10px; margin: 0; font-size: 12.5px; }
+.rd-relay-fields dt { color: var(--muted); }
+.rd-relay-fields dd { margin: 0; }
+.rd-relay-info { margin-bottom: 14px; font-size: 13.5px; }
+.rd-relay-info p { margin: 0 0 8px; }
+
 /* ── Typed AGENTS.md rules editor ── */
 .rd-rules-list {
   max-height: 320px;

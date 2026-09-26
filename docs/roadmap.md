@@ -48,6 +48,9 @@ agents as ducks by team, per-session messages, a full-height Ask Oracle chat).
 Unreleased on main: Copilot nudges, and the settle and peer waits cut from 10
 to 5 minutes. Copilot sessions get an inbox only by hand until item 9 lands.
 
+Oracle Relay (needs-you notes in the chat, answers relayed to the session, rules
+made in plain words) is built on branch `oracle-relay`.
+
 Next: Oracle on WhatsApp (design PR #25, waiting on five owner answers). Later
 rules (stale state, file collisions, scheduled AGENTS.md suggestions) are
 listed with triggers in the design doc.

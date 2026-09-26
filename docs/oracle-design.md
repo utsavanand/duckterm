@@ -84,6 +84,38 @@ Claude sessions showed as waiting, inflated the tab-title count, and fired
 "waiting on an answer" desktop notifications. The hook now forwards
 `notification_type` and a trimmed `message`, and `idle_prompt` derives `idle`.
 
+## Oracle Relay
+
+Design and prototype: https://claude.ai/artifact/DaaaPcnKrxkm6JhoXHosxu.
+Code: `core/relay.py`, `/relay` routes in `server.py`, `RelayNotes.tsx`.
+
+What needs the owner becomes a note in the Ask Oracle chat. Notes live in
+`relay.json` (0600, last 500) beside the DB and stay after they're answered.
+
+| Note | Source | Answer route |
+| --- | --- | --- |
+| Approval | The approval registry, synced on every event and on `/approvals` | `ApprovalRegistry.set_decision`, the dashboard's path |
+| Choice | Claude's `AskUserQuestion`, which arrives as a `PermissionRequest` with its options | The option's number key, only if "N. Label" is still on screen (a digit selects immediately, checked on Claude Code 2.1.283) |
+| Question | At each `Stop`, the last paragraph of the last assistant message ends with "?" | Typed into the prompt under the paste checks; otherwise an owner inbox message, which Oracle nudges |
+
+Notes close by themselves when the agent moves on: choice notes on the next
+tool event or turn end, question notes when the owner types a prompt.
+
+Rules are made in the chat ("always …", "when an agent asks …"): one model call
+proposes a structured rule, and nothing exists until the owner clicks Create.
+"stop R2" deletes one, "rules" lists them.
+
+- Approval rules match tool, command regex, and folder exactly, and only
+  answer blocking approvals. They never match a command that chains, pipes,
+  substitutes, or redirects, or an irreversible one (force push, `rm -rf`,
+  releases, `git reset --hard`).
+- Answer rules match when all their keywords appear in the question and only
+  send the owner's fixed reply. They pre-fill the reply until the owner has
+  sent it unchanged 10 times in a row; an edit resets the count.
+
+The control tower's Needs you tile and list count open notes, and the Oracle
+button shows the same count.
+
 ## Stale "waiting" badges
 
 Once a minute, before nudging, Oracle clears "waiting" on sessions that are
