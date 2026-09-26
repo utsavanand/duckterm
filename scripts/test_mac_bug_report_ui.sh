@@ -10,6 +10,8 @@ cat > "$REPORT_UI_TEST_DIR/ReportUITests.app/Contents/Info.plist" <<'PLIST'
 PLIST
 swiftc -framework AppKit -framework WebKit \
   mac/Sources/Duckterm/BugReportData.swift mac/Sources/Duckterm/BugReport.swift \
+  mac/Sources/Duckterm/AppIdentity.swift mac/Sources/Duckterm/RemoteHost.swift \
+  mac/Sources/Duckterm/ArtifactDownloads.swift \
   mac/Sources/Duckterm/DashboardWindow.swift mac/Tests/BugReportUITests.swift \
   -o "$REPORT_UI_TEST_DIR/ReportUITests.app/Contents/MacOS/report-ui-tests"
 "$REPORT_UI_TEST_DIR/ReportUITests.app/Contents/MacOS/report-ui-tests"

@@ -119,16 +119,15 @@ class TestToken:
         assert a != b  # 64 bits of entropy — collisions don't happen
         assert security.valid_session_key(a)  # its own output passes the validator
 
-    def test_secret_write_replaces_symlink_without_overwriting_target(self, tmp_path) -> None:
+    def test_secret_write_rejects_symlink_without_overwriting_target(self, tmp_path) -> None:
         target = tmp_path / "original"
         target.write_text("untouched")
         secret = tmp_path / "secret"
         secret.symlink_to(target)
-        security.write_private_text(secret, "new credential")
+        with pytest.raises(ValueError, match="symbolic link"):
+            security.write_private_text(secret, "new credential")
         assert target.read_text() == "untouched"
-        assert not secret.is_symlink()
-        assert secret.read_text() == "new credential"
-        assert stat.S_IMODE(secret.stat().st_mode) == 0o600
+        assert secret.is_symlink()
 
 
 @pytest.mark.parametrize(

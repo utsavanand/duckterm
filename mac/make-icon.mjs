@@ -17,7 +17,16 @@ import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const svg = readFileSync(join(here, "../web/public/favicon.svg"), "utf8");
+const testBuild = process.argv.includes("--test");
+let svg = readFileSync(join(here, "../web/public/favicon.svg"), "utf8");
+
+if (testBuild) {
+  // A purple duck plus a high-contrast badge distinguishes Test in the Dock.
+  svg = svg.replaceAll("#5EE38B", "#D8B4FE").replaceAll("#1FA34C", "#8B5CF6")
+    .replaceAll("#0E7A38", "#6D28D9")
+    .replace("</svg>", '<rect x="6" y="46" width="42" height="15" rx="5" fill="#F5F3FF"/><text x="27" y="57" text-anchor="middle" fill="#5B21B6" font-family="Arial,sans-serif" font-weight="900" font-size="11">TEST</text></svg>');
+}
+const outputName = testBuild ? "AppIconTest.icns" : "AppIcon.icns";
 
 // iconutil expects exactly these names/sizes.
 const sizes = [
@@ -58,7 +67,7 @@ execFileSync("iconutil", [
   "icns",
   iconset,
   "-o",
-  join(here, "Resources/AppIcon.icns"),
+  join(here, "Resources", outputName),
 ]);
 rmSync(work, { recursive: true, force: true });
-console.log("wrote mac/Resources/AppIcon.icns from web/public/favicon.svg");
+console.log(`wrote mac/Resources/${outputName} from web/public/favicon.svg`);

@@ -49,6 +49,33 @@ Oracle used to consume workspace width. A long active input line was permanently
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-26 — Initial terminal activation must respect open menus
+**Broke:** New Session intermittently vanished while being clicked, even without
+concurrent native UI probes.
+**Cause:** late session discovery activated the default terminal through an
+unconditional focus call, bypassing the guarded replay path.
+**Rule:** only explicit session-row or view-tab navigation may override another
+control's focus. Delay initial session discovery in a browser regression and
+verify an already-open menu remains focused and usable.
+
+## 2026-09-26 — Move must preserve the name and open the exact destination session
+**Broke:** full native Move acceptance showed the destination folder name instead
+of the source session name. Opening the remote dashboard also lacked the moved
+session's identity, so it could select another session.
+**Cause:** transfer launch did not persist the display name through history's
+metadata API, and host switching carried only launch drafts.
+**Rule:** persist the name and carry the exact destination key through the native
+bridge. Verify the selected row with multiple sessions and the durable source
+link through the actual desktop flow, not only transfer API tests.
+
+## 2026-09-26 — Artifact downloads and remote navigation share one delegate policy
+**Found:** integrating artifact downloads introduced a second navigation-policy
+callback alongside the remote dashboard's origin restriction.
+**Rule:** combine download and navigation decisions in one callback. Only the
+current dashboard's main frame may download a blob, and changing computers must
+reset navigation-load state so a failed new connection can retry. Compile the
+native app and rerun artifact, report UI, and transfer checks after integration.
+
 ## 2026-09-26 — "Waiting" badges stayed wrong for days after the idle fix
 **Broke:** 6 sessions showed "waiting" and filled the control tower's Needs
 you list; 5 weren't waiting on anything.
@@ -111,6 +138,14 @@ never saw what a restarted server holds.
 **Rule:** per-harness behavior for a session resolves from its DB row's
 runtime, not the supervisor's. Test fakes should mirror the adopted state,
 not the freshly launched one.
+
+## 2026-09-25 — Remote-session integration must preserve newer native and launch behavior
+**Broke:** both branches added the same navigation delegate callback; newer launch
+properties also left the feature's tests stale, and standalone native tests lacked
+remote-host dependencies.
+**Rule:** combine callbacks, preserve folder-assignment and launch-selection behavior,
+keep the stable installed bundle IDs, and run both full application and native UI
+checks after integrating main. Test builds must retain their isolated identity.
 
 ## 2026-09-25 — Restart should not expand every folder
 **Broke:** every dashboard mount initialized folders as expanded, so restarting
@@ -322,6 +357,32 @@ unbounded read; an attachment could grow or be replaced after selection.
 **Rule:** open without following symlinks, verify the opened file, bound the read,
 and retain the selected bytes for export. Test size/count limits, opt-outs,
 duplicate names, and private output permissions before wiring up delivery.
+
+## 2026-09-21 — Codex resume defaulted to the source computer's directory
+**Broke:** a transferred Codex conversation prompted to use its old Mac directory
+on Linux, with that unavailable directory selected by default.
+**Cause:** setting the child process cwd does not override Codex's recorded resume
+directory; the launch command omitted its explicit directory option.
+**Rule:** pass the reviewed destination through Codex's `--cd` option and verify
+cross-platform resume against the actual supported provider version.
+
+## 2026-09-21 — Test app packaging assumed an editable installation
+**Broke:** the committed candidate imported correctly from source, but a fresh
+Test build failed while calculating its isolated port.
+**Cause:** the build imported the installed Duckterm package instead of reading
+the helper from its own checkout; the development venv hid that dependency.
+**Rule:** validate Test packaging in a fresh environment and load build metadata
+from checkout files without requiring an installed application package.
+
+## 2026-09-21 — Remote transfer and connection lifecycle need durable ownership
+**Broke:** concurrent connector handshakes exceeded the connection limit; forgetting
+an inactive computer left its tunnel and picker entry alive. Project migration
+had only a design and could not preserve worktree state or recover a lost response.
+**Cause:** capacity was checked before an await, host removal updated only storage,
+and transfer/launch stages had no durable owner.
+**Rule:** reserve capacity without yielding, remove cached connections with host
+metadata, and journal reviewed snapshots and launch claims. Test interrupted uploads,
+Git index/working-tree preservation, and lost responses before allowing migration.
 
 ## 2026-09-21 — Installation docs advertised missing downloads
 **Broke:** the README recommended a nonexistent PyPI package and a Mac ZIP that

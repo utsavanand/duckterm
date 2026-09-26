@@ -39,6 +39,7 @@ export interface DuckCelebration {
 }
 
 export interface SessionView {
+  remoteTransfer?: { id: string; stage: string; target?: string; session_key?: string };
   celebration?: DuckCelebration; // browser-only; never restored from persisted rows
   inboxPending?: number;
   key: string;
@@ -83,6 +84,7 @@ export interface ProgressDigest {
 
 /** A persisted session row from GET /sessions (SQLite, snake_case). */
 export interface PersistedSession {
+  remote_transfer?: SessionView["remoteTransfer"];
   session_key: string;
   state: SessionState;
   source_app?: string | null;
@@ -157,6 +159,7 @@ function parseProgress(raw: string | null | undefined): ProgressDigest | undefin
 export function viewFromPersisted(s: PersistedSession): SessionView {
   return {
     key: s.session_key,
+    remoteTransfer: s.remote_transfer,
     label: s.name || s.source_app || s.session_key.slice(0, 8),
     // Server already settled this row's state; if it's idle, backdate idleSince
     // so effectiveState shows idle immediately rather than after a fresh grace.

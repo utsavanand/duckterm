@@ -128,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
         "connector-admin", help="Manage a hosted connector's Secret Manager version"
     )
     admin.add_argument("name")
-    admin.add_argument("--config", required=True, type=Path)
+    admin.add_argument("--config", default=Path("/etc/duckterm-broker/config.json"), type=Path)
     admin.add_argument("--version", type=int)
     admin.add_argument("--write-access", action="store_true")
     admin.add_argument("--disable", action="store_true")

@@ -178,7 +178,7 @@ class Broker:
         tasks: list[asyncio.Task[Any]] = []
         counted = False
         try:
-            if not workspace or self.active >= MAX_CONNECTIONS:
+            if not workspace:
                 raise ValueError("Connector service unavailable")
             hello = json.loads(await asyncio.wait_for(reader.readline(), 5))
             if not isinstance(hello, dict) or set(hello) != {"name"}:
@@ -191,6 +191,9 @@ class Broker:
                 await writer.drain()
                 return
             entry = self.permitted(workspace, name)
+            # Reserve without awaiting: simultaneous handshakes share this limit.
+            if self.active >= MAX_CONNECTIONS:
+                raise ValueError("Connector service unavailable")
             self.active += 1
             counted = True
             if read_config(self.config).get("mode") == "local":

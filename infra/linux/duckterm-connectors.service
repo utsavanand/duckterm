@@ -1,0 +1,31 @@
+[Unit]
+Description=Duckterm isolated connector service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=duckterm-broker
+Group=duckterm-broker
+WorkingDirectory=/var/lib/duckterm-broker
+Environment=HOME=/var/lib/duckterm-broker
+Environment=PATH=/opt/duckterm/venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/opt/duckterm/venv/bin/duckterm connector-service
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/duckterm-broker
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LimitCORE=0
+MemoryMax=700M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { AgentTree } from "./AgentTree";
 import { api } from "./api";
+import { desktop } from "./desktop";
 import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
 import { ControlTower } from "./ControlTower";
@@ -15,6 +16,7 @@ import { ArtifactsView } from "./ArtifactsView";
 import { InboxView } from "./InboxView";
 import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
+import { MoveRemoteModal } from "./RemoteProject";
 import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
 import { MessagePinStrip, PinTarget, useMessagePins } from "./MessagePins";
@@ -61,12 +63,20 @@ function Dashboard() {
 
   const [modal, setModal] = useState<
     "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
-  >(null);
+  >(desktop()?.draft ? "launch" : null);
   const [towerOpen, setTowerOpen] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const pendingDesktopSession = useRef(desktop()?.selectedSession);
   const messagePins = useMessagePins(selectedKey);
   const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
   const pinSequence = useRef(0);
+  const [moveKey, setMoveKey] = useState<string | null>(null);
+  useEffect(() => {
+    const move = (event: Event) => setMoveKey((event as CustomEvent<string>).detail);
+    window.addEventListener("move-to-remote", move);
+    return () => window.removeEventListener("move-to-remote", move);
+  }, []);
+  const moveSession = sessions.find(s => s.key === moveKey);
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
@@ -193,6 +203,14 @@ function Dashboard() {
 
   // Default the selection to the first agent so the center pane isn't empty.
   useEffect(() => {
+    if (pendingDesktopSession.current) {
+      const key = pendingDesktopSession.current;
+      if (sessions.some(s => s.key === key)) {
+        pendingDesktopSession.current = undefined;
+        setSelectedKey(key);
+      }
+      return;
+    }
     if (selectedKey && sessions.some((s) => s.key === selectedKey)) return;
     setSelectedKey(agents[0]?.key ?? null);
   }, [agents, selectedKey, sessions]);
@@ -500,6 +518,8 @@ function Dashboard() {
             refreshFolders();
           }}
           onClose={() => {
+            const native = desktop();
+            if (native) delete native.draft;
             setModal(null);
             setLaunchGroup(undefined);
           }}
@@ -515,6 +535,7 @@ function Dashboard() {
           onClose={() => setModal(null)}
         />
       )}
+      {moveSession && <MoveRemoteModal session={moveSession} onClose={() => setMoveKey(null)} />}
       {forkSession && (
         <ForkModal session={forkSession} onClose={() => setForkKey(null)} />
       )}

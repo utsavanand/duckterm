@@ -12,6 +12,7 @@ subprocess; drive them from async code via asyncio.to_thread.
 import shlex
 import shutil
 import subprocess
+import sys
 
 from duckterm.helpers import instance
 
@@ -105,7 +106,13 @@ def spawn_piped(
     the start, so live output isn't missed. Returns the tmux target."""
     target = spawn(session_id, command, cwd, env)
     # -o starts piping immediately; appends raw pane output to the file.
-    _tmux("pipe-pane", "-t", target, "-o", f"cat >> {shlex.quote(pipe_path)}")
+    _tmux(
+        "pipe-pane",
+        "-t",
+        target,
+        "-o",
+        shlex.join([sys.executable, "-m", "duckterm.helpers.pane_log", pipe_path]),
+    )
     return target
 
 

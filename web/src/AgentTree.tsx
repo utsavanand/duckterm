@@ -1,3 +1,4 @@
+import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
 import { HelperAgents } from "./HelperAgents";
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
@@ -848,6 +849,19 @@ function TreeRow({
               )}
             </button>
           )}
+          {resumable && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "") && <>
+            <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key }))}>Move to remote…</button>
+            <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={async () => {
+              if (!window.confirm("Continue this session locally as a separate continuation? A remote session, if created, will remain running.")) return;
+              await destinationRequest("local", "project-continue", { source_session: s.key });
+              localStorage.removeItem(`moved-session:${s.key}`);
+              await resumeSession();
+            }}>Continue locally</button>
+            {(s.remoteTransfer?.stage === "moved" || localStorage.getItem(`moved-session:${s.key}`)) && <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => {
+              const moved = s.remoteTransfer?.stage === "moved" ? s.remoteTransfer : JSON.parse(localStorage.getItem(`moved-session:${s.key}`)!);
+              selectLaunchTarget(moved.target, {}, moved.session_key ?? moved.key);
+            }}>Open remote session</button>}
+          </>}
           {resumable && (
             <button
               className="rd-btn rd-btn-sm rd-btn-primary"

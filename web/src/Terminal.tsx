@@ -162,7 +162,12 @@ export function Terminal({
       visible = nextVisible;
       cancelAttachScroll();
       pendingOpenScroll = visible;
-      if (visible) { settleOpening(); focusTerm(true); }
+      if (visible) {
+        settleOpening();
+        // Initial session discovery also activates a terminal. Only explicit
+        // row/tab navigation may take focus from another dashboard control.
+        focusTerm(!!document.activeElement?.closest(".rd-row, .rd-view-toggle"));
+      }
     };
 
     const connect = () => {

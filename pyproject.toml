@@ -46,7 +46,7 @@ version = { attr = "duckterm.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-duckterm = ["hooks/*.sh", "dashboard/index.html", "dashboard/assets/*"]
+duckterm = ["hooks/*.sh", "dashboard/index.html", "dashboard/*.svg", "dashboard/*.ico", "dashboard/assets/*"]
 
 [tool.ruff]
 line-length = 100

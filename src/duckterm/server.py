@@ -179,6 +179,7 @@ def _mid(prefix: str, suffix: str) -> dict[str, str]:
 
 # fmt: off
 _ROUTES: list[Route] = [
+    Route("POST", "", lambda s, r, w, h, b, seg: s._transfer(w, seg, b), prefix="/transfers/"),
     Route("POST", "", lambda s, r, w, h, b, seg: s._introduce_collaboration(w, seg, send=False),
           **_mid("/sessions/", "/collaboration/instructions")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._introduce_collaboration(w, seg),
@@ -242,6 +243,8 @@ _ROUTES: list[Route] = [
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._deregister_harness(w, seg),
           prefix="/harnesses/"),
     # ── connectors (GitHub, Railway, … — credentials + MCP install) ──
+    Route("POST", "", lambda s, r, w, h, b, seg: s._forget_connector(w, seg),
+          **_mid("/connectors/", "/forget")),
     Route("GET", "/connectors", lambda s, r, w, h, b, seg: s._list_connectors(w)),
     Route("POST", "", lambda s, r, w, h, b, seg: s._enable_connector(w, seg, b),
           **_mid("/connectors/", "/enable")),
@@ -306,6 +309,8 @@ _ROUTES: list[Route] = [
 
 class Server:
     def __init__(self, bus: EventBus | None = None, history: HistoryStore | None = None) -> None:
+        self._transfer_sources: set[str] = set()
+        self._transfer_launches: set[str] = set()
         self.history = history if history is not None else HistoryStore()
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
@@ -996,9 +1001,16 @@ class Server:
         await _write_json(writer, 200, {"ok": ok})
 
     async def _sessions(self, writer: asyncio.StreamWriter) -> None:
+        from duckterm import transfers
+
         sessions = self.history.sessions()
         subagents = self.history.subagents_by_session()
         for s in sessions:
+            transfer = transfers.session_transfer(str(s.get("session_key") or ""))
+            if transfer:
+                s["remote_transfer"] = {
+                    k: transfer.get(k) for k in ("id", "stage", "target", "session_key")
+                }
             s["subagents"] = subagents.get(str(s.get("session_key") or ""), [])
             stats = self._transcript_stats_for(s)
             s["context_tokens"] = stats.get("context_tokens")
@@ -1100,7 +1112,7 @@ class Server:
                 return
 
         # Headless: Duckterm supervises the agent invisibly (automation / CI).
-        if not req.get("in_terminal", True):
+        if os.environ.get("DUCKTERM_HOSTED") or not req.get("in_terminal", True):
             try:
                 key = await self.orchestrator.launch(
                     runtime=_build_runtime(req.get("runtime"), command),
@@ -1112,6 +1124,7 @@ class Server:
                     prompt=req.get("prompt", ""),
                     name=name,
                     env=extra_env,
+                    test=req.get("test") is True,
                 )
             except (GitError, ValueError) as e:
                 await _write_json(writer, 400, {"error": str(e)})
@@ -1224,7 +1237,7 @@ class Server:
         # worktree and supervises the agent, so the fork renders in the browser
         # terminal. carry_context swaps in the parent harness's resume command
         # so the fork continues the conversation in the isolated worktree.
-        if not req.get("in_terminal", True):
+        if os.environ.get("DUCKTERM_HOSTED") or not req.get("in_terminal", True):
             runtime_name = req.get("runtime", parent.get("runtime") or "generic")
             run_command = command
             carried = False
@@ -1425,7 +1438,7 @@ class Server:
             child_key = security.new_session_key("convfork")
         req = json.loads(body or b"{}")
 
-        if not req.get("in_terminal", True):
+        if os.environ.get("DUCKTERM_HOSTED") or not req.get("in_terminal", True):
             key = await self.orchestrator.launch(
                 runtime=_build_runtime("claude-code", shlex.join(argv)),
                 cwd=cwd,
@@ -1583,12 +1596,29 @@ class Server:
             {"event_type": events.NOTIFICATION, "session_key": session_key, "lifecycle": lifecycle}
         )
 
+    async def _transfer(self, writer: asyncio.StreamWriter, operation: str, body: bytes) -> None:
+        from duckterm.transfer_api import handle
+
+        await handle(self, writer, operation, body)
+
     async def _resume(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """Resume a stopped/terminated launched session: relaunch its agent in the
         saved worktree/cwd under the same session_key. For claude-code, continue
         the conversation with `--resume <claude session_id>`; other runtimes
         relaunch their command (fresh conversation if they have no native resume).
         """
+        from duckterm import transfers
+
+        if session_key in self._transfer_sources or transfers.session_transfer(session_key):
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": "This session has a remote transfer. Use Continue locally "
+                    "to explicitly create a separate continuation."
+                },
+            )
+            return
         row = self.history.session(session_key)
         if row is None:
             await _write_json(writer, 404, {"error": f"no session {session_key}"})
@@ -2322,10 +2352,24 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        if not isinstance(req, dict) or (
+            "write_access" in req and not isinstance(req["write_access"], bool)
+        ):
+            await _write_json(
+                writer, 400, {"error": "expected an object with boolean write_access"}
+            )
+            return
         token = str(req.get("token") or "").strip() or None
         secret = str(req.get("secret") or "").strip() or None
         try:
-            result = connectors.enable(name, token, secret)
+            result = await asyncio.to_thread(
+                connectors.enable,
+                name,
+                token,
+                secret,
+                source=req.get("source"),
+                write_access=req.get("write_access", False),
+            )
         except ValueError as e:
             await _write_json(writer, 404, {"error": str(e)})
             return
@@ -2336,9 +2380,23 @@ class Server:
 
     async def _disable_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
         try:
-            result = connectors.disable(name)
+            result = await asyncio.to_thread(connectors.disable, name)
         except ValueError as e:
             await _write_json(writer, 404, {"error": str(e)})
+            return
+        except RuntimeError as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        await _write_json(writer, 200, result)
+
+    async def _forget_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
+        try:
+            result = await asyncio.to_thread(connectors.forget, name)
+        except ValueError as e:
+            await _write_json(writer, 404, {"error": str(e)})
+            return
+        except RuntimeError as e:
+            await _write_json(writer, 400, {"error": str(e)})
             return
         await _write_json(writer, 200, result)
 

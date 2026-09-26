@@ -4,7 +4,7 @@ import WebKit
 /// A single window hosting the dashboard in a WKWebView. Reused across opens —
 /// clicking the menu item brings the existing window forward rather than
 /// spawning duplicates.
-final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
+final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
     private var window: NSWindow?
     private var web: WKWebView?
     private var dashboardLoaded = false
@@ -20,11 +20,117 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         },
         showError: { [weak self] error in self?.showArtifactDownloadError(error) }
     )
-    private let url: URL
+    private var url: URL
+    var desktopHosts: [RemoteHost] = []
+    var desktopTarget = "local"
+    var launchDraft: [String: String]?
+    var selectedSession: String?
+    var onChooseLaunchTarget: ((String, [String: String], String?) -> Void)?
+
+    var onLaunchRequest: ((String, String, [String: Any]) async throws -> Any)?
+
+    private func desktopScript() -> WKUserScript {
+        var state: [String: Any] = [
+            "currentTarget": desktopTarget,
+            "targets": [["id": "local", "name": "This Mac"]] + desktopHosts.map {
+                ["id": $0.target, "name": "Remote — \($0.name)"]
+            }
+        ]
+        if let launchDraft { state["draft"] = launchDraft }
+        if let selectedSession { state["selectedSession"] = selectedSession }
+        let data = try! JSONSerialization.data(withJSONObject: state)
+        return WKUserScript(source: "window.__rubbertermDesktop = \(String(decoding: data, as: UTF8.self));",
+                            injectionTime: .atDocumentStart, forMainFrameOnly: true)
+    }
+
+    private func configureDesktop(_ config: WKWebViewConfiguration) {
+        config.userContentController.addUserScript(desktopScript())
+        config.userContentController.add(self, name: "remoteSession")
+        config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "launchRequest")
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        // Only the current dashboard's main frame may request a host change.
+        let origin = message.frameInfo.securityOrigin
+        guard message.webView === web, message.frameInfo.isMainFrame,
+              origin.protocol == url.scheme, origin.host == url.host,
+              origin.port == url.port,
+              let body = message.body as? [String: Any],
+              body["action"] as? String == "launch",
+              let target = body["target"] as? String,
+              target == "local" || target == "add" || desktopHosts.contains(where: { $0.target == target }),
+              let draft = body["draft"] as? [String: String],
+              Set(draft.keys).isSubset(of: ["agent", "command", "name", "prompt"]),
+              draft.values.allSatisfy({ $0.utf8.count <= 16384 }) else { return }
+        let sessionKey = body["session_key"] as? String
+        if let sessionKey, sessionKey.isEmpty || sessionKey.utf8.count > 200 { return }
+        onChooseLaunchTarget?(target, draft, sessionKey)
+    }
+
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage,
+                               replyHandler: @escaping (Any?, String?) -> Void) {
+        let origin = message.frameInfo.securityOrigin
+        guard message.webView === web, message.frameInfo.isMainFrame,
+              origin.protocol == url.scheme, origin.host == url.host, origin.port == url.port,
+              let body = message.body as? [String: Any],
+              let target = body["target"] as? String,
+              target == "local" || desktopHosts.contains(where: { $0.target == target }),
+              let operation = body["operation"] as? String,
+              ["browse", "branches", "themes", "launch", "project-preview", "project-transfer", "project-clone", "project-launch", "project-status", "project-pause", "project-preflight", "project-continue"].contains(operation),
+              let params = body["params"] as? [String: Any],
+              let encoded = try? JSONSerialization.data(withJSONObject: params), encoded.count <= 65536,
+              let handler = onLaunchRequest else {
+            replyHandler(nil, "Invalid launch request"); return
+        }
+        Task { @MainActor in
+            do { replyHandler(try await handler(target, operation, params), nil) }
+            catch { replyHandler(nil, error.localizedDescription) }
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard webView === web else { return }
+        dashboardLoaded = true
+        AppDiagnostics.shared.record("Dashboard loaded")
+        // A host change carries form text once, never a machine-specific folder.
+        launchDraft = nil
+        selectedSession = nil
+        webView.configuration.userContentController.removeAllUserScripts()
+        webView.configuration.userContentController.addUserScript(desktopScript())
+    }
 
     init(url: URL) {
         self.url = url
     }
+
+    func connect(url: URL, remote: Bool, title: String) {
+        self.url = url
+        dashboardLoaded = false
+        web?.stopLoading()
+        // Replace the web view to drop old sockets, callbacks and page state.
+        // Remote sessions use an ephemeral browser store, never local cookies.
+        guard let window else { return }
+        let config = WKWebViewConfiguration()
+        configureDesktop(config)
+        if remote { config.websiteDataStore = .nonPersistent() }
+        let replacement = WKWebView(frame: window.contentView?.frame ?? .zero, configuration: config)
+        replacement.navigationDelegate = self
+        replacement.uiDelegate = self
+        self.web = replacement
+        window.contentView = replacement
+        replacement.load(URLRequest(url: url))
+        window.title = title
+    }
+
+    func refreshDesktop() {
+        let script = desktopScript()
+        web?.configuration.userContentController.removeAllUserScripts()
+        web?.configuration.userContentController.addUserScript(script)
+        web?.evaluateJavaScript(script.source + "; window.dispatchEvent(new Event('desktop-targets-changed'));", completionHandler: nil)
+    }
+
+    func setTitle(_ title: String) { window?.title = title }
 
     /// Run JS in the dashboard page — the Edit-menu clipboard bridge.
     func evaluate(_ js: String, done: ((Any?) -> Void)? = nil) {
@@ -40,10 +146,6 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         }
     }
 
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        dashboardLoaded = true
-        AppDiagnostics.shared.record("Dashboard loaded")
-    }
 
     func show() {
         if let window {
@@ -52,7 +154,9 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             return
         }
         dashboardLoaded = false
-        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
+        let config = WKWebViewConfiguration()
+        configureDesktop(config)
+        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760), configuration: config)
         if #available(macOS 13.3, *) {
             web.isInspectable = true  // debuggable from Safari's Develop menu
         }
@@ -71,7 +175,20 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             backing: .buffered,
             defer: false
         )
-        win.title = "DuckTerm"
+        win.title = AppIdentity.name
+        let computerButton = NSButton(
+            title: "Settings…",
+            target: nil,
+            action: NSSelectorFromString("showSettings:")
+        )
+        computerButton.bezelStyle = .rounded
+        computerButton.frame = NSRect(x: 0, y: 2, width: 100, height: 26)
+        computerButton.toolTip = "Manage remote computers"
+        let computerControl = NSTitlebarAccessoryViewController()
+        computerControl.layoutAttribute = .right
+        computerControl.view = NSView(frame: NSRect(x: 0, y: 0, width: 110, height: 30))
+        computerControl.view.addSubview(computerButton)
+        win.addTitlebarAccessoryViewController(computerControl)
         win.contentView = web
         win.center()
         win.delegate = self
@@ -92,30 +209,44 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         // A download policy change may cancel navigation after the dashboard
         // loaded. Never reload a working terminal in response to that event.
         guard !dashboardLoaded else { return }
+        let failedURL = url
         AppDiagnostics.shared.record("Dashboard connection failed", code: (error as NSError).code)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
-            guard let self else { return }
+            guard let self, self.url == failedURL, self.web === webView else { return }
             webView.load(URLRequest(url: self.url))
         }
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // Preserve authenticated artifact downloads without permitting a page
+        // outside the current dashboard to navigate the native view.
+        if navigationAction.shouldPerformDownload {
+            let origin = navigationAction.sourceFrame.securityOrigin
+            let trusted = webView === web && navigationAction.sourceFrame.isMainFrame
+                && origin.protocol == url.scheme && origin.host == url.host && origin.port == url.port
+            decisionHandler(trusted && navigationAction.request.url?.scheme == "blob" ? .download : .cancel)
+            return
+        }
+        guard let destination = navigationAction.request.url else { decisionHandler(.cancel); return }
+        if destination.scheme == url.scheme && destination.host == url.host && destination.port == url.port {
+            decisionHandler(.allow)
+        } else {
+            if ["https", "http"].contains(destination.scheme ?? "") { NSWorkspace.shared.open(destination) }
+            decisionHandler(.cancel)
+        }
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if let destination = navigationAction.request.url,
+           ["https", "http"].contains(destination.scheme ?? "") { NSWorkspace.shared.open(destination) }
+        return nil
     }
 
     func windowWillClose(_ notification: Notification) {
         window = nil  // rebuild fresh next open so it reloads the dashboard
         web = nil
-    }
-
-    // Saved artifact bytes are downloaded as blobs from the authenticated
-    // dashboard. WebKit needs a delegate or the Download link is a silent no-op.
-    func webView(
-        _ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
-        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-    ) {
-        if action.shouldPerformDownload {
-            decisionHandler(action.sourceFrame.isMainFrame && action.request.url?.scheme == "blob"
-                            ? .download : .cancel)
-        } else {
-            decisionHandler(.allow)
-        }
     }
 
     func webView(
