@@ -19,7 +19,12 @@ from duckterm.helpers.private_files import private_read, private_write
 
 SETTLE_MS = 10 * 60_000  # idle this long before a nudge: the owner may be about to type
 PEER_WAIT_MS = 10 * 60_000  # give an active recipient time to find new peer mail itself
-RENUDGE_MS = 60 * 60_000  # at most one nudge per session per hour
+# A draft always shows on screen, and prompt_empty already checks the screen.
+# Keystrokes only matter while someone may be typing right now.
+TYPING_QUIET_MS = 2 * 60_000
+# While mail from the last nudge is still open, wait this long before nudging
+# about newer mail: the agent may have chosen not to act, so don't nag.
+RENUDGE_MS = 60 * 60_000
 
 
 @dataclass(frozen=True)
@@ -46,7 +51,6 @@ def should_nudge(
     *,
     state: str,
     turn_ended_ms: int,
-    observed_since_ms: int,
     last_owner_input_ms: int,
     prompt_empty: bool,
     mail: list[dict[str, Any]],
@@ -58,16 +62,19 @@ def should_nudge(
         return []
     if now_ms - turn_ended_ms < SETTLE_MS:
         return []
-    # Keystrokes after the turn ended may be an unsent draft. When the turn
-    # ended before this server started watching, the screen check stands alone.
-    if turn_ended_ms >= observed_since_ms and last_owner_input_ms > turn_ended_ms:
+    if now_ms - last_owner_input_ms < TYPING_QUIET_MS:
         return []
     picked = pick_mail(mail, now_ms)
     if not picked:
         return []
     if previous is not None:
         ids = frozenset(str(m["id"]) for m in picked)
-        if ids <= previous.ids or now_ms - previous.at_ms < RENUDGE_MS:
+        if ids <= previous.ids:
+            return []
+        # Once everything from the last nudge is answered or closed, the agent
+        # has shown it acts on reminders, so new mail may wake it right away.
+        still_open = previous.ids & {str(m["id"]) for m in mail}
+        if still_open and now_ms - previous.at_ms < RENUDGE_MS:
             return []
     return picked
 

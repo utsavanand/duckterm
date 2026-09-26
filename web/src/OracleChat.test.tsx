@@ -50,3 +50,20 @@ it("keeps a failed question in the box so it can be resent", async () => {
   expect(screen.getByRole("alert")).toHaveTextContent("no summarizer backend");
   expect(box).toHaveValue("status?");
 });
+
+it("offers example questions on an empty chat and sends one when clicked", async () => {
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
+  vi.mocked(api.fleetAsk).mockReturnValue(new Promise(() => {}));
+  render(<OracleChat onClose={() => {}} />);
+  const example = await screen.findByRole("button", { name: "Which sessions are waiting on me?" });
+  fireEvent.click(example);
+  expect(api.fleetAsk).toHaveBeenCalledWith("Which sessions are waiting on me?");
+  expect(screen.queryByRole("button", { name: "Which sessions are waiting on me?" })).toBeNull();
+});
+
+it("hides the example questions once a conversation exists", async () => {
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [{ q: "hi", a: "hello", at: 1 }] });
+  render(<OracleChat onClose={() => {}} />);
+  await screen.findByText("hello");
+  expect(screen.queryByRole("button", { name: /waiting on me/ })).toBeNull();
+});

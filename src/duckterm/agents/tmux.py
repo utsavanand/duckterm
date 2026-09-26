@@ -65,8 +65,30 @@ def spawn(session_id: str, command: str, cwd: str, env: dict[str, str] | None = 
         env_args += ["-e", f"{k}={v}"]
     # `-x/-y` set the initial size; a detached session otherwise defaults to
     # 80x24, which mismatches the browser pane and garbles a TUI's wrapping.
+    # Keep our private server alive between agents. Otherwise the last quick
+    # child can exit while the next launch connects, making new-session fail
+    # with "server exited unexpectedly". Set this BEFORE starting the child in
+    # the same tmux command queue, including on a newly created server.
     ok, err = _tmux(
-        "new-session", "-d", "-s", target, "-x", "120", "-y", "40", "-c", cwd, *env_args, command
+        "start-server",
+        ";",
+        "set-option",
+        "-s",
+        "exit-empty",
+        "off",
+        ";",
+        "new-session",
+        "-d",
+        "-s",
+        target,
+        "-x",
+        "120",
+        "-y",
+        "40",
+        "-c",
+        cwd,
+        *env_args,
+        command,
     )
     if not ok:
         raise ValueError(f"tmux failed to start the session: {err.strip() or 'unknown error'}")
@@ -95,11 +117,26 @@ def spawn_piped(
 
 
 def list_duckterm_sessions() -> list[str]:
-    """All live session ids Duckterm spawned (the rd_<id> targets, id only)."""
-    ok, out = _tmux("list-sessions", "-F", "#{session_name}")
+    """All live session ids, or raise when discovery cannot establish liveness.
+
+    An absent server means no sessions. Permission/socket/probe errors do not:
+    treating those as an empty list incorrectly interrupts every live agent.
+    """
+    ok, out = _tmux("list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}")
     if not ok:
-        return []
-    return [name[len(_PREFIX) :] for name in out.split() if name.startswith(_PREFIX)]
+        if "no server running on " in out or (
+            "error connecting to " in out and "(No such file or directory)" in out
+        ):
+            return []
+        raise RuntimeError(f"cannot discover tmux sessions: {out.strip()}")
+    live = []
+    for line in out.splitlines():
+        name, _, dead = line.partition("\t")
+        if name.startswith(_PREFIX) and dead == "0":
+            key = name[len(_PREFIX) :]
+            if key not in live:
+                live.append(key)
+    return live
 
 
 def send_keys(target: str, keys: str, *, enter: bool = True) -> bool:

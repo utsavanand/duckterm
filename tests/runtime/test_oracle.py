@@ -12,6 +12,7 @@ from duckterm.core import oracle
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.claude_code import ClaudeCodeRuntime
 from duckterm.runtimes.codex import CodexRuntime
+from duckterm.runtimes.generic import GenericRuntime
 from duckterm.server import Server
 
 HOUR = 3_600_000
@@ -43,7 +44,6 @@ OLD_PEER = {"id": "q1", "kind": "question", "status": "queued", "created_at": NO
 GATES = dict(
     state="idle",
     turn_ended_ms=NOW - HOUR,
-    observed_since_ms=NOW - 2 * HOUR,
     last_owner_input_ms=NOW - 3 * HOUR,
     prompt_empty=True,
     mail=[OLD_PEER],
@@ -59,15 +59,25 @@ GATES = dict(
         ({"state": "waiting"}, False),
         ({"prompt_empty": False}, False),
         ({"turn_ended_ms": NOW - 60_000}, False),  # not settled
-        ({"last_owner_input_ms": NOW - 30 * 60_000}, False),  # typed after the turn ended
-        # Turn ended before this server watched: keystroke memory is blank, screen decides.
-        ({"observed_since_ms": NOW - 30 * 60_000, "last_owner_input_ms": 0}, True),
+        ({"last_owner_input_ms": NOW - 60_000}, False),  # typing right now
+        # A stray key after the turn ended no longer blocks until the next turn;
+        # the screen check covers a real draft.
+        ({"last_owner_input_ms": NOW - 30 * 60_000}, True),
         ({"mail": [{**OLD_PEER, "created_at": NOW - 60_000}]}, False),  # fresh peer mail
         ({"mail": [{**OLD_PEER, "last_read_at": NOW - HOUR}]}, False),  # read, left queued
         ({"mail": [{**OLD_PEER, "status": "accepted", "last_read_at": NOW - HOUR}]}, True),
         ({"mail": [{**OLD_PEER, "kind": "broadcast", "created_at": NOW - 60_000}]}, True),
         ({"previous": oracle.Nudge(frozenset({"q1"}), NOW - 5 * HOUR)}, False),  # same mail
-        ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000)}, False),  # rate limit
+        # New mail, earlier nudged mail handled: no need to wait out the hour.
+        ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000)}, True),
+        # New mail while earlier nudged mail is still open: wait out the hour.
+        (
+            {
+                "previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000),
+                "mail": [OLD_PEER, {**OLD_PEER, "id": "q0"}],
+            },
+            False,
+        ),
         ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 2 * HOUR)}, True),  # new mail
     ],
 )
@@ -78,9 +88,10 @@ def test_should_nudge_gates(change, nudges) -> None:
 class FakeSupervisor:
     def __init__(self, screen: str) -> None:
         self.running = True
-        self.runtime = CodexRuntime()
+        # What reconcile() gives a pane re-adopted after a server restart; the
+        # session's real runtime is only on its DB row.
+        self.runtime = GenericRuntime("true")
         self.screen = screen
-        self.observed_since_ms = 0
         self.last_owner_input_ms = 0
         self.pasted: list[bytes] = []
 
@@ -202,3 +213,22 @@ def test_terminal_reports_are_not_typing(data, report) -> None:
     from duckterm.core.orchestrator import is_terminal_report
 
     assert is_terminal_report(data) is report
+
+
+def test_digest_screen_drops_prompt_suggestions_but_keeps_drafts_and_output() -> None:
+    from duckterm.runtimes.base import plain_screen
+
+    screen = "\n".join(
+        [
+            "\x1b[2m  Worked for 1m 7s\x1b[0m",  # dim output stays
+            CLAUDE_SUGGESTION,
+            CODEX_EMPTY,
+            CLAUDE_DRAFT,
+        ]
+    )
+    text = plain_screen(screen)
+    assert "Worked for 1m 7s" in text
+    assert "check inbox" not in text
+    assert "Ask Codex to do anything" not in text
+    assert "❯ fix the flaky test" in text
+    assert "\x1b" not in text

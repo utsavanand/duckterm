@@ -59,6 +59,7 @@ from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
+from duckterm.core.tokens import TokenLedger
 from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
@@ -71,9 +72,12 @@ from duckterm.helpers import (
     session_credentials,
     session_instructions,
 )
+from duckterm.helpers.private_files import private_read
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence import backup_sync
+from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
+from duckterm.persistence.artifacts import ArtifactError
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
 from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.history import HistoryStore
@@ -220,6 +224,9 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
     Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
+    Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._session_message(w, seg, b),
+          **_mid("/sessions/", "/message")),
     Route("DELETE", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w, clear=True)),
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
@@ -311,6 +318,11 @@ class Server:
         self._backup_jobs: BackupJobs | None = None
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
         self._oracle_nudges: dict[str, oracle.Nudge] = {}
+        self._tokens = TokenLedger(
+            Path.home() / ".claude" / "projects", Path.home() / ".codex" / "sessions"
+        )
+        # The ledger isn't thread-safe; one scan at a time.
+        self._tokens_lock = asyncio.Lock()
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -384,6 +396,8 @@ class Server:
                     return
                 size = int(headers.get("content-length", "0"))
                 limit = MAX_BODY_BYTES if path.startswith("/api/v1/session/") else MAX_REQUEST_BYTES
+                if urllib.parse.urlsplit(path).path == "/api/v1/session/artifacts":
+                    limit = MAX_ARTIFACT_REQUEST_BYTES
                 if size < 0 or size > limit:
                     await _write_json(writer, 413, {"error": "request body too large"})
                     return
@@ -436,6 +450,12 @@ class Server:
 
         if path == "/backup" and method in {"GET", "PUT", "POST"}:
             await self._backup(writer, headers, method, body)
+            return
+        artifact_match = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]+)/artifacts(?:/([a-f0-9]{32}))?", path
+        )
+        if artifact_match and method in {"GET", "DELETE"}:
+            await self._artifacts(writer, headers, artifact_match[1], artifact_match[2], method)
             return
         pin_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/pins(?:/([a-f0-9]{64}))?", path)
         if pin_match and method in {"GET", "POST", "DELETE"}:
@@ -747,6 +767,38 @@ class Server:
         messages = await asyncio.to_thread(self._session_messages, session_key)
         await _write_json(writer, 200, {"messages": messages})
 
+    async def _artifacts(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        session_key: str,
+        artifact_id: str | None,
+        method: str,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        if self.history.session(session_key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        result: dict[str, Any]
+        try:
+            if method == "DELETE":
+                if artifact_id is None:
+                    raise ArtifactError(400, "An artifact ID is required")
+                self.history.artifacts.remove(session_key, artifact_id)
+                result = {"removed": True}
+            elif artifact_id is None:
+                result = {"artifacts": self.history.artifacts.list(session_key)}
+            else:
+                result = {"artifact": self.history.artifacts.get(session_key, artifact_id)}
+        except ArtifactError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        # Content travels as authenticated JSON, never as executable HTML on the
+        # dashboard origin. The preview must render it in an isolated sandbox.
+        await _write_json(writer, 200, result)
+
     async def _message_pins(
         self,
         writer: asyncio.StreamWriter,
@@ -831,6 +883,12 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "expected an object"})
+            return
+        if "artifact_id" in req:
+            await self._add_artifact_annotation(writer, session_key, req)
+            return
         quote = (req.get("quote") or "").strip()
         note = (req.get("note") or "").strip()
         if not note:
@@ -846,6 +904,81 @@ class Server:
             prompt = f'Re: "{quote}" — {note}' if quote else note
             sent = supervisor.write_bytes(prompt.encode() + b"\r")
         await _write_json(writer, 200, {"id": ann_id, "sent": sent})
+
+    async def _add_artifact_annotation(
+        self, writer: asyncio.StreamWriter, session_key: str, req: dict[str, Any]
+    ) -> None:
+        """Deliver explicit owner feedback on exactly the saved artifact revision."""
+        quote, note = req.get("quote", ""), req.get("note")
+        if not isinstance(quote, str) or not isinstance(note, str) or not note.strip():
+            await _write_json(
+                writer, 400, {"error": "quote and note must be text; note is required"}
+            )
+            return
+        try:
+            if len(quote.encode()) > 8000 or len(note.encode()) > 8000:
+                raise ValueError("Quote and note must each fit within 8000 UTF-8 bytes.")
+            artifact_id = req.get("artifact_id")
+            if not isinstance(artifact_id, str):
+                raise ValueError("artifact_id must be text")
+            artifact = self.history.artifacts.get(session_key, artifact_id)
+        except ArtifactError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except ValueError as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        if req.get("artifact_sha256") != artifact["sha256"]:
+            await _write_json(
+                writer,
+                409,
+                {"error": "This artifact changed. Review its latest copy before sending feedback."},
+            )
+            return
+        supervisor = self.orchestrator.get(session_key)
+        if supervisor is None or not supervisor.running:
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": (
+                        "Feedback was not sent: this session has no live terminal. "
+                        "Your comment is kept here."
+                    )
+                },
+            )
+            return
+        # JSON escapes newlines and terminal control bytes in every field. A
+        # quoted artifact must never become extra keystrokes or extra submits.
+        context = {
+            "artifact": artifact["title"],
+            "path": artifact["source_path"],
+            "artifact_id": artifact["id"],
+            "sha256": artifact["sha256"],
+            "selected_text": quote.strip(),
+        }
+        prompt = "Artifact feedback: " + json.dumps({**context, "feedback": note.strip()})
+        try:
+            sent = await asyncio.to_thread(supervisor.write_bytes, prompt.encode() + b"\r")
+        except OSError:
+            sent = False
+        if not sent:
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": (
+                        "Feedback could not be delivered. Your comment is kept here; "
+                        "try again when the agent is live."
+                    )
+                },
+            )
+            return
+        ann_id = security.new_session_key("ann")
+        self.history.add_annotation(
+            ann_id, session_key, json.dumps(context), note.strip(), int(time.time() * 1000)
+        )
+        await _write_json(writer, 200, {"id": ann_id, "sent": True})
 
     async def _heartbeat(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """A launched tab pings here while alive. Records last_seen so the sweep
@@ -1958,6 +2091,15 @@ class Server:
             "output). Answer the user's question about them, concise and "
             "concrete — name sessions by their name. If the digests don't hold "
             "the answer, say what to open instead of guessing.\n\n"
+            "The answer renders as Markdown in a narrow chat panel. Open with a "
+            "one-sentence direct answer. Then use a bulleted list with one "
+            "session per bullet, the session name in bold followed by its folder, "
+            "and one or two short sentences each. Group bullets under short bold "
+            "labels only when there are distinct groups. No tables, no headings "
+            "larger than bold text, no preamble, and no closing offer.\n\n"
+            "Terminal output ends at each agent's input line. That line holds "
+            "nothing the user sent: a finished turn with an empty-looking input "
+            "means the session is idle, not that it received an instruction.\n\n"
             + digests
             + ("\n\nEarlier exchanges:\n" + "\n".join(history) if history else "")
             + f"\n\nQuestion: {question}\nAnswer:"
@@ -1984,6 +2126,93 @@ class Server:
                 "backend": result.backend,
             },
         )
+
+    async def _control_tower(self, writer: asyncio.StreamWriter) -> None:
+        """Fleet insights for the control tower page. Session states and
+        folders come from the dashboard's own event stream, not from here."""
+        now = time.time()
+        async with self._tokens_lock:
+            tokens = await asyncio.to_thread(self._tokens.totals, 7, now)
+        day_ago = int((now - 86400) * 1000)
+        backup = self._backup_jobs.snapshot() if self._backup_jobs else None
+        if backup is None:
+            raw = private_read(paths.home() / "backup-state.json")
+            backup = json.loads(raw) if raw else {"destination": None, "job": None}
+        destination = str(backup.get("destination") or "")
+        kind = "gcs" if destination.startswith("gs://") else ("local" if destination else None)
+        job = backup.get("job") or {}
+        await _write_json(
+            writer,
+            200,
+            {
+                "tokens": {"days": 7, "by_agent": tokens},
+                "mail": {
+                    **self.history.session_api.mail_stats(day_ago),
+                    "nudges": self.history.count_events("OracleNudge", day_ago),
+                },
+                "backup": {
+                    "destination": kind,
+                    "status": job.get("status"),
+                    "finished_at": job.get("finished_at"),
+                },
+                # The remote workspace isn't on main yet (branch remote-session).
+                "remote": {"available": False, "count": 0},
+            },
+        )
+
+    async def _session_message(
+        self, writer: asyncio.StreamWriter, session_key: str, body: bytes
+    ) -> None:
+        """Owner message to one session: into its inbox, or typed into its
+        prompt when Oracle's paste gates allow it right now."""
+        try:
+            req = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not isinstance(req, dict) or req.get("mode") not in ("inbox", "prompt"):
+            await _write_json(writer, 400, {"error": "mode must be inbox or prompt"})
+            return
+        if req["mode"] == "inbox":
+            try:
+                message_id = self.history.session_api.owner_message(session_key, req.get("text"))
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            await _write_json(writer, 200, {"delivered": "inbox", "message_id": message_id})
+            return
+        text = req.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text.encode()) > 16384:
+            await _write_json(writer, 400, {"error": "text must be 1 to 16384 bytes"})
+            return
+        refusal = await self._typing_refusal(session_key)
+        if refusal:
+            await _write_json(writer, 409, {"error": refusal})
+            return
+        sup = self.orchestrator.get(session_key)
+        assert sup is not None
+        sent = await asyncio.to_thread(
+            sup.write_bytes, b"\x1b[200~" + text.strip().encode() + b"\x1b[201~\r"
+        )
+        await _write_json(writer, 200 if sent else 409, {"delivered": "prompt" if sent else None})
+
+    async def _typing_refusal(self, session_key: str) -> str | None:
+        """Why owner text can't be typed into this session's prompt right now,
+        or None. The same gates Oracle applies before pasting a nudge."""
+        row = self.history.session(session_key)
+        sup = self.orchestrator.get(session_key)
+        if row is None or sup is None or not sup.running:
+            return "This session has no live terminal."
+        inbox = "Send it to the inbox instead."
+        if row.get("state") != "idle":
+            return f"It isn't idle, so typing could interrupt it. {inbox}"
+        if time.time() * 1000 - sup.last_owner_input_ms < oracle.TYPING_QUIET_MS:
+            return f"Someone typed in its terminal in the last 2 minutes. {inbox}"
+        screen = await asyncio.to_thread(sup.visible_screen)
+        harness = _build_runtime(row.get("runtime"), str(row.get("command") or ""))
+        if not harness.prompt_is_empty(screen):
+            return f"Its prompt isn't empty, so there may be a draft. {inbox}"
+        return None
 
     async def _oracle_chat(self, writer: asyncio.StreamWriter, *, clear: bool = False) -> None:
         path = paths.home() / "oracle-chat.json"
@@ -3206,9 +3435,12 @@ class Server:
             picked = oracle.should_nudge(
                 state="idle",
                 turn_ended_ms=self.history.last_event_ts(key, events.STOP),
-                observed_since_ms=sup.observed_since_ms,
                 last_owner_input_ms=sup.last_owner_input_ms,
-                prompt_empty=sup.runtime.prompt_is_empty(screen),
+                # Not sup.runtime: sessions re-adopted after a restart run
+                # under GenericRuntime, which never reports an empty prompt.
+                prompt_empty=_build_runtime(
+                    row.get("runtime"), str(row.get("command") or "")
+                ).prompt_is_empty(screen),
                 mail=mail,
                 previous=self._oracle_nudges.get(key),
                 now_ms=now,

@@ -1,7 +1,7 @@
 # Remote-session merge candidate
 
-The remote-session candidate now integrates main through `d1c0512`. The main
-checkout is clean. The feature has not yet been merged into main.
+The remote-session candidate now integrates main through `dc9e6da`. The main
+checkout has not been modified by this integration. The feature has not yet been merged into main.
 
 ## Behavior
 
@@ -23,7 +23,7 @@ checkout is clean. The feature has not yet been merged into main.
 
 ## Validation and practical limits
 
-The post-fix local gate passed: 649 Python tests, 87 frontend tests, and 51 browser
+The post-fix local gate passed: 676 Python tests, 102 frontend tests, and 56 browser
 tests. Four native unit tests and the real Swift transfer rehearsal also passed.
 Python lint, formatting, types, and documentation checks passed.
 
@@ -88,6 +88,21 @@ open, with its separate saved host pointing to QA port 4341. The owner has been
 asked to check the integrated New Session form. Production Claude PID 66209 is
 still running and has not been stopped. Main's prior uncommitted-work blocker is
 resolved; the feature remains separate pending acceptance.
+
+## Integration validation — 2026-09-26 UTC
+
+Integrated main through `dc9e6da` (60 new commits since the previous integration).
+The full gate passed: 676 Python, 102 frontend, and 56 browser tests. Four native
+unit tests, the actual WebKit artifact-download probe, report UI checks, and the
+real Swift transfer/retry rehearsal passed. The separate DuckTerm Test app builds.
+The merge combines artifact downloads with remote-origin navigation restrictions
+and resets navigation-load state when switching computers. No production release
+or additional VM deployment was performed for this integration.
+
+The remaining native Move check means the complete desktop flow from selecting
+a stopped source session through review, transfer, and opening its resumed remote
+conversation. Component tests and synthetic provider recall do not establish that
+whole flow. Prior Claude onboarding/version limitations are still recorded above.
 
 ## Remaining before merge
 

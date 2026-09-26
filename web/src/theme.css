@@ -2519,10 +2519,11 @@ select {
   padding: 3px 6px;
 }
 
-/* Ask Oracle: a chat docked to the right of the panes. It sits in the
-   workspace row instead of floating, so the sessions stay usable while it
-   is open. */
+/* Oracle covers the context pane without resizing live terminals. Narrowing
+   xterm can truncate the cursor line permanently; closing a chat must not
+   damage an agent's draft or trigger a TUI reflow. */
 .rd-workspace {
+  position: relative;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -2535,23 +2536,13 @@ select {
   background: var(--bg-soft);
   border-color: var(--brand-green);
 }
+/* Oracle chat: a column that fills its container (the control tower rail). */
 .rd-oracle {
-  width: 420px;
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 1px solid var(--border);
+  height: 100%;
   background: var(--bg);
-}
-@media (max-width: 1100px) {
-  /* The panes stack into one column here; the chat covers them instead. */
-  .rd-oracle {
-    position: fixed;
-    inset: 0;
-    width: auto;
-    z-index: 70;
-  }
 }
 .rd-oracle-head {
   display: flex;
@@ -2574,6 +2565,30 @@ select {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
+}
+.rd-oracle-empty p {
+  margin: 0 0 12px;
+}
+.rd-oracle-suggestions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.rd-oracle-suggestion {
+  padding: 7px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.rd-oracle-suggestion:hover {
+  background: var(--bg-soft);
+  border-color: var(--brand-green);
 }
 .rd-oracle-exchange {
   margin-bottom: 20px;
@@ -2613,31 +2628,135 @@ select {
   color: var(--danger, #c0392b);
   font-size: 13px;
 }
+/* One bordered box holding the growing textarea and Send, so the button
+   always sits level with the last line instead of floating below a taller
+   field. */
 .rd-oracle-compose {
   display: flex;
   align-items: flex-end;
   gap: 8px;
-  padding: 12px;
-  border-top: 1px solid var(--border);
+  margin: 12px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-soft);
+}
+.rd-oracle-compose:focus-within {
+  border-color: var(--brand-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-green) 18%, transparent);
 }
 .rd-oracle-compose textarea {
   flex: 1;
   resize: none;
   max-height: 160px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--bg-soft);
+  padding: 5px 0;
+  border: none;
+  outline: none;
+  background: transparent;
   color: var(--text);
   font: inherit;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 20px;
 }
-.rd-oracle-compose textarea:focus {
-  outline: none;
-  border-color: var(--brand-green);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-green) 18%, transparent);
+
+/* Control tower: Oracle's full-page fleet view. Replaces the three panes
+   like the folder grid does; the page scrolls on its own. */
+.rd-workspace-panes { display: contents; }
+.rd-tower-layer { position: absolute; inset: 0; z-index: 5; display: flex; background: var(--bg); }
+/* Two columns: the fleet scrolls on the left under a pinned header; Oracle
+   chat fills the right edge at full height so it's always in view. */
+.rd-tower { flex: 1; min-width: 0; display: flex; min-height: 0; }
+.rd-tower-scroll { flex: 1; min-width: 0; overflow-y: auto; padding: 0 16px 32px; }
+.rd-tower-oracle { width: 420px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); }
+@media (max-width: 1000px) {
+  .rd-tower { flex-direction: column; overflow-y: auto; }
+  .rd-tower-scroll { overflow: visible; }
+  .rd-tower-oracle { width: auto; height: 560px; flex-shrink: 0; border-left: 0; border-top: 1px solid var(--border); }
 }
+.rd-tower-bar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 14px; padding: 12px 0 10px; margin-bottom: 4px; background: var(--bg); }
+.rd-tower-title { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
+.rd-tower-title small { font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 6px; }
+.rd-tower-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
+@media (max-width: 1250px) { .rd-tower-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .rd-tower-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.rd-tower-tile { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; background: var(--card); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rd-tower-tile.warn { border-color: var(--amber-border); background: var(--amber-bg); }
+.rd-tower-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.rd-tower-num { font-size: 24px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.rd-tower-tile.warn .rd-tower-num { color: var(--amber-text); }
+.rd-tower-sub { font-size: 12px; color: var(--text-soft); line-height: 1.4; }
+.rd-tower-stack { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--bg-soft); margin-bottom: 2px; }
+.rd-tower-stack span { display: block; height: 100%; }
+.rd-tower-stack-busy { background: var(--busy); }
+.rd-tower-stack-waiting { background: var(--wait); }
+.rd-tower-stack-idle { background: var(--idle); }
+.rd-tower-facts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.rd-tower-fact { font-size: 12.5px; color: var(--text-soft); border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; background: var(--bg-soft); }
+.rd-tower-fact b { color: var(--text); font-weight: 600; }
+.rd-tower-teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.rd-tower-team { border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow: hidden; }
+.rd-tower-team.wide { grid-column: span 2; }
+@media (max-width: 700px) { .rd-tower-team.wide { grid-column: auto; } }
+.rd-tower-team-head { display: flex; align-items: baseline; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+.rd-tower-team-name { font-weight: 600; }
+.rd-tower-team-meta { font-size: 12px; color: var(--muted); }
+.rd-tower-field {
+  position: relative;
+  background-color: var(--bg-soft);
+  background-image: radial-gradient(var(--border) 1px, transparent 1.2px);
+  background-size: 14px 14px;
+}
+.rd-tower-duck { position: absolute; width: 76px; margin-left: -38px; display: flex; flex-direction: column; align-items: center; gap: 1px; background: none; border: 0; padding: 0; cursor: pointer; color: inherit; }
+.rd-tower-duck-body { position: relative; display: block; width: 52px; height: 52px; }
+.rd-tower-duck-name { font-size: 11px; color: var(--text-soft); max-width: 76px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd-tower-duck:hover .rd-tower-duck-name, .rd-tower-duck:focus-visible .rd-tower-duck-name, .rd-tower-duck.pinned .rd-tower-duck-name { color: var(--text); font-weight: 600; }
+.rd-tower-duck.s-waiting .rd-tower-duck-body::before { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 2px solid var(--wait); opacity: 0.7; animation: rd-tower-ring 2.2s ease-out infinite; }
+.rd-tower-duck.stuck .rd-tower-duck-body, .rd-tower-duck.resting .rd-tower-duck-body { opacity: 0.55; }
+.rd-tower-duck.stuck .rd-tower-duck-body::after { content: "?"; position: absolute; top: -4px; left: -2px; width: 16px; height: 16px; font: 700 11px/16px system-ui, sans-serif; text-align: center; border-radius: 50%; background: var(--card); border: 1px solid var(--border-strong); color: var(--text-soft); }
+.rd-tower-mail { position: absolute; top: -6px; right: -10px; font: 600 10px/1 system-ui, sans-serif; color: #fff; background: var(--busy); border-radius: 999px; padding: 3px 5px; }
+.rd-tower-ducklings { position: absolute; bottom: 2px; left: 44px; display: flex; align-items: flex-end; }
+.rd-tower-ducklings .rd-duck-wrap { margin-left: -4px; }
+.rd-tower-ducklings em { font: 600 10px/1 system-ui, sans-serif; font-style: normal; color: var(--text-soft); margin: 0 0 3px 1px; }
+.rd-tower-duck-body.drift { animation: rd-tower-drift var(--dur, 14s) ease-in-out infinite; animation-delay: var(--delay, 0s); }
+@keyframes rd-tower-drift { 0%,100% { transform: translate(0,0); } 25% { transform: translate(var(--dx), -2px); } 50% { transform: translate(calc(var(--dx) * 0.4), 3px); } 75% { transform: translate(calc(var(--dx) * -0.6), -1px); } }
+@keyframes rd-tower-ring { 0% { transform: scale(0.9); opacity: 0.8; } 100% { transform: scale(1.25); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .rd-tower-duck-body.drift, .rd-tower-duck.s-waiting .rd-tower-duck-body::before { animation: none; }
+}
+.rd-tower-card { position: fixed; z-index: 80; width: 330px; max-width: calc(100vw - 32px); background: var(--card); border: 1px solid var(--border-strong); border-radius: 12px; box-shadow: 0 14px 40px -10px rgba(0,0,0,0.35); padding: 12px 14px; font-size: 13px; }
+.rd-tower-card-head { display: flex; align-items: center; gap: 8px; }
+.rd-tower-card-name { font-weight: 650; font-size: 15px; }
+.rd-tower-pill { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; border: 1px solid currentColor; color: var(--muted); }
+.rd-tower-pill.s-busy { color: var(--busy); }
+.rd-tower-pill.s-idle { color: var(--idle); }
+.rd-tower-pill.s-waiting, .rd-tower-pill.s-stuck { color: var(--wait); }
+.rd-tower-card-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.rd-tower-card-work { margin-top: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.rd-tower-card-work .rd-tower-label { display: block; margin-bottom: 2px; }
+.rd-tower-card-row { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 8px; font-size: 12px; color: var(--text-soft); }
+.rd-tower-card-row b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.rd-tower-hint { font-size: 11.5px; color: var(--muted); margin-top: 6px; }
+.rd-tower-composer { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.rd-tower-composer .rd-tower-hint { margin-top: 0; }
+.rd-tower-seg { display: flex; border: 1px solid var(--border-strong); border-radius: 8px; overflow: hidden; }
+.rd-tower-seg button { flex: 1; border: 0; background: var(--card); color: var(--text); padding: 5px 6px; font-size: 12px; cursor: pointer; }
+.rd-tower-seg button[aria-pressed="true"] { background: var(--bg-soft); font-weight: 600; box-shadow: inset 0 -2px 0 var(--brand-green); }
+.rd-tower-seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+.rd-tower-composer textarea { resize: vertical; min-height: 64px; max-height: 200px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--bg-soft); color: var(--text); font: inherit; font-size: 13px; padding: 7px 9px; }
+.rd-tower-composer textarea:focus { outline: none; border-color: var(--brand-green); }
+.rd-tower-card-actions { display: flex; align-items: center; gap: 8px; }
+.rd-tower-ok { font-size: 12px; color: var(--brand-green); }
+.rd-tower-error { font-size: 12px; color: var(--danger); }
+.rd-tower-needs { margin-bottom: 16px; }
+.rd-tower-needs h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.rd-tower-needs h2 span { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.rd-tower-needs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+.rd-tower-need { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px 12px; border: 1px solid var(--amber-border); border-radius: 10px; background: var(--amber-bg); color: inherit; text-align: left; cursor: pointer; }
+.rd-tower-need:hover { border-color: var(--wait); }
+.rd-tower-need-who { flex: 1; min-width: 0; }
+.rd-tower-need-who b { font-weight: 600; }
+.rd-tower-need-who small { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rd-tower-need-age { font-size: 12px; color: var(--amber-text); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* ── Typed AGENTS.md rules editor ── */
 .rd-rules-list {

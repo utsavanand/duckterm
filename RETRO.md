@@ -1,7 +1,114 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Artifact feedback needs provenance and an isolated selection bridge
+
+Text selected inside an opaque preview cannot be read directly by the app. Keep that origin isolation; authorize only a small app-owned reporter with a fresh CSP nonce, strip artifact scripts, and validate the sending frame/channel. Bind feedback to the saved artifact revision, escape terminal controls, and retain failed comments instead of reporting a false send. Verify real terminal receipt and malicious-preview rejection together.
+
+## 2026-09-26 — Recheck layout integration after concurrent merges
+
+The Control Tower introduced a wrapper between workspace and panels while collapse controls passed their branch checks. A direct-child CSS selector then stopped applying, and Oracle labels changed. Match the panel through its workspace ancestor, update the integration test to the merged UI, and gate the exact combined tree before publishing.
+
+## 2026-09-26 — Collapsing chrome must preserve the live terminal
+
+Side panels consumed space even when the owner only needed the center. Collapse their contents without unmounting the terminal or changing its session identity; leave a visible, keyboard-accessible reopen control. Verify real PTY resize frames, unchanged unsent input, independent toggles, persistence and Oracle interaction, not just a wider CSS box.
+
+## 2026-09-26 — Artifact previews must outlive temporary source files
+**Found:** a generated report or mockup can live in a temporary directory, so a
+catalog of file paths loses the deliverable when the agent cleans up or a file moves.
+**Rule:** register a bounded saved copy using the generating session's credential.
+Treat the path as provenance, never an instruction for the server to read a file.
+Keep artifact content out of the app's HTML origin, and test source deletion,
+session isolation, replacement, cleanup and backup restore before shipping.
+
+## 2026-09-25 — Last-agent exit raced the next tmux launch
+
+Linux fork-chain CI intermittently returned HTTP 400 because tmux reported
+`server exited unexpectedly`, reproduced after 30 passing repetitions. Its
+last short-lived agent could exit while the next launch connected. Configure
+`exit-empty off` on DuckTerm's private server before launching the child in
+the same tmux command queue. Preserve HTTP error bodies in fork tests: a
+passing retry is not diagnosis. Test that the server PID survives an empty
+interval and the next launch, and stress the real Linux fork chain.
+
+
+
+## 2026-09-26 — Re-adopting a terminal must repair stale interruption state
+
+All 21 live terminals survived while their database rows said interrupted, exposing Resume and disabling session messaging. Startup reattached panes but never cleared an existing interruption; normal hooks deliberately preserve at-rest states. Recover only confirmed-live interrupted sessions from their latest agent activity, clear ended_at, and restore enrollment without relaunching or inventing a new run. Keep deliberate Stop/Archive states intact. Failed tmux discovery is unknown liveness, not an empty fleet: never interrupt everything on a PATH/socket error. Verify stored state and process continuity after release, not only pane counts.
+
+## 2026-09-25 — Density is information structure, not just font size
+
+The first Compact/Standard/Relaxed preview only varied padding and type size, so the modes looked alike. The approved design changes one-line versus two-line rows, hover details, and persistent selected-session controls. Keep session names regular-weight in every mode, remember the choice, and test both geometry and access to hidden actions. Preserve the existing row-selection focus behavior: adding a focusable wrapper stole focus from the newly opened terminal, caught by the full browser suite.
+
+
+## 2026-09-25 — Opening Oracle must not resize a live terminal
+
+Oracle used to consume workspace width. A long active input line was permanently clipped after an open/close cycle, even though the original terminal dimensions returned. xterm excludes the cursor line from normal reflow; a resize-back is not a repair. Keep Oracle over the existing context column, hiding its covered controls, and preserve the terminal geometry. Browser regression covers long unsubmitted input, repeated toggles, and typing afterward. Completed-output-only resize tests missed this case.
+
+
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
+
+## 2026-09-26 — Artifact downloads and remote navigation share one delegate policy
+**Found:** integrating artifact downloads introduced a second navigation-policy
+callback alongside the remote dashboard's origin restriction.
+**Rule:** combine download and navigation decisions in one callback. Only the
+current dashboard's main frame may download a blob, and changing computers must
+reset navigation-load state so a failed new connection can retry. Compile the
+native app and rerun artifact, report UI, and transfer checks after integration.
+
+## 2026-09-26 — Control tower opened with its header scrolled off screen
+**Broke:** opening the tower showed the tiles cut off at the top and no
+"← Sessions" button, so there was no visible way back.
+**Cause:** the Oracle chat kept its newest answer in view with
+`scrollIntoView`, which scrolls every scrollable ancestor, so it scrolled the
+whole tower page down. The mocked-chat screenshots before release had an
+empty chat, so nothing needed scrolling.
+**Rule:** keep a list at its bottom by setting that list's own `scrollTop`.
+Check a page with realistic content in every scrolling region before
+shipping it.
+
+## 2026-09-26 — Replacing the panes with the control tower broke terminal wrapping
+**Broke (caught by e2e before merge):** after opening and closing the control
+tower, every long line in a terminal wrapped one column later than before.
+**Cause:** the tower first replaced the three panes, which unmounted the
+terminal. Remounting replays its output, and the replay wrapped at a
+different width than the live session had. The B5 regression test
+(`oracle-terminal-resize.spec.ts`) failed on the rendered rows.
+**Rule:** a full-page view goes over the panes as an opaque layer, with the
+panes kept mounted and `inert`. Never unmount a terminal just to show
+something else.
+
+## 2026-09-26 — Token totals were inflated 6x in the control tower design
+**Broke:** the design and prototype said 10.9B tokens in 7 days; the real
+figure was 1.8B.
+**Cause:** Claude Code writes one transcript line per content block and
+repeats the reply's usage on each, so summing lines double-counted. The scan
+also summed whole transcripts touched this week, including months of older
+history in resumed sessions.
+**Rule:** count Claude usage once per (message id, request id) and bucket by
+each record's own timestamp. Check a derived total against one file counted
+by hand before putting it in front of the owner.
+
+## 2026-09-25 — Ask Oracle reported prompt suggestions as the owner's instructions
+**Broke:** Oracle told the owner that qa and bugs-dev were both "told to
+deploy the fixes to production" and warned they might deploy twice, and that
+architect was sitting on "approve the VM testing". Nobody sent those.
+**Cause:** the fleet digest read tmux panes without escapes. Claude's dimmed
+suggested next prompt and Codex's placeholder then looked like typed input.
+**Rule:** anything that reads an agent's screen for meaning must drop dimmed
+text on the input line, the same way Oracle's empty-prompt check does.
+
+## 2026-09-25 — Oracle never nudged a session that existed before a restart
+**Broke:** zero nudges in two days, while main-qa sat idle with five unread
+peer messages and an empty prompt.
+**Cause:** reconcile() re-adopts surviving tmux panes with GenericRuntime, and
+Oracle asked the supervisor's runtime whether the prompt was empty. Generic
+always says no. Tests used a fake supervisor carrying the real runtime, so they
+never saw what a restarted server holds.
+**Rule:** per-harness behavior for a session resolves from its DB row's
+runtime, not the supervisor's. Test fakes should mirror the adopted state,
+not the freshly launched one.
 
 ## 2026-09-25 — Remote-session integration must preserve newer native and launch behavior
 **Broke:** both branches added the same navigation delegate callback; newer launch

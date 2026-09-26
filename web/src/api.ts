@@ -20,6 +20,21 @@ export interface OracleExchange {
   at: number;
 }
 
+export interface TokenTotals {
+  input: number;
+  cache_read: number;
+  cache_write: number;
+  output: number;
+}
+
+// GET /control-tower: the insights the dashboard's session stream lacks.
+export interface TowerInsights {
+  tokens: { days: number; by_agent: Record<string, TokenTotals> };
+  mail: { sent: number; answered: number; nudges: number };
+  backup: { destination: "gcs" | "local" | null; status: string | null; finished_at: number | null };
+  remote: { available: boolean; count: number };
+}
+
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
@@ -152,7 +167,39 @@ export interface BackupState {
   } | null;
 }
 
+export interface Artifact {
+  id: string;
+  session_key: string;
+  title: string;
+  source_path: string;
+  media_type: string;
+  size: number;
+  sha256: string;
+  created_at: number;
+  updated_at: number;
+}
+export interface ArtifactContent extends Artifact { content_base64: string }
+
+async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
+  const response = await fetch(path, { method, cache: "no-store", headers: authHeaders() });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? "Could not load artifacts");
+  return result as T;
+}
+
 export const api = {
+  artifactFeedback: async (key: string, artifact: Artifact, quote: string, note: string) => {
+    const response = await fetch(`/sessions/${encodeURIComponent(key)}/annotations`, {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ artifact_id: artifact.id, artifact_sha256: artifact.sha256, quote, note }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.sent) throw new Error(data.error || "Feedback was not sent. Try again when the agent is live.");
+  },
+  artifacts: (key: string) => artifactRequest<{ artifacts: Artifact[] }>(`/sessions/${encodeURIComponent(key)}/artifacts`),
+  artifact: (key: string, id: string) => artifactRequest<{ artifact: ArtifactContent }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`),
+  removeArtifact: (key: string, id: string) => artifactRequest<{ removed: boolean }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, "DELETE"),
+
   backupStatus: async (): Promise<BackupState> => {
     const res = await fetch("/backup", { cache: "no-store", headers: authHeaders() });
     const data = await res.json();
@@ -216,6 +263,12 @@ export const api = {
       { question },
     ),
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
+  controlTower: () => get<TowerInsights>("/control-tower"),
+  messageSession: (key: string, text: string, mode: "inbox" | "prompt") =>
+    post<{ delivered: "inbox" | "prompt" | null }>(
+      `/sessions/${encodeURIComponent(key)}/message`,
+      { text, mode },
+    ),
   clearOracleChat: () =>
     fetch("/oracle/chat", { method: "DELETE", headers: authHeaders() }).then(
       (r) => r.json() as Promise<{ messages: OracleExchange[] }>,

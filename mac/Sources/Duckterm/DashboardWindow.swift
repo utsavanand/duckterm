@@ -7,6 +7,19 @@ import WebKit
 final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
     private var window: NSWindow?
     private var web: WKWebView?
+    private var dashboardLoaded = false
+    private lazy var artifactDownloads = ArtifactDownloads(
+        chooseDestination: { [weak self] name, done in
+            guard let host = self?.sheetHost() else { done(nil); return }
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = name
+            panel.canCreateDirectories = true
+            panel.beginSheetModal(for: host) { result in
+                done(result == .OK ? panel.url : nil)
+            }
+        },
+        showError: { [weak self] error in self?.showArtifactDownloadError(error) }
+    )
     private var url: URL
     var desktopHosts: [RemoteHost] = []
     var desktopTarget = "local"
@@ -74,6 +87,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard webView === web else { return }
+        dashboardLoaded = true
         AppDiagnostics.shared.record("Dashboard loaded")
         // A host change carries form text once, never a machine-specific folder.
         launchDraft = nil
@@ -87,6 +101,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
 
     func connect(url: URL, remote: Bool, title: String) {
         self.url = url
+        dashboardLoaded = false
         web?.stopLoading()
         // Replace the web view to drop old sockets, callbacks and page state.
         // Remote sessions use an ephemeral browser store, never local cookies.
@@ -133,6 +148,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+        dashboardLoaded = false
         let config = WKWebViewConfiguration()
         configureDesktop(config)
         let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760), configuration: config)
@@ -185,6 +201,9 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        // A download policy change may cancel navigation after the dashboard
+        // loaded. Never reload a working terminal in response to that event.
+        guard !dashboardLoaded else { return }
         let failedURL = url
         AppDiagnostics.shared.record("Dashboard connection failed", code: (error as NSError).code)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
@@ -195,6 +214,15 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // Preserve authenticated artifact downloads without permitting a page
+        // outside the current dashboard to navigate the native view.
+        if navigationAction.shouldPerformDownload {
+            let origin = navigationAction.sourceFrame.securityOrigin
+            let trusted = webView === web && navigationAction.sourceFrame.isMainFrame
+                && origin.protocol == url.scheme && origin.host == url.host && origin.port == url.port
+            decisionHandler(trusted && navigationAction.request.url?.scheme == "blob" ? .download : .cancel)
+            return
+        }
         guard let destination = navigationAction.request.url else { decisionHandler(.cancel); return }
         if destination.scheme == url.scheme && destination.host == url.host && destination.port == url.port {
             decisionHandler(.allow)
@@ -214,6 +242,20 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     func windowWillClose(_ notification: Notification) {
         window = nil  // rebuild fresh next open so it reloads the dashboard
         web = nil
+    }
+
+    func webView(
+        _ webView: WKWebView, navigationAction: WKNavigationAction,
+        didBecome download: WKDownload
+    ) {
+        download.delegate = artifactDownloads
+    }
+
+    private func showArtifactDownloadError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could not save artifact"
+        alert.informativeText = error.localizedDescription
+        if let host = sheetHost() { alert.beginSheetModal(for: host) }
     }
 
     // ── JS dialog panels (WKUIDelegate) — native sheets for alert/confirm/prompt ──

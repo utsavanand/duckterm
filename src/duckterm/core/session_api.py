@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from duckterm.helpers import session_credentials
+from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
+from duckterm.persistence.artifacts import ArtifactError, ArtifactStore
 from duckterm.runtimes.base import AT_REST_STATES
 
 # Store a far-future deadline so older servers do not immediately expire
@@ -119,6 +121,7 @@ class SessionAPI:
     def __init__(self, conn: sqlite3.Connection, credential_dir: Path) -> None:
         self.conn = conn
         self.credential_dir = credential_dir
+        self.artifacts = ArtifactStore(conn)
         conn.executescript(SCHEMA)
         question_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(session_questions)")
@@ -356,6 +359,53 @@ class SessionAPI:
             )
         return response
 
+    def owner_message(self, key: str, text: object) -> str:
+        """One owner notice to one session, the same record a folder broadcast
+        queues. Returns the message id."""
+        message = _text(text, "text", 16384)
+        row = self.conn.execute(
+            "SELECT s.grp, m.root FROM sessions s "
+            "LEFT JOIN session_api_members m ON m.session_key = s.session_key "
+            "WHERE s.session_key = ?",
+            (key,),
+        ).fetchone()
+        if row is None:
+            raise APIError(404, "session not found")
+        if not (row["root"] and _inside(row["grp"] or "", row["root"])):
+            raise APIError(
+                409,
+                "This session has no inbox because it isn't in a shared folder. "
+                "Type into its prompt or open its terminal instead.",
+            )
+        notice_id = "b-" + secrets.token_hex(16)
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO session_questions "
+                "(id, sender, recipient, sender_name, root, question, created_at, "
+                "expires_at, idempotency_key, content_hash, kind) "
+                "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, 'broadcast')",
+                (
+                    notice_id,
+                    key,
+                    row["root"],
+                    message,
+                    int(time.time() * 1000),
+                    NO_DEADLINE,
+                    notice_id,
+                    hashlib.sha256(message.encode()).hexdigest(),
+                ),
+            )
+        return notice_id
+
+    def mail_stats(self, since_ms: int) -> dict[str, int]:
+        """Agent-to-agent questions sent since a time, and how many were answered."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS sent, COALESCE(SUM(status = 'answered'), 0) AS answered "
+            "FROM session_questions WHERE kind = 'question' AND created_at >= ?",
+            (since_ms,),
+        ).fetchone()
+        return {"sent": int(row["sent"]), "answered": int(row["answered"])}
+
     def pending_counts(self) -> dict[str, int]:
         self._sweep()
         return {
@@ -550,7 +600,12 @@ class SessionAPI:
                 member.get("session_updated_at", 0),
                 member.get("progress_at") or 0,
             ),
-            "capabilities": ["inbox.read", "answers.explicit"],
+            "capabilities": [
+                "inbox.read",
+                "answers.explicit",
+                "artifacts.register",
+                "artifacts.list",
+            ],
         }
 
     def _peer(self, sender: str, recipient: str, *, live: bool = True) -> dict[str, Any]:
@@ -693,7 +748,8 @@ class SessionAPI:
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path.removeprefix("/api/v1/session")
         query = urllib.parse.parse_qs(parsed.query)
-        if len(body) > MAX_BODY_BYTES:
+        limit = MAX_ARTIFACT_REQUEST_BYTES if path == "/artifacts" else MAX_BODY_BYTES
+        if len(body) > limit:
             raise APIError(413, "request body too large")
         try:
             req = json.loads(body or b"{}")
@@ -702,6 +758,13 @@ class SessionAPI:
         if not isinstance(req, dict):
             raise APIError(400, "expected a JSON object")
         member = self._member(key)
+        if path == "/artifacts" and method in {"GET", "POST"}:
+            try:
+                if method == "GET":
+                    return 200, {"artifacts": self.artifacts.list(key)}
+                return 200, {"artifact": self.artifacts.register(key, req)}
+            except ArtifactError as exc:
+                raise APIError(exc.status, str(exc)) from exc
         if path == "/self" and method == "GET":
             return 200, self._public(member)
         if path == "/self" and method == "PATCH":

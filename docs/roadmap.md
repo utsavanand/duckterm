@@ -133,6 +133,135 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
     is user input and must be escaped. Every previously-left comment
     lights up as soon as this ships.
 
+## Shipped / in flight, recorded 2026-09-26
+
+- **Independent left/right panel collapse** — shipped v0.4.56 (PRs #40/#41,
+  `main-dev`): accessible header buttons, persisted choices, 36px reopen
+  rails, center pane takes the freed width (verified 738 → 1035 → 1368 px),
+  narrow stacked windows reclaim height.
+- **Control Tower** — phases 1 and 2 implemented on branch `control-tower`
+  (not merged): clicking Oracle opens a full page rather than a side panel,
+  with fleet insights (agent count, total tokens, last backup, remote
+  session count) and an animated duck scene grouped into teams by folder.
+  Design: [control-tower-design.md](control-tower-design.md), built on
+  [oracle-design.md](oracle-design.md). **Was not tracked here while being
+  built** — recorded now; this is the second time a designed, implemented
+  feature reached the roadmap only after the fact (see the process note
+  above).
+
+## Ownership, as reported by the sessions themselves (2026-09-25)
+
+The owner asked whether items attributed to sessions were actually being
+worked on. Asked directly; answers recorded as given rather than inferred:
+
+- **`ui-dev` is AVAILABLE with nothing in progress**, and stated explicitly
+  that annotation highlights (F6), packaged icons (B4), desktop
+  notifications (B6), and the urgency/Interrupt controls are **pending /
+  not started** — "please do not mark them in progress or completed".
+  Priority order sent back: B6 → F6 → B4 → urgency/Interrupt.
+- **`main-dev`** shipped Artifacts (v0.4.55) and the fork-race CI fix
+  (v0.4.54); **B3 is explicitly still queued and not fixed by that
+  release**. The backup sync-mode exclusion test remains unanswered after
+  three asks.
+- Lesson for this document: an item having a named owner is not the same as
+  an item being worked on. Ownership lines here now mean "asked and
+  confirmed", not "sent to".
+
+## Bugs — open
+
+B6. **Desktop notification setting does not work** (owner-reported
+    2026-09-25, `ui-dev`). Three distinct defects in App.tsx:171-201:
+    - **It does not persist.** `notifyOn` is plain `useState` initialized
+      from `Notification.permission === "granted"`; nothing writes or reads
+      localStorage. Turning it OFF reverts on reload, so "off" is
+      effectively unachievable once permission is granted. Every
+      neighbouring control in the same menu (density, theme, terminal
+      themes, `rd.oracleOpen`) persists — notifications are the lone
+      exception. Fix: store under an `rd.` key, initialize from stored AND
+      current permission so a revoked permission beats a stored true.
+    - **No feedback when permission is denied.** `requestPermission()`
+      resolves "denied" immediately without prompting once a site is
+      blocked, so the checkbox snaps back with no explanation — which reads
+      exactly as "the setting doesn't work". Say "blocked in your browser"
+      instead; HeaderMenus already has the `header-notification-help` slot.
+    - **Burst on load and on enable.** `prevWaiting` starts empty and
+      `notifyOn` is in the effect's dependency list, so already-waiting
+      sessions all look new: they notify at load, and toggling the setting
+      ON notifies for every currently-waiting session. Same class of
+      mistake the duck celebration got right by firing only on witnessed
+      live transitions. Fix: prime `prevWaiting` without notifying; don't
+      treat a `notifyOn` change as a transition.
+    Note: the Mac app has an independent native notifier
+    (main.swift:14-57, its own `notified` set), so in DuckTerm.app the
+    browser checkbox and the native path are two mechanisms — the Settings
+    control should govern both or say that it only affects the browser.
+
+
+
+B5. ~~Opening Oracle corrupts terminal wrapping irreversibly.~~ **Fixed by
+    layout** in v0.4.51 (PRs #27/#28): Oracle now occupies the right
+    context pane without narrowing the terminal, so the geometry that used
+    to be lost is never disturbed. Regression test
+    `web/e2e/oracle-terminal-resize.spec.ts` drives a real terminal and
+    asserts both the reported size and the rendered rows survive
+    open/close. Owner's bug no longer reproduces.
+    **Latent defect retained, deliberately recorded:** the underlying cause
+    is untouched — `settleOpening` in Terminal.tsx still early-returns
+    `if (!visible || !host.clientWidth || !host.clientHeight)` *before*
+    `fit.fit()`/`sendResize()`, and the ResizeObserver is wired to it, so a
+    callback firing while the host is unmeasurable still drops a resize
+    with nothing to retry. Not triggered by Oracle any more; still reachable
+    from grid splits, folder-grid open/close, Messages/History tab
+    switches, window resize, or any future pane. If terminal geometry goes
+    wrong again, start here rather than re-deriving it. Cheap hardening
+    whenever that function is next touched: schedule a retry instead of
+    returning silently (RETRO precedent: the blank Mac window, where a
+    failed load had no retry).
+
+## In flight (2026-09-25)
+
+- **Public website + custom domain** — **shipped**:
+  https://duckterm.utsava.xyz/ (verified HTTP 200, title "DuckTerm — One
+  place for your coding agents", no RubberTerm leakage). Demo uses the
+  actual UI with fictional data. Source lives in the `rubber-duck` repo
+  (PR #26), not this one — worth knowing when looking for it.
+- **Sidebar density** — **shipped** v0.4.51: Compact / Standard / Relaxed
+  in Settings with the choice remembered, distinct detail and action
+  layouts, regular-weight session names. (A density row wrapper stealing
+  terminal focus was caught by ui-dev's own browser suite before release.)
+
+## Designed 2026-09-25, awaiting owner review
+
+F7. **Plan hand-off** — plan with one agent/model, implement with another
+    (owner wants it soon; Conductor has it). Design:
+    [plan-handoff-design.md](plan-handoff-design.md). Decisions: same
+    worktree (not a fork — fork is for parallel attempts and creates
+    immediate divergence, wrong shape here); seed from the planner's last
+    assistant message, user-editable (not Claude's plan-mode file, which
+    would make the feature Claude-only); implementer recorded as a child of
+    the planner. Not a conversation transfer — transcripts are
+    harness-specific, so the implementer is *seeded*, not resumed. Needs a
+    UI preview before build. Open question for the owner: expose a model
+    field per harness at hand-off, or agent-choice only (recommended).
+
+F8. **DuckCloud** — product name for the `remote-session` work plus the
+    setup experience. Design: [duckcloud-design.md](duckcloud-design.md).
+    Bring-your-own-cloud; **GCP and AWS both at launch** (owner decision).
+    Sign-in rides the user's existing `gcloud`/`aws` CLI login — no OAuth
+    app, no stored cloud credentials — the same reasoning as connectors and
+    `backup --to gs://`. Setup replaces "have a project" with cloud /
+    account / size, sizes quoted with hourly price, every resource named
+    `duckterm-` so the user can clean up in their own console. Cost
+    estimate before provisioning and a running estimate in the dashboard;
+    **idle shutdown on by default**, with honest warnings that stopping a
+    VM terminates its processes and that disk still bills while stopped.
+    Does NOT reorder B2: `remote-session` already rewrote `connectors.py`
+    (689 lines), so the connector wizard should be designed against that
+    branch, making connectors and the merge one sequenced piece of work.
+    **The branch is the long pole and the main risk** — it carries remote
+    workspace, session migration, and the connector rewrite while five
+    sessions push to main daily.
+
 ## Bugs (user-reported 2026-09-23, fix before new features)
 
 B1. ~~Messages panel shows the previous session's transcript.~~ **Fixed**
@@ -286,13 +415,31 @@ F2. **Settings button** — the *surface* shipped in v0.4.45 (header Settings
     harness Agents tab, which updates the *agent CLIs*; this updates
     DuckTerm itself, and the two should not be conflated in the UI.
 
-F3. **Folder artifacts.** Attach artifacts (markdown/HTML) to a folder, and
-    let an agent that generates one *recommend associating it* with the
-    folder. Mac app renders markdown at minimum, HTML if cheap. Design
-    question to settle first: is an artifact a file reference on disk
-    (cheap, always current, dies if the file moves) or a stored copy
-    (durable, snapshot semantics, needs storage + retention)? Recommend
-    file reference in v1.
+F3. **Artifacts — SHIPPED v0.4.55** (PR #36, `77d2f4c`; `main-dev` confirmed released and installed).
+    The owner approved the local Artifacts tab beside Inbox and reviewed the
+    concrete list/preview layout. Includes session-scoped saved copies,
+    Markdown/static HTML/image previews, download and removal. Mac downloads
+    use a native Save dialog. DuckCentral and cloud publication remain deferred.
+    [Implementation and limits](artifacts.md).
+
+    - Automatic **cooperative registration**: new/resumed agent instructions and
+      CLI self/inbox reminders tell agents to register generated deliverables.
+      No filesystem scan or claim that every output is detected. This follows
+      the owner's latest request for automatic local registration; no separate
+      owner acceptance step is required for each artifact.
+    - Content is a bounded SQLite snapshot, not a new artifact directory, so
+      full archives and sync database copies already include it. A real CLI
+      upload and archive restore test verifies the saved bytes survive.
+    - Clients upload bytes using their own session credential. Source paths
+      are provenance only; the server never follows them. Owner reads/deletes
+      require owner authentication; peers cannot access artifact contents.
+    - Static HTML runs in an iframe with no sandbox exceptions and a restrictive
+      CSP; sanitized Markdown uses the same isolation. Browser tests check
+      blocked network/script execution, refresh, downloads and draft retention.
+    - Same session/path replaces its saved copy (no prior-version history).
+      Stop/archive retains artifacts; explicit session deletion removes them,
+      consistent with message pins. Original files and existing backups stay
+      intact. File/count/storage limits are documented, not silent eviction.
 
 F4. **Migrate a running session to another harness** (e.g. Claude Code →
     Codex). Hard constraint from

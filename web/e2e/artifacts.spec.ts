@@ -1,0 +1,85 @@
+import { expect, test } from "@playwright/test";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { apiDelete, apiPatch, apiPost, base, expandFolder } from "./helpers";
+
+test("registered artifacts persist, preview safely, refresh, download, and preserve terminal drafts", async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "duckterm-artifacts-test-")));
+  let key = "";
+  try {
+    const launched = await apiPost("/sessions/launch", { command: "sh -c 'cat'", cwd, runtime: "generic", name: "artifact-test-agent", in_terminal: false, test: true });
+    expect(launched.status).toBe(200);
+    key = String(launched.body.session_key);
+    await apiPatch(`/sessions/${key}`, { group: "Artifact probes" });
+    const enrollment = await apiPost(`/sessions/${key}/collaboration`, { root: "Artifact probes" });
+    expect(enrollment.status).toBe(200);
+    const register = async (path: string, title: string, content: string) => {
+      const response = await fetch(`${base()}/api/v1/session/artifacts`, { method: "POST", headers: { Authorization: `Bearer ${enrollment.body.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ source_path: path, title, content_base64: Buffer.from(content).toString("base64") }) });
+      expect(response.status).toBe(200);
+      return response.json();
+    };
+    await page.goto(base());
+    await expandFolder(page, "Artifact probes");
+    await page.locator(".rd-row-name", { hasText: "artifact-test-agent" }).click();
+    await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
+    await page.keyboard.type("ARTIFACT_DRAFT_NOT_SUBMITTED");
+    await page.getByRole("button", { name: "Artifacts", exact: true }).click();
+    await expect(page.getByText("Your outputs will appear here")).toBeVisible();
+    const tabs = await page.locator(".rd-view-toggle button").allTextContents();
+    expect(tabs.indexOf("Artifacts")).toBe(tabs.findIndex((text) => text.startsWith("Inbox")) + 1);
+    await register(join(cwd, "release-review.md"), "Release review", "# Ready for the next release\n\nSaved locally.\n\n- Verified restore\n- Preserved terminal drafts");
+    const frame = page.frameLocator('iframe[title="Preview of Release review"]');
+    await expect(frame.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({ timeout: 8000 });
+    await page.screenshot({ path: "/tmp/duckterm-artifacts-implemented-markdown.png" });
+    const unsafeHTML = `<style>body{background:#fafbf8;color:#27352c;padding:32px;font:16px system-ui}h1{font-size:32px}</style><h1>Website mockup</h1><p>Saved HTML layout</p><script>parent.document.body.dataset.artifactLeak='yes';fetch('/artifact-leak')</script><img src='/artifact-leak'><meta http-equiv='refresh' content='0;url=/artifact-leak'>`;
+    const leaked: string[] = [];
+    await page.route("**/artifact-leak", (route) => { leaked.push(route.request().url()); return route.abort(); });
+    await register(join(cwd, "website.html"), "Website mockup", unsafeHTML);
+    await page.getByRole("button", { name: /HTML Website mockup/ }).click({ timeout: 8000 });
+    await expect(page.frameLocator('iframe[title="Preview of Website mockup"]').getByRole("heading", { name: "Website mockup" })).toBeVisible();
+    await expect(page.locator('iframe[title="Preview of Website mockup"]')).toHaveAttribute("sandbox", "allow-scripts");
+    await page.screenshot({ path: "/tmp/duckterm-artifacts-implemented-html.png" });
+    expect(await page.locator("body").getAttribute("data-artifact-leak")).toBeNull();
+    expect(leaked).toEqual([]);
+    const downloadPending = page.waitForEvent("download");
+    await page.getByRole("link", { name: "Download", exact: true }).click();
+    const download = await downloadPending;
+    expect(download.suggestedFilename()).toBe("website.html");
+    await download.saveAs(join(cwd, "download.html"));
+    expect(readFileSync(join(cwd, "download.html"), "utf8")).toBe(unsafeHTML);
+    await register(join(cwd, "backup-flow.svg"), "Backup flow", `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="260" onload="parent.document.body.dataset.artifactLeak='yes'"><rect width="600" height="260" rx="16" fill="#eaf0e7"/><text x="40" y="130" fill="#27352c" font-size="28">Session → Saved artifact → Backup</text></svg>`);
+    await page.getByRole("button", { name: /Image Backup flow/ }).click({ timeout: 8000 });
+    const image = page.getByRole("img", { name: "Backup flow", exact: true });
+    await expect(image).toBeVisible();
+    await expect.poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(600);
+    expect(await page.locator("body").getAttribute("data-artifact-leak")).toBeNull();
+    await page.screenshot({ path: "/tmp/duckterm-artifacts-implemented-image.png" });
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(page.getByRole("button", { name: /Image Backup flow/ })).toHaveCount(0);
+    await register(join(cwd, "release-review.md"), "Release review", "# Revised report\n\nUpdated snapshot.");
+    await page.getByRole("button", { name: /Markdown Release review/ }).click();
+    await expect(frame.getByRole("heading", { name: "Revised report" })).toBeVisible({ timeout: 8000 });
+    await page.getByRole("button", { name: "Terminal", exact: true }).click();
+    await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("ARTIFACT_DRAFT_NOT_SUBMITTED");
+    await page.reload();
+    await expandFolder(page, "Artifact probes");
+    await page.locator(".rd-row-name", { hasText: "artifact-test-agent" }).click();
+    await page.getByRole("button", { name: "Artifacts", exact: true }).click();
+    await page.getByRole("button", { name: /Markdown Release review/ }).click();
+    await expect(frame.getByRole("heading", { name: "Revised report" })).toBeVisible();
+    page.on("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(page.getByRole("button", { name: /Markdown Release review/ })).toHaveCount(0);
+    await expect(page.frameLocator('iframe[title="Preview of Website mockup"]').getByRole("heading", { name: "Website mockup" })).toBeVisible();
+    await page.getByRole("button", { name: "Remove", exact: true }).click();
+    await expect(page.getByText("Your outputs will appear here")).toBeVisible();
+  } finally {
+    if (key) { await apiPost(`/sessions/${key}/stop`); await apiDelete(`/sessions/${key}`); }
+    rmSync(cwd, { recursive: true, force: true });
+  }
+});
