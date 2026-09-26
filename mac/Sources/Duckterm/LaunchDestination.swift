@@ -4,6 +4,7 @@ import Foundation
 /// redirects, cookies, or credentials cross the web-view bridge.
 final class LaunchDestination: NSObject, URLSessionTaskDelegate {
     private lazy var session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
+    private let probes = BoundedSessionHTTP()
 
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
@@ -62,7 +63,7 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
         for _ in 0..<attempts {
             var probe = URLRequest(url: base, cachePolicy: .reloadIgnoringLocalCacheData)
             probe.timeoutInterval = 2
-            if let (data, response) = try? await session.data(for: probe),
+            if let (data, response) = try? await probes.perform(probe),
                let http = response as? HTTPURLResponse, http.statusCode == 200,
                http.value(forHTTPHeaderField: "X-Duckterm") == "1" {
                 let html = String(decoding: data, as: UTF8.self)

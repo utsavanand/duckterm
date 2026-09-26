@@ -11,6 +11,11 @@ final class SessionTransportTests: XCTestCase {
             XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": "GET"]), path)
         }
         XCTAssertThrowsError(try SessionTransport.request(base: URL(string: "https://example.com")!, params: ["path": "/sessions", "method": "GET"]))
+        for path in ["/sessions/launch", "/sessions/compare", "/sessions/clear-terminated"] {
+            for method in ["GET", "POST", "PATCH", "DELETE"] {
+                XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+            }
+        }
     }
 
     @MainActor func testQueryStaysDataAndImageBodyIsNotStringified() throws {

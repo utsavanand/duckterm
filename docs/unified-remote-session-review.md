@@ -183,3 +183,19 @@ publishing SessionStart. Unexpected spawn failures retain their exception in an
 archived diagnostic event and remain out of the live sidebar. Existing failed
 user rows are left untouched. General reconciliation of a lost normal-launch
 response remains a separate concern; requests are never automatically retried.
+
+Release review corrections: remote terminal delivery awaits WebKit before the
+next receive, reserved collection routes cannot masquerade as session IDs, and
+token probes use the bounded HTTP reader. The loopback-only stress reproduction
+is `python3 scripts/test_session_transport_pressure.py`: it delivers 500 MB of
+random WebSocket output to an intentionally slow real WebKit page and asserts
+native RSS growth below 256 MiB. It does not measure WebKit's separate-process
+memory or exercise xterm rendering; the one-window native acceptance separately
+checks real terminal input and output.
+
+Tracked follow-ups: cache readiness tokens per connection with explicit
+invalidation on reconnect/rotation (never replay writes); offer an explicit
+machine picker in Connectors/Meta-harnesses after a UI preview. Those dialogs
+currently name and use the selected session's machine. Remote pending-rule
+counts at launch remain omitted; the existing `elsewhere` guard prevents a
+remote project path from being looked up on This Mac.

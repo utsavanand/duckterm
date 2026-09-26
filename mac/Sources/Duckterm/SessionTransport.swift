@@ -3,7 +3,7 @@ import Foundation
 /// Delegate-driven collection enforces the limit while bytes arrive, including
 /// a dishonest/missing Content-Length. Completion-handler data tasks buffer the
 /// entire response before application code can check its size.
-private final class BoundedSessionHTTP: NSObject, URLSessionDataDelegate {
+final class BoundedSessionHTTP: NSObject, URLSessionDataDelegate {
     private struct Pending {
         var data = Data()
         var response: URLResponse?
@@ -84,6 +84,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
     private var generation = 0
     private var sockets: [String: (host: String, socket: URLSessionWebSocketTask)] = [:]
     var onTerminal: (([String: Any]) -> Void)?
+    var onTerminalData: (([String: Any]) async -> Void)?
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask,
                                willPerformHTTPRedirection response: HTTPURLResponse,
@@ -113,6 +114,9 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             throw LaunchDestination.Failure.message("Invalid session request")
         }
         let route = components.path
+        guard !["/sessions/launch", "/sessions/compare", "/sessions/clear-terminated"].contains(route) else {
+            throw LaunchDestination.Failure.message("Unsupported session operation")
+        }
         let parts = route.split(separator: "/", omittingEmptySubsequences: false)
         guard !parts.contains("."), !parts.contains(".."), !route.contains("\\") else {
             throw LaunchDestination.Failure.message("Invalid session path")
@@ -193,7 +197,9 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
                         let message = try await socket.receive()
                         guard self?.sockets[id]?.socket === socket else { break }
                         if case .data(let bytes) = message {
-                            self?.onTerminal?(["id": id, "data": bytes.base64EncodedString()])
+                            // One delivery at a time: WebKit must consume this
+                            // frame before another receive can enqueue output.
+                            await self?.onTerminalData?(["id": id, "data": bytes.base64EncodedString()])
                         }
                     }
                 } catch { failure = error.localizedDescription }

@@ -143,6 +143,14 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         evaluate("(() => { const e = \(String(decoding: data, as: UTF8.self)); window.dispatchEvent(new CustomEvent(e.name, {detail:e.detail})); })()")
     }
 
+    func dispatchAndWait(name: String, detail: [String: Any]) async {
+        guard let web, let data = try? JSONSerialization.data(withJSONObject: ["name": name, "detail": detail]) else { return }
+        let script = "(() => { const e = \(String(decoding: data, as: UTF8.self)); window.dispatchEvent(new CustomEvent(e.name, {detail:e.detail})); })()"
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            web.evaluateJavaScript(script) { _, _ in continuation.resume() }
+        }
+    }
+
     func setTitle(_ title: String) { window?.title = title }
 
     /// Run JS in the dashboard page — the Edit-menu clipboard bridge.
