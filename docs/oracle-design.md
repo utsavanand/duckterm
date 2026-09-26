@@ -83,6 +83,17 @@ Claude sessions showed as waiting, inflated the tab-title count, and fired
 "waiting on an answer" desktop notifications. The hook now forwards
 `notification_type` and a trimmed `message`, and `idle_prompt` derives `idle`.
 
+## Stale "waiting" badges
+
+Once a minute, before nudging, Oracle clears "waiting" on sessions that are
+really idle: no pending approval, badge older than a minute, and an empty
+prompt on screen. A real wait always draws a menu whose selected line starts
+with the marker (Claude's permission dialog shows "❯ 1. Yes"), so it never
+reads as empty. The correction is recorded as an idle notice with
+`reconciled: true`. It exists because badges set by Claude's idle notice
+before the hook forwarded its type stayed "waiting" for days: on 2026-09-26,
+5 of 6 "waiting" sessions weren't waiting on anything.
+
 ## Later rules, with triggers
 
 - **Needs-you queue:** sessions waiting on the owner for 30+ minutes, as one

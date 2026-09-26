@@ -3358,10 +3358,39 @@ class Server:
                 if not _pid_alive(int(w["agent_pid"])):
                     self._archive_swept(str(w["session_key"]))
 
+    async def _clear_stale_waiting(self, now: int) -> None:
+        """Clear "waiting" badges on sessions that are really idle. A real wait
+        (a permission request or a menu question) draws a menu whose selected
+        line starts with the prompt marker, e.g. "❯ 1. Yes"; an idle session
+        shows an empty prompt. Badges set by Claude's idle notice before the
+        hook forwarded its type stayed "waiting" for days otherwise."""
+        waiting_on_approval = {a.session_key for a in self.approvals.pending()}
+        for row in self.history.sessions():
+            key = str(row["session_key"])
+            if row.get("state") != "waiting" or key in waiting_on_approval:
+                continue
+            if now - int(row.get("updated_at") or now) < 60_000:
+                continue  # a dialog may still be drawing
+            sup = self.orchestrator.get(key)
+            if sup is None or not sup.running:
+                continue
+            screen = await asyncio.to_thread(sup.visible_screen)
+            harness = _build_runtime(row.get("runtime"), str(row.get("command") or ""))
+            if harness.prompt_is_empty(screen):
+                self.bus.publish(
+                    {
+                        "event_type": events.NOTIFICATION,
+                        "notification_type": "idle_prompt",
+                        "session_key": key,
+                        "reconciled": True,
+                    }
+                )
+
     async def _oracle_tick(self) -> None:
         """Paste an inbox reminder into idle agents whose mail would otherwise
         wait until the owner happens to look. Gates live in core/oracle.py."""
         now = int(time.time() * 1000)
+        await self._clear_stale_waiting(now)
         for row in self.history.sessions():
             key = str(row["session_key"])
             sup = self.orchestrator.get(key)
