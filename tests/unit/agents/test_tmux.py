@@ -77,7 +77,7 @@ def test_spawn_capture_kill_roundtrip() -> None:
 @pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
 def test_private_server_survives_last_agent_exit(monkeypatch, tmp_path) -> None:
     # Use our own socket so another live fixture cannot hide exit-empty races.
-    monkeypatch.setenv("DUCKTERM_TMUX_SOCKET", f"fork-exit-{tmp_path.name}")
+    monkeypatch.setenv("DUCKTERM_TMUX_SOCKET", f"{tmux.socket_name()}-empty")
     try:
         target = tmux.spawn("quick", "true", cwd=str(tmp_path))
         deadline = time.monotonic() + 5
