@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Empty folders need their own refresh path
+
+The sidebar rendered saved empty folders, but fetched their catalog only on mount, session-count changes, or successful local edits. A folder created or moved elsewhere could remain invisible indefinitely, and a failed move reported an existing destination without revealing it. Refresh the folder catalog independently and on focus/return; refresh after a move conflict too. Preserve rows on fetch failure and ignore superseded responses. Browser coverage must create and move empty nested folders after the page is open and verify persistence after the last session leaves.
+
 ## 2026-09-26 — A checkout picker must select the checkout itself
 **Broke:** destination Browse silently appended a child name and reused DuckTerm's
 folder after switching to Sotto. Users could neither select their exact empty
