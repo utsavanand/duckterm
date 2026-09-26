@@ -4,7 +4,7 @@ import { AgentTree } from "./AgentTree";
 import { api } from "./api";
 import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
-import { OracleChat } from "./OracleChat";
+import { ControlTower } from "./ControlTower";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
@@ -60,20 +60,7 @@ function Dashboard() {
   const [modal, setModal] = useState<
     "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
   >(null);
-  const [oracleOpen, setOracleOpen] = useState(() => {
-    try {
-      return localStorage.getItem("rd.oracleOpen") === "1";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem("rd.oracleOpen", oracleOpen ? "1" : "0");
-    } catch {
-      /* private window or blocked storage: the panel just starts closed */
-    }
-  }, [oracleOpen]);
+  const [towerOpen, setTowerOpen] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const messagePins = useMessagePins(selectedKey);
   const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
@@ -264,12 +251,12 @@ function Dashboard() {
         </span>
         <span className="rd-spacer" />
         <button
-          className={`rd-btn rd-btn-ghost rd-btn-sm${oracleOpen ? " rd-btn-active" : ""}`}
-          aria-pressed={oracleOpen}
-          onClick={() => setOracleOpen((o) => !o)}
-          title="Ask questions about your running sessions"
+          className={`rd-btn rd-btn-ghost rd-btn-sm${towerOpen ? " rd-btn-active" : ""}`}
+          aria-pressed={towerOpen}
+          onClick={() => setTowerOpen((o) => !o)}
+          title="Control tower: fleet insights, every agent at a glance, and Oracle chat"
         >
-          Ask Oracle
+          Oracle
         </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
@@ -295,6 +282,24 @@ function Dashboard() {
       </header>
 
       <div className="rd-workspace">
+      {/* The tower is a layer over the panes, not a replacement: terminals stay
+          mounted at their size, since a remount replays output at a different
+          width (B5). inert keeps keystrokes and focus out of the hidden panes. */}
+      {towerOpen && gridFolder === null && (
+        <div className="rd-tower-layer">
+          <ControlTower
+            agents={agents.map((s) => ({ ...s, shownState: effectiveState(s, now) }))}
+            now={now}
+            onBack={() => setTowerOpen(false)}
+            onOpenTerminal={(key) => {
+              setSelectedKey(key);
+              setView("terminal");
+              setTowerOpen(false);
+            }}
+          />
+        </div>
+      )}
+      <div className="rd-workspace-panes" {...(towerOpen && gridFolder === null ? { inert: "" } : {})}>
       {gridFolder !== null ? (
         <GridView
           key={gridFolder}
@@ -473,7 +478,7 @@ function Dashboard() {
           </section>
         </div>
       )}
-      {oracleOpen && <OracleChat onClose={() => setOracleOpen(false)} />}
+      </div>
       </div>
 
       {messageFolder !== null && <MessageFolderModal key={messageFolder} folder={messageFolder} onClose={() => setMessageFolder(null)} />}

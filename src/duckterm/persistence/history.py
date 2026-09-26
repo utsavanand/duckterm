@@ -585,6 +585,13 @@ class HistoryStore:
         self._conn.commit()
         return self.session(key) is not None
 
+    def count_events(self, event_type: str, since_ms: int) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE event_type = ? AND ts >= ?",
+            (event_type, since_ms),
+        ).fetchone()
+        return int(row[0])
+
     def last_event_ts(self, session_key: str, event_type: str) -> int:
         row = self._conn.execute(
             "SELECT MAX(ts) FROM events WHERE session_key = ? AND event_type = ?",
