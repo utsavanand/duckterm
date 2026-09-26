@@ -140,6 +140,43 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
     is user input and must be escaped. Every previously-left comment
     lights up as soon as this ships.
 
+## Designed 2026-09-26, awaiting owner preview approval
+
+F9. **Focus — pinned sessions view** (owner-approved for design via
+    `product`). Design:
+    [focus-and-request-status-design.md](focus-and-request-status-design.md).
+    Pin toggle on any session (max 3, 4th refused with "Unpin one first",
+    never auto-swap), a Focus header button beside Ask Oracle opening the
+    pinned set in the existing grid. **Reuse claim confirmed**: `GridView`
+    already takes a session list plus a title, so drag-to-split, resize,
+    dock, and `evenRow` come free. **But layout does not persist today** —
+    GridView holds its tree in plain `useState`, so folder grids already
+    forget their arrangement on reload; persisting it is new work that
+    applies to both. Pin state goes **server-side** (a column on
+    `sessions`, cap enforced server-side): it must survive restart, and a
+    browser-local pin would make the Mac app and a browser tab disagree —
+    the same split-brain that made the notification setting feel broken
+    (B6). Layout is per-device view state and belongs in localStorage.
+
+F10. **Request status updates** (owner-approved for design via `product`).
+    Same design doc. Sender currently learns nothing without polling
+    `duckterm session get` — I have asked `main-dev` the same backup
+    question four times for exactly this reason.
+    **Received and Done need no new machinery** — they are notifications on
+    transitions that already exist; ship them first. The **hourly progress**
+    update is the only new moving part, and it must not be a new interrupt:
+    it rides the **existing turn-end notice**
+    ([inbox-awareness-design.md](inbox-awareness-design.md)), gated to once
+    per hour, so a busy agent is never interrupted mid-turn. If the
+    recipient posts nothing, the sender still gets "still accepted, no
+    update" — never synthesize a status on the recipient's behalf.
+    `duckterm session progress REQUEST_ID "…"` is the right shape as a
+    **distinct verb**, because replies mean finished work and a progress
+    note must not close the request. Chains link via an **explicit**
+    `parent_request_id` on ask — never inferred from recently-accepted work,
+    since a wrong link sends a completion to the wrong human — with a
+    bounded walk that tolerates expired ancestors.
+
 ## Shipped / in flight, recorded 2026-09-26
 
 - **Artifact feedback** — shipped v0.4.57 (PR #44, plus ui-dev's PR #42
