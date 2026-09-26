@@ -74,6 +74,8 @@ from duckterm.helpers import (
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence import backup_sync
+from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
+from duckterm.persistence.artifacts import ArtifactError
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
 from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.history import HistoryStore
@@ -379,6 +381,8 @@ class Server:
                     return
                 size = int(headers.get("content-length", "0"))
                 limit = MAX_BODY_BYTES if path.startswith("/api/v1/session/") else MAX_REQUEST_BYTES
+                if urllib.parse.urlsplit(path).path == "/api/v1/session/artifacts":
+                    limit = MAX_ARTIFACT_REQUEST_BYTES
                 if size < 0 or size > limit:
                     await _write_json(writer, 413, {"error": "request body too large"})
                     return
@@ -431,6 +435,12 @@ class Server:
 
         if path == "/backup" and method in {"GET", "PUT", "POST"}:
             await self._backup(writer, headers, method, body)
+            return
+        artifact_match = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]+)/artifacts(?:/([a-f0-9]{32}))?", path
+        )
+        if artifact_match and method in {"GET", "DELETE"}:
+            await self._artifacts(writer, headers, artifact_match[1], artifact_match[2], method)
             return
         pin_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/pins(?:/([a-f0-9]{64}))?", path)
         if pin_match and method in {"GET", "POST", "DELETE"}:
@@ -741,6 +751,38 @@ class Server:
             return
         messages = await asyncio.to_thread(self._session_messages, session_key)
         await _write_json(writer, 200, {"messages": messages})
+
+    async def _artifacts(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        session_key: str,
+        artifact_id: str | None,
+        method: str,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        if self.history.session(session_key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        result: dict[str, Any]
+        try:
+            if method == "DELETE":
+                if artifact_id is None:
+                    raise ArtifactError(400, "An artifact ID is required")
+                self.history.artifacts.remove(session_key, artifact_id)
+                result = {"removed": True}
+            elif artifact_id is None:
+                result = {"artifacts": self.history.artifacts.list(session_key)}
+            else:
+                result = {"artifact": self.history.artifacts.get(session_key, artifact_id)}
+        except ArtifactError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        # Content travels as authenticated JSON, never as executable HTML on the
+        # dashboard origin. The preview must render it in an isolated sandbox.
+        await _write_json(writer, 200, result)
 
     async def _message_pins(
         self,

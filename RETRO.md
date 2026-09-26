@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Artifact previews must outlive temporary source files
+**Found:** a generated report or mockup can live in a temporary directory, so a
+catalog of file paths loses the deliverable when the agent cleans up or a file moves.
+**Rule:** register a bounded saved copy using the generating session's credential.
+Treat the path as provenance, never an instruction for the server to read a file.
+Keep artifact content out of the app's HTML origin, and test source deletion,
+session isolation, replacement, cleanup and backup restore before shipping.
+
 ## 2026-09-25 — Density is information structure, not just font size
 
 The first Compact/Standard/Relaxed preview only varied padding and type size, so the modes looked alike. The approved design changes one-line versus two-line rows, hover details, and persistent selected-session controls. Keep session names regular-weight in every mode, remember the choice, and test both geometry and access to hidden actions. Preserve the existing row-selection focus behavior: adding a focusable wrapper stole focus from the newly opened terminal, caught by the full browser suite.
