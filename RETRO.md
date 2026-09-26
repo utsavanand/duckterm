@@ -1,5 +1,16 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — A launch destination must not replace the dashboard
+**Broke:** creating a remote session replaced the local dashboard, hid live local
+agents, and skipped folder assignment. Repeated failed launches left dead rows.
+**Cause:** the launch form changed, but feeds, terminal connections and actions
+still assumed one selected host. Browser tests mocked the native switch.
+**Rule:** keep one local dashboard and route by machine plus session identity.
+Validate the real native path with simultaneous local/remote agents, a quiet
+remote terminal, local launch from remote selection, and a remote outage. Verify
+that existing rows, terminal DOM and agent processes survive. Keep spawn errors;
+reject predictable failures before creating rows.
+
 ## 2026-09-26 — A checkout picker must select the checkout itself
 **Broke:** destination Browse silently appended a child name and reused DuckTerm's
 folder after switching to Sotto. Users could neither select their exact empty

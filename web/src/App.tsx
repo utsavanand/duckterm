@@ -523,7 +523,7 @@ function Dashboard() {
 
       {messageFolder !== null && <MessageFolderModal key={messageFolder} folder={messageFolder} onClose={() => setMessageFolder(null)} />}
       {inboxFolder !== null && messageFolder === null && (
-        <Modal title={`${inboxFolder} · Interactions`} onClose={() => setInboxFolder(null)}>
+        <Modal title={`${inboxFolder} · Interactions${desktop() ? " · This Mac" : ""}`} onClose={() => setInboxFolder(null)}>
           <InboxView key={inboxFolder} folder={inboxFolder} onMessageFolder={() => setMessageFolder(inboxFolder)} />
         </Modal>
       )}

@@ -111,10 +111,14 @@ class NativeTerminal implements TerminalSocket {
   }
   send(data: string | Uint8Array): void {
     if (this.readyState !== 1) return;
-    const params = typeof data === "string" ? { text: data } : { data: btoa(Array.from(data, b => String.fromCharCode(b)).join("")) };
-    this.outgoing = this.outgoing.then(async () => {
-      if (this.readyState === 1) await destinationRequest(this.host, "terminal-send", { id: this.id, ...params });
-    }).catch(() => this.close());
+    const frames: (string | Uint8Array)[] = typeof data === "string" ? [data] : [];
+    if (typeof data !== "string") for (let start = 0; start < data.length; start += 32768) frames.push(data.slice(start, start + 32768));
+    for (const frame of frames) {
+      const params = typeof frame === "string" ? { text: frame } : { data: btoa(Array.from(frame, b => String.fromCharCode(b)).join("")) };
+      this.outgoing = this.outgoing.then(async () => {
+        if (this.readyState === 1) await destinationRequest(this.host, "terminal-send", { id: this.id, ...params });
+      }).catch(() => this.close());
+    }
   }
   private finish(): void {
     if (this.readyState === 3) return;

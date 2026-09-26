@@ -1,3 +1,4 @@
+import { desktop } from "./desktop";
 import { useEffect, useRef, useState } from "react";
 import { api, BroadcastResult, BroadcastTarget } from "./api";
 import { Button, inputStyle, Modal } from "./ui";
@@ -40,7 +41,7 @@ export function MessageFolderModal({ folder, onClose }: { folder: string; onClos
     }
   }
 
-  return <Modal title={`Message ${folder}`} onClose={() => { if (!busy) onClose(); }}>
+  return <Modal title={`Message ${folder}${desktop() ? " · This Mac" : ""}`} onClose={() => { if (!busy) onClose(); }}>
     <div className="rd-message-folder" role="region" aria-label="Message folder">
       {result ? <>
         <p role="status">Message queued for {result.queued} {result.queued === 1 ? "session" : "sessions"}.{result.skipped > 0 && ` ${result.skipped} skipped.`}</p>

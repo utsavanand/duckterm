@@ -344,7 +344,7 @@ function GroupHeader({
         <span className="rd-group-count">{count}</span>
         <button
           className="rd-group-phone"
-          title="View folder interactions"
+          title={desktop() ? "View this folder’s interactions on This Mac" : "View folder interactions"}
           aria-label={`View interactions in ${name}`}
           onClick={(e) => { e.stopPropagation(); onOpenInbox(); }}
         >
