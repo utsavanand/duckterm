@@ -160,3 +160,16 @@ def test_shared_bundle_detects_interrupted_download(tmp_path, monkeypatch):
     monkeypatch.setattr(connector_client, "connect", lambda name: (Stream(), b'{"ready":true}\n'))
     with pytest.raises(ValueError, match="interrupted"):
         g.shared_request("bundle", {"repository": "fixture/private"}, tmp_path / "bundle")
+
+
+def test_selected_repository_cannot_send_connector_auth_to_another_host(tmp_path):
+    from duckterm import transfers
+
+    with pytest.raises(ValueError, match="does not match"):
+        transfers.clone(
+            "44444444444444448444444444444444",
+            "https://example.invalid/fixture/private.git",
+            "main",
+            str(tmp_path / "clone"),
+            "fixture/private",
+        )
