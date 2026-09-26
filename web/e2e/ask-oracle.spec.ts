@@ -31,6 +31,8 @@ test("Ask Oracle answers a question about running sessions", async ({ page }) =>
     "Use rg, not grep",
     { timeout: 15_000 },
   );
+  // A new answer scrolls only the chat; the tower's header stays in view.
+  await expect(page.getByRole("button", { name: "← Sessions" })).toBeInViewport();
 
   // The conversation lives on the server, so it survives a reload.
   await page.reload();
