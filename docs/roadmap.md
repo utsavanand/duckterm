@@ -351,28 +351,27 @@ B4. **Packaged header icon/favicons missing in v0.4.47** — independent
 
 ## Next (started, not yet mergeable)
 
-3. **Remote workspace on GCP** (branch `remote-session`, latest `250db8b`).
-   End state: **persistent agents/terminals on a per-user workspace VM, not
-   a graphical desktop**. Decided UX: New session → "Run on: This Mac /
-   Remote"; Existing session → "Move to remote"; host setup lives in
-   Settings → Remote computers, not the primary workflow.
-   Before merge:
-   - Build the new session-level remote UX and **session migration**
-     (transfer project changes + supported conversation history, resume
-     remotely, keep the local session until success) — newly requested,
-     not implemented or proven.
-   - Interactive Mac acceptance in the **DuckTerm Test app** (purple TEST
-     icon, separate bundle identity and local instance; built, branding
-     changes uncommitted), then promote.
-   - Reboot/failure/TLS-rotation QA and the overnight persistence result
-     (scheduled Sep 21 13:11 UTC). A VM reboot terminates processes — never
-     claim continuous execution across reboot.
-   - Railway/Porkbun live QA (GitHub verified first, user-selected).
-   - Reconcile with main, which now includes the released session-API and
-     security work.
-   Cost: ~$40–50/month for two VMs before model usage/tax; budget alerts do
-   not cap spend. Open operational items: manual TLS renewal, SQLite
-   retention planning for production.
+3. **Remote workspace / DuckCloud — MERGED, shipping incrementally.**
+   Verified 2026-09-26: `origin/remote-session` has **zero commits diverged
+   from main** (`git log origin/main..origin/remote-session` is empty). The
+   big-bang merge risk this document warned about for a week is gone — the
+   work landed through a series of PRs instead (#54 local/remote clone via
+   the GitHub connector, #58 remote destination picker, #62 exact checkout
+   folder), each integrating main as it went.
+   Shipped through v0.4.64: Run-on picker (This Mac / Remote), remote
+   launch and conversation resume without copying credentials, remote hosts
+   under Settings → Remote computers, clone-local/clone-repository options,
+   and folder selection meaning the exact checkout directory with folder
+   creation inside the picker (superseding v0.4.63's parent-plus-child
+   behavior). Live Linux create-folder → authenticated public clone → retry
+   verified; production Claude preserved.
+   Remaining for DuckCloud proper (design:
+   [duckcloud-design.md](duckcloud-design.md)): the setup flow that replaces
+   "have a GCP project" with cloud/account/size and hourly prices, cost and
+   idle-shutdown controls, the AWS implementation behind the same
+   provisioning interface, and reboot/failure/TLS-rotation QA. Note a VM
+   reboot terminates processes — never claim continuous execution across one.
+
 4. **Re-home approvals UI** (backend untouched; placement question only —
    TODO.md). Candidates: banner strip atop the selected session's terminal
    pane; browser/desktop notification with Approve/Deny actions; a
