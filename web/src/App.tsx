@@ -6,6 +6,7 @@ import { desktop } from "./desktop";
 import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
 import { ControlTower } from "./ControlTower";
+import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
@@ -65,6 +66,7 @@ function Dashboard() {
     "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
   >(desktop()?.draft ? "launch" : null);
   const [towerOpen, setTowerOpen] = useState(false);
+  const relayOpen = useRelayCount();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const pendingDesktopSession = useRef(desktop()?.selectedSession);
   const messagePins = useMessagePins(selectedKey);
@@ -277,6 +279,7 @@ function Dashboard() {
           title="Control tower: fleet insights, every agent at a glance, and Oracle chat"
         >
           Oracle
+          {relayOpen > 0 && <span className="rd-rules-badge" aria-label={`${relayOpen} need you`}>{relayOpen}</span>}
         </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
