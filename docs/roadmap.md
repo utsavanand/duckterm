@@ -224,6 +224,63 @@ worked on. Asked directly; answers recorded as given rather than inferred:
   an item being worked on. Ownership lines here now mean "asked and
   confirmed", not "sent to".
 
+## Now — owner-requested 2026-09-26
+
+F11. **Answer an agent from Oracle's chat without typing into its terminal**
+     (owner-requested via `main-dev`/Oracle). Today Oracle relays answers by
+     typing into the agent's terminal — pasting replies and pressing digit
+     keys in menus. Two failures on 2026-09-26: a two-question
+     AskUserQuestion form where Oracle pressed `1`, the form advanced to the
+     second question, and **nothing was submitted**; and a pasted nudge that
+     **sat unsent for 14 hours** because Claude Code swallowed the Enter.
+     Owner: "it shouldn't be that you have to type into the terminal."
+     Interim shipped on `oracle-multi-question`: menu notes list every
+     question with an "Open <name>'s terminal" button, and the chat no longer
+     presses keys into menus.
+     **Leads checked against the code (architect, 2026-09-26):**
+     - **Lead 1 is real infrastructure.** `core/approvals.py` +
+       `hooks/duckterm-hook.sh` already hold a hook open: the hook registers
+       the request, long-polls `/approvals/:id/decision` for up to **180 s**,
+       and returns a per-harness allow/deny shape. So "answer through the
+       hook instead of the keyboard" is an extension of a working mechanism,
+       not a new one. **But two concrete gaps:** the decision type is
+       `Literal["approve", "deny"]` only — it carries **no payload**, so
+       returning `updatedInput` with answers needs the registry, the HTTP
+       route, and the hook's response shape all widened beyond a binary; and
+       the **180 s cap** is far shorter than a human answering a
+       multi-question form, so the timeout policy must change or the agent
+       falls through to its own prompt mid-answer.
+     - **Lead 2 (Stop hook returning `block` with a reason to continue the
+       turn) is plausible but unverified** — it is a different hook event
+       with different semantics from the permission path, so it needs a real
+       probe against Claude Code before it is designed on.
+     - **Lead 3 stands**: Codex and Copilot need their own equivalents or
+       keep the typing path. Per-harness capability on the contract,
+       default unsupported (RETRO rule), so "cannot answer without typing"
+       is visible rather than silently degraded.
+     **Design settled with `main-dev`, and their proposal is better than
+     widening the decision type:** keep `Decision` as `approve`/`deny` and
+     add an **optional answers payload alongside it**, emitting
+     `updatedInput` only when answers are present. The three existing
+     `set_decision` callers — auto-approval rules (server.py:2240), Oracle's
+     relayed approval (2450), the dashboard route (3379) — then send exactly
+     what they send today, so Approve/Deny carries no regression risk.
+     Verified those are the only three callers and that no web or Mac client
+     calls the decision route directly. F11 must add a test asserting the
+     hook's output is **byte-identical when no answers are given**; existing
+     guards are `tests/runtime/test_relay.py` plus the approvals tests.
+     **Ownership:** the lead-2 Stop-hook probe is owned by the Oracle
+     `main-dev` session (`0048fef0`) and **blocks lead 1's design**; the
+     owner asked to ship the interim shortcut first, so it runs when the
+     owner schedules F11. Per-harness capability flags on the harness
+     contract (default unsupported) agreed. v0.4.64's submit confirmation is
+     the first step toward making "accepted" distinguishable from "typed":
+     UserPromptSubmit-confirmed versus prompt-stuck.
+     Still open from my side: the **180 s hook poll cap** is far shorter than
+     a human answering a multi-question form, so the timeout policy must
+     change as part of this feature — otherwise the agent falls through to
+     its own prompt mid-answer, which is worse than today's failure.
+
 ## Bugs — open
 
 B6. **Desktop notification setting does not work** (owner-reported
@@ -584,6 +641,16 @@ Documented upgrade paths we deliberately do not build yet:
 - **Cross-machine session sharing** — excluded from the session API v1;
   revisit after the GCP remote workspace settles, since it changes the
   "one machine, loopback-only" trust model.
+
+## Release process (changed 2026-09-26)
+
+`release-dev` now owns every release: version bumps, tags, the fresh-worktree
+build, the GitHub release with the Mac zip, pipx install, and the dashboard
+check. Dev sessions push a branch and hand over the commit SHA, the problem
+and fix, the gate log path with pass counts, and any native/E2E QA steps.
+Dev sessions do **not** bump `__version__`, tag, run `release.sh` or
+`build_package.sh` for a release, create GitHub releases, or merge —
+`release-dev` merges after `main-qa`'s QA and the owner's approval via Oracle.
 
 ## Standing quality gates (not roadmap items, but they bound every release)
 
