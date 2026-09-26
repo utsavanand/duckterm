@@ -120,6 +120,63 @@ def test_existing_destination_is_never_overwritten(tmp_path, homes):
     assert (dest / "keep").read_text() == "unchanged"
 
 
+def test_copy_uses_exact_selected_empty_folder(tmp_path, homes, monkeypatch):
+    source, dest = tmp_path / "source", tmp_path / "my-folder"
+    source.mkdir()
+    (source / "file.txt").write_text("project")
+    dest.mkdir()
+    identifier, _, state = deliver(source, dest, homes, monkeypatch)
+    assert state["destination"] == str(dest)
+    assert (dest / "file.txt").read_text() == "project"
+    assert not (dest / "source").exists()
+    assert t.finish(identifier) == state
+
+
+def test_clone_uses_exact_empty_folder_and_retries(tmp_path, homes, monkeypatch):
+    import shutil
+
+    from duckterm import github_projects
+
+    source, dest = tmp_path / "source", tmp_path / "chosen-name"
+    repo(source)
+    dest.mkdir()
+    monkeypatch.setattr(
+        github_projects, "clone", lambda repo, branch, stage: shutil.copytree(source, stage)
+    )
+    identifier = uuid.uuid4().hex
+    state = t.clone(
+        identifier, "https://github.com/fixture/sotto.git", "", str(dest), "fixture/sotto"
+    )
+    assert state["stage"] == "ready"
+    assert (dest / "file.txt").exists()
+    assert not (dest / "sotto").exists()
+    assert (
+        t.clone(identifier, "https://github.com/fixture/sotto.git", "", str(dest), "fixture/sotto")
+        == state
+    )
+
+
+@pytest.mark.parametrize("kind", ["file", "hidden", "symlink"])
+def test_selected_empty_folder_cannot_overwrite_concurrent_content(tmp_path, kind):
+    stage, dest = tmp_path / "stage", tmp_path / "selected"
+    stage.mkdir()
+    (stage / "project").write_text("new")
+    dest.mkdir()
+    assert t.destination_path(str(dest)) == dest
+    if kind == "symlink":
+        dest.rmdir()
+        dest.symlink_to(stage, target_is_directory=True)
+    else:
+        (dest / (".hidden" if kind == "hidden" else "keep")).write_text("unchanged")
+    with pytest.raises(ValueError):
+        t.destination_path(str(dest))
+    with pytest.raises(OSError):
+        t.publish(stage, dest, allow_empty=True)
+    assert (stage / "project").read_text() == "new"
+    if kind != "symlink":
+        assert next(dest.iterdir()).read_text() == "unchanged"
+
+
 def test_receive_recovers_unjournaled_chunk_and_rejects_changed_retry(tmp_path, homes):
     identifier = uuid.uuid4().hex
     payload = b"snapshot"

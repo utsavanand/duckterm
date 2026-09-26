@@ -141,6 +141,7 @@ export interface BrowseEntry {
   is_git: boolean;
 }
 export interface BrowseResult {
+  empty?: boolean;
   path: string;
   parent: string | null;
   is_git: boolean;

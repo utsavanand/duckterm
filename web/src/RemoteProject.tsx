@@ -10,7 +10,7 @@ const browseLocal = (path?: string) => destinationRequest<BrowseResult>("local",
 
 export type PreparedProject = { id: string; destination: string; stage: string; session_key?: string; offset?: number; bytes?: number };
 type Review = { requirements?: string[]; linux_compatible?: boolean; setup?: string[]; fingerprint: string; source: string; bytes: number; entries: { path: string }[]; excluded: string[]; ignored: string[]; git: { kind: string }; conversation: { runtime?: string; id?: string; sha256?: string } };
-type Draft = { github_repository?: string; id: string; source: string; destination: string; url: string; branch: string; selected: string[] };
+type Draft = { destination_source?: string; github_repository?: string; id: string; source: string; destination: string; url: string; branch: string; selected: string[] };
 
 export function RemoteProject({ target, kind, command, sourceSession, sourcePath, onPrepared, onBusy }: {
   target: string; kind: "copy" | "clone"; command: string; sourceSession?: string; sourcePath?: string;
@@ -18,7 +18,15 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
 }) {
   const storage = `remote-project:${target}:${sourceSession ?? "new"}:${kind}`;
   const [draft, setDraft] = useState<Draft>(() => {
-    try { const saved = localStorage.getItem(storage); if (saved) return JSON.parse(saved) as Draft; } catch { /* New draft if storage is unavailable. */ }
+    try {
+      const saved = localStorage.getItem(storage);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Draft;
+        // Older drafts did not bind their destination to the selected repo.
+        if (kind === "clone" && parsed.destination_source !== parsed.url) return { ...parsed, destination: "", id: crypto.randomUUID().replaceAll("-", "") };
+        return parsed;
+      }
+    } catch { /* New draft if storage is unavailable. */ }
     return { id: crypto.randomUUID().replaceAll("-", ""), source: sourcePath ?? "", destination: "", url: "", branch: "", selected: [] };
   });
   const [githubOpen, setGithubOpen] = useState(false);
@@ -36,7 +44,10 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { localStorage.setItem(storage, JSON.stringify(draft)); }, [draft, storage]);
   function change(key: keyof Draft, value: string | string[]) {
-    setDraft(d => ({ ...d, ...(key === "url" ? { github_repository: "" } : {}), [key]: value, id: crypto.randomUUID().replaceAll("-", "") }));
+    setDraft(d => ({ ...d,
+      ...((key === "url" || key === "source") && d[key] !== value ? { destination: "", destination_source: "" } : {}),
+      ...(key === "destination" ? { destination_source: kind === "clone" ? d.url : d.source } : {}),
+      ...(key === "url" ? { github_repository: "" } : {}), [key]: value, id: crypto.randomUUID().replaceAll("-", "") }));
     setReview(null); setChecked(false); setReviewed(false); setError("");
   }
   async function inspect() {
@@ -91,20 +102,19 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
       <Field label="Branch (optional)"><input aria-label="Clone branch" style={inputStyle} value={draft.branch} disabled={busy} onChange={e => change("branch", e.target.value)} /></Field>
       <p>{draft.github_repository ? "Uses the destination’s GitHub connector to clone this repository." : `Uses Git authorization on ${target === "local" ? "This Mac" : "the remote computer"}.`} Local edits are not included.</p>
     </>}
-    <Field label={`New folder on ${desktop()?.targets.find(t => t.id === target)?.name ?? target}`}>
+    <Field label={`Checkout folder on ${desktop()?.targets.find(t => t.id === target)?.name ?? target}`}>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <input aria-label={target === "local" ? "Local destination folder" : "Remote destination folder"} style={{ ...inputStyle, flex: 1, minWidth: 0 }} value={draft.destination} disabled={busy} onChange={e => change("destination", e.target.value)} placeholder="Choose a folder with Browse…" />
         <button className="rd-btn rd-btn-ghost" aria-label="Browse destination folders" disabled={busy} onClick={() => setBrowsingDestination(true)}>Browse…</button>
       </div>
     </Field>
     {browsingDestination && !busy && <>
-      <p>Choose a parent folder. A new project folder will be created inside it.</p>
-      <DirBrowser browse={browseDestination} pickLabel="Use as parent folder" onCancel={() => setBrowsingDestination(false)} onPick={folder => {
-        const currentName = draft.destination.replace(/\/+$/, "").split("/").pop();
-        const sourceName = (kind === "copy" ? draft.source : draft.url.split(/[?#]/)[0]).replace(/\/+$/, "").split("/").pop() ?? "";
-        const name = currentName || (kind === "clone" ? sourceName.replace(/\.git$/, "") : sourceName);
-        const safeName = !name || name === "." || name === ".." ? "new-project" : name;
-        change("destination", `${folder.path.replace(/\/+$/, "")}/${safeName}`);
+      <p>Code will be checked out directly in the folder you select.</p>
+      <DirBrowser browse={browseDestination} pickLabel="Use this folder" emptyOnly
+        suggestedName={(kind === "copy" ? draft.source : draft.url.split(/[?#]/)[0]).replace(/\/+$/, "").split("/").pop()?.replace(/\.git$/, "")}
+        createFolder={(parent, name) => destinationRequest<BrowseResult>(target, "project-mkdir", { parent, name })}
+        onCancel={() => setBrowsingDestination(false)} onPick={folder => {
+        change("destination", folder.path);
         setBrowsingDestination(false);
       }} />
     </>}
@@ -126,7 +136,7 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
     {progress && <div><p role="status">{progress}</p>{busy && <progress aria-label={kind === "clone" ? "Repository clone progress" : "Project copy progress"} max={100} value={percentage} style={{ width: "100%" }} />}</div>}
     {error && <p role="alert">{error}</p>}
     {busy && kind === "copy" && <Button variant="ghost" onClick={() => destinationRequest(target, "project-pause", { id: draft.id }).catch(() => undefined)}>Pause transfer</Button>}
-    <small>{kind === "copy" ? "Retry uses this operation’s saved snapshot. Your local files remain in place. " : "The repository is cloned into a new folder. "}Closing and reopening restores the draft.</small>
+    <small>{kind === "copy" ? "Retry uses this operation’s saved snapshot. Your local files remain in place. " : "The repository is cloned directly into the selected folder. "}Closing and reopening restores the draft.</small>
   </div>;
 }
 

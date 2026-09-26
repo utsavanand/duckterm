@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — A checkout picker must select the checkout itself
+**Broke:** destination Browse silently appended a child name and reused DuckTerm's
+folder after switching to Sotto. Users could neither select their exact empty
+folder nor create a named folder in the picker.
+**Rule:** bind clone destinations to their repository, clear stale selections on
+repository changes, and choose the exact checkout folder. Offer explicit folder
+creation. Publish into selected empty directories atomically; never merge over
+existing files, including files arriving between review and publication.
+
 ## 2026-09-26 — Typing into an agent needs proof it submitted
 **Broke:** an Oracle nudge sat typed but unsent in a Claude Code prompt for
 14 hours. The leftover text then blocked every later nudge to that session.
