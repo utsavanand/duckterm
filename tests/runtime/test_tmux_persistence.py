@@ -30,16 +30,19 @@ def test_session_is_readopted_after_restart(tmp_path: Path) -> None:
 
     async def scenario() -> tuple[bool, list[str], bool]:
         store = HistoryStore(tmp_path / "db.sqlite")
-        bus1 = EventBus(sink=store.record)
+        bus1 = EventBus(sink=lambda event: store.record({**event, "test": True}))
         orch1 = Orchestrator(bus1, history=store)
         await orch1.launch(runtime=GenericRuntime(cmd), cwd=str(tmp_path), session_key=key)
         await asyncio.sleep(0.5)
         alive_after_launch = tmux.session_exists(tmux.target_for(key))
+        store.set_state(key, "interrupted", now=3)
 
         # Simulate a restart: a brand-new orchestrator over the same tmux/home.
-        bus2 = EventBus(sink=store.record)
+        bus2 = EventBus(sink=lambda event: store.record({**event, "test": True}))
         orch2 = Orchestrator(bus2, history=store)
         adopted = await orch2.reconcile()
+        assert store.session(key)["state"] != "interrupted"
+        assert store.session(key)["ended_at"] is None
         # The re-adopted supervisor can control the session.
         stopped = await orch2.stop(key)
         return alive_after_launch, adopted, stopped

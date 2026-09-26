@@ -695,7 +695,7 @@ class HistoryStore:
         event-derived state. Returns whether the session exists.
 
         Stamps ended_at when a session ends; keeps the existing ended_at when
-        archiving an already-ended session; clears it when reviving (busy)."""
+        archiving an already-ended session; clears it when reviving."""
         if state in AT_REST_STATES:
             self.session_api.revoke(key, cancel_pending=state != "stopped")
         if state in ("stopped", "interrupted", "terminated"):
@@ -703,7 +703,7 @@ class HistoryStore:
                 "UPDATE sessions SET state = ?, ended_at = ? WHERE session_key = ?",
                 (state, now, key),
             )
-        elif state == "busy":
+        elif state not in AT_REST_STATES:
             cur = self._conn.execute(
                 "UPDATE sessions SET state = ?, ended_at = NULL WHERE session_key = ?",
                 (state, key),
@@ -716,6 +716,32 @@ class HistoryStore:
             self.session_api.ensure(key)
         self._conn.commit()
         return cur.rowcount > 0
+
+    def recover_interrupted(self, key: str) -> bool:
+        """Repair a stale interruption only after the caller verifies a live pane.
+
+        Adoption is not a new run: preserve history, activity timestamps and
+        intentional Stop/Archive states. Restore the latest agent-reported state
+        and enrollment so normal events and session messaging work again.
+        """
+        session = self.session(key)
+        if not session or not session.get("launched") or session["state"] != "interrupted":
+            return False
+        state: SessionState = "idle"
+        rows = self._conn.execute(
+            "SELECT payload_json FROM events WHERE session_key = ? "
+            "AND event_type IN ('SessionStart', 'PreToolUse', 'PostToolUse', "
+            "'UserPromptSubmit', 'PermissionRequest', 'Notification', 'Stop') "
+            "ORDER BY ts DESC, rowid DESC",
+            (key,),
+        )
+        for row in rows:
+            event = json.loads(row["payload_json"])
+            if event.get("lifecycle") or event.get("notification_type") == "auth_success":
+                continue
+            state = derive_state(event, None)
+            break
+        return self.set_state(key, state)
 
     def touch(self, key: str, ts: int, *, tty: str | None = None) -> bool:
         """Record a liveness ping (and the tab's tty, so delete can close it).

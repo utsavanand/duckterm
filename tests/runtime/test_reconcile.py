@@ -10,13 +10,21 @@ import pytest
 import duckterm.core.orchestrator as orch_mod
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
+from duckterm.helpers.session_credentials import credential_path
 from duckterm.persistence.history import HistoryStore
 
 
 def _seed_launched_running(store: HistoryStore, key: str) -> None:
     """A launched session the DB believes is running (busy)."""
     store.record(
-        {"event_type": "SessionStart", "session_key": key, "launched": True, "_ts": 1, "_id": key}
+        {
+            "event_type": "SessionStart",
+            "session_key": key,
+            "launched": True,
+            "test": True,
+            "_ts": 1,
+            "_id": key,
+        }
     )
     store.record(
         {
@@ -32,7 +40,8 @@ def _seed_launched_running(store: HistoryStore, key: str) -> None:
 def test_reboot_zombie_is_marked_interrupted(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """tmux is gone (reboot) → no live sessions → a launched 'busy' row is
     reconciled to 'interrupted' (died without a clean stop), not left claiming it's running."""
-    monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: False)
+    monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: True)
+    monkeypatch.setattr(orch_mod.tmux, "list_duckterm_sessions", lambda: [])
     store = HistoryStore(tmp_path / "db.sqlite")
     _seed_launched_running(store, "zombie")
     assert store.session("zombie")["state"] == "busy"
@@ -73,7 +82,8 @@ def test_at_rest_and_watched_sessions_are_untouched(
 ) -> None:
     """Reconciliation only touches LAUNCHED, non-at-rest rows: an already-stopped
     session, and a watched (launched=0) session, are both left as-is."""
-    monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: False)
+    monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: True)
+    monkeypatch.setattr(orch_mod.tmux, "list_duckterm_sessions", lambda: [])
     store = HistoryStore(tmp_path / "db.sqlite")
 
     _seed_launched_running(store, "stopme")
@@ -90,3 +100,68 @@ def test_at_rest_and_watched_sessions_are_untouched(
 
     assert store.session("stopme")["state"] == "stopped"  # unchanged
     assert store.session("watched")["state"] == "busy"  # watched: left for PID sweep
+
+
+@pytest.mark.parametrize(
+    "event_type,expected",
+    [("Stop", "idle"), ("PreToolUse", "busy"), ("PermissionRequest", "waiting")],
+)
+def test_live_interrupted_session_recovers_without_relaunch(
+    tmp_path, monkeypatch, event_type, expected
+):
+    monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: True)
+    monkeypatch.setattr(orch_mod.tmux, "list_duckterm_sessions", lambda: ["alive"])
+
+    async def fake_reattach(self):
+        return None
+
+    monkeypatch.setattr(orch_mod.SessionSupervisor, "reattach", fake_reattach)
+    store = HistoryStore(tmp_path / "db.sqlite")
+    _seed_launched_running(store, "alive")
+    store.set_state("alive", "interrupted", now=3)
+    # Hooks can still arrive while the stale interruption blocks state changes.
+    store.record({"event_type": event_type, "session_key": "alive", "_ts": 4, "_id": "latest"})
+    before = store.session("alive")
+    assert before["state"] == "interrupted"
+    credential = credential_path("alive", store.session_api.credential_dir)
+    assert not credential.exists()
+    orch = Orchestrator(EventBus(sink=store.record), history=store)
+    assert asyncio.run(orch.reconcile()) == ["alive"]
+    after = store.session("alive")
+    assert after["state"] == expected
+    assert credential.exists()
+    assert after["ended_at"] is None
+    for field in ("started_at", "updated_at", "event_count", "last_event_type"):
+        assert after[field] == before[field]
+    store.record({"event_type": "PostToolUse", "session_key": "alive", "_ts": 5, "_id": "next"})
+    assert store.session("alive")["state"] == "busy"
+
+
+@pytest.mark.parametrize("state", ["stopped", "archived"])
+def test_live_pane_does_not_undo_intentional_user_state(tmp_path, monkeypatch, state):
+    monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: True)
+    monkeypatch.setattr(orch_mod.tmux, "list_duckterm_sessions", lambda: ["alive"])
+
+    async def fake_reattach(self):
+        return None
+
+    monkeypatch.setattr(orch_mod.SessionSupervisor, "reattach", fake_reattach)
+    store = HistoryStore(tmp_path / "db.sqlite")
+    _seed_launched_running(store, "alive")
+    store.set_state("alive", state, now=3)
+    asyncio.run(Orchestrator(EventBus(), history=store).reconcile())
+    assert store.session("alive")["state"] == state
+
+
+@pytest.mark.parametrize("available", [True, False])
+def test_unavailable_discovery_does_not_interrupt_sessions(tmp_path, monkeypatch, available):
+    monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: available)
+
+    def fail():
+        raise RuntimeError("socket permission denied")
+
+    monkeypatch.setattr(orch_mod.tmux, "list_duckterm_sessions", fail)
+    store = HistoryStore(tmp_path / "db.sqlite")
+    _seed_launched_running(store, "alive")
+    assert asyncio.run(Orchestrator(EventBus(), history=store).reconcile()) == []
+    assert store.session("alive")["state"] == "busy"
