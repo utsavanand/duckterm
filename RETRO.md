@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Launch must wait for project preparation
+**Broke:** choosing a GitHub repository left Launch enabled before a destination
+was entered or the clone completed, producing a generic missing-folder error.
+**Rule:** copy and clone sessions can launch only after preparation succeeds.
+Check the incomplete form, reviewed form, active transfer, and ready state for
+both local and remote destinations; happy-path clone coverage alone missed this.
+
 ## 2026-09-26 — Repository selection and cloning must share connector authorization
 **Missing:** New Session only offered cloning remotely, required a URL, and used
 Git credentials unrelated to the account shown by the GitHub connector.

@@ -122,6 +122,10 @@ export function LaunchModal({
   }, [mode, path, destination]);
 
   async function submit() {
+    if (projectKind !== "existing" && !prepared) {
+      toast(`Review and ${projectKind === "clone" ? "clone" : "copy"} the project before launching`, "err");
+      return;
+    }
     if (!command.trim() || !path) {
       toast("A command and a folder are required", "err");
       return;
@@ -406,7 +410,7 @@ export function LaunchModal({
         <Button variant="ghost" onClick={onClose} disabled={busy || transferBusy}>
           Cancel
         </Button>
-        <Button onClick={submit} disabled={busy || transferBusy}>
+        <Button onClick={submit} disabled={busy || transferBusy || (projectKind !== "existing" && !prepared)}>
           {busy ? "Launching…" : "Launch"}
         </Button>
       </div>
