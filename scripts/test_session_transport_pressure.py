@@ -22,6 +22,8 @@ case = Path(tempfile.mkdtemp(prefix="transport-pressure-"))
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def log_message(self, *_):
         pass
 
@@ -55,7 +57,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 while remaining:
                     chunk = source.read(min(65536, remaining))
-                    self.wfile.write(b"\x82\x7f" + struct.pack("!Q", len(chunk)) + chunk)
+                    header = (
+                        b"\x82\x7f" + struct.pack("!Q", len(chunk))
+                        if len(chunk) >= 65536
+                        else b"\x82\x7e" + struct.pack("!H", len(chunk))
+                    )
+                    self.wfile.write(header + chunk)
                     remaining -= len(chunk)
                 self.wfile.flush()
                 time.sleep(10)
@@ -75,6 +82,11 @@ MainActor.assumeIsolated {
  let window=DashboardWindow(url:base);window.show()
  let transport=SessionTransport();let api=LaunchDestination()
  var received=0
+ transport.onTerminal = { event in
+   if event["closed"] as? Bool == true && received < 500_000_000 {
+     print("FAIL premature close",event);fflush(stdout);exit(1)
+   }
+ }
  transport.onTerminalData = { event in
    await window.dispatchAndWait(name:"remote-terminal",detail:event)
    received += Data(base64Encoded:event["data"] as! String)!.count

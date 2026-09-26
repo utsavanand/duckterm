@@ -110,6 +110,7 @@ def test_missing_command_has_no_session_row(
 
     asyncio.run(scenario())
     assert store.session("missing") is None
+    assert orch._supervisors == {}
 
 
 def test_spawn_exception_keeps_diagnostics_without_a_sidebar_row(
