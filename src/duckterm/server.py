@@ -878,6 +878,12 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "expected an object"})
+            return
+        if "artifact_id" in req:
+            await self._add_artifact_annotation(writer, session_key, req)
+            return
         quote = (req.get("quote") or "").strip()
         note = (req.get("note") or "").strip()
         if not note:
@@ -893,6 +899,81 @@ class Server:
             prompt = f'Re: "{quote}" — {note}' if quote else note
             sent = supervisor.write_bytes(prompt.encode() + b"\r")
         await _write_json(writer, 200, {"id": ann_id, "sent": sent})
+
+    async def _add_artifact_annotation(
+        self, writer: asyncio.StreamWriter, session_key: str, req: dict[str, Any]
+    ) -> None:
+        """Deliver explicit owner feedback on exactly the saved artifact revision."""
+        quote, note = req.get("quote", ""), req.get("note")
+        if not isinstance(quote, str) or not isinstance(note, str) or not note.strip():
+            await _write_json(
+                writer, 400, {"error": "quote and note must be text; note is required"}
+            )
+            return
+        try:
+            if len(quote.encode()) > 8000 or len(note.encode()) > 8000:
+                raise ValueError("Quote and note must each fit within 8000 UTF-8 bytes.")
+            artifact_id = req.get("artifact_id")
+            if not isinstance(artifact_id, str):
+                raise ValueError("artifact_id must be text")
+            artifact = self.history.artifacts.get(session_key, artifact_id)
+        except ArtifactError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except ValueError as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        if req.get("artifact_sha256") != artifact["sha256"]:
+            await _write_json(
+                writer,
+                409,
+                {"error": "This artifact changed. Review its latest copy before sending feedback."},
+            )
+            return
+        supervisor = self.orchestrator.get(session_key)
+        if supervisor is None or not supervisor.running:
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": (
+                        "Feedback was not sent: this session has no live terminal. "
+                        "Your comment is kept here."
+                    )
+                },
+            )
+            return
+        # JSON escapes newlines and terminal control bytes in every field. A
+        # quoted artifact must never become extra keystrokes or extra submits.
+        context = {
+            "artifact": artifact["title"],
+            "path": artifact["source_path"],
+            "artifact_id": artifact["id"],
+            "sha256": artifact["sha256"],
+            "selected_text": quote.strip(),
+        }
+        prompt = "Artifact feedback: " + json.dumps({**context, "feedback": note.strip()})
+        try:
+            sent = await asyncio.to_thread(supervisor.write_bytes, prompt.encode() + b"\r")
+        except OSError:
+            sent = False
+        if not sent:
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": (
+                        "Feedback could not be delivered. Your comment is kept here; "
+                        "try again when the agent is live."
+                    )
+                },
+            )
+            return
+        ann_id = security.new_session_key("ann")
+        self.history.add_annotation(
+            ann_id, session_key, json.dumps(context), note.strip(), int(time.time() * 1000)
+        )
+        await _write_json(writer, 200, {"id": ann_id, "sent": True})
 
     async def _heartbeat(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """A launched tab pings here while alive. Records last_seen so the sweep

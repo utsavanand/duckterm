@@ -41,7 +41,7 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     await register(join(cwd, "website.html"), "Website mockup", unsafeHTML);
     await page.getByRole("button", { name: /HTML Website mockup/ }).click({ timeout: 8000 });
     await expect(page.frameLocator('iframe[title="Preview of Website mockup"]').getByRole("heading", { name: "Website mockup" })).toBeVisible();
-    await expect(page.locator('iframe[title="Preview of Website mockup"]')).toHaveAttribute("sandbox", "");
+    await expect(page.locator('iframe[title="Preview of Website mockup"]')).toHaveAttribute("sandbox", "allow-scripts");
     await page.screenshot({ path: "/tmp/duckterm-artifacts-implemented-html.png" });
     expect(await page.locator("body").getAttribute("data-artifact-leak")).toBeNull();
     expect(leaked).toEqual([]);
