@@ -94,3 +94,9 @@ Successful deliveries are recorded in the session's annotation history. A stoppe
 agent, changed artifact, or write failure returns an error; the UI keeps the
 comment and never claims it was sent. A retained comment stays bound to the
 original revision until the owner cancels it and selects the updated content.
+
+Native selection verification: after running `web/e2e/artifact-feedback.spec.ts`,
+run `scripts/test_artifact_feedback.sh` on macOS. It loads the actual sanitized
+preview emitted by that browser test into WKWebView and checks selected text,
+opaque-origin isolation and blocked artifact scripts. Its fixture contains only
+test artifact content and is written to `/tmp/duckterm-feedback-native.json`.
