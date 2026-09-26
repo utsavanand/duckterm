@@ -65,3 +65,17 @@ it("offers typing into the prompt only for idle agents and shows the server's re
   expect(api.messageSession).toHaveBeenCalledWith("main-qa", "go", "prompt");
   expect(screen.getByRole("alert")).toHaveTextContent("there may be a draft");
 });
+
+it("Escape closes a pinned card first, then returns to the sessions, but not while typing", async () => {
+  vi.mocked(api.controlTower).mockResolvedValue(insights);
+  const onBack = vi.fn();
+  render(<ControlTower agents={agents} now={NOW} onBack={onBack} onOpenTerminal={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "main-qa, Duckterm, Idle" }));
+  fireEvent.keyDown(screen.getByLabelText("Message main-qa"), { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(onBack).not.toHaveBeenCalled();
+  fireEvent.keyDown(screen.getByLabelText("Message Oracle"), { key: "Escape" });
+  expect(onBack).not.toHaveBeenCalled();
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(onBack).toHaveBeenCalledTimes(1);
+});

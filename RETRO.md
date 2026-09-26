@@ -45,6 +45,17 @@ Oracle used to consume workspace width. A long active input line was permanently
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-26 — Control tower opened with its header scrolled off screen
+**Broke:** opening the tower showed the tiles cut off at the top and no
+"← Sessions" button, so there was no visible way back.
+**Cause:** the Oracle chat kept its newest answer in view with
+`scrollIntoView`, which scrolls every scrollable ancestor, so it scrolled the
+whole tower page down. The mocked-chat screenshots before release had an
+empty chat, so nothing needed scrolling.
+**Rule:** keep a list at its bottom by setting that list's own `scrollTop`.
+Check a page with realistic content in every scrolling region before
+shipping it.
+
 ## 2026-09-26 — Replacing the panes with the control tower broke terminal wrapping
 **Broke (caught by e2e before merge):** after opening and closing the control
 tower, every long line in a terminal wrapped one column later than before.

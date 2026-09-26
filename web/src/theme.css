@@ -2663,8 +2663,17 @@ select {
    like the folder grid does; the page scrolls on its own. */
 .rd-workspace-panes { display: contents; }
 .rd-tower-layer { position: absolute; inset: 0; z-index: 5; display: flex; background: var(--bg); }
-.rd-tower { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 16px 32px; }
-.rd-tower-bar { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+/* Two columns: the fleet scrolls on the left under a pinned header; Oracle
+   chat fills the right edge at full height so it's always in view. */
+.rd-tower { flex: 1; min-width: 0; display: flex; min-height: 0; }
+.rd-tower-scroll { flex: 1; min-width: 0; overflow-y: auto; padding: 0 16px 32px; }
+.rd-tower-oracle { width: 420px; flex-shrink: 0; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--border); }
+@media (max-width: 1000px) {
+  .rd-tower { flex-direction: column; overflow-y: auto; }
+  .rd-tower-scroll { overflow: visible; }
+  .rd-tower-oracle { width: auto; height: 560px; flex-shrink: 0; border-left: 0; border-top: 1px solid var(--border); }
+}
+.rd-tower-bar { position: sticky; top: 0; z-index: 3; display: flex; align-items: center; gap: 14px; padding: 12px 0 10px; margin-bottom: 4px; background: var(--bg); }
 .rd-tower-title { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
 .rd-tower-title small { font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 6px; }
 .rd-tower-tiles { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
@@ -2684,8 +2693,6 @@ select {
 .rd-tower-facts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .rd-tower-fact { font-size: 12.5px; color: var(--text-soft); border: 1px solid var(--border); border-radius: 999px; padding: 4px 11px; background: var(--bg-soft); }
 .rd-tower-fact b { color: var(--text); font-weight: 600; }
-.rd-tower-main { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
-@media (max-width: 1000px) { .rd-tower-main { grid-template-columns: minmax(0, 1fr); } }
 .rd-tower-teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
 .rd-tower-team { border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow: hidden; }
 .rd-tower-team.wide { grid-column: span 2; }
@@ -2740,19 +2747,16 @@ select {
 .rd-tower-card-actions { display: flex; align-items: center; gap: 8px; }
 .rd-tower-ok { font-size: 12px; color: var(--brand-green); }
 .rd-tower-error { font-size: 12px; color: var(--danger); }
-.rd-tower-rail { display: flex; flex-direction: column; gap: 12px; }
-.rd-tower-panel { border: 1px solid var(--border); border-radius: 12px; background: var(--card); overflow: hidden; }
-.rd-tower-panel h2 { margin: 0; font-size: 13px; font-weight: 600; padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; }
-.rd-tower-panel h2 span { color: var(--muted); font-weight: 400; }
-.rd-tower-empty { margin: 0; padding: 12px; font-size: 13px; color: var(--muted); }
-.rd-tower-need { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 12px; border: 0; border-bottom: 1px solid var(--border); background: none; color: inherit; text-align: left; cursor: pointer; }
-.rd-tower-need:last-child { border-bottom: 0; }
-.rd-tower-need:hover { background: var(--bg-soft); }
+.rd-tower-needs { margin-bottom: 16px; }
+.rd-tower-needs h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.rd-tower-needs h2 span { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.rd-tower-needs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+.rd-tower-need { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px 12px; border: 1px solid var(--amber-border); border-radius: 10px; background: var(--amber-bg); color: inherit; text-align: left; cursor: pointer; }
+.rd-tower-need:hover { border-color: var(--wait); }
 .rd-tower-need-who { flex: 1; min-width: 0; }
 .rd-tower-need-who b { font-weight: 600; }
 .rd-tower-need-who small { display: block; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rd-tower-need-age { font-size: 12px; color: var(--amber-text); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.rd-tower-chat { height: 520px; }
 
 /* ── Typed AGENTS.md rules editor ── */
 .rd-rules-list {

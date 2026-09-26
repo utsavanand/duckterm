@@ -63,11 +63,20 @@ export function ControlTower({
     return () => { stopped = true; clearTimeout(timer); };
   }, []);
 
+  // Escape closes a pinned card first, then leaves the tower. Not while
+  // typing, where Escape belongs to the text field.
+  const pinnedRef = useRef(pinned);
+  pinnedRef.current = pinned;
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPinned(null); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (pinnedRef.current) return setPinned(null);
+      if (e.target instanceof Element && e.target.closest("textarea, input")) return;
+      onBack();
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [onBack]);
 
   const active = pinned ?? hover;
   const activeAgent = active ? agents.find((a) => a.key === active.key) : undefined;
@@ -81,8 +90,9 @@ export function ControlTower({
 
   return (
     <div className="rd-tower">
+      <div className="rd-tower-scroll">
       <div className="rd-tower-bar">
-        <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onBack}>
+        <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onBack} title="Back to sessions (Esc)">
           ← Sessions
         </button>
         <h1 className="rd-tower-title">
@@ -128,8 +138,34 @@ export function ControlTower({
         ))}
       </section>
 
-      <div className="rd-tower-main">
-        <section className="rd-tower-teams" aria-label="Teams">
+      {waiting.length > 0 && (
+        <section className="rd-tower-needs" aria-label="Needs you">
+          <h2>
+            Needs you <span>{waiting.length} waiting, longest first</span>
+          </h2>
+          <div className="rd-tower-needs-list">
+            {waiting.map((a) => (
+              <button
+                key={a.key}
+                className="rd-tower-need"
+                onClick={(e) => {
+                  const duck = document.querySelector<HTMLElement>(`[data-duck="${CSS.escape(a.key)}"]`);
+                  duck?.scrollIntoView({ block: "center", behavior: "smooth" });
+                  setPinned({ key: a.key, el: duck ?? e.currentTarget });
+                }}
+              >
+                <Duck pose="waiting" size={28} />
+                <span className="rd-tower-need-who">
+                  <b>{a.label}</b> · {teamOf(a)}
+                  <small>{a.progress?.summary ? firstSentence(a.progress.summary) : a.intention || "No summary yet"}</small>
+                </span>
+                <span className="rd-tower-need-age">{ago(now - a.updatedAt)}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+      <section className="rd-tower-teams" aria-label="Teams">
           {teamList.length === 0 && <p className="rd-panel-empty">No agents yet.</p>}
           {teamList.map((team) => {
             const { rows, spots } = placement(team.agents.map((a) => a.key));
@@ -160,37 +196,11 @@ export function ControlTower({
             );
           })}
         </section>
-
-        <aside className="rd-tower-rail">
-          <div className="rd-tower-panel">
-            <h2>
-              Needs you <span>{waiting.length} waiting</span>
-            </h2>
-            {waiting.length === 0 && <p className="rd-tower-empty">Nothing is waiting on you.</p>}
-            {waiting.map((a) => (
-              <button
-                key={a.key}
-                className="rd-tower-need"
-                onClick={(e) => {
-                  const duck = document.querySelector<HTMLElement>(`[data-duck="${CSS.escape(a.key)}"]`);
-                  duck?.scrollIntoView({ block: "center", behavior: "smooth" });
-                  setPinned({ key: a.key, el: duck ?? e.currentTarget });
-                }}
-              >
-                <Duck pose="waiting" size={28} />
-                <span className="rd-tower-need-who">
-                  <b>{a.label}</b> · {teamOf(a)}
-                  <small>{a.progress?.summary ? firstSentence(a.progress.summary) : a.intention || "No summary yet"}</small>
-                </span>
-                <span className="rd-tower-need-age">{ago(now - a.updatedAt)}</span>
-              </button>
-            ))}
-          </div>
-          <div className="rd-tower-panel rd-tower-chat">
-            <OracleChat />
-          </div>
-        </aside>
       </div>
+
+      <aside className="rd-tower-oracle" aria-label="Ask Oracle">
+        <OracleChat />
+      </aside>
 
       {active && activeAgent && (
         <AgentCard

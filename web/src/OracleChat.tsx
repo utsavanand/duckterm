@@ -21,7 +21,7 @@ export function OracleChat({ onClose }: { onClose?: () => void }) {
   const [q, setQ] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const bottom = useRef<HTMLDivElement>(null);
+  const logRef = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
 
   // Grow with the text up to the CSS max-height, then scroll.
@@ -43,7 +43,10 @@ export function OracleChat({ onClose }: { onClose?: () => void }) {
   }, []);
 
   useEffect(() => {
-    bottom.current?.scrollIntoView?.({ block: "end" });
+    // Scroll only the message list. scrollIntoView also scrolled every
+    // scrollable ancestor, which pushed the control tower's header off screen.
+    const log = logRef.current;
+    if (log) log.scrollTop = log.scrollHeight;
   }, [log, pending, error]);
 
   async function ask(text: string = q) {
@@ -74,7 +77,7 @@ export function OracleChat({ onClose }: { onClose?: () => void }) {
   return (
     <aside className="rd-oracle" aria-label="Oracle chat">
       <header className="rd-oracle-head">
-        <span className="rd-oracle-title">Oracle</span>
+        <span className="rd-oracle-title">Ask Oracle</span>
         <span className="rd-spacer" />
         {log.length > 0 && (
           <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => void clear()}>
@@ -91,7 +94,7 @@ export function OracleChat({ onClose }: { onClose?: () => void }) {
           </button>
         )}
       </header>
-      <div className="rd-oracle-log">
+      <div className="rd-oracle-log" ref={logRef}>
         {loaded && log.length === 0 && pending === null && (
           <div className="rd-oracle-empty">
             <p>
@@ -125,7 +128,6 @@ export function OracleChat({ onClose }: { onClose?: () => void }) {
           </div>
         )}
         {error && <p className="rd-oracle-error" role="alert">{error}</p>}
-        <div ref={bottom} />
       </div>
       <div className="rd-oracle-compose">
         <textarea
