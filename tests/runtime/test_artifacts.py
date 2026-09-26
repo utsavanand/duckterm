@@ -196,3 +196,45 @@ def test_real_cli_upload_and_backup_restore(app, tmp_path, monkeypatch):
     finally:
         restored.purge_test_sessions()
         restored.close()
+
+
+def test_artifact_feedback_checks_revision_scope_and_actual_delivery(app, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    server, agents, owner = app
+    file = tmp_path / "report.md"
+    file.write_text("# Report")
+    artifact = register(server, agents["a"], artifacts.registration(file))[1]["artifact"]
+    data = {
+        "artifact_id": artifact["id"],
+        "artifact_sha256": artifact["sha256"],
+        "quote": "Report\n\x1b[201~",
+        "note": "Make it clearer\r\x03",
+    }
+    endpoint = "/sessions/a/annotations"
+
+    def send(payload=data, headers=owner, path=endpoint):
+        return dispatch(server, "POST", path, headers, json.dumps(payload).encode())
+
+    assert send(headers={})[0] == 401
+    assert send(headers=agents["a"])[0] == 403
+    assert send(path="/sessions/b/annotations")[0] == 404
+    assert send({**data, "artifact_sha256": "stale"})[0] == 409
+    assert send({**data, "note": 42})[0] == 400
+    assert send({**data, "quote": "x" * 8001})[0] == 400
+    assert send()[0] == 409  # stopped; never claim delivery or discard into storage
+    assert not server.history.annotations("a")
+    writes = []
+    sup = SimpleNamespace(running=True, write_bytes=lambda b: writes.append(b) or True)
+    monkeypatch.setattr(server.orchestrator, "get", lambda _: sup)
+    assert send()[1]["sent"] is True
+    assert len(writes) == 1 and writes[0].endswith(b"\r")
+    assert b"\n" not in writes[0] and b"\x1b" not in writes[0] and b"\x03" not in writes[0]
+    payload = json.loads(writes[0].decode().removeprefix("Artifact feedback: ").strip())
+    assert payload["path"] == str(file)
+    assert payload["selected_text"] == data["quote"].strip()
+    assert payload["feedback"] == data["note"].strip()
+    assert len(server.history.annotations("a")) == 1
+    sup.write_bytes = lambda _: False
+    assert send()[0] == 409
+    assert len(server.history.annotations("a")) == 1

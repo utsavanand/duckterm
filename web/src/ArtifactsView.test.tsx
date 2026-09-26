@@ -19,7 +19,7 @@ it("ignores an older preview response after another artifact is selected", async
   await screen.findByTitle("Preview of Second report");
   await act(async () => { finish({ artifact: content(first) }); });
   expect(screen.queryByTitle("Preview of First report")).not.toBeInTheDocument();
-  expect(screen.getByTitle("Preview of Second report")).toHaveAttribute("sandbox", "");
+  expect(screen.getByTitle("Preview of Second report")).toHaveAttribute("sandbox", "allow-scripts");
 });
 it("shows failed removal without losing the saved artifact, then removes it after success", async () => {
   vi.spyOn(window, "confirm").mockReturnValue(true);
@@ -43,4 +43,13 @@ it("keeps scripts, navigation and hostile markup out of both preview formats", (
     expect(doc).toContain("default-src 'none'");
     expect(doc).toContain("Mockup");
   }
+});
+
+it("authorizes only the app selection reporter in an opaque-origin frame", () => {
+  const doc = previewDocument('<script nonce="attacker">window.hacked=true</script><p onclick="evil()">Pick me</p>', false, { nonce: "abc123", origin: "http://localhost:4300" });
+  expect(doc.match(/<script/g)).toHaveLength(1);
+  expect(doc).toContain("script-src 'nonce-abc123'");
+  expect(doc).toContain('nonce="abc123"');
+  expect(doc).not.toContain("attacker");
+  expect(doc).not.toContain("onclick");
 });

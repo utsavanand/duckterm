@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Artifact feedback needs provenance and an isolated selection bridge
+
+Text selected inside an opaque preview cannot be read directly by the app. Keep that origin isolation; authorize only a small app-owned reporter with a fresh CSP nonce, strip artifact scripts, and validate the sending frame/channel. Bind feedback to the saved artifact revision, escape terminal controls, and retain failed comments instead of reporting a false send. Verify real terminal receipt and malicious-preview rejection together.
+
 ## 2026-09-26 — Recheck layout integration after concurrent merges
 
 The Control Tower introduced a wrapper between workspace and panels while collapse controls passed their branch checks. A direct-child CSS selector then stopped applying, and Oracle labels changed. Match the panel through its workspace ancestor, update the integration test to the merged UI, and gate the exact combined tree before publishing.

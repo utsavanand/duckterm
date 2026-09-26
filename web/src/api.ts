@@ -183,6 +183,14 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
 }
 
 export const api = {
+  artifactFeedback: async (key: string, artifact: Artifact, quote: string, note: string) => {
+    const response = await fetch(`/sessions/${encodeURIComponent(key)}/annotations`, {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ artifact_id: artifact.id, artifact_sha256: artifact.sha256, quote, note }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.sent) throw new Error(data.error || "Feedback was not sent. Try again when the agent is live.");
+  },
   artifacts: (key: string) => artifactRequest<{ artifacts: Artifact[] }>(`/sessions/${encodeURIComponent(key)}/artifacts`),
   artifact: (key: string, id: string) => artifactRequest<{ artifact: ArtifactContent }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`),
   removeArtifact: (key: string, id: string) => artifactRequest<{ removed: boolean }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, "DELETE"),
