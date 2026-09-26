@@ -94,9 +94,23 @@ What needs the owner becomes a note in the Ask Oracle chat. Notes live in
 
 | Note | Source | Answer route |
 | --- | --- | --- |
-| Approval | The approval registry, synced on every event and on `/approvals` | `ApprovalRegistry.set_decision`, the dashboard's path |
+| Approval | The approval registry, synced on every event and on `/approvals`. For agents that auto-review requests (Codex), only once the agent's own approval prompt is on screen | Claude Code and Copilot: `ApprovalRegistry.set_decision`, the dashboard's path. Codex: its prompt's keys (`y`, Esc), only while the prompt is still on screen |
 | Choice | Claude's `AskUserQuestion`, which arrives as a `PermissionRequest` with its options | The option's number key, only if "N. Label" is still on screen (a digit selects immediately, checked on Claude Code 2.1.283) |
 | Question | 30 s after each `Stop` (skipped if the owner replied), a word-cue filter, then one Sonnet call classifying the ending as blocked, offer, or none | Typed into the prompt under the paste checks; otherwise an owner inbox message, which Oracle nudges |
+
+**Is the owner actually needed for an approval?** A permission request isn't
+proof. In 5 days on the owner's machine, Claude Code sent 9 (8 were
+multiple-choice questions, answered by a person in about 2 minutes), while
+Codex sent 1,597: with `approvals_reviewer = "auto_review"`, its reviewer
+settles nearly every one, and the command finishes about 20 s later. Neither
+the request nor the elapsed time says which will reach the owner; the screen
+does. So for a harness with `auto_approves_requests`, Oracle watches the
+session's screen every 2 s while the request is pending and raises a note
+only when `approval_prompt_visible` sees Codex's own prompt ("Would you like
+to run the following command?" over "1. Yes, proceed (y)"). Claude Code in
+auto mode only calls its hook when it escalates, so its requests stay notes
+immediately. The hook no longer registers a waiting approval for Codex, whose
+3 s hook limit orphaned it.
 
 **Detecting a turn that waits on the owner.** The first version flagged a
 final paragraph ending in "?". Scored against 104 real turn endings from

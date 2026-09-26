@@ -343,6 +343,8 @@ class Server:
         # The ledger isn't thread-safe; one scan at a time.
         self._tokens_lock = asyncio.Lock()
         self.relay = Relay(paths.home() / "relay.json")
+        self._relay_confirmed: set[str] = set()  # approvals seen asking on screen
+        self._relay_watching: set[str] = set()
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -2209,6 +2211,16 @@ class Server:
         for a in pending:
             if a.id in tracked:
                 continue
+            if (
+                not a.blocking
+                and a.id not in self._relay_confirmed
+                and self._relay_harness(a.session_key).auto_approves_requests
+            ):
+                # The request alone isn't evidence: this agent's auto-reviewer
+                # settles nearly all of them. Show it only once the agent's own
+                # approval prompt is on screen.
+                self._relay_watch(a.id, a.session_key)
+                continue
             fields = self._relay_session_fields(a.session_key)
             note = self.relay.add(
                 {
@@ -2230,6 +2242,48 @@ class Server:
                 self.relay.close(
                     note, "answered", answer=rule["action"], answered_by=rule["id"], closed_at=now
                 )
+
+    # How often and how long to look for an auto-reviewing agent's approval
+    # prompt while its request is pending.
+    _RELAY_WATCH_EVERY_S = 2.0
+    _RELAY_WATCH_FOR_S = 600.0
+
+    def _relay_harness(self, key: str) -> AgentRuntime:
+        row = self.history.session(key) or {}
+        return _build_runtime(row.get("runtime"), str(row.get("command") or ""))
+
+    def _relay_watch(self, approval_id: str, key: str) -> None:
+        if approval_id in self._relay_watching:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._relay_watching.add(approval_id)
+        loop.create_task(self._relay_watch_approval(approval_id, key))
+
+    async def _relay_watch_approval(self, approval_id: str, key: str) -> None:
+        """Confirm an auto-reviewed request only if the agent ends up asking
+        the owner on screen; stop as soon as the request resolves."""
+        harness = self._relay_harness(key)
+        waited = 0.0
+        try:
+            while waited < self._RELAY_WATCH_FOR_S:
+                await asyncio.sleep(self._RELAY_WATCH_EVERY_S)
+                waited += self._RELAY_WATCH_EVERY_S
+                pending = self.approvals.get(approval_id)
+                if pending is None or pending.decided is not None:
+                    return
+                sup = self.orchestrator.get(key)
+                if sup is None or not sup.running:
+                    return
+                screen = await asyncio.to_thread(sup.visible_screen)
+                if harness.approval_prompt_visible(screen):
+                    self._relay_confirmed.add(approval_id)
+                    self._relay_sync_approvals()
+                    return
+        finally:
+            self._relay_watching.discard(approval_id)
 
     # Seconds to wait after a turn ends before classifying it: an owner who is
     # watching usually answers in the terminal first, and then no note or model
@@ -2371,6 +2425,32 @@ class Server:
             decision = req.get("answer")
             if decision not in ("approve", "deny"):
                 await _write_json(writer, 400, {"error": "answer must be approve or deny"})
+                return
+            harness = self._relay_harness(note["session_key"])
+            keys = None if note.get("blocking") else harness.approval_keys(decision)
+            if keys is not None:
+                sup = self.orchestrator.get(note["session_key"])
+                screen = await asyncio.to_thread(sup.visible_screen) if sup and sup.running else ""
+                if not harness.approval_prompt_visible(screen):
+                    self.relay.close(note, "handled", closed_at=now)
+                    await _write_json(
+                        writer,
+                        409,
+                        {"error": "Its approval prompt isn't on screen anymore.", "note": note},
+                    )
+                    return
+                assert sup is not None
+                await asyncio.to_thread(sup.write_bytes, keys)
+                self.approvals.forget(str(note.get("approval_id")))
+                self.relay.close(
+                    note,
+                    "answered",
+                    answer=decision,
+                    answered_by="owner",
+                    closed_at=now,
+                    route="keystroke",
+                )
+                await _write_json(writer, 200, {"note": note})
                 return
             if not self.approvals.set_decision(str(note.get("approval_id")), decision):
                 self.relay.close(note, "handled", closed_at=now)
@@ -3190,6 +3270,12 @@ class Server:
         # (Defends against pre-update hooks that still POST it; current hooks skip
         # it client-side.)
         if req.get("tool_name") == "AskUserQuestion":
+            await _write_json(writer, 200, {"id": None})
+            return
+        # Codex kills hooks after 3 s, so its hook can't wait for a decision;
+        # the request it registers would be orphaned "pending" forever. Old
+        # hooks still POST here, so refuse it server-side too.
+        if self._relay_harness(str(key)).auto_approves_requests:
             await _write_json(writer, 200, {"id": None})
             return
         approval = self.approvals.register(
