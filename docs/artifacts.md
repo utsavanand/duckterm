@@ -1,7 +1,7 @@
 # Local artifacts
 
 Generated deliverables are registered by their producing agent and saved locally
-in DuckTerm. The planned Artifacts tab sits next to Inbox and follows the selected
+in DuckTerm. The Artifacts tab sits next to Inbox and follows the selected
 session. The backend does not scan the filesystem or import historical files.
 
 ## Agent registration
@@ -55,4 +55,19 @@ credentials cannot access owner endpoints. Content is returned only inside JSON,
 never served as active HTML on the dashboard origin. Frontend previews must keep
 that isolation and sanitize rendered Markdown. DuckCentral/cloud sync is deferred.
 
-Status: backend and tests in development; visual preview awaiting owner review.
+The owner approved the layout in `docs/previews/artifacts.html`. The app follows
+the selected session, refreshes registered outputs while the tab is open, and
+provides saved-copy download/removal. Downloads in the Mac shell use a native
+Save dialog, stage privately, then write atomically to the chosen destination.
+
+Preview isolation follows [MDN srcdoc guidance](https://developer.mozilla.org/en-US/docs/Web/API/HTMLIFrameElement/srcdoc):
+an iframe with no sandbox exceptions, sanitized HTML, and a restrictive CSP
+inserted before user content. Downloads use Apple's
+[WKDownloadDelegate](https://developer.apple.com/documentation/webkit/wkdownloaddelegate).
+The browser regression verifies resource blocking, script isolation, snapshot
+updates, downloads, reload persistence, removal, and terminal-draft preservation.
+
+
+Native download verification: `scripts/test_artifact_download.sh` exercises a real
+Mac WebKit blob download with the production save delegate, byte-for-byte output
+and atomic replacement of an isolated test file. It requires macOS.

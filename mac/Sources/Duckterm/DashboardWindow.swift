@@ -7,6 +7,19 @@ import WebKit
 final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
     private var window: NSWindow?
     private var web: WKWebView?
+    private var dashboardLoaded = false
+    private lazy var artifactDownloads = ArtifactDownloads(
+        chooseDestination: { [weak self] name, done in
+            guard let host = self?.sheetHost() else { done(nil); return }
+            let panel = NSSavePanel()
+            panel.nameFieldStringValue = name
+            panel.canCreateDirectories = true
+            panel.beginSheetModal(for: host) { result in
+                done(result == .OK ? panel.url : nil)
+            }
+        },
+        showError: { [weak self] error in self?.showArtifactDownloadError(error) }
+    )
     private let url: URL
 
     init(url: URL) {
@@ -28,6 +41,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        dashboardLoaded = true
         AppDiagnostics.shared.record("Dashboard loaded")
     }
 
@@ -37,6 +51,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+        dashboardLoaded = false
         let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 760))
         if #available(macOS 13.3, *) {
             web.isInspectable = true  // debuggable from Safari's Develop menu
@@ -74,6 +89,9 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         _ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        // A download policy change may cancel navigation after the dashboard
+        // loaded. Never reload a working terminal in response to that event.
+        guard !dashboardLoaded else { return }
         AppDiagnostics.shared.record("Dashboard connection failed", code: (error as NSError).code)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
             guard let self else { return }
@@ -84,6 +102,34 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     func windowWillClose(_ notification: Notification) {
         window = nil  // rebuild fresh next open so it reloads the dashboard
         web = nil
+    }
+
+    // Saved artifact bytes are downloaded as blobs from the authenticated
+    // dashboard. WebKit needs a delegate or the Download link is a silent no-op.
+    func webView(
+        _ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        if action.shouldPerformDownload {
+            decisionHandler(action.sourceFrame.isMainFrame && action.request.url?.scheme == "blob"
+                            ? .download : .cancel)
+        } else {
+            decisionHandler(.allow)
+        }
+    }
+
+    func webView(
+        _ webView: WKWebView, navigationAction: WKNavigationAction,
+        didBecome download: WKDownload
+    ) {
+        download.delegate = artifactDownloads
+    }
+
+    private func showArtifactDownloadError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could not save artifact"
+        alert.informativeText = error.localizedDescription
+        if let host = sheetHost() { alert.beginSheetModal(for: host) }
     }
 
     // ── JS dialog panels (WKUIDelegate) — native sheets for alert/confirm/prompt ──

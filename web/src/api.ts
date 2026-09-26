@@ -147,7 +147,31 @@ export interface BackupState {
   } | null;
 }
 
+export interface Artifact {
+  id: string;
+  session_key: string;
+  title: string;
+  source_path: string;
+  media_type: string;
+  size: number;
+  sha256: string;
+  created_at: number;
+  updated_at: number;
+}
+export interface ArtifactContent extends Artifact { content_base64: string }
+
+async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
+  const response = await fetch(path, { method, cache: "no-store", headers: authHeaders() });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? "Could not load artifacts");
+  return result as T;
+}
+
 export const api = {
+  artifacts: (key: string) => artifactRequest<{ artifacts: Artifact[] }>(`/sessions/${encodeURIComponent(key)}/artifacts`),
+  artifact: (key: string, id: string) => artifactRequest<{ artifact: ArtifactContent }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`),
+  removeArtifact: (key: string, id: string) => artifactRequest<{ removed: boolean }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, "DELETE"),
+
   backupStatus: async (): Promise<BackupState> => {
     const res = await fetch("/backup", { cache: "no-store", headers: authHeaders() });
     const data = await res.json();
