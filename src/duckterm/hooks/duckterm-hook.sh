@@ -104,6 +104,10 @@ case "$EVENT_TYPE" in
   PermissionRequest|preToolUse) ;;
   *) exit 0 ;;
 esac
+# Codex kills hooks after 3 s and settles most requests with its own
+# auto-reviewer, so it can't wait on the dashboard; registering would leave an
+# orphaned "pending" approval. The event above still records the request.
+[ "$RUNTIME" = "codex" ] && exit 0
 # AskUserQuestion isn't a tool-permission gate — it's the agent asking YOU a
 # multiple-choice question. The dashboard can't answer it with allow/deny (the
 # agent needs an option), so don't route it: fall through to the terminal prompt

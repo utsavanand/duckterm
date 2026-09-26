@@ -83,6 +83,19 @@ Oracle used to consume workspace width. A long active input line was permanently
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-26 — Oracle showed Codex's auto-approved commands as approval notes
+**Broke:** the chat filled with "Approval" notes for feature-remote-session
+commands that ran seconds later without the owner.
+**Cause:** Codex fires PermissionRequest for every gated command, and with
+`approvals_reviewer = "auto_review"` its reviewer approves nearly all of them
+(1,597 requests in 5 days). The relay treated each request as the owner's to
+answer. The hook also registered a waiting approval for Codex, which kills
+hooks after 3 s, so those records stayed "pending" and their notes open.
+**Rule:** a signal that something *might* need the owner isn't evidence that
+it does. Look for the agent actually asking (its prompt on screen, a hook
+that is really waiting) before surfacing it, and check the per-runtime event
+history before assuming an event means the same thing for every agent.
+
 ## 2026-09-26 — Initial terminal activation must respect open menus
 **Broke:** New Session intermittently vanished while being clicked, even without
 concurrent native UI probes.

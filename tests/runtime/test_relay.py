@@ -291,3 +291,114 @@ def test_without_a_model_the_question_mark_fallback_is_marked(world, monkeypatch
     [note] = question_note(server, monkeypatch, "Should I start with B1?", verdict="")
     assert note["detected_without_model"] is True
     assert question_note(server, monkeypatch, "Tell me which batch is next.", verdict="") == [note]
+
+
+# Codex 0.155's own approval prompt (captured from a live session, path trimmed).
+CODEX_APPROVAL = (
+    "• Running touch probe-file.txt\n  Would you like to run the following command?\n"
+    "  $ touch probe-file.txt\n› 1. Yes, proceed (y)\n"
+    "  2. Yes, and don't ask again for commands that start with `touch` (p)\n"
+    "  3. No, and tell Codex what to do differently (esc)\n"
+)
+CODEX_WORKING = "• Running touch probe-file.txt\n\n› Ask Codex to do anything\n"
+
+
+@pytest.fixture
+def codex_world(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path))
+    history = HistoryStore(tmp_path / "db.sqlite")
+    history.record(
+        {
+            "_id": "c0",
+            "_ts": 1,
+            "event_type": "SessionStart",
+            "session_key": "cx",
+            "test": True,
+            "runtime": "codex",
+            "name": "feature-remote-session",
+        }
+    )
+    server = Server(history=history)
+    server._RELAY_WATCH_EVERY_S = 0.01
+    sup = FakeSupervisor(CODEX_WORKING)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: sup if key == "cx" else None)
+    yield server, {"x-duckterm-token": server.token}, sup
+    history.close()
+
+
+def request(server, command="touch probe-file.txt"):
+    server.bus.publish(
+        {
+            "event_type": "PermissionRequest",
+            "session_key": "cx",
+            "tool_name": "Bash",
+            "tool_input": {"command": command},
+        }
+    )
+
+
+def test_codex_request_its_reviewer_approves_never_becomes_a_note(codex_world) -> None:
+    server, _, _ = codex_world
+
+    async def scenario():
+        request(server)
+        await asyncio.sleep(0.05)  # the watcher looks; no prompt on screen
+        assert server.relay.notes == []
+        server.bus.publish({"event_type": "PostToolUse", "session_key": "cx", "tool_name": "Bash"})
+        await asyncio.sleep(0.05)
+
+    asyncio.run(scenario())
+    assert notes(server) == []
+    assert server.approvals.pending() == []
+
+
+def test_codex_request_becomes_a_note_once_its_prompt_shows_and_approve_presses_y(
+    codex_world,
+) -> None:
+    server, owner, sup = codex_world
+
+    async def scenario():
+        request(server)
+        await asyncio.sleep(0.05)
+        assert server.relay.notes == []
+        sup.screen = CODEX_APPROVAL
+        await asyncio.sleep(0.05)
+
+    asyncio.run(scenario())
+    [note] = notes(server)
+    assert (note["kind"], note["detail"], note["blocking"]) == (
+        "approval",
+        "touch probe-file.txt",
+        False,
+    )
+    status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": "approve"})
+    assert (status, body["note"]["route"]) == (200, "keystroke")
+    assert sup.pasted == [b"y"]
+    assert server.approvals.pending() == []
+
+
+def test_codex_approval_answered_after_its_prompt_left_presses_nothing(codex_world) -> None:
+    server, owner, sup = codex_world
+
+    async def scenario():
+        request(server)
+        sup.screen = CODEX_APPROVAL
+        await asyncio.sleep(0.05)
+
+    asyncio.run(scenario())
+    [note] = notes(server)
+    sup.screen = CODEX_WORKING
+    assert post(server, owner, f"/relay/{note['id']}/answer", {"answer": "deny"})[0] == 409
+    assert sup.pasted == []
+
+
+def test_old_codex_hooks_cannot_register_a_waiting_approval(codex_world) -> None:
+    server, owner, _ = codex_world
+    status, body = post(
+        server,
+        owner,
+        "/approvals",
+        {"session_key": "cx", "tool_name": "Bash", "tool_input": {"command": "ls"}},
+    )
+    assert (status, body) == (200, {"id": None})
+    assert server.approvals.pending() == []
