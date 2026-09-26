@@ -37,6 +37,28 @@ Oracle used to consume workspace width. A long active input line was permanently
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-26 — Replacing the panes with the control tower broke terminal wrapping
+**Broke (caught by e2e before merge):** after opening and closing the control
+tower, every long line in a terminal wrapped one column later than before.
+**Cause:** the tower first replaced the three panes, which unmounted the
+terminal. Remounting replays its output, and the replay wrapped at a
+different width than the live session had. The B5 regression test
+(`oracle-terminal-resize.spec.ts`) failed on the rendered rows.
+**Rule:** a full-page view goes over the panes as an opaque layer, with the
+panes kept mounted and `inert`. Never unmount a terminal just to show
+something else.
+
+## 2026-09-26 — Token totals were inflated 6x in the control tower design
+**Broke:** the design and prototype said 10.9B tokens in 7 days; the real
+figure was 1.8B.
+**Cause:** Claude Code writes one transcript line per content block and
+repeats the reply's usage on each, so summing lines double-counted. The scan
+also summed whole transcripts touched this week, including months of older
+history in resumed sessions.
+**Rule:** count Claude usage once per (message id, request id) and bucket by
+each record's own timestamp. Check a derived total against one file counted
+by hand before putting it in front of the owner.
+
 ## 2026-09-25 — Ask Oracle reported prompt suggestions as the owner's instructions
 **Broke:** Oracle told the owner that qa and bugs-dev were both "told to
 deploy the fixes to production" and warned they might deploy twice, and that

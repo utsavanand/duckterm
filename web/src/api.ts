@@ -20,6 +20,21 @@ export interface OracleExchange {
   at: number;
 }
 
+export interface TokenTotals {
+  input: number;
+  cache_read: number;
+  cache_write: number;
+  output: number;
+}
+
+// GET /control-tower: the insights the dashboard's session stream lacks.
+export interface TowerInsights {
+  tokens: { days: number; by_agent: Record<string, TokenTotals> };
+  mail: { sent: number; answered: number; nudges: number };
+  backup: { destination: "gcs" | "local" | null; status: string | null; finished_at: number | null };
+  remote: { available: boolean; count: number };
+}
+
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
@@ -233,6 +248,12 @@ export const api = {
       { question },
     ),
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
+  controlTower: () => get<TowerInsights>("/control-tower"),
+  messageSession: (key: string, text: string, mode: "inbox" | "prompt") =>
+    post<{ delivered: "inbox" | "prompt" | null }>(
+      `/sessions/${encodeURIComponent(key)}/message`,
+      { text, mode },
+    ),
   clearOracleChat: () =>
     fetch("/oracle/chat", { method: "DELETE", headers: authHeaders() }).then(
       (r) => r.json() as Promise<{ messages: OracleExchange[] }>,

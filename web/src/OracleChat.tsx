@@ -15,7 +15,7 @@ const SUGGESTIONS = [
 // call over a digest of every running session). The server stores the
 // conversation, so it survives reloads and is shared by the browser and the
 // Mac app; it also supplies the last exchanges as follow-up context.
-export function OracleChat({ onClose }: { onClose: () => void }) {
+export function OracleChat({ onClose }: { onClose?: () => void }) {
   const [log, setLog] = useState<OracleExchange[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [q, setQ] = useState("");
@@ -81,13 +81,15 @@ export function OracleChat({ onClose }: { onClose: () => void }) {
             Clear
           </button>
         )}
-        <button
-          className="rd-btn rd-btn-ghost rd-btn-sm"
-          onClick={onClose}
-          aria-label="Close Oracle"
-        >
-          ✕
-        </button>
+        {onClose && (
+          <button
+            className="rd-btn rd-btn-ghost rd-btn-sm"
+            onClick={onClose}
+            aria-label="Close Oracle"
+          >
+            ✕
+          </button>
+        )}
       </header>
       <div className="rd-oracle-log">
         {loaded && log.length === 0 && pending === null && (

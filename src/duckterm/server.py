@@ -59,6 +59,7 @@ from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
+from duckterm.core.tokens import TokenLedger
 from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
@@ -71,6 +72,7 @@ from duckterm.helpers import (
     session_credentials,
     session_instructions,
 )
+from duckterm.helpers.private_files import private_read
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence import backup_sync
@@ -221,6 +223,9 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
     Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
+    Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._session_message(w, seg, b),
+          **_mid("/sessions/", "/message")),
     Route("DELETE", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w, clear=True)),
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
@@ -308,6 +313,11 @@ class Server:
         self._backup_jobs: BackupJobs | None = None
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
         self._oracle_nudges: dict[str, oracle.Nudge] = {}
+        self._tokens = TokenLedger(
+            Path.home() / ".claude" / "projects", Path.home() / ".codex" / "sessions"
+        )
+        # The ledger isn't thread-safe; one scan at a time.
+        self._tokens_lock = asyncio.Lock()
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -2005,6 +2015,93 @@ class Server:
                 "backend": result.backend,
             },
         )
+
+    async def _control_tower(self, writer: asyncio.StreamWriter) -> None:
+        """Fleet insights for the control tower page. Session states and
+        folders come from the dashboard's own event stream, not from here."""
+        now = time.time()
+        async with self._tokens_lock:
+            tokens = await asyncio.to_thread(self._tokens.totals, 7, now)
+        day_ago = int((now - 86400) * 1000)
+        backup = self._backup_jobs.snapshot() if self._backup_jobs else None
+        if backup is None:
+            raw = private_read(paths.home() / "backup-state.json")
+            backup = json.loads(raw) if raw else {"destination": None, "job": None}
+        destination = str(backup.get("destination") or "")
+        kind = "gcs" if destination.startswith("gs://") else ("local" if destination else None)
+        job = backup.get("job") or {}
+        await _write_json(
+            writer,
+            200,
+            {
+                "tokens": {"days": 7, "by_agent": tokens},
+                "mail": {
+                    **self.history.session_api.mail_stats(day_ago),
+                    "nudges": self.history.count_events("OracleNudge", day_ago),
+                },
+                "backup": {
+                    "destination": kind,
+                    "status": job.get("status"),
+                    "finished_at": job.get("finished_at"),
+                },
+                # The remote workspace isn't on main yet (branch remote-session).
+                "remote": {"available": False, "count": 0},
+            },
+        )
+
+    async def _session_message(
+        self, writer: asyncio.StreamWriter, session_key: str, body: bytes
+    ) -> None:
+        """Owner message to one session: into its inbox, or typed into its
+        prompt when Oracle's paste gates allow it right now."""
+        try:
+            req = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not isinstance(req, dict) or req.get("mode") not in ("inbox", "prompt"):
+            await _write_json(writer, 400, {"error": "mode must be inbox or prompt"})
+            return
+        if req["mode"] == "inbox":
+            try:
+                message_id = self.history.session_api.owner_message(session_key, req.get("text"))
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            await _write_json(writer, 200, {"delivered": "inbox", "message_id": message_id})
+            return
+        text = req.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text.encode()) > 16384:
+            await _write_json(writer, 400, {"error": "text must be 1 to 16384 bytes"})
+            return
+        refusal = await self._typing_refusal(session_key)
+        if refusal:
+            await _write_json(writer, 409, {"error": refusal})
+            return
+        sup = self.orchestrator.get(session_key)
+        assert sup is not None
+        sent = await asyncio.to_thread(
+            sup.write_bytes, b"\x1b[200~" + text.strip().encode() + b"\x1b[201~\r"
+        )
+        await _write_json(writer, 200 if sent else 409, {"delivered": "prompt" if sent else None})
+
+    async def _typing_refusal(self, session_key: str) -> str | None:
+        """Why owner text can't be typed into this session's prompt right now,
+        or None. The same gates Oracle applies before pasting a nudge."""
+        row = self.history.session(session_key)
+        sup = self.orchestrator.get(session_key)
+        if row is None or sup is None or not sup.running:
+            return "This session has no live terminal."
+        inbox = "Send it to the inbox instead."
+        if row.get("state") != "idle":
+            return f"It isn't idle, so typing could interrupt it. {inbox}"
+        if time.time() * 1000 - sup.last_owner_input_ms < oracle.TYPING_QUIET_MS:
+            return f"Someone typed in its terminal in the last 2 minutes. {inbox}"
+        screen = await asyncio.to_thread(sup.visible_screen)
+        harness = _build_runtime(row.get("runtime"), str(row.get("command") or ""))
+        if not harness.prompt_is_empty(screen):
+            return f"Its prompt isn't empty, so there may be a draft. {inbox}"
+        return None
 
     async def _oracle_chat(self, writer: asyncio.StreamWriter, *, clear: bool = False) -> None:
         path = paths.home() / "oracle-chat.json"

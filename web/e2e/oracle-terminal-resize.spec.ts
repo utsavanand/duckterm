@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test';
 import { apiPost, apiDelete, base } from './helpers';
 
+// Oracle's control tower is a layer over the panes: the terminal underneath keeps
+// its size, wrapping, and a half-typed draft, and stray keys don't reach it.
 test('Oracle open and close restores terminal wrapping and keeps input usable', async ({ page }) => {
   await page.setViewportSize({width:1800,height:1000});
   const sizes: {cols:number;rows:number}[]=[];
@@ -17,12 +19,13 @@ test('Oracle open and close restores terminal wrapping and keeps input usable', 
     await expect(rows).toContainText('_END');
     const original=await rows.innerText();const size=sizes.at(-1)!;
     for(let i=0;i<3;i++){
-      await page.getByRole('button',{name:'Ask Oracle',exact:true}).click();
+      await page.getByRole('button',{name:'Oracle',exact:true}).click();
       await expect(page.getByLabel('Message Oracle')).toBeVisible();
       await expect.poll(()=>sizes.at(-1)).toEqual(size);
       await expect.poll(() => rows.innerText()).toBe(original);
-      await expect(page.locator('.rd-context-pane')).toBeHidden();
-      await page.getByRole('button',{name:'Close Oracle',exact:true}).click();
+      // The panes under the tower are inert: stray keys must not reach the terminal.
+      await page.keyboard.type('STRAY');
+      await page.getByRole('button',{name:'← Sessions',exact:true}).click();
       await expect.poll(()=>sizes.at(-1)).toEqual(size);
       await expect.poll(() => rows.innerText()).toBe(original);
     }

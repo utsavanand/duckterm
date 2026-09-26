@@ -359,6 +359,53 @@ class SessionAPI:
             )
         return response
 
+    def owner_message(self, key: str, text: object) -> str:
+        """One owner notice to one session, the same record a folder broadcast
+        queues. Returns the message id."""
+        message = _text(text, "text", 16384)
+        row = self.conn.execute(
+            "SELECT s.grp, m.root FROM sessions s "
+            "LEFT JOIN session_api_members m ON m.session_key = s.session_key "
+            "WHERE s.session_key = ?",
+            (key,),
+        ).fetchone()
+        if row is None:
+            raise APIError(404, "session not found")
+        if not (row["root"] and _inside(row["grp"] or "", row["root"])):
+            raise APIError(
+                409,
+                "This session has no inbox because it isn't in a shared folder. "
+                "Type into its prompt or open its terminal instead.",
+            )
+        notice_id = "b-" + secrets.token_hex(16)
+        with self.conn:
+            self.conn.execute(
+                "INSERT INTO session_questions "
+                "(id, sender, recipient, sender_name, root, question, created_at, "
+                "expires_at, idempotency_key, content_hash, kind) "
+                "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, 'broadcast')",
+                (
+                    notice_id,
+                    key,
+                    row["root"],
+                    message,
+                    int(time.time() * 1000),
+                    NO_DEADLINE,
+                    notice_id,
+                    hashlib.sha256(message.encode()).hexdigest(),
+                ),
+            )
+        return notice_id
+
+    def mail_stats(self, since_ms: int) -> dict[str, int]:
+        """Agent-to-agent questions sent since a time, and how many were answered."""
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS sent, COALESCE(SUM(status = 'answered'), 0) AS answered "
+            "FROM session_questions WHERE kind = 'question' AND created_at >= ?",
+            (since_ms,),
+        ).fetchone()
+        return {"sent": int(row["sent"]), "answered": int(row["answered"])}
+
     def pending_counts(self) -> dict[str, int]:
         self._sweep()
         return {
