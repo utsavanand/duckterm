@@ -7,7 +7,12 @@ test("copy review shows source, destination and exclusions before transfer", asy
     window.webkit = { messageHandlers: {
       remoteSession: { postMessage: () => { throw new Error("Must not switch before launch"); } },
       launchRequest: { postMessage: async (raw: unknown) => {
-        const request = raw as { operation: string };
+        const request = raw as { operation: string; target: string; params: { path?: string } };
+        if (request.operation === "browse") {
+          if (request.target !== "local") throw new Error("Source picker must browse This Mac");
+          const path = request.params.path ?? "/Users/you/projects";
+          return { path, parent: "/Users/you", is_git: path.endsWith("/service"), entries: path.endsWith("/service") ? [] : [{ name: "service", path: "/Users/you/projects/service", is_git: true }] };
+        }
         if (request.operation === "project-preview") return { source: "/Users/you/projects/service", fingerprint: "review", bytes: 18432, entries: [{ path: "src/app.py" }, { path: "README.md" }], excluded: [".env", ".venv/"], ignored: [], git: { kind: "git" }, conversation: {} };
         if (request.operation === "project-preflight") return { runtime: "available" };
         if (request.operation === "project-transfer") return { id: "test", stage: "ready", destination: "/home/duckterm/projects/service-copy" };
@@ -20,7 +25,11 @@ test("copy review shows source, destination and exclusions before transfer", asy
   await page.getByRole("button", { name: "New session", exact: true }).click();
   await page.getByRole("combobox", { name: "Run on" }).selectOption("dev");
   await page.getByRole("combobox", { name: "Project source" }).selectOption("copy");
-  await page.getByLabel("Local project path").fill("/Users/you/projects/service");
+  await page.getByRole("button", { name: "Browse…", exact: true }).click();
+  await page.getByText("service", { exact: true }).click();
+  await page.screenshot({ path: "/tmp/remote-source-picker.png", fullPage: true });
+  await page.getByRole("button", { name: "Use this folder (git)", exact: true }).click();
+  await expect(page.getByLabel("Local project path")).toHaveValue("/Users/you/projects/service");
   await page.getByLabel("Remote destination folder").fill("/home/duckterm/projects/service-copy");
   await page.getByRole("button", { name: "Review transfer" }).click();
   await expect(page.getByRole("button", { name: "Copy project" })).toBeDisabled();

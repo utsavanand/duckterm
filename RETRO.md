@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Copy source needs a folder explorer
+**Broke:** copying a local project to a remote machine required typing its path.
+**Cause:** the source form did not reuse New Session's existing folder browser.
+**Rule:** offer Browse beside the source field and route it explicitly to This
+Mac even when the launch destination is remote. Reuse the existing explorer and
+verify that choosing a folder feeds the transfer review.
+
 ## 2026-09-26 — Artifact feedback needs provenance and an isolated selection bridge
 
 Text selected inside an opaque preview cannot be read directly by the app. Keep that origin isolation; authorize only a small app-owned reporter with a fresh CSP nonce, strip artifact scripts, and validate the sending frame/channel. Bind feedback to the saved artifact revision, escape terminal controls, and retain failed comments instead of reporting a false send. Verify real terminal receipt and malicious-preview rejection together.
