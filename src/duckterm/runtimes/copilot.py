@@ -40,13 +40,13 @@ class CopilotRuntime(Harness):
         # Claude Code's. Checked on Copilot CLI 1.0.62, 2026-09-26.
         return prompt_line_rest(screen, "❯", ignore_dim=True) == ""
 
-    def detect_state(self, recent_output: str) -> SessionState:
+    def detect_state(self, recent_output: str) -> SessionState | None:
         for line in reversed(recent_output.splitlines()):
             if _WAITING.search(line):
                 return "waiting"
             if _WORKING.search(line):
                 return "busy"
-        return "idle"
+        return None
 
     def tool_in(self, recent_output: str) -> str | None:
         return None

@@ -1,8 +1,64 @@
 # Spike: is session state detection accurate, flaky, or harness-uneven?
 
-Status: spike scoped 2026-09-25 at the owner's request. **Not yet run** —
-this document is the question, the code reading that motivates it, and the
-method. Implementation/investigation belongs to a dev session.
+Status: first reproducible defect investigated and fixed on 2026-09-26.
+The original scoping notes below are historical hypotheses; corrections and
+measured results take precedence. A full-day fleet study is still pending.
+
+## First investigation: output without state evidence
+
+Against main `e203926`, all ten isolated real-terminal probes reproduced a
+false transition after a valid marker followed by `result: 42` and an ANSI
+reset. Each case ran through both tmux and a raw PTY:
+
+| Runtime | Real marker | Incorrect transition caused by ordinary output |
+| --- | --- | --- |
+| Codex | working | busy → idle |
+| Copilot | thinking | busy → idle |
+| Claude Code | permission menu | waiting → busy |
+| Generic | idle | idle → busy |
+| Generic | waiting | waiting → busy |
+
+The fix makes `detect_state` return `None` when it has no evidence. Both
+supervisor readers skip state emission in that case. `None` is an internal
+absence of evidence, not a new user-visible session state. Explicit markers,
+hook events and process-exit events retain their existing behavior. In
+particular, silence or arbitrary text no longer proves that a Codex/Copilot
+turn ended: a completion hook must report that, or a separately validated
+idle-prompt reconciliation must establish it. Missing hooks can therefore
+leave a stale state; inventing an idle event was not a reliable substitute.
+
+The ten probes fail on unchanged main and pass with the fix. They use
+`test=True`, an isolated home and tmux socket, and stop their processes.
+Existing runtime and history-transition tests also pass. These deterministic
+results establish the defect, not a production-wide accuracy or flap rate.
+
+### Corrections to the initial theory
+
+- Copilot **has hooks**, declared by `CopilotRuntime.hook_spec`; only generic
+  has no hook specification. A declared spec does not prove hook delivery.
+- The supervisor calls `detect_state` on individual decoded lines, not a
+  rolling screen. The tmux reader can additionally split a line at a 4096-byte
+  read boundary. Separately, `/sessions` reconciles waiting states from an
+  eight-line visible-screen snapshot.
+- Hook and output events both reach the same event bus and `HistoryStore`.
+  There is no general rule giving hooks precedence. Consequently disagreement
+  alone is not ground truth, and hook/output provenance is not reliably
+  distinguishable in old event records.
+
+### Remaining investigation priorities
+
+1. Tighten positive matches using captured real prompt fixtures: Copilot's
+   bare `approve`/`running`, Claude's embedded `❯`, and Codex's broad working
+   phrases still match ordinary prose. This fix changes only the no-evidence
+   case; it does not claim those false positives are solved.
+2. Measure hook delivery and output-event provenance, including after restart.
+   The supervisor's cached state is not synchronized with every hook event;
+   explicit output transitions can still disagree with the persisted state.
+3. Sample state transitions over a working day with ground-truth observations.
+   Measure per-harness flapping and distinguish missing hooks from detector
+   errors before changing precedence or adding UI indicators.
+
+No live terminal contents or credentials are included in this report.
 
 ## Why this is worth a spike
 
