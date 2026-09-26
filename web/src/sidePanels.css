@@ -1,7 +1,7 @@
 /* Keep the other sidebar's width stable when one closes; the center gets the
    freed space. Children stay mounted so toggles never reconnect a terminal. */
 @media (min-width: 1101px) {
-  .rd-workspace > .rd-panels-3 {
+  .rd-workspace .rd-panels-3 {
     grid-template-columns: var(--agents-width, minmax(240px, 23.0769%)) minmax(0, 1fr) var(--context-width, minmax(280px, 25.641%));
   }
   .rd-panels-3.rd-agents-collapsed { --agents-width: 36px; }

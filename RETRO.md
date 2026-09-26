@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Recheck layout integration after concurrent merges
+
+The Control Tower introduced a wrapper between workspace and panels while collapse controls passed their branch checks. A direct-child CSS selector then stopped applying, and Oracle labels changed. Match the panel through its workspace ancestor, update the integration test to the merged UI, and gate the exact combined tree before publishing.
+
 ## 2026-09-26 — Collapsing chrome must preserve the live terminal
 
 Side panels consumed space even when the owner only needed the center. Collapse their contents without unmounting the terminal or changing its session identity; leave a visible, keyboard-accessible reopen control. Verify real PTY resize frames, unchanged unsent input, independent toggles, persistence and Oracle interaction, not just a wider CSS box.
