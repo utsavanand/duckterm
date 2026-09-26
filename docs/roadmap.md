@@ -153,6 +153,35 @@ worked on. Asked directly; answers recorded as given rather than inferred:
 
 ## Bugs — open
 
+B6. **Desktop notification setting does not work** (owner-reported
+    2026-09-25, `ui-dev`). Three distinct defects in App.tsx:171-201:
+    - **It does not persist.** `notifyOn` is plain `useState` initialized
+      from `Notification.permission === "granted"`; nothing writes or reads
+      localStorage. Turning it OFF reverts on reload, so "off" is
+      effectively unachievable once permission is granted. Every
+      neighbouring control in the same menu (density, theme, terminal
+      themes, `rd.oracleOpen`) persists — notifications are the lone
+      exception. Fix: store under an `rd.` key, initialize from stored AND
+      current permission so a revoked permission beats a stored true.
+    - **No feedback when permission is denied.** `requestPermission()`
+      resolves "denied" immediately without prompting once a site is
+      blocked, so the checkbox snaps back with no explanation — which reads
+      exactly as "the setting doesn't work". Say "blocked in your browser"
+      instead; HeaderMenus already has the `header-notification-help` slot.
+    - **Burst on load and on enable.** `prevWaiting` starts empty and
+      `notifyOn` is in the effect's dependency list, so already-waiting
+      sessions all look new: they notify at load, and toggling the setting
+      ON notifies for every currently-waiting session. Same class of
+      mistake the duck celebration got right by firing only on witnessed
+      live transitions. Fix: prime `prevWaiting` without notifying; don't
+      treat a `notifyOn` change as a transition.
+    Note: the Mac app has an independent native notifier
+    (main.swift:14-57, its own `notified` set), so in DuckTerm.app the
+    browser checkbox and the native path are two mechanisms — the Settings
+    control should govern both or say that it only affects the browser.
+
+
+
 B5. ~~Opening Oracle corrupts terminal wrapping irreversibly.~~ **Fixed by
     layout** in v0.4.51 (PRs #27/#28): Oracle now occupies the right
     context pane without narrowing the terminal, so the geometry that used
