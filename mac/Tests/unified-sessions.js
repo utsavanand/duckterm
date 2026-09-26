@@ -13,7 +13,7 @@
  const original=await api('/sessions/launch',{session_key:'LOCAL_KEY',name:'Local original',command:'/bin/cat',cwd:'PROJECT',in_terminal:false,test:true});
  await api('/sessions/'+original.session_key,{group:'Unified QA'},'PATCH');
  // Local SSE creates the row; metadata refresh is periodic.
- await wait(()=>row('Local original'),'original row');row('Local original').click();
+ await wait(()=>row('Local original'),'original row');row('Local original').querySelector('.rd-row-name').click();
  const originalTerminal=await wait(()=>document.querySelector('.xterm'),'original terminal');
  window.__qaPageMarker='stable';const origin=location.href;
  async function launch(host,name,command='/bin/cat') {
@@ -54,7 +54,7 @@
  if(row('Failed launch fixture'))throw Error('Failed launch left row');
  const local=await fetch('/sessions').then(r=>r.json());
  if(local.sessions.filter(s=>s.name==='Local from remote view').length!==1)throw Error('Duplicate local launch');
- row('REMOTE_NAME').click();
+ row('REMOTE_NAME').querySelector('.rd-row-name').click();
  window.qaResult={stage:'ready-for-outage',checks:['remote launch kept local rows and terminal','remote terminal accepts input and outputs','remote stop/resume leaves equal local session ID running','local launch while remote selected','failed local launch shows cause without row','created remote selected in same window'],remoteName:'REMOTE_NAME'};
  await wait(()=>window.__qaDisconnected,'disconnect command',60000);
  await wait(()=>row('REMOTE_NAME')?.textContent.includes('Offline'),'offline row',30000);
@@ -65,6 +65,6 @@
  await wait(()=>row('REMOTE_NAME')&&!row('REMOTE_NAME').textContent.includes('Offline'),'remote recovery',60000);
  if([...document.querySelectorAll('.rd-row-name')].filter(e=>e.textContent==='REMOTE_NAME').length!==1)throw Error('Duplicate remote after reconnect');
  if(!originalTerminal.isConnected||location.href!==origin)throw Error('Reconnect replaced local view');
- row('REMOTE_NAME').click();await wait(()=>document.querySelector('.rd-row.selected .rd-row-name')?.textContent==='REMOTE_NAME','selected remote after recovery');await sleep(500);
+ row('REMOTE_NAME').querySelector('.rd-row-name').click();await wait(()=>document.querySelector('.rd-row.selected .rd-row-name')?.textContent==='REMOTE_NAME','selected remote after recovery');await sleep(500);
  window.qaResult.stage='passed';window.qaResult.checks.push('remote outage leaves local launch working','reconnect has one remote row and preserves local terminal');
 })().catch(e=>{window.qaResult={...window.qaResult,stage:'failed',error:String(e),stack:e.stack,errors:window.qaErrors,rows:[...document.querySelectorAll('.rd-row-name')].map(n=>n.textContent)}});
