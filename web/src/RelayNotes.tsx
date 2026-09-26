@@ -3,7 +3,7 @@ import { api, RelayNote, RelayRule } from "./api";
 
 function label(n: RelayNote): string {
   if (n.kind === "approval") return "Approval";
-  if (n.kind === "choice") return "Question";
+  if (n.kind === "choice") return (n.steps ?? 1) > 1 ? `Question ${(n.step ?? 0) + 1} of ${n.steps}` : "Question";
   return n.urgency === "offer" ? "Offer" : "Needs you";
 }
 
@@ -27,7 +27,12 @@ export function closedLine(n: RelayNote): string {
     const verb = n.answer === "approve" ? "approved" : "denied";
     return `${by ? by + verb : "You " + verb}. ${n.route === "keystroke" ? "Oracle pressed the key in its terminal." : "Relayed through the approval request."}`;
   }
-  if (n.kind === "choice") return `You chose "${n.answer}". Oracle selected it in its menu.`;
+  if (n.kind === "choice") {
+    const chose = `You chose "${n.answer}".`;
+    if (n.route === "keystroke-unsubmitted") return `${chose} Oracle selected it, but couldn't find Submit. Submit the answers in its terminal.`;
+    if ((n.step ?? 0) + 1 < (n.steps ?? 1)) return `${chose} Oracle selected it. Answer the next question to finish.`;
+    return `${chose} Oracle selected it in its menu${(n.steps ?? 1) > 1 ? " and submitted the answers" : ""}.`;
+  }
   const said = `${by ? by + "replied" : "You replied"} "${n.answer}".`;
   if (n.route === "inbox") {
     return `${said} It couldn't be typed right now${n.route_reason ? ` (${n.route_reason.split(".")[0].toLowerCase()})` : ""}, so it's in its inbox and Oracle will nudge it.`;

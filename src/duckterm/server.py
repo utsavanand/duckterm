@@ -63,7 +63,7 @@ from duckterm.core.relay import (
     RULE_PROMPT,
     Relay,
     ask_prompt,
-    choice_from,
+    choices_from,
     parse_ask,
     parse_rule_reply,
     question_from,
@@ -2169,21 +2169,27 @@ class Server:
             return
         now = int(event.get("_ts") or time.time() * 1000)
         if et == events.PERMISSION_REQUEST and event.get("tool_name") == "AskUserQuestion":
-            choice = choice_from(event.get("tool_input") or {})
+            choices = choices_from(event.get("tool_input") or {})
             open_choice = any(
                 n["session_key"] == key and n["kind"] == "choice" for n in self.relay.open_notes()
             )
-            if choice and not open_choice:
-                question, options = choice
-                self.relay.add(
-                    {
-                        **self._relay_session_fields(key),
-                        "kind": "choice",
-                        "created_at": now,
-                        "question": question,
-                        "options": options,
-                    }
-                )
+            if choices and not open_choice:
+                # One note per tab. Claude shows one tab at a time and a
+                # digit answers it and moves on, so they're answered in order.
+                form = f"{key}-{now}"
+                for step, (question, options) in enumerate(choices):
+                    self.relay.add(
+                        {
+                            **self._relay_session_fields(key),
+                            "kind": "choice",
+                            "created_at": now,
+                            "question": question,
+                            "options": options,
+                            "form": form,
+                            "step": step,
+                            "steps": len(choices),
+                        }
+                    )
         elif et in (events.PRE_TOOL_USE, events.POST_TOOL_USE, events.STOP, events.SESSION_END):
             self.relay.close_for_session(key, {"choice"}, "handled", now)
         if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END):
@@ -2467,9 +2473,18 @@ class Server:
             if not isinstance(index, int) or not 0 <= index < len(options) or index > 8:
                 await _write_json(writer, 400, {"error": "answer must be an option number"})
                 return
+            earlier = [
+                n
+                for n in self.relay.open_notes()
+                if note.get("form") and n.get("form") == note["form"] and n["step"] < note["step"]
+            ]
+            if earlier:
+                await _write_json(writer, 409, {"error": "Answer its earlier question first."})
+                return
             sup = self.orchestrator.get(note["session_key"])
             screen = await asyncio.to_thread(sup.visible_screen) if sup and sup.running else ""
-            if f"{index + 1}. {options[index]}" not in plain_screen(screen):
+            listed = f"{index + 1}. {options[index]}"
+            if not self._choice_on_screen(screen, note["question"], listed):
                 self.relay.close(note, "handled", closed_at=now)
                 await _write_json(
                     writer, 409, {"error": "Its menu isn't on screen anymore.", "note": note}
@@ -2477,12 +2492,15 @@ class Server:
                 return
             assert sup is not None
             await asyncio.to_thread(sup.write_bytes, str(index + 1).encode())
+            route = "keystroke"
+            if note.get("steps", 1) > 1 and note["step"] == note["steps"] - 1:
+                route = "keystroke" if await self._submit_form(sup) else "keystroke-unsubmitted"
             self.relay.close(
                 note,
                 "answered",
                 answer=options[index],
                 answered_by="owner",
-                route="keystroke",
+                route=route,
                 closed_at=now,
             )
         else:
@@ -2631,6 +2649,27 @@ class Server:
     # Paste, pause, then Enter on its own: Claude Code sometimes swallowed an
     # Enter that arrived in the same burst as a paste, and an Oracle nudge sat
     # unsent in architect's prompt for 14 hours (2026-09-26).
+    @staticmethod
+    def _choice_on_screen(screen: str, question: str, option: str) -> bool:
+        """The option is listed under this question. Checking the question too
+        matters for multi-tab forms, where tabs can share labels like "Yes"."""
+        flat = " ".join(plain_screen(screen).replace("│", " ").split())
+        return option in flat and " ".join(question.split())[:40] in flat
+
+    _FORM_SUBMIT_S = 2.0
+
+    async def _submit_form(self, sup: Any) -> bool:
+        """After a multi-tab form's last answer Claude shows "Review your
+        answers" with "1. Submit answers"; press it once it shows."""
+        waited = 0.0
+        while waited <= self._FORM_SUBMIT_S:
+            screen = " ".join(plain_screen(await asyncio.to_thread(sup.visible_screen)).split())
+            if "1. Submit answers" in screen:
+                return bool(await asyncio.to_thread(sup.write_bytes, b"1"))
+            await asyncio.sleep(0.1)
+            waited += 0.1
+        return False
+
     _SUBMIT_GAP_S = 0.3
     _SUBMIT_CONFIRM_S = 4.0
 

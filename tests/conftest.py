@@ -89,6 +89,7 @@ def _fast_prompt_submit(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(Server, "_SUBMIT_GAP_S", 0.0)
     monkeypatch.setattr(Server, "_SUBMIT_CONFIRM_S", 0.05)
+    monkeypatch.setattr(Server, "_FORM_SUBMIT_S", 0.05)
 
 
 @pytest.fixture(autouse=True, scope="session")

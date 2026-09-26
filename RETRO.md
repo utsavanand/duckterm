@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Multi-question forms need every question relayed
+**Broke:** release-dev asked two questions in one form. Oracle's chat showed
+only the first. The owner approved it, the form moved to the second question,
+and nothing was submitted.
+**Cause:** the relay read only the first question of an `AskUserQuestion` call.
+**Rule:** make a note for each question, press each digit only while its own
+question is on screen (labels like "Yes" repeat across questions), then press
+Submit on the review tab. Report it when Submit can't be found.
+
 ## 2026-09-26 — A checkout picker must select the checkout itself
 **Broke:** destination Browse silently appended a child name and reused DuckTerm's
 folder after switching to Sotto. Users could neither select their exact empty
