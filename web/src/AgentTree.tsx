@@ -51,6 +51,9 @@ export function AgentTree({
   termMode: TermMode;
 }) {
   const folders = [...new Set([...savedFolders, ...sessions.flatMap(session => {
+    // Local folders come from the catalog; stale session snapshots must not
+    // resurrect their old paths while a rename or move refresh is in flight.
+    if (!session.host) return [];
     const parts = session.group?.split("/") ?? [];
     return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
   })])];

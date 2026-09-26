@@ -128,7 +128,9 @@ MainActor.assumeIsolated {
  }
  app.run()
 }
-""".replace("SCRIPT", str(case / "probe.js"))
+""".replace(
+        "SCRIPT", str(case / "probe.js")
+    )
     .replace("SCREENSHOT", "/tmp/duckterm-unified-native.png")
     .replace("duckterm-dev", args.remote_host)
     .replace("remotePort:4341", "remotePort:" + str(args.remote_port))
@@ -181,7 +183,11 @@ for row in rows:
   req=urllib.request.Request(base+'/sessions/'+row['session_key'],data=b'{"force":true}',method='DELETE',headers={'X-Duckterm-Token':token,'Content-Type':'application/json'})
   urllib.request.urlopen(req).close()
   print('Removed own remote QA fixture')
-""".replace("NAME", repr(remote_name)).replace("REMOTE_PORT", str(args.remote_port))
+""".replace(
+        "NAME", repr(remote_name)
+    ).replace(
+        "REMOTE_PORT", str(args.remote_port)
+    )
     subprocess.run(
         ["ssh", args.remote_host, "python3 -"], input=cleanup, text=True, timeout=40, check=False
     )
