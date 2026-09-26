@@ -133,6 +133,22 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
     is user input and must be escaped. Every previously-left comment
     lights up as soon as this ships.
 
+## Shipped / in flight, recorded 2026-09-26
+
+- **Independent left/right panel collapse** — shipped v0.4.56 (PRs #40/#41,
+  `main-dev`): accessible header buttons, persisted choices, 36px reopen
+  rails, center pane takes the freed width (verified 738 → 1035 → 1368 px),
+  narrow stacked windows reclaim height.
+- **Control Tower** — phases 1 and 2 implemented on branch `control-tower`
+  (not merged): clicking Oracle opens a full page rather than a side panel,
+  with fleet insights (agent count, total tokens, last backup, remote
+  session count) and an animated duck scene grouped into teams by folder.
+  Design: [control-tower-design.md](control-tower-design.md), built on
+  [oracle-design.md](oracle-design.md). **Was not tracked here while being
+  built** — recorded now; this is the second time a designed, implemented
+  feature reached the roadmap only after the fact (see the process note
+  above).
+
 ## Ownership, as reported by the sessions themselves (2026-09-25)
 
 The owner asked whether items attributed to sessions were actually being
