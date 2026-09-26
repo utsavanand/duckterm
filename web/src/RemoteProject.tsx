@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { destinationRequest, desktop, selectLaunchTarget } from "./desktop";
 import { Button, Field, inputStyle, Modal } from "./ui";
 import { BrowseResult } from "./api";
@@ -24,6 +24,8 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
   const [githubOpen, setGithubOpen] = useState(false);
   const [percentage, setPercentage] = useState<number | undefined>();
   const [browsing, setBrowsing] = useState(false);
+  const [browsingDestination, setBrowsingDestination] = useState(false);
+  const browseDestination = useCallback((path?: string) => destinationRequest<BrowseResult>(target, "browse", path ? { path } : {}), [target]);
   const [review, setReview] = useState<Review | null>(null);
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -89,8 +91,24 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
       <Field label="Branch (optional)"><input aria-label="Clone branch" style={inputStyle} value={draft.branch} disabled={busy} onChange={e => change("branch", e.target.value)} /></Field>
       <p>{draft.github_repository ? "Uses the destination’s GitHub connector to clone this repository." : `Uses Git authorization on ${target === "local" ? "This Mac" : "the remote computer"}.`} Local edits are not included.</p>
     </>}
-    <Field label={`New folder on ${desktop()?.targets.find(t => t.id === target)?.name ?? target}`}><input aria-label={target === "local" ? "Local destination folder" : "Remote destination folder"} style={inputStyle} value={draft.destination} disabled={busy} onChange={e => change("destination", e.target.value)} placeholder={target === "local" ? "~/projects/new-project" : "/home/duckterm/projects/new-project"} /></Field>
-    <Button onClick={inspect} disabled={busy || !draft.destination || !(kind === "copy" ? draft.source : draft.url)}>Review transfer</Button>
+    <Field label={`New folder on ${desktop()?.targets.find(t => t.id === target)?.name ?? target}`}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input aria-label={target === "local" ? "Local destination folder" : "Remote destination folder"} style={{ ...inputStyle, flex: 1, minWidth: 0 }} value={draft.destination} disabled={busy} onChange={e => change("destination", e.target.value)} placeholder="Choose a folder with Browse…" />
+        <button className="rd-btn rd-btn-ghost" aria-label="Browse destination folders" disabled={busy} onClick={() => setBrowsingDestination(true)}>Browse…</button>
+      </div>
+    </Field>
+    {browsingDestination && !busy && <>
+      <p>Choose a parent folder. A new project folder will be created inside it.</p>
+      <DirBrowser browse={browseDestination} pickLabel="Use as parent folder" onCancel={() => setBrowsingDestination(false)} onPick={folder => {
+        const currentName = draft.destination.replace(/\/+$/, "").split("/").pop();
+        const sourceName = (kind === "copy" ? draft.source : draft.url.split(/[?#]/)[0]).replace(/\/+$/, "").split("/").pop() ?? "";
+        const name = currentName || (kind === "clone" ? sourceName.replace(/\.git$/, "") : sourceName);
+        const safeName = !name || name === "." || name === ".." ? "new-project" : name;
+        change("destination", `${folder.path.replace(/\/+$/, "")}/${safeName}`);
+        setBrowsingDestination(false);
+      }} />
+    </>}
+    <Button onClick={inspect} disabled={busy || browsingDestination || !draft.destination || !(kind === "copy" ? draft.source : draft.url)}>Review transfer</Button>
     {reviewed && <div style={{ marginTop: 12 }}>
       <p>Destination runtime is available. No dependency installation commands will run automatically.</p>
       {review && <>
