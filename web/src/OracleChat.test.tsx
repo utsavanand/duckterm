@@ -69,7 +69,7 @@ it("hides the example questions once a conversation exists", async () => {
   expect(screen.queryByRole("button", { name: /waiting on me/ })).toBeNull();
 });
 
-const question: RelayNote = { id: "n1", session_key: "pm", name: "product-manager", folder: "Entourage", runtime: "claude-code", kind: "question", status: "open", created_at: 1, question: "Want me to spec that fix?" };
+const question: RelayNote = { id: "n1", session_key: "pm", name: "product-manager", folder: "Entourage", runtime: "claude-code", kind: "question", urgency: "blocked", status: "open", created_at: 1, question: "Want me to spec that fix?", excerpt: "It makes a differentiator work. Want me to spec that fix?" };
 
 it("shows an open question note and relays a typed reply", async () => {
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
@@ -134,4 +134,15 @@ it("turns an always sentence into a proposed rule, creates it on confirm, and st
   await act(async () => { fireEvent.keyDown(box, { key: "Enter" }); });
   expect(api.deleteRule).toHaveBeenCalledWith("R1");
   expect(screen.getByText("Stopped R1.")).toBeVisible();
+});
+
+it("labels offers apart from needs-you notes and turns listed options into one-click replies", async () => {
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
+  vi.mocked(api.relayAnswer).mockResolvedValue({ note: question });
+  const offer: RelayNote = { ...question, id: "o1", urgency: "offer", question: "Want the quiz deck too?", options: ["Yes, make it", "Not now"] };
+  render(<OracleChat relay={{ notes: [question, offer], rules: [], open: 1 }} onRelayChange={() => {}} />);
+  expect(screen.getByRole("group", { name: "Needs you from product-manager" })).toBeVisible();
+  expect(screen.getByRole("group", { name: "Offer from product-manager" })).toBeVisible();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Yes, make it" })); });
+  expect(api.relayAnswer).toHaveBeenCalledWith("o1", "Yes, make it");
 });

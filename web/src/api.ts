@@ -31,8 +31,11 @@ export interface RelayNote {
   status: "open" | "answered" | "handled";
   created_at: number;
   closed_at?: number;
-  question?: string;
+  question?: string; // choice: the agent's question; question: the classifier's one-line ask
   options?: string[];
+  urgency?: "blocked" | "offer"; // question notes only
+  excerpt?: string; // question notes: the end of the agent's final message
+  detected_without_model?: boolean;
   tool?: string;
   detail?: string;
   blocking?: boolean;

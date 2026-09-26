@@ -40,9 +40,89 @@ IRREVERSIBLE = re.compile(
 SHELL_COMPOSITION = re.compile(r"[;&|`<>]|\$\(")
 
 
+# Words that show up when an agent asks the owner for something. A turn ending
+# with none of these is skipped without a model call. Measured on 104 labeled
+# real turn endings (2026-09-26): passes 21/21 blocking asks and 18/19 offers,
+# and skips about a third of all turns.
+ASK_CUES = re.compile(
+    r"\?|\b(want me to|should i|shall i|do you want|would you like|let me know|tell me"
+    r"|say (the word|go|so|when|where|yes)|your (call|word|review|decision|move)|on your word"
+    r"|when you'?re ready|ready (to|when|for)|reply|confirm|approve|which (one|do you|would|should)"
+    r"|prefer|decide|decision|waiting (on|for) you|need(s)? (you|your)|i need|can you|could you"
+    r"|please|go ahead|next (move|step) is yours|review|preview|sign (in|into)|options?\b|choice"
+    r"|anything else|or (should|shall|would) |(then|so|before) i can|once you|i recommend"
+    r"|recommendation|up to you)",
+    re.IGNORECASE,
+)
+
+# The classifier Oracle runs on a turn ending that passed ASK_CUES. On the same
+# 104 endings, with Sonnet, over three runs: "blocked" was right 94% of the time
+# and caught 71-81% of blocking asks (runs vary on borderline endings); counting
+# offers too, 86-88% right and 75-78% caught. The question-mark check it
+# replaces caught 10% of blocking asks. Haiku over-flagged (52% right).
+# Adding hand-off examples ("next move is yours") dropped precision to 80%
+# without fixing that miss, so they were left out.
+ASK_PROMPT = """You read how an AI coding agent ended its turn: its final message, and the \
+owner's message that started the turn. Decide whether the agent is now waiting on the owner. \
+Default to none: most turns end with a report.
+
+- blocked: the agent explicitly waits on the owner before the task can go on. It asks the \
+owner to pick between options it listed, to confirm scope or an interpretation before it \
+builds, to supply a key, file, or account, or to do something only the owner can (sign in, \
+add a member, save a file and reply). A ready-and-waiting gate on a consequential step also \
+counts: "ready to merge to main on your word", "say go and I'll deploy", "say the word when \
+you want it live", "approve this?".
+- offer: the work is done and the agent directly asks whether to do an optional next thing: \
+"Want me to also...?", "Should I do X next or Y?", "Anything else, or shall we move on?".
+- none: everything else. Status and results ("Deployed; I'll confirm", "Pushed to GitHub"), \
+explanations and answers, instructions or review feedback for the owner to act on alone \
+("Fix those and rerun", "Refresh the tab"), recommendations without a direct ask, the agent \
+carrying on by itself ("I'll assume yes unless...", "Let me also add..."), soft courtesies \
+("if it still feels off, say where", "if you meant X, say so", "say the word if you'd \
+rather"), errors, and greetings like "What would you like to work on?".
+
+Judge the words, not punctuation: many asks have no question mark, and many question marks \
+are rhetorical.
+Return STRICT JSON only: {"kind": "blocked" | "offer" | "none", "ask": "<what the agent \
+needs, one short sentence to the owner; empty for none>", "options": ["<short label>", ...]}
+options: only when the agent lists distinct choices for the owner to pick; otherwise [].
+
+OWNER'S MESSAGE:
+<<PROMPT>>
+
+AGENT'S FINAL MESSAGE (end of turn):
+<<FINAL>>
+"""
+
+
+def ask_prompt(owner_message: str, final: str) -> str:
+    return ASK_PROMPT.replace("<<PROMPT>>", owner_message[:800]).replace("<<FINAL>>", final[-2500:])
+
+
+def parse_ask(text: str) -> dict[str, Any] | None:
+    """The classifier's verdict as {kind, ask, options}, or None when unusable."""
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match is None:
+        return None
+    try:
+        raw = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw, dict) or raw.get("kind") not in ("blocked", "offer", "none"):
+        return None
+    listed = raw.get("options")
+    options: list[Any] = listed if isinstance(listed, list) else []
+    return {
+        "kind": raw["kind"],
+        "ask": str(raw.get("ask") or "").strip()[:300],
+        "options": [str(o).strip()[:60] for o in options if str(o).strip()][:6],
+    }
+
+
 def question_from(text: str) -> str | None:
-    """The question a turn ended on, or None. Looks at the last paragraph of
-    the reply outside code blocks: a question to the owner ends with "?"."""
+    """Fallback when no model is available: the last paragraph, if it ends
+    with "?". It catches few real asks (10% of blocking ones on the labeled
+    set), so notes from it say they were detected without the model."""
     prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", prose) if p.strip()]
     if not paragraphs:
@@ -84,6 +164,11 @@ class Relay:
 
     def open_notes(self) -> list[dict[str, Any]]:
         return [n for n in self.notes if n["status"] == "open"]
+
+    def needs_you(self) -> list[dict[str, Any]]:
+        """Open notes that wait on the owner. Offers show in the chat but
+        don't count: the agent finished and is only suggesting more."""
+        return [n for n in self.open_notes() if n.get("urgency") != "offer"]
 
     def get(self, note_id: str) -> dict[str, Any] | None:
         return next((n for n in self.notes if n["id"] == note_id), None)

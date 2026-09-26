@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { api, RelayNote, RelayRule } from "./api";
 
-const KIND_LABEL: Record<RelayNote["kind"], string> = {
-  approval: "Approval",
-  choice: "Question",
-  question: "Question",
-};
+function label(n: RelayNote): string {
+  if (n.kind === "approval") return "Approval";
+  if (n.kind === "choice") return "Question";
+  return n.urgency === "offer" ? "Offer" : "Needs you";
+}
 
 function when(ts: number): string {
   const d = new Date(ts);
@@ -50,6 +50,7 @@ export function NoteCard({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const open = note.status === "open";
+  const waiting = open && note.urgency !== "offer";
   const draftRule = note.suggestion ? rules.find((r) => r.id === note.suggestion?.rule_id) : undefined;
 
   async function answer(value: string | number, then?: () => void) {
@@ -68,9 +69,9 @@ export function NoteCard({
   }
 
   return (
-    <div className={`rd-relay-note${open ? " open" : ""}`} data-note={note.id} role="group" aria-label={`${KIND_LABEL[note.kind]} from ${note.name}`}>
+    <div className={`rd-relay-note${waiting ? " open" : ""}${open && note.urgency === "offer" ? " offer" : ""}`} data-note={note.id} role="group" aria-label={`${label(note)} from ${note.name}`}>
       <div className="rd-relay-head">
-        <span className="rd-relay-kind">{KIND_LABEL[note.kind]}</span>
+        <span className="rd-relay-kind">{label(note)}</span>
         <b>{note.name}</b>
         <span className="rd-relay-meta">
           {[note.folder, note.runtime].filter(Boolean).join(" · ")} · {when(note.created_at)}
@@ -82,7 +83,17 @@ export function NoteCard({
           {note.tool && note.tool !== "Bash" && <span className="rd-relay-meta"> ({note.tool})</span>}
         </div>
       )}
-      {note.question && <blockquote className="rd-relay-quote">{note.question}</blockquote>}
+      {note.kind === "choice" && note.question && <blockquote className="rd-relay-quote">{note.question}</blockquote>}
+      {note.kind === "question" && note.question && <div className="rd-relay-ask">{note.question}</div>}
+      {note.kind === "question" && note.excerpt && (
+        <details className="rd-relay-excerpt">
+          <summary>Show the agent's message</summary>
+          <blockquote className="rd-relay-quote">{note.excerpt}</blockquote>
+        </details>
+      )}
+      {note.detected_without_model && (
+        <span className="rd-relay-meta">Spotted without Oracle's classifier (no model was available), so it may not need you.</span>
+      )}
       {open && note.kind === "approval" && (
         <div className="rd-relay-actions">
           <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={busy} onClick={() => void answer("approve")}>Approve</button>
@@ -101,6 +112,15 @@ export function NoteCard({
           {(note.options ?? []).slice(0, 9).map((o, i) => (
             <button key={o} className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy} onClick={() => void answer(i)}>
               {i + 1}. {o}
+            </button>
+          ))}
+        </div>
+      )}
+      {open && note.kind === "question" && (note.options?.length ?? 0) > 0 && (
+        <div className="rd-relay-actions">
+          {(note.options ?? []).map((o) => (
+            <button key={o} className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy} onClick={() => void answer(o)}>
+              {o}
             </button>
           ))}
         </div>

@@ -142,11 +142,22 @@ def test_multiple_choice_answer_presses_the_option_only_while_its_menu_shows(wor
     assert sup.pasted == [b"2"]
 
 
-def question_note(server, monkeypatch, text):
+BLOCKED = '{"kind": "blocked", "ask": "Should it spec the onboarding fix?", "options": []}'
+
+
+def question_note(server, monkeypatch, text, verdict=BLOCKED, calls=None):
+    """Run end-of-turn detection on a final message with a canned classifier."""
+    server._RELAY_SETTLE_S = 0
+    owner = {"role": "user", "blocks": [{"type": "text", "text": "review the onboarding"}]}
     reply = {"role": "assistant", "blocks": [{"type": "text", "text": text}]}
-    monkeypatch.setattr(
-        server, "_session_messages", lambda key: [{"role": "user", "blocks": []}, reply]
-    )
+    monkeypatch.setattr(server, "_session_messages", lambda key: [owner, reply])
+
+    def classify(prompt, claude_model=None):
+        if calls is not None:
+            calls.append((prompt, claude_model))
+        return Summary(text=verdict, backend="cli" if verdict else "none")
+
+    monkeypatch.setattr("duckterm.server.summarize", classify)
     asyncio.run(server._relay_detect_question("pm", int(time.time() * 1000)))
     return [n for n in notes(server) if n["kind"] == "question"]
 
@@ -155,11 +166,11 @@ def test_turn_ending_on_a_question_becomes_a_note_and_the_reply_is_typed(
     world, monkeypatch
 ) -> None:
     server, owner, sup, _ = world
-    assert question_note(server, monkeypatch, "Shipped.\n\nReady for your next task.") == []
     [note] = question_note(
         server, monkeypatch, "It makes a differentiator work. Want me to spec that fix?"
     )
-    assert note["question"].endswith("Want me to spec that fix?")
+    assert (note["question"], note["urgency"]) == ("Should it spec the onboarding fix?", "blocked")
+    assert note["excerpt"].endswith("Want me to spec that fix?")
     status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": "Yes, spec it"})
     assert (status, body["note"]["route"]) == (200, "prompt")
     assert sup.pasted == [b"\x1b[200~Yes, spec it\x1b[201~\r"]
@@ -193,7 +204,8 @@ def test_answer_rule_prefills_a_draft_and_counts_unchanged_sends(world, monkeypa
         "/relay/rules",
         {"rule": {"kind": "answer", "keywords": ["keep going"], "reply": "Yes, continue."}},
     )[1]["rule"]
-    [note] = question_note(server, monkeypatch, "Should I keep going with B2?")
+    keep_going = '{"kind": "blocked", "ask": "Should it keep going with B2?", "options": []}'
+    [note] = question_note(server, monkeypatch, "Should I keep going with B2?", keep_going)
     assert note["suggestion"] == {"rule_id": rule["id"], "reply": "Yes, continue."}
     post(server, owner, f"/relay/{note['id']}/answer", {"answer": "Yes, continue."})
     assert dispatch(server, "GET", "/relay", {})[1]["rules"][0]["streak"] == 1
@@ -225,3 +237,57 @@ def test_rule_proposal_comes_from_the_model_and_is_validated(world, monkeypatch)
     assert status == 200 and body["rule"]["command_pattern"] == r"^pytest\b"
     assert dispatch(server, "GET", "/relay", {})[1]["rules"] == []  # proposing doesn't create
     assert post(server, owner, "/relay/rules/propose", {"text": "hello"})[0] == 422
+
+
+def test_classifier_sees_the_owner_message_and_uses_sonnet(world, monkeypatch) -> None:
+    server, _, _, _ = world
+    calls: list = []
+    question_note(server, monkeypatch, "Ready to merge to main on your word.", calls=calls)
+    [(prompt, model)] = calls
+    assert model == "sonnet"
+    assert "review the onboarding" in prompt and "Ready to merge to main on your word." in prompt
+
+
+def test_offer_shows_but_does_not_count_as_needing_you(world, monkeypatch) -> None:
+    server, _, _, _ = world
+    offer = '{"kind": "offer", "ask": "Want the quiz deck too?", "options": ["Yes", "No"]}'
+    [note] = question_note(server, monkeypatch, "Done. Want the quiz deck too?", offer)
+    assert (note["urgency"], note["options"]) == ("offer", ["Yes", "No"])
+    assert dispatch(server, "GET", "/relay/count", {})[1] == {"open": 0}
+
+
+def test_classifier_none_raises_no_note(world, monkeypatch) -> None:
+    server, _, _, _ = world
+    none = '{"kind": "none", "ask": "", "options": []}'
+    assert (
+        question_note(server, monkeypatch, "If the spacing still feels off, say where.", none) == []
+    )
+
+
+def test_turn_without_any_ask_cue_skips_the_model(world, monkeypatch) -> None:
+    server, _, _, _ = world
+    calls: list = []
+    assert question_note(server, monkeypatch, "Deployed. All 19 tests passed.", calls=calls) == []
+    assert calls == []
+
+
+def test_owner_reply_during_the_settle_wait_skips_detection(world, monkeypatch) -> None:
+    server, _, _, history = world
+    calls: list = []
+    history.record(
+        {
+            "_id": "u1",
+            "_ts": int(time.time() * 1000) + 5_000,
+            "event_type": "UserPromptSubmit",
+            "session_key": "pm",
+        }
+    )
+    assert question_note(server, monkeypatch, "Which do you want: 1 or 2?", calls=calls) == []
+    assert calls == []
+
+
+def test_without_a_model_the_question_mark_fallback_is_marked(world, monkeypatch) -> None:
+    server, _, _, _ = world
+    [note] = question_note(server, monkeypatch, "Should I start with B1?", verdict="")
+    assert note["detected_without_model"] is True
+    assert question_note(server, monkeypatch, "Tell me which batch is next.", verdict="") == [note]

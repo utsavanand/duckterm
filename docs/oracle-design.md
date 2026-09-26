@@ -96,7 +96,28 @@ What needs the owner becomes a note in the Ask Oracle chat. Notes live in
 | --- | --- | --- |
 | Approval | The approval registry, synced on every event and on `/approvals` | `ApprovalRegistry.set_decision`, the dashboard's path |
 | Choice | Claude's `AskUserQuestion`, which arrives as a `PermissionRequest` with its options | The option's number key, only if "N. Label" is still on screen (a digit selects immediately, checked on Claude Code 2.1.283) |
-| Question | At each `Stop`, the last paragraph of the last assistant message ends with "?" | Typed into the prompt under the paste checks; otherwise an owner inbox message, which Oracle nudges |
+| Question | 30 s after each `Stop` (skipped if the owner replied), a word-cue filter, then one Sonnet call classifying the ending as blocked, offer, or none | Typed into the prompt under the paste checks; otherwise an owner inbox message, which Oracle nudges |
+
+**Detecting a turn that waits on the owner.** The first version flagged a
+final paragraph ending in "?". Scored against 104 real turn endings from
+Claude Code and Codex, hand-labeled blocked (21), offer (19), or none (64), it
+caught 10% of blocking asks and was right 15% of the time. Real asks often
+lack a question mark ("ready to merge to main on your word", "reply saved and
+I'll configure it", "Which do you actually want:"), and greetings like "What
+would you like to work on?" have one. The replacement:
+
+| Step | What it does | Measured |
+| --- | --- | --- |
+| Settle | Waits 30 s; an owner reply in the terminal ends it | Saves a call whenever the owner is watching |
+| Cues | `ASK_CUES`, words that appear when agents ask for something | Passes 21/21 blocking, 18/19 offers; skips about a third of all turns |
+| Classifier | `ASK_PROMPT` with the owner's message and the final message, Sonnet | Blocking: 94% right, 71-81% caught across runs. With offers: 86-88% right, 75-78% caught |
+
+Haiku was cheaper but over-flagged status reports (52% right on blocking).
+Offers show in the chat but don't count toward Needs you or the badge. Listed
+options become one-click replies, and the note can show the agent's message.
+Known miss: a plan hand-off buried mid-message ("next move is yours: review
+the plan and say go") read as none in every run. Without a model, the
+question-mark check is the fallback and the note says so.
 
 Notes close by themselves when the agent moves on: choice notes on the next
 tool event or turn end, question notes when the owner types a prompt.

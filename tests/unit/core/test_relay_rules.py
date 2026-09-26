@@ -2,7 +2,15 @@ from pathlib import Path
 
 import pytest
 
-from duckterm.core.relay import ANSWER_RULE_STREAK, Relay, choice_from, question_from, validate_rule
+from duckterm.core.relay import (
+    ANSWER_RULE_STREAK,
+    ASK_CUES,
+    Relay,
+    choice_from,
+    parse_ask,
+    question_from,
+    validate_rule,
+)
 
 
 @pytest.mark.parametrize(
@@ -109,3 +117,29 @@ def test_answer_rule_goes_live_only_after_ten_unchanged_sends(tmp_path: Path) ->
 def test_invalid_rules_are_refused_with_a_reason(raw) -> None:
     with pytest.raises(ValueError):
         validate_rule(raw)
+
+
+@pytest.mark.parametrize(
+    ("text", "passes"),
+    [
+        # Blocking asks with no question mark still reach the classifier.
+        ("Everything is on the branch, ready to merge to main on your word.", True),
+        ("Add the member in Settings, then I can continue the transfer.", True),
+        ("Reply saved and I'll configure Railway.", True),
+        ("Which do you actually want:", True),
+        # Plain reports are skipped without a model call.
+        ("Deployed. All 19 tests passed and the build is green.", False),
+        ("Fixed the flake by keeping the tmux server alive.", False),
+    ],
+)
+def test_ask_cues_let_real_asks_through_and_skip_plain_reports(text, passes) -> None:
+    assert bool(ASK_CUES.search(text)) is passes
+
+
+def test_parse_ask_accepts_only_a_known_kind_and_trims_options() -> None:
+    verdict = parse_ask(
+        'Here: {"kind": "blocked", "ask": "Pick a batch.", "options": ["A", "", "B"]}'
+    )
+    assert verdict == {"kind": "blocked", "ask": "Pick a batch.", "options": ["A", "B"]}
+    assert parse_ask('{"kind": "maybe"}') is None
+    assert parse_ask("not json") is None

@@ -83,7 +83,9 @@ export function ControlTower({
   const activeAgent = active ? agents.find((a) => a.key === active.key) : undefined;
   const relay = useRelay();
   // Oldest first: the longest wait is the most urgent.
-  const needs = relay.notes.filter((n) => n.status === "open").sort((a, b) => a.created_at - b.created_at);
+  const needs = relay.notes
+    .filter((n) => n.status === "open" && n.urgency !== "offer")
+    .sort((a, b) => a.created_at - b.created_at);
   const count = (s: string) => agents.filter((a) => a.shownState === s).length;
   const live = count("busy") + count("waiting") + count("idle");
   const resting = agents.length - live;

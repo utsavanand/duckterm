@@ -59,9 +59,12 @@ from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
 from duckterm.core.relay import (
+    ASK_CUES,
     RULE_PROMPT,
     Relay,
+    ask_prompt,
     choice_from,
+    parse_ask,
     parse_rule_reply,
     question_from,
     validate_rule,
@@ -2228,38 +2231,70 @@ class Server:
                     note, "answered", answer=rule["action"], answered_by=rule["id"], closed_at=now
                 )
 
-    async def _relay_detect_question(self, key: str, at: int) -> None:
-        row = self.history.session(key)
-        if row is None or (row.get("runtime") or "") not in self._RELAY_RUNTIMES:
-            return
-        messages = await asyncio.to_thread(self._session_messages, key)
-        last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
-        if last is None:
-            return
-        blocks = last.get("blocks")
+    # Seconds to wait after a turn ends before classifying it: an owner who is
+    # watching usually answers in the terminal first, and then no note or model
+    # call is needed.
+    _RELAY_SETTLE_S = 30.0
+
+    @staticmethod
+    def _message_text(message: dict[str, Any] | None) -> str:
+        blocks = (message or {}).get("blocks")
         if not isinstance(blocks, list):
-            return
-        text = "\n\n".join(
+            return ""
+        return "\n\n".join(
             str(b.get("text") or "")
             for b in blocks
             if isinstance(b, dict) and b.get("type") == "text"
-        )
-        question = question_from(text)
-        if not question:
+        ).strip()
+
+    async def _relay_detect_question(self, key: str, at: int) -> None:
+        """Did this turn end waiting on the owner? A word-cue filter, then one
+        classifier call (core/relay.py documents both and how they measured)."""
+        row = self.history.session(key)
+        if row is None or (row.get("runtime") or "") not in self._RELAY_RUNTIMES:
+            return
+        await asyncio.sleep(self._RELAY_SETTLE_S)
+        if self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) > at:
+            return
+        messages = await asyncio.to_thread(self._session_messages, key)
+        last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
+        final = self._message_text(last)
+        if not final or not ASK_CUES.search(final[-900:]):
             return
         if any(
             n["session_key"] == key and n["kind"] == "question" for n in self.relay.open_notes()
         ):
             return
+        owner = next(
+            (
+                self._message_text(m)
+                for m in reversed(messages)
+                if m.get("role") == "user" and self._message_text(m)
+            ),
+            "",
+        )
+        result = await asyncio.to_thread(summarize, ask_prompt(owner, final), claude_model="sonnet")
+        verdict = parse_ask(result.text) if result.text else None
+        if verdict is None:
+            fallback = question_from(final)
+            if not fallback:
+                return
+            verdict = {"kind": "blocked", "ask": fallback, "options": [], "fallback": True}
+        if verdict["kind"] == "none":
+            return
         note = self.relay.add(
             {
                 **self._relay_session_fields(key),
                 "kind": "question",
+                "urgency": verdict["kind"],
                 "created_at": at,
-                "question": question,
+                "question": verdict["ask"] or final[-300:],
+                "options": verdict["options"],
+                "excerpt": final[-1200:],
+                "detected_without_model": bool(verdict.get("fallback")),
             }
         )
-        rule = self.relay.answer_rule_for(question)
+        rule = self.relay.answer_rule_for(f"{note['question']}\n{final[-600:]}")
         if rule is None:
             return
         self.relay.update(note, suggestion={"rule_id": rule["id"], "reply": rule["reply"]})
@@ -2310,13 +2345,13 @@ class Server:
             {
                 "notes": self.relay.notes[-200:],
                 "rules": self.relay.rules,
-                "open": len(self.relay.open_notes()),
+                "open": len(self.relay.needs_you()),
             },
         )
 
     async def _relay_count(self, writer: asyncio.StreamWriter) -> None:
         self._relay_sync_approvals()
-        await _write_json(writer, 200, {"open": len(self.relay.open_notes())})
+        await _write_json(writer, 200, {"open": len(self.relay.needs_you())})
 
     async def _relay_answer(self, writer: asyncio.StreamWriter, note_id: str, body: bytes) -> None:
         try:

@@ -2763,6 +2763,11 @@ select {
 .rd-relay-count { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; background: var(--amber-bg); border: 1px solid var(--amber-border); color: var(--amber-text); }
 .rd-relay-note { display: grid; gap: 7px; margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); font-size: 13.5px; }
 .rd-relay-note.open { border-color: var(--amber-border); background: var(--amber-bg); }
+.rd-relay-note.offer { border-color: color-mix(in srgb, var(--busy) 25%, var(--border)); }
+.rd-relay-note.offer .rd-relay-kind { color: var(--busy); }
+.rd-relay-ask { font-weight: 550; }
+.rd-relay-excerpt summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.rd-relay-excerpt .rd-relay-quote { margin-top: 6px; max-height: 220px; overflow-y: auto; font-size: 12.5px; }
 .rd-relay-note.flash { box-shadow: 0 0 0 3px color-mix(in srgb, var(--wait) 40%, transparent); }
 .rd-relay-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 12.5px; }
 .rd-relay-head b { font-size: 13.5px; }
