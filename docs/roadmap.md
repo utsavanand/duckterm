@@ -135,6 +135,19 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
 
 ## Shipped / in flight, recorded 2026-09-26
 
+- **Artifact feedback** — shipped v0.4.57 (PR #44, plus ui-dev's PR #42
+  Oracle layout): highlight HTML/Markdown/text in an artifact to comment and
+  send it to the producing terminal; whole-file Feedback supports images;
+  provenance carried; stale/stopped delivery errors retain the draft;
+  isolated HTML selection bridge.
+  **Note the asymmetry:** this is the annotate-a-selection interaction the
+  owner asked for — but for *artifacts*. F6, the same idea in the **Messages
+  tab**, is the owner's explicitly prioritized item and is still NOT built
+  (verified 2026-09-26: `Messages.tsx` still only POSTs annotations; there is
+  no highlight render path). Artifact feedback shipping first is worth
+  knowing when judging priority order.
+
+
 - **Independent left/right panel collapse** — shipped v0.4.56 (PRs #40/#41,
   `main-dev`): accessible header buttons, persisted choices, 36px reopen
   rails, center pane takes the freed width (verified 738 → 1035 → 1368 px),
