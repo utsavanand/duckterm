@@ -1,3 +1,4 @@
+import { routedFetch as fetch, sessionFetch } from "./hostTransport";
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Duck, duckPhrase, poseFor } from "./Duck";
@@ -96,11 +97,11 @@ export function ContextPanel({ session }: { session: SessionView }) {
   useEffect(() => {
     if (!onBranch || !dir) return;
     setBranches([]);
-    fetch(`/branches?path=${encodeURIComponent(dir)}`)
+    sessionFetch(session.key, `/branches?path=${encodeURIComponent(dir)}`)
       .then((r) => r.json())
       .then((d: { branches?: string[] }) => setBranches(d.branches ?? []))
       .catch(() => setBranches([]));
-  }, [dir, onBranch]);
+  }, [dir, onBranch, session.key]);
 
   return (
     <div className="rd-context">
@@ -277,7 +278,7 @@ export function ContextPanel({ session }: { session: SessionView }) {
         </div>
       )}
       {editingFile && dir && (
-        <FileEditModal dir={dir} onClose={() => setEditingFile(false)} />
+        <FileEditModal sessionKey={session.key} dir={dir} onClose={() => setEditingFile(false)} />
       )}
     </div>
   );

@@ -1,3 +1,4 @@
+import { sessionFetch } from "./hostTransport";
 import type { Terminal as XTerm } from "@xterm/xterm";
 
 // Clipboard bridge for the Mac app (DuckTerm.app). WKWebView validates the
@@ -33,6 +34,7 @@ function editableField(): HTMLElement | null {
 declare global {
   interface Window {
     __rtPasteTarget?: () => string | null;
+    __rtPasteImageData?: (base64: string, sessionKey: string) => boolean;
     __rtPasteImage?: (path: string, sessionKey: string) => boolean;
     __rtCopy?: () => string;
     __rtPaste?: (text: string) => void;
@@ -75,3 +77,15 @@ export function imagePathText(path: string): string {
   // Quote paths with spaces/metacharacters; never reduce a path to its basename.
   return (/^[\w/.-]+$/.test(path) ? path : "'" + path.replace(/'/g, "'\\''") + "'") + " ";
 }
+
+window.__rtPasteImageData = (base64, sessionKey) => {
+  if (window.__rtPasteTarget?.() !== sessionKey) return false;
+  const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  void sessionFetch(sessionKey, "/paste-image", { method: "POST", body: new Blob([bytes], { type: "image/png" }) })
+    .then(async response => {
+      const result = await response.json();
+      if (!response.ok || !result.path) throw new Error(result.error ?? "Could not upload image");
+      if (!window.__rtPasteImage?.(result.path, sessionKey)) throw new Error("Selected terminal changed. Paste the image again.");
+    }).catch((error: Error) => window.alert(`Image paste failed: ${error.message}`));
+  return true;
+};

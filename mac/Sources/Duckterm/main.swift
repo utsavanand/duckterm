@@ -7,25 +7,27 @@ import UserNotifications
 /// you close the window.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var remote: RemoteConnection?
     private var hosts = RemoteHost.load()
     private var launchConnections: [String: RemoteConnection] = [:]
     private let launchAPI = LaunchDestination()
     private let projectTransfer = ProjectTransfer()
-    private var connectionGeneration = 0
+    private let sessionTransport = SessionTransport()
     private let server = ServerProcess()
     private var localStart: Task<Bool, Never>?
-    private var poller: SessionPoller?
+    private var pollers: [String: SessionPoller] = [:]
     private var window: DashboardWindow?
     private var bugReport: BugReportController?
     private var capturingReport = false
-    private var notified = Set<String>()  // waiting keys we've already alerted on
+    private var notified: [String: Set<String>] = [:]
 
     func applicationDidFinishLaunching(_ note: Notification) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         AppDiagnostics.shared.record("Application launched")
         window = DashboardWindow(url: server.url)
+        window?.desktopHosts = hosts
+        sessionTransport.onTerminal = { [weak self] event in self?.window?.dispatch(name: "remote-terminal", detail: event) }
+        window?.onPageReset = { [weak self] in self?.sessionTransport.close() }
         if hosts.isEmpty, AppIdentity.isTest,
            let alias = Bundle.main.object(forInfoDictionaryKey: "DucktermTestRemoteHost") as? String,
            let host = try? RemoteHost(name: alias, target: alias) {
@@ -37,7 +39,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if target == "add" { self.addHost(launchDraft: draft); return }
             let host = self.hosts.first { $0.target == target }
             guard target == "local" || host != nil else { return }
-            self.switchHost(host, launchDraft: draft.isEmpty ? nil : draft, selectedSession: sessionKey)
+            self.connectHost(host, launchDraft: draft.isEmpty ? nil : draft, selectedSession: sessionKey)
         }
         window?.onLaunchRequest = { [weak self] target, operation, params in
             guard let self else { throw LaunchDestination.Failure.message("App closed") }
@@ -53,8 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if target == "local" {
                 _ = await self.ensureLocalServer()
                 base = self.server.url
-            } else if let active = self.remote, active.host.target == target {
-                base = active.url
             } else {
                 guard let host = self.hosts.first(where: { $0.target == target }) else {
                     throw LaunchDestination.Failure.message("Unknown computer")
@@ -63,8 +63,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     let connection = try RemoteConnection(host: host)
                     self.launchConnections[target] = connection
                     connection.start()
+                    self.startPolling(host: target, base: connection.url)
                 }
                 base = self.launchConnections[target]!.url
+            }
+            if operation == "session-request" {
+                return try await self.sessionTransport.perform(base: base, api: self.launchAPI, params: params)
+            }
+            if operation.hasPrefix("terminal-") {
+                return try await self.sessionTransport.terminal(host: target, base: base, api: self.launchAPI, operation: operation, params: params)
             }
             if operation == "project-transfer" {
                 guard target != "local" else { throw LaunchDestination.Failure.message("Choose a remote computer") }
@@ -83,16 +90,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return try await self.launchAPI.perform(base: base, operation: operation, params: params)
         }
+        window?.desktopHosts = hosts
         window?.show()  // open the dashboard window on launch
         NSApp.activate(ignoringOtherApps: true)
 
-        let selected = UserDefaults.standard.string(forKey: "selectedRemoteHost")
-        switchHost(hosts.first { $0.target == selected })
+        window?.setTitle(AppIdentity.name)
+        Task {
+            _ = await ensureLocalServer()
+            startPolling()
+        }
     }
 
     func applicationWillTerminate(_ note: Notification) {
-        poller?.stop()
-        remote?.stop()
+        pollers.values.forEach { $0.stop() }
+        sessionTransport.close()
         launchConnections.values.forEach { $0.stop() }
         server.stop()
     }
@@ -116,16 +127,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return await pending.value
     }
 
-    private func startPolling() {
-        poller?.stop()
-        let generation = connectionGeneration
-        let p = SessionPoller(base: remote?.url ?? server.url)
+    private func startPolling(host: String = "local", base: URL? = nil) {
+        guard pollers[host] == nil else { return }
+        let p = SessionPoller(base: base ?? server.url)
         p.onUpdate = { [weak self] _, waiting in
-            guard let self, self.connectionGeneration == generation else { return }
-            self.notifyWaiting(waiting)
+            self?.notifyWaiting(waiting, host: host)
         }
         p.start()
-        poller = p
+        pollers[host] = p
     }
 
     @objc func showSettings(_ sender: Any?) {
@@ -157,13 +166,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 RemoteHost.save(hosts)
                 launchConnections.removeValue(forKey: removed.target)?.stop()
                 window?.desktopHosts = hosts
-                if remote?.host == removed { switchHost(nil) }
-                else { window?.refreshDesktop() }
+                pollers.removeValue(forKey: removed.target)?.stop()
+                notified.removeValue(forKey: removed.target)
+                sessionTransport.close(host: removed.target)
+                window?.refreshDesktop()
             }
             return
         }
         guard result == .alertFirstButtonReturn else { return }
-        switchHost(picker.indexOfSelectedItem == 0 ? nil : hosts[picker.indexOfSelectedItem - 1])
+        connectHost(picker.indexOfSelectedItem == 0 ? nil : hosts[picker.indexOfSelectedItem - 1])
     }
 
     private func addHost(launchDraft: [String: String]? = nil) {
@@ -180,42 +191,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let target = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             let host = try RemoteHost(name: target, target: target)
             if !hosts.contains(host) { hosts.append(host); RemoteHost.save(hosts) }
-            switchHost(host, launchDraft: launchDraft)
+            connectHost(host, launchDraft: launchDraft)
         } catch { showConnectionError(error) }
     }
 
-    private func switchHost(_ host: RemoteHost?, launchDraft: [String: String]? = nil, selectedSession: String? = nil) {
+    private func connectHost(_ host: RemoteHost?, launchDraft: [String: String]? = nil, selectedSession: String? = nil) {
+        // A host is a launch/session destination, never the dashboard origin.
+        // Existing WKWebView, terminals, local server and sidebar stay mounted.
         window?.desktopHosts = hosts
-        window?.desktopTarget = host?.target ?? "local"
+        window?.desktopTarget = "local"
         window?.launchDraft = launchDraft
-        window?.selectedSession = selectedSession
-        UserDefaults.standard.set(host?.target, forKey: "selectedRemoteHost")
-        connectionGeneration += 1
-        let generation = connectionGeneration
-        poller?.stop()
-        notified.removeAll()
-        remote?.stop()
-        remote = nil
-        if let host {
+        window?.launchTarget = host?.target ?? "local"
+        if let host, launchConnections[host.target] == nil {
             do {
-                let prepared = launchConnections.removeValue(forKey: host.target)
-                let connection = try prepared ?? RemoteConnection(host: host)
-                remote = connection
-                window?.connect(url: connection.url, remote: true, title: "\(AppIdentity.name) · \(host.name) · Connecting")
-                connection.onStatus = { [weak self] status, _ in
-                    guard let self, self.connectionGeneration == generation else { return }
-                    self.window?.setTitle("\(AppIdentity.name) · \(host.name) · \(status)")
-                }
-                if prepared == nil { connection.start() }
-                startPolling()
+                let connection = try RemoteConnection(host: host)
+                launchConnections[host.target] = connection
+                connection.start()
+                startPolling(host: host.target, base: connection.url)
             } catch { showConnectionError(error) }
-        } else {
-            window?.connect(url: server.url, remote: false, title: "\(AppIdentity.name) · This Mac")
-            Task {
-                _ = await ensureLocalServer()
-                guard self.connectionGeneration == generation else { return }
-                self.startPolling()
-            }
+        }
+        window?.refreshDesktop()
+        if let selectedSession {
+            window?.dispatch(name: "native-select-session", detail: ["host": host?.target ?? "local", "key": selectedSession])
         }
     }
 
@@ -226,12 +223,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    private func notifyWaiting(_ waiting: [Session]) {
+    private func notifyWaiting(_ waiting: [Session], host: String) {
         let current = Set(waiting.map(\.session_key))
-        for s in waiting where !notified.contains(s.session_key) {
-            notify(session: s)
+        for s in waiting where !(notified[host] ?? []).contains(s.session_key) {
+            notify(session: s, host: host)
         }
-        notified = current  // a session that waits again later re-notifies
+        notified[host] = current  // a session that waits again later re-notifies
     }
 
     @objc func reportBug(_ sender: Any?) {
@@ -282,6 +279,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let pasteboard = NSPasteboard.general
             do {
                 if let png = try ClipboardImage.png(from: pasteboard) {
+                    if target.hasPrefix("~remote~") {
+                        let data = try JSONSerialization.data(withJSONObject: [png.base64EncodedString(), target])
+                        let json = String(decoding: data, as: UTF8.self)
+                        self.window?.evaluate("window.__rtPasteImageData && window.__rtPasteImageData(...\(json))") { accepted in
+                            if accepted as? Bool != true { self.pasteError(ClipboardImage.Failure.changedTarget) }
+                        }
+                        return
+                    }
                     let home = ProcessInfo.processInfo.environment["DUCKTERM_HOME"] ?? (NSHomeDirectory() + "/.duckterm")
                     let path = try ClipboardImage.save(png, in: URL(fileURLWithPath: home).appendingPathComponent("pastes"))
                     let data = try JSONSerialization.data(withJSONObject: [path.path, target])
@@ -313,13 +318,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window?.evaluate("window.__rtPaste && window.__rtPaste((\(json))[0])")
     }
 
-    private func notify(session: Session) {
+    private func notify(session: Session, host: String) {
         let content = UNMutableNotificationContent()
         content.title = "\(session.label) needs you"
-        content.body = "A session is waiting on your input."
+        content.body = "A session on \(host == "local" ? "This Mac" : host) is waiting on your input."
         content.sound = .default
         let req = UNNotificationRequest(
-            identifier: "waiting-\(session.session_key)", content: content, trigger: nil
+            identifier: "waiting-\(host)-\(session.session_key)", content: content, trigger: nil
         )
         UNUserNotificationCenter.current().add(req)
     }

@@ -39,6 +39,9 @@ export interface DuckCelebration {
 }
 
 export interface SessionView {
+  host?: string;
+  hostLabel?: string;
+  hostOffline?: boolean;
   remoteTransfer?: { id: string; stage: string; target?: string; session_key?: string };
   celebration?: DuckCelebration; // browser-only; never restored from persisted rows
   inboxPending?: number;

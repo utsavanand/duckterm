@@ -2943,3 +2943,14 @@ select {
 .rd-message-tool { color:var(--muted); font-size:12px; }
 .rd-pin-saved { border:1px solid var(--border); border-radius:6px; padding:10px 13px; margin-bottom:10px; color:var(--text); }
 .rd-pin-saved button { margin-left:12px; }
+
+/* Machine identity stays beside the row when local and remote work coexist. */
+.rd-host-label {
+  color: var(--rd-muted, #9ca3af);
+  font-size: 10px;
+  flex: 0 1 auto;
+  max-width: 105px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

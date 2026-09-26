@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { sessionFetch, hostName } from "./hostTransport";
+import { useCallback, useEffect, useState } from "react";
 import { api, authHeaders } from "./api";
 import { Button, Field, inputStyle, Modal, useToast } from "./ui";
 
@@ -24,9 +25,11 @@ interface HarnessItem {
 // it did.
 export function HarnessesModal({
   defaultDir,
+  sessionKey = "",
   onClose,
 }: {
   defaultDir: string | null;
+  sessionKey?: string;
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -37,19 +40,19 @@ export function HarnessesModal({
     null,
   );
 
-  const refresh = () =>
+  const refresh = useCallback(() =>
     api
-      .harnesses()
+      .harnesses(sessionKey)
       .then((d) => setHarnesses(d.harnesses))
-      .catch(() => undefined);
+      .catch(() => undefined), [sessionKey]);
   useEffect(() => {
     refresh();
-  }, []);
+  }, [refresh]);
 
   async function register() {
     if (!regPath.trim()) return;
     try {
-      const r = await api.registerHarness(regPath.trim());
+      const r = await api.registerHarness(regPath.trim(), sessionKey);
       toast(`Registered ${r.name}`);
       setRegPath("");
       refresh();
@@ -60,7 +63,7 @@ export function HarnessesModal({
 
   async function deregister(name: string) {
     try {
-      await api.deregisterHarness(name);
+      await api.deregisterHarness(name, sessionKey);
       refresh();
     } catch (e) {
       toast(`Remove failed: ${(e as Error).message}`, "err");
@@ -76,7 +79,7 @@ export function HarnessesModal({
     setBusy(h.name);
     setOutput(null);
     try {
-      const res = await fetch(
+      const res = await sessionFetch(sessionKey,
         `/harnesses/${encodeURIComponent(h.name)}/${action}`,
         {
           method: "POST",
@@ -102,7 +105,7 @@ export function HarnessesModal({
   }
 
   return (
-    <Modal title="Harnesses" onClose={onClose}>
+    <Modal title={`Harnesses · ${hostName(sessionKey)}`} onClose={onClose}>
       <p className="rd-harness-hint">
         A harness is an installable suite — skills, hooks, sub-agents,
         guardrails — that agents in a folder pick up. Register one by its
@@ -114,6 +117,7 @@ export function HarnessesModal({
           key={h.name}
           harness={h}
           defaultDir={defaultDir}
+          sessionKey={sessionKey}
           busy={busy === h.name}
           output={output?.name === h.name ? output.text : null}
           onRemove={() => deregister(h.name)}
@@ -144,6 +148,7 @@ export function HarnessesModal({
 function HarnessRow({
   harness,
   defaultDir,
+  sessionKey = "",
   busy,
   output,
   onRun,
@@ -151,6 +156,7 @@ function HarnessRow({
 }: {
   harness: Harness;
   defaultDir: string | null;
+  sessionKey?: string;
   busy: boolean;
   output: string | null;
   onRun: (action: "install" | "uninstall", dir: string, args: string[]) => void;
@@ -166,7 +172,7 @@ function HarnessRow({
     setShowContents(next);
     if (next && items === null) {
       try {
-        const d = await api.harnessContents(harness.name);
+        const d = await api.harnessContents(harness.name, sessionKey);
         setItems(d.contents);
       } catch {
         setItems([]);

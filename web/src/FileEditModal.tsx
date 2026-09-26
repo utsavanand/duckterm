@@ -1,3 +1,4 @@
+import { sessionFetch } from "./hostTransport";
 import { useEffect, useState } from "react";
 import { authHeaders } from "./api";
 import { Button, Modal, useToast } from "./ui";
@@ -8,9 +9,11 @@ import { Button, Modal, useToast } from "./ui";
 // an agent's conversation or transcript. New dotfiles are written chmod 600.
 export function FileEditModal({
   dir,
+  sessionKey = "",
   onClose,
 }: {
   dir: string;
+  sessionKey?: string;
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -23,7 +26,7 @@ export function FileEditModal({
   async function load(p: string) {
     setLoading(true);
     try {
-      const res = await fetch(`/file?path=${encodeURIComponent(p)}`);
+      const res = await sessionFetch(sessionKey, `/file?path=${encodeURIComponent(p)}`);
       const d = (await res.json()) as {
         text?: string;
         exists?: boolean;
@@ -42,12 +45,12 @@ export function FileEditModal({
   useEffect(() => {
     load(`${dir}/.env`);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dir]);
+  }, [dir, sessionKey]);
 
   async function save() {
     setSaving(true);
     try {
-      const res = await fetch("/file", {
+      const res = await sessionFetch(sessionKey, "/file", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ path, text }),

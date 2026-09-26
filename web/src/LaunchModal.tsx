@@ -1,7 +1,8 @@
+import { sessionRef } from "./hostTransport";
 import { useEffect, useMemo, useState } from "react";
 import { DirBrowser } from "./DirBrowser";
 import { api, BrowseResult, LaunchRequest } from "./api";
-import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
+import { desktop, destinationRequest } from "./desktop";
 import { RemoteProject, PreparedProject } from "./RemoteProject";
 import { Button, Field, inputStyle, Modal, useToast } from "./ui";
 
@@ -33,7 +34,7 @@ export function LaunchModal({
   const native = desktop();
   const [, refreshTargets] = useState(0);
   useEffect(() => {
-    const refresh = () => { refreshTargets(n => n + 1); setTarget(desktop()?.currentTarget ?? "local"); setPicked(null); setPrepared(null); setProjectKind("existing"); };
+    const refresh = () => { refreshTargets(n => n + 1); setTarget(desktop()?.launchTarget ?? desktop()?.currentTarget ?? "local"); setPicked(null); setPrepared(null); setProjectKind("existing"); };
     window.addEventListener("desktop-targets-changed", refresh);
     return () => window.removeEventListener("desktop-targets-changed", refresh);
   }, []);
@@ -146,6 +147,7 @@ export function LaunchModal({
         name: name || undefined,
         prompt: prompt || undefined,
         in_terminal: false,
+        ...(native?.testBuild ? { test: true } : {}),
         zsh_theme: zshTheme || undefined,
         ...(worktree
           ? {
@@ -155,18 +157,18 @@ export function LaunchModal({
             }
           : { cwd: path }),
       });
-      if (selectedGroup && !elsewhere) {
+      if (selectedGroup) {
         try {
-          await api.setGroup(launched.session_key, selectedGroup);
+          await api.setGroup(sessionRef(target, launched.session_key), selectedGroup);
         } catch (e) {
           toast(`Session started, but folder assignment failed: ${(e as Error).message}. Move it from Ungrouped.`, "err");
           onClose();
           return;
         }
       }
-      if (!elsewhere) onCreated(launched.session_key, selectedGroup);
-      toast(selectedGroup && !elsewhere ? `Started in ${selectedGroup}` : `Started ${name || "session"}`);
-      if (elsewhere) selectLaunchTarget(target, {});
+      onCreated(sessionRef(target, launched.session_key), selectedGroup);
+      window.dispatchEvent(new Event("remote-sessions-refresh"));
+      toast(selectedGroup ? `Started in ${selectedGroup}` : `Started ${name || "session"}`);
       onClose();
     } catch (e) {
       toast(`Launch failed: ${(e as Error).message}`, "err");
@@ -237,7 +239,7 @@ export function LaunchModal({
         </Field>
       )}
 
-      {!elsewhere && <Field label="Sidebar folder">
+      {<Field label="Sidebar folder">
         <select aria-label="Sidebar folder" style={inputStyle} value={selectedGroup} onChange={(e) => setSelectedGroup(e.target.value)}>
           <option value="">Ungrouped</option>
           {[...new Set([...folders, ...(group ? [group] : [])])].sort().map((folder) => (

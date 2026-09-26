@@ -1,3 +1,4 @@
+import { sessionFetch, sessionRef } from "./hostTransport";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { AgentTree } from "./AgentTree";
@@ -69,6 +70,20 @@ function Dashboard() {
   const relayOpen = useRelayCount();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const pendingDesktopSession = useRef(desktop()?.selectedSession);
+  useEffect(() => {
+    const select = (event: Event) => {
+      const key = (event as CustomEvent<string>).detail;
+      pendingDesktopSession.current = key;
+      setSelectedKey(key);
+    };
+    const selectNative = (event: Event) => {
+      const detail = (event as CustomEvent<{host:string; key:string}>).detail;
+      select(new CustomEvent("select-host-session", { detail: sessionRef(detail.host, detail.key) }));
+    };
+    window.addEventListener("native-select-session", selectNative);
+    window.addEventListener("select-host-session", select);
+    return () => { window.removeEventListener("select-host-session", select); window.removeEventListener("native-select-session", selectNative); };
+  }, []);
   const messagePins = useMessagePins(selectedKey);
   const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
   const pinSequence = useRef(0);
@@ -240,7 +255,7 @@ function Dashboard() {
   useEffect(() => {
     if (!agentsMdDir || modal === "agentsmd") return;
     let stale = false;
-    fetch(`/agents-md?dir=${encodeURIComponent(agentsMdDir)}`)
+    sessionFetch(selected?.key ?? "", `/agents-md?dir=${encodeURIComponent(agentsMdDir)}`)
       .then((r) => r.json())
       .then((d: { rules?: { status: string }[] }) => {
         if (!stale)
@@ -252,7 +267,7 @@ function Dashboard() {
     return () => {
       stale = true;
     };
-  }, [agentsMdDir, modal]);
+  }, [agentsMdDir, modal, selected?.key]);
 
   return (
     <div className="rd-app" data-density={density}>
@@ -499,7 +514,7 @@ function Dashboard() {
                 </label>
               )}
             </div>
-            <Connectors />
+            <Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} />
           </section>
         </div>
       )}
@@ -517,6 +532,9 @@ function Dashboard() {
           group={launchGroup}
           folders={folders}
           onCreated={(key, group) => {
+            pendingDesktopSession.current = key;
+            setSelectedKey(key);
+            window.dispatchEvent(new CustomEvent("reveal-sidebar-folder", { detail: group }));
             patchSession(key, { group: group || undefined });
             refreshFolders();
           }}
@@ -529,12 +547,13 @@ function Dashboard() {
         />
       )}
       {modal === "agentsmd" && agentsMdDir && (
-        <AgentsMdModal dir={agentsMdDir} onClose={() => setModal(null)} />
+        <AgentsMdModal sessionKey={selected?.key} dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal
           defaultDir={agentsMdDir}
+          sessionKey={selected?.key}
           onClose={() => setModal(null)}
         />
       )}

@@ -1,3 +1,4 @@
+import { routedFetch as fetch, sessionFetch, splitSessionRef, setRemoteGroup, changeRemoteFolders } from "./hostTransport";
 // Thin wrapper over the Duckterm server. Every POST action the backend
 // exposes lives here so components never hand-roll fetches.
 
@@ -81,8 +82,9 @@ export interface TowerInsights {
   remote: { available: boolean; count: number };
 }
 
-async function post<T>(path: string, body?: unknown): Promise<T> {
-  const res = await fetch(path, {
+async function post<T>(path: string, body?: unknown, context?: string): Promise<T> {
+  const request = context === undefined ? fetch : (path: string, init?: RequestInit) => sessionFetch(context, path, init);
+  const res = await request(path, {
     method: "POST",
     headers: authHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(body ?? {}),
@@ -96,13 +98,14 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return data as T;
 }
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(path, { cache: "no-store" });
+async function get<T>(path: string, context?: string): Promise<T> {
+  const res = await (context === undefined ? fetch(path, { cache: "no-store" }) : sessionFetch(context, path, { cache: "no-store" }));
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return (await res.json()) as T;
 }
 
 export interface LaunchRequest {
+  test?: boolean;
   command: string;
   runtime?: "generic" | "claude-code" | "codex";
   repo_path?: string;
@@ -294,16 +297,16 @@ export const api = {
   branches: (path: string) =>
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
-  connectors: () => get<{ connectors: Connector[] }>("/connectors"),
-  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false) =>
+  connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context),
+  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string) =>
     post<Connector>(`/connectors/${name}/enable`, {
       source, write_access,
       ...(token ? { token } : {}),
       ...(secret ? { secret } : {}),
-    }),
-  forgetConnector: (name: string) => post<Connector>(`/connectors/${name}/forget`),
-  disableConnector: (name: string) =>
-    post<Connector>(`/connectors/${name}/disable`),
+    }, context),
+  forgetConnector: (name: string, context?: string) => post<Connector>(`/connectors/${name}/forget`, {}, context),
+  disableConnector: (name: string, context?: string) =>
+    post<Connector>(`/connectors/${name}/disable`, {}, context),
   fleetAsk: (question: string) =>
     post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
       "/fleet/ask",
@@ -350,8 +353,12 @@ export const api = {
   sendInput: (key: string, text: string) =>
     post<{ written: boolean }>(`/sessions/${key}/input`, { text }),
   // Move a session into a folder group; "" ungroups it.
-  setGroup: (key: string, group: string) =>
-    fetch(`/sessions/${key}`, {
+  setGroup: (key: string, group: string) => {
+    if (splitSessionRef(key).host !== "local") {
+      setRemoteGroup(key, group);
+      return Promise.resolve({ updated: true });
+    }
+    return fetch(`/sessions/${key}`, {
       method: "PATCH",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ group }),
@@ -359,9 +366,10 @@ export const api = {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error ?? "Could not move session");
       return data as { updated: boolean };
-    }),
+    });
+  },
   // Installable harnesses (suites of skills/hooks/sub-agents, e.g. uv-suite).
-  harnesses: () =>
+  harnesses: (context?: string) =>
     get<{
       harnesses: {
         name: string;
@@ -371,19 +379,19 @@ export const api = {
         compatible?: string[];
         error?: string;
       }[];
-    }>("/harnesses"),
-  harnessContents: (name: string) =>
+    }>("/harnesses", context),
+  harnessContents: (name: string, context?: string) =>
     get<{
       compatible: string[];
       contents: { kind: string; name: string; description: string }[];
-    }>(`/harnesses/${encodeURIComponent(name)}/contents`),
-  registerHarness: (path: string) =>
+    }>(`/harnesses/${encodeURIComponent(name)}/contents`, context),
+  registerHarness: (path: string, context?: string) =>
     post<{ name: string; description: string; path: string }>(
       "/harnesses/register",
-      { path },
+      { path }, context,
     ),
-  deregisterHarness: (name: string) =>
-    fetch(`/harnesses/${encodeURIComponent(name)}`, {
+  deregisterHarness: (name: string, context = "") =>
+    sessionFetch(context, `/harnesses/${encodeURIComponent(name)}`, {
       method: "DELETE",
       headers: authHeaders(),
     }).then((r) => r.json() as Promise<{ removed: boolean }>),
@@ -400,6 +408,7 @@ export const api = {
     }).then(async (r) => {
       const d = (await r.json()) as { to?: string; error?: string };
       if (!r.ok) throw new Error(d.error ?? `${r.status}`);
+      changeRemoteFolders(name, d.to!);
       return d as { moved: string; to: string };
     }),
   // Rename the leaf (parent unchanged); subfolders + sessions follow.
@@ -411,13 +420,19 @@ export const api = {
     }).then(async (r) => {
       const d = (await r.json()) as { to?: string; error?: string };
       if (!r.ok) throw new Error(d.error ?? `${r.status}`);
+      changeRemoteFolders(path, d.to!);
       return d as { moved: string; to: string };
     }),
   deleteFolder: (name: string) =>
     fetch(`/folders/${encodeURIComponent(name)}`, {
       method: "DELETE",
       headers: authHeaders(),
-    }).then((r) => r.json() as Promise<{ deleted: string }>),
+    }).then(async (r) => {
+      const result = await r.json();
+      if (!r.ok) throw new Error(result.error ?? "Could not delete folder");
+      changeRemoteFolders(name, "");
+      return result as { deleted: string };
+    }),
   getSession: (key: string) =>
     get<{ notes?: string | null; name?: string | null }>(`/sessions/${key}`),
   fork: (
