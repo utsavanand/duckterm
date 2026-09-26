@@ -500,13 +500,13 @@ def chunk(identifier: str, offset: int) -> dict[str, Any]:
 def destination_path(value: str) -> Path:
     path = Path(value).expanduser()
     if not path.is_absolute() or path.name in ("", ".", ".."):
-        raise ValueError("Choose a new absolute destination folder")
+        raise ValueError("Choose an empty destination folder")
     parent = path.parent.resolve(strict=True)
     if not parent.is_dir():
         raise ValueError("Destination parent must be an existing folder")
     dest = parent / path.name
-    if dest.exists() or dest.is_symlink():
-        raise ValueError("Destination already exists; choose a new folder")
+    if dest.is_symlink() or (dest.exists() and (not dest.is_dir() or any(dest.iterdir()))):
+        raise ValueError("Destination exists and is not an empty folder; choose an empty folder")
     return dest
 
 
@@ -531,6 +531,7 @@ def begin(identifier: str, destination: str, size: int, sha: str) -> dict[str, A
                 "id": identifier,
                 "stage": "receiving",
                 "destination": str(dest),
+                "destination_empty": dest.is_dir(),
                 "bytes": size,
                 "sha256": sha,
                 "offset": 0,
@@ -563,8 +564,13 @@ def receive(identifier: str, offset: int, data: str) -> dict[str, Any]:
         return save(directory, {**state, "offset": path.stat().st_size})
 
 
-def publish(stage: Path, destination: Path) -> None:
-    """Atomic rename that refuses an existing destination, including an empty one."""
+def publish(stage: Path, destination: Path, allow_empty: bool = False) -> None:
+    """Publish atomically; never replace a nonempty folder, even during a race."""
+    if allow_empty:
+        # POSIX directory rename atomically refuses nonempty destinations and
+        # symlinks. Do not remove the destination or merge individual files.
+        os.rename(stage, destination)
+        return
     libc = ctypes.CDLL(None, use_errno=True)
     if sys.platform == "darwin":
         result = libc.renamex_np(os.fsencode(stage), os.fsencode(destination), 4)
@@ -720,7 +726,7 @@ def finish(identifier: str) -> dict[str, Any]:
                         "source_session": snapshot.get("source_session"),
                     },
                 )
-            publish(stage, dest)
+            publish(stage, dest, allow_empty=state.get("destination_empty", False))
             return save(directory, {**state, "stage": "ready"})
         except BaseException:
             if (
@@ -742,6 +748,7 @@ def clone(
         github_projects.repository_name(github_repository)
         if url != f"https://github.com/{github_repository}.git":
             raise ValueError("Selected GitHub repository does not match the clone URL")
+    requested_destination = destination
     destination = str(Path(destination).expanduser().resolve())
     with locked(identifier) as directory:
         previous = read_state(directory)
@@ -762,7 +769,7 @@ def clone(
                 and marker.read_text() == identifier
             ):
                 return save(directory, {**previous, "stage": "ready"})
-        dest = destination_path(destination)
+        dest = destination_path(requested_destination)
         if shutil.disk_usage(dest.parent).free < 512 * 1024 * 1024:
             raise ValueError("Not enough destination disk space to clone safely")
         stage = directory / "clone"
@@ -777,6 +784,7 @@ def clone(
                 "url": url,
                 "branch": branch,
                 "destination": destination,
+                "destination_empty": dest.is_dir(),
             },
         )
         args = ["git", "-c", "core.hooksPath=/dev/null", "clone", "--no-local"]
@@ -812,7 +820,7 @@ def clone(
         private_write(sibling / ".duckterm-transfer-id", identifier)
         shutil.copytree(stage, sibling, dirs_exist_ok=True)
         save(directory, {**state, "stage": "publishing"})
-        publish(sibling, dest)
+        publish(sibling, dest, allow_empty=state["destination_empty"])
         return save(directory, {**state, "stage": "ready"})
 
 

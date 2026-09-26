@@ -25,7 +25,7 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
             throw Failure.message("Invalid destination")
         }
         var paths = ["browse": "/browse", "branches": "/branches", "themes": "/zsh-themes", "launch": "/sessions/launch"]
-        let transfers = ["repositories", "preview", "prepare", "chunk", "begin", "receive", "finish", "clone", "launch", "status", "preflight", "link", "continue"]
+        let transfers = ["mkdir", "repositories", "preview", "prepare", "chunk", "begin", "receive", "finish", "clone", "launch", "status", "preflight", "link", "continue"]
         for name in transfers { paths["transfer-" + name] = "/transfers/" + name }
         guard let path = paths[operation] else { throw Failure.message("Unsupported operation") }
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false)!

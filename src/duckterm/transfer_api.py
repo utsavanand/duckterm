@@ -29,6 +29,10 @@ def source_session(server: "Server", key: str) -> tuple[dict[str, Any], dict[str
 async def dispatch(server: "Server", operation: str, req: dict[str, Any]) -> dict[str, Any]:
     identifier = str(req.get("id", ""))
     source_key = str(req.get("source_session") or "")
+    if operation == "mkdir":
+        from duckterm.helpers import browse
+
+        return await asyncio.to_thread(browse.create, str(req["parent"]), str(req["name"]))
     if operation in ("preview", "prepare"):
         conv = None
         source = str(req.get("source", ""))

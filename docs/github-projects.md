@@ -5,8 +5,13 @@ source → Clone Git repository → Choose from GitHub. The picker shows the
 account and repositories granted to that destination's GitHub connector. Filter
 loaded repositories by owner/name; Load more retrieves the next 100, ordered by
 recent updates. Private repositories are marked. Selecting one fills its HTTPS
-URL and default branch; change the branch if needed, choose a new destination
-folder, review, clone, then launch.
+URL and default branch; change the branch if needed, choose the checkout
+folder, review, clone, then launch. Browse selects the exact empty folder where
+code will be checked out. Use New folder to create a named folder in the current
+location. The repository name is only an editable suggestion for a new folder;
+it is never appended to the selected path. Switching repositories clears the
+previous destination and review. Existing files, including hidden files, prevent
+checkout; publication also refuses files that appear after review.
 
 GitHub must be enabled in Connectors on the destination. A shared connector is
 managed by its administrator. The app does not silently use another account if

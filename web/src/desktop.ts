@@ -29,7 +29,7 @@ export function selectLaunchTarget(target: string, draft: LaunchDraft | Record<s
   bridge.postMessage({ action: "launch", target, draft, ...(sessionKey ? { session_key: sessionKey } : {}) });
 }
 
-export async function destinationRequest<T>(target: string, operation: "browse" | "branches" | "themes" | "launch" | "project-repositories" | "project-preview" | "project-transfer" | "project-clone" | "project-launch" | "project-status" | "project-pause" | "project-preflight" | "project-continue", params: object = {}): Promise<T> {
+export async function destinationRequest<T>(target: string, operation: "browse" | "branches" | "themes" | "launch" | "project-mkdir" | "project-repositories" | "project-preview" | "project-transfer" | "project-clone" | "project-launch" | "project-status" | "project-pause" | "project-preflight" | "project-continue", params: object = {}): Promise<T> {
   const bridge = window.webkit?.messageHandlers?.launchRequest;
   if (!bridge) throw new Error("Update RubberTerm Test to browse another computer without switching screens");
   return await bridge.postMessage({ target, operation, params }) as T;

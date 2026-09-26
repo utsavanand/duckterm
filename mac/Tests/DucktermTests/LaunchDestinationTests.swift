@@ -19,6 +19,15 @@ final class LaunchDestinationTests: XCTestCase {
         XCTAssertEqual(body["page"], 2)
     }
 
+    func testFolderCreationUsesAuthenticatedPostWithLiteralName() throws {
+        let request = try LaunchDestination.request(base: base, operation: "transfer-mkdir", params: ["parent": "/home/test/projects", "name": "my checkout"])
+        XCTAssertEqual(request.url?.path, "/transfers/mkdir")
+        XCTAssertEqual(request.httpMethod, "POST")
+        let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: String]
+        XCTAssertEqual(body["name"], "my checkout")
+        XCTAssertEqual(body["parent"], "/home/test/projects")
+    }
+
     func testFolderIsQueryDataAndLaunchAlwaysUsesOwnedTerminal() throws {
         let folder = "/home/test/a & b?x=#y"
         let request = try LaunchDestination.request(base: base, operation: "browse", params: ["path": folder])
