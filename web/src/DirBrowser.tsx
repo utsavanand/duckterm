@@ -7,11 +7,13 @@ export function DirBrowser({
   start,
   onPick,
   onCancel,
+  pickLabel,
 }: {
   browse: (path?: string) => Promise<BrowseResult>;
   start?: string;
   onPick: (r: BrowseResult) => void;
   onCancel: () => void;
+  pickLabel?: string;
 }) {
   const [data, setData] = useState<BrowseResult | null>(null);
   const [requestedPath, setRequestedPath] = useState(start);
@@ -105,7 +107,7 @@ export function DirBrowser({
           Cancel
         </Button>
         <Button size="sm" onClick={() => onPick(data)}>
-          Use this folder{data.is_git ? " (git)" : ""}
+          {pickLabel ?? `Use this folder${data.is_git ? " (git)" : ""}`}
         </Button>
       </div>
     </div>

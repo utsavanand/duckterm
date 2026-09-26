@@ -7,8 +7,14 @@ for (const target of ["local", "dev"]) {
       window.webkit = { messageHandlers: {
         remoteSession: { postMessage: () => undefined },
         launchRequest: { postMessage: async (raw: unknown) => {
-          const request = raw as { operation: string; target: string; params: { page?: number; url?: string; branch?: string; github_repository?: string; destination?: string } };
+          const request = raw as { operation: string; target: string; params: { path?: string; page?: number; url?: string; branch?: string; github_repository?: string; destination?: string } };
           if (request.target !== expectedTarget) throw new Error("Wrong destination");
+          if (request.operation === "browse") {
+            const home = expectedTarget === "local" ? "/Users/fixture" : "/home/fixture";
+            const path = request.params.path ?? home;
+            if (![home, `${home}/projects`].includes(path)) throw new Error("Picker must start at the destination home, not an invalid draft path");
+            return { path, parent: path === home ? null : home, is_git: false, entries: path === home ? [{ name: "projects", path: `${home}/projects`, is_git: false }] : [] };
+          }
           if (request.operation === "project-repositories") return {
             identity: "fixture-account", next_page: request.params.page === 1 ? 2 : null,
             repositories: request.params.page === 1 ? [{ full_name: "fixture/other", private: false, default_branch: "main" }] : [{ full_name: "fixture/duckterm", private: true, default_branch: "feature" }],
@@ -50,14 +56,35 @@ for (const target of ["local", "dev"]) {
     await expect(review).toBeDisabled();
     await expect(page.getByLabel(target === "local" ? "Local destination folder" : "Remote destination folder")).toHaveValue("");
     await page.screenshot({ path: `/tmp/github-clone-unprepared-${target}.png`, fullPage: true });
-    const destination = target === "local" ? "/Users/fixture/projects/duckterm" : "/home/fixture/duckterm";
-    await page.getByLabel(target === "local" ? "Local destination folder" : "Remote destination folder").fill(destination);
+    const destination = target === "local" ? "/Users/fixture/projects/duckterm" : "/home/fixture/projects/duckterm";
+    const destinationInput = page.getByLabel(target === "local" ? "Local destination folder" : "Remote destination folder");
+    // An invalid manually entered home must not trap the remote picker.
+    if (target === "dev") await destinationInput.fill("/home/nonexistent/duckterm");
+    await page.getByRole("button", { name: "Browse destination folders" }).click();
+    await page.getByText("projects", { exact: true }).click();
+    await page.getByRole("button", { name: "Use as parent folder" }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `/tmp/destination-picker-${target}.png`, fullPage: true });
+    await page.getByRole("button", { name: "Use as parent folder" }).click();
+    await expect(destinationInput).toHaveValue(destination);
     await page.getByRole("button", { name: "Review transfer", exact: true }).click();
     await expect(launch).toBeDisabled();
+    // Cancelling keeps the destination; choosing it again invalidates consent.
+    await page.getByRole("checkbox").check();
+    await page.getByRole("button", { name: "Browse destination folders" }).click();
+    await expect(page.getByRole("button", { name: "Use as parent folder" })).toBeVisible();
+    await page.getByRole("button", { name: "Cancel", exact: true }).first().click();
+    await expect(destinationInput).toHaveValue(destination);
+    await expect(page.getByRole("checkbox")).toBeChecked();
+    await page.getByRole("button", { name: "Browse destination folders" }).click();
+    await page.getByText("projects", { exact: true }).click();
+    await page.getByRole("button", { name: "Use as parent folder" }).click();
+    await expect(page.getByRole("button", { name: "Clone repository", exact: true })).toHaveCount(0);
+    await review.click();
     await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: "Clone repository", exact: true }).click();
     await expect(page.getByRole("progressbar", { name: "Repository clone progress" })).toBeVisible();
     await expect(launch).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Browse destination folders" })).toBeDisabled();
     await expect(page.getByText(destination, { exact: true })).toBeVisible();
     await expect(launch).toBeEnabled();
     await page.getByRole("button", { name: "Launch", exact: true }).click();

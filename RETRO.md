@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Destination folders need browsing too
+**Broke:** entering a guessed remote home path left cloning blocked on a missing
+parent directory. Example paths were mistaken for real destination values.
+**Rule:** browse the selected machine's actual home and choose an existing parent,
+then suggest a new project subfolder from the repository or source name. Reuse
+the folder explorer, recover from invalid drafts, and clear review consent when
+the destination changes.
+
 ## 2026-09-26 — Launch must wait for project preparation
 **Broke:** choosing a GitHub repository left Launch enabled before a destination
 was entered or the clone completed, producing a generic missing-folder error.
