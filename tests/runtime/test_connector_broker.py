@@ -81,7 +81,10 @@ def certificates(path: Path) -> None:
 
 
 @pytest.mark.skipif(not shutil.which("openssl"), reason="TLS test needs openssl")
-def test_certificate_required_and_disable_closes_stdio(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("protocol", ["github", "github-projects"])
+def test_certificate_required_and_disable_closes_stdio(
+    tmp_path: Path, monkeypatch, protocol
+) -> None:
     certificates(tmp_path)
     config = tmp_path / "config.json"
     settings = {
@@ -103,6 +106,16 @@ def test_certificate_required_and_disable_closes_stdio(tmp_path: Path, monkeypat
         "command",
         lambda name, cred, write: ([sys.executable, str(fake)], dict(os.environ)),
     )
+    real_spawn = asyncio.create_subprocess_exec
+
+    async def spawn(*argv, **kwargs):
+        if protocol == "github-projects":
+            assert argv == (sys.executable, "-m", "duckterm.github_projects")
+            assert kwargs["env"]["DUCKTERM_GITHUB_IDENTITY"] == "test-user"
+            argv = (sys.executable, str(fake))
+        return await real_spawn(*argv, **kwargs)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     store = FakeStore()
     broker = connector_broker.Broker(config, store)
 
@@ -120,7 +133,7 @@ def test_certificate_required_and_disable_closes_stdio(tmp_path: Path, monkeypat
                 reader, writer = await asyncio.open_connection(
                     "127.0.0.1", port, ssl=client, server_hostname="server"
                 )
-                writer.write(b'{"name":"github"}\n')
+                writer.write(json.dumps({"name": protocol}).encode() + b"\n")
                 await writer.drain()
                 assert await asyncio.wait_for(reader.read(), 3) == b""
                 writer.close()
@@ -131,7 +144,7 @@ def test_certificate_required_and_disable_closes_stdio(tmp_path: Path, monkeypat
             reader, writer = await asyncio.open_connection(
                 "127.0.0.1", port, ssl=client, server_hostname="server"
             )
-            writer.write(b'{"name":"github"}\n')
+            writer.write(json.dumps({"name": protocol}).encode() + b"\n")
             await writer.drain()
             assert json.loads(await asyncio.wait_for(reader.readline(), 3)) == {"ready": True}
             writer.write(b'{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n')
@@ -145,7 +158,7 @@ def test_certificate_required_and_disable_closes_stdio(tmp_path: Path, monkeypat
             reader, writer = await asyncio.open_connection(
                 "127.0.0.1", port, ssl=client, server_hostname="server"
             )
-            writer.write(b'{"name":"github"}\n')
+            writer.write(json.dumps({"name": protocol}).encode() + b"\n")
             await writer.drain()
             denial = await asyncio.wait_for(reader.read(), 3)
             assert b"disabled" in denial

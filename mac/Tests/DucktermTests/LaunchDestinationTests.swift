@@ -11,6 +11,14 @@ final class LaunchDestinationTests: XCTestCase {
         XCTAssertThrowsError(try LaunchDestination.request(base: base, operation: "launch", params: ["session_key": "other-agent"]))
     }
 
+    func testRepositoryCatalogUsesAuthenticatedPost() throws {
+        let request = try LaunchDestination.request(base: base, operation: "transfer-repositories", params: ["page": 2])
+        XCTAssertEqual(request.url?.path, "/transfers/repositories")
+        XCTAssertEqual(request.httpMethod, "POST")
+        let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Int]
+        XCTAssertEqual(body["page"], 2)
+    }
+
     func testFolderIsQueryDataAndLaunchAlwaysUsesOwnedTerminal() throws {
         let folder = "/home/test/a & b?x=#y"
         let request = try LaunchDestination.request(base: base, operation: "browse", params: ["path": folder])
