@@ -936,7 +936,10 @@ class Server:
                 writer,
                 409,
                 {
-                    "error": "Feedback was not sent: this session has no live terminal. Your comment is kept here."
+                    "error": (
+                        "Feedback was not sent: this session has no live terminal. "
+                        "Your comment is kept here."
+                    )
                 },
             )
             return
@@ -959,7 +962,10 @@ class Server:
                 writer,
                 409,
                 {
-                    "error": "Feedback could not be delivered. Your comment is kept here; try again when the agent is live."
+                    "error": (
+                        "Feedback could not be delivered. Your comment is kept here; "
+                        "try again when the agent is live."
+                    )
                 },
             )
             return
