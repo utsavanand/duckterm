@@ -14,7 +14,13 @@ import shlex
 from pathlib import Path
 
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
-from duckterm.runtimes.base import Harness, HookSpec, SessionState, prompt_line_rest
+from duckterm.runtimes.base import (
+    Harness,
+    HookSpec,
+    SessionState,
+    plain_screen,
+    prompt_line_rest,
+)
 
 # Codex prints a spinner/working line while busy and a prompt glyph when idle.
 # "esc to interrupt" appears on every interruptible-active line (including
@@ -58,6 +64,20 @@ class CodexRuntime(Harness):
         if initial_prompt:
             argv += [initial_prompt]
         return argv
+
+    # With approvals_reviewer = "auto_review", Codex fires PermissionRequest for
+    # every gated command and its reviewer approves nearly all of them: 1,597
+    # requests in 5 days on the owner's machine, typically done in ~20 s.
+    auto_approves_requests = True
+
+    def approval_prompt_visible(self, screen: str) -> bool:
+        # Codex 0.155's prompt: "Would you like to run the following command?"
+        # (or "...make the following edits?") over "› 1. Yes, proceed (y)".
+        text = plain_screen(screen)
+        return "Would you like to" in text and "Yes, proceed (y)" in text
+
+    def approval_keys(self, decision: str) -> bytes | None:
+        return b"y" if decision == "approve" else b"\x1b"
 
     def prompt_is_empty(self, screen: str) -> bool:
         # Codex shows "›" plus a dimmed placeholder ("Ask Codex to do anything")

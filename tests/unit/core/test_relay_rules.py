@@ -143,3 +143,18 @@ def test_parse_ask_accepts_only_a_known_kind_and_trims_options() -> None:
     assert verdict == {"kind": "blocked", "ask": "Pick a batch.", "options": ["A", "B"]}
     assert parse_ask('{"kind": "maybe"}') is None
     assert parse_ask("not json") is None
+
+
+def test_codex_approval_prompt_detection() -> None:
+    from duckterm.runtimes.codex import CodexRuntime
+
+    prompt = (
+        "  Would you like to run the following command?\n  $ touch x\n"
+        "\x1b[1m›\x1b[0m 1. Yes, proceed (y)\n  3. No (esc)"
+    )
+    assert CodexRuntime().approval_prompt_visible(prompt) is True
+    assert (
+        CodexRuntime().approval_prompt_visible("• Ran touch x\n› Ask Codex to do anything") is False
+    )
+    assert CodexRuntime().approval_keys("approve") == b"y"
+    assert CodexRuntime().approval_keys("deny") == b"\x1b"
