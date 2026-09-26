@@ -238,3 +238,75 @@ def test_digest_screen_drops_prompt_suggestions_but_keeps_drafts_and_output() ->
     assert "Ask Codex to do anything" not in text
     assert "❯ fix the flaky test" in text
     assert "\x1b" not in text
+
+
+# Captured from Claude Code 2.1.283 (plain lines; the selected option keeps the marker).
+CLAUDE_PERMISSION = (
+    " Bash command\n   touch probe.txt\n Do you want to proceed?\n"
+    " \x1b[38;5;153m❯ 1. Yes\x1b[39m\n   2. Yes, and always allow access\n   4. No\n"
+    " Esc to cancel · Tab to amend"
+)
+CLAUDE_TRUST = (
+    " Is this a project you trust?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm"
+)
+
+
+@pytest.fixture
+def waiting_session(tmp_path, monkeypatch):
+    history = HistoryStore(tmp_path / "db.sqlite")
+    long_ago = int(time.time() * 1000) - 3 * 86_400_000
+    history.record(
+        {
+            "_id": "w0",
+            "_ts": long_ago,
+            "event_type": "SessionStart",
+            "session_key": "w",
+            "test": True,
+            "runtime": "claude-code",
+        }
+    )
+    # An idle notice from before the hook forwarded notification_type.
+    history.record({"_id": "w1", "_ts": long_ago, "event_type": "Notification", "session_key": "w"})
+    assert history.session("w")["state"] == "waiting"
+    server = Server(history=history)
+    sup = FakeSupervisor(CLAUDE_EMPTY)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: sup if key == "w" else None)
+    yield server, sup, history
+    history.close()
+
+
+@pytest.mark.parametrize(
+    ("screen", "state"),
+    [
+        (CLAUDE_EMPTY, "idle"),
+        (CLAUDE_SUGGESTION, "idle"),
+        (CLAUDE_PERMISSION, "waiting"),
+        (CLAUDE_TRUST, "waiting"),
+    ],
+)
+def test_stale_waiting_badge_clears_only_on_an_empty_prompt(waiting_session, screen, state) -> None:
+    server, sup, history = waiting_session
+    sup.screen = screen
+    asyncio.run(server._oracle_tick())
+    assert history.session("w")["state"] == state
+
+
+def test_waiting_badge_stays_while_an_approval_is_pending(waiting_session) -> None:
+    server, _, history = waiting_session
+    server.approvals.register("w", "Bash", {"command": "ls"}, 1, blocking=True)
+    asyncio.run(server._oracle_tick())
+    assert history.session("w")["state"] == "waiting"
+
+
+def test_fresh_waiting_badge_is_left_alone(waiting_session) -> None:
+    server, _, history = waiting_session
+    history.record(
+        {
+            "_id": "w2",
+            "_ts": int(time.time() * 1000),
+            "event_type": "Notification",
+            "session_key": "w",
+        }
+    )
+    asyncio.run(server._oracle_tick())
+    assert history.session("w")["state"] == "waiting"
