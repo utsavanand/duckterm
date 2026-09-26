@@ -59,7 +59,7 @@ install Python 3.11+, pipx, and tmux using your distribution's package manager.
 Then install the published wheel:
 
 ```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.64/duckterm-0.4.64-py3-none-any.whl
+pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.65/duckterm-0.4.65-py3-none-any.whl
 duckterm serve
 ```
 
@@ -155,7 +155,7 @@ and the [shared connector guide](docs/shared-connectors.md) for central hosting.
 ## Mac app
 
 On **Apple Silicon Macs running macOS 13+**, install the CLI above, then download
-[DuckTerm-0.4.64-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.64/DuckTerm-0.4.64-macos-arm64.zip),
+[DuckTerm-0.4.65-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.65/DuckTerm-0.4.65-macos-arm64.zip),
 unzip it, and move **DuckTerm.app** to **Applications**.
 
 The app opens the dashboard in a native window with a Dock icon and notifications.
