@@ -352,13 +352,38 @@ F2. **Settings button** — the *surface* shipped in v0.4.45 (header Settings
     harness Agents tab, which updates the *agent CLIs*; this updates
     DuckTerm itself, and the two should not be conflated in the UI.
 
-F3. **Folder artifacts.** Attach artifacts (markdown/HTML) to a folder, and
-    let an agent that generates one *recommend associating it* with the
-    folder. Mac app renders markdown at minimum, HTML if cheap. Design
-    question to settle first: is an artifact a file reference on disk
-    (cheap, always current, dies if the file moves) or a stored copy
-    (durable, snapshot semantics, needs storage + retention)? Recommend
-    file reference in v1.
+F3. **Artifacts — IN FLIGHT 2026-09-25** (`main-dev` backend/instructions,
+    `ui-dev` preview requested). Scope expanded and approved: a local
+    Artifacts tab beside Inbox, automatic agent registration of generated
+    outputs, and a catalog with session/folder provenance and
+    HTML/Markdown/image previews. No cloud sync; DuckCentral deferred.
+    **Supersedes my earlier file-reference recommendation**: main-dev
+    proposed durable local snapshots with source-path metadata, which is
+    better reasoning — agent outputs land in temp directories that vanish,
+    so a reference can die while the catalog still lists it.
+    Constraints supplied to main-dev, each verified in code:
+    - **Backup will silently skip artifacts.** `persistence/backup.py`
+      enumerates directories explicitly (checkpoints, snapshots, transcript
+      trees) — a new `artifacts/` dir is matched by no wildcard. Durability
+      a backup omits is half a promise; add it to the archive path, the
+      sync path, and the restore verification.
+    - **Copy `_paste_image`** (server.py:2316), which already solves "agent
+      produced a file, store it safely": server-generated names, size cap,
+      private mode. Don't invent a second storage convention.
+    - **Agent-registered content is untrusted, and HTML preview is the
+      sharp edge.** Reuse the Messages sanitizer rather than opening a
+      second rendering path; Markdown-first is the safer launch.
+    - **Path confinement is already solved** — resolved-path ancestry via
+      `Path.is_relative_to`, real-target checks, `O_NOFOLLOW`. A registered
+      source path is attacker-influenced because an agent chose it (the
+      2026-09-20 review fixed this class twice).
+    - Registration is an agent action (bearer route, identity from the
+      credential) with rate/count caps; catalog management is owner-only.
+    - Decide explicitly whether artifacts survive session deletion —
+      recommend retain-and-label, since the owner wants backups retained.
+    - Keep the owner's original ask in view: the agent **recommends**
+      association, the owner accepts. Same invariant as PM routines,
+      broadcast, and urgent messages — agent proposes, owner decides.
 
 F4. **Migrate a running session to another harness** (e.g. Claude Code →
     Codex). Hard constraint from
