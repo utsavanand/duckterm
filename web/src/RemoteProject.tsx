@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { destinationRequest, desktop, selectLaunchTarget } from "./desktop";
 import { Button, Field, inputStyle, Modal } from "./ui";
+import { BrowseResult } from "./api";
+import { DirBrowser } from "./DirBrowser";
 import { SessionView } from "./types";
+
+const browseLocal = (path?: string) => destinationRequest<BrowseResult>("local", "browse", path ? { path } : {});
 
 export type PreparedProject = { id: string; destination: string; stage: string; session_key?: string; offset?: number; bytes?: number };
 type Review = { requirements?: string[]; linux_compatible?: boolean; setup?: string[]; fingerprint: string; source: string; bytes: number; entries: { path: string }[]; excluded: string[]; ignored: string[]; git: { kind: string }; conversation: { runtime?: string; id?: string; sha256?: string } };
@@ -16,6 +20,7 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
     try { const saved = localStorage.getItem(storage); if (saved) return JSON.parse(saved) as Draft; } catch { /* New draft if storage is unavailable. */ }
     return { id: crypto.randomUUID().replaceAll("-", ""), source: sourcePath ?? "", destination: "", url: "", branch: "", selected: [] };
   });
+  const [browsing, setBrowsing] = useState(false);
   const [review, setReview] = useState<Review | null>(null);
   const [checked, setChecked] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -58,9 +63,14 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
     finally { clearInterval(poll); if (mounted.current) setBusy(false); onBusy(false); }
   }
   return <div>
-    {kind === "copy" ? <Field label="Source project on This Mac">
-      <input aria-label="Local project path" style={inputStyle} value={draft.source} disabled={busy || !!sourceSession} onChange={e => change("source", e.target.value)} placeholder="/Users/you/projects/my-project" />
-    </Field> : <>
+    {kind === "copy" ? <><Field label="Source project on This Mac">
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <input aria-label="Local project path" style={{ ...inputStyle, flex: 1, minWidth: 0 }} value={draft.source} disabled={busy || !!sourceSession} onChange={e => change("source", e.target.value)} placeholder="/Users/you/projects/my-project" />
+        {!sourceSession && <Button variant="ghost" disabled={busy} onClick={() => setBrowsing(true)}>Browse…</Button>}
+      </div>
+    </Field>
+      {browsing && <DirBrowser browse={browseLocal} start={draft.source || undefined} onPick={folder => { change("source", folder.path); setBrowsing(false); }} onCancel={() => setBrowsing(false)} />}
+    </> : <>
       <Field label="Repository URL"><input aria-label="Repository URL" style={inputStyle} value={draft.url} disabled={busy} onChange={e => change("url", e.target.value)} placeholder="https://github.com/owner/project.git" /></Field>
       <Field label="Branch (optional)"><input aria-label="Clone branch" style={inputStyle} value={draft.branch} disabled={busy} onChange={e => change("branch", e.target.value)} /></Field>
       <p>Uses Git authorization on the remote computer. Local edits are not included.</p>

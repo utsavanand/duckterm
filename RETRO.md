@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Copy source needs a folder explorer
+**Broke:** copying a local project to a remote machine required typing its path.
+**Cause:** the source form did not reuse New Session's existing folder browser.
+**Rule:** offer Browse beside the source field and route it explicitly to This
+Mac even when the launch destination is remote. Reuse the existing explorer and
+verify that choosing a folder feeds the transfer review.
+
 ## 2026-09-26 — Unknown output must not invent a state transition
 
 The supervisor classifies individual output lines. Defaulting an unmatched line
