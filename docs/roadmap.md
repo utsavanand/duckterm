@@ -133,6 +133,24 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
     is user input and must be escaped. Every previously-left comment
     lights up as soon as this ships.
 
+## Ownership, as reported by the sessions themselves (2026-09-25)
+
+The owner asked whether items attributed to sessions were actually being
+worked on. Asked directly; answers recorded as given rather than inferred:
+
+- **`ui-dev` is AVAILABLE with nothing in progress**, and stated explicitly
+  that annotation highlights (F6), packaged icons (B4), desktop
+  notifications (B6), and the urgency/Interrupt controls are **pending /
+  not started** — "please do not mark them in progress or completed".
+  Priority order sent back: B6 → F6 → B4 → urgency/Interrupt.
+- **`main-dev`** shipped Artifacts (v0.4.55) and the fork-race CI fix
+  (v0.4.54); **B3 is explicitly still queued and not fixed by that
+  release**. The backup sync-mode exclusion test remains unanswered after
+  three asks.
+- Lesson for this document: an item having a named owner is not the same as
+  an item being worked on. Ownership lines here now mean "asked and
+  confirmed", not "sent to".
+
 ## Bugs — open
 
 B5. ~~Opening Oracle corrupts terminal wrapping irreversibly.~~ **Fixed by
@@ -352,7 +370,7 @@ F2. **Settings button** — the *surface* shipped in v0.4.45 (header Settings
     harness Agents tab, which updates the *agent CLIs*; this updates
     DuckTerm itself, and the two should not be conflated in the UI.
 
-F3. **Artifacts — v0.4.55 implementation verified, release pending** (`main-dev`).
+F3. **Artifacts — SHIPPED v0.4.55** (PR #36, `77d2f4c`; `main-dev` confirmed released and installed).
     The owner approved the local Artifacts tab beside Inbox and reviewed the
     concrete list/preview layout. Includes session-scoped saved copies,
     Markdown/static HTML/image previews, download and removal. Mac downloads
