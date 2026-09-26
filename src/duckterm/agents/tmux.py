@@ -64,8 +64,30 @@ def spawn(session_id: str, command: str, cwd: str, env: dict[str, str] | None = 
         env_args += ["-e", f"{k}={v}"]
     # `-x/-y` set the initial size; a detached session otherwise defaults to
     # 80x24, which mismatches the browser pane and garbles a TUI's wrapping.
+    # Keep our private server alive between agents. Otherwise the last quick
+    # child can exit while the next launch connects, making new-session fail
+    # with "server exited unexpectedly". Set this BEFORE starting the child in
+    # the same tmux command queue, including on a newly created server.
     ok, err = _tmux(
-        "new-session", "-d", "-s", target, "-x", "120", "-y", "40", "-c", cwd, *env_args, command
+        "start-server",
+        ";",
+        "set-option",
+        "-s",
+        "exit-empty",
+        "off",
+        ";",
+        "new-session",
+        "-d",
+        "-s",
+        target,
+        "-x",
+        "120",
+        "-y",
+        "40",
+        "-c",
+        cwd,
+        *env_args,
+        command,
     )
     if not ok:
         raise ValueError(f"tmux failed to start the session: {err.strip() or 'unknown error'}")
