@@ -46,6 +46,7 @@ def test_launch_retry_after_server_restart_keeps_same_process(tmp_path, monkeypa
             ]
         ),
         "test": True,
+        "name": "Preserved migration name",
     }
 
     async def scenario():
@@ -54,6 +55,7 @@ def test_launch_retry_after_server_restart_keeps_same_process(tmp_path, monkeypa
             key = result["session_key"]
             row = history.session(key)
             assert row and row["test"] == 1
+            assert row["name"] == "Preserved migration name"
             before = tmux._tmux("list-panes", "-t", tmux.target_for(key), "-F", "#{pane_pid}")
             restarted = Server(history=history)
             again = await transfer_api.dispatch(restarted, "launch", request)

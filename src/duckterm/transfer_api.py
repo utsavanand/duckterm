@@ -149,6 +149,8 @@ async def dispatch(server: "Server", operation: str, req: dict[str, Any]) -> dic
                 prompt=state["prompt"],
                 test=req.get("test") is True,
             )
+            if state["name"]:
+                server.history.set_meta(key, name=state["name"])
             await asyncio.sleep(1)
             if not tmux.session_exists(tmux.target_for(key)):
                 raise ValueError(

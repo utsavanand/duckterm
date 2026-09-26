@@ -66,6 +66,7 @@ function Dashboard() {
   >(desktop()?.draft ? "launch" : null);
   const [towerOpen, setTowerOpen] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const pendingDesktopSession = useRef(desktop()?.selectedSession);
   const messagePins = useMessagePins(selectedKey);
   const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
   const pinSequence = useRef(0);
@@ -202,6 +203,14 @@ function Dashboard() {
 
   // Default the selection to the first agent so the center pane isn't empty.
   useEffect(() => {
+    if (pendingDesktopSession.current) {
+      const key = pendingDesktopSession.current;
+      if (sessions.some(s => s.key === key)) {
+        pendingDesktopSession.current = undefined;
+        setSelectedKey(key);
+      }
+      return;
+    }
     if (selectedKey && sessions.some((s) => s.key === selectedKey)) return;
     setSelectedKey(agents[0]?.key ?? null);
   }, [agents, selectedKey, sessions]);

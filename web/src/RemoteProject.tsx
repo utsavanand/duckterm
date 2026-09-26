@@ -99,7 +99,7 @@ export function MoveRemoteModal({ session, onClose }: { session: SessionView; on
     localStorage.setItem(`moved-session:${session.key}`, JSON.stringify({ target, key: next.session_key }));
   }
   return <Modal title={`Move ${session.label} to remote`} onClose={() => { if (!busy) onClose(); }}>
-    {result ? <><p>Moved to {hosts.find(t => t.id === target)?.name}. The stopped local session and project remain available for recovery.</p><Button onClick={() => { selectLaunchTarget(target, {}); onClose(); }}>Open remote session</Button></> : <>
+    {result ? <><p>Moved to {hosts.find(t => t.id === target)?.name}. The stopped local session and project remain available for recovery.</p><Button onClick={() => { selectLaunchTarget(target, {}, result.session_key); onClose(); }}>Open remote session</Button></> : <>
       <Field label="Remote computer"><select aria-label="Remote computer" style={inputStyle} value={target} disabled={busy} onChange={e => setTarget(e.target.value)}>{hosts.map(h => <option key={h.id} value={h.id}>{h.name}</option>)}</select></Field>
       {!hosts.length ? <p>Add a computer under Settings → Remote computers first.</p> : <RemoteProject key={target} target={target} kind="copy" command={session.runtime === "codex" ? "codex" : "claude"} sourceSession={session.key} sourcePath={session.worktreePath ?? session.cwd} onPrepared={moved} onBusy={setBusy} />}
     </>}

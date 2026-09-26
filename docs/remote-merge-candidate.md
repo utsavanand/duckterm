@@ -1,7 +1,7 @@
 # Remote-session merge candidate
 
 The remote-session candidate now integrates main through `dc9e6da`. The main
-checkout has not been modified by this integration. The feature has not yet been merged into main.
+checkout has not been modified by this integration. The feature is validated for the requested merge into main.
 
 ## Behavior
 
@@ -23,7 +23,7 @@ checkout has not been modified by this integration. The feature has not yet been
 
 ## Validation and practical limits
 
-The post-fix local gate passed: 676 Python tests, 102 frontend tests, and 56 browser
+The post-fix local gate passed: 676 Python tests, 102 frontend tests, and 57 browser
 tests. Four native unit tests and the real Swift transfer rehearsal also passed.
 Python lint, formatting, types, and documentation checks passed.
 
@@ -104,14 +104,34 @@ a stopped source session through review, transfer, and opening its resumed remot
 conversation. Component tests and synthetic provider recall do not establish that
 whole flow. Prior Claude onboarding/version limitations are still recorded above.
 
-## Remaining before merge
+## Full native Move acceptance — 2026-09-26 UTC
 
-1. Finish native Test acceptance and provider setup, including the full stopped
-   source-session Move flow on supported versions.
-2. Private-repository clone authorization remains unvalidated. This optional
-   check is skipped; public clone and retry passed. No full private history was
-   copied to the VM.
-3. Arrange a safe VM reboot. A live Claude process was observed on the workspace;
-   it has not been interrupted.
-4. Complete user acceptance in DuckTerm Test and merge the validated integration.
-   Main's overlapping work is now committed. No production release is included.
+Both supported providers passed the actual desktop flow: select a stopped source
+session, review its project and exact transcript, confirm Move, then explicitly
+open the remote session. The test used the production AppDelegate, WKWebView,
+SSH bridge, and transfer backend. Only synthetic fixture data and `test:true`
+launch instrumentation were added. The source servers and desktop bundle were
+isolated; the destination was the approved VM QA service on port 4341.
+
+Claude Code 2.1.267 was installed in a temporary Mac QA home; the user's normal
+installation was unchanged. Codex used 0.155.1. Both interactive remote providers
+recalled the exact synthetic marker. The source row stayed stopped, its original
+transcript and files remained unchanged, and its durable link recorded the
+remote session. The VM's existing Claude authentication was used; its incomplete
+onboarding preference was temporarily initialized and restored after testing.
+Normal trust prompts were accepted only for the synthetic projects.
+
+Acceptance found two bugs and verified their fixes: transfer launch now persists
+the session display name, and Open remote session carries its exact key through
+the native bridge instead of relying on dashboard default selection. Regression
+coverage checks name persistence and selection among multiple sessions.
+
+The first final browser run lost a New menu while native UI probes were running;
+the full gate was rerun without concurrent native windows. Synthetic destination
+sessions, projects, and provider transcripts were removed. Production Claude PID
+66209 was preserved. Reboot testing remains deferred to avoid interrupting it;
+service restart and disconnect persistence are verified. Private-repository clone
+QA remains optional and skipped; public clone/retry passed. Neither limitation
+requires stopping the existing user process for this code merge.
+
+No production release or application installation is included in this merge.

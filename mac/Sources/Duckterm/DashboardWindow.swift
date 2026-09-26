@@ -24,7 +24,8 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     var desktopHosts: [RemoteHost] = []
     var desktopTarget = "local"
     var launchDraft: [String: String]?
-    var onChooseLaunchTarget: ((String, [String: String]) -> Void)?
+    var selectedSession: String?
+    var onChooseLaunchTarget: ((String, [String: String], String?) -> Void)?
 
     var onLaunchRequest: ((String, String, [String: Any]) async throws -> Any)?
 
@@ -36,6 +37,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             }
         ]
         if let launchDraft { state["draft"] = launchDraft }
+        if let selectedSession { state["selectedSession"] = selectedSession }
         let data = try! JSONSerialization.data(withJSONObject: state)
         return WKUserScript(source: "window.__rubbertermDesktop = \(String(decoding: data, as: UTF8.self));",
                             injectionTime: .atDocumentStart, forMainFrameOnly: true)
@@ -60,7 +62,9 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
               let draft = body["draft"] as? [String: String],
               Set(draft.keys).isSubset(of: ["agent", "command", "name", "prompt"]),
               draft.values.allSatisfy({ $0.utf8.count <= 16384 }) else { return }
-        onChooseLaunchTarget?(target, draft)
+        let sessionKey = body["session_key"] as? String
+        if let sessionKey, sessionKey.isEmpty || sessionKey.utf8.count > 200 { return }
+        onChooseLaunchTarget?(target, draft, sessionKey)
     }
 
     func userContentController(_ userContentController: WKUserContentController,
@@ -91,6 +95,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         AppDiagnostics.shared.record("Dashboard loaded")
         // A host change carries form text once, never a machine-specific folder.
         launchDraft = nil
+        selectedSession = nil
         webView.configuration.userContentController.removeAllUserScripts()
         webView.configuration.userContentController.addUserScript(desktopScript())
     }

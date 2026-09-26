@@ -32,12 +32,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hosts.append(host)
             RemoteHost.save(hosts)
         }
-        window?.onChooseLaunchTarget = { [weak self] target, draft in
+        window?.onChooseLaunchTarget = { [weak self] target, draft, sessionKey in
             guard let self else { return }
             if target == "add" { self.addHost(launchDraft: draft); return }
             let host = self.hosts.first { $0.target == target }
             guard target == "local" || host != nil else { return }
-            self.switchHost(host, launchDraft: draft.isEmpty ? nil : draft)
+            self.switchHost(host, launchDraft: draft.isEmpty ? nil : draft, selectedSession: sessionKey)
         }
         window?.onLaunchRequest = { [weak self] target, operation, params in
             guard let self else { throw LaunchDestination.Failure.message("App closed") }
@@ -184,10 +184,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } catch { showConnectionError(error) }
     }
 
-    private func switchHost(_ host: RemoteHost?, launchDraft: [String: String]? = nil) {
+    private func switchHost(_ host: RemoteHost?, launchDraft: [String: String]? = nil, selectedSession: String? = nil) {
         window?.desktopHosts = hosts
         window?.desktopTarget = host?.target ?? "local"
         window?.launchDraft = launchDraft
+        window?.selectedSession = selectedSession
         UserDefaults.standard.set(host?.target, forKey: "selectedRemoteHost")
         connectionGeneration += 1
         let generation = connectionGeneration

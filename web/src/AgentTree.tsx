@@ -859,7 +859,7 @@ function TreeRow({
             }}>Continue locally</button>
             {(s.remoteTransfer?.stage === "moved" || localStorage.getItem(`moved-session:${s.key}`)) && <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => {
               const moved = s.remoteTransfer?.stage === "moved" ? s.remoteTransfer : JSON.parse(localStorage.getItem(`moved-session:${s.key}`)!);
-              selectLaunchTarget(moved.target, {});
+              selectLaunchTarget(moved.target, {}, moved.session_key ?? moved.key);
             }}>Open remote session</button>}
           </>}
           {resumable && (

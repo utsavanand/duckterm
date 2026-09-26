@@ -49,6 +49,16 @@ Oracle used to consume workspace width. A long active input line was permanently
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-26 — Move must preserve the name and open the exact destination session
+**Broke:** full native Move acceptance showed the destination folder name instead
+of the source session name. Opening the remote dashboard also lacked the moved
+session's identity, so it could select another session.
+**Cause:** transfer launch did not persist the display name through history's
+metadata API, and host switching carried only launch drafts.
+**Rule:** persist the name and carry the exact destination key through the native
+bridge. Verify the selected row with multiple sessions and the durable source
+link through the actual desktop flow, not only transfer API tests.
+
 ## 2026-09-26 — Artifact downloads and remote navigation share one delegate policy
 **Found:** integrating artifact downloads introduced a second navigation-policy
 callback alongside the remote dashboard's origin restriction.

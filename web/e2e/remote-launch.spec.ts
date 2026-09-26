@@ -49,3 +49,23 @@ test("choosing Remote keeps the current page and form mounted", async ({ page })
   expect(page.url()).toBe(before);
   expect(await page.evaluate(() => window.__rubbertermDesktop?.currentTarget)).toBe("local");
 });
+
+test("opening a moved session selects its exact destination among other sessions", async ({ page }) => {
+  const { seedSession, apiDelete } = await import("./helpers");
+  const selected = `moved-selected-${Date.now()}`;
+  const other = `moved-other-${Date.now()}`;
+  await seedSession(selected, { name: "Moved destination", test: true });
+  await seedSession(other, { name: "Other remote work", test: true });
+  await page.addInitScript((key) => {
+    window.__rubbertermDesktop = {
+      currentTarget: "dev", targets: [{ id: "dev", name: "Remote QA" }], selectedSession: key,
+    };
+  }, selected);
+  try {
+    await page.goto("/");
+    await expect(page.locator(".rd-row.selected .rd-row-name")).toHaveText("Moved destination");
+  } finally {
+    await apiDelete(`/sessions/${selected}`);
+    await apiDelete(`/sessions/${other}`);
+  }
+});

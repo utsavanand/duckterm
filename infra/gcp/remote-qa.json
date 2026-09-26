@@ -4,7 +4,7 @@
   "automated": {
     "python": 676,
     "frontend": 102,
-    "playwright": 56,
+    "playwright": 57,
     "nativeUnit": 4
   },
   "livePassed": [
@@ -24,9 +24,7 @@
     "user confirmed Remote destination and Browse in New session"
   ],
   "pending": [
-    "full native Move acceptance and supported provider setup",
-    "VM reboot when existing Claude process can be interrupted",
-    "merge validated integration after native acceptance"
+    "safe VM reboot validation when existing user process can be interrupted"
   ],
   "deferred": [
     "Railway live provider QA: user selected GitHub first",
@@ -69,16 +67,10 @@
       "updated isolated Linux native copy and restart retry passed; synthetic session deleted",
       "2026-09-26: native unit, WebKit artifact-download probe, report UI, Swift transfer rehearsal, and Test app build passed"
     ],
-    "blocked": [
-      "VM reboot would interrupt existing Claude PID 66209",
-      "native Test acceptance pending"
-    ],
+    "blocked": [],
     "notClaimed": [
-      "full native stopped-source Move acceptance",
       "live private repository clone authorization",
-      "candidate VM reboot recovery",
-      "Claude interactive onboarding completion",
-      "Move from local unsupported Claude 2.1.232"
+      "candidate VM reboot recovery"
     ],
     "liveCandidateUtc": "2026-09-22",
     "candidateBase": "5393304",
@@ -97,6 +89,24 @@
       "QA systemd unit corrected to match production KillMode=process",
       "root-owned VM Codex sessions directory restored to duckterm ownership"
     ],
-    "integrationDate": "2026-09-26"
+    "integrationDate": "2026-09-26",
+    "nativeMoveAcceptance": {
+      "dateUtc": "2026-09-26",
+      "providers": [
+        "Claude Code 2.1.267",
+        "Codex 0.155.1"
+      ],
+      "passed": [
+        "actual AppDelegate/WKWebView stopped-source review/move/open flow",
+        "both providers recalled exact synthetic conversation marker interactively",
+        "source state, transcript and files preserved; durable remote link recorded",
+        "display name preserved and exact remote destination selected"
+      ],
+      "fixes": [
+        "persist moved display name",
+        "carry destination session key through native host switch"
+      ],
+      "cleanup": "synthetic sessions/projects/transcripts deleted; original Claude onboarding preference restored; production PID 66209 preserved"
+    }
   }
 }
