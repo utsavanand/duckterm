@@ -55,12 +55,12 @@ class ClaudeCodeRuntime(Harness):
             argv += [initial_prompt]
         return argv
 
-    def detect_state(self, recent_output: str) -> SessionState:
+    def detect_state(self, recent_output: str) -> SessionState | None:
         # Fallback only; the hook adapter normally drives state. Treat a trailing
-        # prompt-for-input marker as waiting, otherwise assume busy.
+        # prompt-for-input marker as waiting; other output carries no state evidence.
         if "│ Do you want" in recent_output or "❯" in recent_output:
             return "waiting"
-        return "busy"
+        return None
 
     def tool_in(self, recent_output: str) -> str | None:
         return None

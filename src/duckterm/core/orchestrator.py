@@ -230,7 +230,7 @@ class SessionSupervisor:
                             if tool is not None:
                                 self._emit(events.PRE_TOOL_USE, tool_name=tool)
                             new_state = self.runtime.detect_state(line)
-                            if new_state != self._state:
+                            if new_state is not None and new_state != self._state:
                                 self._state = new_state
                                 self._emit(_STATE_EVENT[new_state])
                         continue
@@ -275,7 +275,7 @@ class SessionSupervisor:
             if tool is not None:
                 self._emit(events.PRE_TOOL_USE, tool_name=tool)
             new_state = self.runtime.detect_state(line)
-            if new_state != self._state:
+            if new_state is not None and new_state != self._state:
                 self._state = new_state
                 self._emit(_STATE_EVENT[new_state])
 
