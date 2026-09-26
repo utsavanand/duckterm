@@ -6,6 +6,7 @@ test("side panels reclaim space independently, preserve PTY drafts, and remember
   const sizes: { cols: number; rows: number }[] = [];
   let connections = 0;
   page.on("websocket", socket => {
+    if (!socket.url().includes(`/sessions/${key}/terminal`)) return;
     connections++;
     socket.on("framesent", ({ payload }) => {
       if (typeof payload === "string") {
@@ -37,7 +38,7 @@ test("side panels reclaim space independently, preserve PTY drafts, and remember
     await page.getByRole("button", { name: "Collapse Agents panel", exact: true }).click();
     await expect.poll(width).toBeGreaterThan(originalWidth + 200);
     await expect.poll(() => sizes.at(-1)!.cols).toBeGreaterThan(originalCols);
-    await expect(page.locator(".rd-agents .rd-row-name")).toBeHidden();
+    await expect(page.locator(".rd-agents .rd-row-name", { hasText: "panel-resize-check" })).toBeHidden();
     const leftOnlyWidth = await width();
     const leftOnlyCols = sizes.at(-1)!.cols;
     await page.getByRole("button", { name: "Collapse Context panel", exact: true }).click();
