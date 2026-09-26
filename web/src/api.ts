@@ -20,6 +20,52 @@ export interface OracleExchange {
   at: number;
 }
 
+// Oracle Relay: a note for something a session needs from the owner.
+export interface RelayNote {
+  id: string;
+  session_key: string;
+  name: string;
+  folder: string;
+  runtime: string;
+  kind: "approval" | "choice" | "question";
+  status: "open" | "answered" | "handled";
+  created_at: number;
+  closed_at?: number;
+  question?: string; // choice: the agent's question; question: the classifier's one-line ask
+  options?: string[];
+  urgency?: "blocked" | "offer"; // question notes only
+  excerpt?: string; // question notes: the end of the agent's final message
+  detected_without_model?: boolean;
+  tool?: string;
+  detail?: string;
+  blocking?: boolean;
+  answer?: string;
+  answered_by?: string; // "owner" or a rule id like "R2"
+  route?: "approval" | "keystroke" | "prompt" | "inbox";
+  route_reason?: string | null;
+  suggestion?: { rule_id: string; reply: string };
+}
+
+export interface RelayRule {
+  id?: string;
+  kind: "approval" | "answer";
+  summary?: string;
+  tool?: string | null;
+  command_pattern?: string | null;
+  folder?: string | null;
+  action?: "approve" | "deny";
+  keywords?: string[];
+  reply?: string;
+  mode?: "draft" | "live";
+  streak?: number;
+}
+
+export interface RelayState {
+  notes: RelayNote[];
+  rules: RelayRule[];
+  open: number;
+}
+
 export interface TokenTotals {
   input: number;
   cache_read: number;
@@ -264,6 +310,17 @@ export const api = {
     ),
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
   controlTower: () => get<TowerInsights>("/control-tower"),
+  relay: () => get<RelayState>("/relay"),
+  relayCount: () => get<{ open: number }>("/relay/count"),
+  relayAnswer: (id: string, answer: string | number) =>
+    post<{ note: RelayNote }>(`/relay/${encodeURIComponent(id)}/answer`, { answer }),
+  proposeRule: (text: string) => post<{ rule: RelayRule }>("/relay/rules/propose", { text }),
+  createRule: (rule: RelayRule) => post<{ rule: RelayRule }>("/relay/rules", { rule }),
+  deleteRule: async (id: string) => {
+    const res = await fetch(`/relay/rules/${encodeURIComponent(id)}`, { method: "DELETE", headers: authHeaders() });
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
+  },
   messageSession: (key: string, text: string, mode: "inbox" | "prompt") =>
     post<{ delivered: "inbox" | "prompt" | null }>(
       `/sessions/${encodeURIComponent(key)}/message`,
