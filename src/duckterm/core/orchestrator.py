@@ -505,23 +505,33 @@ class Orchestrator:
         gone — but its DB row still says 'busy'/'idle', and state only advances
         on events, none of which will ever arrive. So after adopting the live
         set, we mark every launched, non-at-rest row with no live backing as
-        'stopped' (resumable — honest, not deleted). This covers the tmux-died
-        case AND the no-tmux PTY case (where the live set is empty)."""
+        'interrupted' (resumable — honest, not deleted). If discovery is
+        unavailable, leave stored states alone rather than assume death."""
         from duckterm.runtimes.generic import GenericRuntime
 
         adopted: list[str] = []
-        if tmux.has_tmux():
-            for key in tmux.list_duckterm_sessions():
-                if key in self._supervisors:
-                    continue
-                row = self.history.session(key) if self.history else None
-                cwd = str(row.get("cwd") or ".") if row else "."
-                supervisor = SessionSupervisor(
-                    bus=self.bus, runtime=GenericRuntime("true"), session_key=key, cwd=cwd
-                )
-                self._supervisors[key] = supervisor
-                await supervisor.reattach()
-                adopted.append(key)
+        # Missing tmux on a GUI app's PATH is not evidence that its panes died.
+        if not tmux.has_tmux():
+            print("[duckterm] skipping reconciliation: tmux unavailable", file=sys.stderr)
+            return adopted
+        try:
+            live_keys = tmux.list_duckterm_sessions()
+        except (OSError, RuntimeError) as exc:
+            print(f"[duckterm] skipping reconciliation: {exc}", file=sys.stderr)
+            return adopted
+        for key in live_keys:
+            if key in self._supervisors:
+                continue
+            row = self.history.session(key) if self.history else None
+            cwd = str(row.get("cwd") or ".") if row else "."
+            supervisor = SessionSupervisor(
+                bus=self.bus, runtime=GenericRuntime("true"), session_key=key, cwd=cwd
+            )
+            await supervisor.reattach()
+            self._supervisors[key] = supervisor
+            adopted.append(key)
+            if self.history is not None:
+                self.history.recover_interrupted(key)
 
         if self.history is not None:
             # Everything actually live right now: freshly adopted + anything a

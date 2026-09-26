@@ -92,3 +92,32 @@ def test_private_server_survives_last_agent_exit(monkeypatch, tmp_path) -> None:
         assert ok and after == before  # No shutdown/restart gap between agents.
     finally:
         tmux._tmux("kill-server")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        "no server running on /tmp/test/socket",
+        "error connecting to /tmp/test/socket (No such file or directory)",
+    ],
+)
+def test_discovery_absent_server_is_empty(monkeypatch, error):
+    monkeypatch.setattr(tmux, "_tmux", lambda *args: (False, error))
+    assert tmux.list_duckterm_sessions() == []
+
+
+def test_discovery_failure_is_not_an_empty_fleet(monkeypatch):
+    monkeypatch.setattr(
+        tmux,
+        "_tmux",
+        lambda *args: (False, "error connecting to /tmp/test/socket (Permission denied)"),
+    )
+    with pytest.raises(RuntimeError, match="cannot discover"):
+        tmux.list_duckterm_sessions()
+
+
+def test_discovery_excludes_dead_panes_and_foreign_sessions(monkeypatch):
+    monkeypatch.setattr(
+        tmux, "_tmux", lambda *args: (True, "rd_alive\t0\nrd_dead\t1\nother\t0\nrd_alive\t0\n")
+    )
+    assert tmux.list_duckterm_sessions() == ["alive"]

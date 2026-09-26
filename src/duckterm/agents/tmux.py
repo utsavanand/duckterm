@@ -110,11 +110,26 @@ def spawn_piped(
 
 
 def list_duckterm_sessions() -> list[str]:
-    """All live session ids Duckterm spawned (the rd_<id> targets, id only)."""
-    ok, out = _tmux("list-sessions", "-F", "#{session_name}")
+    """All live session ids, or raise when discovery cannot establish liveness.
+
+    An absent server means no sessions. Permission/socket/probe errors do not:
+    treating those as an empty list incorrectly interrupts every live agent.
+    """
+    ok, out = _tmux("list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}")
     if not ok:
-        return []
-    return [name[len(_PREFIX) :] for name in out.split() if name.startswith(_PREFIX)]
+        if "no server running on " in out or (
+            "error connecting to " in out and "(No such file or directory)" in out
+        ):
+            return []
+        raise RuntimeError(f"cannot discover tmux sessions: {out.strip()}")
+    live = []
+    for line in out.splitlines():
+        name, _, dead = line.partition("\t")
+        if name.startswith(_PREFIX) and dead == "0":
+            key = name[len(_PREFIX) :]
+            if key not in live:
+                live.append(key)
+    return live
 
 
 def send_keys(target: str, keys: str, *, enter: bool = True) -> bool:
