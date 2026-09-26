@@ -7,6 +7,17 @@
 Mac even when the launch destination is remote. Reuse the existing explorer and
 verify that choosing a folder feeds the transfer review.
 
+## 2026-09-26 — Unknown output must not invent a state transition
+
+The supervisor classifies individual output lines. Defaulting an unmatched line
+to idle (Codex/Copilot) or busy (Claude/generic) turned harmless output and ANSI
+redraws into fake Stop/PreToolUse events. Return no evidence instead and retain
+the last known state. Test the full marker → ordinary output sequence on both
+tmux and PTY; testing a marker alone misses this failure. Ten regression cases
+failed on old main and passed with the fix. Positive regex false matches and
+hook precedence remain separate investigation items.
+
+
 ## 2026-09-26 — Artifact feedback needs provenance and an isolated selection bridge
 
 Text selected inside an opaque preview cannot be read directly by the app. Keep that origin isolation; authorize only a small app-owned reporter with a fresh CSP nonce, strip artifact scripts, and validate the sending frame/channel. Bind feedback to the saved artifact revision, escape terminal controls, and retain failed comments instead of reporting a false send. Verify real terminal receipt and malicious-preview rejection together.

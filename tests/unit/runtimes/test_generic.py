@@ -15,9 +15,8 @@ def test_detect_state_uses_last_marker() -> None:
     assert rt.detect_state("[idle]\n[busy]") == "busy"
     assert rt.detect_state("[waiting] approve?") == "waiting"
 
-
-def test_detect_state_defaults_to_busy_without_markers() -> None:
-    assert GenericRuntime("agent").detect_state("some noise\nmore noise") == "busy"
+    assert rt.detect_state("[idle]\nsome noise") == "idle"
+    assert rt.detect_state("some noise\nmore noise") is None
 
 
 def test_tool_in_extracts_tool_name() -> None:
