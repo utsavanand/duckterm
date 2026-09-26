@@ -33,8 +33,7 @@ export interface RelayNote {
   closed_at?: number;
   question?: string; // choice: the agent's question; question: the classifier's one-line ask
   options?: string[];
-  step?: number; // choice notes from a multi-tab form: 0-based tab, answered in order
-  steps?: number;
+  questions?: { question: string; options: string[] }[]; // choice: every question in the menu form
   urgency?: "blocked" | "offer"; // question notes only
   excerpt?: string; // question notes: the end of the agent's final message
   detected_without_model?: boolean;
@@ -43,7 +42,7 @@ export interface RelayNote {
   blocking?: boolean;
   answer?: string;
   answered_by?: string; // "owner" or a rule id like "R2"
-  route?: "approval" | "keystroke" | "keystroke-unsubmitted" | "prompt" | "prompt-stuck" | "inbox";
+  route?: "approval" | "keystroke" | "prompt" | "prompt-stuck" | "inbox";
   route_reason?: string | null;
   suggestion?: { rule_id: string; reply: string };
 }

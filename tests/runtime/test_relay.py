@@ -13,7 +13,7 @@ from duckterm.llm.summarizer import Summary
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
 
-MENU = "Pick one color:\n❯ 1. Red\n  2. Green\n  3. Blue\nEnter to select"
+MENU = "Merge PR #66?\n❯ 1. Yes\n  2. Hold\nEnter to select"
 
 
 @pytest.fixture
@@ -103,139 +103,40 @@ def test_approval_rule_answers_blocking_requests_only_as_written(world) -> None:
     assert dispatch(server, "DELETE", "/relay/rules/R1", owner)[0] == 200
 
 
-def test_multiple_choice_answer_presses_the_option_only_while_its_menu_shows(world) -> None:
+def test_menu_form_is_one_note_listing_every_question_and_is_answered_in_the_terminal(
+    world,
+) -> None:
     server, owner, sup, _ = world
     ask = {
         "questions": [
+            {"question": "Merge PR #66?", "options": [{"label": "Yes"}, {"label": "Hold"}]},
             {
-                "question": "Pick one color:",
-                "options": [{"label": "Red"}, {"label": "Green"}, {"label": "Blue"}],
-            }
-        ]
-    }
-    server.bus.publish(
-        {
-            "event_type": "PermissionRequest",
-            "session_key": "pm",
-            "tool_name": "AskUserQuestion",
-            "tool_input": ask,
-        }
-    )
-    [note] = [n for n in notes(server) if n["kind"] == "choice"]
-    assert note["options"] == ["Red", "Green", "Blue"]
-    sup.screen = MENU
-    status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": 1})
-    assert status == 200 and body["note"]["answer"] == "Green"
-    assert sup.pasted == [b"2"]
-
-    server.bus.publish(
-        {
-            "event_type": "PermissionRequest",
-            "session_key": "pm",
-            "tool_name": "AskUserQuestion",
-            "tool_input": ask,
-        }
-    )
-    [again] = [n for n in notes(server) if n["kind"] == "choice" and n["status"] == "open"]
-    sup.screen = CLAUDE_EMPTY
-    assert post(server, owner, f"/relay/{again['id']}/answer", {"answer": 0})[0] == 409
-    assert sup.pasted == [b"2"]
-
-
-# Claude's multi-tab AskUserQuestion, as captured from release-dev on
-# 2026-09-26: a tab bar, the question in a box, then numbered options.
-MERGE_TAB = (
-    "←  ☐ Merge #66  ☐ Releases  ✔ Submit  →\n\n"
-    "│ Merge PR #66, which keeps empty folders visible in the sidebar?\n\n"
-    "❯ 1. Yes\n  2. Hold\n  3. Type something.\n"
-)
-RELEASES_TAB = (
-    "←  ☒ Merge #66  ☐ Releases  ✔ Submit  →\n\n"
-    "│ main-dev (Oracle) says you decided releases move entirely to me: version bumps, tags,\n"
-    "│ scripts/release.sh and uploads. Which rule applies?\n\n"
-    "❯ 1. Yes\n     I bump, tag, and publish.\n  2. Devs release\n  3. Type something.\n"
-)
-REVIEW_TAB = (
-    "←  ☒ Merge #66  ☒ Releases  ✔ Submit  →\n\nReview your answers\n"
-    "Ready to submit your answers?\n\n❯ 1. Submit answers\n  2. Cancel\n"
-)
-
-
-class FormTerminal(FakeSupervisor):
-    """Each digit answers the tab on screen and shows the next one."""
-
-    def __init__(self, tabs: list[str]) -> None:
-        super().__init__(tabs[0])
-        self.tabs = tabs
-
-    def write_bytes(self, data: bytes) -> bool:
-        self.pasted.append(data)
-        at = self.tabs.index(self.screen)
-        self.screen = self.tabs[at + 1] if at + 1 < len(self.tabs) else CLAUDE_EMPTY
-        return True
-
-
-def publish_form(server) -> list[dict]:
-    tab = {"options": [{"label": "Yes"}, {"label": "Hold"}]}
-    ask = {
-        "questions": [
-            {**tab, "question": "Merge PR #66, which keeps empty folders visible in the sidebar?"},
-            {
-                "question": "main-dev (Oracle) says you decided releases move entirely to me: "
-                "version bumps, tags, scripts/release.sh and uploads. Which rule applies?",
-                "options": [{"label": "Yes"}, {"label": "Devs release"}],
+                "question": "Which rule applies?",
+                "multiSelect": True,
+                "options": [{"label": "release-dev releases"}, {"label": "Devs release"}],
             },
         ]
     }
-    server.bus.publish(
-        {
-            "event_type": "PermissionRequest",
-            "session_key": "pm",
-            "tool_name": "AskUserQuestion",
-            "tool_input": ask,
-        }
-    )
-    return [n for n in notes(server) if n["kind"] == "choice" and n["status"] == "open"]
+    event = {
+        "event_type": "PermissionRequest",
+        "session_key": "pm",
+        "tool_name": "AskUserQuestion",
+        "tool_input": ask,
+    }
+    server.bus.publish(event)
+    server.bus.publish(event)  # a repeat while the note is open adds nothing
+    [note] = [n for n in notes(server) if n["kind"] == "choice"]
+    assert note["questions"] == [
+        {"question": "Merge PR #66?", "options": ["Yes", "Hold"]},
+        {"question": "Which rule applies?", "options": ["release-dev releases", "Devs release"]},
+    ]
+    sup.screen = MENU
+    status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": 0})
+    assert status == 409 and "in its terminal" in body["error"]
+    assert sup.pasted == []
 
-
-def test_multi_tab_form_gets_a_note_per_tab_answered_in_order_then_submitted(
-    world, monkeypatch
-) -> None:
-    server, owner, _, _ = world
-    form = FormTerminal([MERGE_TAB, RELEASES_TAB, REVIEW_TAB])
-    monkeypatch.setattr(server.orchestrator, "get", lambda key: form)
-    merge, releases = publish_form(server)
-    assert [(n["step"], n["steps"]) for n in (merge, releases)] == [(0, 2), (1, 2)]
-
-    status, body = post(server, owner, f"/relay/{releases['id']}/answer", {"answer": 0})
-    assert status == 409 and "earlier question" in body["error"]
-    assert form.pasted == []
-
-    assert post(server, owner, f"/relay/{merge['id']}/answer", {"answer": 0})[0] == 200
-    status, body = post(server, owner, f"/relay/{releases['id']}/answer", {"answer": 0})
-    assert (status, body["note"]["route"]) == (200, "keystroke")
-    assert form.pasted == [b"1", b"1", b"1"]  # merge tab, releases tab, Submit answers
-
-
-def test_label_shared_across_tabs_is_not_pressed_on_the_wrong_tab(world, monkeypatch) -> None:
-    server, owner, _, _ = world
-    form = FormTerminal([RELEASES_TAB])  # the merge tab was answered in the terminal
-    monkeypatch.setattr(server.orchestrator, "get", lambda key: form)
-    merge, _ = publish_form(server)
-    status, _ = post(server, owner, f"/relay/{merge['id']}/answer", {"answer": 0})
-    assert status == 409  # "1. Yes" is on screen, but under the releases question
-    assert form.pasted == []
-
-
-def test_form_whose_submit_tab_never_shows_is_reported_unsubmitted(world, monkeypatch) -> None:
-    server, owner, _, _ = world
-    form = FormTerminal([MERGE_TAB, RELEASES_TAB, "something else"])
-    monkeypatch.setattr(server.orchestrator, "get", lambda key: form)
-    merge, releases = publish_form(server)
-    post(server, owner, f"/relay/{merge['id']}/answer", {"answer": 0})
-    status, body = post(server, owner, f"/relay/{releases['id']}/answer", {"answer": 0})
-    assert (status, body["note"]["route"]) == (200, "keystroke-unsubmitted")
-    assert form.pasted == [b"1", b"1"]
+    server.bus.publish({"event_type": "PostToolUse", "session_key": "pm", "tool_name": "X"})
+    assert [n["status"] for n in notes(server) if n["kind"] == "choice"] == ["handled"]
 
 
 BLOCKED = '{"kind": "blocked", "ask": "Should it spec the onboarding fix?", "options": []}'

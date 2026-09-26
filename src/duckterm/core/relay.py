@@ -135,24 +135,17 @@ def question_from(text: str) -> str | None:
 
 
 def choices_from(tool_input: dict[str, Any]) -> list[tuple[str, list[str]]]:
-    """(question, option labels) for each tab of an AskUserQuestion form, or
-    [] when any tab can't be answered by one digit press. A multi-select tab
-    only toggles on a digit, so the whole form stays in the terminal."""
+    """(question, option labels) for each question of an AskUserQuestion form."""
     questions = tool_input.get("questions")
-    if not isinstance(questions, list) or not questions:
-        return []
     choices = []
-    for q in questions:
-        if not isinstance(q, dict) or q.get("multiSelect"):
-            return []
-        options = [
-            str(o.get("label"))
-            for o in q.get("options") or []
-            if isinstance(o, dict) and o.get("label")
-        ]
-        if not q.get("question") or not options:
-            return []
-        choices.append((str(q["question"]), options))
+    for q in questions if isinstance(questions, list) else []:
+        if isinstance(q, dict) and q.get("question"):
+            options = [
+                str(o.get("label"))
+                for o in q.get("options") or []
+                if isinstance(o, dict) and o.get("label")
+            ]
+            choices.append((str(q["question"]), options))
     return choices
 
 

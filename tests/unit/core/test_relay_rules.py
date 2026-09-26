@@ -30,16 +30,14 @@ def test_question_from_reads_only_the_final_paragraph(text, question) -> None:
     assert question_from(text) == question
 
 
-def test_choices_from_reads_every_tab_and_skips_forms_a_digit_cannot_answer() -> None:
+def test_choices_from_reads_every_question_and_its_labels() -> None:
     color = {"question": "Pick one color:", "options": [{"label": "Red"}, {"label": "Green"}]}
-    ship = {"question": "Ship it?", "options": [{"label": "Yes"}, {"label": "No"}]}
-    assert choices_from({"questions": [color, ship]}) == [
+    ship = {"question": "Ship it?", "multiSelect": True, "options": [{"label": "Yes"}]}
+    assert choices_from({"questions": [color, ship, {"options": []}]}) == [
         ("Pick one color:", ["Red", "Green"]),
-        ("Ship it?", ["Yes", "No"]),
+        ("Ship it?", ["Yes"]),
     ]
-    assert choices_from({"questions": []}) == []
-    assert choices_from({"questions": [color, {**ship, "multiSelect": True}]}) == []
-    assert choices_from({"questions": [color, {"question": "No options?"}]}) == []
+    assert choices_from({"questions": "nope"}) == []
 
 
 @pytest.fixture

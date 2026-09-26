@@ -101,17 +101,24 @@ it("pre-fills a reply drafted by an answer rule and shows how close it is to act
   expect(screen.getByText(/Drafted by R2\. Send it unchanged 7 more times/)).toBeVisible();
 });
 
-it("answers approvals and multiple-choice notes with their buttons", async () => {
+it("answers approvals with buttons, and sends menu questions to the agent's terminal", async () => {
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.relayAnswer).mockResolvedValue({ note: question });
+  const onOpenTerminal = vi.fn();
   const approval: RelayNote = { ...question, id: "a1", kind: "approval", question: undefined, tool: "Bash", detail: "pytest -q" };
-  const choice: RelayNote = { ...question, id: "c1", kind: "choice", question: "Pick one color:", options: ["Red", "Green"] };
-  render(<OracleChat relay={{ notes: [approval, choice], rules: [], open: 2 }} onRelayChange={() => {}} />);
-  expect(screen.getByText("pytest -q")).toBeVisible();
+  const choice: RelayNote = {
+    ...question, id: "c1", kind: "choice", session_key: "rel", name: "release-dev", question: undefined,
+    questions: [{ question: "Merge PR #66?", options: ["Yes", "Hold"] }, { question: "Which rule applies?", options: ["release-dev releases"] }],
+  };
+  render(<OracleChat relay={{ notes: [approval, choice], rules: [], open: 2 }} onRelayChange={() => {}} onOpenTerminal={onOpenTerminal} />);
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve" })); });
   expect(api.relayAnswer).toHaveBeenCalledWith("a1", "approve");
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "2. Green" })); });
-  expect(api.relayAnswer).toHaveBeenCalledWith("c1", 1);
+  expect(screen.getByText("Merge PR #66?")).toBeVisible();
+  expect(screen.getByText("Which rule applies?")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Yes" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Open release-dev's terminal" }));
+  expect(onOpenTerminal).toHaveBeenCalledWith("rel");
+  expect(api.relayAnswer).toHaveBeenCalledTimes(1);
 });
 
 it("turns an always sentence into a proposed rule, creates it on confirm, and stops it by id", async () => {

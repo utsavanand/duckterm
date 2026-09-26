@@ -194,7 +194,7 @@ export function ControlTower({
       </div>
 
       <aside className="rd-tower-oracle" aria-label="Ask Oracle">
-        <OracleChat relay={relay} onRelayChange={relay.refresh} />
+        <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
       </aside>
 
       {active && activeAgent && (

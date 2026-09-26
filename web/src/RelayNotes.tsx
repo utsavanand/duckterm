@@ -3,7 +3,7 @@ import { api, RelayNote, RelayRule } from "./api";
 
 function label(n: RelayNote): string {
   if (n.kind === "approval") return "Approval";
-  if (n.kind === "choice") return (n.steps ?? 1) > 1 ? `Question ${(n.step ?? 0) + 1} of ${n.steps}` : "Question";
+  if (n.kind === "choice") return "Question";
   return n.urgency === "offer" ? "Offer" : "Needs you";
 }
 
@@ -27,12 +27,7 @@ export function closedLine(n: RelayNote): string {
     const verb = n.answer === "approve" ? "approved" : "denied";
     return `${by ? by + verb : "You " + verb}. ${n.route === "keystroke" ? "Oracle pressed the key in its terminal." : "Relayed through the approval request."}`;
   }
-  if (n.kind === "choice") {
-    const chose = `You chose "${n.answer}".`;
-    if (n.route === "keystroke-unsubmitted") return `${chose} Oracle selected it, but couldn't find Submit. Submit the answers in its terminal.`;
-    if ((n.step ?? 0) + 1 < (n.steps ?? 1)) return `${chose} Oracle selected it. Answer the next question to finish.`;
-    return `${chose} Oracle selected it in its menu${(n.steps ?? 1) > 1 ? " and submitted the answers" : ""}.`;
-  }
+  if (n.kind === "choice") return `You chose "${n.answer}". Oracle selected it in its menu.`;
   const said = `${by ? by + "replied" : "You replied"} "${n.answer}".`;
   if (n.route === "inbox") {
     return `${said} It couldn't be typed right now${n.route_reason ? ` (${n.route_reason.split(".")[0].toLowerCase()})` : ""}, so it's in its inbox and Oracle will nudge it.`;
@@ -46,11 +41,13 @@ export function NoteCard({
   rules,
   onChange,
   onPropose,
+  onOpenTerminal,
 }: {
   note: RelayNote;
   rules: RelayRule[];
   onChange: () => void;
   onPropose: (text: string) => void;
+  onOpenTerminal?: (key: string) => void;
 }) {
   const [reply, setReply] = useState(note.suggestion?.reply ?? "");
   const [busy, setBusy] = useState(false);
@@ -89,7 +86,17 @@ export function NoteCard({
           {note.tool && note.tool !== "Bash" && <span className="rd-relay-meta"> ({note.tool})</span>}
         </div>
       )}
-      {note.kind === "choice" && note.question && <blockquote className="rd-relay-quote">{note.question}</blockquote>}
+      {note.kind === "choice" &&
+        (note.questions ?? (note.question ? [{ question: note.question, options: note.options ?? [] }] : [])).map((q, i) => (
+          <div key={i}>
+            <blockquote className="rd-relay-quote">{q.question}</blockquote>
+            {open && q.options.length > 0 && (
+              <ol className="rd-relay-options">
+                {q.options.map((o) => <li key={o}>{o}</li>)}
+              </ol>
+            )}
+          </div>
+        ))}
       {note.kind === "question" && note.question && <div className="rd-relay-ask">{note.question}</div>}
       {note.kind === "question" && note.excerpt && (
         <details className="rd-relay-excerpt">
@@ -113,13 +120,12 @@ export function NoteCard({
           </button>
         </div>
       )}
-      {open && note.kind === "choice" && (
+      {open && onOpenTerminal && (
         <div className="rd-relay-actions">
-          {(note.options ?? []).slice(0, 9).map((o, i) => (
-            <button key={o} className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy} onClick={() => void answer(i)}>
-              {i + 1}. {o}
-            </button>
-          ))}
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => onOpenTerminal(note.session_key)}>
+            Open {note.name}'s terminal
+          </button>
+          {note.kind === "choice" && <span className="rd-relay-meta">Answer its menu there.</span>}
         </div>
       )}
       {open && note.kind === "question" && (note.options?.length ?? 0) > 0 && (
