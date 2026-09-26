@@ -141,10 +141,11 @@ def test_tick_pastes_fixed_reminder_once_without_peer_text(idle_recipient) -> No
     server, sup = idle_recipient
     asyncio.run(server._oracle_tick())
     asyncio.run(server._oracle_tick())
-    assert len(sup.pasted) == 1
+    assert len(sup.pasted) == 2  # the paste, then Enter on its own
     text = sup.pasted[0].decode()
     assert text.startswith("\x1b[200~Duckterm Oracle: you have 1 inbox item waiting")
-    assert text.endswith("\x1b[201~\r")
+    assert text.endswith("\x1b[201~")
+    assert sup.pasted[1] == b"\r"
     assert "What contract should I use?" not in text
 
 

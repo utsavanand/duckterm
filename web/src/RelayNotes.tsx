@@ -32,6 +32,7 @@ export function closedLine(n: RelayNote): string {
   if (n.route === "inbox") {
     return `${said} It couldn't be typed right now${n.route_reason ? ` (${n.route_reason.split(".")[0].toLowerCase()})` : ""}, so it's in its inbox and Oracle will nudge it.`;
   }
+  if (n.route === "prompt-stuck") return `${said} Typed into its prompt, but it didn't submit. Press Enter in its terminal.`;
   return `${said} Typed into its prompt.`;
 }
 

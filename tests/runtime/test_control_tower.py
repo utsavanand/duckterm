@@ -81,7 +81,7 @@ def test_typing_into_the_prompt_pastes_only_when_every_gate_passes(tower) -> Non
     server, owner, terminal, history = tower
     status, body = send(server, owner, "shared", "go ahead", "prompt")
     assert (status, body["delivered"]) == (200, "prompt")
-    assert terminal.pasted == [b"\x1b[200~go ahead\x1b[201~\r"]
+    assert terminal.pasted == [b"\x1b[200~go ahead\x1b[201~", b"\r"]
 
     terminal.screen = CODEX_DRAFT
     status, body = send(server, owner, "shared", "again", "prompt")
@@ -94,7 +94,7 @@ def test_typing_into_the_prompt_pastes_only_when_every_gate_passes(tower) -> Non
     terminal.last_owner_input_ms = 0
     history.set_state("shared", "busy")
     assert "isn't idle" in send(server, owner, "shared", "again", "prompt")[1]["error"]
-    assert len(terminal.pasted) == 1
+    assert len(terminal.pasted) == 2
 
 
 def test_control_tower_reports_mail_nudges_backup_and_tokens(tower, monkeypatch, tmp_path) -> None:

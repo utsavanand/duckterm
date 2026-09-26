@@ -173,7 +173,68 @@ def test_turn_ending_on_a_question_becomes_a_note_and_the_reply_is_typed(
     assert note["excerpt"].endswith("Want me to spec that fix?")
     status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": "Yes, spec it"})
     assert (status, body["note"]["route"]) == (200, "prompt")
-    assert sup.pasted == [b"\x1b[200~Yes, spec it\x1b[201~\r"]
+    assert sup.pasted == [b"\x1b[200~Yes, spec it\x1b[201~", b"\r"]
+
+
+class SlowTerminal(FakeSupervisor):
+    """Claude Code as seen in the wild: the paste lands in the prompt, and an
+    Enter that arrives too soon after it is swallowed. It submits (records
+    UserPromptSubmit and clears the prompt) only on Enter number `submits_on`."""
+
+    def __init__(self, history, submits_on: int | None) -> None:
+        super().__init__(CLAUDE_EMPTY)
+        self.history, self.submits_on, self.enters = history, submits_on, 0
+
+    def write_bytes(self, data: bytes) -> bool:
+        self.pasted.append(data)
+        if data.startswith(b"\x1b[200~"):
+            text = data[len(b"\x1b[200~") : -len(b"\x1b[201~")].decode()
+            self.screen = CLAUDE_EMPTY.replace("❯\xa0", "❯\xa0" + text)
+        elif data == b"\r":
+            self.enters += 1
+            if self.enters == self.submits_on:
+                self.screen = CLAUDE_EMPTY
+                now = int(time.time() * 1000)
+                self.history.record(
+                    {
+                        "_id": f"ups-{now}",
+                        "_ts": now,
+                        "event_type": "UserPromptSubmit",
+                        "session_key": "pm",
+                    }
+                )
+        return True
+
+
+def test_swallowed_enter_is_pressed_again_until_the_agent_takes_the_prompt(
+    world, monkeypatch
+) -> None:
+    server, owner, _, history = world
+    slow = SlowTerminal(history, submits_on=2)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: slow)
+    [note] = question_note(server, monkeypatch, "Should I start with B1?")
+    status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": "Yes"})
+    assert (status, body["note"]["route"]) == (200, "prompt")
+    assert slow.pasted == [b"\x1b[200~Yes\x1b[201~", b"\r", b"\r"]
+
+
+def test_reply_that_never_submits_is_reported_stuck(world, monkeypatch) -> None:
+    server, owner, _, history = world
+    stuck = SlowTerminal(history, submits_on=None)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: stuck)
+    [note] = question_note(server, monkeypatch, "Should I start with B1?")
+    status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": "Yes"})
+    assert (status, body["note"]["route"]) == (200, "prompt-stuck")
+    assert stuck.pasted.count(b"\r") == 2  # one retry, then it stops pressing
+
+
+def test_owner_message_that_never_submits_says_to_press_enter(world, monkeypatch) -> None:
+    server, owner, _, history = world
+    stuck = SlowTerminal(history, submits_on=None)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: stuck)
+    body = json.dumps({"text": "go ahead", "mode": "prompt"}).encode()
+    status, reply = dispatch(server, "POST", "/sessions/pm/message", owner, body)
+    assert status == 409 and "Press Enter in its terminal" in reply["error"]
 
 
 def test_reply_goes_to_the_inbox_when_a_draft_blocks_typing(world, monkeypatch) -> None:
