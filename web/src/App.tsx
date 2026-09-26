@@ -20,6 +20,7 @@ import { Messages } from "./Messages";
 import { MessagePinStrip, PinTarget, useMessagePins } from "./MessagePins";
 import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
+import { PanelToggle, useSidePanels } from "./SidePanels";
 import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
 import {
@@ -51,6 +52,7 @@ function Dashboard() {
   const { sessions: sourceSessions, connected, removeSessions, patchSession } =
     useEventStream();
   const inboxCounts = useInboxCounts();
+  const sidePanels = useSidePanels();
   const sessions = sourceSessions.map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 }));
   const toast = useToast();
   const now = useNow(1000);
@@ -314,10 +316,11 @@ function Dashboard() {
           onClose={() => setGridFolder(null)}
         />
       ) : (
-        <div className="rd-panels-3">
-          <section className="rd-agents">
+        <div className={`rd-panels-3${sidePanels.collapsed.left ? " rd-agents-collapsed" : ""}${sidePanels.collapsed.right ? " rd-context-collapsed" : ""}`}>
+          <section className={`rd-agents${sidePanels.collapsed.left ? " rd-side-collapsed" : ""}`}>
             <div className="rd-panel-head">
               <span>Agents</span>
+              <PanelToggle side="left" collapsed={sidePanels.collapsed.left} onToggle={() => sidePanels.toggle("left")} />
             </div>
             {agents.length === 0 && folders.length === 0 ? (
               <p className="rd-panel-empty">
@@ -449,9 +452,10 @@ function Dashboard() {
             )}
           </section>
 
-          <section className="rd-context-pane">
+          <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`}>
             <div className="rd-panel-head">
               <span>{selected ? selected.label : "Context"}</span>
+              <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
             <div className="rd-context-body">
               {selected && <ContextPanel session={selected} />}
