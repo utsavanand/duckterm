@@ -3157,7 +3157,6 @@ class Server:
             picked = oracle.should_nudge(
                 state="idle",
                 turn_ended_ms=self.history.last_event_ts(key, events.STOP),
-                observed_since_ms=sup.observed_since_ms,
                 last_owner_input_ms=sup.last_owner_input_ms,
                 # Not sup.runtime: sessions re-adopted after a restart run
                 # under GenericRuntime, which never reports an empty prompt.

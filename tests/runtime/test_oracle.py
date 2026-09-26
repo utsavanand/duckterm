@@ -44,7 +44,6 @@ OLD_PEER = {"id": "q1", "kind": "question", "status": "queued", "created_at": NO
 GATES = dict(
     state="idle",
     turn_ended_ms=NOW - HOUR,
-    observed_since_ms=NOW - 2 * HOUR,
     last_owner_input_ms=NOW - 3 * HOUR,
     prompt_empty=True,
     mail=[OLD_PEER],
@@ -60,9 +59,10 @@ GATES = dict(
         ({"state": "waiting"}, False),
         ({"prompt_empty": False}, False),
         ({"turn_ended_ms": NOW - 60_000}, False),  # not settled
-        ({"last_owner_input_ms": NOW - 30 * 60_000}, False),  # typed after the turn ended
-        # Turn ended before this server watched: keystroke memory is blank, screen decides.
-        ({"observed_since_ms": NOW - 30 * 60_000, "last_owner_input_ms": 0}, True),
+        ({"last_owner_input_ms": NOW - 60_000}, False),  # typing right now
+        # A stray key after the turn ended no longer blocks until the next turn;
+        # the screen check covers a real draft.
+        ({"last_owner_input_ms": NOW - 30 * 60_000}, True),
         ({"mail": [{**OLD_PEER, "created_at": NOW - 60_000}]}, False),  # fresh peer mail
         ({"mail": [{**OLD_PEER, "last_read_at": NOW - HOUR}]}, False),  # read, left queued
         ({"mail": [{**OLD_PEER, "status": "accepted", "last_read_at": NOW - HOUR}]}, True),
@@ -92,7 +92,6 @@ class FakeSupervisor:
         # session's real runtime is only on its DB row.
         self.runtime = GenericRuntime("true")
         self.screen = screen
-        self.observed_since_ms = 0
         self.last_owner_input_ms = 0
         self.pasted: list[bytes] = []
 

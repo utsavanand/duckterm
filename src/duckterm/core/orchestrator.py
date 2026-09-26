@@ -90,10 +90,8 @@ class SessionSupervisor:
         self._input_queue: asyncio.Queue[bytes] | None = None
         self._input_task: asyncio.Task[None] | None = None
         self._last_input = 0.0
-        # Wall-clock ms, for Oracle: a keystroke after the turn ended may be an
-        # unsent draft. Only trustworthy for turns that ended after we started
-        # watching, hence observed_since_ms.
-        self.observed_since_ms = int(time.time() * 1000)
+        # Wall-clock ms of the owner's last keystroke, for Oracle: no nudge is
+        # pasted while someone may be typing into this terminal.
         self.last_owner_input_ms = 0
 
     def _emit(self, event_type: str, **fields: object) -> None:
