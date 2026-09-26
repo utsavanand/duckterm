@@ -57,7 +57,21 @@ pass, and together they answer that objection:
 
 The reminder never quotes the mail, so a peer cannot steer another agent
 through Oracle. Each nudge is recorded as an `OracleNudge` event in the
-session's history.
+session's history, with `submitted` saying whether the agent took it.
+
+**Typing into a prompt.** Every time Oracle types into an agent (nudges,
+relayed replies, owner messages from the control tower, and collaboration
+introductions) it pastes the text, waits 300 ms, and presses Enter as a
+separate write. Claude Code swallowed an Enter sent in the same burst as the
+paste: on 2026-09-26 one nudge of about 40 sat unsubmitted in architect's
+prompt for 14 hours, and the leftover text failed the empty-prompt check for
+every later nudge. Oracle now waits up to 4 s for the agent's
+`UserPromptSubmit` event. If none arrives and the text is still on screen, it
+presses Enter once more. If it is still there, the result is reported as
+stuck: a relayed reply closes with route `prompt-stuck` and tells the owner to
+press Enter, and a control-tower message returns 409 with the same advice.
+A runtime without a submit hook counts as submitted once the text leaves the
+screen.
 
 **Runtimes.** Nudging applies to every coding agent whose empty prompt
 duckterm can recognise, through `Harness.prompt_is_empty`. Claude Code (`❯`),

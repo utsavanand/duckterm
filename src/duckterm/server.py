@@ -745,8 +745,7 @@ class Server:
             await _write_json(writer, 200, {"prompt": prompt})
             return
         assert supervisor is not None
-        # A user-requested follow-up, bracketed as one paste rather than many Enter presses.
-        sent = supervisor.write_bytes(b"\x1b[200~" + prompt.encode() + b"\x1b[201~\r")
+        sent = await self._submit_prompt(session_key, prompt) == "submitted"
         await _write_json(writer, 200 if sent else 409, {"sent": sent})
 
     async def _session_enroll(
@@ -2364,18 +2363,14 @@ class Server:
         now = int(time.time() * 1000)
         refusal = await self._typing_refusal(key)
         if refusal is None:
-            sup = self.orchestrator.get(key)
-            assert sup is not None
-            sent = await asyncio.to_thread(
-                sup.write_bytes, b"\x1b[200~" + text.encode() + b"\x1b[201~\r"
-            )
-            if sent:
+            status = await self._submit_prompt(key, text)
+            if status != "failed":
                 self.relay.close(
                     note,
                     "answered",
                     answer=text,
                     answered_by=answered_by,
-                    route="prompt",
+                    route="prompt" if status == "submitted" else "prompt-stuck",
                     closed_at=now,
                 )
                 return note
@@ -2616,12 +2611,56 @@ class Server:
         if refusal:
             await _write_json(writer, 409, {"error": refusal})
             return
-        sup = self.orchestrator.get(session_key)
-        assert sup is not None
-        sent = await asyncio.to_thread(
-            sup.write_bytes, b"\x1b[200~" + text.strip().encode() + b"\x1b[201~\r"
+        status = await self._submit_prompt(session_key, text.strip())
+        if status == "stuck":
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": "It's typed into its prompt but didn't submit. "
+                    "Press Enter in its terminal."
+                },
+            )
+            return
+        await _write_json(
+            writer,
+            200 if status == "submitted" else 409,
+            {"delivered": "prompt" if status == "submitted" else None},
         )
-        await _write_json(writer, 200 if sent else 409, {"delivered": "prompt" if sent else None})
+
+    # Paste, pause, then Enter on its own: Claude Code sometimes swallowed an
+    # Enter that arrived in the same burst as a paste, and an Oracle nudge sat
+    # unsent in architect's prompt for 14 hours (2026-09-26).
+    _SUBMIT_GAP_S = 0.3
+    _SUBMIT_CONFIRM_S = 4.0
+
+    async def _submit_prompt(self, key: str, text: str) -> str:
+        """Type text into a session's prompt and make sure it was submitted.
+        Returns "submitted", "stuck" (still sitting in the prompt after a
+        second Enter), or "failed" (couldn't write to the terminal)."""
+        sup = self.orchestrator.get(key)
+        if sup is None or not sup.running:
+            return "failed"
+        typed_at = int(time.time() * 1000)
+        if not await asyncio.to_thread(
+            sup.write_bytes, b"\x1b[200~" + text.encode() + b"\x1b[201~"
+        ):
+            return "failed"
+        needle = " ".join(text.split())[:40]
+        for _ in range(2):
+            await asyncio.sleep(self._SUBMIT_GAP_S)
+            await asyncio.to_thread(sup.write_bytes, b"\r")
+            waited = 0.0
+            while waited < self._SUBMIT_CONFIRM_S:
+                if self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) >= typed_at:
+                    return "submitted"
+                await asyncio.sleep(0.2)
+                waited += 0.2
+            screen = plain_screen(await asyncio.to_thread(sup.visible_screen))
+            if needle not in " ".join(screen.split()):
+                # It left the prompt; the runtime just didn't report a submit.
+                return "submitted"
+        return "stuck"
 
     async def _typing_refusal(self, session_key: str) -> str | None:
         """Why owner text can't be typed into this session's prompt right now,
@@ -3911,14 +3950,18 @@ class Server:
             if not picked:
                 continue
             text = oracle.reminder(picked, now)
-            # Bracketed paste so a multi-word line lands as one input, as the
-            # Introduce button does.
-            if not await asyncio.to_thread(
-                sup.write_bytes, b"\x1b[200~" + text.encode() + b"\x1b[201~\r"
-            ):
+            status = await self._submit_prompt(key, text)
+            if status == "failed":
                 continue
             self._oracle_nudges[key] = oracle.Nudge(frozenset(str(m["id"]) for m in picked), now)
-            self.bus.publish({"event_type": "OracleNudge", "session_key": key, "text": text})
+            self.bus.publish(
+                {
+                    "event_type": "OracleNudge",
+                    "session_key": key,
+                    "text": text,
+                    "submitted": status == "submitted",
+                }
+            )
 
     def _archive_swept(self, key: str) -> None:
         """Archive a session whose terminal is gone (auto-sweep)."""
