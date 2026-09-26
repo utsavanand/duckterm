@@ -6,7 +6,8 @@ Git credentials unrelated to the account shown by the GitHub connector.
 **Rule:** expose cloning for This Mac and remote destinations. List repositories
 through the destination's selected connector and use that same grant to clone.
 Shared credentials stay on the connector host; verified repository bundles cross
-the authenticated relay. Never fall back silently to an ambient account.
+the authenticated relay. The broker must own temporary-directory cleanup so
+revoking access also removes partial clones. Never fall back silently to an ambient account.
 
 ## 2026-09-26 — Copy source needs a folder explorer
 **Broke:** copying a local project to a remote machine required typing its path.

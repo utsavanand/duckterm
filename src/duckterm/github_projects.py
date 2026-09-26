@@ -149,8 +149,8 @@ def shared_request(
         stream.settimeout(240)
         stream.sendall(json.dumps({"operation": operation, **params}).encode() + b"\n")
         with stream.makefile("rb") as reader:
-            line = reader.readline(65537)
-            if len(line) > 65536:
+            line = reader.readline(512 * 1024 + 1)
+            if len(line) > 512 * 1024:
                 raise ValueError("Invalid GitHub connector response")
             decoded = json.loads(line)
             if not isinstance(decoded, dict):

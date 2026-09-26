@@ -106,12 +106,17 @@ def test_certificate_required_and_disable_closes_stdio(
         "command",
         lambda name, cred, write: ([sys.executable, str(fake)], dict(os.environ)),
     )
+    worker_directories = []
     real_spawn = asyncio.create_subprocess_exec
 
     async def spawn(*argv, **kwargs):
         if protocol == "github-projects":
             assert argv == (sys.executable, "-m", "duckterm.github_projects")
             assert kwargs["env"]["DUCKTERM_GITHUB_IDENTITY"] == "test-user"
+            temporary = Path(kwargs["env"]["TMPDIR"])
+            assert temporary.is_dir()
+            (temporary / "partial-private-repository").write_text("synthetic contents")
+            worker_directories.append(temporary)
             argv = (sys.executable, str(fake))
         return await real_spawn(*argv, **kwargs)
 
@@ -167,6 +172,7 @@ def test_certificate_required_and_disable_closes_stdio(
             writer.close()
             await writer.wait_closed()
             assert broker.active == 0
+            assert all(not directory.exists() for directory in worker_directories)
         finally:
             server.close()
             await server.wait_closed()

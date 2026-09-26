@@ -217,6 +217,10 @@ class Broker:
                 # Provider tokens remain in this broker-side worker only.
                 argv = [sys.executable, "-m", "duckterm.github_projects"]
                 env["DUCKTERM_GITHUB_IDENTITY"] = str(entry.get("identity") or "")
+                # The broker owns cleanup even when revocation kills the worker.
+                env["TMPDIR"] = resources.enter_context(
+                    tempfile.TemporaryDirectory(prefix="duckterm-github-request-")
+                )
             # Disable or rotation must win races while credentials are fetched.
             if self.permitted(workspace, name) != entry:
                 raise ValueError("Connector configuration changed")
