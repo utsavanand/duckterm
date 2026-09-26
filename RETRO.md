@@ -76,6 +76,16 @@ current dashboard's main frame may download a blob, and changing computers must
 reset navigation-load state so a failed new connection can retry. Compile the
 native app and rerun artifact, report UI, and transfer checks after integration.
 
+## 2026-09-26 — "Waiting" badges stayed wrong for days after the idle fix
+**Broke:** 6 sessions showed "waiting" and filled the control tower's Needs
+you list; 5 weren't waiting on anything.
+**Cause:** the 2026-09-23 fix made new idle notices derive "idle", but
+sessions whose last event was an old untyped idle notice kept "waiting".
+State only changes on new events, and an unused session sends none.
+**Rule:** when a fix changes how state is derived, also correct the state
+already stored. Here Oracle's minute check clears "waiting" when the screen
+shows an empty prompt and no approval is pending.
+
 ## 2026-09-26 — Control tower opened with its header scrolled off screen
 **Broke:** opening the tower showed the tiles cut off at the top and no
 "← Sessions" button, so there was no visible way back.

@@ -49,10 +49,10 @@ pass, and together they answer that objection:
 | Gate | Why |
 | --- | --- |
 | State is `idle` | `waiting` means a question for the owner; that takes precedence |
-| Idle 10+ minutes since the last Stop event | The owner may be about to type |
+| Idle 5+ minutes since the last Stop event (10 until 2026-09-26) | The owner may be about to type |
 | No owner keystroke in the last 2 minutes | Someone may be typing right now. A draft left earlier shows on screen and fails the next check. (Until 2026-09-25 this was "since the turn ended", which let one stray key block nudges until the agent's next turn.) Focus and mouse reports the terminal sends by itself never count |
 | The harness sees an empty input box on screen | Catches any draft, however old, including typing duckterm never saw |
-| Mail is an owner broadcast, accepted work, or an unread peer question 10+ minutes old | Fresh peer mail gives an active recipient time to check itself; a question the agent read and left queued was its choice, often a status update needing no answer |
+| Mail is an owner broadcast, accepted work, or an unread peer question 5+ minutes old (10 until 2026-09-26) | Fresh peer mail gives an active recipient time to check itself; a question the agent read and left queued was its choice, often a status update needing no answer |
 | New mail since the last nudge; if mail from that nudge is still open, wait an hour | A session that chose not to act is not nagged, while one that handled its last reminder is woken for new mail right away |
 
 The reminder never quotes the mail, so a peer cannot steer another agent
@@ -60,11 +60,12 @@ through Oracle. Each nudge is recorded as an `OracleNudge` event in the
 session's history.
 
 **Runtimes.** Nudging applies to every coding agent whose empty prompt
-duckterm can recognise, through `Harness.prompt_is_empty`. Claude Code (`❯`)
-and Codex (`›`) implement it. Both ignore dimmed text after the marker:
-Codex shows a placeholder and Claude a suggested next prompt, while typed text
-is never dim.
-Copilot returns False until its prompt layout is captured and implemented.
+duckterm can recognise, through `Harness.prompt_is_empty`. Claude Code (`❯`),
+Codex (`›`), and Copilot CLI (`❯`, checked on 1.0.62 on 2026-09-26) implement
+it. All ignore dimmed text after the marker: Codex shows a placeholder and
+Claude a suggested next prompt, while typed text is never dim. Copilot
+sessions don't get an inbox automatically yet (roadmap item 9), so nudges
+reach only Copilot sessions that were introduced to collaboration by hand.
 The generic runtime stays False on purpose, because it may be a plain shell.
 PTY-backed sessions without tmux have no screen to read and are skipped.
 
@@ -82,6 +83,17 @@ nothing to answer. Duckterm mapped every Notification to `waiting`, so idle
 Claude sessions showed as waiting, inflated the tab-title count, and fired
 "waiting on an answer" desktop notifications. The hook now forwards
 `notification_type` and a trimmed `message`, and `idle_prompt` derives `idle`.
+
+## Stale "waiting" badges
+
+Once a minute, before nudging, Oracle clears "waiting" on sessions that are
+really idle: no pending approval, badge older than a minute, and an empty
+prompt on screen. A real wait always draws a menu whose selected line starts
+with the marker (Claude's permission dialog shows "❯ 1. Yes"), so it never
+reads as empty. The correction is recorded as an idle notice with
+`reconciled: true`. It exists because badges set by Claude's idle notice
+before the hook forwarded its type stayed "waiting" for days: on 2026-09-26,
+5 of 6 "waiting" sessions weren't waiting on anything.
 
 ## Later rules, with triggers
 

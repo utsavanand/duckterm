@@ -38,15 +38,19 @@ Branch protection and stop/resume are complete (see shipped items). PR #1 is
 closed. Independent bookmark, backup, and menu acceptance results, including
 open defects and test limits: [QA report](qa-2026-09-25.md).
 
-## Oracle (owner-requested 2026-09-23, branch `oracle`)
+## Oracle (owner-requested 2026-09-23)
 
-Design: [oracle-design.md](oracle-design.md). Stage 1 implemented, not yet
-merged or released: the Ask Oracle topbar button replaces the fleet question
-bar; idle agents with pending mail get one fixed reminder pasted into an empty
-prompt, on in every folder (kill switch `DUCKTERM_ORACLE=off`); idle Claude
-sessions no longer show as waiting. Copilot nudges need its prompt layout
-implemented. Later rules (needs-you queue, stale state, file collisions,
-scheduled AGENTS.md suggestions) are listed with triggers in the design doc.
+Design: [oracle-design.md](oracle-design.md) and
+[control-tower-design.md](control-tower-design.md). Shipped v0.4.45–v0.4.57:
+idle-inbox nudges for Claude Code and Codex, on in every folder (kill switch
+`DUCKTERM_ORACLE=off`); the control tower (the Oracle button: fleet insights,
+agents as ducks by team, per-session messages, a full-height Ask Oracle chat).
+Unreleased on main: Copilot nudges, and the settle and peer waits cut from 10
+to 5 minutes. Copilot sessions get an inbox only by hand until item 9 lands.
+
+Next: Oracle on WhatsApp (design PR #25, waiting on five owner answers). Later
+rules (stale state, file collisions, scheduled AGENTS.md suggestions) are
+listed with triggers in the design doc.
 
 Shipped 2026-09-23–25 (v0.4.40 → v0.4.47):
 
