@@ -87,6 +87,9 @@ export function AgentTree({
       toast(`Moved to ${r.to}`);
       onFoldersChanged();
     } catch (e) {
+      // A conflicting destination may have been created in another window.
+      // Refresh it even when this move failed so the owner can see it.
+      onFoldersChanged();
       toast(`Move failed: ${(e as Error).message}`, "err");
     }
   }

@@ -41,6 +41,7 @@ import { Modal, ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
 import { useTheme } from "./useTheme";
 import { useSidebarDensity } from "./useSidebarDensity";
+import { useFolders } from "./useFolders";
 import "./sidebarDensity.css";
 
 function useNow(intervalMs: number): number {
@@ -137,18 +138,10 @@ function Dashboard() {
       return { ...o, folders };
     });
 
-  // Folders persist on the server (incl. empty ones); the left list groups by
-  // them. Refetch when sessions change, since moving a session can create or
-  // clear a folder.
-  const [folders, setFolders] = useState<string[]>([]);
-  const refreshFolders = () =>
-    api
-      .folders()
-      .then((d) => setFolders(d.folders))
-      .catch(() => undefined);
+  const { folders, refreshFolders } = useFolders();
   useEffect(() => {
-    refreshFolders();
-  }, [sessions.length]);
+    void refreshFolders();
+  }, [sessions.length, refreshFolders]);
 
   async function deleteSession(key: string): Promise<boolean> {
     try {
