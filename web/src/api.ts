@@ -41,7 +41,7 @@ export interface RelayNote {
   blocking?: boolean;
   answer?: string;
   answered_by?: string; // "owner" or a rule id like "R2"
-  route?: "approval" | "keystroke" | "prompt" | "inbox";
+  route?: "approval" | "keystroke" | "prompt" | "prompt-stuck" | "inbox";
   route_reason?: string | null;
   suggestion?: { rule_id: string; reply: string };
 }

@@ -81,6 +81,16 @@ def _no_real_terminal() -> Iterator[None]:
             os.environ["DUCKTERM_NO_TERMINAL"] = prev
 
 
+@pytest.fixture(autouse=True)
+def _fast_prompt_submit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Server._submit_prompt pauses and waits for a submit event; tests
+    shouldn't spend real seconds on that."""
+    from duckterm.server import Server
+
+    monkeypatch.setattr(Server, "_SUBMIT_GAP_S", 0.0)
+    monkeypatch.setattr(Server, "_SUBMIT_CONFIRM_S", 0.05)
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _no_summarizer_autodetect() -> Iterator[None]:
     """Disable the summarizer's CLI-agent auto-detection in tests, so a

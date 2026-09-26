@@ -9,6 +9,15 @@ repository changes, and choose the exact checkout folder. Offer explicit folder
 creation. Publish into selected empty directories atomically; never merge over
 existing files, including files arriving between review and publication.
 
+## 2026-09-26 — Typing into an agent needs proof it submitted
+**Broke:** an Oracle nudge sat typed but unsent in a Claude Code prompt for
+14 hours. The leftover text then blocked every later nudge to that session.
+**Cause:** the paste and its Enter went out as one write, and Claude Code
+sometimes swallows an Enter that arrives with the paste. About 1 in 40 nudges.
+**Rule:** paste, pause, then press Enter separately. Confirm with the agent's
+`UserPromptSubmit` event, retry Enter once, and report "stuck" instead of
+claiming delivery.
+
 ## 2026-09-26 — Destination folders need browsing too
 **Broke:** entering a guessed remote home path left cloning blocked on a missing
 parent directory. Example paths were mistaken for real destination values.
