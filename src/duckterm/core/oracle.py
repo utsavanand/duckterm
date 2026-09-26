@@ -17,8 +17,10 @@ from typing import Any
 
 from duckterm.helpers.private_files import private_read, private_write
 
-SETTLE_MS = 10 * 60_000  # idle this long before a nudge: the owner may be about to type
-PEER_WAIT_MS = 10 * 60_000  # give an active recipient time to find new peer mail itself
+# Both were 10 minutes until 2026-09-26. Agents answered about 3 minutes after
+# a nudge, so the delay before the nudge was the part worth shortening.
+SETTLE_MS = 5 * 60_000  # idle this long before a nudge: the owner may be about to type
+PEER_WAIT_MS = 5 * 60_000  # give an active recipient time to find new peer mail itself
 # A draft always shows on screen, and prompt_empty already checks the screen.
 # Keystrokes only matter while someone may be typing right now.
 TYPING_QUIET_MS = 2 * 60_000

@@ -12,6 +12,7 @@ from duckterm.core import oracle
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.claude_code import ClaudeCodeRuntime
 from duckterm.runtimes.codex import CodexRuntime
+from duckterm.runtimes.copilot import CopilotRuntime
 from duckterm.runtimes.generic import GenericRuntime
 from duckterm.server import Server
 
@@ -22,6 +23,9 @@ CLAUDE_DRAFT = "\x1b[38;5;244m────\n\x1b[39m❯\xa0fix the flaky test\n�
 CLAUDE_SUGGESTION = "────\n\x1b[39m❯\xa0\x1b[2mcheck inbox\x1b[0m\n────"
 CODEX_EMPTY = "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n  gpt model · ~/repo"
 CODEX_DRAFT = "\x1b[1m›\x1b[0m ship the release\n  gpt model · ~/repo"
+# Copilot CLI 1.0.62: a "❯" line between two rules, status line below.
+COPILOT_EMPTY = "\x1b[38;2;134;134;134m────\n❯ \x1b[39m\n────\n / commands · ? help   Auto"
+COPILOT_DRAFT = "────\n❯ draft text\n────\n / commands · ? help"
 
 
 @pytest.mark.parametrize(
@@ -33,6 +37,8 @@ CODEX_DRAFT = "\x1b[1m›\x1b[0m ship the release\n  gpt model · ~/repo"
         (ClaudeCodeRuntime(), "no prompt visible", False),
         (CodexRuntime(), CODEX_EMPTY, True),
         (CodexRuntime(), CODEX_DRAFT, False),
+        (CopilotRuntime(), COPILOT_EMPTY, True),
+        (CopilotRuntime(), COPILOT_DRAFT, False),
     ],
 )
 def test_prompt_is_empty_ignores_placeholders_but_not_drafts(runtime, screen, empty) -> None:
