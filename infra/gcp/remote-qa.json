@@ -4,7 +4,7 @@
   "automated": {
     "python": 676,
     "frontend": 102,
-    "playwright": 57,
+    "playwright": 58,
     "nativeUnit": 4
   },
   "livePassed": [

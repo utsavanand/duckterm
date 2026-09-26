@@ -9,7 +9,7 @@ Application implementation and its QA remain separate from this completed setup.
 
 Current evidence: [remote-qa.json](../infra/gcp/remote-qa.json). The candidate now
 implements project copy/clone and exact-conversation handoff, integrates main
-through dc9e6da, and fixes the broker capacity race and forgotten-host cache.
+through 1ea6045, and fixes the broker capacity race and forgotten-host cache.
 Local automated, native compilation, and synthetic native transfer checks pass.
 The prior persistence check's successful same-PID result was recovered from the VM
 journal. The user approved isolated candidate deployment; live copy, interrupted

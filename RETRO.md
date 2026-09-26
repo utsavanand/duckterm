@@ -49,6 +49,15 @@ Oracle used to consume workspace width. A long active input line was permanently
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
 
+## 2026-09-26 — Initial terminal activation must respect open menus
+**Broke:** New Session intermittently vanished while being clicked, even without
+concurrent native UI probes.
+**Cause:** late session discovery activated the default terminal through an
+unconditional focus call, bypassing the guarded replay path.
+**Rule:** only explicit session-row or view-tab navigation may override another
+control's focus. Delay initial session discovery in a browser regression and
+verify an already-open menu remains focused and usable.
+
 ## 2026-09-26 — Move must preserve the name and open the exact destination session
 **Broke:** full native Move acceptance showed the destination folder name instead
 of the source session name. Opening the remote dashboard also lacked the moved

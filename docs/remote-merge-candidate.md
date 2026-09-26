@@ -1,6 +1,6 @@
 # Remote-session merge candidate
 
-The remote-session candidate now integrates main through `dc9e6da`. The main
+The remote-session candidate now integrates main through `1ea6045`. The main
 checkout has not been modified by this integration. The feature is validated for the requested merge into main.
 
 ## Behavior
@@ -23,7 +23,7 @@ checkout has not been modified by this integration. The feature is validated for
 
 ## Validation and practical limits
 
-The post-fix local gate passed: 676 Python tests, 102 frontend tests, and 57 browser
+The post-fix local gate passed: 676 Python tests, 102 frontend tests, and 58 browser
 tests. Four native unit tests and the real Swift transfer rehearsal also passed.
 Python lint, formatting, types, and documentation checks passed.
 
@@ -91,7 +91,7 @@ resolved; the feature remains separate pending acceptance.
 
 ## Integration validation — 2026-09-26 UTC
 
-Integrated main through `dc9e6da` (60 new commits since the previous integration).
+Integrated main through `1ea6045` (60 new commits since the previous integration).
 The full gate passed: 676 Python, 102 frontend, and 56 browser tests. Four native
 unit tests, the actual WebKit artifact-download probe, report UI checks, and the
 real Swift transfer/retry rehearsal passed. The separate DuckTerm Test app builds.
@@ -126,8 +126,10 @@ the session display name, and Open remote session carries its exact key through
 the native bridge instead of relying on dashboard default selection. Regression
 coverage checks name persistence and selection among multiple sessions.
 
-The first final browser run lost a New menu while native UI probes were running;
-the full gate was rerun without concurrent native windows. Synthetic destination
+A repeated browser failure isolated a separate initial-terminal activation race:
+late session discovery could steal focus and close New Session. Activation now
+respects open controls unless the user explicitly navigates via a session row or
+view tab. A delayed-discovery regression covers the race. Synthetic destination
 sessions, projects, and provider transcripts were removed. Production Claude PID
 66209 was preserved. Reboot testing remains deferred to avoid interrupting it;
 service restart and disconnect persistence are verified. Private-repository clone
