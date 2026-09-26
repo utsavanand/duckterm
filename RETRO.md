@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Collapsing chrome must preserve the live terminal
+
+Side panels consumed space even when the owner only needed the center. Collapse their contents without unmounting the terminal or changing its session identity; leave a visible, keyboard-accessible reopen control. Verify real PTY resize frames, unchanged unsent input, independent toggles, persistence and Oracle interaction, not just a wider CSS box.
+
 ## 2026-09-26 — Artifact previews must outlive temporary source files
 **Found:** a generated report or mockup can live in a temporary directory, so a
 catalog of file paths loses the deliverable when the agent cleans up or a file moves.
