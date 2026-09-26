@@ -352,7 +352,7 @@ F2. **Settings button** — the *surface* shipped in v0.4.45 (header Settings
     harness Agents tab, which updates the *agent CLIs*; this updates
     DuckTerm itself, and the two should not be conflated in the UI.
 
-F3. **Artifacts — implemented, release checks in progress** (`main-dev`).
+F3. **Artifacts — v0.4.54 implementation verified, release pending** (`main-dev`).
     The owner approved the local Artifacts tab beside Inbox and reviewed the
     concrete list/preview layout. Includes session-scoped saved copies,
     Markdown/static HTML/image previews, download and removal. Mac downloads
