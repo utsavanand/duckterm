@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Artifact previews must outlive temporary source files
+**Found:** a generated report or mockup can live in a temporary directory, so a
+catalog of file paths loses the deliverable when the agent cleans up or a file moves.
+**Rule:** register a bounded saved copy using the generating session's credential.
+Treat the path as provenance, never an instruction for the server to read a file.
+Keep artifact content out of the app's HTML origin, and test source deletion,
+session isolation, replacement, cleanup and backup restore before shipping.
+
 ## 2026-09-25 — Last-agent exit raced the next tmux launch
 
 Linux fork-chain CI intermittently returned HTTP 400 because tmux reported

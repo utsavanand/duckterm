@@ -276,6 +276,7 @@ class HistoryStore:
         self._conn.executescript(_SCHEMA)
         self._migrate()
         self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
+        self.artifacts = self.session_api.artifacts
         self.session_api.backfill()
         # Stamp the current version after migrating so a later older binary is
         # refused. (Can't parameterize a PRAGMA; the value is our own int.)
@@ -954,6 +955,7 @@ class HistoryStore:
         self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
+        self._conn.execute("DELETE FROM artifacts WHERE session_key = ?", (key,))
         self._conn.execute(
             "INSERT OR REPLACE INTO tombstones (session_key, deleted_at) VALUES (?, ?)",
             (key, now),
@@ -981,6 +983,7 @@ class HistoryStore:
             self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
+            self._conn.execute("DELETE FROM artifacts WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM tombstones WHERE session_key = ?", (key,))
             _remove_checkpoint_dir(key)  # leave zero trace, including on disk
         self._conn.commit()

@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from duckterm.helpers import session_credentials
+from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
+from duckterm.persistence.artifacts import ArtifactError, ArtifactStore
 from duckterm.runtimes.base import AT_REST_STATES
 
 # Store a far-future deadline so older servers do not immediately expire
@@ -119,6 +121,7 @@ class SessionAPI:
     def __init__(self, conn: sqlite3.Connection, credential_dir: Path) -> None:
         self.conn = conn
         self.credential_dir = credential_dir
+        self.artifacts = ArtifactStore(conn)
         conn.executescript(SCHEMA)
         question_columns = {
             row["name"] for row in conn.execute("PRAGMA table_info(session_questions)")
@@ -550,7 +553,12 @@ class SessionAPI:
                 member.get("session_updated_at", 0),
                 member.get("progress_at") or 0,
             ),
-            "capabilities": ["inbox.read", "answers.explicit"],
+            "capabilities": [
+                "inbox.read",
+                "answers.explicit",
+                "artifacts.register",
+                "artifacts.list",
+            ],
         }
 
     def _peer(self, sender: str, recipient: str, *, live: bool = True) -> dict[str, Any]:
@@ -693,7 +701,8 @@ class SessionAPI:
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path.removeprefix("/api/v1/session")
         query = urllib.parse.parse_qs(parsed.query)
-        if len(body) > MAX_BODY_BYTES:
+        limit = MAX_ARTIFACT_REQUEST_BYTES if path == "/artifacts" else MAX_BODY_BYTES
+        if len(body) > limit:
             raise APIError(413, "request body too large")
         try:
             req = json.loads(body or b"{}")
@@ -702,6 +711,13 @@ class SessionAPI:
         if not isinstance(req, dict):
             raise APIError(400, "expected a JSON object")
         member = self._member(key)
+        if path == "/artifacts" and method in {"GET", "POST"}:
+            try:
+                if method == "GET":
+                    return 200, {"artifacts": self.artifacts.list(key)}
+                return 200, {"artifact": self.artifacts.register(key, req)}
+            except ArtifactError as exc:
+                raise APIError(exc.status, str(exc)) from exc
         if path == "/self" and method == "GET":
             return 200, self._public(member)
         if path == "/self" and method == "PATCH":

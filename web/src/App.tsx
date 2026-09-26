@@ -11,6 +11,7 @@ import { BackupModal } from "./BackupModal";
 import { HeaderMenus } from "./HeaderMenus";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
+import { ArtifactsView } from "./ArtifactsView";
 import { InboxView } from "./InboxView";
 import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
@@ -80,7 +81,7 @@ function Dashboard() {
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
-  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox">(
+  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts">(
     "terminal",
   );
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
@@ -372,6 +373,9 @@ function Dashboard() {
               >
                 Inbox{selected && inboxCounts[selected.key] ? ` (${inboxCounts[selected.key]})` : ""}
               </button>
+              <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")}>
+                Artifacts
+              </button>
             </div>
             {selected && (view === "terminal" || view === "messages") && (
               <MessagePinStrip pins={messagePins.pins} error={messagePins.error} onOpen={(pin) => {
@@ -402,6 +406,12 @@ function Dashboard() {
                 ) : (
                   <p className="rd-panel-empty">Select a session to see its inbox.</p>
                 )}
+              </div>
+            )}
+            {view === "artifacts" && (
+              <div className="rd-messages-wrap">
+                {selected ? <ArtifactsView key={selected.key} sessionKey={selected.key} sessionName={selected.label} />
+                  : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
               </div>
             )}
             {/* Terminal view: keep a terminal MOUNTED per PTY-owned agent and just
