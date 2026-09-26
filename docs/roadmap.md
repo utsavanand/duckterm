@@ -258,9 +258,28 @@ F11. **Answer an agent from Oracle's chat without typing into its terminal**
        keep the typing path. Per-harness capability on the contract,
        default unsupported (RETRO rule), so "cannot answer without typing"
        is visible rather than silently degraded.
-     Sequencing: verify lead 2 with a probe first — it is cheap and decides
-     whether free-text answers need the approval path at all. Then widen the
-     decision payload and the timeout for structured answers.
+     **Design settled with `main-dev`, and their proposal is better than
+     widening the decision type:** keep `Decision` as `approve`/`deny` and
+     add an **optional answers payload alongside it**, emitting
+     `updatedInput` only when answers are present. The three existing
+     `set_decision` callers — auto-approval rules (server.py:2240), Oracle's
+     relayed approval (2450), the dashboard route (3379) — then send exactly
+     what they send today, so Approve/Deny carries no regression risk.
+     Verified those are the only three callers and that no web or Mac client
+     calls the decision route directly. F11 must add a test asserting the
+     hook's output is **byte-identical when no answers are given**; existing
+     guards are `tests/runtime/test_relay.py` plus the approvals tests.
+     **Ownership:** the lead-2 Stop-hook probe is owned by the Oracle
+     `main-dev` session (`0048fef0`) and **blocks lead 1's design**; the
+     owner asked to ship the interim shortcut first, so it runs when the
+     owner schedules F11. Per-harness capability flags on the harness
+     contract (default unsupported) agreed. v0.4.64's submit confirmation is
+     the first step toward making "accepted" distinguishable from "typed":
+     UserPromptSubmit-confirmed versus prompt-stuck.
+     Still open from my side: the **180 s hook poll cap** is far shorter than
+     a human answering a multi-question form, so the timeout policy must
+     change as part of this feature — otherwise the agent falls through to
+     its own prompt mid-answer, which is worse than today's failure.
 
 ## Bugs — open
 
