@@ -73,7 +73,11 @@ def test_owner_introduction_requires_idle_live_agent(tmp_path, monkeypatch):
     )
     server = Server(history=store)
     writes = []
-    supervisor = SimpleNamespace(running=True, write_bytes=lambda data: writes.append(data) or True)
+    supervisor = SimpleNamespace(
+        running=True,
+        write_bytes=lambda data: writes.append(data) or True,
+        visible_screen=lambda: "",
+    )
     monkeypatch.setattr(server.orchestrator, "get", lambda key: supervisor)
 
     def post(port, token, action="introduce"):
@@ -108,9 +112,10 @@ def test_owner_introduction_requires_idle_live_agent(tmp_path, monkeypatch):
             assert (await asyncio.to_thread(post, port, server.token))[0] == 409
 
     asyncio.run(scenario())
-    assert len(writes) == 1
+    assert len(writes) == 2  # the paste, then Enter on its own
     assert writes[0].startswith(b"\x1b[200~Duckterm session capability:")
-    assert writes[0].endswith(b"\x1b[201~\r")
+    assert writes[0].endswith(b"\x1b[201~")
+    assert writes[1] == b"\r"
     assert server.token.encode() not in writes[0]
     store.close()
 

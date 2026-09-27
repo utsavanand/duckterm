@@ -12,6 +12,7 @@ from duckterm.core import oracle
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.claude_code import ClaudeCodeRuntime
 from duckterm.runtimes.codex import CodexRuntime
+from duckterm.runtimes.copilot import CopilotRuntime
 from duckterm.runtimes.generic import GenericRuntime
 from duckterm.server import Server
 
@@ -22,6 +23,9 @@ CLAUDE_DRAFT = "\x1b[38;5;244m────\n\x1b[39m❯\xa0fix the flaky test\n�
 CLAUDE_SUGGESTION = "────\n\x1b[39m❯\xa0\x1b[2mcheck inbox\x1b[0m\n────"
 CODEX_EMPTY = "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n  gpt model · ~/repo"
 CODEX_DRAFT = "\x1b[1m›\x1b[0m ship the release\n  gpt model · ~/repo"
+# Copilot CLI 1.0.62: a "❯" line between two rules, status line below.
+COPILOT_EMPTY = "\x1b[38;2;134;134;134m────\n❯ \x1b[39m\n────\n / commands · ? help   Auto"
+COPILOT_DRAFT = "────\n❯ draft text\n────\n / commands · ? help"
 
 
 @pytest.mark.parametrize(
@@ -33,6 +37,8 @@ CODEX_DRAFT = "\x1b[1m›\x1b[0m ship the release\n  gpt model · ~/repo"
         (ClaudeCodeRuntime(), "no prompt visible", False),
         (CodexRuntime(), CODEX_EMPTY, True),
         (CodexRuntime(), CODEX_DRAFT, False),
+        (CopilotRuntime(), COPILOT_EMPTY, True),
+        (CopilotRuntime(), COPILOT_DRAFT, False),
     ],
 )
 def test_prompt_is_empty_ignores_placeholders_but_not_drafts(runtime, screen, empty) -> None:
@@ -44,7 +50,6 @@ OLD_PEER = {"id": "q1", "kind": "question", "status": "queued", "created_at": NO
 GATES = dict(
     state="idle",
     turn_ended_ms=NOW - HOUR,
-    observed_since_ms=NOW - 2 * HOUR,
     last_owner_input_ms=NOW - 3 * HOUR,
     prompt_empty=True,
     mail=[OLD_PEER],
@@ -60,9 +65,10 @@ GATES = dict(
         ({"state": "waiting"}, False),
         ({"prompt_empty": False}, False),
         ({"turn_ended_ms": NOW - 60_000}, False),  # not settled
-        ({"last_owner_input_ms": NOW - 30 * 60_000}, False),  # typed after the turn ended
-        # Turn ended before this server watched: keystroke memory is blank, screen decides.
-        ({"observed_since_ms": NOW - 30 * 60_000, "last_owner_input_ms": 0}, True),
+        ({"last_owner_input_ms": NOW - 60_000}, False),  # typing right now
+        # A stray key after the turn ended no longer blocks until the next turn;
+        # the screen check covers a real draft.
+        ({"last_owner_input_ms": NOW - 30 * 60_000}, True),
         ({"mail": [{**OLD_PEER, "created_at": NOW - 60_000}]}, False),  # fresh peer mail
         ({"mail": [{**OLD_PEER, "last_read_at": NOW - HOUR}]}, False),  # read, left queued
         ({"mail": [{**OLD_PEER, "status": "accepted", "last_read_at": NOW - HOUR}]}, True),
@@ -92,7 +98,6 @@ class FakeSupervisor:
         # session's real runtime is only on its DB row.
         self.runtime = GenericRuntime("true")
         self.screen = screen
-        self.observed_since_ms = 0
         self.last_owner_input_ms = 0
         self.pasted: list[bytes] = []
 
@@ -136,10 +141,13 @@ def test_tick_pastes_fixed_reminder_once_without_peer_text(idle_recipient) -> No
     server, sup = idle_recipient
     asyncio.run(server._oracle_tick())
     asyncio.run(server._oracle_tick())
-    assert len(sup.pasted) == 1
+    assert len(sup.pasted) == 2  # the paste, then Enter on its own
     text = sup.pasted[0].decode()
     assert text.startswith("\x1b[200~Duckterm Oracle: you have 1 inbox item waiting")
-    assert text.endswith("\x1b[201~\r")
+    assert text.endswith(
+        "Run `duckterm session inbox` to check them and continue your work.\x1b[201~"
+    )
+    assert sup.pasted[1] == b"\r"
     assert "What contract should I use?" not in text
 
 
@@ -233,3 +241,75 @@ def test_digest_screen_drops_prompt_suggestions_but_keeps_drafts_and_output() ->
     assert "Ask Codex to do anything" not in text
     assert "❯ fix the flaky test" in text
     assert "\x1b" not in text
+
+
+# Captured from Claude Code 2.1.283 (plain lines; the selected option keeps the marker).
+CLAUDE_PERMISSION = (
+    " Bash command\n   touch probe.txt\n Do you want to proceed?\n"
+    " \x1b[38;5;153m❯ 1. Yes\x1b[39m\n   2. Yes, and always allow access\n   4. No\n"
+    " Esc to cancel · Tab to amend"
+)
+CLAUDE_TRUST = (
+    " Is this a project you trust?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm"
+)
+
+
+@pytest.fixture
+def waiting_session(tmp_path, monkeypatch):
+    history = HistoryStore(tmp_path / "db.sqlite")
+    long_ago = int(time.time() * 1000) - 3 * 86_400_000
+    history.record(
+        {
+            "_id": "w0",
+            "_ts": long_ago,
+            "event_type": "SessionStart",
+            "session_key": "w",
+            "test": True,
+            "runtime": "claude-code",
+        }
+    )
+    # An idle notice from before the hook forwarded notification_type.
+    history.record({"_id": "w1", "_ts": long_ago, "event_type": "Notification", "session_key": "w"})
+    assert history.session("w")["state"] == "waiting"
+    server = Server(history=history)
+    sup = FakeSupervisor(CLAUDE_EMPTY)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: sup if key == "w" else None)
+    yield server, sup, history
+    history.close()
+
+
+@pytest.mark.parametrize(
+    ("screen", "state"),
+    [
+        (CLAUDE_EMPTY, "idle"),
+        (CLAUDE_SUGGESTION, "idle"),
+        (CLAUDE_PERMISSION, "waiting"),
+        (CLAUDE_TRUST, "waiting"),
+    ],
+)
+def test_stale_waiting_badge_clears_only_on_an_empty_prompt(waiting_session, screen, state) -> None:
+    server, sup, history = waiting_session
+    sup.screen = screen
+    asyncio.run(server._oracle_tick())
+    assert history.session("w")["state"] == state
+
+
+def test_waiting_badge_stays_while_an_approval_is_pending(waiting_session) -> None:
+    server, _, history = waiting_session
+    server.approvals.register("w", "Bash", {"command": "ls"}, 1, blocking=True)
+    asyncio.run(server._oracle_tick())
+    assert history.session("w")["state"] == "waiting"
+
+
+def test_fresh_waiting_badge_is_left_alone(waiting_session) -> None:
+    server, _, history = waiting_session
+    history.record(
+        {
+            "_id": "w2",
+            "_ts": int(time.time() * 1000),
+            "event_type": "Notification",
+            "session_key": "w",
+        }
+    )
+    asyncio.run(server._oracle_tick())
+    assert history.session("w")["state"] == "waiting"

@@ -1,0 +1,112 @@
+{
+  "checkedAtUtc": "2026-09-21T06:49:31.460451+00:00",
+  "project": "duckterm-20260920",
+  "automated": {
+    "python": 676,
+    "frontend": 102,
+    "playwright": 58,
+    "nativeUnit": 4
+  },
+  "livePassed": [
+    "native automatic SSH reconnect after tunnel termination",
+    "two persistent pane PIDs survived workspace service restart",
+    "concurrent Claude and Codex sessions each created and tested Python programs",
+    "finished coding sessions reported terminated",
+    "GitHub get_me over mutual TLS as utsavanand",
+    "GitHub disable closed live stream and rejected new stream",
+    "GitHub re-enabled using pinned secret version 2",
+    "native Keychain create/read/update/delete with synthetic credential",
+    "remote dashboard listed both completed coding sessions",
+    "actual WKWebView Run on selection delivered correct draft to native bridge",
+    "Claude resumed a synthetic Mac transcript on Linux and recalled its exact marker",
+    "Codex resumed one synthetic Mac rollout by exact UUID on Linux and recalled its exact marker",
+    "actual WKWebView browsed remote folders and launched a print command without switching dashboards until launch success",
+    "user confirmed Remote destination and Browse in New session"
+  ],
+  "pending": [
+    "safe VM reboot validation when existing user process can be interrupted"
+  ],
+  "deferred": [
+    "Railway live provider QA: user selected GitHub first",
+    "Porkbun live provider QA: user selected GitHub first",
+    "private repository clone authorization: optional check skipped; public clone verified"
+  ],
+  "overnight": {
+    "status": "process-continuity check passed; duration and memory/log measurements unavailable",
+    "observedUtc": "2026-09-21T14:50:30Z",
+    "unit": "duckterm-overnight-qa.service",
+    "result": {
+      "same_processes": true,
+      "sessions": {
+        "remote-qa-two": "busy",
+        "remote-qa-one": "busy"
+      }
+    },
+    "evidence": "journalctl recorded successful service deactivation after the verification output"
+  },
+  "mergedToMain": false,
+  "candidateReview": {
+    "date": "2026-09-21",
+    "integratedMain": "dc9e6da",
+    "implemented": [
+      "copy local folder or Git worktree with HEAD/index/working-tree verification",
+      "clone repository using destination authorization",
+      "Move to remote for stopped sessions with exact supported conversation IDs",
+      "durable chunk retry, launch claim and source recovery journal",
+      "atomic broker capacity reservation",
+      "forgotten-host tunnel and picker cleanup"
+    ],
+    "localEvidence": [
+      "Integrated gate passed: 676 Python, 102 frontend, 56 browser tests plus lint/types/format",
+      "Black, mypy, and slop checks passed separately",
+      "swift test: 4 passed",
+      "RubberTerm Test app built successfully",
+      "real Swift bridge rehearsal: copy, repeated copy, repeated launch same session, secret exclusion and source preservation",
+      "real tmux launch retry after simulated server restart preserved the process PID",
+      "native clipboard, report-data and actual WKWebView report UI passed after integration",
+      "updated isolated Linux native copy and restart retry passed; synthetic session deleted",
+      "2026-09-26: native unit, WebKit artifact-download probe, report UI, Swift transfer rehearsal, and Test app build passed"
+    ],
+    "blocked": [],
+    "notClaimed": [
+      "live private repository clone authorization",
+      "candidate VM reboot recovery"
+    ],
+    "liveCandidateUtc": "2026-09-22",
+    "candidateBase": "5393304",
+    "livePassed": [
+      "real Swift Mac-to-Linux copy, repeated copy and launch, retry after service restart",
+      "Git HEAD/index/working diff, modes, links and selected ignored files preserved",
+      "interrupted chunk upload across service restart and duplicate chunk recovery",
+      "existing destination rejected; synthetic secret excluded",
+      "public octocat/Hello-World clone and retry",
+      "Claude 2.1.267 exact transferred synthetic transcript recalled marker in print mode",
+      "Codex 0.155.1 candidate-launched synthetic resume recalled marker in remote destination after --cd fix",
+      "all three synthetic provider pane PIDs survived restart; launch retries reused existing sessions"
+    ],
+    "liveFixes": [
+      "Codex resume explicitly passes reviewed remote directory with --cd",
+      "QA systemd unit corrected to match production KillMode=process",
+      "root-owned VM Codex sessions directory restored to duckterm ownership"
+    ],
+    "integrationDate": "2026-09-26",
+    "nativeMoveAcceptance": {
+      "dateUtc": "2026-09-26",
+      "providers": [
+        "Claude Code 2.1.267",
+        "Codex 0.155.1"
+      ],
+      "passed": [
+        "actual AppDelegate/WKWebView stopped-source review/move/open flow",
+        "both providers recalled exact synthetic conversation marker interactively",
+        "source state, transcript and files preserved; durable remote link recorded",
+        "display name preserved and exact remote destination selected"
+      ],
+      "fixes": [
+        "persist moved display name",
+        "carry destination session key through native host switch"
+      ],
+      "cleanup": "synthetic sessions/projects/transcripts deleted; original Claude onboarding preference restored; production PID 66209 preserved"
+    }
+  }
+}

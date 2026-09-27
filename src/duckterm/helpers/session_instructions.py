@@ -32,6 +32,24 @@ Scope follows sidebar folders, not filesystem directories. Automatic enrollment
 shares with the top-level sidebar folder. Ungrouped sessions are private. Query
 again when needed: folder membership, peer activity, and permissions may change.
 
+## Generated artifacts
+
+Whenever you create or materially update a user-facing deliverable (a report,
+HTML mockup, Markdown document, image, or exported file), automatically register
+it before your final reply:
+
+- `duckterm session artifact /absolute/path/to/file --title "Short useful title"`
+- `duckterm session artifacts`: list the files registered by this session.
+
+The Mac app shows saved copies under Artifacts, next to Inbox. Registration is
+local, uses your own session credentials, and never publishes to the internet.
+Register deliverables, not ordinary source edits, logs, credentials, or temporary
+scratch work. Only register files you generated for the user's authorized task.
+Files must be regular files (not symlinks), at most 5 MiB each; text is UTF-8.
+Updating the same path replaces its saved copy; other paths remain separate.
+If registration fails, report it and retain the source file; do not claim the
+artifact is in the app. Existing files are not automatically scanned or imported.
+
 ## Exchange questions
 
 - `duckterm session ask SESSION_ID "Question"`: send a question and get its ID.

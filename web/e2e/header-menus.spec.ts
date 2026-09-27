@@ -1,6 +1,34 @@
 import { expect, test, type WebSocketRoute } from "@playwright/test";
 import { apiDelete, apiPost } from "./helpers";
 
+test("late session discovery leaves the New menu open", async ({ page }) => {
+  const result = await apiPost("/sessions/launch", {
+    command: "cat", cwd: "/tmp", name: "late-discovery-probe", in_terminal: false, test: true,
+  });
+  expect(result.status).toBe(200);
+  const key = result.body.session_key as string;
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/sessions", async (route) => {
+    await ready;
+    await route.continue();
+  });
+  try {
+    await page.goto("/");
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    const launch = page.getByRole("button", { name: "New session", exact: true });
+    await expect(launch).toBeFocused();
+    release();
+    await expect(page.locator(".rd-terminal-slot:visible .xterm")).toBeVisible();
+    await expect(launch).toBeFocused();
+    await launch.click();
+    await expect(page.getByPlaceholder("e.g. login refactor")).toBeVisible();
+  } finally {
+    release();
+    await apiDelete(`/sessions/${key}`);
+  }
+});
+
 test("terminal replay does not steal focus from an open header menu", async ({ page }) => {
   const result = await apiPost("/sessions/launch", {
     command: "cat", cwd: "/tmp", name: "menu-focus-probe", in_terminal: false, test: true,

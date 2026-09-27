@@ -10,6 +10,7 @@ import json
 import os
 import signal
 import ssl
+import sys
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -178,7 +179,7 @@ class Broker:
         tasks: list[asyncio.Task[Any]] = []
         counted = False
         try:
-            if not workspace or self.active >= MAX_CONNECTIONS:
+            if not workspace:
                 raise ValueError("Connector service unavailable")
             hello = json.loads(await asyncio.wait_for(reader.readline(), 5))
             if not isinstance(hello, dict) or set(hello) != {"name"}:
@@ -190,7 +191,13 @@ class Broker:
                 writer.write(json.dumps({"connectors": self.statuses(workspace)}).encode() + b"\n")
                 await writer.drain()
                 return
+            github_projects = name == "github-projects"
+            if github_projects:
+                name = "github"
             entry = self.permitted(workspace, name)
+            # Reserve without awaiting: simultaneous handshakes share this limit.
+            if self.active >= MAX_CONNECTIONS:
+                raise ValueError("Connector service unavailable")
             self.active += 1
             counted = True
             if read_config(self.config).get("mode") == "local":
@@ -205,6 +212,15 @@ class Broker:
                     provider_command(name, credential, bool(entry.get("write_access")))
                 )
                 del credential
+            if github_projects:
+                # The same GitHub grant controls repository reads and clones.
+                # Provider tokens remain in this broker-side worker only.
+                argv = [sys.executable, "-m", "duckterm.github_projects"]
+                env["DUCKTERM_GITHUB_IDENTITY"] = str(entry.get("identity") or "")
+                # The broker owns cleanup even when revocation kills the worker.
+                env["TMPDIR"] = resources.enter_context(
+                    tempfile.TemporaryDirectory(prefix="duckterm-github-request-")
+                )
             # Disable or rotation must win races while credentials are fetched.
             if self.permitted(workspace, name) != entry:
                 raise ValueError("Connector configuration changed")

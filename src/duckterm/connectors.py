@@ -1,42 +1,33 @@
-"""Connectors: one switch that wires an external service into every harness.
+"""Shared connectors with explicit identity, private storage and revocable runners.
 
-Enabling a connector (a) resolves a credential — preferring an existing CLI
-login over storing anything — and (b) registers the service's MCP server in
-the claude-code and codex user configs (agents/mcp_install). Disabling removes
-the entries and any stored secret.
-
-Credential handling: the harness config files are plaintext on disk, so a
-token must never be written into them. GitHub's MCP entry therefore runs
-through `duckterm connector-run github`, which resolves the token at server
-launch (gh CLI first, then the secret store) and passes it via the process
-environment. Railway needs no credential at all — its MCP server is bundled in
-the Railway CLI and reuses the CLI login.
-Hugging Face uses a pinned HTTP bridge with optional launch-time credentials
-and the hosted search preset; anonymous discovery requires no token.
-
-Secret store: macOS Keychain (`security`), or a 0600 file under
-DUCKTERM_HOME/connectors on other platforms / when DUCKTERM_NO_KEYCHAIN is set
-(tests, CI).
+Hosted machines delegate execution to the connector service. Local connector
+selection is a convenience boundary: other processes owned by the same user
+can still use that user's CLI logins and Keychain.
 """
 
+import contextlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 
 from duckterm.agents import mcp_install
-from duckterm.helpers.security import write_private_text
+from duckterm.helpers.private_files import private_write
 
 _GITHUB_ENV = "GITHUB_PERSONAL_ACCESS_TOKEN"
 _GITHUB_IMAGE = "ghcr.io/github/github-mcp-server"
-_HF_URL = "https://huggingface.co/mcp?bouquet=search"
-_MCP_REMOTE = "mcp-remote@0.1.38"
 HARNESSES = ("claude-code", "codex")
 NAMES = ("github", "railway", "porkbun", "huggingface", "gmail", "gcp")
+_HF_URL = "https://huggingface.co/mcp?bouquet=search"
+_MCP_REMOTE = "mcp-remote@0.1.38"
 
 
 # ── secret store ──
@@ -57,65 +48,35 @@ def _secret_file(name: str) -> Path:
 
 
 def save_secret(name: str, token: str) -> None:
+    from duckterm.helpers import keychain
+    from duckterm.helpers.private_files import private_write
+
+    if os.environ.get("DUCKTERM_HOSTED"):
+        raise RuntimeError("Hosted credentials must be configured through the connector service")
     if _use_keychain():
-        subprocess.run(
-            [
-                "security",
-                "add-generic-password",
-                "-U",
-                "-a",
-                "duckterm",
-                "-s",
-                _keychain_service(name),
-                "-w",
-                token,
-            ],
-            check=True,
-            capture_output=True,
-        )
-        return
-    path = _secret_file(name)
-    write_private_text(path, token)
+        keychain.access(_keychain_service(name), "write", token)
+    else:
+        private_write(_secret_file(name), token)
 
 
 def load_secret(name: str) -> str | None:
-    if _use_keychain():
-        proc = subprocess.run(
-            [
-                "security",
-                "find-generic-password",
-                "-a",
-                "duckterm",
-                "-s",
-                _keychain_service(name),
-                "-w",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        token = proc.stdout.strip()
-        return token if proc.returncode == 0 and token else None
-    path = _secret_file(name)
-    if not path.exists():
+    from duckterm.helpers import keychain
+    from duckterm.helpers.private_files import private_read
+
+    if os.environ.get("DUCKTERM_HOSTED"):
         return None
-    return path.read_text().strip() or None
+    if _use_keychain():
+        return keychain.access(_keychain_service(name), "read")
+    return (private_read(_secret_file(name)) or "").strip() or None
 
 
 def delete_secret(name: str) -> None:
+    from duckterm.helpers import keychain
+
     if _use_keychain():
-        subprocess.run(
-            [
-                "security",
-                "delete-generic-password",
-                "-a",
-                "duckterm",
-                "-s",
-                _keychain_service(name),
-            ],
-            capture_output=True,
-        )
-        return
-    _secret_file(name).unlink(missing_ok=True)
+        keychain.access(_keychain_service(name), "delete")
+    else:
+        _secret_file(name).unlink(missing_ok=True)
 
 
 # ── credential resolution ──
@@ -130,16 +91,50 @@ def _gh_cli_token() -> str | None:
     return token if proc.returncode == 0 and token else None
 
 
-def github_token() -> tuple[str, str] | None:
-    """(token, source) — the gh CLI login wins over a stored token, so a
-    rotated gh login is picked up without touching the connector."""
-    token = _gh_cli_token()
-    if token:
-        return token, "gh-cli"
-    token = load_secret("github")
-    if token:
-        return token, "stored"
-    return None
+def _policy_path(name: str) -> Path:
+    if name not in NAMES:
+        raise ValueError(f"unknown connector {name!r}")
+    return _secret_file(name).with_suffix(".json")
+
+
+def policy(name: str, *, home: Path | None = None) -> dict[str, object]:
+    path = _policy_path(name)
+    if path.exists():
+        value = json.loads(path.read_text())
+        if not isinstance(value, dict):
+            raise RuntimeError("invalid connector policy")
+        return value
+    # Preserve legacy installed behavior visibly until the user changes it.
+    installed = mcp_install.claude_installed(name, home=home) or mcp_install.codex_installed(
+        name, home=home
+    )
+    source = None
+    if installed:
+        source = "gh-cli" if name == "github" and _gh_cli_token() else "stored"
+        if name == "railway":
+            source = "railway-cli"
+    return {
+        "enabled": installed,
+        "source": source,
+        "identity": None,
+        "write_access": installed and name == "porkbun",
+        "generation": "legacy",
+    }
+
+
+def _save_policy(name: str, value: dict[str, object]) -> None:
+    private_write(_policy_path(name), json.dumps(value))
+
+
+def github_token(source: str | None = None) -> tuple[str, str] | None:
+    chosen = source or policy("github").get("source")
+    if chosen == "gh-cli":
+        token = _gh_cli_token()
+    elif chosen == "stored":
+        token = load_secret("github")
+    else:
+        return None
+    return (token, str(chosen)) if token else None
 
 
 def github_identity(token: str) -> str:
@@ -148,28 +143,17 @@ def github_identity(token: str) -> str:
         headers={"Authorization": f"Bearer {token}", "User-Agent": "duckterm"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=5) as response:
-            identity = json.load(response).get("login")
-        if not isinstance(identity, str) or not identity:
-            raise RuntimeError("GitHub did not return an identity")
-        return identity
-    except (OSError, ValueError) as exc:
-        raise RuntimeError("Could not verify the selected GitHub identity") from exc
-
-
-def github_token_valid(token: str) -> bool:
-    req = urllib.request.Request(
-        "https://api.github.com/user",
-        headers={"Authorization": f"Bearer {token}", "User-Agent": "duckterm"},
-    )
-    try:
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return bool(resp.status == 200)
-    except urllib.error.HTTPError:
-        return False
-    except OSError:
-        # Offline is not "invalid" — don't block enable on network weather.
-        return True
+            identity = json.load(resp).get("login")
+            if not isinstance(identity, str) or not identity:
+                raise RuntimeError("GitHub did not return a connected identity")
+            return identity
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError("GitHub rejected that token (api.github.com/user)") from exc
+    except OSError as exc:
+        raise RuntimeError(
+            "Cannot verify GitHub identity; check your connection and retry"
+        ) from exc
 
 
 def github_server_argv() -> list[str]:
@@ -232,6 +216,12 @@ def huggingface_server_argv() -> list[str]:
     return [npx, "--yes", _MCP_REMOTE, _HF_URL, "--transport", "http-only", "--silent"]
 
 
+def _install(name: str, *, home: Path | None = None) -> None:
+    command, args = _duckterm_bin(), ["connector-run", name]
+    mcp_install.claude_install(name, command, args, home=home)
+    mcp_install.codex_install(name, command, args, home=home)
+
+
 def railway_logged_in() -> bool:
     cli = _railway_cli()
     if cli is None:
@@ -263,11 +253,14 @@ def enable(
     secret: str | None = None,
     *,
     home: Path | None = None,
+    source: str | None = None,
+    write_access: bool = False,
 ) -> dict[str, object]:
+    previous = policy(name, home=home)
     from duckterm import connector_client
 
-    if name not in NAMES:
-        raise ValueError(f"unknown connector {name!r}")
+    if os.environ.get("DUCKTERM_HOSTED"):
+        raise RuntimeError("Manage hosted credentials through the separate connector administrator")
     if connector_client.configured():
         if token or secret:
             raise RuntimeError("Configure provider credentials on the shared connector host")
@@ -275,119 +268,82 @@ def enable(
         if not available.get(name, {}).get("enabled"):
             raise RuntimeError("Connector is not enabled for this workspace on the shared host")
         _install(name, home=home)
-    elif name == "github":
-        _enable_github(token, home=home)
+        _save_policy(name, {"enabled": True, "generation": uuid.uuid4().hex})
+        return status(name, home=home)
+    identity: str | None = None
+    if name == "github":
+        source = source or ("stored" if token else None)
+        if source not in ("stored", "gh-cli"):
+            raise RuntimeError("Choose GitHub CLI login or stored personal access token")
+        if token and source != "stored":
+            raise RuntimeError("A pasted token requires the stored credential source")
+        cred = (token, "stored") if token else github_token(source)
+        if cred is None:
+            raise RuntimeError("no GitHub credential for the selected source")
+        github_server_argv()
+        identity = github_identity(cred[0])
+        if token:
+            save_secret(name, token)
     elif name == "railway":
-        _enable_railway(home=home)
+        if _railway_cli() is None:
+            raise RuntimeError("Railway CLI not installed (https://docs.railway.com/guides/cli)")
+        if source != "railway-cli":
+            raise RuntimeError("Choose the Railway CLI login credential source")
+        if not railway_logged_in():
+            raise RuntimeError("Railway CLI not logged in: run `railway login`")
+        proc = subprocess.run(
+            [str(_railway_cli()), "whoami"], capture_output=True, text=True, timeout=10
+        )
+        identity = proc.stdout.strip()[:200] or "Railway CLI login (identity not returned)"
     elif name == "porkbun":
-        _enable_porkbun(token, secret, home=home)
+        source = "stored"
+        if bool(token) != bool(secret):
+            raise RuntimeError("Porkbun needs an API key AND secret key")
+        key = token or load_secret("porkbun")
+        secret_key = secret or load_secret("porkbun-secret")
+        if not (key and secret_key):
+            raise RuntimeError("Porkbun needs an API key AND secret key (porkbun.com/account/api)")
+        if shutil.which("uvx") is None:
+            raise RuntimeError("uvx not found — install uv (brew install uv)")
+        if not porkbun_keys_valid(key, secret_key):
+            raise RuntimeError("Porkbun rejected those keys (api.porkbun.com ping)")
+        identity = "API key verified; Porkbun does not return an account identity"
+        if token and secret:
+            save_secret("porkbun", token)
+            save_secret("porkbun-secret", secret)
     elif name == "huggingface":
-        _enable_huggingface(token, home=home)
-    else:
+        huggingface_server_argv()
+        if token:
+            if not huggingface_token_valid(token):
+                raise RuntimeError("Hugging Face rejected that token")
+            save_secret(name, token)
+        source = "stored" if token else "anonymous"
+    elif name in ("gmail", "gcp"):
         from duckterm import google_connectors
 
         google_connectors.command(name)
-        _install(name, home=home)
-    _set_enabled(name, True)
-    return status(name, home=home)
-
-
-def _install(name: str, *, home: Path | None = None) -> None:
+        source = "google-oauth" if name == "gmail" else "gcloud-cli"
+    # Publish disabled first: an old live runner must not use a replaced identity.
+    _save_policy(name, {**previous, "enabled": False, "generation": uuid.uuid4().hex})
     command, args = _duckterm_bin(), ["connector-run", name]
-    mcp_install.claude_install(name, command, args, home=home)
-    mcp_install.codex_install(name, command, args, home=home)
-
-
-def _set_enabled(name: str, enabled: bool) -> None:
-    import uuid
-
-    write_private_text(
-        _secret_file(name).with_suffix(".state.json"),
-        json.dumps({"enabled": enabled, "generation": uuid.uuid4().hex}),
+    try:
+        mcp_install.claude_install(name, command, args, home=home)
+        mcp_install.codex_install(name, command, args, home=home)
+    except Exception:
+        mcp_install.claude_remove(name, home=home)
+        mcp_install.codex_remove(name, home=home)
+        raise
+    _save_policy(
+        name,
+        {
+            "enabled": True,
+            "source": source,
+            "identity": identity,
+            "write_access": name == "porkbun" and write_access,
+            "generation": uuid.uuid4().hex,
+        },
     )
-
-
-def execution_state(name: str) -> dict[str, object]:
-    """Revocation state read by the shared host; legacy registrations remain usable."""
-    if name not in NAMES:
-        raise ValueError("Unknown connector")
-    path = _secret_file(name).with_suffix(".state.json")
-    if path.exists():
-        value = json.loads(path.read_text())
-        if not isinstance(value, dict):
-            raise RuntimeError("Invalid connector state")
-        return value
-    return {
-        "enabled": any((mcp_install.claude_installed(name), mcp_install.codex_installed(name))),
-        "generation": "legacy",
-    }
-
-
-def _enable_huggingface(token: str | None, *, home: Path | None) -> dict[str, object]:
-    huggingface_server_argv()
-    if token:
-        if not huggingface_token_valid(token):
-            raise RuntimeError("Hugging Face rejected that token (api/whoami-v2)")
-        save_secret("huggingface", token)
-    # Public discovery needs no account. Resolve optional credentials only at launch.
-    command, args = _duckterm_bin(), ["connector-run", "huggingface"]
-    mcp_install.claude_install("huggingface", command, args, home=home)
-    mcp_install.codex_install("huggingface", command, args, home=home)
-    return status("huggingface", home=home)
-
-
-def _enable_github(token: str | None, *, home: Path | None) -> dict[str, object]:
-    if token:
-        if not github_token_valid(token):
-            raise RuntimeError("GitHub rejected that token (api.github.com/user)")
-        save_secret("github", token)
-    cred = github_token()
-    if cred is None:
-        raise RuntimeError(
-            "no GitHub credential: run `gh auth login`, or paste a personal access token"
-        )
-    github_server_argv()  # raises with an install hint if nothing can run it
-    # The shim resolves the token at launch, so no secret lands in the configs.
-    command, args = _duckterm_bin(), ["connector-run", "github"]
-    mcp_install.claude_install("github", command, args, home=home)
-    mcp_install.codex_install("github", command, args, home=home)
-    return status("github", home=home)
-
-
-def _enable_railway(*, home: Path | None) -> dict[str, object]:
-    cli = _railway_cli()
-    if cli is None:
-        raise RuntimeError("Railway CLI not installed (https://docs.railway.com/guides/cli)")
-    if not railway_logged_in():
-        raise RuntimeError("Railway CLI not logged in: run `railway login`")
-    # Railway's MCP server ships inside the CLI and reuses its login.
-    mcp_install.claude_install("railway", cli, ["mcp"], home=home)
-    mcp_install.codex_install("railway", cli, ["mcp"], home=home)
-    return status("railway", home=home)
-
-
-def _enable_porkbun(
-    token: str | None, secret: str | None, *, home: Path | None
-) -> dict[str, object]:
-    """Porkbun (DNS/domains): two credentials (API key + secret), no CLI to
-    reuse. Runs major/porkbun-mcp via uvx with write mode on — the point of
-    connecting it is letting the agent manage records."""
-    if token and secret:
-        if not porkbun_keys_valid(token, secret):
-            raise RuntimeError("Porkbun rejected those keys (api.porkbun.com ping)")
-        save_secret("porkbun", token)
-        save_secret("porkbun-secret", secret)
-    if not (load_secret("porkbun") and load_secret("porkbun-secret")):
-        raise RuntimeError(
-            "Porkbun needs an API key AND secret key (porkbun.com/account/api; "
-            "also enable API access per domain)"
-        )
-    if shutil.which("uvx") is None:
-        raise RuntimeError("uvx not found — install uv (brew install uv)")
-    command, args = _duckterm_bin(), ["connector-run", "porkbun"]
-    mcp_install.claude_install("porkbun", command, args, home=home)
-    mcp_install.codex_install("porkbun", command, args, home=home)
-    return status("porkbun", home=home)
+    return status(name, home=home)
 
 
 def porkbun_keys_valid(token: str, secret: str) -> bool:
@@ -402,137 +358,128 @@ def porkbun_keys_valid(token: str, secret: str) -> bool:
             return bool(body.get("status") == "SUCCESS")
     except urllib.error.HTTPError:
         return False
-    except OSError:
-        return True  # offline is not "invalid"
+    except OSError as exc:
+        raise RuntimeError("Cannot verify Porkbun keys; check your connection and retry") from exc
 
 
 def disable(name: str, *, home: Path | None = None) -> dict[str, object]:
-    if name not in NAMES:
-        raise ValueError(f"unknown connector {name!r}")
-    _set_enabled(name, False)
+    current = policy(name, home=home)
+    if os.environ.get("DUCKTERM_HOSTED"):
+        raise RuntimeError("Disable hosted connectors through the connector administrator")
+    _save_policy(name, {**current, "enabled": False, "generation": uuid.uuid4().hex})
     mcp_install.claude_remove(name, home=home)
     mcp_install.codex_remove(name, home=home)
-    from duckterm import connector_client
-
-    if connector_client.configured():
-        return status(name, home=home)
-    delete_secret(name)
-    if name == "porkbun":
-        delete_secret("porkbun-secret")
     return status(name, home=home)
 
 
+def forget(name: str, *, home: Path | None = None) -> dict[str, object]:
+    disable(name, home=home)
+    delete_secret(name)
+    if name == "porkbun":
+        delete_secret("porkbun-secret")
+    _save_policy(
+        name,
+        {
+            "enabled": False,
+            "source": None,
+            "identity": None,
+            "write_access": False,
+            "generation": uuid.uuid4().hex,
+        },
+    )
+    return status(name, home=home)
+
+
+_REVOKE_URLS = {
+    "gmail": "https://myaccount.google.com/permissions",
+    "gcp": "https://myaccount.google.com/permissions",
+    "huggingface": "https://huggingface.co/settings/tokens",
+    "github": "https://github.com/settings/tokens",
+    "railway": "https://railway.com/account/tokens",
+    "porkbun": "https://porkbun.com/account/api",
+}
+
+
 def status(name: str, *, home: Path | None = None) -> dict[str, object]:
-    """Cheap, local-only status — no network calls (this backs a GET the UI
-    polls). Credential validity is checked once, at enable time."""
     from duckterm import connector_client
 
     if connector_client.configured():
         return next(row for row in list_status(home=home) if row["name"] == name)
+    current = policy(name, home=home)
     installed = {
         "claude-code": mcp_install.claude_installed(name, home=home),
         "codex": mcp_install.codex_installed(name, home=home),
     }
-    if name in ("gmail", "gcp"):
-        from duckterm import google_connectors
-
-        try:
-            google_connectors.command(name)
-            google_ready, google_detail = True, None
-        except RuntimeError as exc:
-            google_ready, google_detail = False, str(exc)
-        return {
-            "name": name,
-            "title": "Gmail" if name == "gmail" else "Google Cloud",
-            "description": (
-                "Search and read personal Gmail"
-                if name == "gmail"
-                else "Google Cloud resources via your active gcloud account"
-            ),
-            "credential": (
-                ("google-oauth" if name == "gmail" else "gcloud-cli") if google_ready else None
-            ),
-            "installed": installed,
-            "enabled": all(installed.values()),
-            "ready": google_ready,
-            "detail": google_detail,
-        }
-    if name == "huggingface":
-        hf_cred = huggingface_token()
-        try:
-            huggingface_server_argv()
-            ready, hf_detail = True, "Public discovery; token optional"
-        except RuntimeError as exc:
-            ready, hf_detail = False, str(exc)
-        return {
-            "name": name,
-            "title": "Hugging Face",
-            "description": "Discover models, datasets, and documentation on Hugging Face",
-            "credential": hf_cred[1] if hf_cred else None,
-            "installed": installed,
-            "enabled": all(installed.values()),
-            "ready": ready,
-            "detail": hf_detail,
-        }
+    source = current.get("source")
+    detail = None
+    available: list[str] = []
+    ready = False
     if name == "github":
-        cred = None
-        if _gh_cli_token():
-            cred = "gh-cli"
-        elif load_secret("github"):
-            cred = "stored"
+        if shutil.which("gh"):
+            available.append("gh-cli")
+        available.append("stored")
         try:
             github_server_argv()
-            runnable = True
+            ready = source is not None
         except RuntimeError:
-            runnable = False
-        detail = None if runnable else "install github-mcp-server or Docker"
-        return {
-            "name": "github",
-            "title": "GitHub",
-            "description": "Repos, PRs, issues, and actions via the official GitHub MCP server",
-            "credential": cred,
-            "installed": installed,
-            "enabled": all(installed.values()),
-            "ready": cred is not None and runnable,
-            "detail": detail,
-        }
-    if name == "railway":
-        cli = _railway_cli()
-        logged_in = railway_logged_in()
-        detail = None
-        if cli is None:
-            detail = "Railway CLI not installed"
-        elif not logged_in:
-            detail = "run `railway login`"
-        return {
-            "name": "railway",
-            "title": "Railway",
-            "description": "Deployments, services, and logs via the Railway CLI's MCP server",
-            "credential": "railway-cli" if logged_in else None,
-            "installed": installed,
-            "enabled": all(installed.values()),
-            "ready": logged_in,
-            "detail": detail,
-        }
-    if name == "porkbun":
-        has_keys = bool(load_secret("porkbun") and load_secret("porkbun-secret"))
-        runnable = shutil.which("uvx") is not None
-        detail = None
-        if not runnable:
-            detail = "install uv (brew install uv)"
-        elif not has_keys:
-            detail = "needs API key + secret (porkbun.com/account/api)"
-        return {
-            "name": "porkbun",
-            "title": "Porkbun",
-            "description": "Domains and DNS records via porkbun-mcp (writes enabled)",
-            "credential": "stored" if has_keys else None,
-            "installed": installed,
-            "enabled": all(installed.values()),
-            "ready": has_keys and runnable,
-            "detail": detail,
-        }
-    raise ValueError(f"unknown connector {name!r}")
+            detail = "install github-mcp-server or Docker"
+    elif name == "railway":
+        available = ["railway-cli"]
+        ready = _railway_cli() is not None
+        detail = None if ready else "Railway CLI not installed"
+    elif name == "porkbun":
+        available = ["stored"]
+        ready = shutil.which("uvx") is not None and source is not None
+        detail = None if ready else "Needs uv and an API key + secret"
+    elif name == "huggingface":
+        available = ["anonymous", "stored"]
+        try:
+            huggingface_server_argv()
+            ready, detail = True, "Public discovery; token optional"
+        except RuntimeError as exc:
+            detail = str(exc)
+    elif name in ("gmail", "gcp"):
+        from duckterm import google_connectors
+
+        available = ["google-oauth" if name == "gmail" else "gcloud-cli"]
+        try:
+            google_connectors.command(name)
+            ready = True
+        except RuntimeError as exc:
+            detail = str(exc)
+    descriptions = {
+        "gmail": "Search and read personal Gmail",
+        "gcp": "Google Cloud resources",
+        "huggingface": "Discover models, datasets, and documentation",
+        "github": "Repos, PRs, issues, and actions",
+        "railway": "Deployments, services, and logs",
+        "porkbun": "Domains and DNS records",
+    }
+    title = {
+        "github": "GitHub",
+        "railway": "Railway",
+        "porkbun": "Porkbun",
+        "gmail": "Gmail",
+        "gcp": "Google Cloud",
+        "huggingface": "Hugging Face",
+    }[name]
+    return {
+        "name": name,
+        "title": title,
+        "description": descriptions[name],
+        "credential": source,
+        "identity": current.get("identity"),
+        "sources": available,
+        "write_access": current.get("write_access", False),
+        "installed": installed,
+        "enabled": bool(current.get("enabled")) and all(installed.values()),
+        "ready": ready,
+        "detail": detail,
+        "managed": bool(os.environ.get("DUCKTERM_HOSTED")),
+        "revoke_url": (
+            "https://github.com/settings/applications" if source == "gh-cli" else _REVOKE_URLS[name]
+        ),
+    }
 
 
 def list_status(*, home: Path | None = None) -> list[dict[str, object]]:
@@ -568,6 +515,11 @@ def list_status(*, home: Path | None = None) -> list[dict[str, object]]:
             and mcp_install.codex_installed(name, home=home),
             "ready": bool(remote.get(name, {}).get("enabled")),
             "managed": True,
+            "hosted": bool(os.environ.get("DUCKTERM_HOSTED")),
+            "sources": [],
+            "identity": remote.get(name, {}).get("identity"),
+            "write_access": bool(remote.get(name, {}).get("write_access")),
+            "revoke_url": _REVOKE_URLS[name],
             "detail": detail
             or (None if remote.get(name, {}).get("enabled") else "Not enabled for this workspace"),
         }
@@ -575,9 +527,38 @@ def list_status(*, home: Path | None = None) -> list[dict[str, object]]:
     ]
 
 
-def server_command(name: str) -> tuple[list[str], dict[str, str]]:
-    """Resolve provider credentials only on the execution host."""
+def server_command(
+    name: str, current: dict[str, object] | None = None
+) -> tuple[list[str], dict[str, str]]:
+    current = current or policy(name)
     env = dict(os.environ)
+    # Ambient credentials must not override the explicitly selected source/policy.
+    for env_key in (
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "PORKBUN_GET_MUDDY",
+        "PORKBUN_API_KEY",
+        "PORKBUN_SECRET_KEY",
+        "RAILWAY_TOKEN",
+        "RAILWAY_API_TOKEN",
+    ):
+        env.pop(env_key, None)
+    if name == "github":
+        cred = github_token(str(current.get("source")))
+        if cred is None:
+            raise RuntimeError("Selected GitHub credential is unavailable; reconnect it")
+        env[_GITHUB_ENV] = cred[0]
+        return github_server_argv(), env
+    if name == "porkbun":
+        key, secret = load_secret("porkbun"), load_secret("porkbun-secret")
+        if not (key and secret):
+            raise RuntimeError("Porkbun keys missing; reconnect it")
+        env.update(PORKBUN_API_KEY=key, PORKBUN_SECRET_KEY=secret, PORKBUN_GET_MUDDY="false")
+        args = [shutil.which("uvx") or "uvx", "porkbun-mcp"]
+        if current.get("write_access"):
+            args.append("--get-muddy")
+        return args, env
     if name == "huggingface":
         argv = huggingface_server_argv()
         cred = huggingface_token()
@@ -585,42 +566,68 @@ def server_command(name: str) -> tuple[list[str], dict[str, str]]:
             env["DUCKTERM_HF_AUTH"] = f"Bearer {cred[0]}"
             argv.extend(["--header", "Authorization:${DUCKTERM_HF_AUTH}"])
         return argv, env
-    if name == "github":
-        cred = github_token()
-        if cred is None:
-            raise RuntimeError("No GitHub credential; reconnect the connector")
-        env[_GITHUB_ENV] = cred[0]
-        return github_server_argv(), env
-    if name == "railway":
-        cli = _railway_cli()
-        if not cli:
-            raise RuntimeError("Railway CLI not installed")
-        return [cli, "mcp"], env
-    if name == "porkbun":
-        key, secret = load_secret("porkbun"), load_secret("porkbun-secret")
-        if not (key and secret):
-            raise RuntimeError("Porkbun keys missing; reconnect the connector")
-        env.update(PORKBUN_API_KEY=key, PORKBUN_SECRET_KEY=secret)
-        return [shutil.which("uvx") or "uvx", "porkbun-mcp", "--get-muddy"], env
     if name in ("gmail", "gcp"):
         from duckterm import google_connectors
 
         return google_connectors.command(name)
-    raise ValueError(f"Unknown connector {name!r}")
+    cli = _railway_cli()
+    if not cli:
+        raise RuntimeError("Railway CLI is unavailable")
+    return [cli, "mcp"], env
 
 
 def run(name: str) -> None:
     from duckterm import connector_client
 
-    if name not in NAMES:
-        raise SystemExit(f"Unknown connector {name!r}")
     if connector_client.configured():
         connector_client.run(name)
         return
-    argv, env = server_command(name)
-    if name == "gmail":
-        import tempfile
+    current = policy(name)
+    if not current.get("enabled"):
+        raise SystemExit("Connector disabled in Duckterm")
+    argv, env = server_command(name, current)
+    # Keep the supervisor alive so Disable closes already-running MCP processes.
+    # New process group also owns descendants; no PID files or PID-reuse hazards.
+    workspace = tempfile.TemporaryDirectory(prefix="duckterm-gmail-") if name == "gmail" else None
+    try:
+        proc = subprocess.Popen(
+            argv, env=env, cwd=workspace.name if workspace else None, start_new_session=True
+        )
+    except BaseException:
+        if workspace:
+            workspace.cleanup()
+        raise
 
-        with tempfile.TemporaryDirectory(prefix="duckterm-gmail-") as cwd:
-            raise SystemExit(subprocess.call(argv, env=env, cwd=cwd))
-    os.execvpe(argv[0], argv, env)
+    def stop(_signal: int, _frame: object) -> None:
+        raise SystemExit(0)
+
+    previous = signal.signal(signal.SIGTERM, stop)
+    try:
+        while proc.poll() is None:
+            latest = policy(name)
+            if not latest.get("enabled") or latest.get("generation") != current.get("generation"):
+                break
+            time.sleep(0.2)
+    finally:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGTERM)
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=2)
+        # A parent can exit while a descendant ignores TERM and retains credentials.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+        signal.signal(signal.SIGTERM, previous)
+        if workspace:
+            workspace.cleanup()
+    raise SystemExit(proc.returncode or 0)
+
+
+def execution_state(name: str) -> dict[str, object]:
+    return policy(name)
+
+
+def _set_enabled(name: str, enabled: bool) -> None:
+    """Compatibility entry point for shared-host policy administration."""
+    _save_policy(name, {**policy(name), "enabled": enabled, "generation": uuid.uuid4().hex})

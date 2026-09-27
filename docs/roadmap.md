@@ -40,18 +40,25 @@ open defects and test limits: [QA report](qa-2026-09-25.md).
 
 ## Oracle (owner-requested 2026-09-23)
 
-Design: [oracle-design.md](oracle-design.md). Shipped v0.4.45–v0.4.50: the
-Ask Oracle docked chat (saved, formatted answers, example questions) and
+Design: [oracle-design.md](oracle-design.md) and
+[control-tower-design.md](control-tower-design.md). Shipped v0.4.45–v0.4.57:
 idle-inbox nudges for Claude Code and Codex, on in every folder (kill switch
-`DUCKTERM_ORACLE=off`). Merged after v0.4.50, unreleased: re-nudge as soon as
-the previous reminder was handled, structured answers, prompt suggestions no
-longer read as owner instructions. Copilot nudges need its prompt layout.
+`DUCKTERM_ORACLE=off`); the control tower (the Oracle button: fleet insights,
+agents as ducks by team, per-session messages, a full-height Ask Oracle chat).
+Unreleased on main: Copilot nudges, and the settle and peer waits cut from 10
+to 5 minutes. Copilot sessions get an inbox only by hand until item 9 lands.
 
-Next: **Oracle on WhatsApp** — design draft
-[oracle-whatsapp-design.md](oracle-whatsapp-design.md), awaiting owner
-answers to its five open questions. Phase 0 (persistent decision log, a
-"needs you" detector, an Oracle status view showing why each session was or
-wasn't nudged) is useful without WhatsApp and comes first.
+Oracle Relay (needs-you notes in the chat, answers relayed to the session, rules
+made in plain words) has shipped. Menu questions link to the agent's terminal
+instead of being answered from the chat.
+
+Next: **Oracle on WhatsApp**, design draft
+[oracle-whatsapp-design.md](oracle-whatsapp-design.md), waiting on owner
+answers to its five open questions. Its Phase 0 (a persistent decision log, a
+"needs you" detector, and a status view showing why each session was or wasn't
+nudged) is useful without WhatsApp and comes first. Later rules (stale state,
+file collisions, scheduled AGENTS.md suggestions) are listed with triggers in
+the design doc.
 
 Shipped 2026-09-23–25 (v0.4.40 → v0.4.47):
 
@@ -138,6 +145,233 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
     is user input and must be escaped. Every previously-left comment
     lights up as soon as this ships.
 
+## Designed 2026-09-26, awaiting owner preview approval
+
+F9. **Focus — pinned sessions view** (owner-approved for design via
+    `product`). Design:
+    [focus-and-request-status-design.md](focus-and-request-status-design.md).
+    Pin toggle on any session (max 3, 4th refused with "Unpin one first",
+    never auto-swap), a Focus header button beside Ask Oracle opening the
+    pinned set in the existing grid. **Reuse claim confirmed**: `GridView`
+    already takes a session list plus a title, so drag-to-split, resize,
+    dock, and `evenRow` come free. **But layout does not persist today** —
+    GridView holds its tree in plain `useState`, so folder grids already
+    forget their arrangement on reload; persisting it is new work that
+    applies to both. Pin state goes **server-side** (a column on
+    `sessions`, cap enforced server-side): it must survive restart, and a
+    browser-local pin would make the Mac app and a browser tab disagree —
+    the same split-brain that made the notification setting feel broken
+    (B6). Layout is per-device view state and belongs in localStorage.
+
+F10. **Request status updates** (owner-approved for design via `product`).
+    Same design doc. Sender currently learns nothing without polling
+    `duckterm session get` — I have asked `main-dev` the same backup
+    question four times for exactly this reason.
+    **Received and Done need no new machinery** — they are notifications on
+    transitions that already exist; ship them first. The **hourly progress**
+    update is the only new moving part, and it must not be a new interrupt:
+    it rides the **existing turn-end notice**
+    ([inbox-awareness-design.md](inbox-awareness-design.md)), gated to once
+    per hour, so a busy agent is never interrupted mid-turn. If the
+    recipient posts nothing, the sender still gets "still accepted, no
+    update" — never synthesize a status on the recipient's behalf.
+    `duckterm session progress REQUEST_ID "…"` is the right shape as a
+    **distinct verb**, because replies mean finished work and a progress
+    note must not close the request. Chains link via an **explicit**
+    `parent_request_id` on ask — never inferred from recently-accepted work,
+    since a wrong link sends a completion to the wrong human — with a
+    bounded walk that tolerates expired ancestors.
+
+## Shipped / in flight, recorded 2026-09-26
+
+- **Artifact feedback** — shipped v0.4.57 (PR #44, plus ui-dev's PR #42
+  Oracle layout): highlight HTML/Markdown/text in an artifact to comment and
+  send it to the producing terminal; whole-file Feedback supports images;
+  provenance carried; stale/stopped delivery errors retain the draft;
+  isolated HTML selection bridge.
+  **Note the asymmetry:** this is the annotate-a-selection interaction the
+  owner asked for — but for *artifacts*. F6, the same idea in the **Messages
+  tab**, is the owner's explicitly prioritized item and is still NOT built
+  (verified 2026-09-26: `Messages.tsx` still only POSTs annotations; there is
+  no highlight render path). Artifact feedback shipping first is worth
+  knowing when judging priority order.
+
+
+- **Independent left/right panel collapse** — shipped v0.4.56 (PRs #40/#41,
+  `main-dev`): accessible header buttons, persisted choices, 36px reopen
+  rails, center pane takes the freed width (verified 738 → 1035 → 1368 px),
+  narrow stacked windows reclaim height.
+- **Control Tower** — phases 1 and 2 implemented on branch `control-tower`
+  (not merged): clicking Oracle opens a full page rather than a side panel,
+  with fleet insights (agent count, total tokens, last backup, remote
+  session count) and an animated duck scene grouped into teams by folder.
+  Design: [control-tower-design.md](control-tower-design.md), built on
+  [oracle-design.md](oracle-design.md). **Was not tracked here while being
+  built** — recorded now; this is the second time a designed, implemented
+  feature reached the roadmap only after the fact (see the process note
+  above).
+
+## Ownership, as reported by the sessions themselves (2026-09-25)
+
+The owner asked whether items attributed to sessions were actually being
+worked on. Asked directly; answers recorded as given rather than inferred:
+
+- **`ui-dev` is AVAILABLE with nothing in progress**, and stated explicitly
+  that annotation highlights (F6), packaged icons (B4), desktop
+  notifications (B6), and the urgency/Interrupt controls are **pending /
+  not started** — "please do not mark them in progress or completed".
+  Priority order sent back: B6 → F6 → B4 → urgency/Interrupt.
+- **`main-dev`** shipped Artifacts (v0.4.55) and the fork-race CI fix
+  (v0.4.54); **B3 is explicitly still queued and not fixed by that
+  release**. The backup sync-mode exclusion test remains unanswered after
+  three asks.
+- Lesson for this document: an item having a named owner is not the same as
+  an item being worked on. Ownership lines here now mean "asked and
+  confirmed", not "sent to".
+
+## Now — owner-requested 2026-09-26
+
+F11. **Answer an agent from Oracle's chat without typing into its terminal**
+     (owner-requested via `main-dev`/Oracle). Today Oracle relays answers by
+     typing into the agent's terminal — pasting replies and pressing digit
+     keys in menus. Two failures on 2026-09-26: a two-question
+     AskUserQuestion form where Oracle pressed `1`, the form advanced to the
+     second question, and **nothing was submitted**; and a pasted nudge that
+     **sat unsent for 14 hours** because Claude Code swallowed the Enter.
+     Owner: "it shouldn't be that you have to type into the terminal."
+     Interim shipped on `oracle-multi-question`: menu notes list every
+     question with an "Open <name>'s terminal" button, and the chat no longer
+     presses keys into menus.
+     **Leads checked against the code (architect, 2026-09-26):**
+     - **Lead 1 is real infrastructure.** `core/approvals.py` +
+       `hooks/duckterm-hook.sh` already hold a hook open: the hook registers
+       the request, long-polls `/approvals/:id/decision` for up to **180 s**,
+       and returns a per-harness allow/deny shape. So "answer through the
+       hook instead of the keyboard" is an extension of a working mechanism,
+       not a new one. **But two concrete gaps:** the decision type is
+       `Literal["approve", "deny"]` only — it carries **no payload**, so
+       returning `updatedInput` with answers needs the registry, the HTTP
+       route, and the hook's response shape all widened beyond a binary; and
+       the **180 s cap** is far shorter than a human answering a
+       multi-question form, so the timeout policy must change or the agent
+       falls through to its own prompt mid-answer.
+     - **Lead 2 (Stop hook returning `block` with a reason to continue the
+       turn) is plausible but unverified** — it is a different hook event
+       with different semantics from the permission path, so it needs a real
+       probe against Claude Code before it is designed on.
+     - **Lead 3 stands**: Codex and Copilot need their own equivalents or
+       keep the typing path. Per-harness capability on the contract,
+       default unsupported (RETRO rule), so "cannot answer without typing"
+       is visible rather than silently degraded.
+     **Design settled with `main-dev`, and their proposal is better than
+     widening the decision type:** keep `Decision` as `approve`/`deny` and
+     add an **optional answers payload alongside it**, emitting
+     `updatedInput` only when answers are present. The three existing
+     `set_decision` callers — auto-approval rules (server.py:2240), Oracle's
+     relayed approval (2450), the dashboard route (3379) — then send exactly
+     what they send today, so Approve/Deny carries no regression risk.
+     Verified those are the only three callers and that no web or Mac client
+     calls the decision route directly. F11 must add a test asserting the
+     hook's output is **byte-identical when no answers are given**; existing
+     guards are `tests/runtime/test_relay.py` plus the approvals tests.
+     **Ownership:** the lead-2 Stop-hook probe is owned by the Oracle
+     `main-dev` session (`0048fef0`) and **blocks lead 1's design**; the
+     owner asked to ship the interim shortcut first, so it runs when the
+     owner schedules F11. Per-harness capability flags on the harness
+     contract (default unsupported) agreed. v0.4.64's submit confirmation is
+     the first step toward making "accepted" distinguishable from "typed":
+     UserPromptSubmit-confirmed versus prompt-stuck.
+     Still open from my side: the **180 s hook poll cap** is far shorter than
+     a human answering a multi-question form, so the timeout policy must
+     change as part of this feature — otherwise the agent falls through to
+     its own prompt mid-answer, which is worse than today's failure.
+
+## Now — collaboration reliability (owner-reported 2026-09-26)
+
+F12. **Cross-session collaboration is unreliable; the owner has to keep
+     chiming in.** Analysis and proposal:
+     [collaboration-reliability-design.md](collaboration-reliability-design.md).
+     **Not a delivery problem — messages arrive.** Measured from
+     `main-dev`'s real inbox (50 messages) and `session_questions` (273
+     rows): of 16 architect requests with replies, **8 were acted on, 3 were
+     forwarded, and 5 got a thoughtful reply and no work**. Plus 34 of 273
+     requests expired unread (largely my own fault — I passed
+     `--timeout 900` for days after persistent became the default).
+     Root cause: **there is a status field for the MESSAGE and none for the
+     WORK.** `session_questions.status` values all describe the
+     conversation; `answered` means "a reply was written", not "the bug is
+     fixed". So a session can read everything, reply well, keep a clean
+     inbox, and ship nothing — and no field would be red. Downstream of
+     that: nothing owns an outcome; Oracle nudges on unread *mail*, which
+     rewards inbox-clearing rather than shipping; authority is binary, so
+     an owner-reported diagnosed defect in a session's own area gets the
+     same "stop" as a peer's speculative idea (`main-dev` recorded exactly
+     that as its reason for declining a queue of owner-reported bugs); and
+     relay chains lose the originator so completion never reaches the owner.
+     Proposal, in value order: (1) a **work item** with states
+     proposed/accepted/in_progress/blocked/done/dropped where **a reply
+     does not close work — only `done` with evidence does**, and `blocked`
+     must name what it is blocked on; (2) dashboard Work column plus Oracle
+     nudging on **staleness rather than mail**, escalating to the owner only
+     on `blocked`; (3) three authority levels — `fyi` / `proposal` /
+     `sanctioned`, where `sanctioned` is settable only by the owner or by a
+     session quoting owner words, and an unsure session says in one line
+     what it would do **and proceeds** rather than stopping; (4) F10's
+     `parent_request_id` chain walk; (5) tests asserting generated
+     instruction strings match actual behavior — the stale 900-second line
+     in `collaboration.md` would have failed one the day persistent shipped.
+
+## Bugs — open
+
+B6. **Desktop notification setting does not work** (owner-reported
+    2026-09-25, `ui-dev`). Three distinct defects in App.tsx:171-201:
+    - **It does not persist.** `notifyOn` is plain `useState` initialized
+      from `Notification.permission === "granted"`; nothing writes or reads
+      localStorage. Turning it OFF reverts on reload, so "off" is
+      effectively unachievable once permission is granted. Every
+      neighbouring control in the same menu (density, theme, terminal
+      themes, `rd.oracleOpen`) persists — notifications are the lone
+      exception. Fix: store under an `rd.` key, initialize from stored AND
+      current permission so a revoked permission beats a stored true.
+    - **No feedback when permission is denied.** `requestPermission()`
+      resolves "denied" immediately without prompting once a site is
+      blocked, so the checkbox snaps back with no explanation — which reads
+      exactly as "the setting doesn't work". Say "blocked in your browser"
+      instead; HeaderMenus already has the `header-notification-help` slot.
+    - **Burst on load and on enable.** `prevWaiting` starts empty and
+      `notifyOn` is in the effect's dependency list, so already-waiting
+      sessions all look new: they notify at load, and toggling the setting
+      ON notifies for every currently-waiting session. Same class of
+      mistake the duck celebration got right by firing only on witnessed
+      live transitions. Fix: prime `prevWaiting` without notifying; don't
+      treat a `notifyOn` change as a transition.
+    Note: the Mac app has an independent native notifier
+    (main.swift:14-57, its own `notified` set), so in DuckTerm.app the
+    browser checkbox and the native path are two mechanisms — the Settings
+    control should govern both or say that it only affects the browser.
+
+
+
+B5. ~~Opening Oracle corrupts terminal wrapping irreversibly.~~ **Fixed by
+    layout** in v0.4.51 (PRs #27/#28): Oracle now occupies the right
+    context pane without narrowing the terminal, so the geometry that used
+    to be lost is never disturbed. Regression test
+    `web/e2e/oracle-terminal-resize.spec.ts` drives a real terminal and
+    asserts both the reported size and the rendered rows survive
+    open/close. Owner's bug no longer reproduces.
+    **Latent defect retained, deliberately recorded:** the underlying cause
+    is untouched — `settleOpening` in Terminal.tsx still early-returns
+    `if (!visible || !host.clientWidth || !host.clientHeight)` *before*
+    `fit.fit()`/`sendResize()`, and the ResizeObserver is wired to it, so a
+    callback firing while the host is unmeasurable still drops a resize
+    with nothing to retry. Not triggered by Oracle any more; still reachable
+    from grid splits, folder-grid open/close, Messages/History tab
+    switches, window resize, or any future pane. If terminal geometry goes
+    wrong again, start here rather than re-deriving it. Cheap hardening
+    whenever that function is next touched: schedule a retry instead of
+    returning silently (RETRO precedent: the blank Mac window, where a
+    failed load had no retry).
+
 ## In flight (2026-09-25)
 
 - **Public website + custom domain** — **shipped**:
@@ -145,9 +379,10 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
   place for your coding agents", no RubberTerm leakage). Demo uses the
   actual UI with fictional data. Source lives in the `rubber-duck` repo
   (PR #26), not this one — worth knowing when looking for it.
-- **Compact sidebar, bolder folder/session names** (`ui-dev`, owner-
-  requested) — preview prepared, awaiting the owner's visual approval
-  before implementation.
+- **Sidebar density** — **shipped** v0.4.51: Compact / Standard / Relaxed
+  in Settings with the choice remembered, distinct detail and action
+  layouts, regular-weight session names. (A density row wrapper stealing
+  terminal focus was caught by ui-dev's own browser suite before release.)
 
 ## Designed 2026-09-25, awaiting owner review
 
@@ -213,28 +448,27 @@ B4. **Packaged header icon/favicons missing in v0.4.47** — independent
 
 ## Next (started, not yet mergeable)
 
-3. **Remote workspace on GCP** (branch `remote-session`, latest `250db8b`).
-   End state: **persistent agents/terminals on a per-user workspace VM, not
-   a graphical desktop**. Decided UX: New session → "Run on: This Mac /
-   Remote"; Existing session → "Move to remote"; host setup lives in
-   Settings → Remote computers, not the primary workflow.
-   Before merge:
-   - Build the new session-level remote UX and **session migration**
-     (transfer project changes + supported conversation history, resume
-     remotely, keep the local session until success) — newly requested,
-     not implemented or proven.
-   - Interactive Mac acceptance in the **DuckTerm Test app** (purple TEST
-     icon, separate bundle identity and local instance; built, branding
-     changes uncommitted), then promote.
-   - Reboot/failure/TLS-rotation QA and the overnight persistence result
-     (scheduled Sep 21 13:11 UTC). A VM reboot terminates processes — never
-     claim continuous execution across reboot.
-   - Railway/Porkbun live QA (GitHub verified first, user-selected).
-   - Reconcile with main, which now includes the released session-API and
-     security work.
-   Cost: ~$40–50/month for two VMs before model usage/tax; budget alerts do
-   not cap spend. Open operational items: manual TLS renewal, SQLite
-   retention planning for production.
+3. **Remote workspace / DuckCloud — MERGED, shipping incrementally.**
+   Verified 2026-09-26: `origin/remote-session` has **zero commits diverged
+   from main** (`git log origin/main..origin/remote-session` is empty). The
+   big-bang merge risk this document warned about for a week is gone — the
+   work landed through a series of PRs instead (#54 local/remote clone via
+   the GitHub connector, #58 remote destination picker, #62 exact checkout
+   folder), each integrating main as it went.
+   Shipped through v0.4.64: Run-on picker (This Mac / Remote), remote
+   launch and conversation resume without copying credentials, remote hosts
+   under Settings → Remote computers, clone-local/clone-repository options,
+   and folder selection meaning the exact checkout directory with folder
+   creation inside the picker (superseding v0.4.63's parent-plus-child
+   behavior). Live Linux create-folder → authenticated public clone → retry
+   verified; production Claude preserved.
+   Remaining for DuckCloud proper (design:
+   [duckcloud-design.md](duckcloud-design.md)): the setup flow that replaces
+   "have a GCP project" with cloud/account/size and hourly prices, cost and
+   idle-shutdown controls, the AWS implementation behind the same
+   provisioning interface, and reboot/failure/TLS-rotation QA. Note a VM
+   reboot terminates processes — never claim continuous execution across one.
+
 4. **Re-home approvals UI** (backend untouched; placement question only —
    TODO.md). Candidates: banner strip atop the selected session's terminal
    pane; browser/desktop notification with Approve/Deny actions; a
@@ -334,13 +568,31 @@ F2. **Settings button** — the *surface* shipped in v0.4.45 (header Settings
     harness Agents tab, which updates the *agent CLIs*; this updates
     DuckTerm itself, and the two should not be conflated in the UI.
 
-F3. **Folder artifacts.** Attach artifacts (markdown/HTML) to a folder, and
-    let an agent that generates one *recommend associating it* with the
-    folder. Mac app renders markdown at minimum, HTML if cheap. Design
-    question to settle first: is an artifact a file reference on disk
-    (cheap, always current, dies if the file moves) or a stored copy
-    (durable, snapshot semantics, needs storage + retention)? Recommend
-    file reference in v1.
+F3. **Artifacts — SHIPPED v0.4.55** (PR #36, `77d2f4c`; `main-dev` confirmed released and installed).
+    The owner approved the local Artifacts tab beside Inbox and reviewed the
+    concrete list/preview layout. Includes session-scoped saved copies,
+    Markdown/static HTML/image previews, download and removal. Mac downloads
+    use a native Save dialog. DuckCentral and cloud publication remain deferred.
+    [Implementation and limits](artifacts.md).
+
+    - Automatic **cooperative registration**: new/resumed agent instructions and
+      CLI self/inbox reminders tell agents to register generated deliverables.
+      No filesystem scan or claim that every output is detected. This follows
+      the owner's latest request for automatic local registration; no separate
+      owner acceptance step is required for each artifact.
+    - Content is a bounded SQLite snapshot, not a new artifact directory, so
+      full archives and sync database copies already include it. A real CLI
+      upload and archive restore test verifies the saved bytes survive.
+    - Clients upload bytes using their own session credential. Source paths
+      are provenance only; the server never follows them. Owner reads/deletes
+      require owner authentication; peers cannot access artifact contents.
+    - Static HTML runs in an iframe with no sandbox exceptions and a restrictive
+      CSP; sanitized Markdown uses the same isolation. Browser tests check
+      blocked network/script execution, refresh, downloads and draft retention.
+    - Same session/path replaces its saved copy (no prior-version history).
+      Stop/archive retains artifacts; explicit session deletion removes them,
+      consistent with message pins. Original files and existing backups stay
+      intact. File/count/storage limits are documented, not silent eviction.
 
 F4. **Migrate a running session to another harness** (e.g. Claude Code →
     Codex). Hard constraint from
@@ -429,6 +681,16 @@ Documented upgrade paths we deliberately do not build yet:
 - **Cross-machine session sharing** — excluded from the session API v1;
   revisit after the GCP remote workspace settles, since it changes the
   "one machine, loopback-only" trust model.
+
+## Release process (changed 2026-09-26)
+
+`release-dev` now owns every release: version bumps, tags, the fresh-worktree
+build, the GitHub release with the Mac zip, pipx install, and the dashboard
+check. Dev sessions push a branch and hand over the commit SHA, the problem
+and fix, the gate log path with pass counts, and any native/E2E QA steps.
+Dev sessions do **not** bump `__version__`, tag, run `release.sh` or
+`build_package.sh` for a release, create GitHub releases, or merge —
+`release-dev` merges after `main-qa`'s QA and the owner's approval via Oracle.
 
 ## Standing quality gates (not roadmap items, but they bound every release)
 

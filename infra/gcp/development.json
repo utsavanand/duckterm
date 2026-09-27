@@ -1,0 +1,85 @@
+{
+  "projectId": "duckterm-20260920",
+  "projectNumber": "540731020186",
+  "region": "us-central1",
+  "zone": "us-central1-a",
+  "vm": {
+    "name": "duckterm-dev-1",
+    "machineType": "e2-medium",
+    "provisioningModel": "STANDARD",
+    "imageFamily": "ubuntu-2404-lts-amd64",
+    "imageProject": "ubuntu-os-cloud",
+    "bootDiskGiB": 30,
+    "bootDiskType": "pd-standard",
+    "bootDiskAutoDelete": false,
+    "serviceAccount": null,
+    "enableOsLogin": true,
+    "blockProjectSshKeys": true,
+    "network": "duckterm-dev",
+    "subnetwork": "duckterm-dev-us-central1",
+    "subnetworkCidr": "10.80.0.0/24",
+    "sshIngressSource": "35.235.240.0/20",
+    "externalAddress": "ephemeral-for-outbound-access"
+  },
+  "secretManager": {
+    "backend": "gcp",
+    "brokerServiceAccount": "duckterm-broker@duckterm-20260920.iam.gserviceaccount.com",
+    "secretsCreated": [
+      "duckterm-github",
+      "duckterm-railway",
+      "duckterm-porkbun"
+    ],
+    "agentVmMayAccessSecrets": false,
+    "credentialVersionsCreated": 2,
+    "brokerDeployed": true,
+    "brokerSecretAccess": "secretAccessor on the three connector entries only",
+    "githubVersion": 2,
+    "destroyedSyntheticVersions": [
+      "duckterm-github/versions/1"
+    ]
+  },
+  "estimatedMonthlyUsdBeforeCredits": {
+    "compute730Hours": 24.46,
+    "disk": 1.2,
+    "ipv4": 3.65,
+    "baselineTotal": 29.31,
+    "excluded": [
+      "network egress",
+      "taxes",
+      "model-provider charges"
+    ],
+    "connectorVmAdditional": 10.17,
+    "twoVmBaselineTotal": 39.48
+  },
+  "billingAccountSuffix": "FFA08E",
+  "budgetAlert": {
+    "monthlyUsd": 50,
+    "thresholds": [
+      0.5,
+      0.8,
+      1.0
+    ],
+    "beforeCredits": true,
+    "hardCap": false,
+    "id": "801e1257-191c-446a-ae58-19c3186e6389"
+  },
+  "observedInstance": {
+    "id": "4336004959915809136",
+    "status": "RUNNING",
+    "serviceAccountAttached": false,
+    "secureBoot": true,
+    "sshHostEd25519Fingerprint": "SHA256:i+rOFkKBrch1Bp0vdnG9RkkUn7HWAbyAqhA8n+wpGcg"
+  },
+  "connectorVm": {
+    "name": "duckterm-connectors-dev-1",
+    "id": "2194629962296527832",
+    "machineType": "e2-micro",
+    "bootDiskGiB": 10,
+    "internalAddress": "10.80.0.3",
+    "serviceAccount": "duckterm-broker@duckterm-20260920.iam.gserviceaccount.com",
+    "allowedClientTag": "duckterm-agent",
+    "tlsPort": 8443,
+    "tlsClientAuthentication": "required",
+    "providerCredentialsAdded": true
+  }
+}

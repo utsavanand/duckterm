@@ -95,11 +95,27 @@ class Harness(ABC):
         only when this is True, so an unknown prompt layout must return False."""
         return False
 
+    # Whether a permission request from this agent can be settled without the
+    # owner (an auto-reviewer, an auto mode that still fires the event). If so,
+    # Oracle only shows it once approval_prompt_visible confirms the agent is
+    # actually asking on screen.
+    auto_approves_requests = False
+
+    def approval_prompt_visible(self, screen: str) -> bool:
+        """Whether the screen shows the agent's own approval prompt."""
+        return False
+
+    def approval_keys(self, decision: str) -> bytes | None:
+        """Keys that answer the on-screen approval prompt, or None if unknown."""
+        return None
+
     @abstractmethod
     def launch_command(self, *, cwd: Path, session_key: str, initial_prompt: str) -> list[str]: ...
 
     @abstractmethod
-    def detect_state(self, recent_output: str) -> SessionState: ...
+    def detect_state(self, recent_output: str) -> SessionState | None:
+        """Return explicit output evidence, or None to preserve the current state."""
+        ...
 
     @abstractmethod
     def tool_in(self, recent_output: str) -> str | None: ...

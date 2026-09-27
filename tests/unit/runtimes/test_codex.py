@@ -8,8 +8,8 @@ def test_detect_state_from_output_markers() -> None:
     assert rt.detect_state("Working on it...") == "busy"
     assert rt.detect_state("applying patch to foo.py") == "busy"
     assert rt.detect_state("Allow this command? (y/n)") == "waiting"
-    # Settled output with no marker reads as idle.
-    assert rt.detect_state("done.\n$ ") == "idle"
+    # Unrecognized output does not prove the turn ended.
+    assert rt.detect_state("done.\n$ ") is None
 
 
 def test_waiting_takes_precedence_over_working() -> None:
@@ -193,7 +193,7 @@ def test_detect_state_ignores_code_text_and_reads_review_as_busy() -> None:
     # codex's approval machinery running is WORK (interruptible-active line).
     assert r.detect_state("Reviewing approval request (5m 38s • esc to interrupt)") == "busy"
     # code on screen must not vote "waiting" (this exact word broke a session).
-    assert r.detect_state('<iframe allow="autoplay" allowfullscreen>') == "idle"
-    assert r.detect_state("if approved_by_reviewer(x):") == "idle"
+    assert r.detect_state('<iframe allow="autoplay" allowfullscreen>') is None
+    assert r.detect_state("if approved_by_reviewer(x):") is None
     # real prompts still read as waiting.
     assert r.detect_state("Do you want to proceed?") == "waiting"

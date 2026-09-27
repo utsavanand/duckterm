@@ -1,7 +1,220 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Inbox reminders must not stop ongoing work
+
+Oracle's hardcoded “then stop” turned an inbox reminder into a new instruction
+to halt, even when the owner had already authorized unfinished work. Agents
+repeatedly acknowledged mail and went idle. Keep reminders focused on checking
+messages and continuing work; do not add workflow restrictions to an automated
+nudge. The delivery regression checks the actual pasted continuation wording
+and still verifies that peer message text is not injected into the reminder.
+
+
+## 2026-09-26 — Don't answer an agent's menu by pressing keys
+**Broke:** release-dev asked two questions in one form. Oracle's chat showed
+only the first. The owner approved it, Oracle pressed "1", the form moved to
+the second question, and nothing was submitted.
+**Cause:** the relay read only the first question, and a digit press answers
+whatever menu tab happens to be on screen.
+**Rule:** menu notes list every question and link to the session's terminal.
+The owner answers there. Relaying answers needs a channel that doesn't type
+into the terminal.
+
+## 2026-09-26 — Empty folders need their own refresh path
+
+The sidebar rendered saved empty folders, but fetched their catalog only on mount, session-count changes, or successful local edits. A folder created or moved elsewhere could remain invisible indefinitely, and a failed move reported an existing destination without revealing it. Refresh the folder catalog independently and on focus/return; refresh after a move conflict too. Preserve rows on fetch failure and ignore superseded responses. Browser coverage must create and move empty nested folders after the page is open and verify persistence after the last session leaves.
+
+## 2026-09-26 — A checkout picker must select the checkout itself
+**Broke:** destination Browse silently appended a child name and reused DuckTerm's
+folder after switching to Sotto. Users could neither select their exact empty
+folder nor create a named folder in the picker.
+**Rule:** bind clone destinations to their repository, clear stale selections on
+repository changes, and choose the exact checkout folder. Offer explicit folder
+creation. Publish into selected empty directories atomically; never merge over
+existing files, including files arriving between review and publication.
+
+## 2026-09-26 — Typing into an agent needs proof it submitted
+**Broke:** an Oracle nudge sat typed but unsent in a Claude Code prompt for
+14 hours. The leftover text then blocked every later nudge to that session.
+**Cause:** the paste and its Enter went out as one write, and Claude Code
+sometimes swallows an Enter that arrives with the paste. About 1 in 40 nudges.
+**Rule:** paste, pause, then press Enter separately. Confirm with the agent's
+`UserPromptSubmit` event, retry Enter once, and report "stuck" instead of
+claiming delivery.
+
+## 2026-09-26 — Destination folders need browsing too
+**Broke:** entering a guessed remote home path left cloning blocked on a missing
+parent directory. Example paths were mistaken for real destination values.
+**Rule:** browse the selected machine's actual home and choose an existing parent,
+then suggest a new project subfolder from the repository or source name. Reuse
+the folder explorer, recover from invalid drafts, and clear review consent when
+the destination changes.
+
+## 2026-09-26 — Launch must wait for project preparation
+**Broke:** choosing a GitHub repository left Launch enabled before a destination
+was entered or the clone completed, producing a generic missing-folder error.
+**Rule:** copy and clone sessions can launch only after preparation succeeds.
+Check the incomplete form, reviewed form, active transfer, and ready state for
+both local and remote destinations; happy-path clone coverage alone missed this.
+
+## 2026-09-26 — Repository selection and cloning must share connector authorization
+**Missing:** New Session only offered cloning remotely, required a URL, and used
+Git credentials unrelated to the account shown by the GitHub connector.
+**Rule:** expose cloning for This Mac and remote destinations. List repositories
+through the destination's selected connector and use that same grant to clone.
+Shared credentials stay on the connector host; verified repository bundles cross
+the authenticated relay. The broker must own temporary-directory cleanup so
+revoking access also removes partial clones. Never fall back silently to an ambient account.
+
+## 2026-09-26 — Copy source needs a folder explorer
+**Broke:** copying a local project to a remote machine required typing its path.
+**Cause:** the source form did not reuse New Session's existing folder browser.
+**Rule:** offer Browse beside the source field and route it explicitly to This
+Mac even when the launch destination is remote. Reuse the existing explorer and
+verify that choosing a folder feeds the transfer review.
+
+## 2026-09-26 — Unknown output must not invent a state transition
+
+The supervisor classifies individual output lines. Defaulting an unmatched line
+to idle (Codex/Copilot) or busy (Claude/generic) turned harmless output and ANSI
+redraws into fake Stop/PreToolUse events. Return no evidence instead and retain
+the last known state. Test the full marker → ordinary output sequence on both
+tmux and PTY; testing a marker alone misses this failure. Ten regression cases
+failed on old main and passed with the fix. Positive regex false matches and
+hook precedence remain separate investigation items.
+
+
+## 2026-09-26 — Artifact feedback needs provenance and an isolated selection bridge
+
+Text selected inside an opaque preview cannot be read directly by the app. Keep that origin isolation; authorize only a small app-owned reporter with a fresh CSP nonce, strip artifact scripts, and validate the sending frame/channel. Bind feedback to the saved artifact revision, escape terminal controls, and retain failed comments instead of reporting a false send. Verify real terminal receipt and malicious-preview rejection together.
+
+## 2026-09-26 — Recheck layout integration after concurrent merges
+
+The Control Tower introduced a wrapper between workspace and panels while collapse controls passed their branch checks. A direct-child CSS selector then stopped applying, and Oracle labels changed. Match the panel through its workspace ancestor, update the integration test to the merged UI, and gate the exact combined tree before publishing.
+
+## 2026-09-26 — Collapsing chrome must preserve the live terminal
+
+Side panels consumed space even when the owner only needed the center. Collapse their contents without unmounting the terminal or changing its session identity; leave a visible, keyboard-accessible reopen control. Verify real PTY resize frames, unchanged unsent input, independent toggles, persistence and Oracle interaction, not just a wider CSS box.
+
+## 2026-09-26 — Artifact previews must outlive temporary source files
+**Found:** a generated report or mockup can live in a temporary directory, so a
+catalog of file paths loses the deliverable when the agent cleans up or a file moves.
+**Rule:** register a bounded saved copy using the generating session's credential.
+Treat the path as provenance, never an instruction for the server to read a file.
+Keep artifact content out of the app's HTML origin, and test source deletion,
+session isolation, replacement, cleanup and backup restore before shipping.
+
+## 2026-09-25 — Last-agent exit raced the next tmux launch
+
+Linux fork-chain CI intermittently returned HTTP 400 because tmux reported
+`server exited unexpectedly`, reproduced after 30 passing repetitions. Its
+last short-lived agent could exit while the next launch connected. Configure
+`exit-empty off` on DuckTerm's private server before launching the child in
+the same tmux command queue. Preserve HTTP error bodies in fork tests: a
+passing retry is not diagnosis. Test that the server PID survives an empty
+interval and the next launch, and stress the real Linux fork chain.
+
+
+
+## 2026-09-26 — Re-adopting a terminal must repair stale interruption state
+
+All 21 live terminals survived while their database rows said interrupted, exposing Resume and disabling session messaging. Startup reattached panes but never cleared an existing interruption; normal hooks deliberately preserve at-rest states. Recover only confirmed-live interrupted sessions from their latest agent activity, clear ended_at, and restore enrollment without relaunching or inventing a new run. Keep deliberate Stop/Archive states intact. Failed tmux discovery is unknown liveness, not an empty fleet: never interrupt everything on a PATH/socket error. Verify stored state and process continuity after release, not only pane counts.
+
+## 2026-09-25 — Density is information structure, not just font size
+
+The first Compact/Standard/Relaxed preview only varied padding and type size, so the modes looked alike. The approved design changes one-line versus two-line rows, hover details, and persistent selected-session controls. Keep session names regular-weight in every mode, remember the choice, and test both geometry and access to hidden actions. Preserve the existing row-selection focus behavior: adding a focusable wrapper stole focus from the newly opened terminal, caught by the full browser suite.
+
+
+## 2026-09-25 — Opening Oracle must not resize a live terminal
+
+Oracle used to consume workspace width. A long active input line was permanently clipped after an open/close cycle, even though the original terminal dimensions returned. xterm excludes the cursor line from normal reflow; a resize-back is not a repair. Keep Oracle over the existing context column, hiding its covered controls, and preserve the terminal geometry. Browser regression covers long unsubmitted input, repeated toggles, and typing afterward. Completed-output-only resize tests missed this case.
+
+
 Append-only. One entry per issue we actually hit: what broke, the root cause,
 and the rule that prevents the recurrence. Newest first.
+
+## 2026-09-26 — Oracle showed Codex's auto-approved commands as approval notes
+**Broke:** the chat filled with "Approval" notes for feature-remote-session
+commands that ran seconds later without the owner.
+**Cause:** Codex fires PermissionRequest for every gated command, and with
+`approvals_reviewer = "auto_review"` its reviewer approves nearly all of them
+(1,597 requests in 5 days). The relay treated each request as the owner's to
+answer. The hook also registered a waiting approval for Codex, which kills
+hooks after 3 s, so those records stayed "pending" and their notes open.
+**Rule:** a signal that something *might* need the owner isn't evidence that
+it does. Look for the agent actually asking (its prompt on screen, a hook
+that is really waiting) before surfacing it, and check the per-runtime event
+history before assuming an event means the same thing for every agent.
+
+## 2026-09-26 — Initial terminal activation must respect open menus
+**Broke:** New Session intermittently vanished while being clicked, even without
+concurrent native UI probes.
+**Cause:** late session discovery activated the default terminal through an
+unconditional focus call, bypassing the guarded replay path.
+**Rule:** only explicit session-row or view-tab navigation may override another
+control's focus. Delay initial session discovery in a browser regression and
+verify an already-open menu remains focused and usable.
+
+## 2026-09-26 — Move must preserve the name and open the exact destination session
+**Broke:** full native Move acceptance showed the destination folder name instead
+of the source session name. Opening the remote dashboard also lacked the moved
+session's identity, so it could select another session.
+**Cause:** transfer launch did not persist the display name through history's
+metadata API, and host switching carried only launch drafts.
+**Rule:** persist the name and carry the exact destination key through the native
+bridge. Verify the selected row with multiple sessions and the durable source
+link through the actual desktop flow, not only transfer API tests.
+
+## 2026-09-26 — Artifact downloads and remote navigation share one delegate policy
+**Found:** integrating artifact downloads introduced a second navigation-policy
+callback alongside the remote dashboard's origin restriction.
+**Rule:** combine download and navigation decisions in one callback. Only the
+current dashboard's main frame may download a blob, and changing computers must
+reset navigation-load state so a failed new connection can retry. Compile the
+native app and rerun artifact, report UI, and transfer checks after integration.
+
+## 2026-09-26 — "Waiting" badges stayed wrong for days after the idle fix
+**Broke:** 6 sessions showed "waiting" and filled the control tower's Needs
+you list; 5 weren't waiting on anything.
+**Cause:** the 2026-09-23 fix made new idle notices derive "idle", but
+sessions whose last event was an old untyped idle notice kept "waiting".
+State only changes on new events, and an unused session sends none.
+**Rule:** when a fix changes how state is derived, also correct the state
+already stored. Here Oracle's minute check clears "waiting" when the screen
+shows an empty prompt and no approval is pending.
+
+## 2026-09-26 — Control tower opened with its header scrolled off screen
+**Broke:** opening the tower showed the tiles cut off at the top and no
+"← Sessions" button, so there was no visible way back.
+**Cause:** the Oracle chat kept its newest answer in view with
+`scrollIntoView`, which scrolls every scrollable ancestor, so it scrolled the
+whole tower page down. The mocked-chat screenshots before release had an
+empty chat, so nothing needed scrolling.
+**Rule:** keep a list at its bottom by setting that list's own `scrollTop`.
+Check a page with realistic content in every scrolling region before
+shipping it.
+
+## 2026-09-26 — Replacing the panes with the control tower broke terminal wrapping
+**Broke (caught by e2e before merge):** after opening and closing the control
+tower, every long line in a terminal wrapped one column later than before.
+**Cause:** the tower first replaced the three panes, which unmounted the
+terminal. Remounting replays its output, and the replay wrapped at a
+different width than the live session had. The B5 regression test
+(`oracle-terminal-resize.spec.ts`) failed on the rendered rows.
+**Rule:** a full-page view goes over the panes as an opaque layer, with the
+panes kept mounted and `inert`. Never unmount a terminal just to show
+something else.
+
+## 2026-09-26 — Token totals were inflated 6x in the control tower design
+**Broke:** the design and prototype said 10.9B tokens in 7 days; the real
+figure was 1.8B.
+**Cause:** Claude Code writes one transcript line per content block and
+repeats the reply's usage on each, so summing lines double-counted. The scan
+also summed whole transcripts touched this week, including months of older
+history in resumed sessions.
+**Rule:** count Claude usage once per (message id, request id) and bucket by
+each record's own timestamp. Check a derived total against one file counted
+by hand before putting it in front of the owner.
 
 ## 2026-09-25 — Ask Oracle reported prompt suggestions as the owner's instructions
 **Broke:** Oracle told the owner that qa and bugs-dev were both "told to
@@ -22,6 +235,14 @@ never saw what a restarted server holds.
 **Rule:** per-harness behavior for a session resolves from its DB row's
 runtime, not the supervisor's. Test fakes should mirror the adopted state,
 not the freshly launched one.
+
+## 2026-09-25 — Remote-session integration must preserve newer native and launch behavior
+**Broke:** both branches added the same navigation delegate callback; newer launch
+properties also left the feature's tests stale, and standalone native tests lacked
+remote-host dependencies.
+**Rule:** combine callbacks, preserve folder-assignment and launch-selection behavior,
+keep the stable installed bundle IDs, and run both full application and native UI
+checks after integrating main. Test builds must retain their isolated identity.
 
 ## 2026-09-25 — Restart should not expand every folder
 **Broke:** every dashboard mount initialized folders as expanded, so restarting
@@ -233,6 +454,32 @@ unbounded read; an attachment could grow or be replaced after selection.
 **Rule:** open without following symlinks, verify the opened file, bound the read,
 and retain the selected bytes for export. Test size/count limits, opt-outs,
 duplicate names, and private output permissions before wiring up delivery.
+
+## 2026-09-21 — Codex resume defaulted to the source computer's directory
+**Broke:** a transferred Codex conversation prompted to use its old Mac directory
+on Linux, with that unavailable directory selected by default.
+**Cause:** setting the child process cwd does not override Codex's recorded resume
+directory; the launch command omitted its explicit directory option.
+**Rule:** pass the reviewed destination through Codex's `--cd` option and verify
+cross-platform resume against the actual supported provider version.
+
+## 2026-09-21 — Test app packaging assumed an editable installation
+**Broke:** the committed candidate imported correctly from source, but a fresh
+Test build failed while calculating its isolated port.
+**Cause:** the build imported the installed Duckterm package instead of reading
+the helper from its own checkout; the development venv hid that dependency.
+**Rule:** validate Test packaging in a fresh environment and load build metadata
+from checkout files without requiring an installed application package.
+
+## 2026-09-21 — Remote transfer and connection lifecycle need durable ownership
+**Broke:** concurrent connector handshakes exceeded the connection limit; forgetting
+an inactive computer left its tunnel and picker entry alive. Project migration
+had only a design and could not preserve worktree state or recover a lost response.
+**Cause:** capacity was checked before an await, host removal updated only storage,
+and transfer/launch stages had no durable owner.
+**Rule:** reserve capacity without yielding, remove cached connections with host
+metadata, and journal reviewed snapshots and launch claims. Test interrupted uploads,
+Git index/working-tree preservation, and lost responses before allowing migration.
 
 ## 2026-09-21 — Installation docs advertised missing downloads
 **Broke:** the README recommended a nonexistent PyPI package and a Mac ZIP that

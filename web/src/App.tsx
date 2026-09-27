@@ -2,23 +2,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { AgentTree } from "./AgentTree";
 import { api } from "./api";
+import { desktop } from "./desktop";
 import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
-import { OracleChat } from "./OracleChat";
+import { ControlTower } from "./ControlTower";
+import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
 import { HeaderMenus } from "./HeaderMenus";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
+import { ArtifactsView } from "./ArtifactsView";
 import { InboxView } from "./InboxView";
 import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
+import { MoveRemoteModal } from "./RemoteProject";
 import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
 import { MessagePinStrip, PinTarget, useMessagePins } from "./MessagePins";
 import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
+import { PanelToggle, useSidePanels } from "./SidePanels";
 import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
 import {
@@ -34,6 +39,9 @@ import {
 import { Modal, ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
 import { useTheme } from "./useTheme";
+import { useSidebarDensity } from "./useSidebarDensity";
+import { useFolders } from "./useFolders";
+import "./sidebarDensity.css";
 
 function useNow(intervalMs: number): number {
   const [now, setNow] = useState(Date.now());
@@ -48,36 +56,34 @@ function Dashboard() {
   const { sessions: sourceSessions, connected, removeSessions, patchSession } =
     useEventStream();
   const inboxCounts = useInboxCounts();
+  const sidePanels = useSidePanels();
   const sessions = sourceSessions.map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 }));
   const toast = useToast();
   const now = useNow(1000);
   const { theme, resolved: mode, setTheme } = useTheme();
+  const { density, setDensity } = useSidebarDensity();
 
   const [modal, setModal] = useState<
     "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
-  >(null);
-  const [oracleOpen, setOracleOpen] = useState(() => {
-    try {
-      return localStorage.getItem("rd.oracleOpen") === "1";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem("rd.oracleOpen", oracleOpen ? "1" : "0");
-    } catch {
-      /* private window or blocked storage: the panel just starts closed */
-    }
-  }, [oracleOpen]);
+  >(desktop()?.draft ? "launch" : null);
+  const [towerOpen, setTowerOpen] = useState(false);
+  const relayOpen = useRelayCount();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const pendingDesktopSession = useRef(desktop()?.selectedSession);
   const messagePins = useMessagePins(selectedKey);
   const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
   const pinSequence = useRef(0);
+  const [moveKey, setMoveKey] = useState<string | null>(null);
+  useEffect(() => {
+    const move = (event: Event) => setMoveKey((event as CustomEvent<string>).detail);
+    window.addEventListener("move-to-remote", move);
+    return () => window.removeEventListener("move-to-remote", move);
+  }, []);
+  const moveSession = sessions.find(s => s.key === moveKey);
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
-  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox">(
+  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts">(
     "terminal",
   );
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
@@ -117,18 +123,10 @@ function Dashboard() {
       return { ...o, folders };
     });
 
-  // Folders persist on the server (incl. empty ones); the left list groups by
-  // them. Refetch when sessions change, since moving a session can create or
-  // clear a folder.
-  const [folders, setFolders] = useState<string[]>([]);
-  const refreshFolders = () =>
-    api
-      .folders()
-      .then((d) => setFolders(d.folders))
-      .catch(() => undefined);
+  const { folders, refreshFolders } = useFolders();
   useEffect(() => {
-    refreshFolders();
-  }, [sessions.length]);
+    void refreshFolders();
+  }, [sessions.length, refreshFolders]);
 
   async function deleteSession(key: string): Promise<boolean> {
     try {
@@ -200,6 +198,14 @@ function Dashboard() {
 
   // Default the selection to the first agent so the center pane isn't empty.
   useEffect(() => {
+    if (pendingDesktopSession.current) {
+      const key = pendingDesktopSession.current;
+      if (sessions.some(s => s.key === key)) {
+        pendingDesktopSession.current = undefined;
+        setSelectedKey(key);
+      }
+      return;
+    }
     if (selectedKey && sessions.some((s) => s.key === selectedKey)) return;
     setSelectedKey(agents[0]?.key ?? null);
   }, [agents, selectedKey, sessions]);
@@ -242,7 +248,7 @@ function Dashboard() {
   }, [agentsMdDir, modal]);
 
   return (
-    <div className="rd-app">
+    <div className="rd-app" data-density={density}>
       <header className="rd-topbar">
         <span className="rd-brand">
           <img
@@ -260,12 +266,13 @@ function Dashboard() {
         </span>
         <span className="rd-spacer" />
         <button
-          className={`rd-btn rd-btn-ghost rd-btn-sm${oracleOpen ? " rd-btn-active" : ""}`}
-          aria-pressed={oracleOpen}
-          onClick={() => setOracleOpen((o) => !o)}
-          title="Ask questions about your running sessions"
+          className={`rd-btn rd-btn-ghost rd-btn-sm${towerOpen ? " rd-btn-active" : ""}`}
+          aria-pressed={towerOpen}
+          onClick={() => setTowerOpen((o) => !o)}
+          title="Control tower: fleet insights, every agent at a glance, and Oracle chat"
         >
-          Ask Oracle
+          Oracle
+          {relayOpen > 0 && <span className="rd-rules-badge" aria-label={`${relayOpen} need you`}>{relayOpen}</span>}
         </button>
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
@@ -284,13 +291,31 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <HeaderMenus theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} onAction={(action) => {
+        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} onAction={(action) => {
           if (action === "launch") setLaunchGroup(undefined);
           setModal(action);
         }} />
       </header>
 
       <div className="rd-workspace">
+      {/* The tower is a layer over the panes, not a replacement: terminals stay
+          mounted at their size, since a remount replays output at a different
+          width (B5). inert keeps keystrokes and focus out of the hidden panes. */}
+      {towerOpen && gridFolder === null && (
+        <div className="rd-tower-layer">
+          <ControlTower
+            agents={agents.map((s) => ({ ...s, shownState: effectiveState(s, now) }))}
+            now={now}
+            onBack={() => setTowerOpen(false)}
+            onOpenTerminal={(key) => {
+              setSelectedKey(key);
+              setView("terminal");
+              setTowerOpen(false);
+            }}
+          />
+        </div>
+      )}
+      <div className="rd-workspace-panes" {...(towerOpen && gridFolder === null ? { inert: "" } : {})}>
       {gridFolder !== null ? (
         <GridView
           key={gridFolder}
@@ -305,10 +330,11 @@ function Dashboard() {
           onClose={() => setGridFolder(null)}
         />
       ) : (
-        <div className="rd-panels-3">
-          <section className="rd-agents">
+        <div className={`rd-panels-3${sidePanels.collapsed.left ? " rd-agents-collapsed" : ""}${sidePanels.collapsed.right ? " rd-context-collapsed" : ""}`}>
+          <section className={`rd-agents${sidePanels.collapsed.left ? " rd-side-collapsed" : ""}`}>
             <div className="rd-panel-head">
               <span>Agents</span>
+              <PanelToggle side="left" collapsed={sidePanels.collapsed.left} onToggle={() => sidePanels.toggle("left")} />
             </div>
             {agents.length === 0 && folders.length === 0 ? (
               <p className="rd-panel-empty">
@@ -369,6 +395,9 @@ function Dashboard() {
               >
                 Inbox{selected && inboxCounts[selected.key] ? ` (${inboxCounts[selected.key]})` : ""}
               </button>
+              <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")}>
+                Artifacts
+              </button>
             </div>
             {selected && (view === "terminal" || view === "messages") && (
               <MessagePinStrip pins={messagePins.pins} error={messagePins.error} onOpen={(pin) => {
@@ -401,6 +430,12 @@ function Dashboard() {
                 )}
               </div>
             )}
+            {view === "artifacts" && (
+              <div className="rd-messages-wrap">
+                {selected ? <ArtifactsView key={selected.key} sessionKey={selected.key} sessionName={selected.label} />
+                  : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
+              </div>
+            )}
             {/* Terminal view: keep a terminal MOUNTED per PTY-owned agent and just
               show the selected one. Re-mounting on every switch would reconnect
               the WS and replay the whole buffer from scratch each time. */}
@@ -431,9 +466,10 @@ function Dashboard() {
             )}
           </section>
 
-          <section className="rd-context-pane">
+          <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`}>
             <div className="rd-panel-head">
               <span>{selected ? selected.label : "Context"}</span>
+              <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
             <div className="rd-context-body">
               {selected && <ContextPanel session={selected} />}
@@ -460,7 +496,7 @@ function Dashboard() {
           </section>
         </div>
       )}
-      {oracleOpen && <OracleChat onClose={() => setOracleOpen(false)} />}
+      </div>
       </div>
 
       {messageFolder !== null && <MessageFolderModal key={messageFolder} folder={messageFolder} onClose={() => setMessageFolder(null)} />}
@@ -478,6 +514,8 @@ function Dashboard() {
             refreshFolders();
           }}
           onClose={() => {
+            const native = desktop();
+            if (native) delete native.draft;
             setModal(null);
             setLaunchGroup(undefined);
           }}
@@ -493,6 +531,7 @@ function Dashboard() {
           onClose={() => setModal(null)}
         />
       )}
+      {moveSession && <MoveRemoteModal session={moveSession} onClose={() => setMoveKey(null)} />}
       {forkSession && (
         <ForkModal session={forkSession} onClose={() => setForkKey(null)} />
       )}

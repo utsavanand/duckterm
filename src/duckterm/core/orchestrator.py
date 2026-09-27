@@ -30,6 +30,7 @@ from duckterm.core import events
 from duckterm.core.eventbus import EventBus
 from duckterm.git.worktrees import WorktreeManager
 from duckterm.helpers import paths, session_credentials, session_instructions
+from duckterm.helpers.private_files import private_write
 from duckterm.llm.summarizer import build_prompt, mechanical_summary, summarize
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.base import AgentRuntime, SessionState, plain_screen
@@ -90,10 +91,8 @@ class SessionSupervisor:
         self._input_queue: asyncio.Queue[bytes] | None = None
         self._input_task: asyncio.Task[None] | None = None
         self._last_input = 0.0
-        # Wall-clock ms, for Oracle: a keystroke after the turn ended may be an
-        # unsent draft. Only trustworthy for turns that ended after we started
-        # watching, hence observed_since_ms.
-        self.observed_since_ms = int(time.time() * 1000)
+        # Wall-clock ms of the owner's last keystroke, for Oracle: no nudge is
+        # pasted while someone may be typing into this terminal.
         self.last_owner_input_ms = 0
 
     def _emit(self, event_type: str, **fields: object) -> None:
@@ -165,7 +164,7 @@ class SessionSupervisor:
         command = shlex.join(argv)
         self._pipe_path = str(paths.home() / "panes" / f"{self.session_key}.log")
         Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(self._pipe_path).write_text("")
+        private_write(Path(self._pipe_path), "")
         self._tmux_target = tmux.spawn_piped(
             self.session_key,
             command,
@@ -182,7 +181,7 @@ class SessionSupervisor:
         self._pipe_path = str(paths.home() / "panes" / f"{self.session_key}.log")
         if not Path(self._pipe_path).exists():
             Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(self._pipe_path).write_text("")
+            private_write(Path(self._pipe_path), "")
         self._task = asyncio.create_task(self._tail_pipe())
 
     async def _tail_pipe(self) -> None:
@@ -210,7 +209,8 @@ class SessionSupervisor:
             # idle session costs ~5 file reads a second, not 40.
             last_output = 0.0
             loop = asyncio.get_running_loop()
-            with path.open("rb") as fh:
+            fh = path.open("rb")
+            try:
                 while True:
                     chunk = fh.read(4096)
                     if chunk:
@@ -230,14 +230,26 @@ class SessionSupervisor:
                             if tool is not None:
                                 self._emit(events.PRE_TOOL_USE, tool_name=tool)
                             new_state = self.runtime.detect_state(line)
-                            if new_state != self._state:
+                            if new_state is not None and new_state != self._state:
                                 self._state = new_state
                                 self._emit(_STATE_EVENT[new_state])
+                        continue
+                    # The bounded writer rotates by rename. Drain the old inode,
+                    # then follow the replacement without replaying the old file.
+                    try:
+                        rotated = path.stat().st_ino != os.fstat(fh.fileno()).st_ino
+                    except FileNotFoundError:
+                        rotated = False
+                    if rotated:
+                        fh.close()
+                        fh = path.open("rb")
                         continue
                     if not tmux.session_exists(target):
                         break
                     active = max(last_output, self._last_input)
                     await asyncio.sleep(0.025 if loop.time() - active < 5 else 0.2)
+            finally:
+                fh.close()
         except Exception as e:  # noqa: BLE001 — boundary: a background task
             print(f"[duckterm] tail-pipe for {self.session_key} failed: {e}", file=sys.stderr)
         finally:
@@ -263,7 +275,7 @@ class SessionSupervisor:
             if tool is not None:
                 self._emit(events.PRE_TOOL_USE, tool_name=tool)
             new_state = self.runtime.detect_state(line)
-            if new_state != self._state:
+            if new_state is not None and new_state != self._state:
                 self._state = new_state
                 self._emit(_STATE_EVENT[new_state])
 
@@ -507,23 +519,33 @@ class Orchestrator:
         gone — but its DB row still says 'busy'/'idle', and state only advances
         on events, none of which will ever arrive. So after adopting the live
         set, we mark every launched, non-at-rest row with no live backing as
-        'stopped' (resumable — honest, not deleted). This covers the tmux-died
-        case AND the no-tmux PTY case (where the live set is empty)."""
+        'interrupted' (resumable — honest, not deleted). If discovery is
+        unavailable, leave stored states alone rather than assume death."""
         from duckterm.runtimes.generic import GenericRuntime
 
         adopted: list[str] = []
-        if tmux.has_tmux():
-            for key in tmux.list_duckterm_sessions():
-                if key in self._supervisors:
-                    continue
-                row = self.history.session(key) if self.history else None
-                cwd = str(row.get("cwd") or ".") if row else "."
-                supervisor = SessionSupervisor(
-                    bus=self.bus, runtime=GenericRuntime("true"), session_key=key, cwd=cwd
-                )
-                self._supervisors[key] = supervisor
-                await supervisor.reattach()
-                adopted.append(key)
+        # Missing tmux on a GUI app's PATH is not evidence that its panes died.
+        if not tmux.has_tmux():
+            print("[duckterm] skipping reconciliation: tmux unavailable", file=sys.stderr)
+            return adopted
+        try:
+            live_keys = tmux.list_duckterm_sessions()
+        except (OSError, RuntimeError) as exc:
+            print(f"[duckterm] skipping reconciliation: {exc}", file=sys.stderr)
+            return adopted
+        for key in live_keys:
+            if key in self._supervisors:
+                continue
+            row = self.history.session(key) if self.history else None
+            cwd = str(row.get("cwd") or ".") if row else "."
+            supervisor = SessionSupervisor(
+                bus=self.bus, runtime=GenericRuntime("true"), session_key=key, cwd=cwd
+            )
+            await supervisor.reattach()
+            self._supervisors[key] = supervisor
+            adopted.append(key)
+            if self.history is not None:
+                self.history.recover_interrupted(key)
 
         if self.history is not None:
             # Everything actually live right now: freshly adopted + anything a
@@ -553,6 +575,7 @@ class Orchestrator:
         compare_group: str | None = None,
         name: str | None = None,
         env: dict[str, str] | None = None,
+        test: bool = False,
         record_intention: bool = True,
     ) -> str:
         """Launch a supervised agent. If repo_path is given, the agent runs in a
@@ -560,7 +583,7 @@ class Orchestrator:
         forked from `base` (default: repo HEAD); otherwise it runs in `cwd`.
         `parent_session_key` records fork lineage."""
         key = session_key or uuid.uuid4().hex
-        extra: dict[str, object] = {}
+        extra: dict[str, object] = {"test": test}
         if parent_session_key is not None:
             extra["parent_session_key"] = parent_session_key
         if compare_group is not None:

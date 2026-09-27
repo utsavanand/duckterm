@@ -1,0 +1,31 @@
+/* Density changes the sidebar's information hierarchy, never terminal geometry. */
+.rd-app .rd-row-name { font-weight: 400; }
+.rd-row-density-detail, .rd-density-actions { display: none; }
+.rd-app .rd-row-actions { margin-top: 0; }
+.rd-app .rd-row:hover .rd-row-actions,
+.rd-app .rd-row.expanded .rd-row-actions,
+.rd-app .rd-row.actions-open .rd-row-actions { margin-top: 6px; }
+.rd-row.actions-open .rd-row-actions { max-height: 124px; opacity: 1; }
+.rd-row-click:focus-visible, .rd-density-actions:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
+
+[data-density="compact"] .rd-row { padding-top: 3px; padding-bottom: 3px; }
+[data-density="compact"] .rd-row-main { gap: 5px; }
+[data-density="compact"] .rd-row-main > svg { width: 20px; height: 20px; }
+[data-density="compact"] .rd-row-name { font-size: 13px; }
+[data-density="compact"] .rd-row-meta { display: none; }
+[data-density="compact"] .rd-group-head { padding-top: 5px; padding-bottom: 5px; }
+[data-density="compact"] .rd-row .rd-state { font-size: 0; }
+[data-density="compact"] .rd-row .rd-state::before { content: ""; display: block; width: 6px; height: 6px; background: currentColor; border-radius: 50%; }
+[data-density="compact"] .rd-density-actions { display: block; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; padding: 0 4px; }
+[data-density="compact"] .rd-row:not(.expanded):not(.actions-open) .rd-row-actions { max-height: 0; opacity: 0; margin-top: 0; visibility: hidden; }
+
+[data-density="standard"] .rd-row { padding-top: 6px; padding-bottom: 6px; }
+[data-density="standard"] .rd-row-name { font-size: 14px; }
+[data-density="standard"] .rd-row-meta { font-size: 11px; margin-top: 1px; }
+
+[data-density="relaxed"] .rd-row { padding-top: 10px; padding-bottom: 10px; }
+[data-density="relaxed"] .rd-row-name { font-size: 15px; }
+[data-density="relaxed"] .rd-row-main > svg { width: 28px; height: 28px; }
+[data-density="relaxed"] .rd-row-meta { font-size: 12px; margin-top: 6px; white-space: normal; }
+[data-density="relaxed"] .rd-row-density-detail { display: block; font-size: 11px; line-height: 1.6; color: var(--muted); margin-top: 5px; }
+[data-density="relaxed"] .rd-row.selected .rd-row-actions { max-height: 124px; opacity: 1; margin-top: 10px; }

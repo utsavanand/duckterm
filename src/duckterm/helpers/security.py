@@ -16,14 +16,13 @@ Plus input validators for values that flow into shells, file paths, and
 AppleScript.
 """
 
-import os
 import re
 import secrets
-import tempfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from duckterm.helpers import paths
+from duckterm.helpers.private_files import private_read, private_write
 
 TOKEN_HEADER = "x-duckterm-token"
 
@@ -95,26 +94,18 @@ def load_or_create_token() -> str:
     """The per-install secret, created on first run and persisted 0600. Shared
     with the dashboard (injected into its HTML) and the hook script (via env)."""
     path = _token_path()
-    if path.exists():
-        existing = path.read_text().strip()
-        if existing:
-            path.chmod(0o600)
-            return existing
+    existing = (private_read(path) or "").strip()
+    if existing:
+        return existing
     token = secrets.token_urlsafe(32)
-    write_private_text(path, token)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    private_write(path, token)
     return token
 
 
 def write_private_text(path: Path, text: str) -> None:
     """Publish a complete secret with 0600 permissions from its first write."""
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix=".secret-")
-    try:
-        with os.fdopen(fd, "w") as stream:
-            stream.write(text)
-        os.replace(temporary, path)
-    finally:
-        Path(temporary).unlink(missing_ok=True)
+    private_write(path, text)
 
 
 def token_valid(headers: dict[str, str], token: str) -> bool:

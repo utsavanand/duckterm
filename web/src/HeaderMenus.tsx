@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { AUTO, TermMode, themesForMode } from "./termThemes";
 import { Theme } from "./useTheme";
+import { SidebarDensity } from "./useSidebarDensity";
 import "./headerMenus.css";
 
 type Menu = "settings" | "new";
-export function HeaderMenus({ theme, onTheme, termMode, termTheme, onTermTheme, notifyOn, onNotify, onAction }: {
+export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, termTheme, onTermTheme, notifyOn, onNotify, onAction }: {
+  density: SidebarDensity;
+  onDensity: (density: SidebarDensity) => void;
   theme: Theme;
   onTheme: (theme: Theme) => void;
   termMode: TermMode;
@@ -61,6 +64,9 @@ export function HeaderMenus({ theme, onTheme, termMode, termTheme, onTermTheme, 
         <label className="rd-header-menu-field">Terminal colors<select className="rd-term-theme" title={`Terminal color theme (${termMode} mode)`} value={termTheme} onChange={(event) => onTermTheme(event.target.value)}>
           <option value={AUTO}>Auto ({termMode})</option>
           {themesForMode(termMode).map((name) => <option key={name} value={name}>{name}</option>)}
+        </select></label>
+        <label className="rd-header-menu-field">Sidebar density<select value={density} onChange={(event) => onDensity(event.target.value as SidebarDensity)}>
+          <option value="compact">Compact</option><option value="standard">Standard</option><option value="relaxed">Relaxed</option>
         </select></label>
         <div className="rd-header-menu-divider" />
         <div className="rd-header-notifications">

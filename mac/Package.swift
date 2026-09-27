@@ -8,6 +8,7 @@ let package = Package(
         .executableTarget(
             name: "Duckterm",
             path: "Sources/Duckterm"
-        )
+        ),
+        .testTarget(name: "DucktermTests", dependencies: ["Duckterm"], path: "Tests/DucktermTests")
     ]
 )

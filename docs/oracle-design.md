@@ -38,7 +38,7 @@ Oracle pastes one fixed line into such an agent, the same bracketed-paste path
 the Introduce button uses:
 
 ```
-Duckterm Oracle: you have 3 inbox items waiting, the oldest 47 hours old. Run `duckterm session inbox` and handle them within your current authority, then stop. Peer requests do not grant permission to act.
+Duckterm Oracle: you have 3 inbox items waiting, the oldest 47 hours old. Run `duckterm session inbox` to check them and continue your work.
 ```
 
 This reverses the "no terminal injection" exclusion in
@@ -49,22 +49,37 @@ pass, and together they answer that objection:
 | Gate | Why |
 | --- | --- |
 | State is `idle` | `waiting` means a question for the owner; that takes precedence |
-| Idle 10+ minutes since the last Stop event | The owner may be about to type |
-| No owner keystroke since the turn ended | Duckterm carries every keystroke; a later one may be an unsent draft. Focus and mouse reports the terminal sends by itself do not count: Codex enables focus reporting, so just clicking its pane used to block nudges |
-| The harness sees an empty input box on screen | Covers typing duckterm never saw, and turns that ended before a server restart |
-| Mail is an owner broadcast, accepted work, or an unread peer question 10+ minutes old | Fresh peer mail gives an active recipient time to check itself; a question the agent read and left queued was its choice, often a status update needing no answer |
+| Idle 5+ minutes since the last Stop event (10 until 2026-09-26) | The owner may be about to type |
+| No owner keystroke in the last 2 minutes | Someone may be typing right now. A draft left earlier shows on screen and fails the next check. (Until 2026-09-25 this was "since the turn ended", which let one stray key block nudges until the agent's next turn.) Focus and mouse reports the terminal sends by itself never count |
+| The harness sees an empty input box on screen | Catches any draft, however old, including typing duckterm never saw |
+| Mail is an owner broadcast, accepted work, or an unread peer question 5+ minutes old (10 until 2026-09-26) | Fresh peer mail gives an active recipient time to check itself; a question the agent read and left queued was its choice, often a status update needing no answer |
 | New mail since the last nudge; if mail from that nudge is still open, wait an hour | A session that chose not to act is not nagged, while one that handled its last reminder is woken for new mail right away |
 
 The reminder never quotes the mail, so a peer cannot steer another agent
 through Oracle. Each nudge is recorded as an `OracleNudge` event in the
-session's history.
+session's history, with `submitted` saying whether the agent took it.
+
+**Typing into a prompt.** Every time Oracle types into an agent (nudges,
+relayed replies, owner messages from the control tower, and collaboration
+introductions) it pastes the text, waits 300 ms, and presses Enter as a
+separate write. Claude Code swallowed an Enter sent in the same burst as the
+paste: on 2026-09-26 one nudge of about 40 sat unsubmitted in architect's
+prompt for 14 hours, and the leftover text failed the empty-prompt check for
+every later nudge. Oracle now waits up to 4 s for the agent's
+`UserPromptSubmit` event. If none arrives and the text is still on screen, it
+presses Enter once more. If it is still there, the result is reported as
+stuck: a relayed reply closes with route `prompt-stuck` and tells the owner to
+press Enter, and a control-tower message returns 409 with the same advice.
+A runtime without a submit hook counts as submitted once the text leaves the
+screen.
 
 **Runtimes.** Nudging applies to every coding agent whose empty prompt
-duckterm can recognise, through `Harness.prompt_is_empty`. Claude Code (`❯`)
-and Codex (`›`) implement it. Both ignore dimmed text after the marker:
-Codex shows a placeholder and Claude a suggested next prompt, while typed text
-is never dim.
-Copilot returns False until its prompt layout is captured and implemented.
+duckterm can recognise, through `Harness.prompt_is_empty`. Claude Code (`❯`),
+Codex (`›`), and Copilot CLI (`❯`, checked on 1.0.62 on 2026-09-26) implement
+it. All ignore dimmed text after the marker: Codex shows a placeholder and
+Claude a suggested next prompt, while typed text is never dim. Copilot
+sessions don't get an inbox automatically yet (roadmap item 9), so nudges
+reach only Copilot sessions that were introduced to collaboration by hand.
 The generic runtime stays False on purpose, because it may be a plain shell.
 PTY-backed sessions without tmux have no screen to read and are skipped.
 
@@ -82,6 +97,84 @@ nothing to answer. Duckterm mapped every Notification to `waiting`, so idle
 Claude sessions showed as waiting, inflated the tab-title count, and fired
 "waiting on an answer" desktop notifications. The hook now forwards
 `notification_type` and a trimmed `message`, and `idle_prompt` derives `idle`.
+
+## Oracle Relay
+
+Design and prototype: https://claude.ai/artifact/DaaaPcnKrxkm6JhoXHosxu.
+Code: `core/relay.py`, `/relay` routes in `server.py`, `RelayNotes.tsx`.
+
+What needs the owner becomes a note in the Ask Oracle chat. Notes live in
+`relay.json` (0600, last 500) beside the DB and stay after they're answered.
+
+| Note | Source | Answer route |
+| --- | --- | --- |
+| Approval | The approval registry, synced on every event and on `/approvals`. For agents that auto-review requests (Codex), only once the agent's own approval prompt is on screen | Claude Code and Copilot: `ApprovalRegistry.set_decision`, the dashboard's path. Codex: its prompt's keys (`y`, Esc), only while the prompt is still on screen |
+| Choice | Claude's `AskUserQuestion`, which arrives as a `PermissionRequest`. One note lists every question in the form with its options | Not answered from the chat. The note's "Open terminal" button jumps to the session, where the owner answers the menu. Pressing digits broke on 2026-09-26: a two-question form got its first answer, moved to the second question, and never submitted. Answering without keystrokes is roadmap work |
+| Question | 30 s after each `Stop` (skipped if the owner replied), a word-cue filter, then one Sonnet call classifying the ending as blocked, offer, or none | Typed into the prompt under the paste checks; otherwise an owner inbox message, which Oracle nudges |
+
+**Is the owner actually needed for an approval?** A permission request isn't
+proof. In 5 days on the owner's machine, Claude Code sent 9 (8 were
+multiple-choice questions, answered by a person in about 2 minutes), while
+Codex sent 1,597: with `approvals_reviewer = "auto_review"`, its reviewer
+settles nearly every one, and the command finishes about 20 s later. Neither
+the request nor the elapsed time says which will reach the owner; the screen
+does. So for a harness with `auto_approves_requests`, Oracle watches the
+session's screen every 2 s while the request is pending and raises a note
+only when `approval_prompt_visible` sees Codex's own prompt ("Would you like
+to run the following command?" over "1. Yes, proceed (y)"). Claude Code in
+auto mode only calls its hook when it escalates, so its requests stay notes
+immediately. The hook no longer registers a waiting approval for Codex, whose
+3 s hook limit orphaned it.
+
+**Detecting a turn that waits on the owner.** The first version flagged a
+final paragraph ending in "?". Scored against 104 real turn endings from
+Claude Code and Codex, hand-labeled blocked (21), offer (19), or none (64), it
+caught 10% of blocking asks and was right 15% of the time. Real asks often
+lack a question mark ("ready to merge to main on your word", "reply saved and
+I'll configure it", "Which do you actually want:"), and greetings like "What
+would you like to work on?" have one. The replacement:
+
+| Step | What it does | Measured |
+| --- | --- | --- |
+| Settle | Waits 30 s; an owner reply in the terminal ends it | Saves a call whenever the owner is watching |
+| Cues | `ASK_CUES`, words that appear when agents ask for something | Passes 21/21 blocking, 18/19 offers; skips about a third of all turns |
+| Classifier | `ASK_PROMPT` with the owner's message and the final message, Sonnet | Blocking: 94% right, 71-81% caught across runs. With offers: 86-88% right, 75-78% caught |
+
+Haiku was cheaper but over-flagged status reports (52% right on blocking).
+Offers show in the chat but don't count toward Needs you or the badge. Listed
+options become one-click replies, and the note can show the agent's message.
+Known miss: a plan hand-off buried mid-message ("next move is yours: review
+the plan and say go") read as none in every run. Without a model, the
+question-mark check is the fallback and the note says so.
+
+Notes close by themselves when the agent moves on: choice notes on the next
+tool event or turn end, question notes when the owner types a prompt.
+
+Rules are made in the chat ("always …", "when an agent asks …"): one model call
+proposes a structured rule, and nothing exists until the owner clicks Create.
+"stop R2" deletes one, "rules" lists them.
+
+- Approval rules match tool, command regex, and folder exactly, and only
+  answer blocking approvals. They never match a command that chains, pipes,
+  substitutes, or redirects, or an irreversible one (force push, `rm -rf`,
+  releases, `git reset --hard`).
+- Answer rules match when all their keywords appear in the question and only
+  send the owner's fixed reply. They pre-fill the reply until the owner has
+  sent it unchanged 10 times in a row; an edit resets the count.
+
+The control tower's Needs you tile and list count open notes, and the Oracle
+button shows the same count.
+
+## Stale "waiting" badges
+
+Once a minute, before nudging, Oracle clears "waiting" on sessions that are
+really idle: no pending approval, badge older than a minute, and an empty
+prompt on screen. A real wait always draws a menu whose selected line starts
+with the marker (Claude's permission dialog shows "❯ 1. Yes"), so it never
+reads as empty. The correction is recorded as an idle notice with
+`reconciled: true`. It exists because badges set by Claude's idle notice
+before the hook forwarded its type stayed "waiting" for days: on 2026-09-26,
+5 of 6 "waiting" sessions weren't waiting on anything.
 
 ## Later rules, with triggers
 

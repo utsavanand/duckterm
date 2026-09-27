@@ -34,7 +34,7 @@ class GenericRuntime(Harness):
     def launch_command(self, *, cwd: Path, session_key: str, initial_prompt: str) -> list[str]:
         return list(self._argv)
 
-    def detect_state(self, recent_output: str) -> SessionState:
+    def detect_state(self, recent_output: str) -> SessionState | None:
         """Classify by the last recognizable marker in the output window."""
         for line in reversed(recent_output.splitlines()):
             stripped = line.strip()
@@ -44,7 +44,7 @@ class GenericRuntime(Harness):
                 return "waiting"
             if stripped.startswith("[busy]") or stripped.startswith("[tool]"):
                 return "busy"
-        return "busy"
+        return None
 
     def tool_in(self, recent_output: str) -> str | None:
         match = _TOOL.search(recent_output)

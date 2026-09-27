@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { apiPost, base } from "./helpers";
 
-// Ask Oracle: one question about the running fleet -> one answer from the
+// Ask Oracle, in the control tower: one question about the running fleet -> one answer from the
 // summarizer backend (the fake LLM here, which always prints its canned
 // rules — asserting them proves the round trip through /fleet/ask). The
 // conversation must survive a page reload.
@@ -16,7 +16,9 @@ test("Ask Oracle answers a question about running sessions", async ({ page }) =>
   expect(r.status).toBe(200);
 
   await page.goto(base());
-  await page.getByRole("button", { name: "Ask Oracle" }).click();
+  await page.getByRole("button", { name: "Oracle", exact: true }).click();
+  await expect(page.getByRole("heading", { name: /Control tower/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^fleetbot, / })).toBeVisible();
   const panel = page.getByRole("complementary", { name: "Oracle chat" });
   const box = panel.getByLabel("Message Oracle");
   await box.fill("what is fleetbot doing?");
@@ -29,10 +31,13 @@ test("Ask Oracle answers a question about running sessions", async ({ page }) =>
     "Use rg, not grep",
     { timeout: 15_000 },
   );
+  // A new answer scrolls only the chat; the tower's header stays in view.
+  await expect(page.getByRole("button", { name: "← Sessions" })).toBeInViewport();
 
-  // The conversation lives on the server and the panel remembers it was open.
+  // The conversation lives on the server, so it survives a reload.
   await page.reload();
+  await page.getByRole("button", { name: "Oracle", exact: true }).click();
   await expect(panel.locator(".rd-oracle-a").last()).toContainText("Use rg, not grep");
-  await panel.getByRole("button", { name: "Close Oracle" }).click();
-  await expect(panel).toBeHidden();
+  await page.getByRole("button", { name: "← Sessions" }).click();
+  await expect(page.getByRole("heading", { name: /Control tower/ })).toBeHidden();
 });

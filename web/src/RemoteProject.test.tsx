@@ -1,0 +1,43 @@
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { RemoteProject } from "./RemoteProject";
+import { destinationRequest } from "./desktop";
+vi.mock("./desktop", () => ({ destinationRequest: vi.fn(), desktop: () => ({ targets: [{ id: "dev", name: "Remote — dev" }] }), selectLaunchTarget: vi.fn() }));
+afterEach(() => { cleanup(); localStorage.clear(); vi.resetAllMocks(); });
+const snapshot = { fingerprint: "snapshot", source: "/local", bytes: 12, entries: [{ path: "file" }], excluded: [".env"], ignored: [], git: { kind: "git" }, conversation: {} };
+it("requires a review and consent before copying, then reuses the operation on retry", async () => {
+  const prepared = vi.fn();
+  const request = vi.mocked(destinationRequest);
+  request.mockImplementation(async (_target, operation) => {
+    if (operation === "project-preview") return snapshot;
+    if (operation === "project-preflight") return {};
+    if (operation === "project-transfer") throw new Error("Connection lost; retry");
+    return {};
+  });
+  render(<RemoteProject target="dev" kind="copy" command="codex" onPrepared={prepared} onBusy={() => undefined} />);
+  fireEvent.change(screen.getByLabelText("Local project path"), { target: { value: "/local" } });
+  fireEvent.change(screen.getByLabelText("Remote destination folder"), { target: { value: "/remote/new" } });
+  fireEvent.click(screen.getByText("Review transfer"));
+  const copy = await screen.findByRole("button", { name: "Copy project" });
+  expect(copy).toBeDisabled();
+  expect(screen.getByText(".env")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(copy);
+  await screen.findByRole("alert");
+  const first = request.mock.calls.find(c => c[1] === "project-transfer")!;
+  fireEvent.click(copy);
+  await waitFor(() => expect(request.mock.calls.filter(c => c[1] === "project-transfer")).toHaveLength(2));
+  expect(request.mock.calls.filter(c => c[1] === "project-transfer")[1][2]).toEqual(first[2]);
+  expect(prepared).not.toHaveBeenCalled();
+});
+it("does not apply a stale review after changing the destination component", async () => {
+  let resolve!: (v: unknown) => void;
+  vi.mocked(destinationRequest).mockImplementation(async (_target, op) => op === "project-preview" ? await new Promise(r => { resolve = r; }) : {});
+  const { unmount } = render(<RemoteProject target="dev" kind="copy" command="codex" onPrepared={vi.fn()} onBusy={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Local project path"), { target: { value: "/local" } });
+  fireEvent.change(screen.getByLabelText("Remote destination folder"), { target: { value: "/remote/new" } });
+  fireEvent.click(screen.getByText("Review transfer"));
+  unmount();
+  await act(async () => resolve(snapshot));
+  expect(screen.queryByText("Copy project")).toBeNull();
+});

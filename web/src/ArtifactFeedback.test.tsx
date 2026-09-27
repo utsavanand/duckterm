@@ -1,0 +1,25 @@
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { ArtifactFeedback } from "./ArtifactFeedback";
+import { api } from "./api";
+vi.mock("./api", () => ({ api: { artifactFeedback: vi.fn() } }));
+afterEach(() => { cleanup(); vi.resetAllMocks(); });
+it("retains the quote and comment on delivery failure and prevents duplicate sends", async () => {
+  const target = { artifact: { id: "a", session_key: "s", title: "Report", source_path: "/tmp/report.md", media_type: "text/markdown", size: 1, sha256: "old-revision", created_at: 1, updated_at: 1 }, quote: "Selected text", left: 500, bottom: 300 };
+  const sent = vi.fn();
+  let reject!: (error: Error) => void;
+  vi.mocked(api.artifactFeedback).mockImplementationOnce(() => new Promise((_, fail) => { reject = fail; })).mockResolvedValue(undefined);
+  render(<ArtifactFeedback sessionKey="s" sessionName="Agent" target={target} onClose={vi.fn()} onSent={sent} />);
+  const input = screen.getByRole("textbox", { name: "Feedback to agent" });
+  fireEvent.change(input, { target: { value: "Please clarify" } });
+  fireEvent.click(screen.getByRole("button", { name: "Send ⌘↵" }));
+  expect(screen.getByRole("button", { name: "Sending…" })).toBeDisabled();
+  await act(async () => reject(new Error("No live terminal")));
+  expect(await screen.findByRole("alert")).toHaveTextContent("No live terminal");
+  expect(input).toHaveValue("Please clarify");
+  expect(sent).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Send ⌘↵" }));
+  await act(async () => {});
+  expect(api.artifactFeedback).toHaveBeenLastCalledWith("s", target.artifact, "Selected text", "Please clarify");
+  expect(sent).toHaveBeenCalledOnce();
+});

@@ -1,5 +1,8 @@
-import { useEffect, useState } from "react";
-import { api, BrowseResult } from "./api";
+import { useEffect, useMemo, useState } from "react";
+import { DirBrowser } from "./DirBrowser";
+import { api, BrowseResult, LaunchRequest } from "./api";
+import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
+import { RemoteProject, PreparedProject } from "./RemoteProject";
 import { Button, Field, inputStyle, Modal, useToast } from "./ui";
 
 // New session: a command (runtime is inferred from it), a path picked by
@@ -27,10 +30,31 @@ export function LaunchModal({
 }) {
   const toast = useToast();
   const [selectedGroup, setSelectedGroup] = useState(group ?? "");
-  const [agent, setAgent] = useState("claude");
-  const [command, setCommand] = useState("claude");
-  const [name, setName] = useState("");
-  const [prompt, setPrompt] = useState("");
+  const native = desktop();
+  const [, refreshTargets] = useState(0);
+  useEffect(() => {
+    const refresh = () => { refreshTargets(n => n + 1); setTarget(desktop()?.currentTarget ?? "local"); setPicked(null); setPrepared(null); setProjectKind("existing"); };
+    window.addEventListener("desktop-targets-changed", refresh);
+    return () => window.removeEventListener("desktop-targets-changed", refresh);
+  }, []);
+  const [projectKind, setProjectKind] = useState<"existing" | "copy" | "clone">("existing");
+  const [prepared, setPrepared] = useState<PreparedProject | null>(null);
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [target, setTarget] = useState(native?.currentTarget ?? "local");
+  const elsewhere = !!native && target !== native.currentTarget;
+  const destination = useMemo(() => elsewhere ? {
+    browse: (path?: string) => destinationRequest<BrowseResult>(target, "browse", path ? { path } : {}),
+    branches: (path: string) => destinationRequest<{ branches: string[] }>(target, "branches", { path }),
+    zshThemes: () => destinationRequest<{ themes: string[] }>(target, "themes"),
+    launch: (req: LaunchRequest) => {
+      const params = Object.fromEntries(Object.entries(req).filter(([key, value]) => key !== "in_terminal" && value !== undefined));
+      return destinationRequest<{ session_key: string }>(target, "launch", params);
+    },
+  } : api, [elsewhere, target]);
+  const [agent, setAgent] = useState(native?.draft?.agent ?? "claude");
+  const [command, setCommand] = useState(native?.draft?.command ?? "claude");
+  const [name, setName] = useState(native?.draft?.name ?? "");
+  const [prompt, setPrompt] = useState(native?.draft?.prompt ?? "");
   const [picked, setPicked] = useState<BrowseResult | null>(null);
   const [browsing, setBrowsing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -45,11 +69,14 @@ export function LaunchModal({
   const [zshTheme, setZshTheme] = useState("");
 
   useEffect(() => {
-    api
-      .zshThemes()
-      .then((d) => setZshThemes(d.themes))
+    let current = true;
+    setZshThemes([]);
+    setZshTheme("");
+    destination.zshThemes()
+      .then((d) => { if (current) setZshThemes(d.themes); })
       .catch(() => undefined);
-  }, []);
+    return () => { current = false; };
+  }, [destination]);
 
   const path = picked?.path;
   const isGit = picked?.is_git ?? false;
@@ -60,7 +87,7 @@ export function LaunchModal({
   const [pendingRules, setPendingRules] = useState(0);
   useEffect(() => {
     setPendingRules(0);
-    if (!path) return;
+    if (!path || elsewhere) return;
     let stale = false;
     fetch(`/agents-md?dir=${encodeURIComponent(path)}`)
       .then((r) => r.json())
@@ -74,24 +101,31 @@ export function LaunchModal({
     return () => {
       stale = true;
     };
-  }, [path]);
+  }, [path, elsewhere]);
 
   // When a git folder is picked and the user wants a worktree, fetch the
   // branches to base off (local + remote, fetched fresh on the server).
   useEffect(() => {
+    let current = true;
     if (mode === "worktree" && path) {
       setBranches([]);
-      api
+      destination
         .branches(path)
         .then((d) => {
+          if (!current) return;
           setBranches(d.branches);
           setBase(d.branches[0] ?? "");
         })
         .catch(() => undefined);
     }
-  }, [mode, path]);
+    return () => { current = false; };
+  }, [mode, path, destination]);
 
   async function submit() {
+    if (projectKind !== "existing" && !prepared) {
+      toast(`Review and ${projectKind === "clone" ? "clone" : "copy"} the project before launching`, "err");
+      return;
+    }
     if (!command.trim() || !path) {
       toast("A command and a folder are required", "err");
       return;
@@ -107,7 +141,7 @@ export function LaunchModal({
       const worktree = isGit && mode === "worktree";
       // Run the agent in a PTY Duckterm owns (in_terminal:false) so it renders
       // in the in-app terminal — no external iTerm/Terminal tab.
-      const launched = await api.launch({
+      const launched = prepared ? await destinationRequest<{ session_key: string }>(target, "project-launch", { id: prepared.id, command, name, prompt }) : await destination.launch({
         command,
         name: name || undefined,
         prompt: prompt || undefined,
@@ -121,7 +155,7 @@ export function LaunchModal({
             }
           : { cwd: path }),
       });
-      if (selectedGroup) {
+      if (selectedGroup && !elsewhere) {
         try {
           await api.setGroup(launched.session_key, selectedGroup);
         } catch (e) {
@@ -130,8 +164,9 @@ export function LaunchModal({
           return;
         }
       }
-      onCreated(launched.session_key, selectedGroup);
-      toast(selectedGroup ? `Started in ${selectedGroup}` : `Started ${name || "session"}`);
+      if (!elsewhere) onCreated(launched.session_key, selectedGroup);
+      toast(selectedGroup && !elsewhere ? `Started in ${selectedGroup}` : `Started ${name || "session"}`);
+      if (elsewhere) selectLaunchTarget(target, {});
       onClose();
     } catch (e) {
       toast(`Launch failed: ${(e as Error).message}`, "err");
@@ -141,7 +176,37 @@ export function LaunchModal({
   }
 
   return (
-    <Modal title="New session" onClose={onClose}>
+    <Modal title="New session" onClose={() => { if (!busy && !transferBusy) onClose(); }}>
+      {native && (
+        <Field label="Run on">
+          <select
+            aria-label="Run on"
+            style={inputStyle}
+            value={target}
+            disabled={busy || transferBusy}
+            onChange={(event) => {
+              setTarget(event.target.value);
+              setPrepared(null);
+              setProjectKind("existing");
+              setPicked(null);
+              setMode(null);
+              setBrowsing(false);
+              setBranches([]);
+              setBase("");
+              setNewBranch("");
+            }}
+          >
+            {native.targets.map((target) => (
+              <option key={target.id} value={target.id}>{target.name}</option>
+            ))}
+          </select>
+          <small style={{ color: "var(--muted)" }}>
+            {target === "local"
+              ? "Runs on this Mac."
+              : "Keeps running remotely when you close the app or your laptop."}
+          </small>
+        </Field>
+      )}
       <Field label="Agent">
         <div className="rd-agent-pick">
           {AGENTS.map((a) => (
@@ -172,16 +237,23 @@ export function LaunchModal({
         </Field>
       )}
 
-      <Field label="Sidebar folder">
+      {!elsewhere && <Field label="Sidebar folder">
         <select aria-label="Sidebar folder" style={inputStyle} value={selectedGroup} onChange={(e) => setSelectedGroup(e.target.value)}>
           <option value="">Ungrouped</option>
           {[...new Set([...folders, ...(group ? [group] : [])])].sort().map((folder) => (
             <option key={folder} value={folder}>{folder}</option>
           ))}
         </select>
-      </Field>
+      </Field>}
 
-      <Field label="Folder to work in">
+      {native && <Field label="Project source">
+        <select aria-label="Project source" style={inputStyle} value={projectKind} disabled={busy || transferBusy} onChange={e => { setProjectKind(e.target.value as "existing" | "copy" | "clone"); setPicked(null); setPrepared(null); setMode(null); }}>
+          <option value="existing">{target === "local" ? "Existing folder" : "Existing remote folder"}</option>{target !== "local" && <option value="copy">Copy local project</option>}<option value="clone">Clone Git repository</option>
+        </select>
+      </Field>}
+      {projectKind !== "existing" && !prepared && <RemoteProject key={target + projectKind} target={target} kind={projectKind} command={command} onBusy={setTransferBusy} onPrepared={p => { setPrepared(p); setPicked({ path: p.destination, parent: null, is_git: false, entries: [] }); setMode("in-place"); }} />}
+      {(projectKind === "existing" || prepared) && <>
+      <Field label={native ? `Folder on ${native.targets.find((t) => t.id === target)?.name ?? target}` : "Folder to work in"}>
         {path ? (
           <div
             style={{
@@ -205,7 +277,7 @@ export function LaunchModal({
             >
               {isGit ? "git repo" : "plain folder"}
             </span>
-            <Button size="sm" variant="ghost" onClick={() => setBrowsing(true)}>
+            <Button size="sm" variant="ghost" disabled={!!prepared || busy || transferBusy} onClick={() => setBrowsing(true)}>
               Change
             </Button>
           </div>
@@ -226,6 +298,8 @@ export function LaunchModal({
 
       {browsing && (
         <DirBrowser
+          key={target}
+          browse={destination.browse}
           start={path}
           onPick={(r) => {
             setPicked(r);
@@ -290,6 +364,7 @@ export function LaunchModal({
         </>
       )}
 
+      </>}
       <Field label="Name (optional)">
         <input
           style={inputStyle}
@@ -332,10 +407,10 @@ export function LaunchModal({
           marginTop: 8,
         }}
       >
-        <Button variant="ghost" onClick={onClose}>
+        <Button variant="ghost" onClick={onClose} disabled={busy || transferBusy}>
           Cancel
         </Button>
-        <Button onClick={submit} disabled={busy}>
+        <Button onClick={submit} disabled={busy || transferBusy || (projectKind !== "existing" && !prepared)}>
           {busy ? "Launching…" : "Launch"}
         </Button>
       </div>
@@ -345,106 +420,3 @@ export function LaunchModal({
 
 // A simple server-backed folder navigator: lists subdirectories, flags git
 // repos, lets you go up / into / select the current folder.
-function DirBrowser({
-  start,
-  onPick,
-  onCancel,
-}: {
-  start?: string;
-  onPick: (r: BrowseResult) => void;
-  onCancel: () => void;
-}) {
-  const [data, setData] = useState<BrowseResult | null>(null);
-
-  function load(path?: string) {
-    api
-      .browse(path)
-      .then(setData)
-      .catch(() => undefined);
-  }
-  useEffect(() => {
-    load(start);
-  }, [start]);
-
-  if (!data)
-    return <p style={{ fontSize: 13, color: "var(--muted)" }}>Loading…</p>;
-
-  return (
-    <div
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        marginBottom: 12,
-        background: "var(--bg-soft)",
-      }}
-    >
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          padding: "8px 10px",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        <button
-          className="rd-btn rd-btn-sm rd-btn-ghost"
-          disabled={!data.parent}
-          onClick={() => data.parent && load(data.parent)}
-        >
-          ↑ Up
-        </button>
-        <span
-          className="mono"
-          style={{ flex: 1, fontSize: 12, wordBreak: "break-all" }}
-        >
-          {data.path}
-        </span>
-      </div>
-      <div style={{ maxHeight: 200, overflowY: "auto", padding: 6 }}>
-        {data.entries.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--muted)", padding: 8 }}>
-            No subfolders.
-          </div>
-        )}
-        {data.entries.map((e) => (
-          <div
-            key={e.path}
-            onClick={() => load(e.path)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "5px 8px",
-              borderRadius: 6,
-              cursor: "pointer",
-              fontSize: 13,
-            }}
-          >
-            <span>📁</span>
-            <span style={{ flex: 1 }}>{e.name}</span>
-            {e.is_git && (
-              <span style={{ fontSize: 11, color: "var(--idle)" }}>git</span>
-            )}
-          </div>
-        ))}
-      </div>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          gap: 8,
-          padding: "8px 10px",
-          borderTop: "1px solid var(--border)",
-        }}
-      >
-        <Button size="sm" variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button size="sm" onClick={() => onPick(data)}>
-          Use this folder{data.is_git ? " (git)" : ""}
-        </Button>
-      </div>
-    </div>
-  );
-}

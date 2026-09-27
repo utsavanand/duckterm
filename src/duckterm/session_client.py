@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm.helpers.session_credentials import client_credentials
+from duckterm.persistence.artifacts import registration
 
 
 def add_parser(sub: Any) -> None:
@@ -45,6 +46,11 @@ def add_parser(sub: Any) -> None:
         child.add_argument("request_id")
         if action in ("reply", "decline"):
             child.add_argument("--file", default="-", help="UTF-8 answer file; default reads stdin")
+    artifacts = actions.add_parser("artifacts", help="list this session's saved artifacts")
+    artifacts.set_defaults(session_action="artifacts")
+    artifact = actions.add_parser("artifact", help="register a generated file in the Mac app")
+    artifact.add_argument("file", type=Path)
+    artifact.add_argument("--title")
     publish = actions.add_parser("publish", help="update your purpose and current activity")
     publish.add_argument("--purpose")
     publish.add_argument("--activity")
@@ -59,6 +65,11 @@ def main(args: argparse.Namespace) -> int:
         action = args.session_action
         if action == "self":
             path = "/self"
+        elif action == "artifacts":
+            path = "/artifacts"
+        elif action == "artifact":
+            method, path = "POST", "/artifacts"
+            body = registration(args.file, args.title)
         elif action == "discover":
             query = {"scope": args.scope}
             if args.cursor:
@@ -111,6 +122,13 @@ def main(args: argparse.Namespace) -> int:
                 "use duckterm session accept REQUEST_ID, then "
                 "duckterm session reply REQUEST_ID --file answer.txt. Read the next page "
                 "with --before next_cursor. Answered/expired/cancelled requests need no action."
+            )
+        if action in {"self", "inbox"}:
+            result["artifact_instructions"] = (
+                "Automatically register user-facing files you generate with "
+                "duckterm session artifact /absolute/path --title 'Useful title'. "
+                "Saved copies appear in the Mac app Artifacts tab. Local-only, "
+                "5 MiB/file; register deliverables, not source edits, logs or credentials."
             )
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0

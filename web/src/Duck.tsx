@@ -27,8 +27,8 @@ export function duckPhrase(s: SessionView, state: string): string {
   switch (state) {
     case "busy":
       return s.lastTool
-        ? `Right now: on the laptop, typing away — running ${s.lastTool}.`
-        : "Right now: on the laptop, typing away.";
+        ? `Right now: working — running ${s.lastTool}.`
+        : "Right now: working on this computer.";
     case "waiting":
       return `Right now: checking its watch, waiting on you — asked ${ago}.`;
     case "idle":

@@ -58,7 +58,19 @@ from duckterm.core.approvals import ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
+from duckterm.core.relay import (
+    ASK_CUES,
+    RULE_PROMPT,
+    Relay,
+    ask_prompt,
+    choices_from,
+    parse_ask,
+    parse_rule_reply,
+    question_from,
+    validate_rule,
+)
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
+from duckterm.core.tokens import TokenLedger
 from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
@@ -71,14 +83,17 @@ from duckterm.helpers import (
     session_credentials,
     session_instructions,
 )
+from duckterm.helpers.private_files import private_read
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence import backup_sync
+from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
+from duckterm.persistence.artifacts import ArtifactError
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
 from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
-from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime
+from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
 from duckterm.transport.httpio import (
     KEEPALIVE_SECONDS,
     MAX_REQUEST_BYTES,
@@ -175,6 +190,7 @@ def _mid(prefix: str, suffix: str) -> dict[str, str]:
 
 # fmt: off
 _ROUTES: list[Route] = [
+    Route("POST", "", lambda s, r, w, h, b, seg: s._transfer(w, seg, b), prefix="/transfers/"),
     Route("POST", "", lambda s, r, w, h, b, seg: s._introduce_collaboration(w, seg, send=False),
           **_mid("/sessions/", "/collaboration/instructions")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._introduce_collaboration(w, seg),
@@ -219,6 +235,17 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
     Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
+    Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
+    Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
+    Route("GET", "/relay/count", lambda s, r, w, h, b, seg: s._relay_count(w)),
+    Route("POST", "/relay/rules/propose", lambda s, r, w, h, b, seg: s._relay_propose(w, b)),
+    Route("POST", "/relay/rules", lambda s, r, w, h, b, seg: s._relay_create_rule(w, b)),
+    Route("DELETE", "", lambda s, r, w, h, b, seg: s._relay_delete_rule(w, seg),
+          prefix="/relay/rules/"),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._relay_answer(w, seg, b),
+          **_mid("/relay/", "/answer")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._session_message(w, seg, b),
+          **_mid("/sessions/", "/message")),
     Route("DELETE", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w, clear=True)),
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
@@ -235,6 +262,8 @@ _ROUTES: list[Route] = [
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._deregister_harness(w, seg),
           prefix="/harnesses/"),
     # ── connectors (GitHub, Railway, … — credentials + MCP install) ──
+    Route("POST", "", lambda s, r, w, h, b, seg: s._forget_connector(w, seg),
+          **_mid("/connectors/", "/forget")),
     Route("GET", "/connectors", lambda s, r, w, h, b, seg: s._list_connectors(w)),
     Route("POST", "", lambda s, r, w, h, b, seg: s._enable_connector(w, seg, b),
           **_mid("/connectors/", "/enable")),
@@ -299,6 +328,8 @@ _ROUTES: list[Route] = [
 
 class Server:
     def __init__(self, bus: EventBus | None = None, history: HistoryStore | None = None) -> None:
+        self._transfer_sources: set[str] = set()
+        self._transfer_launches: set[str] = set()
         self.history = history if history is not None else HistoryStore()
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
@@ -306,6 +337,14 @@ class Server:
         self._backup_jobs: BackupJobs | None = None
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
         self._oracle_nudges: dict[str, oracle.Nudge] = {}
+        self._tokens = TokenLedger(
+            Path.home() / ".claude" / "projects", Path.home() / ".codex" / "sessions"
+        )
+        # The ledger isn't thread-safe; one scan at a time.
+        self._tokens_lock = asyncio.Lock()
+        self.relay = Relay(paths.home() / "relay.json")
+        self._relay_confirmed: set[str] = set()  # approvals seen asking on screen
+        self._relay_watching: set[str] = set()
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -349,6 +388,7 @@ class Server:
                 # session has since moved on is abandoned — the hook stopped
                 # polling. Clear it so it doesn't linger in "Needs human".
                 self.approvals.drop_abandoned_blocking(str(key), ts, _BLOCKING_POLL_MS)
+        self._relay_observe(event)
 
     def _enrich_git(self, event: dict[str, Any]) -> None:
         """If an event has a cwd but no repo/branch yet (a watched session),
@@ -379,6 +419,8 @@ class Server:
                     return
                 size = int(headers.get("content-length", "0"))
                 limit = MAX_BODY_BYTES if path.startswith("/api/v1/session/") else MAX_REQUEST_BYTES
+                if urllib.parse.urlsplit(path).path == "/api/v1/session/artifacts":
+                    limit = MAX_ARTIFACT_REQUEST_BYTES
                 if size < 0 or size > limit:
                     await _write_json(writer, 413, {"error": "request body too large"})
                     return
@@ -431,6 +473,12 @@ class Server:
 
         if path == "/backup" and method in {"GET", "PUT", "POST"}:
             await self._backup(writer, headers, method, body)
+            return
+        artifact_match = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]+)/artifacts(?:/([a-f0-9]{32}))?", path
+        )
+        if artifact_match and method in {"GET", "DELETE"}:
+            await self._artifacts(writer, headers, artifact_match[1], artifact_match[2], method)
             return
         pin_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/pins(?:/([a-f0-9]{64}))?", path)
         if pin_match and method in {"GET", "POST", "DELETE"}:
@@ -697,8 +745,7 @@ class Server:
             await _write_json(writer, 200, {"prompt": prompt})
             return
         assert supervisor is not None
-        # A user-requested follow-up, bracketed as one paste rather than many Enter presses.
-        sent = supervisor.write_bytes(b"\x1b[200~" + prompt.encode() + b"\x1b[201~\r")
+        sent = await self._submit_prompt(session_key, prompt) == "submitted"
         await _write_json(writer, 200 if sent else 409, {"sent": sent})
 
     async def _session_enroll(
@@ -741,6 +788,38 @@ class Server:
             return
         messages = await asyncio.to_thread(self._session_messages, session_key)
         await _write_json(writer, 200, {"messages": messages})
+
+    async def _artifacts(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        session_key: str,
+        artifact_id: str | None,
+        method: str,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        if self.history.session(session_key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        result: dict[str, Any]
+        try:
+            if method == "DELETE":
+                if artifact_id is None:
+                    raise ArtifactError(400, "An artifact ID is required")
+                self.history.artifacts.remove(session_key, artifact_id)
+                result = {"removed": True}
+            elif artifact_id is None:
+                result = {"artifacts": self.history.artifacts.list(session_key)}
+            else:
+                result = {"artifact": self.history.artifacts.get(session_key, artifact_id)}
+        except ArtifactError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        # Content travels as authenticated JSON, never as executable HTML on the
+        # dashboard origin. The preview must render it in an isolated sandbox.
+        await _write_json(writer, 200, result)
 
     async def _message_pins(
         self,
@@ -826,6 +905,12 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "expected an object"})
+            return
+        if "artifact_id" in req:
+            await self._add_artifact_annotation(writer, session_key, req)
+            return
         quote = (req.get("quote") or "").strip()
         note = (req.get("note") or "").strip()
         if not note:
@@ -841,6 +926,81 @@ class Server:
             prompt = f'Re: "{quote}" — {note}' if quote else note
             sent = supervisor.write_bytes(prompt.encode() + b"\r")
         await _write_json(writer, 200, {"id": ann_id, "sent": sent})
+
+    async def _add_artifact_annotation(
+        self, writer: asyncio.StreamWriter, session_key: str, req: dict[str, Any]
+    ) -> None:
+        """Deliver explicit owner feedback on exactly the saved artifact revision."""
+        quote, note = req.get("quote", ""), req.get("note")
+        if not isinstance(quote, str) or not isinstance(note, str) or not note.strip():
+            await _write_json(
+                writer, 400, {"error": "quote and note must be text; note is required"}
+            )
+            return
+        try:
+            if len(quote.encode()) > 8000 or len(note.encode()) > 8000:
+                raise ValueError("Quote and note must each fit within 8000 UTF-8 bytes.")
+            artifact_id = req.get("artifact_id")
+            if not isinstance(artifact_id, str):
+                raise ValueError("artifact_id must be text")
+            artifact = self.history.artifacts.get(session_key, artifact_id)
+        except ArtifactError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except ValueError as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        if req.get("artifact_sha256") != artifact["sha256"]:
+            await _write_json(
+                writer,
+                409,
+                {"error": "This artifact changed. Review its latest copy before sending feedback."},
+            )
+            return
+        supervisor = self.orchestrator.get(session_key)
+        if supervisor is None or not supervisor.running:
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": (
+                        "Feedback was not sent: this session has no live terminal. "
+                        "Your comment is kept here."
+                    )
+                },
+            )
+            return
+        # JSON escapes newlines and terminal control bytes in every field. A
+        # quoted artifact must never become extra keystrokes or extra submits.
+        context = {
+            "artifact": artifact["title"],
+            "path": artifact["source_path"],
+            "artifact_id": artifact["id"],
+            "sha256": artifact["sha256"],
+            "selected_text": quote.strip(),
+        }
+        prompt = "Artifact feedback: " + json.dumps({**context, "feedback": note.strip()})
+        try:
+            sent = await asyncio.to_thread(supervisor.write_bytes, prompt.encode() + b"\r")
+        except OSError:
+            sent = False
+        if not sent:
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": (
+                        "Feedback could not be delivered. Your comment is kept here; "
+                        "try again when the agent is live."
+                    )
+                },
+            )
+            return
+        ann_id = security.new_session_key("ann")
+        self.history.add_annotation(
+            ann_id, session_key, json.dumps(context), note.strip(), int(time.time() * 1000)
+        )
+        await _write_json(writer, 200, {"id": ann_id, "sent": True})
 
     async def _heartbeat(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """A launched tab pings here while alive. Records last_seen so the sweep
@@ -863,9 +1023,16 @@ class Server:
         await _write_json(writer, 200, {"ok": ok})
 
     async def _sessions(self, writer: asyncio.StreamWriter) -> None:
+        from duckterm import transfers
+
         sessions = self.history.sessions()
         subagents = self.history.subagents_by_session()
         for s in sessions:
+            transfer = transfers.session_transfer(str(s.get("session_key") or ""))
+            if transfer:
+                s["remote_transfer"] = {
+                    k: transfer.get(k) for k in ("id", "stage", "target", "session_key")
+                }
             s["subagents"] = subagents.get(str(s.get("session_key") or ""), [])
             stats = self._transcript_stats_for(s)
             s["context_tokens"] = stats.get("context_tokens")
@@ -967,7 +1134,7 @@ class Server:
                 return
 
         # Headless: Duckterm supervises the agent invisibly (automation / CI).
-        if not req.get("in_terminal", True):
+        if os.environ.get("DUCKTERM_HOSTED") or not req.get("in_terminal", True):
             try:
                 key = await self.orchestrator.launch(
                     runtime=_build_runtime(req.get("runtime"), command),
@@ -979,6 +1146,7 @@ class Server:
                     prompt=req.get("prompt", ""),
                     name=name,
                     env=extra_env,
+                    test=req.get("test") is True,
                 )
             except (GitError, ValueError) as e:
                 await _write_json(writer, 400, {"error": str(e)})
@@ -1091,7 +1259,7 @@ class Server:
         # worktree and supervises the agent, so the fork renders in the browser
         # terminal. carry_context swaps in the parent harness's resume command
         # so the fork continues the conversation in the isolated worktree.
-        if not req.get("in_terminal", True):
+        if os.environ.get("DUCKTERM_HOSTED") or not req.get("in_terminal", True):
             runtime_name = req.get("runtime", parent.get("runtime") or "generic")
             run_command = command
             carried = False
@@ -1292,7 +1460,7 @@ class Server:
             child_key = security.new_session_key("convfork")
         req = json.loads(body or b"{}")
 
-        if not req.get("in_terminal", True):
+        if os.environ.get("DUCKTERM_HOSTED") or not req.get("in_terminal", True):
             key = await self.orchestrator.launch(
                 runtime=_build_runtime("claude-code", shlex.join(argv)),
                 cwd=cwd,
@@ -1450,12 +1618,29 @@ class Server:
             {"event_type": events.NOTIFICATION, "session_key": session_key, "lifecycle": lifecycle}
         )
 
+    async def _transfer(self, writer: asyncio.StreamWriter, operation: str, body: bytes) -> None:
+        from duckterm.transfer_api import handle
+
+        await handle(self, writer, operation, body)
+
     async def _resume(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """Resume a stopped/terminated launched session: relaunch its agent in the
         saved worktree/cwd under the same session_key. For claude-code, continue
         the conversation with `--resume <claude session_id>`; other runtimes
         relaunch their command (fresh conversation if they have no native resume).
         """
+        from duckterm import transfers
+
+        if session_key in self._transfer_sources or transfers.session_transfer(session_key):
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": "This session has a remote transfer. Use Continue locally "
+                    "to explicitly create a separate continuation."
+                },
+            )
+            return
         row = self.history.session(session_key)
         if row is None:
             await _write_json(writer, 404, {"error": f"no session {session_key}"})
@@ -1964,6 +2149,516 @@ class Server:
             },
         )
 
+    # ── Oracle Relay: notes for what needs the owner (core/relay.py) ──
+
+    _RELAY_RUNTIMES = {"claude-code", "codex", "copilot"}
+
+    def _relay_session_fields(self, key: str) -> dict[str, Any]:
+        row = self.history.session(key) or {}
+        return {
+            "session_key": key,
+            "name": row.get("name") or row.get("source_app") or key[:8],
+            "folder": row.get("grp") or "",
+            "runtime": row.get("runtime") or "",
+        }
+
+    def _relay_observe(self, event: dict[str, Any]) -> None:
+        key = str(event.get("session_key") or event.get("session_id") or "")
+        et = event.get("event_type")
+        if not key or event.get("reconciled"):
+            return
+        now = int(event.get("_ts") or time.time() * 1000)
+        if et == events.PERMISSION_REQUEST and event.get("tool_name") == "AskUserQuestion":
+            choices = choices_from(event.get("tool_input") or {})
+            open_choice = any(
+                n["session_key"] == key and n["kind"] == "choice" for n in self.relay.open_notes()
+            )
+            if choices and not open_choice:
+                self.relay.add(
+                    {
+                        **self._relay_session_fields(key),
+                        "kind": "choice",
+                        "created_at": now,
+                        "questions": [{"question": q, "options": o} for q, o in choices],
+                    }
+                )
+        elif et in (events.PRE_TOOL_USE, events.POST_TOOL_USE, events.STOP, events.SESSION_END):
+            self.relay.close_for_session(key, {"choice"}, "handled", now)
+        if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END):
+            self.relay.close_for_session(key, {"question", "choice"}, "handled", now)
+        if et == events.STOP:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                loop.create_task(self._relay_detect_question(key, now))
+        self._relay_sync_approvals()
+
+    def _relay_sync_approvals(self) -> None:
+        """Keep approval notes in step with the approval registry, and let
+        approval rules answer blocking requests."""
+        pending = [a for a in self.approvals.pending() if a.tool_name != "AskUserQuestion"]
+        pending_ids = {a.id for a in pending}
+        tracked = {n.get("approval_id") for n in self.relay.notes if n["kind"] == "approval"}
+        now = int(time.time() * 1000)
+        for n in self.relay.open_notes():
+            if n["kind"] == "approval" and n.get("approval_id") not in pending_ids:
+                self.relay.close(n, "handled", closed_at=now)
+        for a in pending:
+            if a.id in tracked:
+                continue
+            if (
+                not a.blocking
+                and a.id not in self._relay_confirmed
+                and self._relay_harness(a.session_key).auto_approves_requests
+            ):
+                # The request alone isn't evidence: this agent's auto-reviewer
+                # settles nearly all of them. Show it only once the agent's own
+                # approval prompt is on screen.
+                self._relay_watch(a.id, a.session_key)
+                continue
+            fields = self._relay_session_fields(a.session_key)
+            note = self.relay.add(
+                {
+                    **fields,
+                    "kind": "approval",
+                    "created_at": a.created_at or now,
+                    "approval_id": a.id,
+                    "tool": a.tool_name,
+                    "detail": a.detail,
+                    "blocking": a.blocking,
+                }
+            )
+            rule = (
+                self.relay.approval_rule_for(a.tool_name, a.detail, fields["folder"])
+                if a.blocking
+                else None
+            )
+            if rule and self.approvals.set_decision(a.id, rule["action"]):
+                self.relay.close(
+                    note, "answered", answer=rule["action"], answered_by=rule["id"], closed_at=now
+                )
+
+    # How often and how long to look for an auto-reviewing agent's approval
+    # prompt while its request is pending.
+    _RELAY_WATCH_EVERY_S = 2.0
+    _RELAY_WATCH_FOR_S = 600.0
+
+    def _relay_harness(self, key: str) -> AgentRuntime:
+        row = self.history.session(key) or {}
+        return _build_runtime(row.get("runtime"), str(row.get("command") or ""))
+
+    def _relay_watch(self, approval_id: str, key: str) -> None:
+        if approval_id in self._relay_watching:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        self._relay_watching.add(approval_id)
+        loop.create_task(self._relay_watch_approval(approval_id, key))
+
+    async def _relay_watch_approval(self, approval_id: str, key: str) -> None:
+        """Confirm an auto-reviewed request only if the agent ends up asking
+        the owner on screen; stop as soon as the request resolves."""
+        harness = self._relay_harness(key)
+        waited = 0.0
+        try:
+            while waited < self._RELAY_WATCH_FOR_S:
+                await asyncio.sleep(self._RELAY_WATCH_EVERY_S)
+                waited += self._RELAY_WATCH_EVERY_S
+                pending = self.approvals.get(approval_id)
+                if pending is None or pending.decided is not None:
+                    return
+                sup = self.orchestrator.get(key)
+                if sup is None or not sup.running:
+                    return
+                screen = await asyncio.to_thread(sup.visible_screen)
+                if harness.approval_prompt_visible(screen):
+                    self._relay_confirmed.add(approval_id)
+                    self._relay_sync_approvals()
+                    return
+        finally:
+            self._relay_watching.discard(approval_id)
+
+    # Seconds to wait after a turn ends before classifying it: an owner who is
+    # watching usually answers in the terminal first, and then no note or model
+    # call is needed.
+    _RELAY_SETTLE_S = 30.0
+
+    @staticmethod
+    def _message_text(message: dict[str, Any] | None) -> str:
+        blocks = (message or {}).get("blocks")
+        if not isinstance(blocks, list):
+            return ""
+        return "\n\n".join(
+            str(b.get("text") or "")
+            for b in blocks
+            if isinstance(b, dict) and b.get("type") == "text"
+        ).strip()
+
+    async def _relay_detect_question(self, key: str, at: int) -> None:
+        """Did this turn end waiting on the owner? A word-cue filter, then one
+        classifier call (core/relay.py documents both and how they measured)."""
+        row = self.history.session(key)
+        if row is None or (row.get("runtime") or "") not in self._RELAY_RUNTIMES:
+            return
+        await asyncio.sleep(self._RELAY_SETTLE_S)
+        if self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) > at:
+            return
+        messages = await asyncio.to_thread(self._session_messages, key)
+        last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
+        final = self._message_text(last)
+        if not final or not ASK_CUES.search(final[-900:]):
+            return
+        if any(
+            n["session_key"] == key and n["kind"] == "question" for n in self.relay.open_notes()
+        ):
+            return
+        owner = next(
+            (
+                self._message_text(m)
+                for m in reversed(messages)
+                if m.get("role") == "user" and self._message_text(m)
+            ),
+            "",
+        )
+        result = await asyncio.to_thread(summarize, ask_prompt(owner, final), claude_model="sonnet")
+        verdict = parse_ask(result.text) if result.text else None
+        if verdict is None:
+            fallback = question_from(final)
+            if not fallback:
+                return
+            verdict = {"kind": "blocked", "ask": fallback, "options": [], "fallback": True}
+        if verdict["kind"] == "none":
+            return
+        note = self.relay.add(
+            {
+                **self._relay_session_fields(key),
+                "kind": "question",
+                "urgency": verdict["kind"],
+                "created_at": at,
+                "question": verdict["ask"] or final[-300:],
+                "options": verdict["options"],
+                "excerpt": final[-1200:],
+                "detected_without_model": bool(verdict.get("fallback")),
+            }
+        )
+        rule = self.relay.answer_rule_for(f"{note['question']}\n{final[-600:]}")
+        if rule is None:
+            return
+        self.relay.update(note, suggestion={"rule_id": rule["id"], "reply": rule["reply"]})
+        if rule.get("mode") == "live":
+            await self._relay_deliver_question(note, rule["reply"], answered_by=rule["id"])
+
+    async def _relay_deliver_question(
+        self, note: dict[str, Any], text: str, *, answered_by: str
+    ) -> dict[str, Any]:
+        """Type the answer into the session's prompt when Oracle's paste checks
+        allow it; otherwise put it in the session's inbox for a nudge."""
+        key = note["session_key"]
+        now = int(time.time() * 1000)
+        refusal = await self._typing_refusal(key)
+        if refusal is None:
+            status = await self._submit_prompt(key, text)
+            if status != "failed":
+                self.relay.close(
+                    note,
+                    "answered",
+                    answer=text,
+                    answered_by=answered_by,
+                    route="prompt" if status == "submitted" else "prompt-stuck",
+                    closed_at=now,
+                )
+                return note
+        self.history.session_api.owner_message(key, text)  # raises APIError if no inbox
+        self.relay.close(
+            note,
+            "answered",
+            answer=text,
+            answered_by=answered_by,
+            route="inbox",
+            closed_at=now,
+            route_reason=refusal,
+        )
+        return note
+
+    async def _relay_list(self, writer: asyncio.StreamWriter) -> None:
+        self._relay_sync_approvals()
+        await _write_json(
+            writer,
+            200,
+            {
+                "notes": self.relay.notes[-200:],
+                "rules": self.relay.rules,
+                "open": len(self.relay.needs_you()),
+            },
+        )
+
+    async def _relay_count(self, writer: asyncio.StreamWriter) -> None:
+        self._relay_sync_approvals()
+        await _write_json(writer, 200, {"open": len(self.relay.needs_you())})
+
+    async def _relay_answer(self, writer: asyncio.StreamWriter, note_id: str, body: bytes) -> None:
+        try:
+            req = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        note = self.relay.get(note_id)
+        if note is None:
+            await _write_json(writer, 404, {"error": "no such note"})
+            return
+        if note["status"] != "open":
+            await _write_json(writer, 409, {"error": "This was already handled.", "note": note})
+            return
+        now = int(time.time() * 1000)
+        if note["kind"] == "approval":
+            decision = req.get("answer")
+            if decision not in ("approve", "deny"):
+                await _write_json(writer, 400, {"error": "answer must be approve or deny"})
+                return
+            harness = self._relay_harness(note["session_key"])
+            keys = None if note.get("blocking") else harness.approval_keys(decision)
+            if keys is not None:
+                sup = self.orchestrator.get(note["session_key"])
+                screen = await asyncio.to_thread(sup.visible_screen) if sup and sup.running else ""
+                if not harness.approval_prompt_visible(screen):
+                    self.relay.close(note, "handled", closed_at=now)
+                    await _write_json(
+                        writer,
+                        409,
+                        {"error": "Its approval prompt isn't on screen anymore.", "note": note},
+                    )
+                    return
+                assert sup is not None
+                await asyncio.to_thread(sup.write_bytes, keys)
+                self.approvals.forget(str(note.get("approval_id")))
+                self.relay.close(
+                    note,
+                    "answered",
+                    answer=decision,
+                    answered_by="owner",
+                    closed_at=now,
+                    route="keystroke",
+                )
+                await _write_json(writer, 200, {"note": note})
+                return
+            if not self.approvals.set_decision(str(note.get("approval_id")), decision):
+                self.relay.close(note, "handled", closed_at=now)
+                await _write_json(
+                    writer, 409, {"error": "The request is gone; the agent moved on.", "note": note}
+                )
+                return
+            self.relay.close(
+                note,
+                "answered",
+                answer=decision,
+                answered_by="owner",
+                closed_at=now,
+                route="approval" if note.get("blocking") else "keystroke",
+            )
+        elif note["kind"] == "choice":
+            # Pressing digits into a menu broke on multi-question forms, so
+            # menus are answered in the agent's terminal; the note links there.
+            await _write_json(writer, 409, {"error": "Answer it in its terminal."})
+            return
+        else:
+            text = str(req.get("answer") or "").strip()
+            if not text or len(text.encode()) > 16384:
+                await _write_json(writer, 400, {"error": "Write an answer first."})
+                return
+            suggestion = note.get("suggestion")
+            try:
+                await self._relay_deliver_question(note, text, answered_by="owner")
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            if suggestion:
+                self.relay.record_send(suggestion["rule_id"], unchanged=text == suggestion["reply"])
+        await _write_json(writer, 200, {"note": note})
+
+    async def _relay_propose(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            text = str(json.loads(body or b"{}").get("text") or "").strip()
+        except (json.JSONDecodeError, AttributeError):
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not text:
+            await _write_json(writer, 400, {"error": "Describe the rule first."})
+            return
+        folders = (
+            ", ".join(sorted({f.split("/")[0] for f in self.history.folders() if f})) or "none"
+        )
+        prompt = RULE_PROMPT.replace("{folders}", folders).replace("{text}", text)
+        result = await asyncio.to_thread(summarize, prompt)
+        raw = parse_rule_reply(result.text)
+        if raw is None:
+            await _write_json(
+                writer,
+                422,
+                {
+                    "error": "That doesn't read as a rule I can apply. Try \"always "
+                    'approve …" or "when an agent asks …, reply …".'
+                },
+            )
+            return
+        try:
+            rule = validate_rule(raw)
+        except ValueError as exc:
+            await _write_json(writer, 422, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, {"rule": rule})
+
+    async def _relay_create_rule(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            rule = validate_rule(json.loads(body or b"{}").get("rule"))
+        except (json.JSONDecodeError, AttributeError):
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        except ValueError as exc:
+            await _write_json(writer, 422, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, {"rule": self.relay.add_rule(rule, int(time.time() * 1000))})
+
+    async def _relay_delete_rule(self, writer: asyncio.StreamWriter, rule_id: str) -> None:
+        if not self.relay.delete_rule(rule_id):
+            await _write_json(writer, 404, {"error": f"No rule {rule_id}."})
+            return
+        await _write_json(writer, 200, {"deleted": rule_id})
+
+    async def _control_tower(self, writer: asyncio.StreamWriter) -> None:
+        """Fleet insights for the control tower page. Session states and
+        folders come from the dashboard's own event stream, not from here."""
+        now = time.time()
+        async with self._tokens_lock:
+            tokens = await asyncio.to_thread(self._tokens.totals, 7, now)
+        day_ago = int((now - 86400) * 1000)
+        backup = self._backup_jobs.snapshot() if self._backup_jobs else None
+        if backup is None:
+            raw = private_read(paths.home() / "backup-state.json")
+            backup = json.loads(raw) if raw else {"destination": None, "job": None}
+        destination = str(backup.get("destination") or "")
+        kind = "gcs" if destination.startswith("gs://") else ("local" if destination else None)
+        job = backup.get("job") or {}
+        await _write_json(
+            writer,
+            200,
+            {
+                "tokens": {"days": 7, "by_agent": tokens},
+                "mail": {
+                    **self.history.session_api.mail_stats(day_ago),
+                    "nudges": self.history.count_events("OracleNudge", day_ago),
+                },
+                "backup": {
+                    "destination": kind,
+                    "status": job.get("status"),
+                    "finished_at": job.get("finished_at"),
+                },
+                # The remote workspace isn't on main yet (branch remote-session).
+                "remote": {"available": False, "count": 0},
+            },
+        )
+
+    async def _session_message(
+        self, writer: asyncio.StreamWriter, session_key: str, body: bytes
+    ) -> None:
+        """Owner message to one session: into its inbox, or typed into its
+        prompt when Oracle's paste gates allow it right now."""
+        try:
+            req = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not isinstance(req, dict) or req.get("mode") not in ("inbox", "prompt"):
+            await _write_json(writer, 400, {"error": "mode must be inbox or prompt"})
+            return
+        if req["mode"] == "inbox":
+            try:
+                message_id = self.history.session_api.owner_message(session_key, req.get("text"))
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            await _write_json(writer, 200, {"delivered": "inbox", "message_id": message_id})
+            return
+        text = req.get("text")
+        if not isinstance(text, str) or not text.strip() or len(text.encode()) > 16384:
+            await _write_json(writer, 400, {"error": "text must be 1 to 16384 bytes"})
+            return
+        refusal = await self._typing_refusal(session_key)
+        if refusal:
+            await _write_json(writer, 409, {"error": refusal})
+            return
+        status = await self._submit_prompt(session_key, text.strip())
+        if status == "stuck":
+            await _write_json(
+                writer,
+                409,
+                {
+                    "error": "It's typed into its prompt but didn't submit. "
+                    "Press Enter in its terminal."
+                },
+            )
+            return
+        await _write_json(
+            writer,
+            200 if status == "submitted" else 409,
+            {"delivered": "prompt" if status == "submitted" else None},
+        )
+
+    # Paste, pause, then Enter on its own: Claude Code sometimes swallowed an
+    # Enter that arrived in the same burst as a paste, and an Oracle nudge sat
+    # unsent in architect's prompt for 14 hours (2026-09-26).
+    _SUBMIT_GAP_S = 0.3
+    _SUBMIT_CONFIRM_S = 4.0
+
+    async def _submit_prompt(self, key: str, text: str) -> str:
+        """Type text into a session's prompt and make sure it was submitted.
+        Returns "submitted", "stuck" (still sitting in the prompt after a
+        second Enter), or "failed" (couldn't write to the terminal)."""
+        sup = self.orchestrator.get(key)
+        if sup is None or not sup.running:
+            return "failed"
+        typed_at = int(time.time() * 1000)
+        if not await asyncio.to_thread(
+            sup.write_bytes, b"\x1b[200~" + text.encode() + b"\x1b[201~"
+        ):
+            return "failed"
+        needle = " ".join(text.split())[:40]
+        for _ in range(2):
+            await asyncio.sleep(self._SUBMIT_GAP_S)
+            await asyncio.to_thread(sup.write_bytes, b"\r")
+            waited = 0.0
+            while waited < self._SUBMIT_CONFIRM_S:
+                if self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) >= typed_at:
+                    return "submitted"
+                await asyncio.sleep(0.2)
+                waited += 0.2
+            screen = plain_screen(await asyncio.to_thread(sup.visible_screen))
+            if needle not in " ".join(screen.split()):
+                # It left the prompt; the runtime just didn't report a submit.
+                return "submitted"
+        return "stuck"
+
+    async def _typing_refusal(self, session_key: str) -> str | None:
+        """Why owner text can't be typed into this session's prompt right now,
+        or None. The same gates Oracle applies before pasting a nudge."""
+        row = self.history.session(session_key)
+        sup = self.orchestrator.get(session_key)
+        if row is None or sup is None or not sup.running:
+            return "This session has no live terminal."
+        inbox = "Send it to the inbox instead."
+        if row.get("state") != "idle":
+            return f"It isn't idle, so typing could interrupt it. {inbox}"
+        if time.time() * 1000 - sup.last_owner_input_ms < oracle.TYPING_QUIET_MS:
+            return f"Someone typed in its terminal in the last 2 minutes. {inbox}"
+        screen = await asyncio.to_thread(sup.visible_screen)
+        harness = _build_runtime(row.get("runtime"), str(row.get("command") or ""))
+        if not harness.prompt_is_empty(screen):
+            return f"Its prompt isn't empty, so there may be a draft. {inbox}"
+        return None
+
     async def _oracle_chat(self, writer: asyncio.StreamWriter, *, clear: bool = False) -> None:
         path = paths.home() / "oracle-chat.json"
         if clear:
@@ -2102,10 +2797,24 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        if not isinstance(req, dict) or (
+            "write_access" in req and not isinstance(req["write_access"], bool)
+        ):
+            await _write_json(
+                writer, 400, {"error": "expected an object with boolean write_access"}
+            )
+            return
         token = str(req.get("token") or "").strip() or None
         secret = str(req.get("secret") or "").strip() or None
         try:
-            result = connectors.enable(name, token, secret)
+            result = await asyncio.to_thread(
+                connectors.enable,
+                name,
+                token,
+                secret,
+                source=req.get("source"),
+                write_access=req.get("write_access", False),
+            )
         except ValueError as e:
             await _write_json(writer, 404, {"error": str(e)})
             return
@@ -2116,9 +2825,23 @@ class Server:
 
     async def _disable_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
         try:
-            result = connectors.disable(name)
+            result = await asyncio.to_thread(connectors.disable, name)
         except ValueError as e:
             await _write_json(writer, 404, {"error": str(e)})
+            return
+        except RuntimeError as e:
+            await _write_json(writer, 400, {"error": str(e)})
+            return
+        await _write_json(writer, 200, result)
+
+    async def _forget_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
+        try:
+            result = await asyncio.to_thread(connectors.forget, name)
+        except ValueError as e:
+            await _write_json(writer, 404, {"error": str(e)})
+            return
+        except RuntimeError as e:
+            await _write_json(writer, 400, {"error": str(e)})
             return
         await _write_json(writer, 200, result)
 
@@ -2567,6 +3290,12 @@ class Server:
         if req.get("tool_name") == "AskUserQuestion":
             await _write_json(writer, 200, {"id": None})
             return
+        # Codex kills hooks after 3 s, so its hook can't wait for a decision;
+        # the request it registers would be orphaned "pending" forever. Old
+        # hooks still POST here, so refuse it server-side too.
+        if self._relay_harness(str(key)).auto_approves_requests:
+            await _write_json(writer, 200, {"id": None})
+            return
         approval = self.approvals.register(
             str(key),
             str(req.get("tool_name") or "unknown"),
@@ -2574,6 +3303,7 @@ class Server:
             int(time.time() * 1000),
             blocking=True,
         )
+        self._relay_sync_approvals()
         await _write_json(writer, 200, {"id": approval.id})
 
     async def _approval_decision(self, writer: asyncio.StreamWriter, approval_id: str) -> None:
@@ -3138,10 +3868,39 @@ class Server:
                 if not _pid_alive(int(w["agent_pid"])):
                     self._archive_swept(str(w["session_key"]))
 
+    async def _clear_stale_waiting(self, now: int) -> None:
+        """Clear "waiting" badges on sessions that are really idle. A real wait
+        (a permission request or a menu question) draws a menu whose selected
+        line starts with the prompt marker, e.g. "❯ 1. Yes"; an idle session
+        shows an empty prompt. Badges set by Claude's idle notice before the
+        hook forwarded its type stayed "waiting" for days otherwise."""
+        waiting_on_approval = {a.session_key for a in self.approvals.pending()}
+        for row in self.history.sessions():
+            key = str(row["session_key"])
+            if row.get("state") != "waiting" or key in waiting_on_approval:
+                continue
+            if now - int(row.get("updated_at") or now) < 60_000:
+                continue  # a dialog may still be drawing
+            sup = self.orchestrator.get(key)
+            if sup is None or not sup.running:
+                continue
+            screen = await asyncio.to_thread(sup.visible_screen)
+            harness = _build_runtime(row.get("runtime"), str(row.get("command") or ""))
+            if harness.prompt_is_empty(screen):
+                self.bus.publish(
+                    {
+                        "event_type": events.NOTIFICATION,
+                        "notification_type": "idle_prompt",
+                        "session_key": key,
+                        "reconciled": True,
+                    }
+                )
+
     async def _oracle_tick(self) -> None:
         """Paste an inbox reminder into idle agents whose mail would otherwise
         wait until the owner happens to look. Gates live in core/oracle.py."""
         now = int(time.time() * 1000)
+        await self._clear_stale_waiting(now)
         for row in self.history.sessions():
             key = str(row["session_key"])
             sup = self.orchestrator.get(key)
@@ -3157,7 +3916,6 @@ class Server:
             picked = oracle.should_nudge(
                 state="idle",
                 turn_ended_ms=self.history.last_event_ts(key, events.STOP),
-                observed_since_ms=sup.observed_since_ms,
                 last_owner_input_ms=sup.last_owner_input_ms,
                 # Not sup.runtime: sessions re-adopted after a restart run
                 # under GenericRuntime, which never reports an empty prompt.
@@ -3171,14 +3929,18 @@ class Server:
             if not picked:
                 continue
             text = oracle.reminder(picked, now)
-            # Bracketed paste so a multi-word line lands as one input, as the
-            # Introduce button does.
-            if not await asyncio.to_thread(
-                sup.write_bytes, b"\x1b[200~" + text.encode() + b"\x1b[201~\r"
-            ):
+            status = await self._submit_prompt(key, text)
+            if status == "failed":
                 continue
             self._oracle_nudges[key] = oracle.Nudge(frozenset(str(m["id"]) for m in picked), now)
-            self.bus.publish({"event_type": "OracleNudge", "session_key": key, "text": text})
+            self.bus.publish(
+                {
+                    "event_type": "OracleNudge",
+                    "session_key": key,
+                    "text": text,
+                    "submitted": status == "submitted",
+                }
+            )
 
     def _archive_swept(self, key: str) -> None:
         """Archive a session whose terminal is gone (auto-sweep)."""

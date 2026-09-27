@@ -1,3 +1,4 @@
+import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
 import { HelperAgents } from "./HelperAgents";
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
@@ -81,6 +82,9 @@ export function AgentTree({
       toast(`Moved to ${r.to}`);
       onFoldersChanged();
     } catch (e) {
+      // A conflicting destination may have been created in another window.
+      // Refresh it even when this move failed so the owner can see it.
+      onFoldersChanged();
       toast(`Move failed: ${(e as Error).message}`, "err");
     }
   }
@@ -551,6 +555,7 @@ function TreeRow({
   const ended = effState === "terminated";
   const stateLabel = effState; // "waiting" reads fine on its own
   const [notesOpen, setNotesOpen] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [notes, setNotes] = useState(s.notes ?? "");
   const [collapsed, setCollapsed] = useState(false);
   const [capturing, setCapturing] = useState(false);
@@ -684,7 +689,12 @@ function TreeRow({
   return (
     <>
       <div
-        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.inboxPending ? " has-inbox" : ""}`}
+        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${actionsOpen ? " actions-open" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.inboxPending ? " has-inbox" : ""}`}
+        title={`${s.label} · ${s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")} · ${s.runtime ?? "agent"} · ${stateLabel} · ${s.eventCount} events`}
+        onKeyDown={(event) => { if (event.key === "Escape") setActionsOpen(false); }}
+        onBlur={(event) => {
+          if (!(event.relatedTarget instanceof HTMLElement) || !event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false);
+        }}
         style={{ paddingLeft: 12 + indent * 16 + depth * 18 }}
         // Only root sessions are draggable into groups; forks follow their parent.
         draggable={depth === 0}
@@ -748,7 +758,7 @@ function TreeRow({
                 {s.label}
               </span>
             )}
-            <span className={`rd-state st-${effState}`}>{stateLabel}</span>
+            <span className={`rd-state st-${effState}`} title={stateLabel} aria-label={stateLabel}>{stateLabel}</span>
             {!!s.inboxPending && (
               <button
                 className="rd-inbox-badge"
@@ -770,11 +780,16 @@ function TreeRow({
               </span>
             )}
           </span>
+          <button className="rd-density-actions" aria-label={`Actions for ${s.label}`} aria-expanded={actionsOpen}
+            onClick={() => setActionsOpen((open) => !open)}>⋯</button>
         </div>
         <div className="rd-row-meta" onClick={() => onOpen(s.key)}>
           {s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")}
           {" · "}
           {s.eventCount} ev
+        </div>
+        <div className="rd-row-density-detail">
+          {s.runtime ?? "agent"} · {effState === "waiting" ? "Waiting for input" : s.lastTool && effState === "busy" ? `Running ${s.lastTool}` : stateLabel}
         </div>
         {s.subagents && <HelperAgents agents={s.subagents} sessionKey={s.key} />}
         <div className="rd-row-actions">
@@ -837,6 +852,19 @@ function TreeRow({
               )}
             </button>
           )}
+          {resumable && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "") && <>
+            <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key }))}>Move to remote…</button>
+            <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={async () => {
+              if (!window.confirm("Continue this session locally as a separate continuation? A remote session, if created, will remain running.")) return;
+              await destinationRequest("local", "project-continue", { source_session: s.key });
+              localStorage.removeItem(`moved-session:${s.key}`);
+              await resumeSession();
+            }}>Continue locally</button>
+            {(s.remoteTransfer?.stage === "moved" || localStorage.getItem(`moved-session:${s.key}`)) && <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => {
+              const moved = s.remoteTransfer?.stage === "moved" ? s.remoteTransfer : JSON.parse(localStorage.getItem(`moved-session:${s.key}`)!);
+              selectLaunchTarget(moved.target, {}, moved.session_key ?? moved.key);
+            }}>Open remote session</button>}
+          </>}
           {resumable && (
             <button
               className="rd-btn rd-btn-sm rd-btn-primary"

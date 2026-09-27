@@ -19,6 +19,16 @@ callback URL — the tiers never share a database or fight over sessions. Any
 machine running a tier needs Python 3.11+, tmux, and the agent CLIs
 (claude/codex/…) on PATH.
 
+## Native app acceptance
+
+Before merging a desktop feature, build `mac/build.sh --test --run` from its
+worktree and have the user test **RubberTerm Test**. This is the distinct purple
+TEST-badged app, with its own bundle identity and local session instance.
+Production RubberTerm keeps its normal name and green icon. After acceptance
+and required QA, merge into main and continue the release steps below. Build
+production with `mac/build.sh`; do not rename or install the test bundle as
+production. See [the Mac test workflow](../mac/README.md).
+
 ## The four steps
 
 1. **Develop** — branch off `main`, write + test, run `scripts/check.sh`

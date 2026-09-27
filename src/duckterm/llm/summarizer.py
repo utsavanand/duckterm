@@ -38,7 +38,11 @@ _AUTO_AGENTS = [
 ]
 
 
-def summarize(prompt: str) -> Summary:
+def summarize(prompt: str, *, claude_model: str | None = None) -> Summary:
+    """claude_model picks the model when the auto-detected backend is Claude
+    Code (e.g. "sonnet" for a classifier that must be accurate but needn't be
+    the user's default, often slower, model). Explicit backends are used as
+    configured."""
     # Explicit config always wins. DUCKTERM_SUMMARIZER=off only disables the
     # auto-detect fallback (so e.g. tests don't shell out to a real agent), not
     # a backend the user set on purpose.
@@ -52,6 +56,8 @@ def summarize(prompt: str) -> Summary:
         return Summary(text="", backend="none")
     auto = _auto_command()
     if auto:
+        if claude_model and auto.startswith("claude "):
+            auto += f" --model {claude_model}"
         return _cli_summary(auto, prompt)
     return Summary(text="", backend="none")
 
