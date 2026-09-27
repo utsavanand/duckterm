@@ -361,6 +361,43 @@ F12. **Cross-session collaboration is unreliable; the owner has to keep
      instruction strings match actual behavior — the stale 900-second line
      in `collaboration.md` would have failed one the day persistent shipped.
 
+## Implemented, awaiting release (recorded 2026-09-27)
+
+Sessions asked that **implemented** be recorded separately from **installed**
+— a fair distinction this document has been blurring. None of these is on the
+owner's machine yet.
+
+| Item | Branch / PR | Gate | Status |
+| --- | --- | --- | --- |
+| **F12 collaboration reliability** (backend/CLI) | PR #84, now `d66ccd1` | 793 Python / 110 UI / 63 browser | QA + release pending; `release-dev` integrates **after #78** |
+| **F9 Focus + session pinning** | PR #78, `8bfed48` | 776 Python / 115 UI / 64 browser | QA + release pending |
+| ~~Inbox redesign~~ | PR #80, `d1150aa` | 771 / 111 / 64 | **SHIPPED v0.4.68** (`62c7e37`) |
+| ~~Context window fix~~ (B7) | PR #82 **merged** | 115 UI, tsc clean | ships in **v0.4.70** (PR #89), with a RETRO lesson |
+
+**F12 was built by the main-repo `main-dev`, not the oracle-worktree one** —
+correcting PR #81's assignment; the oracle session confirmed no duplicate
+work. Implemented: durable work independent of replies, evidence/blockers/
+handoffs, scoped request-chain updates, stale-work Oracle integration,
+restart cooldowns. Remaining on F12: the Work UI preview with `ui-dev`,
+verified GitHub merge closure, and blocked-work Oracle escalation.
+
+**F12 self-correction worth recording** (`main-dev`, 2026-09-27): an Oracle
+review of its own implementation caught **endless hourly work reminders** —
+the staleness nudge would have fired forever on unchanged work. Now two
+notices with a four-hour backoff, then escalation to the requester as
+attention-needed. That is the right shape: nudging on staleness exists to
+stop work being silently dropped, not to nag indefinitely, and an infinite
+reminder would have recreated the alert fatigue that made mail-nudges easy
+to ignore in the first place.
+
+B8. **Artifact markdown previews render as a blank off-white box**
+    (`product`, 2026-09-27). Artifacts now *lists* correctly — 3 artifacts —
+    so this is **not** the zero-artifacts empty-state hypothesis I proposed;
+    that one is ruled out. Every markdown preview is blank. Details with
+    `main-dev`; PR #83 (Mac app allowing `about:srcdoc` in subframes so
+    artifact previews render) looks like the likely fix — worth confirming
+    it covers the markdown case and not only HTML.
+
 ## Bugs — open
 
 B6. **Desktop notification setting does not work** (owner-reported
