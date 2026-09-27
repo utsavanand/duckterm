@@ -91,3 +91,56 @@ def test_successful_launch_after_a_failed_one_reuses_the_branch_name(
     row = store.session(key)
     assert row is not None
     assert row["branch"] == "retry-me"
+
+
+def test_missing_command_has_no_session_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = HistoryStore(tmp_path / "db.sqlite")
+    orch = Orchestrator(EventBus(sink=store.record))
+
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="command not found"):
+            await orch.launch(
+                runtime=GenericRuntime("missing-command-for-launch-qa"),
+                cwd=str(tmp_path),
+                session_key="missing",
+                test=True,
+            )
+
+    asyncio.run(scenario())
+    assert store.session("missing") is None
+    assert orch._supervisors == {}
+
+
+def test_spawn_exception_keeps_diagnostics_without_a_sidebar_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = HistoryStore(tmp_path / "db.sqlite")
+    bus = EventBus(sink=store.record)
+    orch = Orchestrator(bus)
+    monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: True)
+
+    async def fail(self: object, argv: list[str]) -> None:
+        raise PermissionError("synthetic spawn denial")
+
+    monkeypatch.setattr(orch_mod.SessionSupervisor, "_start_tmux", fail)
+
+    async def scenario() -> None:
+        with pytest.raises(ValueError, match="synthetic spawn denial"):
+            await orch.launch(
+                runtime=GenericRuntime("/bin/cat"),
+                cwd=str(tmp_path),
+                session_key="failed",
+                test=True,
+            )
+
+    asyncio.run(scenario())
+    assert store.session("failed")["state"] == "archived"
+    assert (
+        "synthetic spawn denial"
+        in store._conn.execute(
+            "SELECT payload_json FROM events WHERE session_key='failed' AND event_type='SessionEnd'"
+        ).fetchone()[0]
+    )
+    assert orch.get("failed") is None

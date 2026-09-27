@@ -483,7 +483,8 @@ B8. ~~Artifact markdown previews render as a blank off-white box~~ **Fixed
 - **F12 revert** — PR #96, schema-preserving (keeps `user_version=5` and
   `pinned`, drops no data, with a test proving a v5 DB opens after revert).
 
-**Tier 1 is still entirely unbuilt** — verified against `main` 2026-09-28,
+**Tier 1 is still entirely unbuilt** after four dispatches — verified
+against `main` 2026-09-28,
 not inferred: `Messages.tsx` has only the annotations **POST** and no GET or
 highlight path (F6); `App.tsx` has no persistence for `notifyOn` (B6); no
 adversarial scraper test exists; `pyproject.toml` still does not package the
@@ -493,6 +494,22 @@ decision. F6 in particular is the owner's named priority and the highest
 value-per-hour item on the board: every comment the owner has ever left is
 already stored in the `annotations` table and invisible, so they all appear
 the moment anything renders them.
+
+**Structural observation, recorded because it outlived the mechanism that
+would have fixed it.** Tier 1 (B6, F6, scraper tests, B4) has been sent four
+times — original request, owner go-ahead relay, queue resend, and a restart
+when the Work tab was parked — with an explicit owner go-ahead and nothing
+blocking it. In the same period the fleet shipped: message bookmarks, the
+Inbox redesign, Focus, full-window artifacts, a Context-panel regression fix,
+B9, and F12 (since reverted). **The pattern: the fleet reliably builds what
+arrived most recently or has a preview awaiting approval, and does not
+reliably build a standing queue.** That is exactly what F12 measured — work
+with no state of its own is invisible the moment a newer message lands — and
+deferring F12's mechanism did not retire the pattern. Noting it here so the
+next reconsideration starts from evidence rather than re-deriving it. The
+lightweight candidate remains: one *derived* "requested, acknowledged,
+nothing shipped" signal computed from data already present, with no states
+for anyone to maintain by hand.
 
 ## Bugs — open
 

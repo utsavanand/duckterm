@@ -17,6 +17,7 @@ import os
 import pty
 import re
 import shlex
+import shutil
 import signal
 import sys
 import time
@@ -121,6 +122,14 @@ class SessionSupervisor:
         argv = self.runtime.launch_command(
             cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=prompt
         )
+        # Fail before publishing a session row for predictable launch errors.
+        if not Path(self.cwd).is_dir():
+            raise ValueError(f"project folder does not exist: {self.cwd}")
+        if (
+            not argv
+            or shutil.which(argv[0], path=self._env.get("PATH", os.environ.get("PATH"))) is None
+        ):
+            raise ValueError(f"command not found: {argv[0] if argv else '(empty)'}")
         # Register and enroll synchronously before the child can use its inbox.
         self._emit(events.SESSION_START, command=shlex.join(argv))
         try:
@@ -128,8 +137,14 @@ class SessionSupervisor:
                 await self._start_tmux(argv)
             else:
                 await self._start_pty(argv)
-        except BaseException:
-            self._emit(events.SESSION_END)
+        except BaseException as exc:
+            self._emit(
+                events.SESSION_END,
+                lifecycle="archived",
+                launch_error=f"{type(exc).__name__}: {exc}",
+            )
+            if isinstance(exc, OSError):
+                raise ValueError(f"could not start agent: {exc}") from exc
             raise
 
     async def _start_pty(self, argv: list[str]) -> None:

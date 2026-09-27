@@ -1,3 +1,4 @@
+import { splitSessionRef } from "./hostTransport";
 import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
 import { SessionPin } from "./SessionPin";
 import { HelperAgents } from "./HelperAgents";
@@ -15,7 +16,7 @@ export function AgentTree({
   sessions,
   now,
   labels,
-  folders,
+  folders: savedFolders,
   selectedKey,
   onOpen,
   onOpenInbox,
@@ -52,6 +53,13 @@ export function AgentTree({
   onSetFolderTheme: (folder: string, theme: string | null) => void;
   termMode: TermMode;
 }) {
+  const folders = [...new Set([...savedFolders, ...sessions.flatMap(session => {
+    // Local folders come from the catalog; stale session snapshots must not
+    // resurrect their old paths while a rename or move refresh is in flight.
+    if (!session.host) return [];
+    const parts = session.group?.split("/") ?? [];
+    return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
+  })])];
   const toast = useToast();
   const roots = buildForest(sessions);
 
@@ -289,6 +297,14 @@ function GroupHeader({
 }) {
   // Start every folder closed when the dashboard opens or restarts.
   const [collapsed, setCollapsed] = useState(true);
+  useEffect(() => {
+    const reveal = (event: Event) => {
+      const folder = (event as CustomEvent<string>).detail;
+      if (folder === name || folder.startsWith(name + "/")) setCollapsed(false);
+    };
+    window.addEventListener("reveal-sidebar-folder", reveal);
+    return () => window.removeEventListener("reveal-sidebar-folder", reveal);
+  }, [name]);
   const [over, setOver] = useState(false);
   const leaf = name.split("/").pop();
   return (
@@ -338,7 +354,7 @@ function GroupHeader({
         <span className="rd-group-count">{count}</span>
         <button
           className="rd-group-phone"
-          title="View folder interactions"
+          title={desktop() ? "View this folder’s interactions on This Mac" : "View folder interactions"}
           aria-label={`View interactions in ${name}`}
           onClick={(e) => { e.stopPropagation(); onOpenInbox(); }}
         >
@@ -661,6 +677,7 @@ function TreeRow({
     setResuming(true);
     try {
       const r = await api.resume(s.key);
+      if (r.resumed) setEnding(false);
       const label =
         r.context === "native"
           ? "Resumed — conversation carried"
@@ -764,6 +781,7 @@ function TreeRow({
                 {s.label}
               </span>
             )}
+            {desktop() && <span className="rd-host-label" title={s.hostOffline ? "Remote disconnected; local sessions remain available" : s.hostLabel ?? "This Mac"}>{s.hostLabel ?? "This Mac"}{s.hostOffline ? " · Offline" : ""}</span>}
             <span className={`rd-state st-${effState}`} title={stateLabel} aria-label={stateLabel}>{stateLabel}</span>
             {!!s.inboxPending && (
               <button
@@ -859,7 +877,7 @@ function TreeRow({
               )}
             </button>
           )}
-          {resumable && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "") && <>
+          {resumable && splitSessionRef(s.key).host === "local" && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "") && <>
             <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key }))}>Move to remote…</button>
             <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={async () => {
               if (!window.confirm("Continue this session locally as a separate continuation? A remote session, if created, will remain running.")) return;

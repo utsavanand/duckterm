@@ -53,3 +53,22 @@ it("authorizes only the app selection reporter in an opaque-origin frame", () =>
   expect(doc).not.toContain("attacker");
   expect(doc).not.toContain("onclick");
 });
+
+it("restores background access and history when an expanded session unmounts", async () => {
+  vi.mocked(api.artifacts).mockResolvedValue({ artifacts: [first] });
+  vi.mocked(api.artifact).mockResolvedValue({ artifact: content(first) });
+  history.replaceState({ existing: "preserved" }, "");
+  const background = document.createElement("button");
+  background.textContent = "Background";
+  background.inert = false;
+  document.body.append(background);
+  const view = render(<ArtifactsView sessionKey="session" sessionName="Agent" />);
+  await screen.findByTitle("Preview of First report");
+  fireEvent.click(screen.getByRole("button", { name: "Expand" }));
+  expect(background.inert).toBe(true);
+  expect(history.state).toMatchObject({ existing: "preserved", artifactExpansion: expect.any(String) });
+  view.unmount();
+  expect(background.inert).toBe(false);
+  expect(history.state).toEqual({ existing: "preserved" });
+  background.remove();
+});

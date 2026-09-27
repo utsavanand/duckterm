@@ -32,3 +32,25 @@
 .rd-artifacts-heading .rd-btn:hover, .rd-artifact-actions .rd-btn:hover { border-color: var(--muted); }
 .rd-artifact-actions .rd-btn:disabled { opacity: .5; cursor: default; }
 .rd-artifacts-heading .rd-btn:focus-visible, .rd-artifact-actions .rd-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rd-artifact-title { min-width: 0; }
+.rd-artifact-title-button { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.rd-artifact-title-button:hover:not(:disabled) { text-decoration: underline; text-underline-offset: 4px; }
+.rd-artifact-title-button:disabled { opacity: 1; cursor: default; }
+.rd-artifact-title-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.rd-artifact-expanded { position: fixed; inset: 0; z-index: 90; padding: 0; display: flex; flex-direction: column; background: var(--bg); overflow: hidden; }
+.rd-artifact-expanded .rd-artifact-detail { flex: none; align-items: center; flex-wrap: nowrap; margin: 0; padding: 12px 18px; border-bottom: 1px solid var(--border); }
+.rd-artifact-expanded .rd-artifact-title { flex: 1; }
+.rd-artifact-back { flex: none; font: inherit; font-size: 12px; padding: 7px 12px; color: var(--text); background: var(--bg-soft); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }
+.rd-artifact-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rd-artifact-expanded .rd-artifact-path, .rd-artifact-expanded > .rd-artifact-note:not([role="status"]) { display: none; }
+.rd-artifact-expanded > [role="status"] { margin: 0; padding: 8px 18px; }
+.rd-artifact-expanded > .rd-artifact-frame { flex: 1; min-height: 0; height: 0; border: 0; border-radius: 0; }
+.rd-artifact-expanded > .rd-artifact-image, .rd-artifact-expanded > .rd-artifact-text, .rd-artifact-expanded > .rd-artifact-empty { flex: 1; min-height: 0; overflow: auto; margin: 0; border: 0; border-radius: 0; }
+.rd-artifact-expanded .rd-artifact-image img { max-height: 100%; min-height: 0; }
+@media (max-width: 700px) {
+  .rd-artifact-expanded .rd-artifact-detail { flex-wrap: wrap; gap: 10px; padding: 10px 12px; }
+  .rd-artifact-expanded .rd-artifact-title { order: 3; flex-basis: 100%; }
+  .rd-artifact-expanded .rd-artifact-actions { margin-left: auto; }
+}
+
+.rd-artifact-actions > [hidden] { display: none; }

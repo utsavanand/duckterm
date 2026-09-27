@@ -1,3 +1,4 @@
+import { sessionFetch, sessionRef } from "./hostTransport";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { AgentTree } from "./AgentTree";
@@ -39,6 +40,7 @@ import {
 } from "./termThemes";
 import { Modal, ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
+import { useSessionSelection } from "./useSessionSelection";
 import { useTheme } from "./useTheme";
 import { useSidebarDensity } from "./useSidebarDensity";
 import { useFolders } from "./useFolders";
@@ -54,7 +56,7 @@ function useNow(intervalMs: number): number {
 }
 
 function Dashboard() {
-  const { sessions: sourceSessions, connected, removeSessions, patchSession } =
+  const { sessions: sourceSessions, connected, loadedHosts, removeSessions, patchSession } =
     useEventStream();
   const inboxCounts = useInboxCounts();
   const sidePanels = useSidePanels();
@@ -69,8 +71,21 @@ function Dashboard() {
   >(desktop()?.draft ? "launch" : null);
   const [towerOpen, setTowerOpen] = useState(false);
   const relayOpen = useRelayCount();
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const pendingDesktopSession = useRef(desktop()?.selectedSession);
+  const defaultSelection = sessions.find(s => effectiveState(s, now) !== "archived")?.key ?? null;
+  const { selectedKey, selectSession: setSelectedKey } = useSessionSelection(sessions, defaultSelection, loadedHosts);
+  useEffect(() => {
+    const select = (event: Event) => {
+      const key = (event as CustomEvent<string>).detail;
+      setSelectedKey(key);
+    };
+    const selectNative = (event: Event) => {
+      const detail = (event as CustomEvent<{host:string; key:string}>).detail;
+      select(new CustomEvent("select-host-session", { detail: sessionRef(detail.host, detail.key) }));
+    };
+    window.addEventListener("native-select-session", selectNative);
+    window.addEventListener("select-host-session", select);
+    return () => { window.removeEventListener("select-host-session", select); window.removeEventListener("native-select-session", selectNative); };
+  }, [setSelectedKey]);
   const messagePins = useMessagePins(selectedKey);
   const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
   const pinSequence = useRef(0);
@@ -210,20 +225,6 @@ function Dashboard() {
     }
   }
 
-  // Default the selection to the first agent so the center pane isn't empty.
-  useEffect(() => {
-    if (pendingDesktopSession.current) {
-      const key = pendingDesktopSession.current;
-      if (sessions.some(s => s.key === key)) {
-        pendingDesktopSession.current = undefined;
-        setSelectedKey(key);
-      }
-      return;
-    }
-    if (selectedKey && sessions.some((s) => s.key === selectedKey)) return;
-    setSelectedKey(agents[0]?.key ?? null);
-  }, [agents, selectedKey, sessions]);
-
   const selected = sessions.find((s) => s.key === selectedKey) ?? null;
   const forkSession = sessions.find((s) => s.key === forkKey) ?? null;
   // Agents whose terminal we keep mounted (PTY Duckterm owns). Switching
@@ -247,7 +248,7 @@ function Dashboard() {
   useEffect(() => {
     if (!agentsMdDir || modal === "agentsmd") return;
     let stale = false;
-    fetch(`/agents-md?dir=${encodeURIComponent(agentsMdDir)}`)
+    sessionFetch(selected?.key ?? "", `/agents-md?dir=${encodeURIComponent(agentsMdDir)}`)
       .then((r) => r.json())
       .then((d: { rules?: { status: string }[] }) => {
         if (!stale)
@@ -259,7 +260,7 @@ function Dashboard() {
     return () => {
       stale = true;
     };
-  }, [agentsMdDir, modal]);
+  }, [agentsMdDir, modal, selected?.key]);
 
   return (
     <div className="rd-app" data-density={density}>
@@ -520,7 +521,7 @@ function Dashboard() {
                 </label>
               )}
             </div>
-            <Connectors />
+            <Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} />
           </section>
         </div>
       )}
@@ -529,7 +530,7 @@ function Dashboard() {
 
       {messageFolder !== null && <MessageFolderModal key={messageFolder} folder={messageFolder} onClose={() => setMessageFolder(null)} />}
       {inboxFolder !== null && messageFolder === null && (
-        <Modal title={`${inboxFolder} · Interactions`} onClose={() => setInboxFolder(null)}>
+        <Modal title={`${inboxFolder} · Interactions${desktop() ? " · This Mac" : ""}`} onClose={() => setInboxFolder(null)}>
           <InboxView key={inboxFolder} folder={inboxFolder} onMessageFolder={() => setMessageFolder(inboxFolder)} />
         </Modal>
       )}
@@ -538,6 +539,8 @@ function Dashboard() {
           group={launchGroup}
           folders={folders}
           onCreated={(key, group) => {
+            setSelectedKey(key);
+            window.dispatchEvent(new CustomEvent("reveal-sidebar-folder", { detail: group }));
             patchSession(key, { group: group || undefined });
             refreshFolders();
           }}
@@ -550,12 +553,13 @@ function Dashboard() {
         />
       )}
       {modal === "agentsmd" && agentsMdDir && (
-        <AgentsMdModal dir={agentsMdDir} onClose={() => setModal(null)} />
+        <AgentsMdModal sessionKey={selected?.key} dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal
           defaultDir={agentsMdDir}
+          sessionKey={selected?.key}
           onClose={() => setModal(null)}
         />
       )}

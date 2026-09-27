@@ -1,3 +1,4 @@
+import { sessionFetch } from "./hostTransport";
 import { useEffect, useState } from "react";
 import { authHeaders } from "./api";
 import { Button, Modal, useToast } from "./ui";
@@ -43,9 +44,11 @@ function blankRule(text: string): Rule {
 
 export function AgentsMdModal({
   dir,
+  sessionKey = "",
   onClose,
 }: {
   dir: string;
+  sessionKey?: string;
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -57,7 +60,7 @@ export function AgentsMdModal({
   const [suggesting, setSuggesting] = useState(false);
 
   useEffect(() => {
-    fetch(`/agents-md?dir=${encodeURIComponent(dir)}`)
+    sessionFetch(sessionKey, `/agents-md?dir=${encodeURIComponent(dir)}`)
       .then((r) => r.json())
       .then((d: { rules?: Rule[]; text?: string; managed?: boolean }) => {
         setRules(d.rules ?? []);
@@ -67,7 +70,7 @@ export function AgentsMdModal({
       })
       .catch(() => undefined)
       .finally(() => setLoading(false));
-  }, [dir]);
+  }, [dir, sessionKey]);
 
   const patch = (id: string, changes: Partial<Rule>) =>
     setRules((rs) => rs.map((r) => (r.id === id ? { ...r, ...changes } : r)));
@@ -93,7 +96,7 @@ export function AgentsMdModal({
   async function suggest() {
     setSuggesting(true);
     try {
-      const res = await fetch("/agents-md/suggest", {
+      const res = await sessionFetch(sessionKey, "/agents-md/suggest", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ dir }),
@@ -126,7 +129,7 @@ export function AgentsMdModal({
   async function save() {
     setSaving(true);
     try {
-      const res = await fetch("/agents-md", {
+      const res = await sessionFetch(sessionKey, "/agents-md", {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ dir, rules }),

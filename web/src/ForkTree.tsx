@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useHostData } from "./useHostData";
+import { useEffect } from "react";
 
 interface TreeNode {
   session_key: string;
@@ -87,20 +88,9 @@ export function ForkTree({
   refreshKey: number;
   labels: Record<string, string>;
 }) {
-  const [forest, setForest] = useState<Rendered[]>([]);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/tree")
-      .then((r) => r.json())
-      .then((data: { nodes: TreeNode[] }) => {
-        if (!cancelled) setForest(buildForest(data.nodes));
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
+  const { data, refresh } = useHostData<{ nodes: TreeNode[] }>("/tree");
+  const forest = buildForest(Object.values(data).flatMap(value => value.nodes));
+  useEffect(() => { refresh(); }, [refreshKey, refresh]);
 
   return (
     <section className="rd-tree">

@@ -25,6 +25,8 @@ def test_supervised_launch_preserves_user_task_and_enrolls_before_spawn(
     server = Server(history=store)
     captured = []
     monkeypatch.setattr("duckterm.core.orchestrator.tmux.has_tmux", lambda: False)
+    # The process spawn is mocked below; CI need not install either agent CLI.
+    monkeypatch.setattr("duckterm.core.orchestrator.shutil.which", lambda command, **_: command)
 
     async def spawn(supervisor, argv):
         credential = json.loads(Path(supervisor._env["DUCKTERM_SESSION_TOKEN_FILE"]).read_text())
