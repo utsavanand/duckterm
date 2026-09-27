@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Inbox reminders must not stop ongoing work
+
+Oracle's hardcoded “then stop” turned an inbox reminder into a new instruction
+to halt, even when the owner had already authorized unfinished work. Agents
+repeatedly acknowledged mail and went idle. Keep reminders focused on checking
+messages and continuing work; do not add workflow restrictions to an automated
+nudge. The delivery regression checks the actual pasted continuation wording
+and still verifies that peer message text is not injected into the reminder.
+
+
 ## 2026-09-26 — Don't answer an agent's menu by pressing keys
 **Broke:** release-dev asked two questions in one form. Oracle's chat showed
 only the first. The owner approved it, Oracle pressed "1", the form moved to
