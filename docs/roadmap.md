@@ -313,7 +313,23 @@ F11. **Answer an agent from Oracle's chat without typing into its terminal**
 ## Now — collaboration reliability (owner-reported 2026-09-26)
 
 F12. **Cross-session collaboration is unreliable; the owner has to keep
-     chiming in.** Analysis and proposal:
+     chiming in.** **Owner-approved; assigned to the `main-dev` session in
+     the `oracle` worktree** (2026-09-26) — it is free, and Stage 2 changes
+     what Oracle nudges on, which is that session's own code. The main-repo
+     `main-dev` is mid-build on F9 pinning and the owner's position is that
+     a session already building should not change direction midway.
+     **A live illustration of the bug, worth keeping:** F12 was
+     owner-approved, the approval was relayed, and it was parked as a
+     "follow-up design" because a direct terminal instruction outranked a
+     relayed one. No priority order is held across sessions — F12 lost to
+     the exact problem F12 fixes. Stage 3's `sanctioned` level (settable by
+     the owner, or by a session quoting owner words) would have prevented
+     it.
+     **Coordination window, closing now:** Stage 2 wants a Work column, and
+     `ui-dev` is redesigning the Inbox this week (preview at
+     `docs/previews/inbox-clarity.html`, awaiting owner review). That is the
+     surface where work state belongs — getting it into the redesign is
+     cheaper than bolting it on afterwards. Analysis and proposal:
      [collaboration-reliability-design.md](collaboration-reliability-design.md).
      **Not a delivery problem — messages arrive.** Measured from
      `main-dev`'s real inbox (50 messages) and `session_questions` (273
