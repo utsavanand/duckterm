@@ -10,6 +10,5 @@ export function SessionLocationDuck({ session, pose }: { session: SessionView; p
   return <span className={`rd-session-location ${remote ? "remote" : "local"}${offline ? " offline" : ""}`} role="group" tabIndex={0} aria-label={location} data-location={location}>
     {remote && <svg className="rd-location-cloud" viewBox="0 0 36 32" aria-hidden="true"><path d="M8 28C-1 28 0 17 7 16C5 7 18 4 22 12C31 8 37 18 31 22C36 29 24 30 20 28Z" fill="#d8e9f5" stroke="#8fb3cf" strokeWidth="1.2" />{offline && <path d="M5 30L32 6" stroke="#a86422" strokeWidth="2" />}</svg>}
     <span className="rd-location-mascot"><Duck pose={pose} size={24} celebrating={session.celebration} /></span>
-    {!remote && <svg className="rd-location-computer" viewBox="0 0 16 14" aria-hidden="true"><rect x="2" y="1" width="12" height="9" rx="1.4" /><path d="M0 12h16M6 10v2m4-2v2" /></svg>}
   </span>;
 }
