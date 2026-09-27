@@ -7,6 +7,15 @@ base mascot directly. Reuse the location component across both views, preserve
 Oracle's button focus and activity poses, and cover remote disconnection and
 recovery while Oracle stays open. A sidebar-only test missed this surface.
 
+## 2026-09-27 — Restoring selection must respect collapsed startup folders
+
+Restoring a saved session dispatched the same folder-reveal event as a new
+launch, reopening its parent folders despite the existing collapsed-startup
+behavior. Keep selection restoration independent of folder expansion. Select a
+nested row explicitly before reload in regression tests; relying on the default
+selection made the failure depend on which session arrived first. Native checks
+must verify the selected context even while the corresponding row is hidden.
+
 ## 2026-09-27 — Mark the remote exception without decorating every local row
 
 The location preview added a computer badge to each local duck; the owner
@@ -23,6 +32,14 @@ visible disconnected mark and an accessible label; update outage acceptance
 checks when status moves from row text into an icon. Test equal session IDs on
 different hosts and recovery without duplicate rows.
 
+## 2026-09-27 — Selection restoration must not reopen folders
+
+Restoring the saved session dispatched the same folder-reveal event as an
+explicit launch, undoing the collapsed-on-restart sidebar default. Restore the
+active session independently from folder expansion. Regression tests must select
+a nested session before reloading and verify both its restored selection and
+collapsed ancestors; merely opening folders leaves this dependent on timing.
+
 ## 2026-09-26 — A visible button can still be outside the window
 
 Adding Pin to the Context header crowded the reopen arrow out of its 36px
@@ -30,6 +47,14 @@ collapsed rail. Hide every non-toggle header child when collapsed, including
 future actions. Browser visibility assertions missed this because an offscreen
 button still has a layout box. Assert viewport/rail bounds and hit-test the
 center before clicking, with both Pin and Pinned labels and narrow layouts.
+
+## 2026-09-27 — Hidden terminals still parse output
+
+Keeping every terminal mounted makes switching fast but gives every hidden
+agent a parser competing with foreground keystrokes. Bound the recent-view
+cache, leave server-owned PTYs running, and reconnect older views through the
+existing snapshot path. Measure at fleet scale and test an unfinished input
+line across eviction; a mount-count assertion alone cannot prove safety.
 
 ## 2026-09-26 — Re-read the inbox between merge and tag
 **Broke:** the owner deferred F12 work tracking ("keep this in the roadmap… I

@@ -187,7 +187,11 @@ test("restart collapses parent and nested folders without losing sessions", asyn
     await expect(row).toHaveCount(0);
     await expandFolder(page, `${parent}/Child`);
     await expect(row).toBeVisible();
+    await row.click();
+    await expect(row).toHaveClass(/selected/);
     await page.reload();
+    // Wait for the saved selection to resolve, even though its row stays hidden.
+    await expect(page.locator(".rd-context-pane > .rd-panel-head > span")).toHaveText(key);
     await expect(parentHead.locator(".rd-group-caret")).toHaveText("▸");
     await expect(row).toHaveCount(0);
     await expandFolder(page, parent);
@@ -196,6 +200,7 @@ test("restart collapses parent and nested folders without losing sessions", asyn
     await expect(row).toHaveCount(0);
     await expandFolder(page, `${parent}/Child`);
     await expect(row).toBeVisible();
+    await expect(row).toHaveClass(/selected/);
   } finally {
     await apiDelete(`/sessions/${key}`);
     await apiDelete(`/folders/${encodeURIComponent(parent)}`);
