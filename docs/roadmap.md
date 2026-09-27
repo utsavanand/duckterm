@@ -494,6 +494,47 @@ value-per-hour item on the board: every comment the owner has ever left is
 already stored in the `annotations` table and invisible, so they all appear
 the moment anything renders them.
 
+## Installed 2026-09-28 — v0.4.75
+
+Verified on the owner's machine (`duckterm --version` = 0.4.75):
+
+- **Unified local/remote window** (PR #68, `feature-remote-session`): local
+  "This Mac" rows and remote rows in one native window, with a remote Claude
+  terminal selectable. Selected host/session **persists across relaunch,
+  including remote-offline startup**. Verified against the live fleet: all
+  23 local panes alive, the existing remote Claude PID survived, quit and
+  relaunch regression passed.
+- **Full-window artifacts** (`0c6436f`) and the **Context-panel reopen arrow
+  fix** (`26e855c`, regression proven red first).
+- **F12 revert** shipped in v0.4.74, schema-preserving.
+
+Caveats the reporting session was careful to state, and worth keeping:
+the remote service is still on **0.4.64** — the desktop coexistence fix
+works against that version and it was deliberately not upgraded or
+restarted; and **destination Git credential setup, reboot recovery, and
+connector rotation validation remain unvalidated** — this completion makes
+no claim about them.
+
+F13. **Compact session-location indicators — IMPLEMENTED, awaiting
+     QA/release** (owner-requested and approved 2026-09-28, `ui-dev`,
+     `864f1cf`). "This Mac" text crowded session names once local and
+     remote shared the sidebar. Local rows now use the existing animated
+     duck with a computer badge; remote is a duck in a cloud, crossed when
+     disconnected; the host name appears on hover and keyboard focus with
+     an accessible label. Gate: full `scripts/gate.sh` exit 0, 135 frontend
+     + 68 browser tests; committed tree imported and compiled in a fresh
+     checkout.
+     **It addressed the design risk I raised**: the duck's activity
+     animation is *preserved*, so location and state do not collapse into
+     one compound glyph, and the disconnected mark stays visible rather
+     than reading as the sleeping pose. The native outage test was updated
+     to inspect the accessible icon status, since status moved from row
+     text into an icon — the kind of follow-through that is usually
+     forgotten. Their RETRO entry generalizes it: *"compact identity must
+     still identify the machine"*.
+     Evidence caveat they stated: browser checks used a real local session
+     and a controlled remote bridge, **not live SSH**.
+
 ## Bugs — open
 
 B9. **Terminal typing latency — FIXED, awaiting release** (PR #95,
