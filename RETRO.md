@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Closing a message must not erase the work
+
+An inbox reply records a conversation, not an outcome. Keep assigned work in
+its own durable record, require completion evidence or a named blocker, and
+return declined/unavailable assignments for reassignment instead of deleting
+them. Closing an old message after a handoff must not unassign its successor.
+Store work-reminder timestamps in SQLite so restarting Oracle cannot repeat
+an hourly reminder; use fixed reminder text rather than copying peer content.
+
+
 ## 2026-09-26 — Inbox reminders must not stop ongoing work
 
 Oracle's hardcoded “then stop” turned an inbox reminder into a new instruction

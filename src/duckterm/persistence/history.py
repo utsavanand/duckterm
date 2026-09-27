@@ -34,7 +34,8 @@ Event = dict[str, Any]
 # column-adds are backward-compatible (old code ignores extra columns), so this
 # is a floor for "safe to open," not a hard per-version lock.
 # v3 keeps enrollment synchronized with folder moves and automatically enrolls sessions.
-_SCHEMA_VERSION = 3
+# v5 adds durable collaboration work items; v4 is reserved for Focus pins (PR #78).
+_SCHEMA_VERSION = 5
 
 
 class SchemaTooNewError(RuntimeError):
@@ -953,6 +954,7 @@ class HistoryStore:
         checkpoints). Tombstones the key so a still-running terminal's events
         can't resurrect the row. Returns whether a row was removed."""
         self.session_api.revoke(key)
+        self._conn.execute("DELETE FROM session_work_updates WHERE recipient=?", (key,))
         self._conn.execute("DELETE FROM session_api_members WHERE session_key = ?", (key,))
         self._conn.execute(
             "DELETE FROM session_questions WHERE sender = ? OR recipient = ?", (key, key)
@@ -980,6 +982,15 @@ class HistoryStore:
             for r in self._conn.execute("SELECT session_key FROM sessions WHERE test = 1")
         ]
         for key in keys:
+            self._conn.execute(
+                "DELETE FROM session_work_events WHERE work_id IN "
+                "(SELECT id FROM session_work WHERE requester=? OR owner_session=?)",
+                (key, key),
+            )
+            self._conn.execute(
+                "DELETE FROM session_work WHERE requester=? OR owner_session=?", (key, key)
+            )
+            self._conn.execute("DELETE FROM session_work_updates WHERE recipient=?", (key,))
             self.session_api.revoke(key)
             self._conn.execute("DELETE FROM session_api_members WHERE session_key = ?", (key,))
             self._conn.execute(
