@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — A visible button can still be outside the window
+
+Adding Pin to the Context header crowded the reopen arrow out of its 36px
+collapsed rail. Hide every non-toggle header child when collapsed, including
+future actions. Browser visibility assertions missed this because an offscreen
+button still has a layout box. Assert viewport/rail bounds and hit-test the
+center before clicking, with both Pin and Pinned labels and narrow layouts.
+
 ## 2026-09-26 — Re-read the inbox between merge and tag
 **Broke:** the owner deferred F12 work tracking ("keep this in the roadmap… I
 want to think it through") while its release PR was in CI. release-dev merged,
