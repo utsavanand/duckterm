@@ -10,7 +10,7 @@ the session API.
 
 | Item | Status |
 | --- | --- |
-| F3 Artifacts | Shipped v0.4.55; Mac preview fix (B8) v0.4.69; full-window view in progress (ui-dev) |
+| F3 Artifacts | Shipped v0.4.55; Mac preview fix (B8) v0.4.69; full-window view implemented (`0c6436f`), awaiting release |
 | F9 Focus | **Shipped v0.4.71** (PR #78) |
 | F10 Request status updates | Shipped inside F12 in v0.4.72 (received/done updates, `--parent-request` chains). PR #96 would revert it with F12. |
 | F12 Work tracking | Shipped v0.4.72 **after the owner deferred it**. Revert PR #96 open; owner decides. |

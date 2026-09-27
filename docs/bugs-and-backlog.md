@@ -31,7 +31,7 @@ These are blocked on a decision only the owner can make.
 | Item | Owner | State |
 | --- | --- | --- |
 | **B9** Terminal typing slows as sessions grow | main-dev | Fixed in PR #95 (p95 70.5 → 25.7 ms at 23 sessions); awaiting release and an installed Mac check |
-| Full-window artifact view | ui-dev | Owner approved the preview; implementing on main |
+| Full-window artifact view | ui-dev | Implemented (`0c6436f`), full gate and native WKWebView probe passed; with release-dev for QA and release |
 
 ## Tier 1 — do now (verified unbuilt, hours each)
 
