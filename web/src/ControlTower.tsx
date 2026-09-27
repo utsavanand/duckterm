@@ -144,15 +144,25 @@ export function ControlTower({
       {needs.length > 0 && (
         <section className="rd-tower-needs" aria-label="Needs you">
           <h2>
-            Needs you <span>{needs.length} open, oldest first. Answer in the chat.</span>
+            Needs you <span>{needs.length} open, oldest first.</span>
           </h2>
           <div className="rd-tower-needs-list">
             {needs.map((n) => (
-              <button key={n.id} className="rd-tower-need" onClick={() => showNote(n.id)}>
+              <button
+                key={n.id}
+                className="rd-tower-need"
+                onClick={() => (n.kind === "choice" ? onOpenTerminal(n.session_key) : showNote(n.id))}
+              >
                 <Duck pose="waiting" size={28} />
                 <span className="rd-tower-need-who">
                   <b>{n.name}</b>{n.folder ? ` · ${n.folder.split("/")[0]}` : ""}
-                  <small>{n.kind === "approval" ? `Wants to run ${n.detail || n.tool}` : n.question}</small>
+                  <small>
+                    {n.kind === "approval"
+                      ? `Wants to run ${n.detail || n.tool}`
+                      : n.kind === "choice"
+                        ? `${n.questions?.[0]?.question ?? n.question ?? "A menu question"} Answer in its terminal.`
+                        : n.question}
+                  </small>
                 </span>
                 <span className="rd-tower-need-age">{ago(now - n.created_at)}</span>
               </button>
