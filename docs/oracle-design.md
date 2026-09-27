@@ -86,9 +86,12 @@ PTY-backed sessions without tmux have no screen to read and are skipped.
 **On by default in every folder** (owner decision 2026-09-23). The kill
 switch is `DUCKTERM_ORACLE=off` in the server's environment.
 
-**Known limits.** The nudge memory is in-process, so a server restart can
-repeat one nudge per session. Delivery is not proof the agent handled the
-mail.
+**Restarts.** Each `OracleNudge` event stores the IDs of the mail it
+reminded about. After a server restart, Oracle rebuilds its memory of the last
+nudge from that event, so it doesn't repeat a reminder the agent already got.
+Nudges recorded before 2026-09-26 lack the IDs and count as no previous nudge.
+
+**Known limits.** Delivery is not proof the agent handled the mail.
 
 ## Prerequisite fix: idle is not waiting
 
