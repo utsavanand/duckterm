@@ -1,5 +1,16 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — The Mac app's navigation filter must allow srcdoc subframes
+**Broke:** every Markdown artifact preview was a blank box in the Mac app,
+while the same page rendered in a browser at localhost:4300.
+**Cause:** DashboardWindow's navigation policy cancelled anything not on the
+dashboard's http host. Sandboxed srcdoc previews load as `about:srcdoc`, so
+WebKit's iframe load was refused. Browser tests can't see this: they never run
+the native policy.
+**Rule:** web features that add iframes, blob URLs or new schemes need a check
+in a real WKWebView behind the production policy
+(`scripts/test_artifact_preview.sh`), not only Playwright.
+
 ## 2026-09-26 — Inbox reminders must not stop ongoing work
 
 Oracle's hardcoded “then stop” turned an inbox reminder into a new instruction
