@@ -5,73 +5,98 @@ One place to see everything open, ordered by what to do next. The
 items with their triggers; this page is the working list.
 
 Ownership means **asked and confirmed**, not "sent to". Where a session has
-stated it has not started something, that is recorded as such.
+said it has not started something, that is recorded as such.
 
-Last reconciled against `main`: 2026-09-26.
+Last reconciled against `main` (`4876a2a`, installed **v0.4.73**) and open
+PRs: 2026-09-27, by `product`. Every "verified" line below was checked
+against code or the installed app that day.
+
+## Waiting on the owner
+
+These are blocked on a decision only the owner can make.
+
+| Item | Decision needed |
+| --- | --- |
+| **F12 revert** (PR #96) | F12 work tracking shipped in v0.4.72 after the owner deferred it. Merge the revert, or keep F12. The Folder view spec below builds on F12. |
+| **Folder view + Feature tracker** ([spec](folder-view-spec.md)) | Four open questions in the spec. Also: a Kanban runs into the F12 "heavyweight PM interface" concern. |
+| **Tier 1 go-ahead for ui-dev** | ui-dev says B6, F6 and the scraper tests "await user direction"; it has not started them. |
+| **Duck settle grace** | Shorten the 5-minute grace, or add a distinct "settling" pose. |
+| **B2 connector setup design** | Review; connectors-dev is waiting. |
+| **F7 plan hand-off preview** | Approve the preview; also: agent choice only, or a model field too? |
+| **F11 scheduling** | The Stop-hook probe works; schedule the build. |
+| **Oracle on WhatsApp** | Five open questions in [oracle-whatsapp-design.md](oracle-whatsapp-design.md). |
+
+## In progress
+
+| Item | Owner | State |
+| --- | --- | --- |
+| **B9** Terminal typing slows as sessions grow | main-dev | Fixed in PR #95 (p95 70.5 → 25.7 ms at 23 sessions); awaiting release and an installed Mac check |
+| Full-window artifact view | ui-dev | Implemented (`0c6436f`), full gate and native WKWebView probe passed; with release-dev for QA and release |
 
 ## Tier 1 — do now (verified unbuilt, hours each)
 
-| ID | Item | Owner | Verified |
+| ID | Item | Owner | Verified 2026-09-27 |
 | --- | --- | --- | --- |
-| **B6** | Desktop notification setting does not persist; no feedback when the browser has blocked notifications; already-waiting sessions notify in a burst at load and on enable | ui-dev | `grep` for localStorage/notify in App.tsx → 0 matches |
-| **F6** | Highlight annotated spans in the Messages tab — owner's named priority | ui-dev | Messages.tsx does not even fetch annotations |
-| — | Adversarial scraper unit tests (feed each `detect_state` its own trigger words in innocuous contexts) | ui-dev | no such test exists in `tests/unit/runtimes/` |
-
-All three dispatched to `ui-dev` as one release, in this order.
+| **B6** | Desktop notification setting does not persist; no feedback when the browser blocked notifications; already-waiting sessions notify in a burst at load and on enable | ui-dev (not started) | `notifyOn` is still plain `useState` from `Notification.permission` (App.tsx:182); no localStorage |
+| **F6** | Highlight annotated spans in the Messages tab — owner's named priority | ui-dev (not started) | Messages.tsx only POSTs annotations; no highlight render path |
+| — | Adversarial scraper unit tests (feed each `detect_state` its own trigger words in innocuous contexts) | ui-dev (not started) | `tests/unit/runtimes/` has no such test |
 
 ## Tier 2 — next
 
 | ID | Item | Owner | Note |
 | --- | --- | --- | --- |
-| — | **Duck settle grace**: ducks are drawn typing for 5 minutes after the agent finishes (`IDLE_SETTLE_MS`) | main-dev | Needs an owner choice: shorten the grace, or add a distinct "settling" pose. Also makes celebrations up to 5 min late. |
-| — | **Waiting lifecycle**: raised hands drop on the next agent event, not when the owner looks; `_reconcile_waiting` lets a screen scraper veto a real hook-driven `waiting` | main-dev | Owner's expectation: hands stay up until they get attention |
-| **B4** | Packaged header icon/favicons missing from the wheel; URLs return fallback HTML with HTTP 200 | ui-dev | Fix the packaging **validation**, not only the assets |
-| **B3** | Folder-rename / broadcast scope regression — moving a recipient away cancels its broadcast, then renaming the old folder wrongly makes it readable in the new scope | main-dev | Reproduced twice; sits *under* broadcast and inbox delivery, so features keep stacking on it. `main-qa` idle waiting to re-verify. **main-dev confirms still queued.** |
+| — | **Duck settle grace**: ducks look busy for 5 minutes after the agent finishes | main-dev | `IDLE_SETTLE_MS` is still `5 * 60_000` (sessions.ts:11). Needs the owner choice above. Also delays celebrations. |
+| — | **Waiting lifecycle**: raised hands drop on the next agent event, not when the owner looks; `_reconcile_waiting` lets a screen scraper veto a real hook-driven `waiting` | main-dev | No fix on main. Owner expects hands to stay up until attended. |
+| **B3** | Folder-rename / broadcast scope regression | main-dev | No fix commit on main. Reproduced twice; main-qa waiting to re-verify. |
 
 ## Tier 3 — larger, owner input needed
 
-| ID | Item | Owner | Blocked on |
+| ID | Item | Owner | State |
 | --- | --- | --- | --- |
-| **B2** | Connectors configured but not usable | connectors-dev | Owner review of the rewritten connector setup design |
-| **F11** | Answer an agent from Oracle's chat without typing into its terminal | Oracle main-dev (`0048fef0`) | Owner scheduling; the Stop-hook probe blocks the rest of the design. **Open:** the 180 s hook poll cap is far shorter than a human answering a form. |
-| **F9** | Focus — pinned sessions view | ui-dev (preview) | Owner preview approval |
-| **F10** | Request status updates (Received / In progress / Done, chain-aware) | main-dev | Sequencing agreed: Received+Done need no new machinery, do them first |
-| **F7** | Plan hand-off (plan with one agent, implement with another) | unassigned | Owner preview approval |
-| **F8** | DuckCloud setup flow, cost + idle shutdown, AWS | feature-remote-session | Remote work merged; this is the onboarding layer |
-| **F5** | Meta-harness vocabulary and composition | unassigned | Largest item; nomenclature → compatibility → model router, in that order |
-| **F4** | Migrate a running session to another harness | unassigned | Must be honest: seeded, not resumed |
-| **F2** | Self-update to the latest DuckTerm release (the Settings *surface* shipped in v0.4.45) | unassigned | — |
+| **B2** | Connectors configured but not usable | connectors-dev | Design written; owner review pending |
+| **F11** | Answer an agent from Oracle's chat without typing into its terminal | Oracle main-dev (`0048fef0`) | Probe done: free text works via the Stop hook; menus via the permission path. Open: 180 s vs 300 s timeouts. |
+| **F7** | Plan hand-off | unassigned | Design merged ([plan-handoff-design.md](plan-handoff-design.md), PR #22); preview pending |
+| **F8** | DuckCloud: setup flow, cost and idle shutdown, AWS | feature-remote-session | Remote work merged; design merged ([duckcloud-design.md](duckcloud-design.md)); setup flow not built |
+| — | Folder view + Feature tracker | unassigned | Proposed ([folder-view-spec.md](folder-view-spec.md)) |
+| — | Urgent inbox messages and an explicit Interrupt control | ui-dev | Designed; not built |
+| — | Re-home the approvals UI | unassigned | Placement question only (TODO.md) |
+| **F5** | Meta-harness vocabulary and composition | unassigned | Nomenclature → compatibility → model router, in that order |
+| **F4** | Migrate a running session to another harness | unassigned | Seeded, not resumed |
+| **F2** | Self-update to the latest DuckTerm release | unassigned | Not built |
 | **F1** | Finish the DuckTerm rename in remaining prose | unassigned | Code-side names deliberately unchanged |
 
 ## Standing risks (not tickets, but they bite)
 
+- **Releasing without re-reading the inbox.** F12 shipped in v0.4.72 and
+  v0.4.73 after the owner had deferred it, because release-dev didn't
+  re-read its inbox before merging. The DB is now schema v5. PR #96 records
+  the lesson: re-read the inbox before merge, before tag and before install.
 - **Backup sync mode has no exclusion test.** `gcloud storage rsync`
-  inherits none of the tar path's credential/symlink filtering, and that
-  filtering is why the verified archive contained zero credential files.
-  Asked `main-dev` four times; still unanswered. Treated as an open risk
-  against a shipped feature.
-- **Flaky required checks gate the whole merge queue.** Branch protection
-  has no bypass, so one flaky test blocks every PR including docs-only
-  ones. Two incidents in two days: `test_fork_chain_builds_lineage` (fixed
-  in v0.4.54) and `test_connector_disable` asserting **exact equality of
-  two nanosecond timestamps** taken ~91 ms apart — the documented RETRO
-  pattern about wall-clock assertions. The second still needs a tolerance
-  fix rather than luck.
-- **Untracked work.** Two reconciliation passes found nine shipped,
-  documented features with no roadmap entry (seven on 2026-09-25, plus
-  Control Tower and message bookmarks). The ask to every session is one
-  line when a feature *starts*.
+  inherits none of the tar path's credential/symlink filtering. Verified
+  2026-09-27: `tests/unit/persistence/test_backup.py` covers only the tar
+  path.
+- **Flaky terminal browser tests.** `oracle-terminal-resize` and
+  `side-panels` failed once in a local gate on 2026-09-26, then passed 6/6
+  on repeat. Branch protection has no bypass, so a CI flake blocks every
+  PR. (The connector heartbeat flake was fixed in PR #79.)
+- **Untracked work.** Features keep reaching the roadmap only after they
+  ship. The ask to every session: one line when a feature *starts*.
 
 ## Fixed recently (so nobody re-reports them)
 
+- **B8** Artifact previews blank in the Mac app — v0.4.69 (PR #83). The Mac
+  app's navigation filter refused the preview's `about:srcdoc` load.
+- **B7** Context readout showed "0 left" for Opus 5 — v0.4.70 (PR #82).
+- **B4** Missing header icon/favicons — verified fixed on installed v0.4.73:
+  `favicon.svg` and `favicon.ico` ship in the package and serve real image
+  types.
+- **F9** Focus: pin up to three sessions side by side — v0.4.71 (PR #78).
+- Inbox redesign — v0.4.68 (PR #80). Oracle nudge memory across restarts —
+  v0.4.70 (PR #75). Nudges to act within remit — v0.4.71 (PR #77). Control
+  tower menu questions open the terminal — v0.4.73 (PR #91).
 - **B1** Messages panel showed the previous session's transcript — fixed
-  `5a40863`; missing React `key` meant one component instance was reused
-  across switches.
+  `5a40863`.
 - **B5** Opening Oracle corrupted terminal wrapping — fixed by layout in
   v0.4.51. **The underlying dropped-resize defect is still latent**:
-  `settleOpening` early-returns before `fit`/`sendResize`, so a resize can
-  still be dropped from grid splits, folder-grid toggles, tab switches, or
-  window resize. Start there if geometry breaks again.
-- Fork-race CI flake — fixed v0.4.54. Live sessions falsely showing
-  Interrupted — fixed v0.4.53. Ordinary output flipping session status —
-  fixed v0.4.59.
+  `settleOpening` early-returns before `fit`/`sendResize`. Start there if
+  geometry breaks again.

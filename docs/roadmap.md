@@ -1,9 +1,28 @@
 # DuckTerm — Roadmap
 
-As of 2026-09-25, **v0.4.47** shipped. Ordered by when work can land, not by
-importance. Sources: TODO.md, RETRO.md, design docs, and the active peer
-sessions (`main-dev`, `ui-dev`, `main-qa`, `feature-remote-session`) via the
-session API.
+As of 2026-09-27, **v0.4.73** is released and installed. The sections below
+are a dated log; **the status table directly below is the current truth**,
+and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
+Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
+the session API.
+
+## Status at a glance (reconciled 2026-09-27 against `main` 4876a2a)
+
+| Item | Status |
+| --- | --- |
+| F3 Artifacts | Shipped v0.4.55; Mac preview fix (B8) v0.4.69; full-window view implemented (`0c6436f`), awaiting release |
+| F9 Focus | **Shipped v0.4.71** (PR #78) |
+| F10 Request status updates | Shipped inside F12 in v0.4.72 (received/done updates, `--parent-request` chains). PR #96 would revert it with F12. |
+| F12 Work tracking | Shipped v0.4.72 **after the owner deferred it**. Revert PR #96 open; owner decides. |
+| B9 Terminal typing latency | Fixed in PR #95; awaiting release |
+| B4 Header icon/favicons | **Fixed** (verified on installed v0.4.73) |
+| B7 Opus 5 context readout, B8 blank Mac previews | Fixed, v0.4.70 and v0.4.69 |
+| Control Tower | Merged (PR #39) and shipped; menu wording v0.4.73 |
+| Inbox redesign | Shipped v0.4.68 |
+| B3, B6, F6, duck settle, waiting lifecycle | Open; see bugs-and-backlog |
+| B2, F7, F8, F11, Oracle on WhatsApp | Designed; waiting on owner review or scheduling |
+| Folder view + Feature tracker | Proposed 2026-09-27: [folder-view-spec.md](folder-view-spec.md) |
+| F1, F2, F4, F5, urgent messages, Interrupt, approvals re-home | Not started |
 
 Shipped since this doc was first written (2026-09-20 → 22):
 
@@ -27,7 +46,9 @@ Shipped since this doc was first written (2026-09-20 → 22):
   tracking, 7-day retention, excluded from peer quotas, owner-only auth.
   [folder-broadcast.md](folder-broadcast.md).
 
-## Now (this week)
+## Now (this week) — as of 2026-09-25
+
+*2026-09-27: B4 is fixed; B3 is still open.*
 
 1. **Fix the folder-broadcast scope regression (B3)** — reproduced again
    against installed v0.4.47; original report and regression sent to main-dev.
@@ -147,6 +168,9 @@ F6. **Show where comments were left in the Messages tab** (owner-requested
 
 ## Designed 2026-09-26, awaiting owner preview approval
 
+*2026-09-27: F9 **shipped in v0.4.71** (PR #78). F10's received/done updates
+and request chains shipped inside F12 in v0.4.72; PR #96 would revert them.*
+
 F9. **Focus — pinned sessions view** (owner-approved for design via
     `product`). Design:
     [focus-and-request-status-design.md](focus-and-request-status-design.md).
@@ -202,7 +226,7 @@ F10. **Request status updates** (owner-approved for design via `product`).
   rails, center pane takes the freed width (verified 738 → 1035 → 1368 px),
   narrow stacked windows reclaim height.
 - **Control Tower** — phases 1 and 2 implemented on branch `control-tower`
-  (not merged): clicking Oracle opens a full page rather than a side panel,
+  (*since merged in PR #39 and shipped*): clicking Oracle opens a full page rather than a side panel,
   with fleet insights (agent count, total tokens, last backup, remote
   session count) and an animated duck scene grouped into teams by folder.
   Design: [control-tower-design.md](control-tower-design.md), built on
@@ -405,6 +429,9 @@ Cross-session collaboration is unreliable; the owner has to keep
 
 ## Implemented, awaiting release (recorded 2026-09-27)
 
+*Later on 2026-09-27: F9 shipped in v0.4.71 and F12 in v0.4.72. The owner had
+deferred F12 before it shipped; revert PR #96 is open.*
+
 Sessions asked that **implemented** be recorded separately from **installed**
 — a fair distinction this document has been blurring. None of these is on the
 owner's machine yet.
@@ -432,7 +459,10 @@ stop work being silently dropped, not to nag indefinitely, and an infinite
 reminder would have recreated the alert fatigue that made mail-nudges easy
 to ignore in the first place.
 
-B8. **Artifact markdown previews render as a blank off-white box**
+B8. ~~Artifact markdown previews render as a blank off-white box~~ **Fixed
+    in v0.4.69** (PR #83): the Mac app's navigation filter refused the
+    preview's `about:srcdoc` load; browsers were never affected. Original
+    report:
     (`product`, 2026-09-27). Artifacts now *lists* correctly — 3 artifacts —
     so this is **not** the zero-artifacts empty-state hypothesis I proposed;
     that one is ruled out. Every markdown preview is blank. Details with
@@ -642,7 +672,9 @@ B3. **Folder-rename scope bug, still present in v0.4.47** — originally
     folder then wrongly makes that cancelled message readable in the new
     scope. Findings sent to main-dev. **Blocking**, not completed.
 
-B4. **Packaged header icon/favicons missing in v0.4.47** — independent
+B4. ~~Packaged header icon/favicons missing in v0.4.47~~ **Fixed** —
+    verified 2026-09-27 on installed v0.4.73: both files are in the package
+    and serve `image/svg+xml` and `image/x-icon`. Original report: — independent
     screenshot review found the broken header image. The wheel excludes
     dashboard-root favicon.svg/favicon.ico; their URLs return fallback HTML
     with HTTP 200. Include the assets and validate installed image content,
