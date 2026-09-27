@@ -13,7 +13,7 @@ from duckterm.llm.summarizer import Summary
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
 
-MENU = "Pick one color:\n❯ 1. Red\n  2. Green\n  3. Blue\nEnter to select"
+MENU = "Merge PR #66?\n❯ 1. Yes\n  2. Hold\nEnter to select"
 
 
 @pytest.fixture
@@ -103,43 +103,40 @@ def test_approval_rule_answers_blocking_requests_only_as_written(world) -> None:
     assert dispatch(server, "DELETE", "/relay/rules/R1", owner)[0] == 200
 
 
-def test_multiple_choice_answer_presses_the_option_only_while_its_menu_shows(world) -> None:
+def test_menu_form_is_one_note_listing_every_question_and_is_answered_in_the_terminal(
+    world,
+) -> None:
     server, owner, sup, _ = world
     ask = {
         "questions": [
+            {"question": "Merge PR #66?", "options": [{"label": "Yes"}, {"label": "Hold"}]},
             {
-                "question": "Pick one color:",
-                "options": [{"label": "Red"}, {"label": "Green"}, {"label": "Blue"}],
-            }
+                "question": "Which rule applies?",
+                "multiSelect": True,
+                "options": [{"label": "release-dev releases"}, {"label": "Devs release"}],
+            },
         ]
     }
-    server.bus.publish(
-        {
-            "event_type": "PermissionRequest",
-            "session_key": "pm",
-            "tool_name": "AskUserQuestion",
-            "tool_input": ask,
-        }
-    )
+    event = {
+        "event_type": "PermissionRequest",
+        "session_key": "pm",
+        "tool_name": "AskUserQuestion",
+        "tool_input": ask,
+    }
+    server.bus.publish(event)
+    server.bus.publish(event)  # a repeat while the note is open adds nothing
     [note] = [n for n in notes(server) if n["kind"] == "choice"]
-    assert note["options"] == ["Red", "Green", "Blue"]
+    assert note["questions"] == [
+        {"question": "Merge PR #66?", "options": ["Yes", "Hold"]},
+        {"question": "Which rule applies?", "options": ["release-dev releases", "Devs release"]},
+    ]
     sup.screen = MENU
-    status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": 1})
-    assert status == 200 and body["note"]["answer"] == "Green"
-    assert sup.pasted == [b"2"]
+    status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": 0})
+    assert status == 409 and "in its terminal" in body["error"]
+    assert sup.pasted == []
 
-    server.bus.publish(
-        {
-            "event_type": "PermissionRequest",
-            "session_key": "pm",
-            "tool_name": "AskUserQuestion",
-            "tool_input": ask,
-        }
-    )
-    [again] = [n for n in notes(server) if n["kind"] == "choice" and n["status"] == "open"]
-    sup.screen = CLAUDE_EMPTY
-    assert post(server, owner, f"/relay/{again['id']}/answer", {"answer": 0})[0] == 409
-    assert sup.pasted == [b"2"]
+    server.bus.publish({"event_type": "PostToolUse", "session_key": "pm", "tool_name": "X"})
+    assert [n["status"] for n in notes(server) if n["kind"] == "choice"] == ["handled"]
 
 
 BLOCKED = '{"kind": "blocked", "ask": "Should it spec the onboarding fix?", "options": []}'

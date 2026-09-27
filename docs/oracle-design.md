@@ -109,7 +109,7 @@ What needs the owner becomes a note in the Ask Oracle chat. Notes live in
 | Note | Source | Answer route |
 | --- | --- | --- |
 | Approval | The approval registry, synced on every event and on `/approvals`. For agents that auto-review requests (Codex), only once the agent's own approval prompt is on screen | Claude Code and Copilot: `ApprovalRegistry.set_decision`, the dashboard's path. Codex: its prompt's keys (`y`, Esc), only while the prompt is still on screen |
-| Choice | Claude's `AskUserQuestion`, which arrives as a `PermissionRequest` with its options | The option's number key, only if "N. Label" is still on screen (a digit selects immediately, checked on Claude Code 2.1.283) |
+| Choice | Claude's `AskUserQuestion`, which arrives as a `PermissionRequest`. One note lists every question in the form with its options | Not answered from the chat. The note's "Open terminal" button jumps to the session, where the owner answers the menu. Pressing digits broke on 2026-09-26: a two-question form got its first answer, moved to the second question, and never submitted. Answering without keystrokes is roadmap work |
 | Question | 30 s after each `Stop` (skipped if the owner replied), a word-cue filter, then one Sonnet call classifying the ending as blocked, offer, or none | Typed into the prompt under the paste checks; otherwise an owner inbox message, which Oracle nudges |
 
 **Is the owner actually needed for an approval?** A permission request isn't

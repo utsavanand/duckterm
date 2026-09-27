@@ -33,10 +33,12 @@ export function OracleChat({
   relay,
   onRelayChange,
   onClose,
+  onOpenTerminal,
 }: {
   relay: RelayState;
   onRelayChange: () => void;
   onClose?: () => void;
+  onOpenTerminal?: (key: string) => void;
 }) {
   const [locals, setLocals] = useState<Local[]>([]);
   const [log, setLog] = useState<OracleExchange[]>([]);
@@ -193,7 +195,7 @@ export function OracleChat({
               />
             </div>
           ) : e.type === "note" ? (
-            <NoteCard key={e.note.id} note={e.note} rules={relay.rules} onChange={onRelayChange} onPropose={(t) => void propose(t)} />
+            <NoteCard key={e.note.id} note={e.note} rules={relay.rules} onChange={onRelayChange} onPropose={(t) => void propose(t)} onOpenTerminal={onOpenTerminal} />
           ) : e.local.kind === "proposal" ? (
             e.local.state === "open" ? (
               <ProposalCard

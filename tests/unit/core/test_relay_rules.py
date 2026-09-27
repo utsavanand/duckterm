@@ -6,7 +6,7 @@ from duckterm.core.relay import (
     ANSWER_RULE_STREAK,
     ASK_CUES,
     Relay,
-    choice_from,
+    choices_from,
     parse_ask,
     question_from,
     validate_rule,
@@ -30,14 +30,14 @@ def test_question_from_reads_only_the_final_paragraph(text, question) -> None:
     assert question_from(text) == question
 
 
-def test_choice_from_reads_the_first_question_and_its_labels() -> None:
-    tool_input = {
-        "questions": [
-            {"question": "Pick one color:", "options": [{"label": "Red"}, {"label": "Green"}]}
-        ]
-    }
-    assert choice_from(tool_input) == ("Pick one color:", ["Red", "Green"])
-    assert choice_from({"questions": []}) is None
+def test_choices_from_reads_every_question_and_its_labels() -> None:
+    color = {"question": "Pick one color:", "options": [{"label": "Red"}, {"label": "Green"}]}
+    ship = {"question": "Ship it?", "multiSelect": True, "options": [{"label": "Yes"}]}
+    assert choices_from({"questions": [color, ship, {"options": []}]}) == [
+        ("Pick one color:", ["Red", "Green"]),
+        ("Ship it?", ["Yes"]),
+    ]
+    assert choices_from({"questions": "nope"}) == []
 
 
 @pytest.fixture

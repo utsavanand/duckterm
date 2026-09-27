@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Don't answer an agent's menu by pressing keys
+**Broke:** release-dev asked two questions in one form. Oracle's chat showed
+only the first. The owner approved it, Oracle pressed "1", the form moved to
+the second question, and nothing was submitted.
+**Cause:** the relay read only the first question, and a digit press answers
+whatever menu tab happens to be on screen.
+**Rule:** menu notes list every question and link to the session's terminal.
+The owner answers there. Relaying answers needs a channel that doesn't type
+into the terminal.
+
 ## 2026-09-26 — Empty folders need their own refresh path
 
 The sidebar rendered saved empty folders, but fetched their catalog only on mount, session-count changes, or successful local edits. A folder created or moved elsewhere could remain invisible indefinitely, and a failed move reported an existing destination without revealing it. Refresh the folder catalog independently and on focus/return; refresh after a move conflict too. Preserve rows on fetch failure and ignore superseded responses. Browser coverage must create and move empty nested folders after the page is open and verify persistence after the last session leaves.

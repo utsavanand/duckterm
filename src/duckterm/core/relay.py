@@ -134,20 +134,19 @@ def question_from(text: str) -> str | None:
     return last[-600:]
 
 
-def choice_from(tool_input: dict[str, Any]) -> tuple[str, list[str]] | None:
-    """(question, option labels) from an AskUserQuestion call's input."""
+def choices_from(tool_input: dict[str, Any]) -> list[tuple[str, list[str]]]:
+    """(question, option labels) for each question of an AskUserQuestion form."""
     questions = tool_input.get("questions")
-    if not isinstance(questions, list) or not questions or not isinstance(questions[0], dict):
-        return None
-    q = questions[0]
-    options = [
-        str(o.get("label"))
-        for o in q.get("options") or []
-        if isinstance(o, dict) and o.get("label")
-    ]
-    if not q.get("question") or not options:
-        return None
-    return str(q["question"]), options
+    choices = []
+    for q in questions if isinstance(questions, list) else []:
+        if isinstance(q, dict) and q.get("question"):
+            options = [
+                str(o.get("label"))
+                for o in q.get("options") or []
+                if isinstance(o, dict) and o.get("label")
+            ]
+            choices.append((str(q["question"]), options))
+    return choices
 
 
 class Relay:

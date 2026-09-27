@@ -63,7 +63,7 @@ from duckterm.core.relay import (
     RULE_PROMPT,
     Relay,
     ask_prompt,
-    choice_from,
+    choices_from,
     parse_ask,
     parse_rule_reply,
     question_from,
@@ -2169,19 +2169,17 @@ class Server:
             return
         now = int(event.get("_ts") or time.time() * 1000)
         if et == events.PERMISSION_REQUEST and event.get("tool_name") == "AskUserQuestion":
-            choice = choice_from(event.get("tool_input") or {})
+            choices = choices_from(event.get("tool_input") or {})
             open_choice = any(
                 n["session_key"] == key and n["kind"] == "choice" for n in self.relay.open_notes()
             )
-            if choice and not open_choice:
-                question, options = choice
+            if choices and not open_choice:
                 self.relay.add(
                     {
                         **self._relay_session_fields(key),
                         "kind": "choice",
                         "created_at": now,
-                        "question": question,
-                        "options": options,
+                        "questions": [{"question": q, "options": o} for q, o in choices],
                     }
                 )
         elif et in (events.PRE_TOOL_USE, events.POST_TOOL_USE, events.STOP, events.SESSION_END):
@@ -2462,29 +2460,10 @@ class Server:
                 route="approval" if note.get("blocking") else "keystroke",
             )
         elif note["kind"] == "choice":
-            index = req.get("answer")
-            options = note.get("options") or []
-            if not isinstance(index, int) or not 0 <= index < len(options) or index > 8:
-                await _write_json(writer, 400, {"error": "answer must be an option number"})
-                return
-            sup = self.orchestrator.get(note["session_key"])
-            screen = await asyncio.to_thread(sup.visible_screen) if sup and sup.running else ""
-            if f"{index + 1}. {options[index]}" not in plain_screen(screen):
-                self.relay.close(note, "handled", closed_at=now)
-                await _write_json(
-                    writer, 409, {"error": "Its menu isn't on screen anymore.", "note": note}
-                )
-                return
-            assert sup is not None
-            await asyncio.to_thread(sup.write_bytes, str(index + 1).encode())
-            self.relay.close(
-                note,
-                "answered",
-                answer=options[index],
-                answered_by="owner",
-                route="keystroke",
-                closed_at=now,
-            )
+            # Pressing digits into a menu broke on multi-question forms, so
+            # menus are answered in the agent's terminal; the note links there.
+            await _write_json(writer, 409, {"error": "Answer it in its terminal."})
+            return
         else:
             text = str(req.get("answer") or "").strip()
             if not text or len(text.encode()) > 16384:
