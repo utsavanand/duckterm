@@ -48,7 +48,7 @@ export function useSessionSelection(sessions: SessionView[], defaultKey: string 
       if (pending) {
         saveSelection(key);
         setSelection({ key, pending: false, restoring: false });
-        if (restoring && selected.group) window.dispatchEvent(new CustomEvent("reveal-sidebar-folder", { detail: selected.group }));
+        // Restore the active session without changing startup folder collapse.
       }
       return;
     }
