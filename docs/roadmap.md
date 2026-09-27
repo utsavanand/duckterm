@@ -312,8 +312,50 @@ F11. **Answer an agent from Oracle's chat without typing into its terminal**
 
 ## Now — collaboration reliability (owner-reported 2026-09-26)
 
-F12. **Cross-session collaboration is unreliable; the owner has to keep
-     chiming in.** **Owner-approved; assigned to the `main-dev` session in
+**F12 shipped before the deferral registered, and is being reverted.**
+Sequence worth recording, because it is a process finding rather than a bug:
+the owner deferred F12 on 2026-09-27, but PR #84 had already merged and
+released as **v0.4.72** — so deferred code reached the owner's machine.
+`release-dev` acknowledged the missed hold and is shipping **PR #96**, an
+owner-approved schema-preserving revert, before integrating B9's #95.
+The revert is done correctly and I verified it rather than trusting the
+summary: it removes `work_items.py`, the Oracle/session-API wiring and the
+docs, but **keeps `user_version=5`, keeps the `pinned` column, drops no
+data**, and adds a test asserting a v5 database opens after the revert with
+its rows intact. That is the right shape — a deferral should not cost the
+owner a migration or a downgrade path.
+The lesson: a hold is only effective if it reaches the gatekeeper before the
+release train does. Worth a standing rule — a deferral instruction should
+name the PR number and go to `release-dev` directly, not only to the
+implementing session.
+
+F12. **Work tracking / Work UI — DEFERRED by the owner 2026-09-27** for
+     design reconsideration, not active implementation. The owner's concern:
+     it risks becoming a **heavyweight project-management interface**, and
+     they want to think it through first. That is a fair objection and the
+     design doc partly invited it — six states, evidence, blockers and
+     handoffs is close to a ticketing system, which the doc itself warned
+     against ("if it needs a separate UI to maintain, it is too heavy and
+     will rot"). `release-dev` holds PR #84; `ui-dev` stopped the Work UI.
+     **Preserve as separately delivered:** the lightweight inbox and Oracle
+     improvements that shipped alongside it — persistent requests, the
+     reworded nudge, nudge memory across restarts, the two-notice
+     four-hour backoff — are real wins and are not part of the deferral.
+     **The underlying problem does not go away with the mechanism**, so it
+     stays recorded: `answered` still means "a reply was written", not
+     "the bug is fixed"; of 16 measured requests, 5 got a reply and no
+     work. If the heavyweight version is wrong, the lightweight question to
+     answer on reconsideration is: what is the *smallest* thing that makes
+     un-acted work visible without a tracker to maintain? One candidate
+     worth considering — a single derived "replied but nothing shipped"
+     signal computed from data already present (request answered, no
+     commit/PR referencing it), with no new states for anyone to update by
+     hand.
+     Original analysis:
+     [collaboration-reliability-design.md](collaboration-reliability-design.md).
+
+Cross-session collaboration is unreliable; the owner has to keep
+     chiming in (original F12 analysis, retained for context). **Owner-approved; assigned to the `main-dev` session in
      the `oracle` worktree** (2026-09-26) — it is free, and Stage 2 changes
      what Oracle nudges on, which is that session's own code. The main-repo
      `main-dev` is mid-build on F9 pinning and the owner's position is that
@@ -398,10 +440,59 @@ B8. **Artifact markdown previews render as a blank off-white box**
     artifact previews render) looks like the likely fix — worth confirming
     it covers the markdown case and not only HTML.
 
+## Implemented, awaiting release (2026-09-27/28)
+
+- **B9 terminal responsiveness** — PR #95 `6028d8b`. Independent QA
+  reproduced ~25 ms p95 at 5/15/23 sessions; 15 browser + 3 unit tests;
+  same PTY PID and draft intact after eviction. Native acceptance pending.
+- **Full-window artifacts** (`ui-dev`) — `0c6436f`, owner approved the
+  preview. Expand/title, full-window Back/Feedback/Download, scroll and
+  focus return, Escape from iframe, browser Back, Markdown/HTML/image/text,
+  mobile. Gate: 123 frontend + 66 browser; a separate native WKWebView
+  actual-srcdoc bridge probe passed.
+- **F12 revert** — PR #96, schema-preserving (keeps `user_version=5` and
+  `pinned`, drops no data, with a test proving a v5 DB opens after revert).
+
+**Tier 1 is still entirely unbuilt** — verified against `main` 2026-09-28,
+not inferred: `Messages.tsx` has only the annotations **POST** and no GET or
+highlight path (F6); `App.tsx` has no persistence for `notifyOn` (B6); no
+adversarial scraper test exists; `pyproject.toml` still does not package the
+favicons (B4). All four are owner-reported or owner-prioritized, all four
+have an explicit owner go-ahead, and none is blocked on a preview or a
+decision. F6 in particular is the owner's named priority and the highest
+value-per-hour item on the board: every comment the owner has ever left is
+already stored in the `annotations` table and invisible, so they all appear
+the moment anything renders them.
+
 ## Bugs — open
 
-B9. **Terminal typing latency grows with fleet size** (owner-reported
-    2026-09-27). Investigation:
+B9. **Terminal typing latency — FIXED, awaiting release** (PR #95,
+    `6028d8b`). Measured before and after at 5 / 15 / 23 mounted terminals,
+    p95 keystroke latency:
+
+    | Terminals | Before | After |
+    | --- | --- | --- |
+    | 5 | 26.7 ms | 25.9 ms |
+    | 15 | 51.2 ms | 26.0 ms |
+    | 23 | **70.5 ms** | **25.7 ms** |
+
+    Latency was scaling with session count — nearly tripling from 5 to 23.
+    It is now **flat**: 2.7× better at the owner's working scale and no
+    longer degrading as sessions are added. That confirms the diagnosis
+    (hidden terminals parsing and reconciling), not data volume.
+    Fix: bound the browser terminal cache to the 3 most recent views,
+    memoize `Terminal`, stabilize the session list. 14 real-PTY browser
+    tests including **drafts surviving eviction** — the right thing to
+    guard, since an evicted terminal must not eat half-typed input.
+    Deferred unless further profiling warrants: the timestamp clock,
+    document-visibility polling, and server-side `/sessions` caching.
+    Messages and Inbox already unmount hidden panels.
+    (Owner-reported and selected 2026-09-27.) `main-dev` is on branch
+    `fix/terminal-responsiveness` from latest main, working from
+    [performance-investigation.md](performance-investigation.md) with
+    before/after browser measurements. Initial focus: mounted terminal
+    count and unnecessary React work; no new visible UI. (Owner-reported
+    2026-09-27.) Investigation:
     [performance-investigation.md](performance-investigation.md).
     Measured: 23 live sessions, 44 artifacts, 30,286 events, DB 6 MB → 42 MB
     in a week. Data volume is not the problem; per-session work multiplied
