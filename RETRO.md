@@ -30,6 +30,14 @@ the viewer also makes its React key a sibling of the preview key: namespace them
 separately, or closing feedback can leave duplicate previews after revisions.
 Cover selection, revisions and keyboard return together in a real browser.
 
+## 2026-09-27 — Restoring rows does not restore selection
+Native acceptance restored remote rows and grouping but missed the selected
+row after quitting the app. Persist machine plus session ID at selection time.
+Local data arriving first must not overwrite an offline remote selection; only
+a successful snapshot from that host can establish that the saved row is gone.
+An explicit user choice cancels the pending restoration. Verify an actual app
+relaunch as well as reload, and make failed acceptance assertions fail the run.
+
 ## 2026-09-26 — Changing how a note is answered means changing every place that says how
 **Broke:** after menu notes moved to "answer in the terminal" (#69), the
 control tower's Needs-you list still said "Answer in the chat", and menu rows
@@ -159,6 +167,17 @@ whatever menu tab happens to be on screen.
 **Rule:** menu notes list every question and link to the session's terminal.
 The owner answers there. Relaying answers needs a channel that doesn't type
 into the terminal.
+
+## 2026-09-26 — A launch destination must not replace the dashboard
+**Broke:** creating a remote session replaced the local dashboard, hid live local
+agents, and skipped folder assignment. Repeated failed launches left dead rows.
+**Cause:** the launch form changed, but feeds, terminal connections and actions
+still assumed one selected host. Browser tests mocked the native switch.
+**Rule:** keep one local dashboard and route by machine plus session identity.
+Validate the real native path with simultaneous local/remote agents, a quiet
+remote terminal, local launch from remote selection, and a remote outage. Verify
+that existing rows, terminal DOM and agent processes survive. Keep spawn errors;
+reject predictable failures before creating rows.
 
 ## 2026-09-26 — Empty folders need their own refresh path
 

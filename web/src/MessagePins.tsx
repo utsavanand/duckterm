@@ -1,3 +1,4 @@
+import { routedFetch as fetch } from "./hostTransport";
 import { useEffect, useRef, useState } from "react";
 import { authHeaders } from "./api";
 import { useToast } from "./ui";

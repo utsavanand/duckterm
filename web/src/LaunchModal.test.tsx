@@ -1,8 +1,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { sessionRef } from "./hostTransport";
+import { api } from "./api";
 import { LaunchModal } from "./LaunchModal";
 
 vi.mock("./api", () => ({ api: {
+  setGroup: vi.fn().mockResolvedValue({ updated: true }),
   zshThemes: vi.fn().mockResolvedValue({ themes: [] }),
   browse: vi.fn().mockResolvedValue({ path: "/Users/test", parent: null, is_git: false, entries: [] }),
 } }));
@@ -25,7 +28,7 @@ function setup(request: (message: unknown) => Promise<unknown>) {
   return switchHost;
 }
 
-it("keeps the same form and dashboard until a remote launch succeeds", async () => {
+it("keeps the same dashboard after a remote launch and selects the qualified session", async () => {
   const request = vi.fn(async (raw: unknown) => {
     const message = raw as { operation: string };
     if (message.operation === "themes") return { themes: [] };
@@ -34,7 +37,8 @@ it("keeps the same form and dashboard until a remote launch succeeds", async () 
   });
   const switchHost = setup(request);
   const close = vi.fn();
-  await act(async () => { render(<LaunchModal folders={[]} onCreated={vi.fn()} onClose={close} group="local-folder" />); });
+  const created = vi.fn();
+  await act(async () => { render(<LaunchModal folders={[]} onCreated={created} onClose={close} group="local-folder" />); });
   const name = screen.getByPlaceholderText("e.g. login refactor");
   fireEvent.change(name, { target: { value: "My task" } });
   fireEvent.click(screen.getByText("Codex"));
@@ -46,7 +50,9 @@ it("keeps the same form and dashboard until a remote launch succeeds", async () 
   await screen.findByText("Use this folder");
   fireEvent.click(screen.getByText("Use this folder"));
   fireEvent.click(screen.getByText("Launch"));
-  await waitFor(() => expect(switchHost).toHaveBeenCalledWith({ action: "launch", target: "dev", draft: {} }));
+  await waitFor(() => expect(created).toHaveBeenCalledWith(sessionRef("dev", "remote-task"), "local-folder"));
+  expect(switchHost).not.toHaveBeenCalled();
+  expect(api.setGroup).toHaveBeenCalledWith(sessionRef("dev", "remote-task"), "local-folder");
   expect(request).toHaveBeenCalledWith({ target: "dev", operation: "launch", params: {
     command: "codex", name: "My task", cwd: "/home/test/project",
   } });

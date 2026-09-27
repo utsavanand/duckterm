@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { hostName } from "./hostTransport";
+import { useCallback, useEffect, useState } from "react";
 import { api, Connector } from "./api";
 import { useToast } from "./ui";
 
@@ -11,7 +12,7 @@ const sourceNames: Record<string, string> = {
   "railway-cli": "Railway CLI login on this computer",
 };
 
-export function Connectors() {
+export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
   const toast = useToast();
   const [rows, setRows] = useState<Connector[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -21,12 +22,12 @@ export function Connectors() {
   const [secret, setSecret] = useState("");
   const [write, setWrite] = useState(false);
 
-  const refresh = () => { api.connectors().then(d => setRows(d.connectors)).catch(() => undefined); };
+  const refresh = useCallback(() => { api.connectors(sessionKey).then(d => setRows(d.connectors)).catch(() => undefined); }, [sessionKey]);
   useEffect(() => {
     refresh();
     window.addEventListener("focus", refresh);
     return () => window.removeEventListener("focus", refresh);
-  }, []);
+  }, [refresh]);
 
   function edit(c: Connector) {
     setEditing(c.name);
@@ -41,8 +42,8 @@ export function Connectors() {
     setBusy(c.name);
     try {
       const next = action === "enable"
-        ? await api.enableConnector(c.name, editing === c.name ? token.trim() || undefined : undefined, editing === c.name ? secret.trim() || undefined : undefined, source, write)
-        : action === "forget" ? await api.forgetConnector(c.name) : await api.disableConnector(c.name);
+        ? await api.enableConnector(c.name, editing === c.name ? token.trim() || undefined : undefined, editing === c.name ? secret.trim() || undefined : undefined, source, write, sessionKey)
+        : action === "forget" ? await api.forgetConnector(c.name, sessionKey) : await api.disableConnector(c.name, sessionKey);
       setRows(rs => rs.map(r => r.name === next.name ? next : r));
       setEditing(null);
       setToken("");
@@ -59,8 +60,8 @@ export function Connectors() {
   }
 
   return <div className="rd-connectors">
-    <div className="rd-panel-head"><span>Connectors ({rows.length}) · this computer</span><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh</button></div>
-    <div className="rd-connector-desc">Enabled integrations are shared by agents on this computer.</div>
+    <div className="rd-panel-head"><span>Connectors ({rows.length}) · {hostName(sessionKey)}</span><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh</button></div>
+    <div className="rd-connector-desc">Enabled integrations are shared by agents on {hostName(sessionKey)}.</div>
     {rows.map(c => <div key={c.name} className="rd-connector">
       <div className="rd-connector-row">
         <span className={`dot ${c.enabled ? "on" : "off"}`} />

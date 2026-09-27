@@ -23,6 +23,8 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     private var url: URL
     var desktopHosts: [RemoteHost] = []
     var desktopTarget = "local"
+    var launchTarget: String?
+    var onPageReset: (() -> Void)?
     var launchDraft: [String: String]?
     var selectedSession: String?
     var onChooseLaunchTarget: ((String, [String: String], String?) -> Void)?
@@ -32,11 +34,13 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     private func desktopScript() -> WKUserScript {
         var state: [String: Any] = [
             "currentTarget": desktopTarget,
+            "testBuild": AppIdentity.isTest,
             "targets": [["id": "local", "name": "This Mac"]] + desktopHosts.map {
                 ["id": $0.target, "name": "Remote — \($0.name)"]
             }
         ]
         if let launchDraft { state["draft"] = launchDraft }
+        if let launchTarget { state["launchTarget"] = launchTarget }
         if let selectedSession { state["selectedSession"] = selectedSession }
         let data = try! JSONSerialization.data(withJSONObject: state)
         return WKUserScript(source: "window.__rubbertermDesktop = \(String(decoding: data, as: UTF8.self));",
@@ -77,9 +81,9 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
               let target = body["target"] as? String,
               target == "local" || desktopHosts.contains(where: { $0.target == target }),
               let operation = body["operation"] as? String,
-              ["browse", "branches", "themes", "launch", "project-mkdir", "project-repositories", "project-preview", "project-transfer", "project-clone", "project-launch", "project-status", "project-pause", "project-preflight", "project-continue"].contains(operation),
+              ["session-request", "terminal-open", "terminal-send", "terminal-close", "browse", "branches", "themes", "launch", "project-mkdir", "project-repositories", "project-preview", "project-transfer", "project-clone", "project-launch", "project-status", "project-pause", "project-preflight", "project-continue"].contains(operation),
               let params = body["params"] as? [String: Any],
-              let encoded = try? JSONSerialization.data(withJSONObject: params), encoded.count <= 65536,
+              let encoded = try? JSONSerialization.data(withJSONObject: params), encoded.count <= (operation == "session-request" ? 14 * 1024 * 1024 : 131072),
               let handler = onLaunchRequest else {
             replyHandler(nil, "Invalid launch request"); return
         }
@@ -87,6 +91,10 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             do { replyHandler(try await handler(target, operation, params), nil) }
             catch { replyHandler(nil, error.localizedDescription) }
         }
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        if webView === web { onPageReset?() }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -128,6 +136,19 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         web?.configuration.userContentController.removeAllUserScripts()
         web?.configuration.userContentController.addUserScript(script)
         web?.evaluateJavaScript(script.source + "; window.dispatchEvent(new Event('desktop-targets-changed'));", completionHandler: nil)
+    }
+
+    func dispatch(name: String, detail: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: ["name": name, "detail": detail]) else { return }
+        evaluate("(() => { const e = \(String(decoding: data, as: UTF8.self)); window.dispatchEvent(new CustomEvent(e.name, {detail:e.detail})); })()")
+    }
+
+    func dispatchAndWait(name: String, detail: [String: Any]) async {
+        guard let web, let data = try? JSONSerialization.data(withJSONObject: ["name": name, "detail": detail]) else { return }
+        let script = "(() => { const e = \(String(decoding: data, as: UTF8.self)); window.dispatchEvent(new CustomEvent(e.name, {detail:e.detail})); })()"
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            web.evaluateJavaScript(script) { _, _ in continuation.resume() }
+        }
     }
 
     func setTitle(_ title: String) { window?.title = title }

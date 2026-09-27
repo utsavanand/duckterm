@@ -1,3 +1,4 @@
+import { routedFetch as fetch } from "./hostTransport";
 import { useEffect, useState } from "react";
 import { api, CheckpointRecord } from "./api";
 import { SessionView } from "./types";

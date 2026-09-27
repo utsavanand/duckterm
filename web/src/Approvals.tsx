@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useHostData } from "./useHostData";
+import { hostFetch, sessionRef, splitSessionRef } from "./hostTransport";
+import { useEffect, useRef, useState } from "react";
 import { authHeaders } from "./api";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
@@ -32,7 +34,8 @@ export function Approvals({
   selectedKey: string | null;
 }) {
   const toast = useToast();
-  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const { data, refresh } = useHostData<{ approvals: Approval[] }>("/approvals", 2000);
+  const approvals = Object.entries(data).flatMap(([host, value]) => value.approvals.map(a => ({ ...a, id: sessionRef(host, a.id) })));
   const [expanded, setExpanded] = useState(false);
   // Which approval's full command is revealed (one line + ellipsis at rest).
   const [cmdOpen, setCmdOpen] = useState<string | null>(null);
@@ -44,22 +47,12 @@ export function Approvals({
     prevIds.current = approvalIds;
   }, [approvalIds]);
 
-  const refresh = useCallback(() => {
-    fetch("/approvals")
-      .then((r) => r.json())
-      .then((d: { approvals: Approval[] }) => setApprovals(d.approvals))
-      .catch(() => undefined);
-  }, []);
-
-  useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 2000);
-    return () => clearInterval(t);
-  }, [refresh, pollKey]);
+  useEffect(() => { refresh(); }, [refresh, pollKey]);
 
   async function decide(id: string, decision: "approve" | "deny") {
     try {
-      const res = await fetch(`/approvals/${id}/decide`, {
+      const ref = splitSessionRef(id);
+      const res = await hostFetch(ref.host, `/approvals/${encodeURIComponent(ref.key)}/decide`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ decision }),
