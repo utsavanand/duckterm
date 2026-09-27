@@ -281,6 +281,41 @@ F11. **Answer an agent from Oracle's chat without typing into its terminal**
      change as part of this feature — otherwise the agent falls through to
      its own prompt mid-answer, which is worse than today's failure.
 
+## Now — collaboration reliability (owner-reported 2026-09-26)
+
+F12. **Cross-session collaboration is unreliable; the owner has to keep
+     chiming in.** Analysis and proposal:
+     [collaboration-reliability-design.md](collaboration-reliability-design.md).
+     **Not a delivery problem — messages arrive.** Measured from
+     `main-dev`'s real inbox (50 messages) and `session_questions` (273
+     rows): of 16 architect requests with replies, **8 were acted on, 3 were
+     forwarded, and 5 got a thoughtful reply and no work**. Plus 34 of 273
+     requests expired unread (largely my own fault — I passed
+     `--timeout 900` for days after persistent became the default).
+     Root cause: **there is a status field for the MESSAGE and none for the
+     WORK.** `session_questions.status` values all describe the
+     conversation; `answered` means "a reply was written", not "the bug is
+     fixed". So a session can read everything, reply well, keep a clean
+     inbox, and ship nothing — and no field would be red. Downstream of
+     that: nothing owns an outcome; Oracle nudges on unread *mail*, which
+     rewards inbox-clearing rather than shipping; authority is binary, so
+     an owner-reported diagnosed defect in a session's own area gets the
+     same "stop" as a peer's speculative idea (`main-dev` recorded exactly
+     that as its reason for declining a queue of owner-reported bugs); and
+     relay chains lose the originator so completion never reaches the owner.
+     Proposal, in value order: (1) a **work item** with states
+     proposed/accepted/in_progress/blocked/done/dropped where **a reply
+     does not close work — only `done` with evidence does**, and `blocked`
+     must name what it is blocked on; (2) dashboard Work column plus Oracle
+     nudging on **staleness rather than mail**, escalating to the owner only
+     on `blocked`; (3) three authority levels — `fyi` / `proposal` /
+     `sanctioned`, where `sanctioned` is settable only by the owner or by a
+     session quoting owner words, and an unsure session says in one line
+     what it would do **and proceeds** rather than stopping; (4) F10's
+     `parent_request_id` chain walk; (5) tests asserting generated
+     instruction strings match actual behavior — the stale 900-second line
+     in `collaboration.md` would have failed one the day persistent shipped.
+
 ## Bugs — open
 
 B6. **Desktop notification setting does not work** (owner-reported
