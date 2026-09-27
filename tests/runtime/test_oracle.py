@@ -151,6 +151,16 @@ def test_tick_pastes_fixed_reminder_once_without_peer_text(idle_recipient) -> No
     assert "What contract should I use?" not in text
 
 
+def test_restarted_server_does_not_repeat_the_last_nudge(idle_recipient, monkeypatch) -> None:
+    server, sup = idle_recipient
+    asyncio.run(server._oracle_tick())
+    assert len(sup.pasted) == 2
+    restarted = Server(history=server.history)
+    monkeypatch.setattr(restarted.orchestrator, "get", lambda key: sup if key == "b" else None)
+    asyncio.run(restarted._oracle_tick())
+    assert len(sup.pasted) == 2
+
+
 def test_tick_skips_mail_the_agent_already_read(idle_recipient) -> None:
     server, sup = idle_recipient
     server.history.session_api.inbox("b")
