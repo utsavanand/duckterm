@@ -31,9 +31,21 @@ it("restores a remote choice across remount and local-first offline startup with
   const reveal = vi.fn(); window.addEventListener("reveal-sidebar-folder", reveal);
   restored.rerender({ rows:[local,remote], loadedHosts:["local","qa-remote"] });
   expect(restored.result.current.selectedKey).toBe(remoteKey);
-  expect(reveal).toHaveBeenCalledOnce();
-  expect((reveal.mock.calls[0][0] as CustomEvent).detail).toBe("Projects");
+  expect(reveal).not.toHaveBeenCalled();
   window.removeEventListener("reveal-sidebar-folder", reveal);
+});
+
+it("restores a nested local selection without revealing its collapsed folders", () => {
+  localStorage.setItem("rd.selectedSession", JSON.stringify({host:"local",sessionKey:"same"}));
+  const reveal = vi.fn(); window.addEventListener("reveal-sidebar-folder", reveal);
+  try {
+    const view = mount([], []);
+    view.rerender({rows:[{...local,group:"Projects/Child"}],loadedHosts:["local"]});
+    expect(view.result.current.selectedKey).toBe(local.key);
+    expect(reveal).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener("reveal-sidebar-folder", reveal);
+  }
 });
 
 it("lets an explicit local choice cancel pending remote restoration", () => {

@@ -105,11 +105,13 @@ MainActor.assumeIsolated {
     connections.values.forEach {$0.start()}
     var selected=false
     for _ in 0..<600 {
-     if (try? await probeEval(web,"document.querySelector('.rd-row.selected .rd-row-name')?.textContent==='REMOTE_NAME'")) as? Bool == true {selected=true;break}
+     // Restoring the active terminal must leave startup folders collapsed.
+     let check="(() => { const g=[...document.querySelectorAll('.rd-group-head')].find(e=>e.textContent.includes('Unified QA')); return document.querySelector('.rd-context-pane > .rd-panel-head > span')?.textContent==='REMOTE_NAME' && g?.querySelector('.rd-group-caret')?.textContent==='▸' && !document.querySelector('.rd-row.selected'); })()"
+     if (try? await probeEval(web,check)) as? Bool == true {selected=true;break}
      try await Task.sleep(nanoseconds:100_000_000)
     }
     guard selected else {throw NSError(domain:"Remote selection lost after app relaunch",code:12)}
-    print("PASS actual app relaunch: offline selection retained, then remote selected after reconnect");fflush(stdout)
+    print("PASS actual app relaunch: offline selection retained, then remote selected after reconnect with folder collapsed");fflush(stdout)
     app.terminate(nil);return
    }
    hostWindow.setContentSize(NSSize(width:1400,height:850))
