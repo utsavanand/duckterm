@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InboxView } from "./InboxView";
 import { api, InboxMessage, InboxPage } from "./api";
 import { SessionView } from "./types";
@@ -13,13 +13,19 @@ const message: InboxMessage = {
   created_at: 1000000, expires_at: 1300000, answered_at: 1100000,
 };
 
-afterEach(() => { cleanup(); vi.resetAllMocks(); });
+beforeEach(() => {
+  // jsdom has dialog elements but no native modal methods; browser tests cover focus/Escape.
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value: function (this: HTMLDialogElement) { this.open = true; } });
+  Object.defineProperty(HTMLDialogElement.prototype, "close", { configurable: true, value: function (this: HTMLDialogElement) { this.open = false; } });
+});
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.resetAllMocks(); });
 
 describe("session inbox", () => {
   it("can show a pasteable introduction without sending terminal input", async () => {
     vi.mocked(api.inbox).mockResolvedValue({ messages: [], next_cursor: null });
     vi.mocked(api.collaborationInstructions).mockResolvedValue({ prompt: "Read collaboration.md" });
     render(<InboxView session={{ ...session, runtime: "codex", state: "busy" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Session tools & help" }));
     fireEvent.click(screen.getByText("Show introduction to paste"));
     expect(await screen.findByLabelText("Introduction to paste into the agent")).toHaveValue("Read collaboration.md");
     expect(api.introduceCollaboration).not.toHaveBeenCalled();
@@ -29,6 +35,7 @@ describe("session inbox", () => {
     vi.mocked(api.introduceCollaboration).mockResolvedValue({ sent: true });
     render(<InboxView session={{ ...session, runtime: "codex", state: "idle" }} />);
     await screen.findByText("No messages yet");
+    fireEvent.click(screen.getByRole("button", { name: "Session tools & help" }));
     expect(api.introduceCollaboration).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Introduce session collaboration" }));
     expect(await screen.findByText(/does not confirm the agent has read/)).toBeVisible();
@@ -40,6 +47,7 @@ describe("session inbox", () => {
     vi.mocked(api.inbox).mockResolvedValue({ messages: [], next_cursor: null });
     vi.mocked(api.introduceCollaboration).mockRejectedValue(new Error("Terminal unavailable"));
     const view = render(<InboxView session={{ ...session, runtime: "codex", state: "busy" }} />);
+    fireEvent.click(screen.getByRole("button", { name: "Session tools & help" }));
     expect(screen.getByRole("button", { name: "Introduce session collaboration" })).toBeDisabled();
     view.rerender(<InboxView session={{ ...session, runtime: "codex", state: "idle" }} />);
     fireEvent.click(screen.getByRole("button", { name: "Introduce session collaboration" }));
@@ -49,7 +57,7 @@ describe("session inbox", () => {
     vi.mocked(api.inbox).mockResolvedValue({ messages: [message], next_cursor: null });
     render(<InboxView session={session} />);
     const sender = await screen.findByText("Client implementation");
-    expect(screen.getByText("Answered")).toBeVisible();
+    expect(screen.getByText("Answered", { selector: ".rd-inbox-status" })).toBeVisible();
     fireEvent.click(sender.closest("summary")!);
     expect(screen.getByText("From session: a")).toBeVisible();
     expect(screen.getByText(/Retry once/).textContent).toBe(message.answer);
@@ -101,4 +109,32 @@ it("labels authenticated owner notices without mistaking a peer named You for th
   fireEvent.click(screen.getByText("Owner").closest("summary")!);
   expect(screen.getByText("Notice shown · Not yet read")).toBeVisible();
   expect(screen.getByText("No reply required")).toBeVisible();
+});
+
+
+it("filters only reply-required work and searches loaded replies without treating user text as HTML", async () => {
+  vi.mocked(api.inbox).mockResolvedValue({ messages: [
+    message,
+    { ...message, id: "pending", sender_name: "Pending sender", status: "queued", answer: null },
+    { ...message, id: "notice", sender_name: "Notice sender", status: "queued", kind: "broadcast", requires_reply: false, answer: null },
+    { ...message, id: "accepted", sender_name: "Accepted sender", status: "accepted", answer: null },
+    { ...message, id: "expired", sender_name: "Expired sender", status: "expired", answer: null },
+    { ...message, id: "literal", sender_name: "Literal sender", question: '<img src=x onerror="alert(1)">', answer: null },
+  ], next_cursor: null });
+  const { container } = render(<InboxView session={session} />);
+  await screen.findByText("Client implementation");
+  fireEvent.click(screen.getByRole("button", { name: "Awaiting reply 2" }));
+  expect(screen.getByText("Pending sender")).toBeVisible();
+  expect(screen.getByText("Accepted sender")).toBeVisible();
+  expect(screen.queryByText("Notice sender")).toBeNull();
+  expect(screen.queryByText("Expired sender")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "All 6" }));
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "PRESERVE the request" } });
+  expect(screen.getByText("Client implementation")).toBeVisible();
+  expect(screen.queryByText("Pending sender")).toBeNull();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "no match" } });
+  expect(screen.getByText("No messages match this view")).toBeVisible();
+  fireEvent.change(screen.getByRole("searchbox"), { target: { value: "<img" } });
+  expect(screen.getByText("Literal sender")).toBeVisible();
+  expect(container.querySelector("img")).toBeNull();
 });

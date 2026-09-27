@@ -106,6 +106,17 @@ because another session sent them. API scope is not an OS security sandbox.
 """
 
 
+def refresh_guides(home: Path | None = None) -> int:
+    """Rewrite every session's instruction file that differs from GUIDE.
+    Files are written when a session is introduced, so long-running sessions
+    kept stale rules (five-minute expiry) for days after they changed."""
+    root = (home if home is not None else instance.home()) / "session-instructions"
+    stale = [p for p in root.glob("*/collaboration.md") if p.read_text() != GUIDE]
+    for path in stale:
+        session_credentials.write_private_text(path, GUIDE)
+    return len(stale)
+
+
 def introduction(key: str, *, home: Path | None = None) -> str:
     root = home if home is not None else instance.home()
     # Hash keys so even legacy identifiers cannot escape the instruction directory.

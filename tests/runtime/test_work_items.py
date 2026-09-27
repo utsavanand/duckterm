@@ -514,8 +514,8 @@ def test_existing_database_migrates_work_without_losing_columns(tmp_path, monkey
         assert migrated._conn.execute("PRAGMA user_version").fetchone()[0] == 5
         columns = {r["name"] for r in migrated._conn.execute("PRAGMA table_info(sessions)")}
         assert original_columns <= columns
-        if version == 4:
-            assert "pinned" in columns
+        # A v3 DB gains Focus pins (v4) and work items (v5) in one open.
+        assert "pinned" in columns
         question_columns = {
             r["name"] for r in migrated._conn.execute("PRAGMA table_info(session_questions)")
         }

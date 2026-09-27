@@ -1,4 +1,5 @@
 import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
+import { SessionPin } from "./SessionPin";
 import { HelperAgents } from "./HelperAgents";
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
@@ -18,6 +19,7 @@ export function AgentTree({
   selectedKey,
   onOpen,
   onOpenInbox,
+  onPin,
   onFork,
   onDelete,
   onFoldersChanged,
@@ -37,6 +39,7 @@ export function AgentTree({
   selectedKey: string | null;
   onOpen: (key: string) => void;
   onOpenInbox?: (key: string) => void;
+  onPin?: (session: SessionView) => Promise<void>;
   onFork: (key: string) => void;
   onDelete: (key: string) => Promise<boolean>;
   onFoldersChanged: () => void;
@@ -170,6 +173,7 @@ export function AgentTree({
       selectedKey={selectedKey}
       onOpen={onOpen}
       onOpenInbox={onOpenInbox}
+      onPin={onPin}
       onFork={onFork}
       onDelete={onDelete}
       onRename={onRename}
@@ -507,6 +511,7 @@ function TreeRow({
   selectedKey,
   onOpen,
   onOpenInbox,
+  onPin,
   onFork,
   onDelete,
   onRename,
@@ -520,6 +525,7 @@ function TreeRow({
   selectedKey: string | null;
   onOpen: (key: string) => void;
   onOpenInbox?: (key: string) => void;
+  onPin?: (session: SessionView) => Promise<void>;
   onFork: (key: string) => void;
   onDelete: (key: string) => Promise<boolean>;
   onRename: (key: string, name: string) => void;
@@ -780,6 +786,7 @@ function TreeRow({
               </span>
             )}
           </span>
+          {onPin && <SessionPin session={s} onToggle={onPin} />}
           <button className="rd-density-actions" aria-label={`Actions for ${s.label}`} aria-expanded={actionsOpen}
             onClick={() => setActionsOpen((open) => !open)}>⋯</button>
         </div>
@@ -970,6 +977,7 @@ function TreeRow({
             selectedKey={selectedKey}
             onOpen={onOpen}
       onOpenInbox={onOpenInbox}
+      onPin={onPin}
             onFork={onFork}
             onDelete={onDelete}
             onRename={onRename}
