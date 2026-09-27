@@ -26,7 +26,8 @@ test("folder phone survives collapse and reload and shows answered exchanges", a
     await phone.click();
     await expect(page.getByRole("heading", { name: "Phone review · Interactions" })).toBeVisible();
     await expect(page.locator(".rd-inbox-message")).toHaveCount(1);
-    await expect(page.locator(".rd-inbox-message strong")).toHaveText("Folder sender → Folder recipient");
+    await expect(page.locator(".rd-inbox-message strong")).toHaveText("Folder sender");
+    await expect(page.locator(".rd-inbox-recipient")).toHaveText("→ Folder recipient");
     await expect(page.locator(".rd-inbox-status")).toHaveText("Answered");
     await page.locator(".rd-inbox-message summary").click();
     await expect(page.locator(".rd-inbox-answer p")).toContainText("updated_at");
@@ -98,7 +99,7 @@ test("owner reviews folder recipients, sends once, and sees unread Owner notices
     await expect(page.getByRole("status")).toContainText("Message queued for 2 sessions.");
     await page.getByRole("button", { name: "Done", exact: true }).click();
     await expect(page.locator(".rd-inbox-message")).toHaveCount(2);
-    await expect(page.locator(".rd-owner-badge")).toHaveText(["Owner", "Owner"]);
+    await expect(page.locator(".rd-inbox-owner")).toHaveText(["Owner", "Owner"]);
     await expect(page.locator(".rd-inbox-status")).toHaveText(["Unread", "Unread"]);
     await page.locator(".rd-inbox-message summary").first().click();
     await expect(page.getByText("No reply required", { exact: true }).first()).toBeVisible();
