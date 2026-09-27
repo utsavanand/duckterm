@@ -21,7 +21,7 @@ async function launchCat(name: string): Promise<string> {
   return r.body.session_key as string;
 }
 
-// Terminals for every PTY agent stay mounted; only the selected slot is shown.
+// Recent PTY terminal views stay mounted; only the selected slot is shown.
 // Scope assertions to the VISIBLE slot.
 function visibleRows(page: import("@playwright/test").Page) {
   return page.locator(".rd-terminal-slot:visible .xterm-rows");
@@ -201,5 +201,41 @@ test("terminal: opening a hidden session and returning from another view lands a
     await page.getByRole("button", { name: "Terminal", exact: true }).click();
     await expect(visibleRows(page)).toContainText("REOPEN_LAST_LINE");
     await expect.poll(() => viewport.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop)).toBeLessThan(3);
+  } finally { for (const key of keys) await apiDelete(`/sessions/${key}`); }
+});
+
+test("terminal: evicting an old view preserves the running PTY and its input draft", async ({ page }) => {
+  const keys: string[] = [];
+  const connections = new Map<string, number>();
+  page.on("websocket", socket => {
+    const key = /\/sessions\/([^/]+)\/terminal/.exec(socket.url())?.[1];
+    if (key) connections.set(key, (connections.get(key) ?? 0) + 1);
+  });
+  try {
+    for (let i = 0; i < 5; i++) keys.push(await launchCat(`cache-${i}`));
+    await page.goto(base());
+    await page.locator(".rd-row-name", { hasText: "cache-0" }).click();
+    await waitTerminalReady(page);
+    await page.keyboard.type("DRAFT_SURVIVES_EVICTION");
+    for (const i of [1, 2, 3, 4]) {
+      await page.locator(".rd-row-name", { hasText: `cache-${i}` }).click();
+      await waitTerminalReady(page);
+      await expect.poll(() => page.locator(".rd-terminal-slot .xterm").count()).toBeLessThanOrEqual(3);
+    }
+    const recentConnections = connections.get(keys[3]);
+    await page.locator(".rd-row-name", { hasText: "cache-3" }).click();
+    await waitTerminalReady(page);
+    expect(connections.get(keys[3])).toBe(recentConnections); // warm view needs no replay
+    const oldConnections = connections.get(keys[0]) ?? 0;
+    await page.locator(".rd-row-name", { hasText: "cache-0" }).click();
+    await waitTerminalReady(page);
+    await expect(visibleRows(page)).toContainText("DRAFT_SURVIVES_EVICTION");
+    expect(connections.get(keys[0])).toBe(oldConnections + 1);
+    await page.keyboard.type("_CONTINUED");
+    await page.keyboard.press("Enter");
+    await expect(visibleRows(page)).toContainText("DRAFT_SURVIVES_EVICTION_CONTINUED");
+    // PTY echo and cat's completed-line echo can arrive in separate frames.
+    await expect.poll(async () => (await visibleRows(page).allTextContents())
+      .join("\n").split("DRAFT_SURVIVES_EVICTION_CONTINUED").length - 1).toBe(2);
   } finally { for (const key of keys) await apiDelete(`/sessions/${key}`); }
 });

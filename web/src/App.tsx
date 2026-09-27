@@ -25,6 +25,7 @@ import { Messages } from "./Messages";
 import { MessagePinStrip, PinTarget, useMessagePins } from "./MessagePins";
 import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
+import { useTerminalCache } from "./terminalCache";
 import { PanelToggle, useSidePanels } from "./SidePanels";
 import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
@@ -60,7 +61,10 @@ function Dashboard() {
     useEventStream();
   const inboxCounts = useInboxCounts();
   const sidePanels = useSidePanels();
-  const sessions = sourceSessions.map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 }));
+  const sessions = useMemo(
+    () => sourceSessions.map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 })),
+    [sourceSessions, inboxCounts],
+  );
   const toast = useToast();
   const now = useNow(1000);
   const { theme, resolved: mode, setTheme } = useTheme();
@@ -227,12 +231,17 @@ function Dashboard() {
 
   const selected = sessions.find((s) => s.key === selectedKey) ?? null;
   const forkSession = sessions.find((s) => s.key === forkKey) ?? null;
-  // Agents whose terminal we keep mounted (PTY Duckterm owns). Switching
-  // between them is then instant — no WS reconnect, no buffer replay.
+  // Grid membership includes every owned PTY; the single-session view keeps
+  // only recently visited terminals mounted so hidden output stays bounded.
   const terminalAgents = useMemo(
     () => agents.filter((s) => s.ptyOwned),
     [agents],
   );
+
+  const mountedTerminalKeys = useTerminalCache(
+    terminalAgents.map(s => s.key), view === "terminal" ? selectedKey : null,
+  );
+  const mountedTerminals = terminalAgents.filter(s => mountedTerminalKeys.includes(s.key));
 
   const labels = useMemo(
     () => Object.fromEntries(sessions.map((s) => [s.key, s.label])),
@@ -464,10 +473,9 @@ function Dashboard() {
                   : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
               </div>
             )}
-            {/* Terminal view: keep a terminal MOUNTED per PTY-owned agent and just
-              show the selected one. Re-mounting on every switch would reconnect
-              the WS and replay the whole buffer from scratch each time. */}
-            {terminalAgents.map((s) => (
+            {/* Keep recent views warm. Older browser views reconnect on demand;
+              their server-owned terminals continue running while evicted. */}
+            {mountedTerminals.map((s) => (
               <div
                 key={s.key}
                 data-key={s.key}

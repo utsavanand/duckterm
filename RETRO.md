@@ -25,6 +25,14 @@ visible disconnected mark and an accessible label; update outage acceptance
 checks when status moves from row text into an icon. Test equal session IDs on
 different hosts and recovery without duplicate rows.
 
+## 2026-09-27 — Selection restoration must not reopen folders
+
+Restoring the saved session dispatched the same folder-reveal event as an
+explicit launch, undoing the collapsed-on-restart sidebar default. Restore the
+active session independently from folder expansion. Regression tests must select
+a nested session before reloading and verify both its restored selection and
+collapsed ancestors; merely opening folders leaves this dependent on timing.
+
 ## 2026-09-26 — A visible button can still be outside the window
 
 Adding Pin to the Context header crowded the reopen arrow out of its 36px
@@ -32,6 +40,14 @@ collapsed rail. Hide every non-toggle header child when collapsed, including
 future actions. Browser visibility assertions missed this because an offscreen
 button still has a layout box. Assert viewport/rail bounds and hit-test the
 center before clicking, with both Pin and Pinned labels and narrow layouts.
+
+## 2026-09-27 — Hidden terminals still parse output
+
+Keeping every terminal mounted makes switching fast but gives every hidden
+agent a parser competing with foreground keystrokes. Bound the recent-view
+cache, leave server-owned PTYs running, and reconnect older views through the
+existing snapshot path. Measure at fleet scale and test an unfinished input
+line across eviction; a mount-count assertion alone cannot prove safety.
 
 ## 2026-09-26 — Re-read the inbox between merge and tag
 **Broke:** the owner deferred F12 work tracking ("keep this in the roadmap… I
