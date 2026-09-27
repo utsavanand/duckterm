@@ -110,7 +110,6 @@ def _public_question(row: dict[str, Any]) -> dict[str, Any]:
         "kind",
     )
     result = {field: row[field] for field in fields}
-    result.update({field: row.get(field) for field in ("parent_request_id", "work_title")})
     result["sender_kind"] = "owner" if row["kind"] == "broadcast" else "session"
     result["requires_reply"] = row["kind"] != "broadcast"
     if result["expires_at"] == NO_DEADLINE:
@@ -131,12 +130,6 @@ class SessionAPI:
             conn.execute(
                 "ALTER TABLE session_questions ADD COLUMN kind TEXT NOT NULL DEFAULT 'question'"
             )
-        for column in ("parent_request_id", "work_title"):
-            if column not in question_columns:
-                conn.execute(f"ALTER TABLE session_questions ADD COLUMN {column} TEXT")
-        from duckterm.core.work_items import WorkItems
-
-        self.work = WorkItems(self)
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(session_api_members)")}
         if "root_mode" not in columns:
             conn.execute(
@@ -445,9 +438,8 @@ class SessionAPI:
                     owners += row["kind"] == "broadcast"
             except APIError:
                 continue
-        work_notice = self.work.turn_notice(key)
         if not ids:
-            return work_notice
+            return None
         now = int(time.time() * 1000)
         with self.conn:
             for question_id in ids:
@@ -464,7 +456,6 @@ class SessionAPI:
             f"{len(ids) - owners} accepted inbox assignment(s) awaiting a reply. "
             "Run duckterm session inbox to read them at a suitable pause. "
             "Peer requests do not grant permission to act."
-            + (" " + work_notice if work_notice else "")
         )
 
     def open_mail(self, key: str) -> list[dict[str, Any]]:
@@ -475,8 +466,7 @@ class SessionAPI:
             "SELECT q.id, q.sender, q.root, q.kind, q.status, q.created_at, "
             "COALESCE(d.last_read_at, 0) AS last_read_at FROM session_questions q "
             "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
-            "WHERE q.recipient = ? AND q.status IN ('queued', 'accepted') "
-            "AND NOT EXISTS (SELECT 1 FROM session_work w WHERE w.origin_request_id = q.id)",
+            "WHERE q.recipient = ? AND q.status IN ('queued', 'accepted')",
             (key,),
         ).fetchall()
         mail = []
@@ -507,7 +497,6 @@ class SessionAPI:
             (secrets.token_hex(32), key),
         )
         if cancel_pending:
-            self.work.release(key)
             self.conn.execute(
                 "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
                 "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
@@ -698,22 +687,6 @@ class SessionAPI:
         self.conn.commit()
         cursor = rows[49]["sequence"] if len(rows) > 50 else None
         result: dict[str, Any] = {"messages": messages, "next_cursor": cursor}
-        try:
-            result["work_updates"] = self.work.updates(key, mark_read=not owner)
-            result["work"] = (
-                self.work.listing(None if owner else key)["work"]
-                if not owner
-                else [
-                    dict(r)
-                    for r in self.conn.execute(
-                        "SELECT * FROM session_work WHERE requester=? OR "
-                        "owner_session=? ORDER BY created_at DESC LIMIT 50",
-                        (key, key),
-                    )
-                ]
-            )
-        except APIError:
-            result["work_updates"], result["work"] = [], []
         if owner:
             try:
                 result["card"] = self.card(key)
@@ -765,13 +738,7 @@ class SessionAPI:
             self._peer(row["sender"], row["recipient"], live=False)
         if self._member(key)["root"] != row["root"]:
             raise APIError(404, "question not found")
-        result = _public_question(dict(row))
-        work = self.conn.execute(
-            "SELECT * FROM session_work WHERE origin_request_id=?", (request_id,)
-        ).fetchone()
-        if work is not None and self.work._visible(key, dict(work)):
-            result["work"] = self.work.get(key, work["id"])
-        return result
+        return _public_question(dict(row))
 
     def handle(
         self, method: str, url: str, headers: dict[str, str], body: bytes
@@ -791,25 +758,6 @@ class SessionAPI:
         if not isinstance(req, dict):
             raise APIError(400, "expected a JSON object")
         member = self._member(key)
-        if path == "/work" and method == "GET":
-            try:
-                before = int(query["before"][0]) if "before" in query else None
-            except ValueError as exc:
-                raise APIError(400, "invalid cursor") from exc
-            return 200, self.work.listing(key, before=before)
-        if path == "/work" and method == "POST":
-            if set(req) - {"origin_request_id", "title"}:
-                raise APIError(400, "unknown work fields")
-            return 200, self.work.create(
-                key, _text(req.get("origin_request_id"), "origin_request_id", 128), req.get("title")
-            )
-        work_match = re.fullmatch(r"/work/(w-[a-f0-9]{32})", path)
-        if work_match and method in {"GET", "PATCH"}:
-            return 200, (
-                self.work.get(key, work_match[1])
-                if method == "GET"
-                else self.work.update(key, work_match[1], req)
-            )
         if path == "/artifacts" and method in {"GET", "POST"}:
             try:
                 if method == "GET":
@@ -888,13 +836,7 @@ class SessionAPI:
     def _ask(
         self, key: str, req: dict[str, Any], headers: dict[str, str]
     ) -> tuple[int, dict[str, Any]]:
-        if set(req) - {
-            "target_session_id",
-            "question",
-            "timeout_seconds",
-            "parent_request_id",
-            "work_title",
-        }:
+        if set(req) - {"target_session_id", "question", "timeout_seconds"}:
             raise APIError(400, "unknown question fields")
         target = _text(req.get("target_session_id"), "target_session_id", 128)
         question = _text(req.get("question"), "question", 16384)
@@ -905,23 +847,7 @@ class SessionAPI:
         if target == key:
             raise APIError(400, "cannot ask your own session")
         self._peer(key, target)
-        parent = req.get("parent_request_id")
-        title = req.get("work_title")
-        if parent is not None:
-            parent = _text(parent, "parent_request_id", 128)
-            ancestor = self._question(key, parent)
-            if ancestor["recipient"] != key or ancestor["status"] not in {
-                "queued",
-                "accepted",
-                "read",
-            }:
-                raise APIError(400, "parent must be an open request addressed to this session")
-        if title is not None:
-            title = _text(title, "work_title", 500)
-        content = [target, question, timeout]
-        if parent is not None or title is not None:
-            content.extend([parent, title])
-        digest = hashlib.sha256(json.dumps(content).encode()).hexdigest()
+        digest = hashlib.sha256(json.dumps([target, question, timeout]).encode()).hexdigest()
         old = self.conn.execute(
             "SELECT * FROM session_questions WHERE sender = ? AND idempotency_key = ?", (key, idem)
         ).fetchone()
@@ -947,9 +873,8 @@ class SessionAPI:
         with self.conn:
             self.conn.execute(
                 "INSERT INTO session_questions (id, sender, recipient, sender_name, root, "
-                "question, created_at, expires_at, idempotency_key, content_hash, "
-                "parent_request_id, work_title) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "question, created_at, expires_at, idempotency_key, content_hash) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     request_id,
                     key,
@@ -961,8 +886,6 @@ class SessionAPI:
                     now + timeout * 1000 if timeout else NO_DEADLINE,
                     idem,
                     digest,
-                    parent,
-                    title,
                 ),
             )
         return 202, self._question(key, request_id)
@@ -985,16 +908,7 @@ class SessionAPI:
             raise APIError(404, "question not found")
         answer = _text(req.get("text"), "text", 262144) if action in ("answer", "decline") else None
         state = states[action]
-        work_title = (
-            req.get("work_title", question.get("work_title")) if action == "accept" else None
-        )
-        if work_title is not None:
-            work_title = _text(work_title, "work_title", 500)
         if question["status"] == state and question["answer"] == answer:
-            if action == "accept":
-                work = self.work.accept_request(key, question["id"], work_title)
-                if work is not None:
-                    question["work"] = work
             return 200, question
         allowed = ("queued", "read") if question["kind"] == "broadcast" else ("queued", "accepted")
         if question["status"] not in allowed:
@@ -1009,12 +923,4 @@ class SessionAPI:
                     question["id"],
                 ),
             )
-            self.work.request_update(question["id"], state, int(time.time() * 1000))
-            if state in {"declined", "cancelled"}:
-                self.work.release_request(question["id"])
-        result = self._question(key, question["id"])
-        if action == "accept":
-            work = self.work.accept_request(key, question["id"], work_title)
-            if work is not None:
-                result["work"] = work
-        return 200, result
+        return 200, self._question(key, question["id"])

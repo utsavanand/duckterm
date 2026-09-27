@@ -33,12 +33,6 @@ def add_parser(sub: Any) -> None:
     ask.add_argument("target")
     ask.add_argument("question")
     ask.add_argument(
-        "--work-title", help="mark an implementation assignment; acceptance creates tracked work"
-    )
-    ask.add_argument(
-        "--parent-request", help="request being relayed; links status updates back to its sender"
-    )
-    ask.add_argument(
         "--request-key", default=None, help="reuse this key when retrying the same question"
     )
     ask.add_argument(
@@ -50,30 +44,8 @@ def add_parser(sub: Any) -> None:
     for action in ("get", "accept", "reply", "decline", "cancel"):
         child = actions.add_parser(action)
         child.add_argument("request_id")
-        if action == "accept":
-            child.add_argument(
-                "--work-title", help="track this assignment separately from the reply"
-            )
         if action in ("reply", "decline"):
             child.add_argument("--file", default="-", help="UTF-8 answer file; default reads stdin")
-    work = actions.add_parser("work", help="track assigned outcomes independently of inbox replies")
-    work_actions = work.add_subparsers(dest="work_action", required=True)
-    work_list = work_actions.add_parser("list")
-    work_list.add_argument("--before", type=int)
-    work_get = work_actions.add_parser("get")
-    work_get.add_argument("work_id")
-    work_create = work_actions.add_parser("create")
-    work_create.add_argument("title")
-    work_create.add_argument("--request", required=True)
-    work_update = work_actions.add_parser("update")
-    work_update.add_argument("work_id")
-    work_update.add_argument(
-        "--state", choices=["proposed", "accepted", "in_progress", "blocked", "done", "dropped"]
-    )
-    work_update.add_argument("--note")
-    work_update.add_argument("--blocker")
-    work_update.add_argument("--evidence")
-    work_update.add_argument("--assign", dest="owner_session")
     artifacts = actions.add_parser("artifacts", help="list this session's saved artifacts")
     artifacts.set_defaults(session_action="artifacts")
     artifact = actions.add_parser("artifact", help="register a generated file in the Mac app")
@@ -91,24 +63,7 @@ def main(args: argparse.Namespace) -> int:
         body: dict[str, Any] | None = None
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         action = args.session_action
-        if action == "work":
-            path = "/work"
-            if args.work_action == "list":
-                if args.before is not None:
-                    path += f"?before={args.before}"
-            elif args.work_action == "create":
-                method = "POST"
-                body = {"title": args.title, "origin_request_id": args.request}
-            else:
-                path += "/" + urllib.parse.quote(args.work_id, safe="")
-                if args.work_action == "update":
-                    method = "PATCH"
-                    body = {
-                        field: getattr(args, field)
-                        for field in ("state", "note", "blocker", "evidence", "owner_session")
-                        if getattr(args, field) is not None
-                    }
-        elif action == "self":
+        if action == "self":
             path = "/self"
         elif action == "artifacts":
             path = "/artifacts"
@@ -130,10 +85,6 @@ def main(args: argparse.Namespace) -> int:
                 "question": args.question,
                 "timeout_seconds": args.timeout,
             }
-            if args.work_title:
-                body["work_title"] = args.work_title
-            if args.parent_request:
-                body["parent_request_id"] = args.parent_request
         elif action == "publish":
             method, path = "PATCH", "/self"
             body = {
@@ -147,8 +98,6 @@ def main(args: argparse.Namespace) -> int:
                 method = "POST"
                 path += "/" + ("answer" if action == "reply" else action)
                 body = {}
-                if action == "accept" and args.work_title:
-                    body["work_title"] = args.work_title
                 if action in ("reply", "decline"):
                     text = (
                         sys.stdin.read()
@@ -172,11 +121,7 @@ def main(args: argparse.Namespace) -> int:
                 "reading them marks them read. For peer questions, "
                 "use duckterm session accept REQUEST_ID, then "
                 "duckterm session reply REQUEST_ID --file answer.txt. Read the next page "
-                "with --before next_cursor. For implementation assignments, use accept "
-                "--work-title TITLE; replies do not close tracked work. Check the work "
-                "and work_updates fields, and use duckterm session work list/update "
-                "to record progress, blockers or completion evidence. Closed messages "
-                "may still have open work items."
+                "with --before next_cursor. Answered/expired/cancelled requests need no action."
             )
         if action in {"self", "inbox"}:
             result["artifact_instructions"] = (

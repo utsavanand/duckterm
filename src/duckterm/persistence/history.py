@@ -35,7 +35,10 @@ Event = dict[str, Any]
 # is a floor for "safe to open," not a hard per-version lock.
 # v3 keeps enrollment synchronized with folder moves and automatically enrolls sessions.
 # v4 persists session pins for the owner's Focus view (PR #78).
-# v5 adds durable collaboration work items (PR #84).
+# v5 added collaboration work tables (PR #84). The owner deferred that feature and
+# its code was reverted, but installed DBs are already stamped v5 and keep the
+# (now unused) tables and session_questions columns. Staying at v5 lets those
+# DBs open; dropping back to 4 would raise SchemaTooNewError.
 _SCHEMA_VERSION = 5
 
 
@@ -984,7 +987,6 @@ class HistoryStore:
         checkpoints). Tombstones the key so a still-running terminal's events
         can't resurrect the row. Returns whether a row was removed."""
         self.session_api.revoke(key)
-        self._conn.execute("DELETE FROM session_work_updates WHERE recipient=?", (key,))
         self._conn.execute("DELETE FROM session_api_members WHERE session_key = ?", (key,))
         self._conn.execute(
             "DELETE FROM session_questions WHERE sender = ? OR recipient = ?", (key, key)
@@ -1012,15 +1014,6 @@ class HistoryStore:
             for r in self._conn.execute("SELECT session_key FROM sessions WHERE test = 1")
         ]
         for key in keys:
-            self._conn.execute(
-                "DELETE FROM session_work_events WHERE work_id IN "
-                "(SELECT id FROM session_work WHERE requester=? OR owner_session=?)",
-                (key, key),
-            )
-            self._conn.execute(
-                "DELETE FROM session_work WHERE requester=? OR owner_session=?", (key, key)
-            )
-            self._conn.execute("DELETE FROM session_work_updates WHERE recipient=?", (key,))
             self.session_api.revoke(key)
             self._conn.execute("DELETE FROM session_api_members WHERE session_key = ?", (key,))
             self._conn.execute(
