@@ -494,6 +494,34 @@ value-per-hour item on the board: every comment the owner has ever left is
 already stored in the `annotations` table and invisible, so they all appear
 the moment anything renders them.
 
+## Installed 2026-09-28 — v0.4.75
+
+Verified on the owner's machine (`duckterm --version` = 0.4.75):
+
+- **Unified local/remote window** (PR #68, `feature-remote-session`): local
+  "This Mac" rows and remote rows in one native window, with a remote Claude
+  terminal selectable. Selected host/session **persists across relaunch,
+  including remote-offline startup**. Verified against the live fleet: all
+  23 local panes alive, the existing remote Claude PID survived, quit and
+  relaunch regression passed.
+- **Full-window artifacts** (`0c6436f`) and the **Context-panel reopen arrow
+  fix** (`26e855c`, regression proven red first).
+- **F12 revert** shipped in v0.4.74, schema-preserving.
+
+Caveats the reporting session was careful to state, and worth keeping:
+the remote service is still on **0.4.64** — the desktop coexistence fix
+works against that version and it was deliberately not upgraded or
+restarted; and **destination Git credential setup, reboot recovery, and
+connector rotation validation remain unvalidated** — this completion makes
+no claim about them.
+
+F13. **Compact session-location indicators** (owner-requested 2026-09-28,
+     `ui-dev`). "This Mac" text takes too much space; use an icon for local
+     and a duck-in-cloud for remote. Preview prepared for visual review —
+     the existing animated duck with a local computer badge, a remote
+     cloud, and a disconnected slash, with the machine name on hover. No
+     product changes pending the owner's approval.
+
 ## Bugs — open
 
 B9. **Terminal typing latency — FIXED, awaiting release** (PR #95,
