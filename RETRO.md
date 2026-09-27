@@ -1,5 +1,17 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Re-read the inbox between merge and tag
+**Broke:** the owner deferred F12 work tracking ("keep this in the roadmap… I
+want to think it through") while its release PR was in CI. release-dev merged,
+tagged and installed v0.4.72 without reading the hold that had arrived meanwhile,
+so F12 shipped and the DB moved to schema v5. v0.4.73 carried it too.
+**Cause:** release-dev checked the inbox only at the start of a release, not
+before each irreversible step (merge, tag, install). A schema bump made the
+mistake one-way: dropping back to v4 would raise SchemaTooNewError.
+**Rule:** check the inbox (and pending replies) immediately before merge, before
+tag and before install. A revert of a schema-bumping feature keeps its
+`_SCHEMA_VERSION` and leaves its tables in place (#84 reverted, schema stays 5).
+
 ## 2026-09-26 — Changing how a note is answered means changing every place that says how
 **Broke:** after menu notes moved to "answer in the terminal" (#69), the
 control tower's Needs-you list still said "Answer in the chat", and menu rows
