@@ -64,7 +64,7 @@ it("restores background access and history when an expanded session unmounts", a
   document.body.append(background);
   const view = render(<ArtifactsView sessionKey="session" sessionName="Agent" />);
   await screen.findByTitle("Preview of First report");
-  fireEvent.click(screen.getByRole("button", { name: "Expand", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Expand" }));
   expect(background.inert).toBe(true);
   expect(history.state).toMatchObject({ existing: "preserved", artifactExpansion: expect.any(String) });
   view.unmount();
