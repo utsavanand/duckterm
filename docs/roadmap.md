@@ -49,11 +49,16 @@ Unreleased on main: Copilot nudges, and the settle and peer waits cut from 10
 to 5 minutes. Copilot sessions get an inbox only by hand until item 9 lands.
 
 Oracle Relay (needs-you notes in the chat, answers relayed to the session, rules
-made in plain words) is built on branch `oracle-relay`.
+made in plain words) has shipped. Menu questions link to the agent's terminal
+instead of being answered from the chat.
 
-Next: Oracle on WhatsApp (design PR #25, waiting on five owner answers). Later
-rules (stale state, file collisions, scheduled AGENTS.md suggestions) are
-listed with triggers in the design doc.
+Next: **Oracle on WhatsApp**, design draft
+[oracle-whatsapp-design.md](oracle-whatsapp-design.md), waiting on owner
+answers to its five open questions. Its Phase 0 (a persistent decision log, a
+"needs you" detector, and a status view showing why each session was or wasn't
+nudged) is useful without WhatsApp and comes first. Later rules (stale state,
+file collisions, scheduled AGENTS.md suggestions) are listed with triggers in
+the design doc.
 
 Shipped 2026-09-23–25 (v0.4.40 → v0.4.47):
 
@@ -276,12 +281,158 @@ F11. **Answer an agent from Oracle's chat without typing into its terminal**
      contract (default unsupported) agreed. v0.4.64's submit confirmation is
      the first step toward making "accepted" distinguishable from "typed":
      UserPromptSubmit-confirmed versus prompt-stuck.
-     Still open from my side: the **180 s hook poll cap** is far shorter than
-     a human answering a multi-question form, so the timeout policy must
-     change as part of this feature — otherwise the agent falls through to
-     its own prompt mid-answer, which is worse than today's failure.
+     **Lead 2 PROBE RESULT (Oracle `main-dev`, 2026-09-26): IT WORKS.**
+     Tested against Claude Code 2.1.283, headless and interactive, on a
+     private tmux server isolated from DuckTerm hooks. A Stop hook printing
+     `{"decision":"block","reason":"…"}` continues the turn with that text;
+     the transcript records it as a user message beginning "Stop hook
+     feedback:". Guard the loop with `stop_hook_active` — the next Stop has
+     it true, and the hook exits 0. Holding works: with a 300 s hook
+     timeout it waited 25 s for an answer file, then blocked with it.
+     **So free-text answers need none of lead 1's payload work** — the two
+     cases split cleanly: structured menu answers via the permission path,
+     free text via Stop. That is the scope halving I hoped the probe would
+     settle.
+     Four probe findings that shape the design, all of which must be
+     honored: (1) if the owner types in the terminal while the hook holds,
+     the message is **queued, not sent** — so the server must release the
+     held hook as soon as the owner types in that pane; the supervisor
+     already tracks owner keystrokes. (2) Esc interrupts the hook cleanly
+     with no orphan process. (3) Claude's UI labels injected text "Stop
+     hook **error**: <reason>" — cosmetic but misleading, so the reason
+     string must say plainly that it is the owner's reply relayed by Oracle.
+     (4) Holding on every Stop would put a spinner on every turn end, so
+     hold only when an answer is actually expected.
+     Still open from my side: the **180 s poll cap** on the permission path
+     is far shorter than a human answering a multi-question form. The probe
+     shows the Stop path can hold 300 s, so the two paths now have
+     *different* timeouts — reconcile them deliberately, and make sure
+     neither falls through to the agent's own prompt mid-answer, which is
+     worse than today's failure.
+
+## Now — collaboration reliability (owner-reported 2026-09-26)
+
+F12. **Cross-session collaboration is unreliable; the owner has to keep
+     chiming in.** **Owner-approved; assigned to the `main-dev` session in
+     the `oracle` worktree** (2026-09-26) — it is free, and Stage 2 changes
+     what Oracle nudges on, which is that session's own code. The main-repo
+     `main-dev` is mid-build on F9 pinning and the owner's position is that
+     a session already building should not change direction midway.
+     **A live illustration of the bug, worth keeping:** F12 was
+     owner-approved, the approval was relayed, and it was parked as a
+     "follow-up design" because a direct terminal instruction outranked a
+     relayed one. No priority order is held across sessions — F12 lost to
+     the exact problem F12 fixes. Stage 3's `sanctioned` level (settable by
+     the owner, or by a session quoting owner words) would have prevented
+     it.
+     **Coordination window, closing now:** Stage 2 wants a Work column, and
+     `ui-dev` is redesigning the Inbox this week (preview at
+     `docs/previews/inbox-clarity.html`, awaiting owner review). That is the
+     surface where work state belongs — getting it into the redesign is
+     cheaper than bolting it on afterwards. Analysis and proposal:
+     [collaboration-reliability-design.md](collaboration-reliability-design.md).
+     **Not a delivery problem — messages arrive.** Measured from
+     `main-dev`'s real inbox (50 messages) and `session_questions` (273
+     rows): of 16 architect requests with replies, **8 were acted on, 3 were
+     forwarded, and 5 got a thoughtful reply and no work**. Plus 34 of 273
+     requests expired unread (largely my own fault — I passed
+     `--timeout 900` for days after persistent became the default).
+     Root cause: **there is a status field for the MESSAGE and none for the
+     WORK.** `session_questions.status` values all describe the
+     conversation; `answered` means "a reply was written", not "the bug is
+     fixed". So a session can read everything, reply well, keep a clean
+     inbox, and ship nothing — and no field would be red. Downstream of
+     that: nothing owns an outcome; Oracle nudges on unread *mail*, which
+     rewards inbox-clearing rather than shipping; authority is binary, so
+     an owner-reported diagnosed defect in a session's own area gets the
+     same "stop" as a peer's speculative idea (`main-dev` recorded exactly
+     that as its reason for declining a queue of owner-reported bugs); and
+     relay chains lose the originator so completion never reaches the owner.
+     Proposal, in value order: (1) a **work item** with states
+     proposed/accepted/in_progress/blocked/done/dropped where **a reply
+     does not close work — only `done` with evidence does**, and `blocked`
+     must name what it is blocked on; (2) dashboard Work column plus Oracle
+     nudging on **staleness rather than mail**, escalating to the owner only
+     on `blocked`; (3) three authority levels — `fyi` / `proposal` /
+     `sanctioned`, where `sanctioned` is settable only by the owner or by a
+     session quoting owner words, and an unsure session says in one line
+     what it would do **and proceeds** rather than stopping; (4) F10's
+     `parent_request_id` chain walk; (5) tests asserting generated
+     instruction strings match actual behavior — the stale 900-second line
+     in `collaboration.md` would have failed one the day persistent shipped.
+
+## Implemented, awaiting release (recorded 2026-09-27)
+
+Sessions asked that **implemented** be recorded separately from **installed**
+— a fair distinction this document has been blurring. None of these is on the
+owner's machine yet.
+
+| Item | Branch / PR | Gate | Status |
+| --- | --- | --- | --- |
+| **F12 collaboration reliability** (backend/CLI) | PR #84, now `d66ccd1` | 793 Python / 110 UI / 63 browser | QA + release pending; `release-dev` integrates **after #78** |
+| **F9 Focus + session pinning** | PR #78, `8bfed48` | 776 Python / 115 UI / 64 browser | QA + release pending |
+| ~~Inbox redesign~~ | PR #80, `d1150aa` | 771 / 111 / 64 | **SHIPPED v0.4.68** (`62c7e37`) |
+| ~~Context window fix~~ (B7) | PR #82 **merged** | 115 UI, tsc clean | ships in **v0.4.70** (PR #89), with a RETRO lesson |
+
+**F12 was built by the main-repo `main-dev`, not the oracle-worktree one** —
+correcting PR #81's assignment; the oracle session confirmed no duplicate
+work. Implemented: durable work independent of replies, evidence/blockers/
+handoffs, scoped request-chain updates, stale-work Oracle integration,
+restart cooldowns. Remaining on F12: the Work UI preview with `ui-dev`,
+verified GitHub merge closure, and blocked-work Oracle escalation.
+
+**F12 self-correction worth recording** (`main-dev`, 2026-09-27): an Oracle
+review of its own implementation caught **endless hourly work reminders** —
+the staleness nudge would have fired forever on unchanged work. Now two
+notices with a four-hour backoff, then escalation to the requester as
+attention-needed. That is the right shape: nudging on staleness exists to
+stop work being silently dropped, not to nag indefinitely, and an infinite
+reminder would have recreated the alert fatigue that made mail-nudges easy
+to ignore in the first place.
+
+B8. **Artifact markdown previews render as a blank off-white box**
+    (`product`, 2026-09-27). Artifacts now *lists* correctly — 3 artifacts —
+    so this is **not** the zero-artifacts empty-state hypothesis I proposed;
+    that one is ruled out. Every markdown preview is blank. Details with
+    `main-dev`; PR #83 (Mac app allowing `about:srcdoc` in subframes so
+    artifact previews render) looks like the likely fix — worth confirming
+    it covers the markdown case and not only HTML.
 
 ## Bugs — open
+
+B9. **Terminal typing latency grows with fleet size** (owner-reported
+    2026-09-27). Investigation:
+    [performance-investigation.md](performance-investigation.md).
+    Measured: 23 live sessions, 44 artifacts, 30,286 events, DB 6 MB → 42 MB
+    in a week. Data volume is not the problem; per-session work multiplied
+    by session count is.
+    **Main cause — every PTY terminal stays mounted always.** `App.tsx`
+    renders all `ptyOwned` sessions and hides the unselected with
+    `display: none`, deliberately, so switching does not reconnect the WS
+    and replay the buffer. At 23 sessions that is 23 live xterm instances,
+    23 WebSockets and 23 parsers decoding continuously — a busy hidden
+    agent still parses every byte and holds 5,000 lines of scrollback, and
+    the foreground terminal competes with 22 others for the main thread
+    that also handles keystrokes. Matches the symptom exactly: monotonic in
+    session count, worst when other agents are busy.
+    Contributing: a **1 Hz whole-dashboard re-render** (`useNow(1000)`)
+    that rebuilds `sessions` as new objects every second while `Terminal`
+    is **not memoized**; **stacked polling** (approvals 2 s, Messages 3 s,
+    inbox ~3 s, history 10 s, seed 30 s) that runs regardless of
+    visibility; and **`/sessions` doing up to three filesystem touches per
+    session per call** (`_transcript_stats_for` reads the transcript tail,
+    `_suites_for` inspects the directory, `_reconcile_waiting` reads the
+    tmux screen) — ~69 at 23 sessions, every 30 s.
+    Fix order: cap mounted terminals to the selected plus N most-recent;
+    memoize `Terminal` and stabilize `sessions` identity; scope the clock
+    tick; make polling visibility-aware; cache the per-row `/sessions` work.
+    **Measure keystroke-to-paint latency against mounted-terminal count
+    first** — without before/after numbers this is guesswork.
+    Not the fix: a Go/Rust byte-pump sidecar (the symptom is client-side, and
+    a sidecar cannot help a main thread reconciling 23 React subtrees) or
+    pruning the database.
+
+
 
 B6. **Desktop notification setting does not work** (owner-reported
     2026-09-25, `ui-dev`). Three distinct defects in App.tsx:171-201:

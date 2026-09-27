@@ -1,5 +1,115 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Changing how a note is answered means changing every place that says how
+**Broke:** after menu notes moved to "answer in the terminal" (#69), the
+control tower's Needs-you list still said "Answer in the chat", and menu rows
+were blank because their questions live in a list, not in `question`.
+**Rule:** when a note's answer route or shape changes, grep every surface that
+renders that note kind (chat, control tower, notifications) in the same PR
+(#91).
+
+## 2026-09-26 — Stalled work needs bounded reminders
+
+A cooldown alone still wakes an idle agent forever. Back off after the first
+reminder, stop after the second without progress, and notify the requester.
+Persist the count across restart and share it with task-end notices. Keep
+status maintenance outside the Oracle kill switch.
+
+## 2026-09-26 — Acceptance must reconcile pre-created work
+
+Work can be explicitly tracked before its inbox request is accepted. Reusing
+the existing ID is not enough: acceptance must advance its proposed state,
+while preserving later progress and any intervening reassignment. Cover both
+creation orders and retries, including requests without work-title metadata.
+
+## 2026-09-26 — Closing a message must not erase the work
+
+An inbox reply records a conversation, not an outcome. Keep assigned work in
+its own durable record, require completion evidence or a named blocker, and
+return declined/unavailable assignments for reassignment instead of deleting
+them. Closing an old message after a handoff must not unassign its successor.
+Store work-reminder timestamps in SQLite so restarting Oracle cannot repeat
+an hourly reminder; use fixed reminder text rather than copying peer content.
+
+## 2026-09-26 — Instruction files written once go stale, and nudges must say what to do
+**Broke:** 15 of 27 sessions' collaboration.md still said questions expire
+after five minutes, so long-running agents passed --timeout and their work
+orders silently expired. Separately, the "continue your work" reminder dropped
+both the peer-authority line and any fallback for an unsure session.
+**Cause:** session-instructions/*/collaboration.md is written only when a
+session is introduced. The reminder wording was tuned for one failure (agents
+stopping) and lost the other guardrails.
+**Rule:** refresh generated per-session guides at server startup
+(refresh_guides). An automated nudge states the remit, the authority boundary
+and what to do when unsure, in one line each (#77).
+
+## 2026-09-26 — Assert on the pid that matters, and prove the assert can fail
+**Broke:** `test_shutdown_stops_credential_holding_descendant` failed on CI
+with a heartbeat write ~100 ms after the sample point. The first fix waited
+for `os.killpg(proc.pid, 0)` to raise `ProcessLookupError` — and failed on CI
+again, the same way.
+**Cause:** that wait was a no-op. `proc` is the supervisor, which pytest
+starts *without* `start_new_session`, so it is not a group leader and no
+group has its pid; `killpg` raised `ProcessLookupError` on the first call and
+the loop never waited. The group that `run()` actually signals belongs to the
+MCP server (`start_new_session=True`), whose pgid is the inner pid the test
+never saw. A green local run proved nothing, because the assertion could not
+fail.
+**Rule:** when a test asserts "process X is gone", make the fixture report
+X's real pid and group rather than deriving them from a handle that may not
+be the leader, and include them in the failure message so a CI-only failure
+is diagnosable from the log. Before believing any such fix, mutate the
+fixture so the process *does* survive and watch the test go red — an
+assertion never seen failing is not evidence. Local reproduction attempts
+(12 CPU hogs on 14 cores, then 2x oversubscription with `taskpolicy -b`) all
+stayed green while CI stayed red, so treat "cannot reproduce" as a reason to
+strengthen the assertion, not to ship the explanation.
+
+## 2026-09-26 — Session pin limits belong in the same write as the pin
+
+A browser-only three-pin cap cannot protect against two windows taking the
+last slot simultaneously. Persist session pins and enforce the count in one
+conditional SQL write. Treat polling metadata as authoritative over stale
+local pins, and keep stopped or archived sessions in Focus rather than
+silently changing the owner's selection. Check real terminal input as well
+as layout persistence; a mock terminal is not evidence of an interactive one.
+
+## 2026-09-26 — A guessed context window must not render like a fact
+**Broke:** the context row showed "559k used · 0 left" for claude-opus-5
+sessions, which have a 1M window, and every opus-5 session carried a false
+"high" context warning from 160k. 11 of 15 sessions with a recorded model were
+affected.
+**Cause:** `MODEL_WINDOWS` matched only fable|mythos. opus-5 fell back to the
+200k default, and `max(0, window - used)` silently clamped the impossible
+result to zero.
+**Rule:** an assumed value renders as unknown, not as a number. Used exceeding
+the assumed window proves the guess is wrong. Never drive a warning from a
+guessed denominator (#82).
+
+## 2026-09-26 — In-memory Oracle state is lost on every release install
+**Broke:** each server restart, including every release install, could paste
+a duplicate "you have N inbox items" reminder into every idle agent that still
+had the same unread mail.
+**Cause:** Oracle kept its last nudge per session only in `_oracle_nudges`.
+**Rule:** anything that suppresses repeat typing into an agent must survive a
+restart. Record it in history (`OracleNudge.mail_ids`) and rebuild from there
+(#75).
+
+## 2026-09-26 — The Mac app's navigation filter must allow srcdoc subframes
+**Broke:** every Markdown artifact preview was a blank box in the Mac app,
+while the same page rendered in a browser at localhost:4300.
+**Cause:** DashboardWindow's navigation policy cancelled anything not on the
+dashboard's http host. Sandboxed srcdoc previews load as `about:srcdoc`, so
+WebKit's iframe load was refused. Browser tests can't see this: they never run
+the native policy.
+**Rule:** web features that add iframes, blob URLs or new schemes need a check
+in a real WKWebView behind the production policy
+(`scripts/test_artifact_preview.sh`), not only Playwright.
+
+## 2026-09-26 — Keep inbox context separate from the message reading area
+
+An expanded session card and onboarding panel looked like inbox messages and pushed actual mail below the fold. Give session context its own collapsed summary and move setup into an explicit tools dialog. Bound the message list through the complete flex layout so it scrolls independently of the heading and controls. Adapt to the pane's width, not just the window, and verify a populated list, long expanded replies, live refresh, and the smaller folder modal. Search and filter counts must describe loaded records, not imply a complete server-side search.
+
 ## 2026-09-26 — Inbox reminders must not stop ongoing work
 
 Oracle's hardcoded “then stop” turned an inbox reminder into a new instruction

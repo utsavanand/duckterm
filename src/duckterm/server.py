@@ -471,6 +471,10 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        work_path = urllib.parse.urlsplit(path)
+        if work_path.path == "/work" or re.fullmatch(r"/work/w-[a-f0-9]{32}", work_path.path):
+            await self._work_items(writer, headers, method, work_path.path, work_path.query, body)
+            return
         if path == "/backup" and method in {"GET", "PUT", "POST"}:
             await self._backup(writer, headers, method, body)
             return
@@ -479,6 +483,10 @@ class Server:
         )
         if artifact_match and method in {"GET", "DELETE"}:
             await self._artifacts(writer, headers, artifact_match[1], artifact_match[2], method)
+            return
+        focus_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/focus-pin", path)
+        if focus_match and method == "PUT":
+            await self._focus_pin(writer, focus_match[1], body)
             return
         pin_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/pins(?:/([a-f0-9]{64}))?", path)
         if pin_match and method in {"GET", "POST", "DELETE"}:
@@ -659,6 +667,42 @@ class Server:
             return
         await _write_json(writer, 200, {"counts": self.history.session_api.pending_counts()})
 
+    async def _work_items(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        method: str,
+        path: str,
+        query: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            req = json.loads(body or b"{}")
+            if not isinstance(req, dict):
+                raise APIError(400, "expected a JSON object")
+            work = self.history.session_api.work
+            if method == "GET" and path == "/work":
+                params = urllib.parse.parse_qs(query)
+                result = work.listing(
+                    None, before=int(params["before"][0]) if "before" in params else None
+                )
+            elif method == "GET":
+                result = work.get(None, path.rsplit("/", 1)[1])
+            elif method == "PATCH" and path != "/work":
+                result = work.update(None, path.rsplit("/", 1)[1], req)
+            else:
+                raise APIError(405, "method not allowed")
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except (ValueError, UnicodeDecodeError):
+            await _write_json(writer, 400, {"error": "invalid JSON or cursor"})
+            return
+        await _write_json(writer, 200, result)
+
     async def _session_inbox(
         self, writer: asyncio.StreamWriter, session_key: str, headers: dict[str, str], query: str
     ) -> None:
@@ -820,6 +864,28 @@ class Server:
         # Content travels as authenticated JSON, never as executable HTML on the
         # dashboard origin. The preview must render it in an isolated sandbox.
         await _write_json(writer, 200, result)
+
+    async def _focus_pin(self, writer: asyncio.StreamWriter, session_key: str, body: bytes) -> None:
+        """Owner-only session pins, independent of saved message pins."""
+        if len(body) > 4096:
+            await _write_json(writer, 413, {"error": "pin request too large"})
+            return
+        try:
+            req = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            req = None
+        if not isinstance(req, dict) or type(req.get("pinned")) is not bool:
+            await _write_json(writer, 400, {"error": "pinned must be a boolean"})
+            return
+        try:
+            found = self.history.set_pinned(session_key, req["pinned"])
+        except ValueError as exc:
+            await _write_json(writer, 409, {"error": str(exc)})
+            return
+        if not found:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        await _write_json(writer, 200, {"pinned": req["pinned"]})
 
     async def _message_pins(
         self,
@@ -3821,6 +3887,9 @@ class Server:
         # this guards the case where they were misconfigured to collide.)
         lock = _acquire_home_lock()
         try:
+            refreshed = session_instructions.refresh_guides()
+            if refreshed:
+                print(f"refreshed {refreshed} stale session instruction file(s)")
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
@@ -3854,11 +3923,13 @@ class Server:
         while True:
             await asyncio.sleep(20)
             ticks += 1
-            if ticks % 3 == 0 and os.environ.get("DUCKTERM_ORACLE") != "off":
+            if ticks % 3 == 0:
                 # An exception here would end this loop, silently stopping both
                 # Oracle and the dead-session sweep below.
                 try:
-                    await self._oracle_tick()
+                    self.history.session_api.work.tick(int(time.time() * 1000))
+                    if os.environ.get("DUCKTERM_ORACLE") != "off":
+                        await self._oracle_tick()
                 except Exception:
                     traceback.print_exc()
             now = int(time.time() * 1000)
@@ -3908,6 +3979,7 @@ class Server:
                 continue
             try:
                 mail = self.history.session_api.open_mail(key)
+                mail += self.history.session_api.work.nudge_items(key, now)
             except APIError:
                 continue
             if not mail:
@@ -3923,7 +3995,7 @@ class Server:
                     row.get("runtime"), str(row.get("command") or "")
                 ).prompt_is_empty(screen),
                 mail=mail,
-                previous=self._oracle_nudges.get(key),
+                previous=self._oracle_nudges.get(key) or self._last_nudge(key),
                 now_ms=now,
             )
             if not picked:
@@ -3932,15 +4004,28 @@ class Server:
             status = await self._submit_prompt(key, text)
             if status == "failed":
                 continue
-            self._oracle_nudges[key] = oracle.Nudge(frozenset(str(m["id"]) for m in picked), now)
+            self.history.session_api.work.notified(picked, now)
+            ids = sorted(str(m["id"]) for m in picked)
+            self._oracle_nudges[key] = oracle.Nudge(frozenset(ids), now)
             self.bus.publish(
                 {
                     "event_type": "OracleNudge",
                     "session_key": key,
                     "text": text,
                     "submitted": status == "submitted",
+                    "mail_ids": ids,
                 }
             )
+
+    def _last_nudge(self, key: str) -> oracle.Nudge | None:
+        """The last nudge as recorded in history, so a server restart doesn't
+        repeat a reminder the agent already got. Nudges recorded before
+        mail_ids was stored can't be matched to mail and count as none."""
+        found = self.history.last_event(key, "OracleNudge")
+        if found is None or "mail_ids" not in found[0]:
+            return None
+        event, ts = found
+        return oracle.Nudge(frozenset(str(i) for i in event["mail_ids"]), ts)
 
     def _archive_swept(self, key: str) -> None:
         """Archive a session whose terminal is gone (auto-sweep)."""

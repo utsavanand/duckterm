@@ -3,7 +3,12 @@ import { useEffect, useState } from "react";
 import { api } from "./api";
 import { Duck, duckPhrase, poseFor } from "./Duck";
 import { FileEditModal } from "./FileEditModal";
-import { contextLevel, contextWindowFor, fmtTokens } from "./sessions";
+import {
+  contextLevel,
+  contextWindowFor,
+  contextWindowIsAssumed,
+  fmtTokens,
+} from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
 
@@ -174,13 +179,11 @@ export function ContextPanel({ session }: { session: SessionView }) {
             <span className="k">context</span>
             <span className={`v${ctxLevel ? ` ctx-${ctxLevel}` : ""}`}>
               {fmtTokens(session.contextTokens)} used ·{" "}
-              {fmtTokens(
-                Math.max(
-                  0,
-                  contextWindowFor(session.model) - session.contextTokens,
-                ),
-              )}{" "}
-              left
+              {contextWindowIsAssumed(session.model, session.contextTokens)
+                ? "window unknown"
+                : `${fmtTokens(
+                    contextWindowFor(session.model) - session.contextTokens,
+                  )} left`}
             </span>
           </div>
         )}

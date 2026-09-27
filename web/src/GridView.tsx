@@ -9,6 +9,8 @@ import {
   removeLeaf,
   resizeSplit,
 } from "./gridLayout";
+import { addPane, loadGrid, reconcileGrid, saveGrid } from "./gridStorage";
+import { SessionPin } from "./SessionPin";
 import { Terminal } from "./Terminal";
 import { SessionView } from "./types";
 
@@ -24,8 +26,14 @@ export function GridView({
   themeFor,
   onSwitchFolder,
   onClose,
+  focus = false,
+  storageKey,
+  onPin,
 }: {
   title: string;
+  focus?: boolean;
+  storageKey?: string;
+  onPin?: (session: SessionView) => Promise<void>;
   agents: SessionView[];
   folders: string[];
   themeFor: (s: SessionView) => string;
@@ -33,47 +41,23 @@ export function GridView({
   onClose: () => void;
 }) {
   const byKey = useMemo(() => new Map(agents.map((a) => [a.key, a])), [agents]);
-  // Default: vertical sections, at most 3 expanded; the rest dock.
-  const [tree, setTree] = useState<LayoutNode | null>(() =>
-    agents.length ? evenRow(agents.slice(0, 3).map((a) => a.key)) : null,
-  );
-  const [docked, setDocked] = useState<Set<string>>(
-    () => new Set(agents.slice(3).map((a) => a.key)),
-  );
+  const [initial] = useState(() => loadGrid(storageKey, agents.map(a => a.key)));
+  const [tree, setTree] = useState<LayoutNode | null>(initial.tree);
+  const [docked, setDocked] = useState<Set<string>>(() => new Set(initial.docked));
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ key: string; edge: Edge } | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
-
-  /** A new pane joins as a right-hand column, sized like one more section. */
-  function withNewPane(node: LayoutNode | null, key: string): LayoutNode {
-    if (!node) return evenRow([key]);
-    const count = leaves(node).length;
-    return {
-      type: "split",
-      dir: "row",
-      children: [node, { type: "leaf", key }],
-      weights: [Math.max(1, count), 1],
-    };
-  }
-
-  // Sessions can appear (a new fork) or vanish (deleted) while the grid is up.
-  const agentKeys = agents.map((a) => a.key).join(",");
+  const agentKeys = JSON.stringify(agents.map(a => a.key).sort());
   useEffect(() => {
-    setTree((t) => {
-      let next = t;
-      const known = new Set([...(t ? leaves(t) : []), ...docked]);
-      for (const a of agents) {
-        if (!known.has(a.key)) next = withNewPane(next, a.key);
-      }
-      if (next) {
-        for (const key of leaves(next)) {
-          if (!byKey.has(key)) next = next ? removeLeaf(next, key) : next;
-        }
-      }
-      return next;
-    });
+    const next = reconcileGrid({ tree, docked: [...docked] }, JSON.parse(agentKeys));
+    setTree(next.tree);
+    setDocked(new Set(next.docked));
+    // Reconcile membership only; layout edits are handled by the controls below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentKeys]);
+  useEffect(() => {
+    saveGrid(storageKey, reconcileGrid({ tree, docked: [...docked] }, JSON.parse(agentKeys)));
+  }, [storageKey, tree, docked, agentKeys]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -100,7 +84,7 @@ export function GridView({
       next.delete(key);
       return next;
     });
-    setTree((t) => withNewPane(t, key));
+    setTree((t) => addPane(t, key));
   }
 
   function edgeFor(e: React.DragEvent, el: HTMLElement): Edge {
@@ -191,6 +175,7 @@ export function GridView({
               <span className="rd-grid-tile-branch">⎇ {s.branch}</span>
             )}
             <span className="rd-spacer" />
+            {focus && onPin && <SessionPin session={s} onToggle={onPin} />}
             <button
               className="rd-grid-tile-collapse"
               title="Collapse to the dock"
@@ -200,7 +185,11 @@ export function GridView({
             </button>
           </div>
           <div className="rd-grid-tile-term">
-            <Terminal sessionKey={node.key} theme={themeFor(s)} />
+            {focus && (["stopped", "archived", "terminated", "interrupted"].includes(s.state) || !s.ptyOwned) ? (
+              <p className="rd-focus-at-rest">{["stopped", "archived", "terminated", "interrupted"].includes(s.state)
+                ? `${s.label} is ${s.state}. Its pin is saved.`
+                : "This session has no terminal in DuckTerm."}</p>
+            ) : <Terminal sessionKey={node.key} theme={themeFor(s)} />}
           </div>
         </div>
       );
@@ -237,9 +226,9 @@ export function GridView({
     <div className="rd-grid">
       <div className="rd-grid-bar">
         <span className="rd-grid-title">
-          {shown + dockedList.length} running
+          {focus ? `Focus · ${agents.length} / 3 pinned` : `${shown + dockedList.length} running`}
         </span>
-        <select
+        {!focus && <select
           className="rd-grid-folder"
           value={title}
           onChange={(e) => onSwitchFolder(e.target.value)}
@@ -250,7 +239,7 @@ export function GridView({
               {f}
             </option>
           ))}
-        </select>
+        </select>}
         <select
           className="rd-grid-folder rd-grid-cols"
           title="Reset the arrangement to an even layout"
@@ -264,21 +253,21 @@ export function GridView({
           <option value={1}>1 column</option>
           <option value={2}>2 columns</option>
           <option value={3}>3 columns</option>
-          <option value={4}>4 columns</option>
+          {!focus && <option value={4}>4 columns</option>}
         </select>
         <span className="rd-grid-hint">
           drag a title bar onto a tile's edge to split
         </span>
         <span className="rd-spacer" />
         <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={onClose}>
-          Exit grid (esc)
+          {focus ? "← Sessions (esc)" : "Exit grid (esc)"}
         </button>
       </div>
       {!tree ? (
         <p className="rd-panel-empty">
           {dockedList.length > 0
             ? "Every session is collapsed — click a chip below to expand it."
-            : "No running terminals in this folder."}
+            : focus ? "No pinned sessions. Return to Sessions to pin one." : "No running terminals in this folder."}
         </p>
       ) : (
         <div ref={rootRef} className="rd-grid-tiles-tree">

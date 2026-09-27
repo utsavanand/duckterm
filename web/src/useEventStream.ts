@@ -65,6 +65,8 @@ export function reduce(state: State, action: Action): State {
   }
   if (action.kind === "seed") {
     const next = new Map(state.sessions);
+    // Pins are server-owned metadata, including deletion in another window.
+    for (const [key, session] of next) next.set(key, { ...session, pinned: false });
     for (const s of action.sessions) {
       const persisted = viewFromPersisted(s);
       const live = next.get(s.session_key);
@@ -83,6 +85,7 @@ export function reduce(state: State, action: Action): State {
       // "watched" and hiding its terminal until a full reload.
       merged.launched = persisted.launched;
       merged.ptyOwned = persisted.ptyOwned;
+      merged.pinned = persisted.pinned;
       next.set(s.session_key, merged);
     }
     // A seed only lists live sessions; anything we'd tombstoned that the server

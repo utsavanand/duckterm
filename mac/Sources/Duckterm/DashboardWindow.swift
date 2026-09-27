@@ -250,7 +250,8 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             return
         }
         guard let destination = navigationAction.request.url else { decisionHandler(.cancel); return }
-        if destination.scheme == url.scheme && destination.host == url.host && destination.port == url.port {
+        if dashboardAllowsNavigation(to: destination, dashboard: url,
+                                     inMainFrame: navigationAction.targetFrame?.isMainFrame ?? true) {
             decisionHandler(.allow)
         } else {
             if ["https", "http"].contains(destination.scheme ?? "") { NSWorkspace.shared.open(destination) }

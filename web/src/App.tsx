@@ -9,6 +9,7 @@ import { ContextPanel } from "./ContextPanel";
 import { ControlTower } from "./ControlTower";
 import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
+import { SessionPin } from "./SessionPin";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
 import { HeaderMenus } from "./HeaderMenus";
@@ -105,6 +106,19 @@ function Dashboard() {
   const [inboxFolder, setInboxFolder] = useState<string | null>(null);
   // The folder whose terminals are tiled fullscreen; null = grid closed.
   const [gridFolder, setGridFolder] = useState<string | null>(null);
+  const [focusOpen, setFocusOpen] = useState(false);
+  const pinnedSessions = sessions.filter((s) => s.pinned);
+  useEffect(() => {
+    if (focusOpen && pinnedSessions.length === 0) setFocusOpen(false);
+  }, [focusOpen, pinnedSessions.length]);
+  async function toggleSessionPin(s: SessionView) {
+    try {
+      const saved = await api.setFocusPin(s.key, !s.pinned);
+      patchSession(s.key, saved);
+    } catch (e) {
+      toast((e as Error).message, "err");
+    }
+  }
   // Terminal color theme, per app mode: the terminal follows the light/dark
   // toggle, and each mode remembers its own pick ("auto" = the mode default).
   const [termThemes, setTermThemes] =
@@ -280,10 +294,16 @@ function Dashboard() {
           {connected ? "Live" : "Disconnected"}
         </span>
         <span className="rd-spacer" />
+        <button className={`rd-btn rd-btn-ghost rd-btn-sm${focusOpen ? " rd-btn-active" : ""}`}
+          disabled={!pinnedSessions.length} aria-pressed={focusOpen}
+          title={pinnedSessions.length ? "Open pinned terminals" : "Pin a session to open Focus"}
+          onClick={() => { setFocusOpen((open) => !open); setTowerOpen(false); }}>
+          Focus · {pinnedSessions.length}
+        </button>
         <button
           className={`rd-btn rd-btn-ghost rd-btn-sm${towerOpen ? " rd-btn-active" : ""}`}
           aria-pressed={towerOpen}
-          onClick={() => setTowerOpen((o) => !o)}
+          onClick={() => { setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); }}
           title="Control tower: fleet insights, every agent at a glance, and Oracle chat"
         >
           Oracle
@@ -316,7 +336,7 @@ function Dashboard() {
       {/* The tower is a layer over the panes, not a replacement: terminals stay
           mounted at their size, since a remount replays output at a different
           width (B5). inert keeps keystrokes and focus out of the hidden panes. */}
-      {towerOpen && gridFolder === null && (
+      {towerOpen && !focusOpen && gridFolder === null && (
         <div className="rd-tower-layer">
           <ControlTower
             agents={agents.map((s) => ({ ...s, shownState: effectiveState(s, now) }))}
@@ -330,10 +350,16 @@ function Dashboard() {
           />
         </div>
       )}
-      <div className="rd-workspace-panes" {...(towerOpen && gridFolder === null ? { inert: "" } : {})}>
-      {gridFolder !== null ? (
+      <div className="rd-workspace-panes" {...(towerOpen && !focusOpen && gridFolder === null ? { inert: "" } : {})}>
+      {focusOpen ? (
+        <GridView key="focus" title="Focus" focus storageKey="rd.grid.focus"
+          agents={pinnedSessions} folders={[]} themeFor={themeFor}
+          onPin={toggleSessionPin} onSwitchFolder={() => undefined}
+          onClose={() => setFocusOpen(false)} />
+      ) : gridFolder !== null ? (
         <GridView
           key={gridFolder}
+          storageKey={`rd.grid.folder.${gridFolder}`}
           title={gridFolder}
           themeFor={themeFor}
           agents={terminalAgents.filter(
@@ -363,6 +389,7 @@ function Dashboard() {
                 folders={folders}
                 selectedKey={selectedKey}
                 onOpen={setSelectedKey}
+                onPin={toggleSessionPin}
                 onOpenInbox={(key) => { setSelectedKey(key); setView("inbox"); }}
                 onFork={setForkKey}
                 onDelete={deleteSession}
@@ -437,7 +464,7 @@ function Dashboard() {
               </div>
             )}
             {view === "inbox" && (
-              <div className="rd-messages-wrap">
+              <div className="rd-messages-wrap rd-inbox-wrap">
                 {selected ? (
                   <InboxView key={selected.key} session={{ ...selected, state: effectiveState(selected, now) }} />
                 ) : (
@@ -484,6 +511,7 @@ function Dashboard() {
           <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`}>
             <div className="rd-panel-head">
               <span>{selected ? selected.label : "Context"}</span>
+              {selected && <SessionPin session={selected} onToggle={toggleSessionPin} label />}
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
             <div className="rd-context-body">

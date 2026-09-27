@@ -82,3 +82,20 @@ it("Escape closes a pinned card first, then returns to the sessions, but not whi
   fireEvent.keyDown(window, { key: "Escape" });
   expect(onBack).toHaveBeenCalledTimes(1);
 });
+
+it("sends a menu question straight to the agent's terminal", async () => {
+  vi.mocked(api.controlTower).mockResolvedValue(insights);
+  vi.mocked(api.relay).mockResolvedValue({
+    notes: [{ id: "c1", session_key: "rel", name: "release-dev", folder: "Duckterm", runtime: "claude-code", kind: "choice", status: "open", created_at: NOW - 60_000, questions: [{ question: "Merge PR #66?", options: ["Yes", "Hold"] }, { question: "Which rule applies?", options: ["release-dev releases"] }] }],
+    rules: [],
+    open: 1,
+  });
+  const onOpenTerminal = vi.fn();
+  render(<ControlTower agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={onOpenTerminal} />);
+  const needs = await screen.findByRole("region", { name: "Needs you" });
+  expect(needs).not.toHaveTextContent("Answer in the chat");
+  const row = await within(needs).findByRole("button", { name: /release-dev/ });
+  expect(row).toHaveTextContent("Merge PR #66? Answer in its terminal.");
+  fireEvent.click(row);
+  expect(onOpenTerminal).toHaveBeenCalledWith("rel");
+});
