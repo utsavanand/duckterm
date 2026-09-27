@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Session pin limits belong in the same write as the pin
+
+A browser-only three-pin cap cannot protect against two windows taking the
+last slot simultaneously. Persist session pins and enforce the count in one
+conditional SQL write. Treat polling metadata as authoritative over stale
+local pins, and keep stopped or archived sessions in Focus rather than
+silently changing the owner's selection. Check real terminal input as well
+as layout persistence; a mock terminal is not evidence of an interactive one.
+
 ## 2026-09-26 — A guessed context window must not render like a fact
 **Broke:** the context row showed "559k used · 0 left" for claude-opus-5
 sessions, which have a 1M window, and every opus-5 session carried a false

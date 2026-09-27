@@ -17,7 +17,7 @@ test("archive hides the session for good; resume is refused", async ({
 
   // Archive it.
   await row.hover();
-  await row.getByRole("button", { name: "Archive" }).click();
+  await row.getByRole("button", { name: "Archive", exact: true }).click();
 
   // It leaves the agents list...
   await expect(page.locator(".rd-row", { hasText: key })).toHaveCount(0);

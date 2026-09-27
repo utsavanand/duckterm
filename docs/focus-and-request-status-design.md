@@ -1,8 +1,19 @@
 # Focus (pinned sessions) and request status updates — design
 
 Status: designed 2026-09-26 at the owner's request (relayed by `product`).
-Not implemented. Needs a UI preview for the owner before build; the build
-then goes to `main-dev`.
+Feature 1 is implemented on `feature/session-focus`, with owner-reviewed UI.
+Release validation is pending. Feature 2 remains a design.
+
+Focus uses owner-authenticated `PUT /sessions/:key/focus-pin` with
+`{"pinned": true|false}`. Missing sessions return 404, invalid input 400, and
+a fourth pin 409 (`Unpin one first`). `GET /sessions` includes `pinned` (0/1).
+Schema v4 adds the column; the count check and write are one SQL statement.
+Pins survive lifecycle changes; deletion frees the slot.
+
+Both Focus and folder grids persist layout, separately under `rd.grid.focus`
+and `rd.grid.folder.<folder>`. Invalid saved layouts fall back to a usable
+default. Stopped and archived pins remain visible with their state instead
+of opening a nonexistent terminal. No new polling loop is added.
 
 ---
 

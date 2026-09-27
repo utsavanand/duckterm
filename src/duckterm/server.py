@@ -480,6 +480,10 @@ class Server:
         if artifact_match and method in {"GET", "DELETE"}:
             await self._artifacts(writer, headers, artifact_match[1], artifact_match[2], method)
             return
+        focus_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/focus-pin", path)
+        if focus_match and method == "PUT":
+            await self._focus_pin(writer, focus_match[1], body)
+            return
         pin_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/pins(?:/([a-f0-9]{64}))?", path)
         if pin_match and method in {"GET", "POST", "DELETE"}:
             await self._message_pins(writer, headers, pin_match[1], pin_match[2], method, body)
@@ -820,6 +824,28 @@ class Server:
         # Content travels as authenticated JSON, never as executable HTML on the
         # dashboard origin. The preview must render it in an isolated sandbox.
         await _write_json(writer, 200, result)
+
+    async def _focus_pin(self, writer: asyncio.StreamWriter, session_key: str, body: bytes) -> None:
+        """Owner-only session pins, independent of saved message pins."""
+        if len(body) > 4096:
+            await _write_json(writer, 413, {"error": "pin request too large"})
+            return
+        try:
+            req = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            req = None
+        if not isinstance(req, dict) or type(req.get("pinned")) is not bool:
+            await _write_json(writer, 400, {"error": "pinned must be a boolean"})
+            return
+        try:
+            found = self.history.set_pinned(session_key, req["pinned"])
+        except ValueError as exc:
+            await _write_json(writer, 409, {"error": str(exc)})
+            return
+        if not found:
+            await _write_json(writer, 404, {"error": "no such session"})
+            return
+        await _write_json(writer, 200, {"pinned": req["pinned"]})
 
     async def _message_pins(
         self,

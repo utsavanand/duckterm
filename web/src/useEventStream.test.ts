@@ -191,3 +191,12 @@ describe("witnessed turn celebrations", () => {
     expect(act(seed, "Stop", 30).sessions.get("s1")?.celebration).toBeUndefined();
   });
 });
+
+it("server pin changes override stale local state without events, including deleted pins", () => {
+  const row: PersistedSession = { session_key:"pin", state:"busy", event_count:1, started_at:1, updated_at:1, pinned:1 };
+  const seeded = reduce(emptyState(), {kind:"seed",sessions:[row]});
+  expect(seeded.sessions.get("pin")?.pinned).toBe(true);
+  const unpinned = reduce(seeded, {kind:"seed",sessions:[{...row,pinned:0}]});
+  expect(unpinned.sessions.get("pin")?.pinned).toBe(false);
+  expect(reduce(seeded, {kind:"seed",sessions:[]}).sessions.get("pin")?.pinned).toBe(false);
+});
