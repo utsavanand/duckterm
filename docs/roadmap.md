@@ -312,8 +312,33 @@ F11. **Answer an agent from Oracle's chat without typing into its terminal**
 
 ## Now — collaboration reliability (owner-reported 2026-09-26)
 
-F12. **Cross-session collaboration is unreliable; the owner has to keep
-     chiming in.** **Owner-approved; assigned to the `main-dev` session in
+F12. **Work tracking / Work UI — DEFERRED by the owner 2026-09-27** for
+     design reconsideration, not active implementation. The owner's concern:
+     it risks becoming a **heavyweight project-management interface**, and
+     they want to think it through first. That is a fair objection and the
+     design doc partly invited it — six states, evidence, blockers and
+     handoffs is close to a ticketing system, which the doc itself warned
+     against ("if it needs a separate UI to maintain, it is too heavy and
+     will rot"). `release-dev` holds PR #84; `ui-dev` stopped the Work UI.
+     **Preserve as separately delivered:** the lightweight inbox and Oracle
+     improvements that shipped alongside it — persistent requests, the
+     reworded nudge, nudge memory across restarts, the two-notice
+     four-hour backoff — are real wins and are not part of the deferral.
+     **The underlying problem does not go away with the mechanism**, so it
+     stays recorded: `answered` still means "a reply was written", not
+     "the bug is fixed"; of 16 measured requests, 5 got a reply and no
+     work. If the heavyweight version is wrong, the lightweight question to
+     answer on reconsideration is: what is the *smallest* thing that makes
+     un-acted work visible without a tracker to maintain? One candidate
+     worth considering — a single derived "replied but nothing shipped"
+     signal computed from data already present (request answered, no
+     commit/PR referencing it), with no new states for anyone to update by
+     hand.
+     Original analysis:
+     [collaboration-reliability-design.md](collaboration-reliability-design.md).
+
+Cross-session collaboration is unreliable; the owner has to keep
+     chiming in (original F12 analysis, retained for context). **Owner-approved; assigned to the `main-dev` session in
      the `oracle` worktree** (2026-09-26) — it is free, and Stage 2 changes
      what Oracle nudges on, which is that session's own code. The main-repo
      `main-dev` is mid-build on F9 pinning and the owner's position is that
@@ -400,8 +425,33 @@ B8. **Artifact markdown previews render as a blank off-white box**
 
 ## Bugs — open
 
-B9. **Terminal typing latency grows with fleet size** (owner-reported
-    2026-09-27). Investigation:
+B9. **Terminal typing latency — FIXED, awaiting release** (PR #95,
+    `6028d8b`). Measured before and after at 5 / 15 / 23 mounted terminals,
+    p95 keystroke latency:
+
+    | Terminals | Before | After |
+    | --- | --- | --- |
+    | 5 | 26.7 ms | 25.9 ms |
+    | 15 | 51.2 ms | 26.0 ms |
+    | 23 | **70.5 ms** | **25.7 ms** |
+
+    Latency was scaling with session count — nearly tripling from 5 to 23.
+    It is now **flat**: 2.7× better at the owner's working scale and no
+    longer degrading as sessions are added. That confirms the diagnosis
+    (hidden terminals parsing and reconciling), not data volume.
+    Fix: bound the browser terminal cache to the 3 most recent views,
+    memoize `Terminal`, stabilize the session list. 14 real-PTY browser
+    tests including **drafts surviving eviction** — the right thing to
+    guard, since an evicted terminal must not eat half-typed input.
+    Deferred unless further profiling warrants: the timestamp clock,
+    document-visibility polling, and server-side `/sessions` caching.
+    Messages and Inbox already unmount hidden panels.
+    (Owner-reported and selected 2026-09-27.) `main-dev` is on branch
+    `fix/terminal-responsiveness` from latest main, working from
+    [performance-investigation.md](performance-investigation.md) with
+    before/after browser measurements. Initial focus: mounted terminal
+    count and unnecessary React work; no new visible UI. (Owner-reported
+    2026-09-27.) Investigation:
     [performance-investigation.md](performance-investigation.md).
     Measured: 23 live sessions, 44 artifacts, 30,286 events, DB 6 MB → 42 MB
     in a week. Data volume is not the problem; per-session work multiplied
