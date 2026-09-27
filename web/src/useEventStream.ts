@@ -1,5 +1,7 @@
 import { useEffect, useReducer, useState } from "react";
 import { applyEvent } from "./sessions";
+import { desktop } from "./desktop";
+import { hostFetch, remoteGroups } from "./hostTransport";
 import {
   PersistedSession,
   DucktermEvent,
@@ -11,6 +13,9 @@ import {
 type InitFrame = { type: "init"; events: DucktermEvent[] };
 
 export type Action =
+  | { kind: "remote-snapshot"; host: string; label: string; sessions: PersistedSession[]; groups: Record<string, string> }
+  | { kind: "remote-offline"; host: string }
+  | { kind: "remote-hosts"; hosts: string[] }
   | { kind: "seed"; sessions: PersistedSession[] }
   | { kind: "event"; event: DucktermEvent; replay?: boolean; receivedAt?: number }
   | { kind: "remove"; keys: string[] }
@@ -43,6 +48,21 @@ function mergeDefined(base: SessionView, over: SessionView): SessionView {
 // Exported for unit tests — this is the pure heart of the event stream (seed,
 // event-merge, remove/tombstone, optimistic patch), independent of React.
 export function reduce(state: State, action: Action): State {
+  if (action.kind === "remote-hosts") {
+    return { ...state, sessions: new Map([...state.sessions].filter(([, s]) => !s.host || action.hosts.includes(s.host))) };
+  }
+  if (action.kind === "remote-offline") {
+    return { ...state, sessions: new Map([...state.sessions].map(([key, s]) => [key, s.host === action.host ? { ...s, hostOffline: true } : s])) };
+  }
+  if (action.kind === "remote-snapshot") {
+    const next = new Map([...state.sessions].filter(([, s]) => s.host !== action.host));
+    for (const row of action.sessions) {
+      if (state.tombstoned.has(row.session_key)) continue;
+      next.set(row.session_key, { ...viewFromPersisted(row), host: action.host, hostLabel: action.label,
+        hostOffline: false, group: action.groups[row.session_key] ?? row.grp ?? undefined });
+    }
+    return { ...state, sessions: next };
+  }
   if (action.kind === "seed") {
     const next = new Map(state.sessions);
     // Pins are server-owned metadata, including deletion in another window.
@@ -123,6 +143,7 @@ export function reduce(state: State, action: Action): State {
 export function useEventStream(): {
   sessions: SessionView[];
   connected: boolean;
+  loadedHosts: string[];
   recentEvents: DucktermEvent[];
   removeSessions: (keys: string[]) => void;
   patchSession: (key: string, fields: Partial<SessionView>) => void;
@@ -132,16 +153,60 @@ export function useEventStream(): {
     tombstoned: new Set<string>(),
   });
   const [connected, setConnected] = useState(false);
+  const [loadedHosts, setLoadedHosts] = useState<string[]>([]);
   // Rolling buffer of the newest events, newest first (live activity feed).
   const [recentEvents, setRecentEvents] = useState<DucktermEvent[]>([]);
+
+  useEffect(() => {
+    let dispose = () => {};
+    const connectHosts = () => {
+      dispose();
+      let stopped = false;
+      const hosts = desktop()?.targets.filter(t => t.id !== "local") ?? [];
+      dispatch({ kind: "remote-hosts", hosts: hosts.map(h => h.id) });
+      const timers = new Map<string, ReturnType<typeof setTimeout>>();
+      const busy = new Set<string>();
+      const refresh = (host: typeof hosts[number]) => {
+        if (stopped || busy.has(host.id)) return;
+        clearTimeout(timers.get(host.id));
+        busy.add(host.id);
+        void hostFetch(host.id, "/sessions").then(async response => {
+          if (!response.ok) throw new Error("Remote unavailable");
+          const data = await response.json() as { sessions: PersistedSession[] };
+          if (!stopped) {
+            dispatch({ kind: "remote-snapshot", host: host.id, label: host.name.replace(/^Remote — /, ""), sessions: data.sessions, groups: remoteGroups() });
+            setLoadedHosts(previous => previous.includes(host.id) ? previous : [...previous, host.id]);
+          }
+        }).catch(() => { if (!stopped) dispatch({ kind: "remote-offline", host: host.id }); })
+          .finally(() => {
+            busy.delete(host.id);
+            if (!stopped) timers.set(host.id, setTimeout(() => refresh(host), 2500));
+          });
+      };
+      const refreshAll = () => hosts.forEach(refresh);
+      refreshAll();
+      window.addEventListener("remote-sessions-refresh", refreshAll);
+      dispose = () => {
+        stopped = true;
+        timers.forEach(clearTimeout);
+        window.removeEventListener("remote-sessions-refresh", refreshAll);
+      };
+    };
+    connectHosts();
+    window.addEventListener("desktop-targets-changed", connectHosts);
+    return () => { dispose(); window.removeEventListener("desktop-targets-changed", connectHosts); };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     const seed = () =>
       fetch("/sessions")
-        .then((r) => r.json())
+        .then((r) => { if (!r.ok) throw new Error("Local sessions unavailable"); return r.json(); })
         .then((data: { sessions: PersistedSession[] }) => {
-          if (!cancelled) dispatch({ kind: "seed", sessions: data.sessions });
+          if (!cancelled) {
+            dispatch({ kind: "seed", sessions: data.sessions });
+            setLoadedHosts(previous => previous.includes("local") ? previous : [...previous, "local"]);
+          }
         })
         .catch(() => undefined);
     seed();
@@ -199,6 +264,7 @@ export function useEventStream(): {
   return {
     sessions: list,
     connected,
+    loadedHosts,
     recentEvents,
     removeSessions,
     patchSession,

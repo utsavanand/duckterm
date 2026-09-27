@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useArtifactExpansion } from "./useArtifactExpansion";
 import DOMPurify from "dompurify";
 import { api, Artifact, ArtifactContent } from "./api";
 import { html } from "./render";
@@ -24,6 +25,7 @@ export function previewDocument(source: string, markdown: boolean, bridge?: { no
       const rect = selection.getRangeAt(0).getBoundingClientRect();
       parent.postMessage({type: 'artifact-selection', channel: ${JSON.stringify(bridge.nonce)}, quote, left: rect.left, bottom: rect.bottom}, ${JSON.stringify(bridge.origin)});
     };
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') parent.postMessage({type: 'artifact-escape', channel: ${JSON.stringify(bridge.nonce)}}, ${JSON.stringify(bridge.origin)}); });
     document.addEventListener('mouseup', report);
     document.addEventListener('keyup', event => { if (event.key === 'Shift' || event.key.startsWith('Arrow')) report(); });
   })();</script>` : "";
@@ -42,20 +44,22 @@ function size(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function ArtifactPreview({ artifact, onSelect }: { artifact: ArtifactContent; onSelect: (selection: ArtifactSelection) => void }) {
+function ArtifactPreview({ artifact, onSelect, onEscape }: { artifact: ArtifactContent; onSelect: (selection: ArtifactSelection) => void; onEscape: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [nonce] = useState(() => Array.from(crypto.getRandomValues(new Uint8Array(24)), b => b.toString(16).padStart(2, "0")).join(""));
   useEffect(() => {
     const receive = (event: MessageEvent) => {
       const data = event.data;
-      if (event.source !== frame.current?.contentWindow || event.origin !== "null" || !data || data.type !== "artifact-selection" || data.channel !== nonce) return;
+      if (event.source !== frame.current?.contentWindow || event.origin !== "null" || !data || data.channel !== nonce) return;
+      if (data.type === "artifact-escape") { onEscape(); return; }
+      if (data.type !== "artifact-selection") return;
       if (typeof data.quote !== "string" || !data.quote.trim() || data.quote.length > 8000 || !Number.isFinite(data.left) || !Number.isFinite(data.bottom)) return;
       const box = frame.current.getBoundingClientRect();
       onSelect({ quote: data.quote.trim(), left: box.left + Math.max(0, Math.min(data.left, box.width)), bottom: box.top + Math.max(0, Math.min(data.bottom, box.height)) });
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
-  }, [nonce, onSelect]);
+  }, [nonce, onSelect, onEscape]);
   function selectText(event: React.MouseEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>) {
     const selection = window.getSelection();
     if (!selection?.rangeCount || !selection.toString().trim() || selection.toString().length > 8000) return;
@@ -94,6 +98,15 @@ export function ArtifactsView({ sessionKey, sessionName }: { sessionKey: string;
   const [removing, setRemoving] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState("");
   const selected = files?.find((file) => file.id === selectedId) ?? files?.[0];
+  const { expanded, viewer, back, expand, close } = useArtifactExpansion(selected ? `${sessionKey}:${selected.id}` : undefined);
+  useEffect(() => {
+    if (!expanded) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !feedback && !event.defaultPrevented) { event.preventDefault(); close(); }
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [expanded, feedback, close]);
   const visibleContent = content?.id === selected?.id && content?.sha256 === selected?.sha256 && content?.updated_at === selected?.updated_at ? content : null;
 
   useEffect(() => {
@@ -154,21 +167,24 @@ export function ArtifactsView({ sessionKey, sessionName }: { sessionKey: string;
       <nav className="rd-artifact-list" aria-label="Saved artifacts">{files.map((file) => <button key={file.id} className={`rd-artifact-item${file.id === selected?.id ? " selected" : ""}`} aria-pressed={file.id === selected?.id} onClick={() => { setSelectedId(file.id); setFeedback(null); setFeedbackStatus(""); }}>
         <span className="rd-artifact-type">{label(file)}</span><strong>{file.title}</strong><small>{file.source_path.split("/").pop()} · {size(file.size)}</small><small>{new Date(file.updated_at).toLocaleString()}</small>
       </button>)}</nav>
-      {selected && <div className="rd-artifact-viewer"><header className="rd-artifact-detail"><div><h3>{selected.title}</h3><p className="rd-artifact-path">{selected.source_path}</p></div><div className="rd-artifact-actions">
+      {selected && <div ref={viewer} className={`rd-artifact-viewer${expanded ? " rd-artifact-expanded" : ""}`} role={expanded ? "dialog" : undefined} aria-modal={expanded ? true : undefined} aria-label={expanded ? selected.title : undefined}><header className="rd-artifact-detail">
+        {expanded && <button ref={back} className="rd-btn rd-btn-sm rd-artifact-back" onClick={close}>← Back to sessions</button>}
+        <div className="rd-artifact-title"><h3><button className="rd-artifact-title-button" aria-label={`Expand ${selected.title}`} disabled={expanded} onClick={event => expand(event.currentTarget)}>{selected.title}</button></h3><p className="rd-artifact-path">{selected.source_path}</p></div><div className="rd-artifact-actions">
+        <button hidden={expanded} className="rd-btn rd-btn-sm" onClick={event => expand(event.currentTarget)}>Expand</button>
         <button ref={feedbackButton} className="rd-btn rd-btn-sm" disabled={!visibleContent} onClick={event => {
           if (!visibleContent) return;
           const box = event.currentTarget.getBoundingClientRect();
           setFeedback({ artifact: visibleContent, quote: "", left: box.left, bottom: box.bottom }); setFeedbackStatus("");
         }}>Feedback</button>
         {downloadUrl && visibleContent && <a className="rd-btn rd-btn-sm" href={downloadUrl} download={selected.source_path.split("/").pop() || "artifact"}>Download</a>}
-        <button className="rd-btn rd-btn-sm" disabled={removing} onClick={() => void remove()}>{removing ? "Removing…" : "Remove"}</button>
+        {!expanded && <button className="rd-btn rd-btn-sm" disabled={removing} onClick={() => void remove()}>{removing ? "Removing…" : "Remove"}</button>}
       </div></header>
       {visibleContent?.media_type.startsWith("text/") && <p className="rd-artifact-note">Highlight text to send feedback to {sessionName}.</p>}
       {feedbackStatus && <p className="rd-artifact-note" role="status">{feedbackStatus}</p>}
-      {previewError ? <p role="alert">Could not load the saved copy: {previewError}</p> : visibleContent ? <ArtifactPreview key={`${visibleContent.id}:${visibleContent.sha256}`} artifact={visibleContent} onSelect={selection => { if (!feedback) { setFeedback({ artifact: visibleContent, ...selection }); setFeedbackStatus(""); } }} /> : <p role="status">Loading preview…</p>}
+      {previewError ? <p role="alert">Could not load the saved copy: {previewError}</p> : visibleContent ? <ArtifactPreview key={`${visibleContent.id}:${visibleContent.sha256}`} artifact={visibleContent} onEscape={() => { if (feedback) window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); else if (expanded) close(); }} onSelect={selection => { if (!feedback) { setFeedback({ artifact: visibleContent, ...selection }); setFeedbackStatus(""); } }} /> : <p role="status">Loading preview…</p>}
       <p className="rd-artifact-note">{selected.media_type === "text/html" ? "Saved HTML preview · Scripts and external resources are disabled." : "Saved copy · Available even if the original file moves."}</p>
+    {feedback && <ArtifactFeedback key={`feedback:${feedback.artifact.id}:${feedback.artifact.sha256}`} sessionKey={sessionKey} sessionName={sessionName} target={feedback} onClose={() => { setFeedback(null); feedbackButton.current?.focus(); }} onSent={() => { setFeedback(null); setFeedbackStatus("Sent to the agent"); feedbackButton.current?.focus(); }} />}
       </div>}
     </div>}
-    {feedback && <ArtifactFeedback key={`${feedback.artifact.id}:${feedback.artifact.sha256}`} sessionKey={sessionKey} sessionName={sessionName} target={feedback} onClose={() => { setFeedback(null); feedbackButton.current?.focus(); }} onSent={() => { setFeedback(null); setFeedbackStatus("Sent to the agent"); feedbackButton.current?.focus(); }} />}
   </section>;
 }

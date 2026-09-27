@@ -15,6 +15,13 @@ export function ArtifactFeedback({ sessionKey, sessionName, target, onClose, onS
   const input = useRef<HTMLTextAreaElement>(null);
   const [position, setPosition] = useState({ left: 12, top: 90 });
   useEffect(() => { input.current?.focus(); }, []);
+  useEffect(() => {
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !sending) { event.preventDefault(); onClose(); }
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [sending, onClose]);
   useLayoutEffect(() => {
     const place = () => {
       const box = pop.current?.getBoundingClientRect();
@@ -37,7 +44,6 @@ export function ArtifactFeedback({ sessionKey, sessionName, target, onClose, onS
     <p className="rd-feedback-to">To {sessionName} · {target.artifact.source_path.split("/").pop()}</p>
     <blockquote>{target.quote ? `“${target.quote}”` : "Feedback on the whole artifact"}</blockquote>
     <textarea ref={input} aria-label="Feedback to agent" placeholder="What would you like changed?" value={note} maxLength={8000} disabled={sending} onChange={e => setNote(e.target.value)} onKeyDown={e => {
-      if (e.key === "Escape" && !sending) { e.preventDefault(); onClose(); }
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); }
     }} />
     {error && <p role="alert" className="rd-feedback-error">{error}</p>}

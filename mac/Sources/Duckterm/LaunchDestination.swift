@@ -4,6 +4,7 @@ import Foundation
 /// redirects, cookies, or credentials cross the web-view bridge.
 final class LaunchDestination: NSObject, URLSessionTaskDelegate {
     private lazy var session = URLSession(configuration: .ephemeral, delegate: self, delegateQueue: nil)
+    private let probes = BoundedSessionHTTP()
 
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
@@ -43,8 +44,8 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         if operation == "launch" {
-            let allowed: Set<String> = ["command", "name", "prompt", "cwd", "repo_path", "branch", "base", "zsh_theme"]
-            guard Set(params.keys).isSubset(of: allowed), params.values.allSatisfy({ $0 is String }) else {
+            let allowed: Set<String> = ["command", "name", "prompt", "cwd", "repo_path", "branch", "base", "zsh_theme", "test"]
+            guard Set(params.keys).isSubset(of: allowed), params.allSatisfy({ key, value in key == "test" ? (value as? Bool == true) : value is String }) else {
                 throw Failure.message("Invalid launch parameters")
             }
             var body = params
@@ -56,14 +57,13 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
         return request
     }
 
-    func perform(base: URL, operation: String, params: [String: Any]) async throws -> Any {
-        var request = try Self.request(base: base, operation: operation, params: params)
+    func token(base: URL, attempts: Int = 30) async throws -> String {
         // Wait only for readiness. A launch POST is sent once, never retried.
         var token: String?
-        for _ in 0..<30 {
+        for _ in 0..<attempts {
             var probe = URLRequest(url: base, cachePolicy: .reloadIgnoringLocalCacheData)
             probe.timeoutInterval = 2
-            if let (data, response) = try? await session.data(for: probe),
+            if let (data, response) = try? await probes.perform(probe),
                let http = response as? HTTPURLResponse, http.statusCode == 200,
                http.value(forHTTPHeaderField: "X-Duckterm") == "1" {
                 let html = String(decoding: data, as: UTF8.self)
@@ -77,6 +77,12 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
             try await Task.sleep(nanoseconds: 500_000_000)
         }
         guard let token else { throw Failure.message("Could not connect to this computer. Check SSH access and try again.") }
+        return token
+    }
+
+    func perform(base: URL, operation: String, params: [String: Any]) async throws -> Any {
+        var request = try Self.request(base: base, operation: operation, params: params)
+        let token = try await token(base: base)
         if request.httpMethod == "POST" { request.setValue(token, forHTTPHeaderField: "X-Duckterm-Token") }
         let (data, response): (Data, URLResponse)
         do { (data, response) = try await session.data(for: request) }

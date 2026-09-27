@@ -1,3 +1,4 @@
+import { terminalSocket, TerminalSocket, sessionFetch } from "./hostTransport";
 import { useEffect, useRef } from "react";
 import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -98,8 +99,7 @@ export function Terminal({
     // restart — and the session can come back (Resume, tmux reattach). The
     // slot stays mounted across all of that, so the terminal must reconnect
     // itself; the server repaints the current screen on each (re)attach.
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    let ws: WebSocket | null = null;
+    let ws: TerminalSocket | null = null;
     let retry: number | undefined;
     let attempts = 0; // consecutive failures — drives the backoff
     let disposed = false;
@@ -176,9 +176,7 @@ export function Terminal({
       replayReady = false;
       cancelAttachScroll();
       pendingOpenScroll = visible;
-      ws = new WebSocket(
-        `${proto}://${location.host}/sessions/${sessionKey}/terminal`,
-      );
+      ws = terminalSocket(sessionKey);
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
         attempts = 0; // live again — future retries start fast
@@ -233,7 +231,7 @@ export function Terminal({
         toastRef.current("Image paste failed: select a connected terminal and try again.", "err");
         return;
       }
-      void fetch("/paste-image", {
+      void sessionFetch(sessionKey, "/paste-image", {
         method: "POST", headers: authHeaders({ "Content-Type": blob.type }), body: blob,
       }).then(async (response) => {
         const data = await response.json() as { path?: string; error?: string };

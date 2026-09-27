@@ -79,3 +79,40 @@ test("side panels reclaim space independently, preserve PTY drafts, and remember
     await apiDelete(`/sessions/${key}`);
   }
 });
+
+test("collapsed Context rail keeps its reopen arrow inside the viewport with Pin or Pinned", async ({ page }) => {
+  const result = await apiPost("/sessions/launch", { command: "sh -c 'cat'", cwd: "/tmp", name: "context-reopen-check", in_terminal: false, test: true });
+  expect(result.status).toBe(200);
+  const key = String(result.body.session_key);
+  try {
+    await page.setViewportSize({ width: 1970, height: 1250 });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto(base());
+    await page.locator(".rd-row-name", { hasText: "context-reopen-check" }).click();
+    const pane = page.locator(".rd-context-pane");
+    const reopen = page.getByRole("button", { name: "Show Context panel", exact: true });
+    for (const pinned of [false, true]) {
+      if (pinned) await pane.getByRole("button", { name: "Pin context-reopen-check", exact: true }).click();
+      for (const width of [1970, 1440, 1101, 1000]) {
+        await page.setViewportSize({ width, height: 1250 });
+        await page.getByRole("button", { name: "Collapse Context panel", exact: true }).click();
+        // Visibility alone passes even when the button extends outside the viewport.
+        const box = (await reopen.boundingBox())!, rail = (await pane.boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(rail.x);
+        expect(box.x + box.width).toBeLessThanOrEqual(Math.min(width, rail.x + rail.width));
+        expect(await reopen.evaluate(button => {
+          const r = button.getBoundingClientRect();
+          return button.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
+        })).toBe(true);
+        await expect(pane.locator('.rd-focus-pin')).toBeHidden();
+        if (width === 1970 && !pinned) await page.screenshot({ path: "/tmp/context-reopen-fixed.png" });
+        await reopen.click();
+        await expect(pane.locator('.rd-context-body')).toBeVisible();
+        await expect(pane.getByRole("button", { name: `${pinned ? "Unpin" : "Pin"} context-reopen-check`, exact: true })).toBeVisible();
+      }
+    }
+  } finally {
+    await apiPost(`/sessions/${key}/stop`);
+    await apiDelete(`/sessions/${key}`);
+  }
+});

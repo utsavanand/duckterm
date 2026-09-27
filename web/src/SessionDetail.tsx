@@ -1,3 +1,4 @@
+import { routedFetch as fetch } from "./hostTransport";
 import { useCallback, useEffect, useState } from "react";
 import { api, CheckpointRecord, RawEvent } from "./api";
 import { Terminal } from "./Terminal";
