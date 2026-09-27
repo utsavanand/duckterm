@@ -472,7 +472,17 @@ B8. ~~Artifact markdown previews render as a blank off-white box~~ **Fixed
 
 ## Implemented, awaiting release (2026-09-27/28)
 
-- **B9 terminal responsiveness** — PR #95 `6028d8b`. Independent QA
+- **B9 terminal responsiveness** — PR #95, now `528072d`. A release
+  blocker was found and fixed: the restored selection was **expanding
+  sidebar folders on restart**, traced to `useSessionSelection`; selection
+  now survives without reopening folders. Gate 137 frontend + 68 browser.
+  **Caveat stated by `main-dev`, kept visible: native latency evidence is
+  still inconclusive.** The browser p95 numbers (70.5 → 25.7 ms at 23
+  terminals) are solid and independently reproduced, but the owner works in
+  the **Mac app** — so the fix is proven in Chromium and unproven in
+  WKWebView. That is the same class of gap RETRO records three times over
+  (menus, clipboard, dialogs): browser e2e proves the page, not the shell.
+  Confirm natively before calling B9 done. Earlier at `6028d8b`; independent QA
   reproduced ~25 ms p95 at 5/15/23 sessions; 15 browser + 3 unit tests;
   same PTY PID and draft intact after eviction. Native acceptance pending.
 - **Full-window artifacts** (`ui-dev`) — `0c6436f`, owner approved the
@@ -521,6 +531,39 @@ F13. **Compact session-location indicators** (owner-requested 2026-09-28,
      the existing animated duck with a local computer badge, a remote
      cloud, and a disconnected slash, with the machine name on hover. No
      product changes pending the owner's approval.
+
+F13. **Compact session-location indicators — IMPLEMENTED, awaiting
+     QA/release** (owner-approved 2026-09-28, `ui-dev`, `a8031276`). Local
+     rows use the existing animated duck with a computer badge; remote is a
+     duck in a cloud, crossed when disconnected; host name on hover and
+     keyboard focus with an accessible label. Full gate exit 0, 135
+     frontend + 68 browser. It addressed the design risk raised in review:
+     the duck's **activity animation is preserved**, so location and state
+     do not collapse into one glyph, and the native outage check was
+     updated to inspect the accessible icon status once status moved from
+     row text into an icon. Evidence caveat: browser checks used a
+     controlled remote bridge, **not live SSH**.
+
+## B9 is the oldest unshipped fix (2026-09-28)
+
+**The owner's typing-latency fix has still not reached them.** Installed is
+**v0.4.77**; PR #95 is open and unmerged, and `main` has neither the bounded
+terminal cache nor a memoized `Terminal` — verified, not inferred.
+
+Meanwhile v0.4.76 and v0.4.77 shipped **on top of it**: compact
+session-location icons, then the owner's correction to plain local ducks,
+plus the folder-on-reload fix. Those are fine changes, but the sequencing
+means an owner-reported performance bug — diagnosed, fixed, independently
+QA'd at ~25 ms p95, and blocker-cleared — has been overtaken twice by newer
+UI work.
+
+This is the same pattern already recorded for Tier 1: **newer work with a
+preview overtakes older work in a queue**, regardless of which the owner
+cares about more. B9 differs only in that it is *finished* and merely
+waiting, which makes it the cheapest possible thing to ship.
+
+Recommendation, one line: **ship #95 next, ahead of further UI work**, and
+confirm the fix natively in the Mac app rather than only in Chromium.
 
 ## Bugs — open
 
