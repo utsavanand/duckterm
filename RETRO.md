@@ -8,6 +8,14 @@ future actions. Browser visibility assertions missed this because an offscreen
 button still has a layout box. Assert viewport/rail bounds and hit-test the
 center before clicking, with both Pin and Pinned labels and narrow layouts.
 
+## 2026-09-27 — Hidden terminals still parse output
+
+Keeping every terminal mounted makes switching fast but gives every hidden
+agent a parser competing with foreground keystrokes. Bound the recent-view
+cache, leave server-owned PTYs running, and reconnect older views through the
+existing snapshot path. Measure at fleet scale and test an unfinished input
+line across eviction; a mount-count assertion alone cannot prove safety.
+
 ## 2026-09-26 — Re-read the inbox between merge and tag
 **Broke:** the owner deferred F12 work tracking ("keep this in the roadmap… I
 want to think it through") while its release PR was in CI. release-dev merged,

@@ -1,5 +1,5 @@
 import { terminalSocket, TerminalSocket, sessionFetch } from "./hostTransport";
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -17,7 +17,7 @@ import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 //
 // The WS is a GET, so it rides the same 127.0.0.1 loopback gate as the rest of
 // the GET API — no token needed (only state-changing POSTs are token-gated).
-export function Terminal({
+export const Terminal = memo(function Terminal({
   sessionKey,
   active = true,
   theme = DEFAULT_TERM_THEME,
@@ -299,4 +299,4 @@ export function Terminal({
       style={{ flex: 1, height: 0, minHeight: 0, background: bg }}
     />
   );
-}
+});
