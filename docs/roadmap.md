@@ -49,11 +49,16 @@ Unreleased on main: Copilot nudges, and the settle and peer waits cut from 10
 to 5 minutes. Copilot sessions get an inbox only by hand until item 9 lands.
 
 Oracle Relay (needs-you notes in the chat, answers relayed to the session, rules
-made in plain words) is built on branch `oracle-relay`.
+made in plain words) has shipped. Menu questions link to the agent's terminal
+instead of being answered from the chat.
 
-Next: Oracle on WhatsApp (design PR #25, waiting on five owner answers). Later
-rules (stale state, file collisions, scheduled AGENTS.md suggestions) are
-listed with triggers in the design doc.
+Next: **Oracle on WhatsApp**, design draft
+[oracle-whatsapp-design.md](oracle-whatsapp-design.md), waiting on owner
+answers to its five open questions. Its Phase 0 (a persistent decision log, a
+"needs you" detector, and a status view showing why each session was or wasn't
+nudged) is useful without WhatsApp and comes first. Later rules (stale state,
+file collisions, scheduled AGENTS.md suggestions) are listed with triggers in
+the design doc.
 
 Shipped 2026-09-23–25 (v0.4.40 → v0.4.47):
 
@@ -276,15 +281,55 @@ F11. **Answer an agent from Oracle's chat without typing into its terminal**
      contract (default unsupported) agreed. v0.4.64's submit confirmation is
      the first step toward making "accepted" distinguishable from "typed":
      UserPromptSubmit-confirmed versus prompt-stuck.
-     Still open from my side: the **180 s hook poll cap** is far shorter than
-     a human answering a multi-question form, so the timeout policy must
-     change as part of this feature — otherwise the agent falls through to
-     its own prompt mid-answer, which is worse than today's failure.
+     **Lead 2 PROBE RESULT (Oracle `main-dev`, 2026-09-26): IT WORKS.**
+     Tested against Claude Code 2.1.283, headless and interactive, on a
+     private tmux server isolated from DuckTerm hooks. A Stop hook printing
+     `{"decision":"block","reason":"…"}` continues the turn with that text;
+     the transcript records it as a user message beginning "Stop hook
+     feedback:". Guard the loop with `stop_hook_active` — the next Stop has
+     it true, and the hook exits 0. Holding works: with a 300 s hook
+     timeout it waited 25 s for an answer file, then blocked with it.
+     **So free-text answers need none of lead 1's payload work** — the two
+     cases split cleanly: structured menu answers via the permission path,
+     free text via Stop. That is the scope halving I hoped the probe would
+     settle.
+     Four probe findings that shape the design, all of which must be
+     honored: (1) if the owner types in the terminal while the hook holds,
+     the message is **queued, not sent** — so the server must release the
+     held hook as soon as the owner types in that pane; the supervisor
+     already tracks owner keystrokes. (2) Esc interrupts the hook cleanly
+     with no orphan process. (3) Claude's UI labels injected text "Stop
+     hook **error**: <reason>" — cosmetic but misleading, so the reason
+     string must say plainly that it is the owner's reply relayed by Oracle.
+     (4) Holding on every Stop would put a spinner on every turn end, so
+     hold only when an answer is actually expected.
+     Still open from my side: the **180 s poll cap** on the permission path
+     is far shorter than a human answering a multi-question form. The probe
+     shows the Stop path can hold 300 s, so the two paths now have
+     *different* timeouts — reconcile them deliberately, and make sure
+     neither falls through to the agent's own prompt mid-answer, which is
+     worse than today's failure.
 
 ## Now — collaboration reliability (owner-reported 2026-09-26)
 
 F12. **Cross-session collaboration is unreliable; the owner has to keep
-     chiming in.** Analysis and proposal:
+     chiming in.** **Owner-approved; assigned to the `main-dev` session in
+     the `oracle` worktree** (2026-09-26) — it is free, and Stage 2 changes
+     what Oracle nudges on, which is that session's own code. The main-repo
+     `main-dev` is mid-build on F9 pinning and the owner's position is that
+     a session already building should not change direction midway.
+     **A live illustration of the bug, worth keeping:** F12 was
+     owner-approved, the approval was relayed, and it was parked as a
+     "follow-up design" because a direct terminal instruction outranked a
+     relayed one. No priority order is held across sessions — F12 lost to
+     the exact problem F12 fixes. Stage 3's `sanctioned` level (settable by
+     the owner, or by a session quoting owner words) would have prevented
+     it.
+     **Coordination window, closing now:** Stage 2 wants a Work column, and
+     `ui-dev` is redesigning the Inbox this week (preview at
+     `docs/previews/inbox-clarity.html`, awaiting owner review). That is the
+     surface where work state belongs — getting it into the redesign is
+     cheaper than bolting it on afterwards. Analysis and proposal:
      [collaboration-reliability-design.md](collaboration-reliability-design.md).
      **Not a delivery problem — messages arrive.** Measured from
      `main-dev`'s real inbox (50 messages) and `session_questions` (273

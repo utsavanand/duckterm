@@ -3949,7 +3949,7 @@ class Server:
                     row.get("runtime"), str(row.get("command") or "")
                 ).prompt_is_empty(screen),
                 mail=mail,
-                previous=self._oracle_nudges.get(key),
+                previous=self._oracle_nudges.get(key) or self._last_nudge(key),
                 now_ms=now,
             )
             if not picked:
@@ -3958,15 +3958,27 @@ class Server:
             status = await self._submit_prompt(key, text)
             if status == "failed":
                 continue
-            self._oracle_nudges[key] = oracle.Nudge(frozenset(str(m["id"]) for m in picked), now)
+            ids = sorted(str(m["id"]) for m in picked)
+            self._oracle_nudges[key] = oracle.Nudge(frozenset(ids), now)
             self.bus.publish(
                 {
                     "event_type": "OracleNudge",
                     "session_key": key,
                     "text": text,
                     "submitted": status == "submitted",
+                    "mail_ids": ids,
                 }
             )
+
+    def _last_nudge(self, key: str) -> oracle.Nudge | None:
+        """The last nudge as recorded in history, so a server restart doesn't
+        repeat a reminder the agent already got. Nudges recorded before
+        mail_ids was stored can't be matched to mail and count as none."""
+        found = self.history.last_event(key, "OracleNudge")
+        if found is None or "mail_ids" not in found[0]:
+            return None
+        event, ts = found
+        return oracle.Nudge(frozenset(str(i) for i in event["mail_ids"]), ts)
 
     def _archive_swept(self, key: str) -> None:
         """Archive a session whose terminal is gone (auto-sweep)."""

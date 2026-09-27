@@ -620,6 +620,15 @@ class HistoryStore:
         ).fetchone()
         return int(row[0] or 0)
 
+    def last_event(self, session_key: str, event_type: str) -> tuple[dict[str, Any], int] | None:
+        """The newest event of a type for a session, with its timestamp."""
+        row = self._conn.execute(
+            "SELECT payload_json, ts FROM events WHERE session_key = ? AND event_type = ? "
+            "ORDER BY ts DESC LIMIT 1",
+            (session_key, event_type),
+        ).fetchone()
+        return (json.loads(row["payload_json"]), int(row["ts"])) if row else None
+
     def folders(self) -> list[str]:
         """Folder names: those explicitly created plus any referenced by a
         session's group (so a folder never silently disappears), plus every

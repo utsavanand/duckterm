@@ -449,7 +449,7 @@ function Dashboard() {
               </div>
             )}
             {view === "inbox" && (
-              <div className="rd-messages-wrap">
+              <div className="rd-messages-wrap rd-inbox-wrap">
                 {selected ? (
                   <InboxView key={selected.key} session={{ ...selected, state: effectiveState(selected, now) }} />
                 ) : (

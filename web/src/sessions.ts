@@ -132,18 +132,34 @@ export function applyAll(events: DucktermEvent[]): Map<string, SessionView> {
 }
 
 
-// The standard claude context window; "left" in the panel is approximate
-// (the 1M-beta window would read pessimistically, never optimistically).
 // Per-model context windows. A hardcoded 200k flagged a fable-5 session
 // (1M window) as nearly full at 123k. Unknown models keep the pessimistic
 // 200k default — warning too early beats never warning.
-const MODEL_WINDOWS: [RegExp, number][] = [[/fable|mythos/i, 1_000_000]];
+const MODEL_WINDOWS: [RegExp, number][] = [
+  [/fable|mythos/i, 1_000_000],
+  [/opus-5/i, 1_000_000],
+];
+
+export const DEFAULT_WINDOW = 200_000;
 
 export function contextWindowFor(model?: string): number {
   for (const [re, win] of MODEL_WINDOWS) {
     if (model && re.test(model)) return win;
   }
-  return 200_000;
+  return DEFAULT_WINDOW;
+}
+
+/** True when the window is a guess rather than a known per-model value.
+ *
+ * A guess must not render like a fact. An unrecognized model showed a
+ * confident "0 left" for every opus-5 session — 559k used against an assumed
+ * 200k window, clamped to zero — and the same assumption drove a permanent
+ * "high" context warning. Used exceeding the window is itself proof the
+ * guess is wrong, so that counts as unknown too. */
+export function contextWindowIsAssumed(model?: string, tokens?: number): boolean {
+  const matched = MODEL_WINDOWS.some(([re]) => model && re.test(model));
+  if (!matched) return true;
+  return tokens != null && tokens > contextWindowFor(model);
 }
 
 // Context-size thresholds (claude's window is ~200k): "warm" = start thinking
@@ -154,6 +170,9 @@ export function contextLevel(
   model?: string,
 ): "warm" | "high" | null {
   if (!tokens) return null;
+  // Never warn off an assumed window: that fired "high" on every opus-5
+  // session past 160k against a window that was actually 1M.
+  if (contextWindowIsAssumed(model, tokens)) return null;
   const win = contextWindowFor(model);
   if (tokens >= win * 0.8) return "high";
   if (tokens >= win * 0.55) return "warm";

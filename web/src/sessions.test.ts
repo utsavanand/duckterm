@@ -3,6 +3,8 @@ import {
   applyAll,
   applyEvent,
   contextLevel,
+  contextWindowFor,
+  contextWindowIsAssumed,
   effectiveState,
   IDLE_SETTLE_MS,
 } from "./sessions";
@@ -166,14 +168,46 @@ describe("contextLevel (model-aware windows)", () => {
   it("does not warn a 1M-window model at 123k", () => {
     expect(contextLevel(123_000, "claude-fable-5")).toBeNull();
   });
-  it("warns 200k-window models on the old thresholds", () => {
-    expect(contextLevel(123_000, "claude-sonnet-4")).toBe("warm");
-    expect(contextLevel(165_000, "claude-sonnet-4")).toBe("high");
-    expect(contextLevel(123_000, undefined)).toBe("warm"); // unknown = pessimistic
+  it("does not warn on an assumed window", () => {
+    // An unrecognized model's 200k is a guess. Warning off a guess fired
+    // "high" on every opus-5 session past 160k against a real 1M window.
+    expect(contextLevel(123_000, "claude-sonnet-4")).toBeNull();
+    expect(contextLevel(165_000, "claude-sonnet-4")).toBeNull();
+    expect(contextLevel(123_000, undefined)).toBeNull();
   });
   it("scales thresholds for large windows", () => {
     expect(contextLevel(560_000, "claude-fable-5")).toBe("warm"); // >55% of 1M
     expect(contextLevel(820_000, "claude-mythos-5")).toBe("high"); // >80%
+  });
+  it("does not call an opus-5 session at 559k 'high'", () => {
+    // The reported bug: 559k showed "0 left" and a high warning, because the
+    // window was assumed to be 200k. Against the real 1M window 559k is 56%,
+    // so "warm" is correct and "high" would be the bug.
+    expect(contextLevel(559_000, "claude-opus-5")).toBe("warm");
+    expect(contextLevel(559_000, "claude-opus-5-5")).toBe("warm");
+    expect(contextLevel(300_000, "claude-opus-5")).toBeNull(); // 30%: no warning
+  });
+});
+
+describe("context window resolution", () => {
+  it("gives opus-5 and fable the 1M window", () => {
+    expect(contextWindowFor("claude-opus-5")).toBe(1_000_000);
+    expect(contextWindowFor("claude-opus-5-5")).toBe(1_000_000);
+    expect(contextWindowFor("claude-fable-5")).toBe(1_000_000);
+  });
+  it("leaves 559k of headroom instead of reporting none", () => {
+    // The exact figure from the owner's screenshot: "559k used - 0 left".
+    const left = contextWindowFor("claude-opus-5") - 559_000;
+    expect(left).toBe(441_000);
+  });
+  it("marks an unrecognized model's window as assumed", () => {
+    expect(contextWindowIsAssumed("some-new-model", 10_000)).toBe(true);
+    expect(contextWindowIsAssumed(undefined, 10_000)).toBe(true);
+    expect(contextWindowIsAssumed("claude-opus-5", 10_000)).toBe(false);
+  });
+  it("treats used-exceeding-window as proof the window is wrong", () => {
+    // Silently clamping this to "0 left" is what hid the bug.
+    expect(contextWindowIsAssumed("claude-opus-5", 1_200_000)).toBe(true);
   });
 });
 

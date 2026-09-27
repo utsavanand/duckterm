@@ -9,6 +9,20 @@ local pins, and keep stopped or archived sessions in Focus rather than
 silently changing the owner's selection. Check real terminal input as well
 as layout persistence; a mock terminal is not evidence of an interactive one.
 
+## 2026-09-26 — The Mac app's navigation filter must allow srcdoc subframes
+**Broke:** every Markdown artifact preview was a blank box in the Mac app,
+while the same page rendered in a browser at localhost:4300.
+**Cause:** DashboardWindow's navigation policy cancelled anything not on the
+dashboard's http host. Sandboxed srcdoc previews load as `about:srcdoc`, so
+WebKit's iframe load was refused. Browser tests can't see this: they never run
+the native policy.
+**Rule:** web features that add iframes, blob URLs or new schemes need a check
+in a real WKWebView behind the production policy
+(`scripts/test_artifact_preview.sh`), not only Playwright.
+
+## 2026-09-26 — Keep inbox context separate from the message reading area
+
+An expanded session card and onboarding panel looked like inbox messages and pushed actual mail below the fold. Give session context its own collapsed summary and move setup into an explicit tools dialog. Bound the message list through the complete flex layout so it scrolls independently of the heading and controls. Adapt to the pane's width, not just the window, and verify a populated list, long expanded replies, live refresh, and the smaller folder modal. Search and filter counts must describe loaded records, not imply a complete server-side search.
 
 ## 2026-09-26 — Inbox reminders must not stop ongoing work
 
