@@ -1,5 +1,6 @@
 import { splitSessionRef } from "./hostTransport";
 import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
+import { SessionLocationDuck } from "./SessionLocationDuck";
 import { SessionPin } from "./SessionPin";
 import { HelperAgents } from "./HelperAgents";
 import { ReactNode, useEffect, useState } from "react";
@@ -741,7 +742,7 @@ function TreeRow({
           ) : (
             depth > 0 && <span className="rd-row-twig">⑂</span>
           )}
-          <Duck key={s.key} pose={poseFor(effState)} size={24} celebrating={s.celebration} />
+          {desktop() ? <SessionLocationDuck key={s.key} session={s} pose={poseFor(effState)} /> : <Duck key={s.key} pose={poseFor(effState)} size={24} celebrating={s.celebration} />}
           <span className="rd-row-click" onClick={() => onOpen(s.key)}>
             {s.branch && (
               <span
@@ -781,7 +782,6 @@ function TreeRow({
                 {s.label}
               </span>
             )}
-            {desktop() && <span className="rd-host-label" title={s.hostOffline ? "Remote disconnected; local sessions remain available" : s.hostLabel ?? "This Mac"}>{s.hostLabel ?? "This Mac"}{s.hostOffline ? " · Offline" : ""}</span>}
             <span className={`rd-state st-${effState}`} title={stateLabel} aria-label={stateLabel}>{stateLabel}</span>
             {!!s.inboxPending && (
               <button
