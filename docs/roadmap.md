@@ -347,6 +347,40 @@ F12. **Cross-session collaboration is unreliable; the owner has to keep
 
 ## Bugs — open
 
+B9. **Terminal typing latency grows with fleet size** (owner-reported
+    2026-09-27). Investigation:
+    [performance-investigation.md](performance-investigation.md).
+    Measured: 23 live sessions, 44 artifacts, 30,286 events, DB 6 MB → 42 MB
+    in a week. Data volume is not the problem; per-session work multiplied
+    by session count is.
+    **Main cause — every PTY terminal stays mounted always.** `App.tsx`
+    renders all `ptyOwned` sessions and hides the unselected with
+    `display: none`, deliberately, so switching does not reconnect the WS
+    and replay the buffer. At 23 sessions that is 23 live xterm instances,
+    23 WebSockets and 23 parsers decoding continuously — a busy hidden
+    agent still parses every byte and holds 5,000 lines of scrollback, and
+    the foreground terminal competes with 22 others for the main thread
+    that also handles keystrokes. Matches the symptom exactly: monotonic in
+    session count, worst when other agents are busy.
+    Contributing: a **1 Hz whole-dashboard re-render** (`useNow(1000)`)
+    that rebuilds `sessions` as new objects every second while `Terminal`
+    is **not memoized**; **stacked polling** (approvals 2 s, Messages 3 s,
+    inbox ~3 s, history 10 s, seed 30 s) that runs regardless of
+    visibility; and **`/sessions` doing up to three filesystem touches per
+    session per call** (`_transcript_stats_for` reads the transcript tail,
+    `_suites_for` inspects the directory, `_reconcile_waiting` reads the
+    tmux screen) — ~69 at 23 sessions, every 30 s.
+    Fix order: cap mounted terminals to the selected plus N most-recent;
+    memoize `Terminal` and stabilize `sessions` identity; scope the clock
+    tick; make polling visibility-aware; cache the per-row `/sessions` work.
+    **Measure keystroke-to-paint latency against mounted-terminal count
+    first** — without before/after numbers this is guesswork.
+    Not the fix: a Go/Rust byte-pump sidecar (the symptom is client-side, and
+    a sidecar cannot help a main thread reconciling 23 React subtrees) or
+    pruning the database.
+
+
+
 B6. **Desktop notification setting does not work** (owner-reported
     2026-09-25, `ui-dev`). Three distinct defects in App.tsx:171-201:
     - **It does not persist.** `notifyOn` is plain `useState` initialized
