@@ -20,6 +20,16 @@ mistake one-way: dropping back to v4 would raise SchemaTooNewError.
 tag and before install. A revert of a schema-bumping feature keeps its
 `_SCHEMA_VERSION` and leaves its tables in place (#84 reverted, schema stays 5).
 
+## 2026-09-26 — Expand the existing preview without replacing its document
+
+A full-window artifact view must preserve the iframe, scroll position, selected
+artifact and feedback draft. Keep the viewer mounted, restore background access
+and opener focus after returning, and route Escape from the sandboxed frame
+through the same source/origin/nonce checks as selections. Moving Feedback into
+the viewer also makes its React key a sibling of the preview key: namespace them
+separately, or closing feedback can leave duplicate previews after revisions.
+Cover selection, revisions and keyboard return together in a real browser.
+
 ## 2026-09-26 — Changing how a note is answered means changing every place that says how
 **Broke:** after menu notes moved to "answer in the terminal" (#69), the
 control tower's Needs-you list still said "Answer in the chat", and menu rows
