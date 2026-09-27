@@ -1,5 +1,27 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Assert on the pid that matters, and prove the assert can fail
+**Broke:** `test_shutdown_stops_credential_holding_descendant` failed on CI
+with a heartbeat write ~100 ms after the sample point. The first fix waited
+for `os.killpg(proc.pid, 0)` to raise `ProcessLookupError` — and failed on CI
+again, the same way.
+**Cause:** that wait was a no-op. `proc` is the supervisor, which pytest
+starts *without* `start_new_session`, so it is not a group leader and no
+group has its pid; `killpg` raised `ProcessLookupError` on the first call and
+the loop never waited. The group that `run()` actually signals belongs to the
+MCP server (`start_new_session=True`), whose pgid is the inner pid the test
+never saw. A green local run proved nothing, because the assertion could not
+fail.
+**Rule:** when a test asserts "process X is gone", make the fixture report
+X's real pid and group rather than deriving them from a handle that may not
+be the leader, and include them in the failure message so a CI-only failure
+is diagnosable from the log. Before believing any such fix, mutate the
+fixture so the process *does* survive and watch the test go red — an
+assertion never seen failing is not evidence. Local reproduction attempts
+(12 CPU hogs on 14 cores, then 2x oversubscription with `taskpolicy -b`) all
+stayed green while CI stayed red, so treat "cannot reproduce" as a reason to
+strengthen the assertion, not to ship the explanation.
+
 ## 2026-09-26 — Keep inbox context separate from the message reading area
 
 An expanded session card and onboarding panel looked like inbox messages and pushed actual mail below the fold. Give session context its own collapsed summary and move setup into an explicit tools dialog. Bound the message list through the complete flex layout so it scrolls independently of the heading and controls. Adapt to the pane's width, not just the window, and verify a populated list, long expanded replies, live refresh, and the smaller folder modal. Search and filter counts must describe loaded records, not imply a complete server-side search.
