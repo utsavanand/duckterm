@@ -139,6 +139,75 @@ classify differently depending on window contents and timing. Two calls a
 second apart can disagree with no state change at all. Any test that asserts
 a single reading proves little; the spike must measure stability over time.
 
+## Owner-reported symptoms (2026-09-26) — both now root-caused
+
+The owner reported two specific things. Both are real, and both are
+explained by the code rather than needing measurement first.
+
+### Symptom 1: "a duck typing on a computer when the agent isn't doing anything"
+
+The busy pose is shown for up to **five minutes after the agent has
+finished**. `applyEvent` in `web/src/sessions.ts` deliberately returns
+`"busy"` for `Stop` — the event that means *the turn ended* — and leaves
+`effectiveState()` to flip it to idle only once `now - idleSince >=
+IDLE_SETTLE_MS`, where `IDLE_SETTLE_MS = 5 * 60_000`.
+
+That grace exists for a good reason: treating `PostToolUse` as idle made
+sessions flap busy↔idle on every tool call (the comment says so). But the
+cost is that a finished agent is drawn hammering a keyboard for five
+minutes. The duck is not wrong about the data; the data says "busy" long
+after the work stopped.
+
+Worth noting the asymmetry with the celebration feature: the duck
+*celebrates* on the real `busy → idle` transition, which is driven by the
+same settle timer — so the celebration also fires up to five minutes late.
+
+Fix direction (needs owner input, it is a product choice): either shorten
+the grace substantially, or introduce a distinct "settling / just finished"
+pose so the five minutes is honest rather than mislabelled as typing. Do
+not simply treat `Stop` as idle — that reintroduces the flapping the grace
+was added to stop.
+
+### Symptom 2: "they raise hands and then it immediately goes back — hands should stay up until they get attention"
+
+Two independent causes:
+
+1. **Nothing clears `waiting` on attention; only a new event does.**
+   `effectiveState` returns `waiting` as a terminal passthrough, and
+   `applyEvent` only leaves `waiting` when the next hook event arrives
+   (`PreToolUse`/`PostToolUse`/`UserPromptSubmit` → busy). So the hand drops
+   when *the agent does something*, not when the owner looks. If the agent
+   proceeds on its own — or any tool event lands — the hand drops with the
+   question still unanswered from the owner's point of view.
+2. **The server actively overrides `waiting` from the screen.**
+   `_reconcile_waiting` (server.py:1049) glances at the terminal before
+   reporting a pty-owned session as waiting, and **if the harness's
+   `detect_state` reads "busy" it discards the waiting state**. That was
+   added for a real Codex bug (approvals answered in-terminal fire no hook,
+   so a stale `PermissionRequest` made a working session look stuck). But it
+   means the *screen scraper* can veto a genuine hook-driven waiting — and
+   per this spike's other findings those scrapers are the least trustworthy
+   part of the system: Copilot's `_WORKING` regex matches the word
+   "running" or "thinking" anywhere on a line. An agent that prints
+   "thinking…" while genuinely waiting for approval gets its hand pushed
+   down.
+
+Fix direction: the owner's stated expectation — **hands stay up until they
+get attention** — implies `waiting` should be cleared by an explicit
+*acknowledgement* (owner viewed/answered the session), not by an unrelated
+agent event and certainly not by a regex vetoing a hook. Keep the Codex
+reconciliation, but narrow it: only let the screen override `waiting` when
+the *same* runtime's evidence is strong (a "Working (17m)" style progress
+marker), never on a generic word match, and never for hook-driven runtimes.
+
+### What this changes about the spike
+
+These two findings are not "measure and see" — they are decided behaviors
+with known mechanisms. So the spike's measurement work is still worth doing
+for the flap/disagreement rates, but **the duck-accuracy complaints should
+be fixed from the analysis above rather than waiting for a study.** Measure
+the scrapers; fix the settle grace and the waiting lifecycle.
+
 ## What the spike should actually do
 
 1. **Instrument, do not guess.** For every live session, log at intervals:
