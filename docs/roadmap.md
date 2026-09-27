@@ -565,6 +565,28 @@ waiting, which makes it the cheapest possible thing to ship.
 Recommendation, one line: **ship #95 next, ahead of further UI work**, and
 confirm the fix natively in the Mac app rather than only in Chromium.
 
+## B9 SHIPPED AND INSTALLED — v0.4.78 (2026-09-28)
+
+The owner's typing-latency fix is **on their machine**. Verified rather than
+inferred: PR #95 merged, `web/src/Terminal.tsx` exports a `memo(...)`
+wrapper, `App.tsx` keeps only recently-visited terminals mounted, and the
+installed bundle (`index-DFLDw0D3.js`) contains the memo call.
+
+The merge conflict that had held it for four releases was resolved — the
+`useSessionSelection.ts` overlap turned out to be, as suspected, the same
+fix that had already shipped separately via PR #104.
+
+Measured improvement (browser p95, independently reproduced): 5 terminals
+26.7 → 25.9 ms, 15 terminals 51.2 → 26.0 ms, **23 terminals 70.5 → 25.7 ms**
+— flat rather than merely lower, so adding sessions no longer degrades
+typing.
+
+**Still open: native confirmation.** All numbers are from Chromium and the
+owner works in the Mac app. RETRO records three cases where browser e2e
+passed while the WKWebView shell was broken. The acceptance test that
+settles it is the simplest one — **the owner typing across ~23 sessions and
+noticing it is no longer slow.**
+
 ## Bugs — open
 
 B9. **Terminal typing latency — FIXED, awaiting release** (PR #95,
