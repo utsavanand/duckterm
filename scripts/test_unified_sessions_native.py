@@ -94,7 +94,7 @@ MainActor.assumeIsolated {
    if ProcessInfo.processInfo.environment["QA_RESTORE"] == "1" {
     var localReady=false
     for _ in 0..<200 {
-     if (try? await probeEval(web,"[...document.querySelectorAll('.rd-row-name')].some(e=>e.textContent==='Local during remote outage')")) as? Bool == true {localReady=true;break}
+     if (try? await probeEval(web,"[...document.querySelectorAll('.rd-row-name')].some(e=>e.textContent==='Local original')")) as? Bool == true {localReady=true;break}
      try await Task.sleep(nanoseconds:100_000_000)
     }
     guard localReady else {throw NSError(domain:"Local rows missing during offline startup",code:10)}
