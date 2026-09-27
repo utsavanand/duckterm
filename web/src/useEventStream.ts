@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 import { applyEvent } from "./sessions";
 import {
   PersistedSession,
@@ -190,9 +190,9 @@ export function useEventStream(): {
 
   // Stable order: newest session first by START time, which never changes —
   // so cards don't reshuffle (and buttons don't move) as events stream in.
-  const list = [...state.sessions.values()].sort(
+  const list = useMemo(() => [...state.sessions.values()].sort(
     (a, b) => b.startedAt - a.startedAt || a.key.localeCompare(b.key),
-  );
+  ), [state.sessions]);
   const removeSessions = (keys: string[]) => dispatch({ kind: "remove", keys });
   const patchSession = (key: string, fields: Partial<SessionView>) =>
     dispatch({ kind: "patch", key, fields });

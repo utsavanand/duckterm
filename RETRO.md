@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-27 — Hidden terminals still parse output
+
+Keeping every terminal mounted makes switching fast but gives every hidden
+agent a parser competing with foreground keystrokes. Bound the recent-view
+cache, leave server-owned PTYs running, and reconnect older views through the
+existing snapshot path. Measure at fleet scale and test an unfinished input
+line across eviction; a mount-count assertion alone cannot prove safety.
+
 ## 2026-09-26 — Stalled work needs bounded reminders
 
 A cooldown alone still wakes an idle agent forever. Back off after the first
