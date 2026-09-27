@@ -3,6 +3,12 @@
 Status: proposed by product for the owner, 2026-09-27. Not designed or built.
 Owner's direction: "an important feature to build; spec it out properly."
 
+> **2026-09-27 update:** F12 work tracking was reverted in v0.4.74 at the
+> owner's request (too heavy). Sections 3 and 4 below assume F12's work items
+> exist; they no longer do. Before design, the owner chooses: a Feature
+> tracker with its own minimal card data (title, description, folder,
+> column, assignee, evidence link), or waiting for the F12 redesign.
+
 ## Summary
 
 Clicking a folder opens a **folder view**: a page about that folder and its
@@ -11,7 +17,7 @@ The first optional widget is the **Feature tracker**, a Kanban board of coding
 work assigned to the folder and carried out by its agents.
 
 The Feature tracker is a board over the **work items that already exist**
-(F12, shipped in v0.4.72, [work-items.md](work-items.md)), not a new ticket
+(F12, shipped in v0.4.72 and reverted in v0.4.74; design in [collaboration-reliability-design.md](collaboration-reliability-design.md)), not a new ticket
 system. That keeps it within the collaboration design's "don't build a
 ticketing system" rule: one work table, shown per folder.
 
@@ -122,7 +128,7 @@ work, so no relay-authority problem arises.
 
 Kanban for non-coding work, custom columns, widget plugins, cross-folder
 boards, closing cards automatically when a GitHub PR merges (needs a trusted
-integration, per work-items.md), and time estimates.
+integration, per the F12 design), and time estimates.
 
 ## Delivery
 
