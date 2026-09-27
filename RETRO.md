@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-09-27 — Restoring selection must respect collapsed startup folders
+
+Restoring a saved session dispatched the same folder-reveal event as a new
+launch, reopening its parent folders despite the existing collapsed-startup
+behavior. Keep selection restoration independent of folder expansion. Select a
+nested row explicitly before reload in regression tests; relying on the default
+selection made the failure depend on which session arrived first. Native checks
+must verify the selected context even while the corresponding row is hidden.
+
 ## 2026-09-26 — A visible button can still be outside the window
 
 Adding Pin to the Context header crowded the reopen arrow out of its 36px
