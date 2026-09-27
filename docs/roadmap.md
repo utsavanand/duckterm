@@ -49,11 +49,16 @@ Unreleased on main: Copilot nudges, and the settle and peer waits cut from 10
 to 5 minutes. Copilot sessions get an inbox only by hand until item 9 lands.
 
 Oracle Relay (needs-you notes in the chat, answers relayed to the session, rules
-made in plain words) is built on branch `oracle-relay`.
+made in plain words) has shipped. Menu questions link to the agent's terminal
+instead of being answered from the chat.
 
-Next: Oracle on WhatsApp (design PR #25, waiting on five owner answers). Later
-rules (stale state, file collisions, scheduled AGENTS.md suggestions) are
-listed with triggers in the design doc.
+Next: **Oracle on WhatsApp**, design draft
+[oracle-whatsapp-design.md](oracle-whatsapp-design.md), waiting on owner
+answers to its five open questions. Its Phase 0 (a persistent decision log, a
+"needs you" detector, and a status view showing why each session was or wasn't
+nudged) is useful without WhatsApp and comes first. Later rules (stale state,
+file collisions, scheduled AGENTS.md suggestions) are listed with triggers in
+the design doc.
 
 Shipped 2026-09-23–25 (v0.4.40 → v0.4.47):
 
