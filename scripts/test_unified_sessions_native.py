@@ -35,6 +35,7 @@ env = dict(
     os.environ,
     DUCKTERM_HOME=str(state),
     DUCKTERM_NO_BROWSER="1",
+    DUCKTERM_SUMMARIZER="off",
     DUCKTERM_TMUX_SOCKET="unified-qa-" + run,
     PYTHONPATH=str(root / "src"),
     CLAUDE_CONFIG_DIR=str(case / "claude"),
@@ -61,6 +62,12 @@ js = (
 (case / "probe.js").write_text(js)
 source = (root / "mac/Sources/Duckterm/main.swift").read_text()
 source = source[: source.index("MainActor.assumeIsolated {")]
+# On the second process start, withhold only this test app's SSH tunnels until
+# the local feed has loaded. The real remote service and agents keep running.
+source = source.replace(
+    "connection.start()",
+    'if ProcessInfo.processInfo.environment["QA_RESTORE"] != "1" { connection.start() }',
+)
 source += (
     """
 import WebKit
@@ -84,6 +91,27 @@ MainActor.assumeIsolated {
     try await Task.sleep(nanoseconds:100_000_000)
    }
    guard let web,let hostWindow else {throw NSError(domain:"Missing dashboard",code:1)}
+   if ProcessInfo.processInfo.environment["QA_RESTORE"] == "1" {
+    var localReady=false
+    for _ in 0..<200 {
+     if (try? await probeEval(web,"[...document.querySelectorAll('.rd-row-name')].some(e=>e.textContent==='Local during remote outage')")) as? Bool == true {localReady=true;break}
+     try await Task.sleep(nanoseconds:100_000_000)
+    }
+    guard localReady else {throw NSError(domain:"Local rows missing during offline startup",code:10)}
+    try await Task.sleep(nanoseconds:2_000_000_000)
+    let held=try await probeEval(web,"(() => { const s=JSON.parse(localStorage.getItem('rd.selectedSession')); return s?.host==='duckterm-dev' && !document.querySelector('.rd-row.selected'); })()") as? Bool == true
+    guard held else {throw NSError(domain:"Offline remote selection was overwritten",code:11)}
+    let connections=Mirror(reflecting:delegate).children.first {$0.label=="launchConnections"}!.value as! [String:RemoteConnection]
+    connections.values.forEach {$0.start()}
+    var selected=false
+    for _ in 0..<600 {
+     if (try? await probeEval(web,"document.querySelector('.rd-row.selected .rd-row-name')?.textContent==='REMOTE_NAME'")) as? Bool == true {selected=true;break}
+     try await Task.sleep(nanoseconds:100_000_000)
+    }
+    guard selected else {throw NSError(domain:"Remote selection lost after app relaunch",code:12)}
+    print("PASS actual app relaunch: offline selection retained, then remote selected after reconnect");fflush(stdout)
+    app.terminate(nil);return
+   }
    hostWindow.setContentSize(NSSize(width:1400,height:850))
    _=try await probeEval(web,try String(contentsOfFile:"SCRIPT") + ";undefined")
    var previous="";var success=false;var disconnected=false;var reconnected=false
@@ -113,12 +141,12 @@ MainActor.assumeIsolated {
       web.reload()
       var restored=false
       for _ in 0..<300 {
-        let check="(() => { const g=[...document.querySelectorAll('.rd-group-head')].find(e=>e.textContent.includes('Unified QA')); if(g?.querySelector('.rd-group-caret')?.textContent==='▸')g.click(); return [...document.querySelectorAll('.rd-row-name')].some(e=>e.textContent==='REMOTE_NAME'); })()"
+        let check="(() => { const g=[...document.querySelectorAll('.rd-group-head')].find(e=>e.textContent.includes('Unified QA')); if(g?.querySelector('.rd-group-caret')?.textContent==='▸')g.click(); return document.querySelector('.rd-row.selected .rd-row-name')?.textContent==='REMOTE_NAME'; })()"
         if (try? await probeEval(web,check)) as? Bool == true {restored=true;break}
         try await Task.sleep(nanoseconds:100_000_000)
       }
       guard restored,hostWindow.contentView === web else {throw NSError(domain:"Mixed grouping did not survive reload",code:5)}
-      print("PASS",result,"grouping persisted across reload");success=true;break
+      print("PASS",result,"grouping and selection persisted across reload");success=true;break
     }
     try await Task.sleep(nanoseconds:100_000_000)
    }
@@ -173,6 +201,9 @@ try:
     if result.returncode:
         print("SERVER LOG", (case / "server.log").read_text()[-5000:])
     result.check_returncode()
+    subprocess.run(
+        [str(contents / "MacOS/DuckTerm")], env={**env, "QA_RESTORE": "1"}, timeout=100, check=True
+    )
 finally:
     cleanup = """import json,re,urllib.request
 base='http://127.0.0.1:REMOTE_PORT'

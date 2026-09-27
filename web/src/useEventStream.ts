@@ -143,6 +143,7 @@ export function reduce(state: State, action: Action): State {
 export function useEventStream(): {
   sessions: SessionView[];
   connected: boolean;
+  loadedHosts: string[];
   recentEvents: DucktermEvent[];
   removeSessions: (keys: string[]) => void;
   patchSession: (key: string, fields: Partial<SessionView>) => void;
@@ -152,6 +153,7 @@ export function useEventStream(): {
     tombstoned: new Set<string>(),
   });
   const [connected, setConnected] = useState(false);
+  const [loadedHosts, setLoadedHosts] = useState<string[]>([]);
   // Rolling buffer of the newest events, newest first (live activity feed).
   const [recentEvents, setRecentEvents] = useState<DucktermEvent[]>([]);
 
@@ -171,7 +173,10 @@ export function useEventStream(): {
         void hostFetch(host.id, "/sessions").then(async response => {
           if (!response.ok) throw new Error("Remote unavailable");
           const data = await response.json() as { sessions: PersistedSession[] };
-          if (!stopped) dispatch({ kind: "remote-snapshot", host: host.id, label: host.name.replace(/^Remote — /, ""), sessions: data.sessions, groups: remoteGroups() });
+          if (!stopped) {
+            dispatch({ kind: "remote-snapshot", host: host.id, label: host.name.replace(/^Remote — /, ""), sessions: data.sessions, groups: remoteGroups() });
+            setLoadedHosts(previous => previous.includes(host.id) ? previous : [...previous, host.id]);
+          }
         }).catch(() => { if (!stopped) dispatch({ kind: "remote-offline", host: host.id }); })
           .finally(() => {
             busy.delete(host.id);
@@ -196,9 +201,12 @@ export function useEventStream(): {
     let cancelled = false;
     const seed = () =>
       fetch("/sessions")
-        .then((r) => r.json())
+        .then((r) => { if (!r.ok) throw new Error("Local sessions unavailable"); return r.json(); })
         .then((data: { sessions: PersistedSession[] }) => {
-          if (!cancelled) dispatch({ kind: "seed", sessions: data.sessions });
+          if (!cancelled) {
+            dispatch({ kind: "seed", sessions: data.sessions });
+            setLoadedHosts(previous => previous.includes("local") ? previous : [...previous, "local"]);
+          }
         })
         .catch(() => undefined);
     seed();
@@ -256,6 +264,7 @@ export function useEventStream(): {
   return {
     sessions: list,
     connected,
+    loadedHosts,
     recentEvents,
     removeSessions,
     patchSession,

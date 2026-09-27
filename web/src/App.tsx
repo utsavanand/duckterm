@@ -40,6 +40,7 @@ import {
 } from "./termThemes";
 import { Modal, ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
+import { useSessionSelection } from "./useSessionSelection";
 import { useTheme } from "./useTheme";
 import { useSidebarDensity } from "./useSidebarDensity";
 import { useFolders } from "./useFolders";
@@ -55,7 +56,7 @@ function useNow(intervalMs: number): number {
 }
 
 function Dashboard() {
-  const { sessions: sourceSessions, connected, removeSessions, patchSession } =
+  const { sessions: sourceSessions, connected, loadedHosts, removeSessions, patchSession } =
     useEventStream();
   const inboxCounts = useInboxCounts();
   const sidePanels = useSidePanels();
@@ -70,12 +71,11 @@ function Dashboard() {
   >(desktop()?.draft ? "launch" : null);
   const [towerOpen, setTowerOpen] = useState(false);
   const relayOpen = useRelayCount();
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const pendingDesktopSession = useRef(desktop()?.selectedSession);
+  const defaultSelection = sessions.find(s => effectiveState(s, now) !== "archived")?.key ?? null;
+  const { selectedKey, selectSession: setSelectedKey } = useSessionSelection(sessions, defaultSelection, loadedHosts);
   useEffect(() => {
     const select = (event: Event) => {
       const key = (event as CustomEvent<string>).detail;
-      pendingDesktopSession.current = key;
       setSelectedKey(key);
     };
     const selectNative = (event: Event) => {
@@ -85,7 +85,7 @@ function Dashboard() {
     window.addEventListener("native-select-session", selectNative);
     window.addEventListener("select-host-session", select);
     return () => { window.removeEventListener("select-host-session", select); window.removeEventListener("native-select-session", selectNative); };
-  }, []);
+  }, [setSelectedKey]);
   const messagePins = useMessagePins(selectedKey);
   const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
   const pinSequence = useRef(0);
@@ -224,20 +224,6 @@ function Dashboard() {
       setNotifyOn((v) => !v);
     }
   }
-
-  // Default the selection to the first agent so the center pane isn't empty.
-  useEffect(() => {
-    if (pendingDesktopSession.current) {
-      const key = pendingDesktopSession.current;
-      if (sessions.some(s => s.key === key)) {
-        pendingDesktopSession.current = undefined;
-        setSelectedKey(key);
-      }
-      return;
-    }
-    if (selectedKey && sessions.some((s) => s.key === selectedKey)) return;
-    setSelectedKey(agents[0]?.key ?? null);
-  }, [agents, selectedKey, sessions]);
 
   const selected = sessions.find((s) => s.key === selectedKey) ?? null;
   const forkSession = sessions.find((s) => s.key === forkKey) ?? null;
@@ -553,7 +539,6 @@ function Dashboard() {
           group={launchGroup}
           folders={folders}
           onCreated={(key, group) => {
-            pendingDesktopSession.current = key;
             setSelectedKey(key);
             window.dispatchEvent(new CustomEvent("reveal-sidebar-folder", { detail: group }));
             patchSession(key, { group: group || undefined });

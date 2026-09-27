@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-27 — Restoring rows does not restore selection
+Native acceptance restored remote rows and grouping but missed the selected
+row after quitting the app. Persist machine plus session ID at selection time.
+Local data arriving first must not overwrite an offline remote selection; only
+a successful snapshot from that host can establish that the saved row is gone.
+An explicit user choice cancels the pending restoration. Verify an actual app
+relaunch as well as reload, and make failed acceptance assertions fail the run.
+
 ## 2026-09-26 — Changing how a note is answered means changing every place that says how
 **Broke:** after menu notes moved to "answer in the terminal" (#69), the
 control tower's Needs-you list still said "Answer in the chat", and menu rows
