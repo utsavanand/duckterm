@@ -1,5 +1,28 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Stalled work needs bounded reminders
+
+A cooldown alone still wakes an idle agent forever. Back off after the first
+reminder, stop after the second without progress, and notify the requester.
+Persist the count across restart and share it with task-end notices. Keep
+status maintenance outside the Oracle kill switch.
+
+## 2026-09-26 — Acceptance must reconcile pre-created work
+
+Work can be explicitly tracked before its inbox request is accepted. Reusing
+the existing ID is not enough: acceptance must advance its proposed state,
+while preserving later progress and any intervening reassignment. Cover both
+creation orders and retries, including requests without work-title metadata.
+
+## 2026-09-26 — Closing a message must not erase the work
+
+An inbox reply records a conversation, not an outcome. Keep assigned work in
+its own durable record, require completion evidence or a named blocker, and
+return declined/unavailable assignments for reassignment instead of deleting
+them. Closing an old message after a handoff must not unassign its successor.
+Store work-reminder timestamps in SQLite so restarting Oracle cannot repeat
+an hourly reminder; use fixed reminder text rather than copying peer content.
+
 ## 2026-09-26 — Instruction files written once go stale, and nudges must say what to do
 **Broke:** 15 of 27 sessions' collaboration.md still said questions expire
 after five minutes, so long-running agents passed --timeout and their work

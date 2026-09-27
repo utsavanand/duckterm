@@ -471,6 +471,10 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        work_path = urllib.parse.urlsplit(path)
+        if work_path.path == "/work" or re.fullmatch(r"/work/w-[a-f0-9]{32}", work_path.path):
+            await self._work_items(writer, headers, method, work_path.path, work_path.query, body)
+            return
         if path == "/backup" and method in {"GET", "PUT", "POST"}:
             await self._backup(writer, headers, method, body)
             return
@@ -662,6 +666,42 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         await _write_json(writer, 200, {"counts": self.history.session_api.pending_counts()})
+
+    async def _work_items(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        method: str,
+        path: str,
+        query: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            req = json.loads(body or b"{}")
+            if not isinstance(req, dict):
+                raise APIError(400, "expected a JSON object")
+            work = self.history.session_api.work
+            if method == "GET" and path == "/work":
+                params = urllib.parse.parse_qs(query)
+                result = work.listing(
+                    None, before=int(params["before"][0]) if "before" in params else None
+                )
+            elif method == "GET":
+                result = work.get(None, path.rsplit("/", 1)[1])
+            elif method == "PATCH" and path != "/work":
+                result = work.update(None, path.rsplit("/", 1)[1], req)
+            else:
+                raise APIError(405, "method not allowed")
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except (ValueError, UnicodeDecodeError):
+            await _write_json(writer, 400, {"error": "invalid JSON or cursor"})
+            return
+        await _write_json(writer, 200, result)
 
     async def _session_inbox(
         self, writer: asyncio.StreamWriter, session_key: str, headers: dict[str, str], query: str
@@ -3883,11 +3923,13 @@ class Server:
         while True:
             await asyncio.sleep(20)
             ticks += 1
-            if ticks % 3 == 0 and os.environ.get("DUCKTERM_ORACLE") != "off":
+            if ticks % 3 == 0:
                 # An exception here would end this loop, silently stopping both
                 # Oracle and the dead-session sweep below.
                 try:
-                    await self._oracle_tick()
+                    self.history.session_api.work.tick(int(time.time() * 1000))
+                    if os.environ.get("DUCKTERM_ORACLE") != "off":
+                        await self._oracle_tick()
                 except Exception:
                     traceback.print_exc()
             now = int(time.time() * 1000)
@@ -3937,6 +3979,7 @@ class Server:
                 continue
             try:
                 mail = self.history.session_api.open_mail(key)
+                mail += self.history.session_api.work.nudge_items(key, now)
             except APIError:
                 continue
             if not mail:
@@ -3961,6 +4004,7 @@ class Server:
             status = await self._submit_prompt(key, text)
             if status == "failed":
                 continue
+            self.history.session_api.work.notified(picked, now)
             ids = sorted(str(m["id"]) for m in picked)
             self._oracle_nudges[key] = oracle.Nudge(frozenset(ids), now)
             self.bus.publish(
