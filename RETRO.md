@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-09-27 — Session location must follow the duck into Oracle
+
+The sidebar cloud did not reach Oracle because its fleet ducks rendered the
+base mascot directly. Reuse the location component across both views, preserve
+Oracle's button focus and activity poses, and cover remote disconnection and
+recovery while Oracle stays open. A sidebar-only test missed this surface.
+
 ## 2026-09-27 — Mark the remote exception without decorating every local row
 
 The location preview added a computer badge to each local duck; the owner

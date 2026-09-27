@@ -35,8 +35,28 @@ test("location icons preserve names and expose remote identity, disconnection an
       expect(name.width).toBeGreaterThan(100);
       await page.screenshot({ path: `/tmp/session-location-${mode}-implemented.png` });
     }
+    await page.getByRole('button', { name: 'Oracle', exact: true }).click();
+    const oracleLocal = page.locator('.rd-tower-duck', { hasText: 'local-reviewer' });
+    const oracleRemote = page.locator('.rd-tower-duck', { hasText: 'remote-reviewer' });
+    await expect(oracleLocal).toBeVisible();
+    await expect(oracleLocal.locator('.rd-location-cloud')).toHaveCount(0);
+    await expect(oracleRemote.locator('.rd-location-cloud')).toBeVisible();
+    await expect(oracleRemote).toHaveAccessibleName(/Remote · Build server/);
+    await expect(oracleRemote.locator('[tabindex]')).toHaveCount(0);
+    const cloudBox = (await oracleRemote.locator('.rd-location-cloud').boundingBox())!;
+    const labelBox = (await oracleRemote.locator('.rd-tower-duck-name').boundingBox())!;
+    expect(cloudBox.y + cloudBox.height).toBeLessThanOrEqual(labelBox.y + 1);
+    await oracleRemote.click();
+    await expect(page.getByRole('dialog', { name: 'remote-reviewer details' })).toContainText('Remote · Build server');
+    await page.keyboard.press('Escape');
+    await page.mouse.move(0, 0);
+    await page.screenshot({ path: '/tmp/oracle-remote-cloud.png' });
     await page.evaluate(() => { localStorage.setItem('probe.remoteOffline', 'true'); window.dispatchEvent(new Event('remote-sessions-refresh')); });
     const disconnected = remote.getByRole('group', { name: 'Remote · Build server · Disconnected', exact: true });
+    await expect(oracleRemote).toHaveAccessibleName(/Disconnected/);
+    await expect(oracleRemote.locator('.rd-location-cloud path')).toHaveCount(2);
+    await page.screenshot({ path: '/tmp/oracle-remote-cloud-offline.png' });
+    await page.getByRole('button', { name: '← Sessions', exact: true }).click();
     await expect(disconnected).toBeVisible();
     await expect(remote.locator('.rd-location-cloud path')).toHaveCount(2);
     await expect(computer).toBeVisible();
@@ -44,6 +64,10 @@ test("location icons preserve names and expose remote identity, disconnection an
     await page.screenshot({ path: '/tmp/session-location-offline-implemented.png' });
     await page.evaluate(() => { localStorage.removeItem('probe.remoteOffline'); window.dispatchEvent(new Event('remote-sessions-refresh')); });
     await expect(cloud).toBeVisible();
+    await page.getByRole('button', { name: 'Oracle', exact: true }).click();
+    await expect(oracleRemote).not.toHaveAccessibleName(/Disconnected/);
+    await expect(oracleRemote.locator('.rd-location-cloud path')).toHaveCount(1);
+    await page.getByRole('button', { name: '← Sessions', exact: true }).click();
     await expect(remote.locator('.rd-location-cloud path')).toHaveCount(1);
     await expect(page.locator('.rd-row-name', { hasText: 'remote-reviewer' })).toHaveCount(1);
   } finally { await apiDelete(`/sessions/${key}`); }

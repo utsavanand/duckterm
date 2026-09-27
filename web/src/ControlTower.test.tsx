@@ -99,3 +99,16 @@ it("sends a menu question straight to the agent's terminal", async () => {
   fireEvent.click(row);
   expect(onOpenTerminal).toHaveBeenCalledWith("rel");
 });
+
+
+it("shows the remote cloud in Oracle fleet and needs-you ducks without adding nested tab stops", async () => {
+  vi.mocked(api.controlTower).mockResolvedValue(insights);
+  const remote = agent({ key: "qa", host: "build", hostLabel: "Build server", shownState: "waiting", hostOffline: true });
+  render(<ControlTower agents={[...agents.filter(a => a.key !== "qa"), remote]} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />);
+  const duck = screen.getByRole("button", { name: /qa, Duckterm, Waiting on you, Remote · Build server · Disconnected/ });
+  expect(duck.querySelector('.rd-location-cloud')).not.toBeNull();
+  expect(duck.querySelector('[tabindex]')).toBeNull();
+  expect(screen.getByRole("button", { name: "architect, Duckterm, Busy" }).querySelector('.rd-location-cloud')).toBeNull();
+  const needs = await screen.findByRole("region", { name: "Needs you" });
+  expect(within(needs).getByRole("group", { name: "Remote · Build server · Disconnected" })).toBeInTheDocument();
+});
