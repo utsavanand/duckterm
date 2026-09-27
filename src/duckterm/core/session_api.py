@@ -991,8 +991,10 @@ class SessionAPI:
         if work_title is not None:
             work_title = _text(work_title, "work_title", 500)
         if question["status"] == state and question["answer"] == answer:
-            if action == "accept" and work_title:
-                question["work"] = self.work.create(key, question["id"], work_title)
+            if action == "accept":
+                work = self.work.accept_request(key, question["id"], work_title)
+                if work is not None:
+                    question["work"] = work
             return 200, question
         allowed = ("queued", "read") if question["kind"] == "broadcast" else ("queued", "accepted")
         if question["status"] not in allowed:
@@ -1011,6 +1013,8 @@ class SessionAPI:
             if state in {"declined", "cancelled"}:
                 self.work.release_request(question["id"])
         result = self._question(key, question["id"])
-        if action == "accept" and work_title:
-            result["work"] = self.work.create(key, question["id"], work_title)
+        if action == "accept":
+            work = self.work.accept_request(key, question["id"], work_title)
+            if work is not None:
+                result["work"] = work
         return 200, result

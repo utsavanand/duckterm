@@ -250,6 +250,18 @@ def test_work_nudge_cooldown_survives_restart_and_does_not_repeat_at_hour_bounda
     try:
         assert second.session_api.work.turn_notice("b") is None
         assert second.session_api.work.nudge_items("b", now[0] + HOUR // 2) == []
+        assert second.session_api.work.nudge_items("b", now[0] + HOUR) == []
+        later = now[0] + 4 * HOUR
+        retry = second.session_api.work.nudge_items("b", later)
+        assert len(retry) == 1
+        second.session_api.work.notified(retry, later)
+        assert second.session_api.work.nudge_items("b", later + 100 * HOUR) == []
+        assert any(
+            u.get("kind") == "attention_needed" for u in second.session_api.work.updates("a")
+        )
+        now[0] = later + 100 * HOUR
+        assert second.session_api.work.turn_notice("b") is None
+        update(store, auth, work, {"state": "in_progress", "note": "Resumed"})
         assert len(second.session_api.work.nudge_items("b", now[0] + HOUR)) == 1
     finally:
         second.close()
@@ -446,3 +458,99 @@ def test_work_instructions_match_cli_states_and_persistent_request_default():
     for state in STATES:
         args = parser.parse_args(["session", "work", "update", "w-example", "--state", state])
         assert args.state == state
+
+
+@pytest.mark.parametrize("title", [None, "Fix the bug"])
+def test_accept_reconciles_precreated_work_and_retries_preserve_progress(scenario, title):
+    store, auth = scenario
+    q = request(store, auth, title=title)
+    work = call(
+        store, auth["a"], "POST", "/work", {"origin_request_id": q["id"], "title": "Explicit work"}
+    )[1]
+    assert work["state"] == "proposed"
+    accepted = accept(store, auth, q)["work"]
+    assert accepted["id"] == work["id"] and accepted["state"] == "accepted"
+    assert len(accept(store, auth, q)["work"]["history"]) == 2
+    update(store, auth, work, {"state": "in_progress"})
+    assert accept(store, auth, q)["work"]["state"] == "in_progress"
+
+
+def test_accept_old_request_does_not_reclaim_forwarded_precreated_work(scenario):
+    store, auth = scenario
+    q = request(store, auth)
+    work = call(
+        store, auth["a"], "POST", "/work", {"origin_request_id": q["id"], "title": "Explicit work"}
+    )[1]
+    update(store, auth, work, {"owner_session": "c", "note": "Handoff"}, who="a")
+    accepted = accept(store, auth, q)
+    assert accepted["status"] == "accepted" and "work" not in accepted
+    current = store.session_api.work.get("c", work["id"])
+    assert current["state"] == "proposed" and current["owner_session"] == "c"
+    assert "work" not in accept(store, auth, q)
+
+
+@pytest.mark.parametrize("version", [3, 4])
+def test_existing_database_migrates_work_without_losing_columns(tmp_path, monkeypatch, version):
+    import sqlite3
+
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path))
+    path = tmp_path / "db.sqlite"
+    old = HistoryStore(path)
+    old.close()
+    with sqlite3.connect(path) as conn:
+        for table in ("session_work", "session_work_events", "session_work_updates"):
+            conn.execute(f"DROP TABLE {table}")
+        for column in ("parent_request_id", "work_title"):
+            conn.execute(f"ALTER TABLE session_questions DROP COLUMN {column}")
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+        if "pinned" in columns:
+            conn.execute("ALTER TABLE sessions DROP COLUMN pinned")
+        if version == 4:
+            conn.execute("ALTER TABLE sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+        conn.execute(f"PRAGMA user_version={version}")
+        original_columns = {r[1] for r in conn.execute("PRAGMA table_info(sessions)")}
+    migrated = HistoryStore(path)
+    try:
+        assert migrated._conn.execute("PRAGMA user_version").fetchone()[0] == 5
+        columns = {r["name"] for r in migrated._conn.execute("PRAGMA table_info(sessions)")}
+        assert original_columns <= columns
+        if version == 4:
+            assert "pinned" in columns
+        question_columns = {
+            r["name"] for r in migrated._conn.execute("PRAGMA table_info(session_questions)")
+        }
+        assert {"parent_request_id", "work_title"} <= question_columns
+        assert "notice_count" in {
+            r["name"] for r in migrated._conn.execute("PRAGMA table_info(session_work)")
+        }
+        assert migrated.session_api.work.listing(None)["work"] == []
+    finally:
+        migrated.close()
+
+
+def test_work_maintenance_runs_with_oracle_disabled(scenario, monkeypatch):
+    import asyncio
+
+    store, _ = scenario
+    server = Server(history=store)
+    monkeypatch.setenv("DUCKTERM_ORACLE", "off")
+    calls = []
+    monkeypatch.setattr(store.session_api.work, "tick", lambda now: calls.append(now))
+    monkeypatch.setattr(store, "sweep_dead", lambda *args, **kwargs: [])
+    monkeypatch.setattr(store, "live_watched", lambda: [])
+    count = 0
+
+    async def sleep(_):
+        nonlocal count
+        count += 1
+        if count > 3:
+            raise asyncio.CancelledError
+
+    async def forbidden():
+        pytest.fail("Oracle must stay disabled")
+
+    monkeypatch.setattr(asyncio, "sleep", sleep)
+    monkeypatch.setattr(server, "_oracle_tick", forbidden)
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(server._sweep_dead_loop())
+    assert len(calls) == 1

@@ -3894,11 +3894,13 @@ class Server:
         while True:
             await asyncio.sleep(20)
             ticks += 1
-            if ticks % 3 == 0 and os.environ.get("DUCKTERM_ORACLE") != "off":
+            if ticks % 3 == 0:
                 # An exception here would end this loop, silently stopping both
                 # Oracle and the dead-session sweep below.
                 try:
-                    await self._oracle_tick()
+                    self.history.session_api.work.tick(int(time.time() * 1000))
+                    if os.environ.get("DUCKTERM_ORACLE") != "off":
+                        await self._oracle_tick()
                 except Exception:
                     traceback.print_exc()
             now = int(time.time() * 1000)
@@ -3941,7 +3943,6 @@ class Server:
         wait until the owner happens to look. Gates live in core/oracle.py."""
         now = int(time.time() * 1000)
         await self._clear_stale_waiting(now)
-        self.history.session_api.work.tick(now)
         for row in self.history.sessions():
             key = str(row["session_key"])
             sup = self.orchestrator.get(key)

@@ -1,5 +1,19 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Stalled work needs bounded reminders
+
+A cooldown alone still wakes an idle agent forever. Back off after the first
+reminder, stop after the second without progress, and notify the requester.
+Persist the count across restart and share it with task-end notices. Keep
+status maintenance outside the Oracle kill switch.
+
+## 2026-09-26 — Acceptance must reconcile pre-created work
+
+Work can be explicitly tracked before its inbox request is accepted. Reusing
+the existing ID is not enough: acceptance must advance its proposed state,
+while preserving later progress and any intervening reassignment. Cover both
+creation orders and retries, including requests without work-title metadata.
+
 ## 2026-09-26 — Closing a message must not erase the work
 
 An inbox reply records a conversation, not an outcome. Keep assigned work in

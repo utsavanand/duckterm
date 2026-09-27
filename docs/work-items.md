@@ -46,8 +46,11 @@ Accepted or in-progress work becomes stale after an hour without an update.
 Oracle checks it on its existing sweep, using the existing idle, empty-prompt,
 and typing-quiet gates. Proposed handoffs become eligible after five minutes.
 No new scheduler or background worker is added. Reminders contain fixed text,
-not the task title or peer's instructions. Stored notice timestamps limit work
-reminders to once an hour, including across restarts and task-end notices.
+not the task title or peer's instructions. Stored notice timestamps and counts limit unchanged work to two reminders,
+with four hours between them, including across restarts and task-end notices.
+After the second reminder the requester receives an attention-needed update;
+further reminders stop until progress changes. Work-status maintenance keeps
+running when Oracle nudges are disabled.
 Busy agents are not interrupted. Blocked work is displayed for a decision,
 not repeatedly nudged as if the assignee could resolve it alone.
 

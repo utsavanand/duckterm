@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS session_work (
  state TEXT NOT NULL, blocker TEXT NOT NULL DEFAULT '', evidence TEXT NOT NULL DEFAULT '',
  owner_authorized INTEGER NOT NULL DEFAULT 0,
  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, closed_at INTEGER,
- last_notice_at INTEGER NOT NULL DEFAULT 0, last_status_at INTEGER NOT NULL DEFAULT 0
+ last_notice_at INTEGER NOT NULL DEFAULT 0, notice_count INTEGER NOT NULL DEFAULT 0,
+ last_status_at INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS work_assignee ON session_work(owner_session, state);
 CREATE TABLE IF NOT EXISTS session_work_events (
@@ -43,6 +44,11 @@ class WorkItems:
         self.api = api
         self.conn = api.conn
         self.conn.executescript(SCHEMA)
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(session_work)")}
+        if "notice_count" not in columns:
+            self.conn.execute(
+                "ALTER TABLE session_work ADD COLUMN notice_count INTEGER NOT NULL DEFAULT 0"
+            )
 
     def _visible(self, key: str | None, row: dict[str, Any]) -> bool:
         if key is None:
@@ -135,6 +141,20 @@ class WorkItems:
             self._event(work_id, key, state, "Created from inbox request", now)
         return self.get(key, work_id)
 
+    def accept_request(self, key: str, request_id: str, title: str | None) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT * FROM session_work WHERE origin_request_id=?", (request_id,)
+        ).fetchone()
+        if row is None:
+            return self.create(key, request_id, title) if title else None
+        # Accepting an old message must not reclaim a forwarded assignment or
+        # reveal the successor's private progress to its previous assignee.
+        if not self._visible(key, dict(row)):
+            return None
+        if row["owner_session"] == key and row["state"] == "proposed":
+            return self.update(key, row["id"], {"state": "accepted"})
+        return self.get(key, row["id"])
+
     def _event(self, work_id: str, actor: str | None, state: str, note: str, now: int) -> int:
         cur = self.conn.execute(
             "INSERT INTO session_work_events "
@@ -209,7 +229,8 @@ class WorkItems:
             self.conn.execute(
                 "UPDATE session_work SET "
                 "state=?,owner_session=?,blocker=?,evidence=?,owner_authorized=?,"
-                "updated_at=?,closed_at=?,last_status_at=0 WHERE id=?",
+                "updated_at=?,closed_at=?,last_status_at=0,last_notice_at=0,notice_count=0 "
+                "WHERE id=?",
                 (
                     state,
                     assignee,
@@ -377,6 +398,13 @@ class WorkItems:
             )
         ]
 
+    @staticmethod
+    def _notice_due(row: dict[str, Any], now: int) -> bool:
+        return bool(
+            row["notice_count"] < 2
+            and (row["notice_count"] == 0 or now - row["last_notice_at"] >= 4 * HOUR)
+        )
+
     def nudge_items(self, key: str, now: int) -> list[dict[str, Any]]:
         proposed = [
             dict(r)
@@ -395,26 +423,43 @@ class WorkItems:
                 "created_at": r["updated_at"],
             }
             for r in self.stale(key, now) + proposed
-            if now - r["last_notice_at"] >= HOUR
+            if self._notice_due(r, now)
         ]
 
     def notified(self, items: list[dict[str, Any]], now: int) -> None:
         with self.conn:
-            self.conn.executemany(
-                "UPDATE session_work SET last_notice_at=? WHERE id=?",
-                [(now, item["work_id"]) for item in items if item.get("kind") == "work"],
-            )
+            for item in items:
+                if item.get("kind") != "work":
+                    continue
+                self.conn.execute(
+                    "UPDATE session_work SET last_notice_at=?,notice_count=notice_count+1 "
+                    "WHERE id=? AND notice_count<2",
+                    (now, item["work_id"]),
+                )
+                row = self.conn.execute(
+                    "SELECT * FROM session_work WHERE id=?", (item["work_id"],)
+                ).fetchone()
+                if row and row["notice_count"] == 2:
+                    self._notify(
+                        row["requester"],
+                        row["root"],
+                        f"reminder-limit:{row['id']}:{row['updated_at']}",
+                        {
+                            "work_id": row["id"],
+                            "kind": "attention_needed",
+                            "state": row["state"],
+                            "note": "Two reminders sent without a progress update. "
+                            "Further reminders paused; review or reassign this work.",
+                        },
+                        now,
+                    )
 
     def turn_notice(self, key: str) -> str | None:
         now = int(time.time() * 1000)
-        rows = [r for r in self.stale(key, now) if now - r["last_notice_at"] >= HOUR]
+        rows = [r for r in self.stale(key, now) if self._notice_due(r, now)]
         if not rows:
             return None
-        with self.conn:
-            self.conn.executemany(
-                "UPDATE session_work SET last_notice_at=? WHERE id=?",
-                [(now, r["id"]) for r in rows],
-            )
+        self.notified([{"kind": "work", "work_id": r["id"]} for r in rows], now)
         return (
             f"{len(rows)} work item(s) have no update for at least an hour. "
             "Run duckterm session work list, update progress or record a blocker, "
