@@ -133,8 +133,9 @@ export function applyAll(events: DucktermEvent[]): Map<string, SessionView> {
 
 
 // Per-model context windows. A hardcoded 200k flagged a fable-5 session
-// (1M window) as nearly full at 123k. Unknown models keep the pessimistic
-// 200k default — warning too early beats never warning.
+// (1M window) as nearly full at 123k. Unknown models keep a 200k default for
+// the number, but it renders as "window unknown" and never drives a warning
+// (see contextWindowIsAssumed).
 const MODEL_WINDOWS: [RegExp, number][] = [
   [/fable|mythos/i, 1_000_000],
   [/opus-5/i, 1_000_000],
