@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-27 — Selection restoration must not reopen folders
+
+Restoring the saved session dispatched the same folder-reveal event as an
+explicit launch, undoing the collapsed-on-restart sidebar default. Restore the
+active session independently from folder expansion. Regression tests must select
+a nested session before reloading and verify both its restored selection and
+collapsed ancestors; merely opening folders leaves this dependent on timing.
+
 ## 2026-09-26 — A visible button can still be outside the window
 
 Adding Pin to the Context header crowded the reopen arrow out of its 36px

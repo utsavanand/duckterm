@@ -31,8 +31,7 @@ it("restores a remote choice across remount and local-first offline startup with
   const reveal = vi.fn(); window.addEventListener("reveal-sidebar-folder", reveal);
   restored.rerender({ rows:[local,remote], loadedHosts:["local","qa-remote"] });
   expect(restored.result.current.selectedKey).toBe(remoteKey);
-  expect(reveal).toHaveBeenCalledOnce();
-  expect((reveal.mock.calls[0][0] as CustomEvent).detail).toBe("Projects");
+  expect(reveal).not.toHaveBeenCalled();
   window.removeEventListener("reveal-sidebar-folder", reveal);
 });
 

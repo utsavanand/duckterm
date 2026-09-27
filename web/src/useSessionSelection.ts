@@ -48,7 +48,8 @@ export function useSessionSelection(sessions: SessionView[], defaultKey: string 
       if (pending) {
         saveSelection(key);
         setSelection({ key, pending: false, restoring: false });
-        if (restoring && selected.group) window.dispatchEvent(new CustomEvent("reveal-sidebar-folder", { detail: selected.group }));
+        // Restoring the active session must leave sidebar folders collapsed.
+        // Explicit launches reveal their folder separately in App.
       }
       return;
     }
