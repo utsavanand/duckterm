@@ -544,6 +544,41 @@ F13. **Compact session-location indicators — IMPLEMENTED, awaiting
      row text into an icon. Evidence caveat: browser checks used a
      controlled remote bridge, **not live SSH**.
 
+F14. **Cross-host session discovery and messaging** (owner-requested
+     2026-09-28). Design:
+     [cross-host-collaboration-design.md](cross-host-collaboration-design.md).
+     Symptom: local `sotto` cannot discover `sotto-remote` although both
+     appear in the unified Mac app.
+     **Not a bug — a deliberately unbuilt capability.** `/peers` resolves
+     both parties from the *local* SQLite and refuses unless roots match, so
+     a session on another machine is invisible rather than denied; the Mac
+     app is the only thing that spans hosts (via its SSH
+     `session-request` proxy); and `hostTransport.ts` states outright that
+     *"desktop grouping is presentation metadata… must not change remote
+     inbox authorization"*. The job is to add the capability **without**
+     converting "drawn in the same list" into "can message each other".
+     Recommended architecture: **desktop-relayed, servers stay
+     loopback-only** — the app already holds authenticated SSH transports,
+     so nothing new becomes network-reachable and SSH keeps owning auth
+     (same reasoning as connectors and `backup --to gs://`). Rejected:
+     server-to-server federation, which would make every laptop an inbound
+     network service against the whole security model. Deferred: relay-
+     mediated, which is the only headless option and should be revisited
+     when `share.duckterm.com` ships.
+     Key constraints: host-qualified identity reusing the existing
+     `~remote~<hex>` shape so equal session ids on two hosts stay distinct;
+     **explicit owner-granted teams stored on BOTH servers** so either can
+     revoke independently; store-and-forward with the **existing**
+     idempotency keys so a retry after a half-delivered send is safe;
+     unreachable peers shown as unreachable rather than absent; and a
+     bare session id still resolving locally so no command changes meaning.
+     **Owner approved the architecture 2026-09-28** — app-required is
+     acceptable ("don't mind mac app open for local to remote messaging"),
+     so desktop-relayed is settled and the relay stays a later headless
+     path. Two smaller decisions remain in the doc: grant granularity
+     (recommend folder-to-folder) and whether a remote peer is visible
+     pre-grant (recommend invisible).
+
 ## B9 is the oldest unshipped fix (2026-09-28)
 
 **The owner's typing-latency fix has still not reached them.** Installed is
