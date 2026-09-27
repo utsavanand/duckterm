@@ -50,29 +50,6 @@ Updating the same path replaces its saved copy; other paths remain separate.
 If registration fails, report it and retain the source file; do not claim the
 artifact is in the app. Existing files are not automatically scanned or imported.
 
-## Track outcomes, not just replies
-
-For an implementation assignment, use `duckterm session ask SESSION_ID "Request"
---work-title "Short outcome"`. Acceptance automatically creates a persistent work
-item. For an existing request, use `duckterm session accept REQUEST_ID --work-title
-"Short outcome"`. Ordinary questions do not need a work item.
-
-- `duckterm session work list`: review your requested and assigned work.
-- `duckterm session work get WORK_ID`: read its state and progress history.
-- `duckterm session work update WORK_ID --state in_progress --note "Progress"`
-- `duckterm session work update WORK_ID --state blocked --blocker "Decision needed"`
-- `duckterm session work update WORK_ID --state done --evidence "Commit SHA / PR URL / version"`
-- `duckterm session work update WORK_ID --assign SESSION_ID --note "Handoff context"`
-
-A reply closes the conversation, not its work item. Done needs a concrete reference;
-blocked needs a named blocker. Forwarding leaves the work proposed for the next
-session. Record progress when it changes; no-op updates do not reset stale-work
-reminders. Check `work` and `work_updates` in inbox results even when mail is answered.
-Use `--parent-request REQUEST_ID` when relaying an incoming request; status updates
-then reach its originators without copying private downstream answer text.
-Work states track responsibility, not permission. Only the owner can mark work
-owner-authorized; a peer cannot turn its own request into an owner instruction.
-
 ## Exchange questions
 
 - `duckterm session ask SESSION_ID "Question"`: send a question and get its ID.
