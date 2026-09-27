@@ -144,7 +144,9 @@ def test_tick_pastes_fixed_reminder_once_without_peer_text(idle_recipient) -> No
     assert len(sup.pasted) == 2  # the paste, then Enter on its own
     text = sup.pasted[0].decode()
     assert text.startswith("\x1b[200~Duckterm Oracle: you have 1 inbox item waiting")
-    assert text.endswith("\x1b[201~")
+    assert text.endswith(
+        "Run `duckterm session inbox` to check them and continue your work.\x1b[201~"
+    )
     assert sup.pasted[1] == b"\r"
     assert "What contract should I use?" not in text
 

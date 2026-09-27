@@ -41,11 +41,13 @@ export function NoteCard({
   rules,
   onChange,
   onPropose,
+  onOpenTerminal,
 }: {
   note: RelayNote;
   rules: RelayRule[];
   onChange: () => void;
   onPropose: (text: string) => void;
+  onOpenTerminal?: (key: string) => void;
 }) {
   const [reply, setReply] = useState(note.suggestion?.reply ?? "");
   const [busy, setBusy] = useState(false);
@@ -84,7 +86,17 @@ export function NoteCard({
           {note.tool && note.tool !== "Bash" && <span className="rd-relay-meta"> ({note.tool})</span>}
         </div>
       )}
-      {note.kind === "choice" && note.question && <blockquote className="rd-relay-quote">{note.question}</blockquote>}
+      {note.kind === "choice" &&
+        (note.questions ?? (note.question ? [{ question: note.question, options: note.options ?? [] }] : [])).map((q, i) => (
+          <div key={i}>
+            <blockquote className="rd-relay-quote">{q.question}</blockquote>
+            {open && q.options.length > 0 && (
+              <ol className="rd-relay-options">
+                {q.options.map((o) => <li key={o}>{o}</li>)}
+              </ol>
+            )}
+          </div>
+        ))}
       {note.kind === "question" && note.question && <div className="rd-relay-ask">{note.question}</div>}
       {note.kind === "question" && note.excerpt && (
         <details className="rd-relay-excerpt">
@@ -108,13 +120,12 @@ export function NoteCard({
           </button>
         </div>
       )}
-      {open && note.kind === "choice" && (
+      {open && onOpenTerminal && (
         <div className="rd-relay-actions">
-          {(note.options ?? []).slice(0, 9).map((o, i) => (
-            <button key={o} className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy} onClick={() => void answer(i)}>
-              {i + 1}. {o}
-            </button>
-          ))}
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => onOpenTerminal(note.session_key)}>
+            Open {note.name}'s terminal
+          </button>
+          {note.kind === "choice" && <span className="rd-relay-meta">Answer its menu there.</span>}
         </div>
       )}
       {open && note.kind === "question" && (note.options?.length ?? 0) > 0 && (

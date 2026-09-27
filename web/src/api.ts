@@ -34,6 +34,7 @@ export interface RelayNote {
   closed_at?: number;
   question?: string; // choice: the agent's question; question: the classifier's one-line ask
   options?: string[];
+  questions?: { question: string; options: string[] }[]; // choice: every question in the menu form
   urgency?: "blocked" | "offer"; // question notes only
   excerpt?: string; // question notes: the end of the agent's final message
   detected_without_model?: boolean;

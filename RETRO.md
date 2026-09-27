@@ -1,5 +1,25 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Inbox reminders must not stop ongoing work
+
+Oracle's hardcoded “then stop” turned an inbox reminder into a new instruction
+to halt, even when the owner had already authorized unfinished work. Agents
+repeatedly acknowledged mail and went idle. Keep reminders focused on checking
+messages and continuing work; do not add workflow restrictions to an automated
+nudge. The delivery regression checks the actual pasted continuation wording
+and still verifies that peer message text is not injected into the reminder.
+
+
+## 2026-09-26 — Don't answer an agent's menu by pressing keys
+**Broke:** release-dev asked two questions in one form. Oracle's chat showed
+only the first. The owner approved it, Oracle pressed "1", the form moved to
+the second question, and nothing was submitted.
+**Cause:** the relay read only the first question, and a digit press answers
+whatever menu tab happens to be on screen.
+**Rule:** menu notes list every question and link to the session's terminal.
+The owner answers there. Relaying answers needs a channel that doesn't type
+into the terminal.
+
 ## 2026-09-26 — A launch destination must not replace the dashboard
 **Broke:** creating a remote session replaced the local dashboard, hid live local
 agents, and skipped folder assignment. Repeated failed launches left dead rows.
