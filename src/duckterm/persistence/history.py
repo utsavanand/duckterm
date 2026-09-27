@@ -34,7 +34,8 @@ Event = dict[str, Any]
 # column-adds are backward-compatible (old code ignores extra columns), so this
 # is a floor for "safe to open," not a hard per-version lock.
 # v3 keeps enrollment synchronized with folder moves and automatically enrolls sessions.
-_SCHEMA_VERSION = 3
+# v4 persists session pins for the owner's Focus view.
+_SCHEMA_VERSION = 4
 
 
 class SchemaTooNewError(RuntimeError):
@@ -202,6 +203,7 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
 # Columns added to `sessions` after the first release. CREATE TABLE IF NOT
 # EXISTS won't add these to a pre-existing DB, so we ALTER them in on open.
 _SESSIONS_COLUMNS = {
+    "pinned": "INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))",
     "runtime": "TEXT",
     # Model id observed in the session's transcript (e.g. "claude-fable-5").
     # Persisted so AGENTS.md rule scopes like "claude-code/fable-5" can match
@@ -558,6 +560,25 @@ class HistoryStore:
         self._conn.execute("UPDATE sessions SET model = ? WHERE session_key = ?", (model, key))
         self._conn.commit()
 
+    def set_pinned(self, key: str, pinned: bool) -> bool:
+        """Set a Focus pin. The conditional write enforces the global cap atomically.
+
+        Returns False for a missing session; raises ValueError at the limit.
+        Retrying an already-pinned session succeeds without replacing any pin.
+        """
+        cur = self._conn.execute(
+            "UPDATE sessions SET pinned = ? WHERE session_key = ? "
+            "AND (? = 0 OR pinned = 1 OR "
+            "(SELECT COUNT(*) FROM sessions WHERE pinned = 1) < 3)",
+            (int(pinned), key, int(pinned)),
+        )
+        self._conn.commit()
+        if cur.rowcount:
+            return True
+        if self.session(key) is None:
+            return False
+        raise ValueError("Unpin one first")
+
     def set_meta(
         self,
         key: str,
@@ -598,6 +619,15 @@ class HistoryStore:
             (session_key, event_type),
         ).fetchone()
         return int(row[0] or 0)
+
+    def last_event(self, session_key: str, event_type: str) -> tuple[dict[str, Any], int] | None:
+        """The newest event of a type for a session, with its timestamp."""
+        row = self._conn.execute(
+            "SELECT payload_json, ts FROM events WHERE session_key = ? AND event_type = ? "
+            "ORDER BY ts DESC LIMIT 1",
+            (session_key, event_type),
+        ).fetchone()
+        return (json.loads(row["payload_json"]), int(row["ts"])) if row else None
 
     def folders(self) -> list[str]:
         """Folder names: those explicitly created plus any referenced by a

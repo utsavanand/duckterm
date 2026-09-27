@@ -1,0 +1,5 @@
+.rd-focus-pin { display:inline-flex; align-items:center; justify-content:center; gap:5px; flex-shrink:0; min-width:28px; min-height:28px; padding:4px; border:1px solid transparent; border-radius:5px; background:transparent; color:var(--muted); cursor:pointer; font:inherit; font-size:11px; }
+.rd-focus-pin:hover, .rd-focus-pin.active { color:var(--accent); background:var(--accent-soft, #17825018); }
+.rd-focus-pin:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+.rd-focus-pin:disabled { opacity:.5; cursor:wait; }
+.rd-focus-at-rest { padding:24px; color:var(--muted); font-size:13px; }

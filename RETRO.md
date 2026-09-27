@@ -22,6 +22,47 @@ assertion never seen failing is not evidence. Local reproduction attempts
 stayed green while CI stayed red, so treat "cannot reproduce" as a reason to
 strengthen the assertion, not to ship the explanation.
 
+## 2026-09-26 — Session pin limits belong in the same write as the pin
+
+A browser-only three-pin cap cannot protect against two windows taking the
+last slot simultaneously. Persist session pins and enforce the count in one
+conditional SQL write. Treat polling metadata as authoritative over stale
+local pins, and keep stopped or archived sessions in Focus rather than
+silently changing the owner's selection. Check real terminal input as well
+as layout persistence; a mock terminal is not evidence of an interactive one.
+
+## 2026-09-26 — A guessed context window must not render like a fact
+**Broke:** the context row showed "559k used · 0 left" for claude-opus-5
+sessions, which have a 1M window, and every opus-5 session carried a false
+"high" context warning from 160k. 11 of 15 sessions with a recorded model were
+affected.
+**Cause:** `MODEL_WINDOWS` matched only fable|mythos. opus-5 fell back to the
+200k default, and `max(0, window - used)` silently clamped the impossible
+result to zero.
+**Rule:** an assumed value renders as unknown, not as a number. Used exceeding
+the assumed window proves the guess is wrong. Never drive a warning from a
+guessed denominator (#82).
+
+## 2026-09-26 — In-memory Oracle state is lost on every release install
+**Broke:** each server restart, including every release install, could paste
+a duplicate "you have N inbox items" reminder into every idle agent that still
+had the same unread mail.
+**Cause:** Oracle kept its last nudge per session only in `_oracle_nudges`.
+**Rule:** anything that suppresses repeat typing into an agent must survive a
+restart. Record it in history (`OracleNudge.mail_ids`) and rebuild from there
+(#75).
+
+## 2026-09-26 — The Mac app's navigation filter must allow srcdoc subframes
+**Broke:** every Markdown artifact preview was a blank box in the Mac app,
+while the same page rendered in a browser at localhost:4300.
+**Cause:** DashboardWindow's navigation policy cancelled anything not on the
+dashboard's http host. Sandboxed srcdoc previews load as `about:srcdoc`, so
+WebKit's iframe load was refused. Browser tests can't see this: they never run
+the native policy.
+**Rule:** web features that add iframes, blob URLs or new schemes need a check
+in a real WKWebView behind the production policy
+(`scripts/test_artifact_preview.sh`), not only Playwright.
+
 ## 2026-09-26 — Keep inbox context separate from the message reading area
 
 An expanded session card and onboarding panel looked like inbox messages and pushed actual mail below the fold. Give session context its own collapsed summary and move setup into an explicit tools dialog. Bound the message list through the complete flex layout so it scrolls independently of the heading and controls. Adapt to the pane's width, not just the window, and verify a populated list, long expanded replies, live refresh, and the smaller folder modal. Search and filter counts must describe loaded records, not imply a complete server-side search.

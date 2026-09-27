@@ -236,6 +236,15 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
 }
 
 export const api = {
+  setFocusPin: async (key: string, pinned: boolean): Promise<{ pinned: boolean }> => {
+    const res = await fetch(`/sessions/${encodeURIComponent(key)}/focus-pin`, {
+      method: "PUT", headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ pinned }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Could not save pin");
+    return data;
+  },
   artifactFeedback: async (key: string, artifact: Artifact, quote: string, note: string) => {
     const response = await fetch(`/sessions/${encodeURIComponent(key)}/annotations`, {
       method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
