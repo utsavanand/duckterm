@@ -276,10 +276,34 @@ F11. **Answer an agent from Oracle's chat without typing into its terminal**
      contract (default unsupported) agreed. v0.4.64's submit confirmation is
      the first step toward making "accepted" distinguishable from "typed":
      UserPromptSubmit-confirmed versus prompt-stuck.
-     Still open from my side: the **180 s hook poll cap** is far shorter than
-     a human answering a multi-question form, so the timeout policy must
-     change as part of this feature — otherwise the agent falls through to
-     its own prompt mid-answer, which is worse than today's failure.
+     **Lead 2 PROBE RESULT (Oracle `main-dev`, 2026-09-26): IT WORKS.**
+     Tested against Claude Code 2.1.283, headless and interactive, on a
+     private tmux server isolated from DuckTerm hooks. A Stop hook printing
+     `{"decision":"block","reason":"…"}` continues the turn with that text;
+     the transcript records it as a user message beginning "Stop hook
+     feedback:". Guard the loop with `stop_hook_active` — the next Stop has
+     it true, and the hook exits 0. Holding works: with a 300 s hook
+     timeout it waited 25 s for an answer file, then blocked with it.
+     **So free-text answers need none of lead 1's payload work** — the two
+     cases split cleanly: structured menu answers via the permission path,
+     free text via Stop. That is the scope halving I hoped the probe would
+     settle.
+     Four probe findings that shape the design, all of which must be
+     honored: (1) if the owner types in the terminal while the hook holds,
+     the message is **queued, not sent** — so the server must release the
+     held hook as soon as the owner types in that pane; the supervisor
+     already tracks owner keystrokes. (2) Esc interrupts the hook cleanly
+     with no orphan process. (3) Claude's UI labels injected text "Stop
+     hook **error**: <reason>" — cosmetic but misleading, so the reason
+     string must say plainly that it is the owner's reply relayed by Oracle.
+     (4) Holding on every Stop would put a spinner on every turn end, so
+     hold only when an answer is actually expected.
+     Still open from my side: the **180 s poll cap** on the permission path
+     is far shorter than a human answering a multi-question form. The probe
+     shows the Stop path can hold 300 s, so the two paths now have
+     *different* timeouts — reconcile them deliberately, and make sure
+     neither falls through to the agent's own prompt mid-answer, which is
+     worse than today's failure.
 
 ## Now — collaboration reliability (owner-reported 2026-09-26)
 
