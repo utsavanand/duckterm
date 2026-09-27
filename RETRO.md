@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-09-27 — Put keyboard tooltip behavior on the actual focus owner
+
+Oracle Needs-you buttons own focus so their nested remote duck adds no tab
+stop. The mascot-only focus selector left the machine tooltip hidden during
+keyboard navigation. Let the parent button reveal it and test with the mouse
+away; a hover check alone can hide this accessibility gap.
+
 ## 2026-09-27 — Session location must follow the duck into Oracle
 
 The sidebar cloud did not reach Oracle because its fleet ducks rendered the

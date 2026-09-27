@@ -8,3 +8,6 @@
 .rd-session-location::after { content: attr(data-location); position: absolute; left: 0; bottom: calc(100% + 7px); width: max-content; max-width: 240px; overflow-wrap: anywhere; white-space: normal; padding: 6px 9px; background: var(--card); border: 1px solid var(--border-strong); color: var(--text); border-radius: 5px; font-size: 12px; font-weight: 400; line-height: 1.5; visibility: hidden; opacity: 0; pointer-events: none; z-index: 10; }
 .rd-session-location:hover::after, .rd-session-location:focus::after { visibility: visible; opacity: 1; }
 .rd-session-location:focus-visible { outline: 2px solid var(--accent); border-radius: 4px; }
+
+/* Oracle rows own keyboard focus; the nested mascot adds no tab stop. */
+.rd-tower-need:focus .rd-session-location::after { visibility: visible; opacity: 1; }
