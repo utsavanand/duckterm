@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, TowerInsights } from "./api";
 import { Duck, poseFor } from "./Duck";
+import { SessionLocationDuck, sessionLocation } from "./SessionLocationDuck";
 import { OracleChat } from "./OracleChat";
 import { useRelay } from "./relay";
 import {
@@ -153,7 +154,7 @@ export function ControlTower({
                 className="rd-tower-need"
                 onClick={() => (n.kind === "choice" ? onOpenTerminal(n.session_key) : showNote(n.id))}
               >
-                <Duck pose="waiting" size={28} />
+                <OracleDuck agent={agents.find((a) => a.key === n.session_key)} pose="waiting" size={28} />
                 <span className="rd-tower-need-who">
                   <b>{n.name}</b>{n.folder ? ` · ${n.folder.split("/")[0]}` : ""}
                   <small>
@@ -276,6 +277,12 @@ function BackupTile({ insights, now }: { insights: TowerInsights | null; now: nu
   );
 }
 
+function OracleDuck({ agent, pose, size }: { agent?: TowerAgent; pose: Parameters<typeof Duck>[0]["pose"]; size: number }) {
+  return agent && sessionLocation(agent).remote
+    ? <SessionLocationDuck session={agent} pose={pose} height={size} focusable={false} />
+    : <Duck pose={pose} size={size} />;
+}
+
 function AgentDuck({
   agent,
   spot,
@@ -301,7 +308,7 @@ function AgentDuck({
       data-duck={agent.key}
       className={`rd-tower-duck s-${state}${stuck ? " stuck" : ""}${pinned ? " pinned" : ""}${pose === "sleeping" ? " resting" : ""}`}
       style={{ left: `${spot.left}%`, top: spot.top }}
-      aria-label={`${agent.label}, ${teamOf(agent)}, ${stuck ? "looks stuck" : STATE_WORD[state] ?? state}`}
+      aria-label={`${agent.label}, ${teamOf(agent)}, ${stuck ? "looks stuck" : STATE_WORD[state] ?? state}${sessionLocation(agent).remote ? `, ${sessionLocation(agent).label}` : ""}`}
       onMouseEnter={(e) => onHover(e.currentTarget)}
       onMouseLeave={() => onHover(null)}
       onFocus={(e) => onHover(e.currentTarget)}
@@ -312,7 +319,7 @@ function AgentDuck({
         className={`rd-tower-duck-body${drifts ? " drift" : ""}`}
         style={{ "--dx": `${spot.drift}px`, "--dur": `${12 + Math.abs(spot.drift) / 3}s`, "--delay": `-${Math.abs(spot.drift) / 4}s` } as React.CSSProperties}
       >
-        <Duck pose={pose} size={52} />
+        <OracleDuck agent={agent} pose={pose} size={52} />
         {(agent.inboxPending ?? 0) > 0 && <span className="rd-tower-mail">✉ {agent.inboxPending}</span>}
         {subs > 0 && (
           <span className="rd-tower-ducklings" aria-hidden="true">
@@ -417,7 +424,7 @@ function AgentCard({
         <span className={`rd-tower-pill s-${stuck ? "stuck" : state}`}>{stuck ? "Looks stuck" : STATE_WORD[state] ?? state}</span>
       </div>
       <div className="rd-tower-card-meta">
-        {[agent.group || "No folder", agent.runtime, agent.model].filter(Boolean).join(" · ")} · updated {ago(now - agent.updatedAt)} ago
+        {[sessionLocation(agent).remote ? sessionLocation(agent).label : null, agent.group || "No folder", agent.runtime, agent.model].filter(Boolean).join(" · ")} · updated {ago(now - agent.updatedAt)} ago
       </div>
       <div className="rd-tower-card-work">
         <span className="rd-tower-label">Working on</span>
