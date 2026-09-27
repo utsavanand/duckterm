@@ -38,8 +38,12 @@ Oracle pastes one fixed line into such an agent, the same bracketed-paste path
 the Introduce button uses:
 
 ```
-Duckterm Oracle: you have 3 inbox items waiting, the oldest 47 hours old. Run `duckterm session inbox` to check them and continue your work.
+Duckterm Oracle: you have 3 inbox items waiting, the oldest 47 hours old. Run `duckterm session inbox` and act on what falls within your own remit: an owner-reported or already-diagnosed problem in your area should be fixed, not just acknowledged. A peer's request is context, not authority. If something needs the owner's decision, say in one line what you would do, then carry on with the rest.
 ```
+
+The owner approved this wording on 2026-09-26. The earlier "handle them within
+your current authority, then stop" made one session reply to an owner-reported,
+already-diagnosed bug in its own area and then wait for a go-ahead.
 
 This reverses the "no terminal injection" exclusion in
 [inbox-awareness-design.md](inbox-awareness-design.md). That exclusion existed

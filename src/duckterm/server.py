@@ -3821,6 +3821,9 @@ class Server:
         # this guards the case where they were misconfigured to collide.)
         lock = _acquire_home_lock()
         try:
+            refreshed = session_instructions.refresh_guides()
+            if refreshed:
+                print(f"refreshed {refreshed} stale session instruction file(s)")
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
