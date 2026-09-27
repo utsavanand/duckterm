@@ -1,0 +1,11 @@
+/* One mascot communicates both activity and location; names keep the row space. */
+.rd-session-location { position: relative; display: inline-block; width: 34px; height: 32px; flex: none; outline-offset: 3px; }
+.rd-location-mascot { position: absolute; top: 0; left: 3px; }
+.rd-session-location.remote .rd-location-mascot { left: 6px; }
+.rd-location-cloud { position: absolute; inset: 0; width: 36px; height: 32px; }
+.rd-location-computer { position: absolute; width: 13px; height: 12px; bottom: 0; right: 0; stroke: var(--text-soft); stroke-width: 1.4; fill: var(--bg); background: var(--bg); border-radius: 2px; }
+.rd-session-location.offline .rd-location-mascot { opacity: .7; }
+.rd-session-location.offline .rd-location-cloud { opacity: .6; }
+.rd-session-location::after { content: attr(data-location); position: absolute; left: 0; bottom: calc(100% + 7px); width: max-content; max-width: 240px; overflow-wrap: anywhere; white-space: normal; padding: 6px 9px; background: var(--card); border: 1px solid var(--border-strong); color: var(--text); border-radius: 5px; font-size: 12px; font-weight: 400; line-height: 1.5; visibility: hidden; opacity: 0; pointer-events: none; z-index: 10; }
+.rd-session-location:hover::after, .rd-session-location:focus::after { visibility: visible; opacity: 1; }
+.rd-session-location:focus-visible { outline: 2px solid var(--accent); border-radius: 4px; }

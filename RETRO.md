@@ -9,6 +9,15 @@ nested row explicitly before reload in regression tests; relying on the default
 selection made the failure depend on which session arrived first. Native checks
 must verify the selected context even while the corresponding row is hidden.
 
+## 2026-09-26 — Compact identity must still identify the machine
+
+Repeated host labels squeezed session names after local and remote sessions
+shared the sidebar. Put location in the existing mascot, preserve its activity
+animation, and expose the machine name on hover and keyboard focus. Keep a
+visible disconnected mark and an accessible label; update outage acceptance
+checks when status moves from row text into an icon. Test equal session IDs on
+different hosts and recovery without duplicate rows.
+
 ## 2026-09-26 — A visible button can still be outside the window
 
 Adding Pin to the Context header crowded the reopen arrow out of its 36px

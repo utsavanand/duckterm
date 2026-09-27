@@ -57,12 +57,12 @@
  row('REMOTE_NAME').querySelector('.rd-row-name').click();
  window.qaResult={stage:'ready-for-outage',checks:['remote launch kept local rows and terminal','remote terminal accepts input and outputs','remote stop/resume leaves equal local session ID running','local launch while remote selected','failed local launch shows cause without row','created remote selected in same window'],remoteName:'REMOTE_NAME'};
  await wait(()=>window.__qaDisconnected,'disconnect command',60000);
- await wait(()=>row('REMOTE_NAME')?.textContent.includes('Offline'),'offline row',30000);
+ await wait(()=>row('REMOTE_NAME')?.querySelector('.rd-session-location')?.getAttribute('aria-label')?.includes('Disconnected'),'offline row',30000);
  if(!row('Local original')||!originalTerminal.isConnected)throw Error('Outage disturbed local terminal');
  await launch('local','Local during remote outage');await wait(()=>row('Local during remote outage'),'offline local launch');
  window.qaResult.stage='ready-for-reconnect';
  await wait(()=>window.__qaReconnected,'reconnect command',60000);
- await wait(()=>row('REMOTE_NAME')&&!row('REMOTE_NAME').textContent.includes('Offline'),'remote recovery',60000);
+ await wait(()=>row('REMOTE_NAME')&&!row('REMOTE_NAME').querySelector('.rd-session-location')?.getAttribute('aria-label')?.includes('Disconnected'),'remote recovery',60000);
  if([...document.querySelectorAll('.rd-row-name')].filter(e=>e.textContent==='REMOTE_NAME').length!==1)throw Error('Duplicate remote after reconnect');
  if(!originalTerminal.isConnected||location.href!==origin)throw Error('Reconnect replaced local view');
  row('REMOTE_NAME').querySelector('.rd-row-name').click();await wait(()=>document.querySelector('.rd-row.selected .rd-row-name')?.textContent==='REMOTE_NAME','selected remote after recovery');await sleep(500);
