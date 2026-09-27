@@ -23,6 +23,40 @@ them. Closing an old message after a handoff must not unassign its successor.
 Store work-reminder timestamps in SQLite so restarting Oracle cannot repeat
 an hourly reminder; use fixed reminder text rather than copying peer content.
 
+## 2026-09-26 — Instruction files written once go stale, and nudges must say what to do
+**Broke:** 15 of 27 sessions' collaboration.md still said questions expire
+after five minutes, so long-running agents passed --timeout and their work
+orders silently expired. Separately, the "continue your work" reminder dropped
+both the peer-authority line and any fallback for an unsure session.
+**Cause:** session-instructions/*/collaboration.md is written only when a
+session is introduced. The reminder wording was tuned for one failure (agents
+stopping) and lost the other guardrails.
+**Rule:** refresh generated per-session guides at server startup
+(refresh_guides). An automated nudge states the remit, the authority boundary
+and what to do when unsure, in one line each (#77).
+
+## 2026-09-26 — Assert on the pid that matters, and prove the assert can fail
+**Broke:** `test_shutdown_stops_credential_holding_descendant` failed on CI
+with a heartbeat write ~100 ms after the sample point. The first fix waited
+for `os.killpg(proc.pid, 0)` to raise `ProcessLookupError` — and failed on CI
+again, the same way.
+**Cause:** that wait was a no-op. `proc` is the supervisor, which pytest
+starts *without* `start_new_session`, so it is not a group leader and no
+group has its pid; `killpg` raised `ProcessLookupError` on the first call and
+the loop never waited. The group that `run()` actually signals belongs to the
+MCP server (`start_new_session=True`), whose pgid is the inner pid the test
+never saw. A green local run proved nothing, because the assertion could not
+fail.
+**Rule:** when a test asserts "process X is gone", make the fixture report
+X's real pid and group rather than deriving them from a handle that may not
+be the leader, and include them in the failure message so a CI-only failure
+is diagnosable from the log. Before believing any such fix, mutate the
+fixture so the process *does* survive and watch the test go red — an
+assertion never seen failing is not evidence. Local reproduction attempts
+(12 CPU hogs on 14 cores, then 2x oversubscription with `taskpolicy -b`) all
+stayed green while CI stayed red, so treat "cannot reproduce" as a reason to
+strengthen the assertion, not to ship the explanation.
+
 ## 2026-09-26 — Session pin limits belong in the same write as the pin
 
 A browser-only three-pin cap cannot protect against two windows taking the

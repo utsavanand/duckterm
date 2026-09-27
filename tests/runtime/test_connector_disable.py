@@ -1,7 +1,9 @@
 """A live stdio connection closes on disable and stale configs cannot reconnect."""
 
+import contextlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import time
@@ -12,6 +14,26 @@ import pytest
 from duckterm import connectors
 
 
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _alive_group(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 @pytest.mark.parametrize("action", ["disable", "terminate"])
 def test_shutdown_stops_credential_holding_descendant(
     tmp_path: Path, monkeypatch, action: str
@@ -20,6 +42,7 @@ def test_shutdown_stops_credential_holding_descendant(
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / ".duckterm"))
     monkeypatch.setenv("DUCKTERM_NO_KEYCHAIN", "1")
     heartbeat = tmp_path / "heartbeat"
+    pids = tmp_path / "pids.json"
     child = (
         "import signal,time\nfrom pathlib import Path\n"
         "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
@@ -27,9 +50,14 @@ def test_shutdown_stops_credential_holding_descendant(
         "while True:\n p.write_text(str(time.monotonic_ns()))\n time.sleep(.02)\n"
     )
     binary = tmp_path / "github-mcp-server"
+    # Record the server's own pid, its process group, and the credential
+    # holder's pid. The supervisor is not a group leader, so the test cannot
+    # derive the group that run() signals — it has to be told.
     binary.write_text(
-        f"#!{sys.executable}\nimport subprocess,sys,time\n"
-        f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+        f"#!{sys.executable}\nimport json,os,subprocess,sys,time\n"
+        f"held = subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+        f"open({str(pids)!r},'w').write(json.dumps("
+        "{'server': os.getpid(), 'group': os.getpgid(0), 'holder': held.pid}))\n"
         "time.sleep(60)\n"
     )
     binary.chmod(0o700)
@@ -39,14 +67,27 @@ def test_shutdown_stops_credential_holding_descendant(
     proc = subprocess.Popen([sys.executable, "-m", "duckterm.cli", "connector-run", "github"])
     try:
         deadline = time.monotonic() + 5
-        while not heartbeat.exists() and time.monotonic() < deadline:
+        while not (heartbeat.exists() and pids.exists()) and time.monotonic() < deadline:
             time.sleep(0.02)
-        assert heartbeat.exists()
+        assert heartbeat.exists() and pids.exists()
+        recorded = json.loads(pids.read_text())
         if action == "disable":
             connectors.disable("github", home=tmp_path)
         else:
             proc.terminate()
         proc.wait(timeout=5)
+        # The credential holder is what must not survive, and it is a
+        # grandchild: run() signals the MCP server's group, whose id is the
+        # server's pid, not the supervisor's. Wait for the holder itself to
+        # go, then prove it wrote nothing after that.
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and _alive(recorded["holder"]):
+            time.sleep(0.02)
+        assert not _alive(recorded["holder"]), (
+            f"credential holder {recorded['holder']} outlived run(); "
+            f"server={recorded['server']} group={recorded['group']} "
+            f"group_alive={_alive_group(recorded['group'])}"
+        )
         before = heartbeat.stat().st_mtime_ns
         time.sleep(0.15)
         assert heartbeat.stat().st_mtime_ns == before
@@ -54,6 +95,11 @@ def test_shutdown_stops_credential_holding_descendant(
         if proc.poll() is None:
             proc.terminate()
             proc.wait(timeout=5)
+        # A survivor would otherwise idle for 60s and contaminate later tests.
+        if pids.exists():
+            for pid in json.loads(pids.read_text()).values():
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(pid, signal.SIGKILL)
 
 
 def test_disable_terminates_live_mcp_and_blocks_stale_shim(tmp_path: Path, monkeypatch) -> None:
