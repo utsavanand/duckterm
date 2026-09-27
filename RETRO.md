@@ -1,5 +1,21 @@
 # Retro — lessons from real breakage
 
+## 2026-09-27 — Restoring selection must respect collapsed startup folders
+
+Restoring a saved session dispatched the same folder-reveal event as a new
+launch, reopening its parent folders despite the existing collapsed-startup
+behavior. Keep selection restoration independent of folder expansion. Select a
+nested row explicitly before reload in regression tests; relying on the default
+selection made the failure depend on which session arrived first. Native checks
+must verify the selected context even while the corresponding row is hidden.
+
+## 2026-09-27 — Mark the remote exception without decorating every local row
+
+The location preview added a computer badge to each local duck; the owner
+wanted only remote sessions decorated. Keep local ducks plain and cloud remote
+ducks. Removing the redundant badge preserves the approved compact layout,
+existing activity animations, and machine-name tooltips.
+
 ## 2026-09-26 — Compact identity must still identify the machine
 
 Repeated host labels squeezed session names after local and remote sessions
