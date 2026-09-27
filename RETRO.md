@@ -1,5 +1,17 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Instruction files written once go stale, and nudges must say what to do
+**Broke:** 15 of 27 sessions' collaboration.md still said questions expire
+after five minutes, so long-running agents passed --timeout and their work
+orders silently expired. Separately, the "continue your work" reminder dropped
+both the peer-authority line and any fallback for an unsure session.
+**Cause:** session-instructions/*/collaboration.md is written only when a
+session is introduced. The reminder wording was tuned for one failure (agents
+stopping) and lost the other guardrails.
+**Rule:** refresh generated per-session guides at server startup
+(refresh_guides). An automated nudge states the remit, the authority boundary
+and what to do when unsure, in one line each (#77).
+
 ## 2026-09-26 — Assert on the pid that matters, and prove the assert can fail
 **Broke:** `test_shutdown_stops_credential_holding_descendant` failed on CI
 with a heartbeat write ~100 ms after the sample point. The first fix waited
