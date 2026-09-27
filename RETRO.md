@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — Changing how a note is answered means changing every place that says how
+**Broke:** after menu notes moved to "answer in the terminal" (#69), the
+control tower's Needs-you list still said "Answer in the chat", and menu rows
+were blank because their questions live in a list, not in `question`.
+**Rule:** when a note's answer route or shape changes, grep every surface that
+renders that note kind (chat, control tower, notifications) in the same PR
+(#91).
+
 ## 2026-09-26 — Stalled work needs bounded reminders
 
 A cooldown alone still wakes an idle agent forever. Back off after the first
