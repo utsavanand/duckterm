@@ -1,5 +1,26 @@
 # Retro — lessons from real breakage
 
+## 2026-09-26 — A guessed context window must not render like a fact
+**Broke:** the context row showed "559k used · 0 left" for claude-opus-5
+sessions, which have a 1M window, and every opus-5 session carried a false
+"high" context warning from 160k. 11 of 15 sessions with a recorded model were
+affected.
+**Cause:** `MODEL_WINDOWS` matched only fable|mythos. opus-5 fell back to the
+200k default, and `max(0, window - used)` silently clamped the impossible
+result to zero.
+**Rule:** an assumed value renders as unknown, not as a number. Used exceeding
+the assumed window proves the guess is wrong. Never drive a warning from a
+guessed denominator (#82).
+
+## 2026-09-26 — In-memory Oracle state is lost on every release install
+**Broke:** each server restart, including every release install, could paste
+a duplicate "you have N inbox items" reminder into every idle agent that still
+had the same unread mail.
+**Cause:** Oracle kept its last nudge per session only in `_oracle_nudges`.
+**Rule:** anything that suppresses repeat typing into an agent must survive a
+restart. Record it in history (`OracleNudge.mail_ids`) and rebuild from there
+(#75).
+
 ## 2026-09-26 — The Mac app's navigation filter must allow srcdoc subframes
 **Broke:** every Markdown artifact preview was a blank box in the Mac app,
 while the same page rendered in a browser at localhost:4300.
