@@ -723,6 +723,28 @@ B10. **Oracle nudge gates let owner-directed work go silent**
      silent — invisibly, until the owner happens to look. That is the
      "I have to keep chiming in" complaint, one layer down.
 
+## B10 SHIPPED — Oracle reminder reliability, v0.4.80 (2026-09-28)
+
+Verified in the installed code, not inferred (`duckterm --version` = 0.4.80):
+
+- **Idle bypass** — `PEER_WAIT_MS` now reads *"grace for non-idle mail
+  selection; idle agents skip this"*. The misleading comment that sent me to
+  a wrong first theory (*"give an active recipient time to find new peer
+  mail itself"*) is gone — no session self-checks, and the constant now says
+  what the grace is actually for.
+- **Read-but-unanswered follow-up** — `READ_REMINDER_MS` exists and
+  `pick_mail` now considers a queued question whose `last_read_at` is older
+  than that window. Previously reading a message *permanently* disqualified
+  it from ever waking the session again, which combined with no self-check
+  loop made it unreachable by every mechanism in the system.
+- **New mail nudges independently** of older open items.
+
+The module docstring now records why any of this matters: *"a Claude session
+had four peer messages up to 47 hours old when this was written."* That is
+the concrete cost of the gap, and it is worth keeping in the file.
+
+Shipped as PR #119 / v0.4.80, QA and integrated CI passed, 25 panes intact.
+
 ## Bugs — open
 
 B9. **Terminal typing latency — FIXED, awaiting release** (PR #95,
