@@ -16,6 +16,18 @@ Fault-inject deletion to prove a failed transfer leaves neither missing nor doub
 counts. Keep completion-day activity separate from sent-day cohorts, and label
 histogram percentiles approximate rather than deriving fake medians from totals.
 
+## 2026-09-28 — Terminal snapshots and live bytes need the same ordering source
+
+A tmux capture could include bytes still buffered before the pane log, then a
+new viewer replayed those bytes again as the file reader caught up. File offsets
+and sleeps cannot identify that boundary. Use one ordered control stream for
+each viewer's capture and live output; keep logging separate. Test with a frozen
+file reader, mid-output attachments, and disconnected or paused viewers. Preserve
+the cursor's blank row so post-snapshot output cannot overwrite the previous line.
+Test input with viewers attached on the bundled version too: tmux 3.7 selects
+read-only control clients for send-keys and rejects otherwise valid input. Keep
+the viewer's private command channel output-only without that client flag.
+
 ## 2026-09-28 — A shared directory cannot identify a conversation
 
 Codex Resume used the newest rollout in a cwd when its recorded native ID was
