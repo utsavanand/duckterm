@@ -29,6 +29,14 @@ replaced the new rule, then Save reported success for an empty list. Gate edits
 and saves on successful loading, ignore stale responses, and block saving after
 load failures. Test delayed responses and Enter as well as clicks; a passing retry
 does not explain an intermittent failure.
+## 2026-09-28 — Analytics must preserve the model at usage time
+
+Harness names are not model identities. Claude assistant records carry model IDs,
+while Codex model metadata lives on turn-context lines without token usage. Read
+both record types, bucket deltas under the then-current exact model, and retain an
+explicit unknown bucket. Tests cover model switches, duplicate blocks, incremental
+rescans, UTC dates and unmapped identities. Never average daily medians: combine
+histograms and keep the result labelled approximate.
 
 
 ## 2026-09-28 — A local gate must include the checks that can reject CI

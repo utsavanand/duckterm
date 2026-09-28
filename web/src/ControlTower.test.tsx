@@ -26,7 +26,7 @@ const agents = [
   agent({ key: "qa", group: "Nourish", state: "waiting", shownState: "waiting", updatedAt: NOW - 4 * 86_400_000 }),
 ];
 function renderTower() {
-  return render(<ControlTower agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />);
+  return render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />);
 }
 
 it("shows fleet tiles with the cache share and a missing backup as a warning", async () => {
@@ -72,7 +72,7 @@ it("offers typing into the prompt only for idle agents and shows the server's re
 it("Escape closes a pinned card first, then returns to the sessions, but not while typing", async () => {
   vi.mocked(api.controlTower).mockResolvedValue(insights);
   const onBack = vi.fn();
-  render(<ControlTower agents={agents} now={NOW} onBack={onBack} onOpenTerminal={() => {}} />);
+  render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={onBack} onOpenTerminal={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: "main-qa, Duckterm, Idle" }));
   fireEvent.keyDown(screen.getByLabelText("Message main-qa"), { key: "Escape" });
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -91,7 +91,7 @@ it("sends a menu question straight to the agent's terminal", async () => {
     open: 1,
   });
   const onOpenTerminal = vi.fn();
-  render(<ControlTower agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={onOpenTerminal} />);
+  render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={onOpenTerminal} />);
   const needs = await screen.findByRole("region", { name: "Needs you" });
   expect(needs).not.toHaveTextContent("Answer in the chat");
   const row = await within(needs).findByRole("button", { name: /release-dev/ });
@@ -104,7 +104,7 @@ it("sends a menu question straight to the agent's terminal", async () => {
 it("shows the remote cloud in Oracle fleet and needs-you ducks without adding nested tab stops", async () => {
   vi.mocked(api.controlTower).mockResolvedValue(insights);
   const remote = agent({ key: "qa", host: "build", hostLabel: "Build server", shownState: "waiting", hostOffline: true });
-  render(<ControlTower agents={[...agents.filter(a => a.key !== "qa"), remote]} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />);
+  render(<ControlTower onAnalytics={() => {}} agents={[...agents.filter(a => a.key !== "qa"), remote]} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />);
   const duck = screen.getByRole("button", { name: /qa, Duckterm, Waiting on you, Remote · Build server · Disconnected/ });
   expect(duck.querySelector('.rd-location-cloud')).not.toBeNull();
   expect(duck.querySelector('[tabindex]')).toBeNull();

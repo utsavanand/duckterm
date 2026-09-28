@@ -338,7 +338,8 @@ class Server:
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
         self._oracle_nudges: dict[str, oracle.Nudge] = {}
         self._tokens = TokenLedger(
-            Path.home() / ".claude" / "projects", Path.home() / ".codex" / "sessions"
+            Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects",
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "sessions",
         )
         # The ledger isn't thread-safe; one scan at a time.
         self._tokens_lock = asyncio.Lock()
@@ -489,6 +490,9 @@ class Server:
             await self._message_pins(writer, headers, pin_match[1], pin_match[2], method, body)
             return
         inbox_path = urllib.parse.urlsplit(path)
+        if method == "GET" and inbox_path.path == "/analytics/tokens":
+            await self._token_analytics(writer, headers, inbox_path.query)
+            return
         if method == "GET" and inbox_path.path == "/analytics/mail":
             await self._mail_analytics(writer, headers, inbox_path.query)
             return
@@ -2582,6 +2586,52 @@ class Server:
             await _write_json(writer, 404, {"error": f"No rule {rule_id}."})
             return
         await _write_json(writer, 200, {"deleted": rule_id})
+
+    async def _token_analytics(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            params = urllib.parse.parse_qs(query, keep_blank_values=True)
+            if any(len(v) != 1 for v in params.values()):
+                raise ValueError
+            raw_days = params.get("days", ["7"])[0]
+            days = None if raw_days == "all" else int(raw_days)
+            if days is not None and not 1 <= days <= 36500:
+                raise ValueError
+        except ValueError:
+            await _write_json(writer, 400, {"error": "days must be 1..36500 or all"})
+            return
+        native_ids: dict[str, set[str]] = {}
+        for row in self.history._conn.execute(
+            "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
+            "FROM events WHERE sid IS NOT NULL"
+        ):
+            native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
+        identities = [
+            dict(
+                key=r["session_key"],
+                runtime=r["runtime"],
+                name=r["name"] or r["session_key"],
+                folder=r["grp"],
+                test=bool(r["test"]),
+                native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
+            )
+            for r in self.history._conn.execute("SELECT * FROM sessions")
+        ]
+        async with self._tokens_lock:
+            result = await asyncio.to_thread(
+                self._tokens.analytics,
+                days,
+                time.time(),
+                identities,
+                agent=params.get("agent", [""])[0],
+                folder=params.get("folder", [""])[0],
+                session=params.get("session", [""])[0],
+            )
+        await _write_json(writer, 200, result)
 
     async def _mail_analytics(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str

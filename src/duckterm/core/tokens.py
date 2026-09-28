@@ -16,6 +16,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 FIELDS = ("input", "cache_read", "cache_write", "output")
 
@@ -25,22 +26,36 @@ class _FileState:
     offset: int = 0
     days: dict[str, dict[str, int]] = field(default_factory=dict)
     seen: set[tuple[str, str]] = field(default_factory=set)
+    models: dict[tuple[str, str], dict[str, int]] = field(default_factory=dict)
+    native_id: str = ""
+    model: str = ""
     codex_prev: dict[str, int] = field(default_factory=dict)
 
 
 def _day(ts: object) -> str | None:
     if not isinstance(ts, str) or len(ts) < 10:
         return None
-    return ts[:10]
+    try:
+        stamp = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            return None
+        return stamp.astimezone(UTC).date().isoformat()
+    except ValueError:
+        return None
 
 
-def _add(state: _FileState, day: str, usage: dict[str, int]) -> None:
+def _add(state: _FileState, day: str, usage: dict[str, int], model: str = "") -> None:
     bucket = state.days.setdefault(day, dict.fromkeys(FIELDS, 0))
+    detail = state.models.setdefault((day, model), dict.fromkeys(FIELDS, 0))
     for k in FIELDS:
-        bucket[k] += max(0, usage.get(k, 0))
+        value = max(0, usage.get(k, 0))
+        bucket[k] += value
+        detail[k] += value
 
 
 def _claude_line(state: _FileState, obj: dict[str, object]) -> None:
+    if isinstance(obj.get("sessionId"), str):
+        state.native_id = str(obj["sessionId"])
     if obj.get("type") != "assistant":
         return
     message = obj.get("message")
@@ -63,12 +78,19 @@ def _claude_line(state: _FileState, obj: dict[str, object]) -> None:
             "cache_write": int(usage.get("cache_creation_input_tokens") or 0),
             "output": int(usage.get("output_tokens") or 0),
         },
+        model=str(message["model"]) if isinstance(message.get("model"), str) else "",
     )
 
 
 def _codex_line(state: _FileState, obj: dict[str, object]) -> None:
     payload = obj.get("payload") if isinstance(obj.get("payload"), dict) else obj
-    if not isinstance(payload, dict) or payload.get("type") != "token_count":
+    if not isinstance(payload, dict):
+        return
+    if obj.get("type") == "session_meta" and isinstance(payload.get("id"), str):
+        state.native_id = payload["id"]
+    if obj.get("type") == "turn_context":
+        state.model = str(payload["model"]) if isinstance(payload.get("model"), str) else ""
+    if payload.get("type") != "token_count":
         return
     info = payload.get("info")
     total = info.get("total_token_usage") if isinstance(info, dict) else None
@@ -84,7 +106,7 @@ def _codex_line(state: _FileState, obj: dict[str, object]) -> None:
     }
     delta = {k: now[k] - state.codex_prev.get(k, 0) for k in FIELDS}
     state.codex_prev = now
-    _add(state, day, delta)
+    _add(state, day, delta, model=state.model)
 
 
 class TokenLedger:
@@ -120,14 +142,15 @@ class TokenLedger:
         # Leave a trailing partial line for the next scan.
         end = data.rfind(b"\n") + 1
         for raw in data[:end].splitlines():
-            if b"usage" not in raw:
-                continue
             try:
                 obj = json.loads(raw)
             except json.JSONDecodeError:
                 continue
             if isinstance(obj, dict):
-                handle_line(state, obj)
+                try:
+                    handle_line(state, obj)
+                except (TypeError, ValueError, OverflowError):
+                    continue  # malformed usage must not break the whole page
         state.offset += end
         return state
 
@@ -147,3 +170,86 @@ class TokenLedger:
                             sums[k] += bucket[k]
             out[agent] = sums
         return out
+
+    def analytics(
+        self,
+        days: int | None,
+        now: float,
+        identities: list[dict[str, Any]],
+        *,
+        agent: str = "",
+        folder: str = "",
+        session: str = "",
+    ) -> dict[str, Any]:
+        """Exact model IDs per usage event; never infer a model from the harness.
+
+        Identity mapping uses recorded native IDs only, never directory recency.
+        Ambiguous/unmapped transcripts remain Outside DuckTerm; test IDs are excluded.
+        Folder/name metadata describes the session's current placement.
+        """
+        today = datetime.fromtimestamp(now, UTC).date().isoformat()
+        cutoff = (
+            _day(datetime.fromtimestamp(now - (days - 1) * 86400, UTC).isoformat())
+            if days
+            else None
+        )
+        mapping: dict[tuple[str, str], list[dict[str, Any]]] = {}
+        for entry in identities:
+            for native in entry["native_ids"]:
+                mapping.setdefault((entry["runtime"], native), []).append(entry)
+        rows: list[dict[str, Any]] = []
+        earliest: str | None = None
+        options: dict[str, dict[str, str]] = {"agents": {}, "folders": {}, "sessions": {}}
+        for harness in self.roots:
+            for path in self._paths(harness):
+                state = self._scan(harness, path, since_mtime=0)
+                if state is None:
+                    continue
+                # Claude files use the native session UUID as the filename; helper
+                # transcripts carry the parent sessionId in their records.
+                native = state.native_id or (path.stem if harness == "claude-code" else "")
+                matches = mapping.get((harness, native), [])
+                if any(i.get("test") for i in matches):
+                    continue
+                identity = matches[0] if len(matches) == 1 else None
+                key = identity["key"] if identity else "outside"
+                name = identity["name"] if identity else "Outside DuckTerm"
+                group = (identity["folder"] or "ungrouped") if identity else "outside"
+                group_name = (identity["folder"] or "Ungrouped") if identity else "Outside DuckTerm"
+                options["agents"][harness] = {"codex": "Codex", "claude-code": "Claude Code"}[
+                    harness
+                ]
+                options["folders"][group] = group_name
+                options["sessions"][key] = name
+                for (day, model), usage in state.models.items():
+                    if day > today or not any(usage.values()):
+                        continue
+                    earliest = min(earliest, day) if earliest else day
+                    if (cutoff and day < cutoff) or (agent and agent != harness):
+                        continue
+                    if (folder and folder != group) or (session and session != key):
+                        continue
+                    rows.append(
+                        dict(
+                            day=day,
+                            model=model or None,
+                            agent=harness,
+                            session=key,
+                            session_name=name,
+                            folder=group,
+                            folder_name=group_name,
+                            **usage,
+                        )
+                    )
+        return dict(
+            version=1,
+            timezone="UTC",
+            days=days,
+            today=today,
+            earliest_day=earliest,
+            rows=rows,
+            options={
+                kind: [dict(value=k, label=v) for k, v in sorted(values.items())]
+                for kind, values in options.items()
+            },
+        )
