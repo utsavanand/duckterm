@@ -103,6 +103,9 @@ class ClaudeCodeRuntime(Harness):
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return [*self._argv, "--resume", session_key]
 
+    def can_resume_unambiguously(self, *, cwd: Path, recorded: str | None) -> bool:
+        return bool(recorded and self.locate_transcript(cwd=cwd, session_id=recorded))
+
     def find_resumable_id(self, *, cwd: Path, recorded: str | None) -> str | None:
         # The recorded id isn't always valid (a forked/transient id, or its
         # transcript was deleted) — verify the file exists. Falling back to the

@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-09-28 — A shared directory cannot identify a conversation
+
+Codex Resume used the newest rollout in a cwd when its recorded native ID was
+missing or stale. Two sessions in one repo could silently exchange conversations.
+Use only the native ID recorded by a session-key-bound hook; never replace it
+with a directory guess. Refuse unknown identity when another Codex row shares
+the directory, including stopped rows. Test independent IDs through a database
+restart and keep fork/snapshot paths from reintroducing the same fallback.
+
+
 ## 2026-09-28 — An idle agent cannot notice inbox mail by itself
 
 New peer mail waited behind both an idle grace and an old open item, while
