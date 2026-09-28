@@ -7,9 +7,13 @@ The v1 histogram boundaries are immutable; a new definition needs a new version.
 import sqlite3
 import time
 from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import Any
+
+RollupKey = tuple[str, str, str, str, str, str, int]
+Contribution = tuple[str, str, str, str, str, str, int, int, int, int]
 
 DAY = 86_400_000
 BOUNDS = (60_000, 300_000, 900_000, 3_600_000, 14_400_000, DAY)
@@ -47,7 +51,7 @@ def day(ts: int) -> str:
 
 
 @contextmanager
-def atomic(conn: sqlite3.Connection):
+def atomic(conn: sqlite3.Connection) -> Iterator[None]:
     # A savepoint composes with the caller's transaction without committing it.
     conn.execute("SAVEPOINT mail_analytics")
     try:
@@ -60,7 +64,7 @@ def atomic(conn: sqlite3.Connection):
         conn.execute("RELEASE mail_analytics")
 
 
-def contributions(row):
+def contributions(row: sqlite3.Row) -> Iterator[Contribution]:
     sent = day(row["created_at"])
     base = (row["sender"], row["recipient"], row["kind"])
     yield (sent, *base, "sent", "", -1, 1, 0, 0)
@@ -82,7 +86,7 @@ def contributions(row):
         yield (completed, *base, "duration", "", bucket, 1, duration, duration)
 
 
-def _add(conn, values) -> None:
+def _add(conn: sqlite3.Connection, values: Iterable[Contribution]) -> None:
     conn.executemany(
         """INSERT INTO mail_rollup_v1 VALUES (?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(day,sender,recipient,kind,series,status,bucket) DO UPDATE SET
@@ -93,7 +97,7 @@ def _add(conn, values) -> None:
     )
 
 
-def retire_mail(conn: sqlite3.Connection, where: str, params: tuple = ()) -> None:
+def retire_mail(conn: sqlite3.Connection, where: str, params: tuple[object, ...] = ()) -> None:
     """Internal SQL predicate only. Transfer and deletion succeed or fail together."""
     with atomic(conn):
         rows = conn.execute(
@@ -104,7 +108,7 @@ def retire_mail(conn: sqlite3.Connection, where: str, params: tuple = ()) -> Non
         conn.execute(f"DELETE FROM session_questions AS q WHERE {where}", params)
 
 
-def retire_events(conn: sqlite3.Connection, where: str, params: tuple = ()) -> None:
+def retire_events(conn: sqlite3.Connection, where: str, params: tuple[object, ...] = ()) -> None:
     with atomic(conn):
         rows = conn.execute(
             "SELECT ts, session_key FROM events e WHERE event_type='OracleNudge' "
@@ -139,10 +143,19 @@ def snapshot(
     """Calendar UTC days including today. None means all retained history."""
     now = int(time.time() * 1000) if now is None else now
     start = day(now - (days - 1) * DAY) if days else "0000-01-01"
-    merged: dict[tuple, list[int]] = {}
+    merged: dict[RollupKey, list[int]] = {}
     with atomic(conn):
         for row in conn.execute("SELECT * FROM mail_rollup_v1 WHERE day>=?", (start,)):
-            merged[tuple(row)[:7]] = list(tuple(row)[7:])
+            key: RollupKey = (
+                row["day"],
+                row["sender"],
+                row["recipient"],
+                row["kind"],
+                row["series"],
+                row["status"],
+                row["bucket"],
+            )
+            merged[key] = [row["count"], row["duration_sum_ms"], row["duration_max_ms"]]
         for row in conn.execute(
             f"SELECT {MAIL_COLUMNS} FROM session_questions q WHERE {REAL_MAIL}"
         ):
@@ -173,7 +186,7 @@ def snapshot(
             "SELECT value FROM mail_analytics_meta WHERE key='enabled_at'"
         ).fetchone()[0]
     daily: dict[str, dict[str, Any]] = {}
-    cohorts: dict[str, dict[str, int | str]] = {}
+    cohorts: dict[str, dict[str, int]] = {}
     pairs: dict[tuple[str, str], int] = defaultdict(int)
     for (when, sender, recipient, kind, series, status, bucket), (count, total, maximum) in sorted(
         merged.items()
@@ -204,12 +217,12 @@ def snapshot(
             entry["sent"] += count
             pairs[sender, recipient] += count
             cohort = cohorts.setdefault(
-                when, dict(day=when, sent=0, answered=0, declined=0, expired=0, cancelled=0)
+                when, dict(sent=0, answered=0, declined=0, expired=0, cancelled=0)
             )
             cohort["sent"] += count
         elif series == "cohort":
             cohort = cohorts.setdefault(
-                when, dict(day=when, sent=0, answered=0, declined=0, expired=0, cancelled=0)
+                when, dict(sent=0, answered=0, declined=0, expired=0, cancelled=0)
             )
             cohort[status] += count
         elif series == "completed":
@@ -242,7 +255,7 @@ def snapshot(
         ),
         histogram_upper_bounds_ms=[*BOUNDS, None],
         daily=list(daily.values()),
-        cohorts=list(cohorts.values()),
+        cohorts=[dict(day=when, **counts) for when, counts in cohorts.items()],
         top_senders=[
             dict(session=key, sent=count)
             for key, count in sorted(senders.items(), key=lambda x: (-x[1], x[0]))[:20]

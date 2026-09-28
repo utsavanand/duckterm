@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-09-28 — A local gate must include the checks that can reject CI
+
+Mail analytics passed the local gate but failed CI strict typing because the
+gate omitted mypy. Add the CI Python checks (mypy, Black and slop_check) to the
+local gate, and type aggregate keys, counters and iterators explicitly. A green
+subset of checks must not be reported as covering the omitted CI checks.
+
 ## 2026-09-28 — Preserve counts at the same boundary that deletes their source
 
 Seven-day mail retention cannot support lasting analytics by querying live rows

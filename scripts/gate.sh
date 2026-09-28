@@ -16,6 +16,12 @@ step "pytest"
 "$PY" -m pytest tests -q >> "$LOG" 2>&1
 step "ruff check"
 "$PY" -m ruff check src tests >> "$LOG" 2>&1
+step "black --check"
+"$PY" -m black --check src tests scripts >> "$LOG" 2>&1
+step "mypy"
+"$PY" -m mypy >> "$LOG" 2>&1
+step "slop_check"
+"$PY" scripts/slop_check.py >> "$LOG" 2>&1
 step "ruff format --check"
 "$PY" -m ruff format --check src tests >> "$LOG" 2>&1
 cd web
