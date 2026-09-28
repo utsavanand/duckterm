@@ -214,6 +214,45 @@ to `duckterm-harness.json`; whether a blueprint can require specific
 harnesses per role; how a running team is upgraded when its blueprint
 changes; how blueprints are shared or published.
 
+## Idea: router mode (DuckTerm picks the model)
+
+Owner, 2026-09-28: a big feature to build eventually; details to come. Today
+a session runs one model chosen at launch (and, with F15, changed by
+restarting). In **router mode**, DuckTerm picks the model for each task or
+request based on how complex it is: a small fast model for simple edits and
+questions, a stronger one for planning and hard debugging.
+
+This is roadmap F5's step (c), the model router, which F5 says to build only
+after the meta-harness vocabulary and composition work.
+
+**Possible ways to build it**, from least to most control:
+
+1. **Per task, at launch or restart.** DuckTerm classifies the task and
+   starts or restarts the session with the chosen model, using F15's Change
+   model. Works with every harness as-is; switches only between turns.
+2. **Per request, through a local gateway.** Point the harness at a DuckTerm
+   proxy (Claude Code can use a custom base URL; Codex can use a custom
+   model provider) that chooses a model for each API call. This needs API
+   keys, not a subscription login, and has to handle each vendor's tool-call
+   format.
+3. **DuckTerm's own agent loop over the APIs.** Full control over routing,
+   but it means DuckTerm becomes a harness itself.
+
+**Known problems to solve:**
+
+- Switching models mid-conversation throws away the prompt cache, so a
+  cheaper model can cost more overall.
+- Mixing vendors (Claude and GPT) inside one conversation needs tool calls
+  and context translated between formats.
+- Subscription plans (the owner's setup) may not allow requests through a
+  proxy; the gateway options may need API keys.
+- How the router judges complexity: rules, a small classifier model, or
+  learning from which model finished similar tasks.
+
+Open: which of the three to start with; whether the user can see and
+override each choice; what to measure (speed, success, tokens), which the
+Analytics page could show.
+
 ## Open decisions
 
 - [x] `remote-session` merged (per the architect, 2026-09-26); DuckCloud still needs setup flow, cost/idle controls and AWS.
