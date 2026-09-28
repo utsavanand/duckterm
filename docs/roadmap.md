@@ -19,7 +19,7 @@ the session API.
 | B4, B7, B8 | Fixed (B4 verified on installed v0.4.73; B7 v0.4.70; B8 v0.4.69) |
 | Control Tower | Shipped (PR #39); menu wording v0.4.73 |
 | Inbox redesign | Shipped v0.4.68 |
-| B3, B6, B10, F6, duck settle, waiting lifecycle | Open; see [bugs-and-backlog.md](bugs-and-backlog.md) |
+| B3, B6, B12, F6, duck settle, waiting lifecycle | Open; see [bugs-and-backlog.md](bugs-and-backlog.md) |
 | F11 Answer agents without typing | Stop-hook path now carries inbox reminders (`cd25224`); relaying owner answers not built |
 | B2, F7, F8, Oracle on WhatsApp | Designed; waiting on owner review or scheduling |
 | F14 Cross-host discovery and messaging | Designed ([cross-host-collaboration-design.md](cross-host-collaboration-design.md), PR #110) |
