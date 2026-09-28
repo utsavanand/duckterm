@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-09-28 — An idle agent cannot notice inbox mail by itself
+
+New peer mail waited behind both an idle grace and an old open item, while
+reading an unfinished question excluded it forever. Skip the peer-age delay
+for idle recipients, track reminded IDs independently of newer arrivals, and
+allow one delayed reminder for read queued questions. Persist the per-item
+history across server restarts; retain draft, active-turn and owner-typing guards.
+
+
 ## 2026-09-27 — Put keyboard tooltip behavior on the actual focus owner
 
 Oracle Needs-you buttons own focus so their nested remote duck adds no tab

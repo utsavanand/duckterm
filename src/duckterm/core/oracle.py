@@ -20,32 +20,40 @@ from duckterm.helpers.private_files import private_read, private_write
 # Both were 10 minutes until 2026-09-26. Agents answered about 3 minutes after
 # a nudge, so the delay before the nudge was the part worth shortening.
 SETTLE_MS = 5 * 60_000  # idle this long before a nudge: the owner may be about to type
-PEER_WAIT_MS = 5 * 60_000  # give an active recipient time to find new peer mail itself
+PEER_WAIT_MS = 5 * 60_000  # grace for non-idle mail selection; idle agents skip this
 # A draft always shows on screen, and prompt_empty already checks the screen.
 # Keystrokes only matter while someone may be typing right now.
 TYPING_QUIET_MS = 2 * 60_000
-# While mail from the last nudge is still open, wait this long before nudging
-# about newer mail: the agent may have chosen not to act, so don't nag.
+# The same unfinished item must not cause repeated interruptions.
 RENUDGE_MS = 60 * 60_000
+READ_REMINDER_MS = 4 * 60 * 60_000
 
 
 @dataclass(frozen=True)
 class Nudge:
     ids: frozenset[str]
     at_ms: int
+    read_ids: frozenset[str] = frozenset()
 
 
-def pick_mail(mail: list[dict[str, Any]], now_ms: int) -> list[dict[str, Any]]:
-    """Mail worth waking an agent for: owner broadcasts, accepted work, and
-    peer questions that have waited PEER_WAIT_MS. A peer question the agent
-    already read and left queued was a choice (often a status update that
-    needs no answer), so it no longer wakes the agent."""
+def pick_mail(
+    mail: list[dict[str, Any]], now_ms: int, *, idle: bool = False
+) -> list[dict[str, Any]]:
+    """Idle agents cannot notice new mail themselves. Read queued questions
+    get one delayed follow-up; should_nudge applies the recorded history."""
     return [
         m
         for m in mail
-        if m["kind"] == "broadcast"
-        or m["status"] == "accepted"
-        or (not m.get("last_read_at") and now_ms - int(m["created_at"]) >= PEER_WAIT_MS)
+        if m["status"] in {"queued", "accepted"}
+        and (
+            m["kind"] == "broadcast"
+            or m["status"] == "accepted"
+            or (
+                now_ms - int(m["last_read_at"]) >= READ_REMINDER_MS
+                if m.get("last_read_at")
+                else idle or now_ms - int(m["created_at"]) >= PEER_WAIT_MS
+            )
+        )
     ]
 
 
@@ -59,26 +67,49 @@ def should_nudge(
     previous: Nudge | None,
     now_ms: int,
 ) -> list[dict[str, Any]]:
-    """The mail to remind about, or [] when any gate fails."""
+    """Only new eligible mail or one overdue read reminder can wake an idle agent."""
     if state != "idle" or not prompt_empty or turn_ended_ms <= 0:
         return []
     if now_ms - turn_ended_ms < SETTLE_MS:
         return []
     if now_ms - last_owner_input_ms < TYPING_QUIET_MS:
         return []
-    picked = pick_mail(mail, now_ms)
-    if not picked:
-        return []
-    if previous is not None:
-        ids = frozenset(str(m["id"]) for m in picked)
-        if ids <= previous.ids:
-            return []
-        # Once everything from the last nudge is answered or closed, the agent
-        # has shown it acts on reminders, so new mail may wake it right away.
-        still_open = previous.ids & {str(m["id"]) for m in mail}
-        if still_open and now_ms - previous.at_ms < RENUDGE_MS:
-            return []
-    return picked
+    picked = pick_mail(mail, now_ms, idle=True)
+    result = []
+    for m in picked:
+        key = str(m["id"])
+        read_queued = m["kind"] == "question" and m["status"] == "queued" and m.get("last_read_at")
+        if read_queued:
+            if previous and (key in previous.read_ids or now_ms - previous.at_ms < RENUDGE_MS):
+                continue
+        elif previous and key in previous.ids:
+            continue
+        result.append(m)
+    return result
+
+
+def record_nudge(
+    previous: Nudge | None,
+    picked: list[dict[str, Any]],
+    mail: list[dict[str, Any]],
+    now_ms: int,
+) -> Nudge:
+    """Retain per-item history across newer mail, pruning closed items."""
+    open_ids = {str(m["id"]) for m in mail}
+    ids = (previous.ids if previous else frozenset()) & open_ids
+    read_ids = (previous.read_ids if previous else frozenset()) & open_ids
+    return Nudge(
+        frozenset(ids | {str(m["id"]) for m in picked}),
+        now_ms,
+        frozenset(
+            read_ids
+            | {
+                str(m["id"])
+                for m in picked
+                if m["kind"] == "question" and m["status"] == "queued" and m.get("last_read_at")
+            }
+        ),
+    )
 
 
 def reminder(mail: list[dict[str, Any]], now_ms: int) -> str:
