@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-09-28 — Preserve counts at the same boundary that deletes their source
+
+Seven-day mail retention cannot support lasting analytics by querying live rows
+alone. Transfer aggregate counts in the same transaction as deletion, including
+session removal and Oracle event retention; query remaining live rows separately.
+Fault-inject deletion to prove a failed transfer leaves neither missing nor double
+counts. Keep completion-day activity separate from sent-day cohorts, and label
+histogram percentiles approximate rather than deriving fake medians from totals.
+
 ## 2026-09-28 — A shared directory cannot identify a conversation
 
 Codex Resume used the newest rollout in a cwd when its recorded native ID was

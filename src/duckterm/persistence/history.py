@@ -22,6 +22,7 @@ from duckterm.core import events
 from duckterm.core.session_api import SessionAPI
 from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
+from duckterm.persistence import mail_analytics
 from duckterm.runtimes.base import AT_REST_STATES, SessionState
 
 Event = dict[str, Any]
@@ -39,7 +40,8 @@ Event = dict[str, Any]
 # its code was reverted, but installed DBs are already stamped v5 and keep the
 # (now unused) tables and session_questions columns. Staying at v5 lets those
 # DBs open; dropping back to 4 would raise SchemaTooNewError.
-_SCHEMA_VERSION = 5
+# v6 retains analytics at deletion. Older sweep code would lose these counts.
+_SCHEMA_VERSION = 6
 
 
 class SchemaTooNewError(RuntimeError):
@@ -283,15 +285,17 @@ class HistoryStore:
         self._migrate()
         self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
         self.artifacts = self.session_api.artifacts
+        mail_analytics.initialize(self._conn)
         self.session_api.backfill()
         # Stamp the current version after migrating so a later older binary is
         # refused. (Can't parameterize a PRAGMA; the value is our own int.)
         self._conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+        self.session_api._sweep()
         # Retention: hooks write thousands of event rows a day and nothing
         # else ever deletes them — sweep everything older than 30 days at
         # startup so the DB doesn't grow without bound. Session rows stay.
         cutoff = int((time.time() - 30 * 86400) * 1000)
-        self._conn.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
+        mail_analytics.retire_events(self._conn, "ts < ?", (cutoff,))
         self._conn.commit()
 
     def _migrate(self) -> None:
@@ -988,11 +992,9 @@ class HistoryStore:
         can't resurrect the row. Returns whether a row was removed."""
         self.session_api.revoke(key)
         self._conn.execute("DELETE FROM session_api_members WHERE session_key = ?", (key,))
-        self._conn.execute(
-            "DELETE FROM session_questions WHERE sender = ? OR recipient = ?", (key, key)
-        )
+        mail_analytics.retire_mail(self._conn, "sender = ? OR recipient = ?", (key, key))
+        mail_analytics.retire_events(self._conn, "session_key = ?", (key,))
         cur = self._conn.execute("DELETE FROM sessions WHERE session_key = ?", (key,))
-        self._conn.execute("DELETE FROM events WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
