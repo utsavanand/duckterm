@@ -28,9 +28,8 @@ def test_every_byte_and_unicode_roundtrip():
 
 
 @pytest.mark.parametrize("bad", [b"\\", rb"\12", rb"\400", rb"\999", rb"\x1b"])
-def test_malformed_escapes_are_refused(bad):
-    with pytest.raises(ValueError):
-        unescape(bad)
+def test_unknown_escapes_remain_literal(bad):
+    assert unescape(bad) == bad
 
 
 def test_ordered_snapshot_then_output_ignores_old_and_other_panes():
@@ -75,3 +74,8 @@ def test_command_error_is_not_live_stream():
 def test_exact_guard_text_in_snapshot_cannot_end_the_frame():
     _, snap = ready((b"%end 123 3 0",), b"%7 0 0 1 0")
     assert b"%end 123 3 0" in snap
+
+
+def test_capture_backslash_and_hyperlink_terminator():
+    assert unescape(rb"C:\\work\\file") == rb"C:\work\file"
+    assert unescape(rb"\033]8;;https://example.test\033\\") == b"\x1b]8;;https://example.test\x1b\\"

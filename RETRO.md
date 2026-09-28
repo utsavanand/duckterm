@@ -12,6 +12,13 @@ make the fake tmux response depend on loop progress and verify the tail remains
 alive until tmux actually reports exit. Approval keystrokes use the existing
 ordered input queue rather than synchronously calling tmux from callbacks.
 
+Screen capture -C doubles literal backslashes, while live output octal-escapes
+them. Assuming one encoding rejected real TUI captures. Decode both forms,
+preserve unknown escapes, and test OSC8, colours, Unicode, invalid UTF-8 and
+literal backslashes through real tmux. Drain each viewer independently into a
+bounded queue; overflow closes its client even if the browser never reads again.
+During cleanup, drain subprocess pipes too: wait() can hang on a full pipe.
+
 ## 2026-09-28 — A local gate must include the checks that can reject CI
 
 Mail analytics passed the local gate but failed CI strict typing because the

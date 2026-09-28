@@ -176,3 +176,101 @@ def test_client_loss_reconnect_keeps_pane_and_other_viewer(tmp_path, loss):
             await orch.stop(key)
 
     asyncio.run(scenario())
+
+
+def test_rich_tui_capture_and_live_bytes(tmp_path):
+    payload = (
+        b"\x1b[2J\x1b[H\x1b[38;5;123m256 colour\x1b[0m\r\n"
+        b"\x1b[38;2;10;20;30mtrue colour\x1b[0m\r\n"
+        b"\x1b]8;;https://example.test\x1b\\link\x1b]8;;\x1b\\\r\n"
+        + "emoji 🦆 CJK 中文\r\n".encode()
+        + b"path C:\\work\\file literal \\015\r\ninvalid \xff\xfe\r\n"
+    )
+    script = tmp_path / "tui.py"
+    trigger = tmp_path / "go"
+    script.write_text(
+        "import os,time,pathlib\n"
+        f"payload={payload!r}\n"
+        'os.write(1,payload+b"READY\\r\\n")\n'
+        f"while not pathlib.Path({str(trigger)!r}).exists(): time.sleep(.005)\n"
+        'os.write(1,payload+b"LIVE_DONE\\r\\n")\n'
+        "time.sleep(30)\n"
+    )
+
+    async def scenario():
+        orch = Orchestrator(EventBus())
+        key = await orch.launch(
+            runtime=GenericRuntime(shlex.join([sys.executable, str(script)])),
+            cwd=str(tmp_path),
+            test=True,
+        )
+        sup = orch.get(key)
+        feed = None
+        try:
+            async with asyncio.timeout(5):
+                while "READY" not in await asyncio.to_thread(tmux.capture_pane, sup._tmux_target):
+                    await asyncio.sleep(0.01)
+            feed = sup.subscribe_bytes()
+            snapshot = await asyncio.wait_for(anext(feed), 5)
+            assert b"C:\\work\\file literal \\015" in snapshot
+            assert "🦆 CJK 中文".encode() in snapshot
+            trigger.touch()
+            live = await until(feed, b"LIVE_DONE")
+            assert b"\x1b[38;2;10;20;30m" in live
+            assert b"\x1b]8;;https://example.test\x1b\\" in live
+            assert b"invalid \xff\xfe" in live
+            assert b"C:\\work\\file literal \\015" in live
+        finally:
+            if feed:
+                await feed.aclose()
+            await orch.stop(key)
+
+    asyncio.run(scenario())
+
+
+def test_stalled_viewer_closes_client_without_waiting_for_consumer(tmp_path, monkeypatch):
+    from duckterm.agents import tmux_stream
+
+    monkeypatch.setattr(tmux_stream, "_MAX_QUEUED_CHUNKS", 2)
+    script = tmp_path / "flood-stalled.py"
+    trigger = tmp_path / "go"
+    script.write_text(
+        "import os,time,pathlib\n"
+        'print("READY",flush=True)\n'
+        f"while not pathlib.Path({str(trigger)!r}).exists(): time.sleep(.005)\n"
+        "for i in range(100):\n"
+        ' os.write(1,b"output\\n"); time.sleep(.01)\n'
+        'print("DONE",flush=True)\n'
+        "time.sleep(30)\n"
+    )
+
+    async def scenario():
+        orch = Orchestrator(EventBus())
+        key = await orch.launch(
+            runtime=GenericRuntime(shlex.join([sys.executable, str(script)])),
+            cwd=str(tmp_path),
+            test=True,
+        )
+        sup = orch.get(key)
+        feed = sup.subscribe_bytes()
+        replacement = None
+        try:
+            await asyncio.wait_for(anext(feed), 5)
+            trigger.touch()
+            # Do not advance/close the generator. Its reader must still reap
+            # the subprocess when the bounded viewer queue fills.
+            async with asyncio.timeout(5):
+                while (await asyncio.to_thread(tmux._tmux, "list-clients"))[1].strip():
+                    await asyncio.sleep(0.01)
+                while "DONE" not in await asyncio.to_thread(tmux.capture_pane, sup._tmux_target):
+                    await asyncio.sleep(0.01)
+            assert await asyncio.to_thread(tmux.session_exists, sup._tmux_target)
+            replacement = sup.subscribe_bytes()
+            assert b"DONE" in await asyncio.wait_for(anext(replacement), 5)
+        finally:
+            await feed.aclose()
+            if replacement:
+                await replacement.aclose()
+            await orch.stop(key)
+
+    asyncio.run(scenario())
