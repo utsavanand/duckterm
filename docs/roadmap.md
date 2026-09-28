@@ -624,6 +624,53 @@ passed while the WKWebView shell was broken. The acceptance test that
 settles it is the simplest one — **the owner typing across ~23 sessions and
 noticing it is no longer slow.**
 
+F16. **Self-contained Mac app — first-launch works with no developer
+     setup** (`main-dev` + `ui-dev`, 2026-09-28; branch
+     `fix/self-contained-mac`, `3c3d975`). The install story a stranger
+     actually meets, which nothing tracked until now.
+     Backend: a **pinned** official CPython 3.13.15 arm64 install-only
+     archive with its **SHA256 verified on every build and cache hit**, the
+     dashboard built in, an agent-CLI wrapper for app-launched hooks, and
+     **no developer-checkout fallback** — the path that made the app work
+     on this machine while failing everywhere else. Startup reuses a running
+     server, else the bundled interpreter; the installed CLI is a developer
+     fallback only. **No silent CLI overwrite**, no runtime bytecode writes,
+     explicit embedded Mach-O signing with deep strict verification. Zip
+     29.2 MB.
+     Evidence is the strong kind: a **relocated** app copy with an isolated
+     identity, an **empty temporary home**, and a **stripped PATH with no
+     installed CLI** started its bundled interpreter and served HTTP 200.
+     Repro: `python3 mac/Tests/bundled-runtime.py mac/build/DuckTerm.app`.
+     Corrupt archives are rejected before extraction. Stated limit, and it
+     is the right one to state: **this is not a clean-account
+     Gatekeeper/notarization claim.**
+     UI half (`ui-dev`, preview pending owner review):
+     http://127.0.0.1:4388/missing-tmux.html — tmux is genuinely required
+     (`agents/tmux.py` gates on `shutil.which("tmux")`) and a fresh user
+     hitting that today gets a failure rather than guidance. The preview
+     offers a copyable install command, a Homebrew link, Recheck/Later, and
+     keeps the dashboard and remote use available meanwhile. No production
+     wiring yet; `main.swift`, `ServerProcess.swift` and `mac/build.sh`
+     untouched.
+     Not claiming release-complete until the tmux guidance is included —
+     correct call: shipping a self-contained app that still dead-ends on a
+     missing dependency would recreate the problem it was built to solve.
+     **Owner-approved extension 2026-09-28: BUNDLE TMUX TOO.** Measured
+     cost ~1.5 MB (tmux 924 KB + libutf8proc/libevent/libncursesw) on a
+     29 MB zip — ~5% to remove the most likely first-launch failure. The
+     real work: tmux links Homebrew dylibs at `/opt/homebrew/opt/...`, so
+     it needs its libraries copied in, load paths rewritten
+     (`install_name_tool`), and re-signing — the same pattern just built
+     for CPython, one step smaller. Resolution order: bundled → system
+     (kept for CLI users and as fallback) → the missing-tmux screen, now
+     the safety net rather than the primary path. **Critical test**: a
+     session started under system tmux and resumed under bundled tmux must
+     attach to the SAME server (same pane PIDs), not silently fork a second
+     empty one — the one place this could eat the owner's live panes.
+     Accepted tradeoff, recorded: bundling means we own tmux security
+     updates; pin the version visibly and put the bump in the release
+     checklist.
+
 ## Bugs — open
 
 B9. **Terminal typing latency — FIXED, awaiting release** (PR #95,
