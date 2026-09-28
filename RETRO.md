@@ -1,5 +1,17 @@
 # Retro — lessons from real breakage
 
+## 2026-09-28 — Never wait for tmux on the loop that drains its output
+
+The terminal control stream exposed synchronous tmux calls on the asyncio loop.
+A liveness probe could block that loop while tmux waited for its output client
+to drain, freezing the dashboard and hooks too. Move blocking tmux operations
+off-loop, including property reads, screen capture, resize, transfer and lifecycle
+paths. Keep database and state mutations on-loop. A slow liveness response is
+not a dead session: do not replace it with a timeout returning False. Regressions
+make the fake tmux response depend on loop progress and verify the tail remains
+alive until tmux actually reports exit. Approval keystrokes use the existing
+ordered input queue rather than synchronously calling tmux from callbacks.
+
 ## 2026-09-28 — A local gate must include the checks that can reject CI
 
 Mail analytics passed the local gate but failed CI strict typing because the
