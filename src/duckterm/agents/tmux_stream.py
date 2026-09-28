@@ -124,7 +124,8 @@ class Decoder:
 async def stream(target: str) -> AsyncGenerator[bytes, None]:
     """Close only this viewer on failure; the browser reconnects with a new snapshot.
 
-    Read-only/ignore-size leave the owned pane's input and sizing unchanged.
+    ignore-size leaves pane sizing unchanged. The private command channel only
+    captures output; read-only would also block send-keys in tmux 3.7.
     pause-after bounds tmux's backlog for a stalled viewer; %pause terminates
     this feed rather than silently leaving the browser attached to paused output.
     """
@@ -133,7 +134,7 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             "-C",
             "attach-session",
             "-f",
-            "read-only,ignore-size,pause-after=5",
+            "ignore-size,pause-after=5",
             "-t",
             target,
             ";",

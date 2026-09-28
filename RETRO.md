@@ -8,6 +8,9 @@ and sleeps cannot identify that boundary. Use one ordered control stream for
 each viewer's capture and live output; keep logging separate. Test with a frozen
 file reader, mid-output attachments, and disconnected or paused viewers. Preserve
 the cursor's blank row so post-snapshot output cannot overwrite the previous line.
+Test input with viewers attached on the bundled version too: tmux 3.7 selects
+read-only control clients for send-keys and rejects otherwise valid input. Keep
+the viewer's private command channel output-only without that client flag.
 
 ## 2026-09-28 — A green gate on synthetic panes shipped a server hang (v0.4.83)
 **Broke:** v0.4.83's new ordered terminal replay (#130) raised `ValueError:
