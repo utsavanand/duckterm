@@ -789,9 +789,13 @@ code,
    split from the per-session context above by a hard divider. */
 .rd-connectors {
   border-top: 1px solid var(--border);
-  /* Fill whatever the context above doesn't need, and scroll inside it. */
+  /* Fill whatever the context above doesn't need, and scroll inside it.
+     The floor is load-bearing: the context body is `flex: 0 1 auto`, so a
+     tall Session card above claimed the whole column and shrank connectors
+     to zero height — rendered, scrollable, and entirely off screen in
+     v0.4.85. Reserve enough for the heading plus one row. */
   flex: 1 1 0;
-  min-height: 0;
+  min-height: 8.5rem;
   overflow-y: auto;
   padding-bottom: 12px;
 }
@@ -842,6 +846,15 @@ code,
   font-family: ui-monospace, Menlo, monospace;
   color: var(--muted);
   margin: 4px 0 0 15px;
+}
+.rd-connector-proof {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rd-connector-proof button {
+  margin-left: auto;
 }
 .rd-connector-token {
   display: flex;

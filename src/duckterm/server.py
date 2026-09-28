@@ -281,6 +281,8 @@ _ROUTES: list[Route] = [
           **_mid("/connectors/", "/enable")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._disable_connector(w, seg),
           **_mid("/connectors/", "/disable")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._verify_connector(w, seg),
+          **_mid("/connectors/", "/verify")),
     # ── left-panel folders ──
     Route("GET", "/session-inbox-counts", lambda s, r, w, h, b, seg: s._inbox_counts(w, h)),
     Route("GET", "/folders", lambda s, r, w, h, b, seg: s._list_folders(w)),
@@ -3317,7 +3319,20 @@ class Server:
         # Credential/CLI probes can take seconds. Keep other dashboard requests
         # and terminal traffic responsive while they finish.
         statuses = await asyncio.to_thread(connectors.list_status)
+        used = await asyncio.to_thread(self.history.connector_last_used)
+        for row in statuses:
+            recorded = used.get(str(row["name"]))
+            row["last_used"] = recorded[0] if recorded else None
+            row["use_count"] = recorded[1] if recorded else 0
         await _write_json(writer, 200, {"connectors": statuses})
+
+    async def _verify_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
+        """Prove the harness path works, rather than that a config entry exists."""
+        if name not in connectors.NAMES:
+            await _write_json(writer, 404, {"error": "unknown connector"})
+            return
+        result = await asyncio.to_thread(connectors.verify, name)
+        await _write_json(writer, 200, {"name": name, **result})
 
     async def _enable_connector(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
         try:

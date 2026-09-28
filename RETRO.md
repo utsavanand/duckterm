@@ -305,6 +305,23 @@ counts. Keep completion-day activity separate from sent-day cohorts, and label
 histogram percentiles approximate rather than deriving fake medians from totals.
 
 
+## 2026-09-28 — Trace the thing before designing the fix for it
+**Broke:** B2 was filed as "connectors configured but not usable", and two
+rounds of design went into a setup wizard for connectors that could not be
+set up.
+**Cause:** nobody had run the connectors. Speaking MCP through the exact
+command the harness configs use (`duckterm connector-run NAME`) returned
+GitHub 45 tools, Railway 34, Porkbun 25 — all three working. The defect was
+that the panel could only say `enabled=True, detail=None`, which asserts a
+config entry, not a usable tool. The owner's "I don't know if I can really
+use them" described the UI precisely.
+**Rule:** before designing a fix, exercise the feature end to end through the
+real path a user's software takes, and let the result pick the fix. The
+evidence a trace produces is often the feature itself: here the probe became
+the Check now action. Corollary for probes — hold stdin open until the reply
+lands, because closing it early makes an MCP server exit with "server is
+closing: EOF", and a working connector reads as broken.
+
 ## 2026-09-28 — A shared directory cannot identify a conversation
 
 Codex Resume used the newest rollout in a cwd when its recorded native ID was

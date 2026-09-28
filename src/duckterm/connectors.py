@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -622,6 +623,103 @@ def run(name: str) -> None:
         if workspace:
             workspace.cleanup()
     raise SystemExit(proc.returncode or 0)
+
+
+def verify(name: str, *, timeout: float = 30.0) -> dict[str, object]:
+    """Speak MCP to the connector the way a harness does and report what it serves.
+
+    Runs the registered command itself (`duckterm connector-run NAME`), so a
+    pass means the harness path works — not that a config entry exists. stdin
+    stays open until the reply arrives: closing it early makes servers exit
+    ("server is closing: EOF") and look broken when they are fine.
+    """
+    if name not in NAMES:
+        raise ValueError(f"unknown connector {name!r}")
+    argv = [_duckterm_bin(), "connector-run", name]
+    deadline = time.monotonic() + timeout
+    proc = subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    replies: dict[int, dict[str, object]] = {}
+
+    def collect() -> None:
+        for line in proc.stdout or ():
+            if not line.startswith("{"):
+                continue
+            with contextlib.suppress(ValueError):
+                message = json.loads(line)
+                if isinstance(message, dict) and isinstance(message.get("id"), int):
+                    replies[message["id"]] = message
+
+    reader = threading.Thread(target=collect, daemon=True)
+    reader.start()
+
+    def send(message: dict[str, object]) -> None:
+        assert proc.stdin is not None
+        proc.stdin.write(json.dumps(message) + "\n")
+        proc.stdin.flush()
+
+    def await_reply(request_id: int) -> dict[str, object] | None:
+        while request_id not in replies and time.monotonic() < deadline:
+            if proc.poll() is not None and request_id not in replies:
+                return None
+            time.sleep(0.05)
+        return replies.get(request_id)
+
+    try:
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "duckterm-verify", "version": "1"},
+                },
+            }
+        )
+        if await_reply(1) is None:
+            return _verify_failure(proc, "The connector did not start")
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        listing = await_reply(2)
+        if listing is None:
+            return _verify_failure(proc, "The connector did not list its tools")
+        if "error" in listing:
+            message = listing["error"]
+            detail = message.get("message") if isinstance(message, dict) else None
+            return {"ok": False, "detail": str(detail or message)[:200], "tools": 0}
+        result = listing.get("result")
+        tools = result.get("tools", []) if isinstance(result, dict) else []
+        return {"ok": True, "detail": None, "tools": len(tools)}
+    except OSError as exc:
+        return {"ok": False, "detail": str(exc)[:200], "tools": 0}
+    finally:
+        with contextlib.suppress(OSError):
+            if proc.stdin:
+                proc.stdin.close()
+        proc.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def _verify_failure(proc: "subprocess.Popen[str]", summary: str) -> dict[str, object]:
+    """Surface the server's own complaint — it names the missing binary or login."""
+    with contextlib.suppress(OSError, ValueError):
+        if proc.poll() is not None and proc.stderr:
+            tail = (proc.stderr.read() or "").strip().splitlines()
+            if tail:
+                return {"ok": False, "detail": f"{summary}: {tail[-1][:160]}", "tools": 0}
+    return {"ok": False, "detail": summary, "tools": 0}
 
 
 def execution_state(name: str) -> dict[str, object]:

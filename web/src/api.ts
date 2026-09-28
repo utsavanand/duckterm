@@ -178,6 +178,15 @@ export interface Connector {
   enabled: boolean;
   ready: boolean;
   detail: string | null;
+  last_used: number | null; // epoch ms of the newest hook-reported tool call
+  use_count: number;
+}
+
+export interface ConnectorCheck {
+  name: string;
+  ok: boolean;
+  tools: number;
+  detail: string | null;
 }
 
 export interface BrowseEntry {
@@ -359,6 +368,8 @@ export const api = {
   forgetConnector: (name: string, context?: string) => post<Connector>(`/connectors/${name}/forget`, {}, context),
   disableConnector: (name: string, context?: string) =>
     post<Connector>(`/connectors/${name}/disable`, {}, context),
+  verifyConnector: (name: string, context?: string) =>
+    post<ConnectorCheck>(`/connectors/${name}/verify`, {}, context),
   folderArtifacts: (folder: string) => artifactRequest<{ artifacts: FolderArtifact[]; truncated?: boolean }>(`/folders/${encodeURIComponent(folder)}/artifacts`),
   folderRecipients: (folder: string) => artifactRequest<FolderRecipients>(`/folders/${encodeURIComponent(folder)}/recipients`),
   folderDispatch: (folder: string, request: { identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>

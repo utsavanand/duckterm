@@ -1,7 +1,18 @@
 import { hostName } from "./hostTransport";
 import { useCallback, useEffect, useState } from "react";
-import { api, Connector } from "./api";
+import { api, Connector, ConnectorCheck } from "./api";
 import { useToast } from "./ui";
+
+// Hook-derived, so silence means "nothing reported it", never "never used".
+function lastUsedLabel(c: Connector): string {
+  if (!c.last_used) return "No recorded use";
+  const minutes = Math.round((Date.now() - c.last_used) / 60000);
+  if (minutes < 1) return `Used just now · ${c.use_count} calls`;
+  if (minutes < 60) return `Used ${minutes}m ago · ${c.use_count} calls`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `Used ${hours}h ago · ${c.use_count} calls`;
+  return `Used ${Math.round(hours / 24)}d ago · ${c.use_count} calls`;
+}
 
 const sourceNames: Record<string, string> = {
   "gh-cli": "GitHub CLI login on this computer",
@@ -21,6 +32,19 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
   const [token, setToken] = useState("");
   const [secret, setSecret] = useState("");
   const [write, setWrite] = useState(false);
+  const [checks, setChecks] = useState<Record<string, ConnectorCheck & { at: number }>>({});
+
+  async function verify(c: Connector) {
+    setBusy(c.name);
+    try {
+      const result = await api.verifyConnector(c.name, sessionKey);
+      setChecks(prev => ({ ...prev, [c.name]: { ...result, at: Date.now() } }));
+    } catch (e) {
+      toast(`${c.title}: ${(e as Error).message}`, "err");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   const refresh = useCallback(() => { api.connectors(sessionKey).then(d => setRows(d.connectors)).catch(() => undefined); }, [sessionKey]);
   useEffect(() => {
@@ -71,6 +95,17 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
       </div>
       <div className="rd-connector-desc">{c.description}{c.name === "porkbun" ? ` · ${c.write_access ? "Write access enabled" : "Read-only"}` : ""}</div>
       <div className="rd-connector-desc">{c.identity ?? (c.credential ? "Identity not verified — reconnect to verify" : c.detail)}</div>
+      {c.enabled && <div className="rd-connector-desc rd-connector-proof">
+        <span>{checks[c.name]
+          ? (checks[c.name].ok
+              ? `✓ Verified — ${checks[c.name].tools} tools available`
+              : `✗ ${checks[c.name].detail ?? "Verification failed"}`)
+          : "Configured · not verified this session"}</span>
+        <span> · {lastUsedLabel(c)}</span>
+        <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => verify(c)}>
+          {busy === c.name ? "Checking…" : "Check now"}
+        </button>
+      </div>}
           {!c.managed && c.name === "gmail" && !c.ready && (
             <details className="rd-connector-desc">
               <summary>Set up personal Gmail</summary>

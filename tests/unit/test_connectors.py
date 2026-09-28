@@ -5,6 +5,7 @@ enable/disable writing (and cleaning) BOTH harness configs. CLI dependencies
 
 import json
 import stat
+import sys
 import tomllib
 from pathlib import Path
 
@@ -354,3 +355,54 @@ def test_huggingface_rejects_unsupported_node(
     with pytest.raises(RuntimeError, match="Node.js 22"):
         connectors.enable("huggingface", home=tmp_path)
     assert not (tmp_path / ".claude.json").exists()
+
+
+def _fake_mcp(path: Path, body: str) -> None:
+    """A stdio MCP server that answers initialize + tools/list over real pipes."""
+    path.write_text(f"#!{sys.executable}\nimport json,sys\n{body}\n")
+    path.chmod(0o755)
+
+
+_SERVES_TOOLS = """
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    msg = json.loads(line)
+    if msg.get('id') == 1:
+        ready = {'jsonrpc':'2.0','id':1,'result':{'protocolVersion':'2024-11-05'}}
+        print(json.dumps(ready), flush=True)
+    elif msg.get('id') == 2:
+        tools = [{'name': f'tool_{i}'} for i in range(3)]
+        print(json.dumps({'jsonrpc':'2.0','id':2,'result':{'tools':tools}}), flush=True)
+"""
+
+
+def test_verify_reports_the_tools_a_working_connector_serves(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = tmp_path / "server"
+    _fake_mcp(server, _SERVES_TOOLS)
+    monkeypatch.setattr(connectors, "_duckterm_bin", lambda: str(server))
+    assert connectors.verify("github") == {"ok": True, "detail": None, "tools": 3}
+
+
+def test_verify_surfaces_the_servers_own_error_when_it_cannot_start(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = tmp_path / "server"
+    _fake_mcp(server, "sys.stderr.write('uvx not found\\n')\nraise SystemExit(1)")
+    monkeypatch.setattr(connectors, "_duckterm_bin", lambda: str(server))
+    result = connectors.verify("porkbun")
+    assert result["ok"] is False and result["tools"] == 0
+    assert "uvx not found" in str(result["detail"])
+
+
+def test_verify_does_not_hang_on_a_server_that_never_answers(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = tmp_path / "server"
+    _fake_mcp(server, "import time\ntime.sleep(60)")
+    monkeypatch.setattr(connectors, "_duckterm_bin", lambda: str(server))
+    result = connectors.verify("github", timeout=1.0)
+    assert result["ok"] is False and "did not start" in str(result["detail"])
