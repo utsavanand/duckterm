@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-27 against `main` f6575b3, installed v0.4.79)
+## Status at a glance (reconciled 2026-09-28 by release-dev at the v0.4.81 release)
 
 | Item | Status |
 | --- | --- |
@@ -15,6 +15,9 @@ the session API.
 | F12 Work tracking | **Reverted in v0.4.74** (PR #96) per the owner's deferral; schema stays v5. Back on the roadmap for a lighter redesign. |
 | F10 Request status updates | Removed with the F12 revert. Received/done updates and request chains are **not** on main. |
 | B9 Terminal typing latency | **Shipped v0.4.78** (PR #95); native Mac confirmation still open (PR #112) |
+| B10 Oracle reminder reliability | **Shipped v0.4.80** (PR #119): new mail wakes idle agents; read-but-unanswered questions get one 4-hour follow-up |
+| Codex Resume identity | **Stopgap shipped v0.4.81** (PR #125): Resume uses only the session's recorded ID and refuses (409) instead of guessing in a shared folder. Lifetime ID pinning stays with F15. |
+| F16 Self-contained Mac app | Backend ready (PR #124, draft); waiting on bundled tmux and missing-tmux guidance, then notarization (owner's Apple Developer ID) |
 | Local and remote sessions in one window | Shipped v0.4.75 (PR #68); location icons v0.4.76-0.4.77; remote clouds on the Oracle page v0.4.79 |
 | B4, B7, B8 | Fixed (B4 verified on installed v0.4.73; B7 v0.4.70; B8 v0.4.69) |
 | Control Tower | Shipped (PR #39); menu wording v0.4.73 |
