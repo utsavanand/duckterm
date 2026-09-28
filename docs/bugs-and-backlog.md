@@ -7,8 +7,8 @@ items with their triggers; this page is the working list.
 Ownership means **asked and confirmed**, not "sent to". Where a session has
 said it has not started something, that is recorded as such.
 
-Last reconciled against `main` (`f6575b3`, installed **v0.4.79**) and open
-PRs: 2026-09-27, by `product`. Every "verified" line below was checked
+Status last updated at the **v0.4.81** release (2026-09-28) by `release-dev`; items
+below were last reconciled against code by `product` on 2026-09-27. Every "verified" line below was checked
 against code or the installed app that day.
 
 ## Waiting on the owner

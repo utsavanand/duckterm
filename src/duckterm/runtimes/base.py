@@ -132,6 +132,11 @@ class Harness(ABC):
     @abstractmethod
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]: ...
 
+    def can_resume_unambiguously(self, *, cwd: Path, recorded: str | None) -> bool:
+        """Whether this exact recorded conversation can be resumed, without
+        guessing by cwd or recency. Harnesses must explicitly prove support."""
+        return False
+
     def find_resumable_id(self, *, cwd: Path, recorded: str | None) -> str | None:
         """A conversation id restore_command can actually resume: the recorded
         one if its transcript still exists, else the harness's best fallback
