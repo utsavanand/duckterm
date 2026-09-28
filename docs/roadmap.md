@@ -19,7 +19,7 @@ the session API.
 | B4, B7, B8 | Fixed (B4 verified on installed v0.4.73; B7 v0.4.70; B8 v0.4.69) |
 | Control Tower | Shipped (PR #39); menu wording v0.4.73 |
 | Inbox redesign | Shipped v0.4.68 |
-| B3, B6, B10, F6, duck settle, waiting lifecycle | Open; see [bugs-and-backlog.md](bugs-and-backlog.md) |
+| B3, B6, B12, F6, duck settle, waiting lifecycle | Open; see [bugs-and-backlog.md](bugs-and-backlog.md) |
 | F11 Answer agents without typing | Stop-hook path now carries inbox reminders (`cd25224`); relaying owner answers not built |
 | B2, F7, F8, Oracle on WhatsApp | Designed; waiting on owner review or scheduling |
 | F14 Cross-host discovery and messaging | Designed ([cross-host-collaboration-design.md](cross-host-collaboration-design.md), PR #110) |
@@ -546,6 +546,55 @@ F13. **Compact session-location indicators — IMPLEMENTED, awaiting
      row text into an icon. Evidence caveat: browser checks used a
      controlled remote bridge, **not live SSH**.
 
+F15. **Session controls: right-panel card, Restart, Change model, Switch
+     harness** (owner-directed 2026-09-27 via `product`; spec:
+     [session-controls-spec.md](session-controls-spec.md), reviewed by the
+     architect, **sent to `main-dev` to build 2026-09-28**).
+     Owner decisions, recorded in the spec: no inline action buttons in the
+     sidebar in **any** density — everything lives in a right-panel Session
+     card, and the row `⋯` goes too; Switch harness stays on the same card
+     (no child session); Change model **is** a restart with the new model,
+     so the Restart dialog offers the model choice; Restart **waits for the
+     current turn to end** and never interrupts.
+     **BLOCKING on Restart — the Codex hazard is live, not theoretical.**
+     Verified 2026-09-28: two live Codex sessions share
+     `/Users/utsava/workspace-2026/duckterm`, and
+     `runtimes/codex.py find_resumable_id()` resolves the resume target by
+     the **newest rollout in that cwd** (in-process launches never report
+     Codex's session id). Both therefore resolve to the same rollout, so
+     restarting either can **silently attach to the other session's
+     conversation**. Tolerable for Resume — deliberate and occasional —
+     but not for Restart, which this spec makes routine on every session
+     *and* the mechanism for Change model. Required first: pin the rollout
+     id **at launch** when it is unambiguous, or disable Restart/Change
+     model for Codex sessions sharing a cwd, with the reason shown.
+     Treat "can resume be targeted unambiguously" as a per-harness
+     capability, default false (RETRO: the empty-Messages-tab rule).
+     Other design calls sent with the review: **Resume on stopped rows** is
+     the one action worth an exception to decision 1, flagged for the owner
+     as requested; Restart should **refuse** on an unsent draft rather than
+     warn-and-proceed (losing typed input to a routine action is what stops
+     people using a feature); define "turn ended" as the Stop hook event,
+     not an idle heuristic; a queued restart must be visible and
+     cancelable; Change model must use the harness's model flag, never
+     typed `/model` (that is the mechanism F11 exists to remove); Switch
+     harness is **seeded, not resumed** — a transcript is harness-specific
+     and the UI must say so.
+     Sequencing: Session card first (pure UI, immediate value in compact),
+     then Restart *after* the Codex fix, then Change model, then Switch
+     harness with a preview.
+     **Preview ready, awaiting owner review** (`ui-dev`, 2026-09-28):
+     http://127.0.0.1:4388/session-controls.html, registered in Artifacts —
+     right-panel actions, same-card editable harness handoff,
+     **queued/cancelable restart**, and **draft/identity blocks**. Design
+     only; no production implementation and no F15 build approval inferred.
+     Worth noting the preview already encodes the review constraints rather
+     than deferring them: the queued restart is cancelable, the draft block
+     is present, and `main-dev` holds the exact Codex conversation-identity
+     requirement, Stop-completion sequencing, draft **recheck at execution**
+     (not only at queue time — a draft can be typed while a restart waits),
+     and persisted-queue requirements.
+
 F14. **Cross-host session discovery and messaging** (owner-requested
      2026-09-28). Design:
      [cross-host-collaboration-design.md](cross-host-collaboration-design.md).
@@ -670,6 +719,78 @@ F16. **Self-contained Mac app — first-launch works with no developer
      Accepted tradeoff, recorded: bundling means we own tmux security
      updates; pin the version visibly and put the bump in the release
      checklist.
+
+B11. **Copy from a remote session's terminal — unresolved, untracked
+     until now** (`ui-dev` flagged it 2026-09-28 as "remote-copy report
+     remains unresolved pending affected session/view"). Recorded here so
+     it stops living only in an inbox message.
+     Why it is plausible rather than speculative: the Mac app's clipboard
+     path is a bridge (`__rtCopy`/`__rtPaste` in `clipboardBridge.ts`),
+     added because **xterm renders selection on canvas so WKWebView's
+     responder-chain copy is inert** (RETRO 2026-09-20). Remote sessions
+     reach the app through a *different* path again — `hostTransport`'s
+     SSH `session-request` proxy. So "copy works locally" does not imply
+     "copy works on a remote session"; they are two different routes to the
+     same-looking UI.
+     What is needed to act on it: the affected session and view. Whoever
+     hit it should say whether it was a remote terminal in the unified
+     window, which density, and whether ⌘C did nothing or copied the wrong
+     thing — those point at different layers.
+
+B10. **Oracle nudge gates let owner-directed work go silent**
+     (owner-reported 2026-09-28, sent to `main-dev`). The owner noticed two
+     messages sitting in an idle session's inbox and asked why neither the
+     session nor Oracle acted.
+     **Investigated; the first theory was wrong.** The inbox had nothing
+     stale — 44 answered, 4 expired, exactly 2 queued, both new. The gate
+     that fired is `PEER_WAIT_MS = 5 min` in `pick_mail()`, whose comment
+     reads *"give an active recipient time to find new peer mail itself."*
+     With `SETTLE_MS` (idle 5 min) and `TYPING_QUIET_MS` (2 min since owner
+     input), the owner noticed and typed before Oracle's threshold — so
+     Oracle was neither broken nor muted; the owner beat the timer.
+     **Root cause is the assumption, not the number:** no session checks its
+     own inbox unprompted — the collaboration instructions forbid polling
+     and an idle session is stopped, not watching. So that grace is dead
+     time before the *only* mechanism that can wake anyone.
+     Three fixes sent: (1) skip `PEER_WAIT_MS` when the session is **idle**,
+     keep it when busy where the grace is genuinely right; (2) new mail
+     should re-nudge even when an older item is still open — suppression
+     should key on "already nudged about *this* mail", which
+     `ids <= previous.ids` already does, not on "anything open"; (3)
+     **highest value** — `pick_mail` skips any peer question with
+     `last_read_at` set, so reading a message *permanently* disqualifies it
+     from ever waking the session again. Combined with no self-check loop,
+     a message read but not finished is unreachable by every mechanism in
+     the system. That is F12's problem reappearing in the nudge layer:
+     acknowledging suppresses the reminder and nothing tracks the work.
+     Minimal fix: re-nudge a read-but-still-queued question once after a
+     longer interval (~4h) rather than never.
+     **Why it matters beyond its size:** Oracle is the only thing that wakes
+     an idle session, so every gate is a place owner-directed work can go
+     silent — invisibly, until the owner happens to look. That is the
+     "I have to keep chiming in" complaint, one layer down.
+
+## B10 SHIPPED — Oracle reminder reliability, v0.4.80 (2026-09-28)
+
+Verified in the installed code, not inferred (`duckterm --version` = 0.4.80):
+
+- **Idle bypass** — `PEER_WAIT_MS` now reads *"grace for non-idle mail
+  selection; idle agents skip this"*. The misleading comment that sent me to
+  a wrong first theory (*"give an active recipient time to find new peer
+  mail itself"*) is gone — no session self-checks, and the constant now says
+  what the grace is actually for.
+- **Read-but-unanswered follow-up** — `READ_REMINDER_MS` exists and
+  `pick_mail` now considers a queued question whose `last_read_at` is older
+  than that window. Previously reading a message *permanently* disqualified
+  it from ever waking the session again, which combined with no self-check
+  loop made it unreachable by every mechanism in the system.
+- **New mail nudges independently** of older open items.
+
+The module docstring now records why any of this matters: *"a Claude session
+had four peer messages up to 47 hours old when this was written."* That is
+the concrete cost of the gap, and it is worth keeping in the file.
+
+Shipped as PR #119 / v0.4.80, QA and integrated CI passed, 25 panes intact.
 
 ## Bugs — open
 
