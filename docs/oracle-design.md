@@ -133,6 +133,23 @@ auto mode only calls its hook when it escalates, so its requests stay notes
 immediately. The hook no longer registers a waiting approval for Codex, whose
 3 s hook limit orphaned it.
 
+**The waiting badge follows the same evidence** (2026-09-28). Every
+`PermissionRequest` used to set the session to waiting, so a Codex agent whose
+reviewer had approved a command showed waiting while the command ran, with no
+note in Oracle. The owner saw a waiting badge and nothing to answer. Now a
+request from an auto-reviewing harness is marked `auto_reviewed` and keeps the
+session busy. It flips to waiting when the watch confirms the prompt on screen.
+
+The watch gives up after 10 minutes. Every 60 s, a second check looks at
+auto-reviewed requests pending for over 2 minutes. If the known prompt is on
+screen, the request becomes a note, which covers prompts that appear late. If
+the screen shows neither the known prompt nor Codex's busy markers ("Working",
+"esc to interrupt"), the prompt is probably a shape Oracle can't read yet, such
+as an MCP or network approval. The session shows waiting, with no note since
+Oracle can't answer it, and its screen is saved to `relay-missed-prompts.json`
+beside `relay.json` (last 100 entries). New shapes get added from those real
+screens.
+
 **Detecting a turn that waits on the owner.** The first version flagged a
 final paragraph ending in "?". Scored against 104 real turn endings from
 Claude Code and Codex, hand-labeled blocked (21), offer (19), or none (64), it

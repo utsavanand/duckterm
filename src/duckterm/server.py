@@ -54,7 +54,7 @@ from duckterm import connectors, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events, oracle, progress
-from duckterm.core.approvals import ApprovalRegistry
+from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
@@ -83,7 +83,7 @@ from duckterm.helpers import (
     session_credentials,
     session_instructions,
 )
-from duckterm.helpers.private_files import private_read
+from duckterm.helpers.private_files import private_read, private_write
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence import backup_sync, mail_analytics
@@ -345,6 +345,7 @@ class Server:
         self.relay = Relay(paths.home() / "relay.json")
         self._relay_confirmed: set[str] = set()  # approvals seen asking on screen
         self._relay_watching: set[str] = set()
+        self._relay_logged: set[str] = set()  # requests whose screen was logged
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -373,6 +374,13 @@ class Server:
         Enrich watched sessions with git state detected from their cwd, so they
         too can show repo/branch and be forked into a worktree."""
         self._enrich_git(event)
+        key = event.get("session_key") or event.get("session_id")
+        if (
+            event.get("event_type") == events.PERMISSION_REQUEST
+            and key
+            and self._relay_harness(str(key)).auto_approves_requests
+        ):
+            event["auto_reviewed"] = True
         self.history.record(event)
         self.approvals.from_event(event)
         if event.get("event_type") == events.STOP:
@@ -2331,11 +2339,74 @@ class Server:
                     return
                 screen = await asyncio.to_thread(sup.visible_screen)
                 if harness.approval_prompt_visible(screen):
-                    self._relay_confirmed.add(approval_id)
-                    self._relay_sync_approvals()
+                    self._relay_confirm(approval_id, key)
                     return
         finally:
             self._relay_watching.discard(approval_id)
+
+    def _relay_confirm(self, approval_id: str, key: str) -> None:
+        self._relay_confirmed.add(approval_id)
+        self._relay_sync_approvals()
+        self._mark_waiting(key)
+
+    def _mark_waiting(self, key: str) -> None:
+        self.bus.publish(
+            {
+                "event_type": events.NOTIFICATION,
+                "notification_type": "permission_prompt",
+                "session_key": key,
+                "reconciled": True,
+            }
+        )
+
+    # An auto-reviewed request still pending this long, on a screen that
+    # neither shows a known prompt nor looks busy, is probably a prompt shape
+    # Oracle can't read yet.
+    _RELAY_STUCK_MS = 120_000
+    _RELAY_MISSED_KEEP = 100
+
+    async def _relay_check_stuck(self, now: int) -> None:
+        """Catch auto-reviewed requests the 10-minute watch can't: a prompt that
+        shows later becomes a note, and an unknown prompt shape shows waiting and
+        logs its screen to relay-missed-prompts.json, so new shapes can be added
+        from real screens."""
+        for a in self.approvals.pending():
+            if (
+                a.blocking
+                or a.id in self._relay_confirmed
+                or now - a.created_at < self._RELAY_STUCK_MS
+            ):
+                continue
+            harness = self._relay_harness(a.session_key)
+            sup = self.orchestrator.get(a.session_key)
+            if not harness.auto_approves_requests or sup is None or not sup.running:
+                continue
+            screen = await asyncio.to_thread(sup.visible_screen)
+            if harness.approval_prompt_visible(screen):
+                self._relay_confirm(a.id, a.session_key)
+            elif harness.detect_state(screen) != "busy" and a.id not in self._relay_logged:
+                self._relay_logged.add(a.id)
+                self._mark_waiting(a.session_key)
+                self._log_missed_prompt(a, plain_screen(screen), now)
+
+    def _log_missed_prompt(self, a: Approval, screen: str, now: int) -> None:
+        path = self.relay.path.with_name("relay-missed-prompts.json")
+        raw = private_read(path)
+        entries = json.loads(raw) if raw else []
+        fields = self._relay_session_fields(a.session_key)
+        entries.append(
+            {
+                "at": now,
+                "session": fields["name"],
+                "runtime": fields["runtime"],
+                "tool": a.tool_name,
+                "detail": a.detail,
+                "pending_ms": now - a.created_at,
+                "screen": "\n".join(screen.splitlines()[-40:]),
+            }
+        )
+        private_write(path, json.dumps(entries[-self._RELAY_MISSED_KEEP :], indent=1))
+        print(f"relay: unrecognized prompt on {entries[-1]['session']}, screen saved to {path}")
 
     # Seconds to wait after a turn ends before classifying it: an owner who is
     # watching usually answers in the terminal first, and then no note or model
@@ -3931,6 +4002,11 @@ class Server:
         while True:
             await asyncio.sleep(20)
             ticks += 1
+            if ticks % 3 == 0:
+                try:
+                    await self._relay_check_stuck(int(time.time() * 1000))
+                except Exception:
+                    traceback.print_exc()
             if ticks % 3 == 0 and os.environ.get("DUCKTERM_ORACLE") != "off":
                 # An exception here would end this loop, silently stopping both
                 # Oracle and the dead-session sweep below.
