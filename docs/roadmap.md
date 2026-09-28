@@ -600,6 +600,39 @@ waiting, which makes it the cheapest possible thing to ship.
 Recommendation, one line: **ship #95 next, ahead of further UI work**, and
 confirm the fix natively in the Mac app rather than only in Chromium.
 
+B10. **Oracle nudge gates let owner-directed work go silent**
+     (owner-reported 2026-09-28, sent to `main-dev`). The owner noticed two
+     messages sitting in an idle session's inbox and asked why neither the
+     session nor Oracle acted.
+     **Investigated; the first theory was wrong.** The inbox had nothing
+     stale — 44 answered, 4 expired, exactly 2 queued, both new. The gate
+     that fired is `PEER_WAIT_MS = 5 min` in `pick_mail()`, whose comment
+     reads *"give an active recipient time to find new peer mail itself."*
+     With `SETTLE_MS` (idle 5 min) and `TYPING_QUIET_MS` (2 min since owner
+     input), the owner noticed and typed before Oracle's threshold — so
+     Oracle was neither broken nor muted; the owner beat the timer.
+     **Root cause is the assumption, not the number:** no session checks its
+     own inbox unprompted — the collaboration instructions forbid polling
+     and an idle session is stopped, not watching. So that grace is dead
+     time before the *only* mechanism that can wake anyone.
+     Three fixes sent: (1) skip `PEER_WAIT_MS` when the session is **idle**,
+     keep it when busy where the grace is genuinely right; (2) new mail
+     should re-nudge even when an older item is still open — suppression
+     should key on "already nudged about *this* mail", which
+     `ids <= previous.ids` already does, not on "anything open"; (3)
+     **highest value** — `pick_mail` skips any peer question with
+     `last_read_at` set, so reading a message *permanently* disqualifies it
+     from ever waking the session again. Combined with no self-check loop,
+     a message read but not finished is unreachable by every mechanism in
+     the system. That is F12's problem reappearing in the nudge layer:
+     acknowledging suppresses the reminder and nothing tracks the work.
+     Minimal fix: re-nudge a read-but-still-queued question once after a
+     longer interval (~4h) rather than never.
+     **Why it matters beyond its size:** Oracle is the only thing that wakes
+     an idle session, so every gate is a place owner-directed work can go
+     silent — invisibly, until the owner happens to look. That is the
+     "I have to keep chiming in" complaint, one layer down.
+
 ## Bugs — open
 
 B9. **Terminal typing latency — FIXED, awaiting release** (PR #95,
