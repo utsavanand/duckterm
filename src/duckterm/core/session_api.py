@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm.helpers import session_credentials
+from duckterm.persistence import mail_analytics
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
 from duckterm.persistence.artifacts import ArtifactError, ArtifactStore
 from duckterm.runtimes.base import AT_REST_STATES
@@ -623,14 +624,16 @@ class SessionAPI:
                 "WHERE status IN ('queued', 'accepted') AND expires_at > 0 AND expires_at <= ?",
                 (now,),
             )
-            self.conn.execute(
-                "DELETE FROM session_questions WHERE status NOT IN ('queued', 'accepted') "
+            mail_analytics.retire_mail(
+                self.conn,
+                "status NOT IN ('queued', 'accepted') "
                 "AND CASE WHEN expires_at > 0 AND expires_at < ? THEN expires_at "
                 "ELSE COALESCE(answered_at, created_at) END < ?",
                 (NO_DEADLINE, now - 7 * 86400000),
             )
-            self.conn.execute(
-                "DELETE FROM session_questions WHERE kind = 'broadcast' AND created_at < ?",
+            mail_analytics.retire_mail(
+                self.conn,
+                "kind = 'broadcast' AND created_at < ?",
                 (now - 7 * 86400000,),
             )
             self.conn.execute(

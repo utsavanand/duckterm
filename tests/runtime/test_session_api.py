@@ -484,3 +484,18 @@ def test_folder_names_with_sql_wildcards_do_not_move_other_trees(store: HistoryS
     store.delete_folder("moved")
     assert call(store, a, "GET", "/self")[1]["root"] == ""
     assert call(store, b, "GET", "/self")[1]["folder"] == "projectXone/child"
+
+
+def test_mail_analytics_owner_route_and_range_validation(store: HistoryStore) -> None:
+    server = Server(history=store)
+    owner = {"x-duckterm-token": server.token}
+    assert dispatch(server, "GET", "/analytics/mail", {})[0] == 401
+    session = enroll(store, "a")
+    assert dispatch(server, "GET", "/analytics/mail", session)[0] == 403
+    for query in ("0", "-1", "wat", "", "36501", "7&days=30"):
+        assert dispatch(server, "GET", "/analytics/mail?days=" + query, owner)[0] == 400
+    for query, days in (("1", 1), ("7", 7), ("all", None)):
+        status, result = dispatch(server, "GET", "/analytics/mail?days=" + query, owner)
+        assert status == 200 and result["days"] == days
+        assert result["timezone"] == "UTC" and result["version"] == 1
+        assert result["daily"] == []  # Fixture sessions are explicitly test:true.

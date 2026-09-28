@@ -1,6 +1,7 @@
 # Analytics: tokens and Agent Mail — spec
 
-Status: proposed by product for the owner, 2026-09-28. Not designed or built.
+Status: Agent Mail backend implemented; Analytics page and token extensions pending.
+Backend contract and retention details: [mail-analytics.md](mail-analytics.md).
 Owner's ask: click the Oracle page's Tokens tile and the Agent Mail tile to
 get "deeper analytics … a small kind of analytics app within DuckTerm".
 

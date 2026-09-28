@@ -86,7 +86,7 @@ from duckterm.helpers import (
 from duckterm.helpers.private_files import private_read
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
-from duckterm.persistence import backup_sync
+from duckterm.persistence import backup_sync, mail_analytics
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
 from duckterm.persistence.artifacts import ArtifactError
 from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
@@ -489,6 +489,9 @@ class Server:
             await self._message_pins(writer, headers, pin_match[1], pin_match[2], method, body)
             return
         inbox_path = urllib.parse.urlsplit(path)
+        if method == "GET" and inbox_path.path == "/analytics/mail":
+            await self._mail_analytics(writer, headers, inbox_path.query)
+            return
         if method == "GET" and inbox_path.path == "/folder-interactions":
             await self._folder_inbox(writer, headers, inbox_path.query)
             return
@@ -2579,6 +2582,25 @@ class Server:
             await _write_json(writer, 404, {"error": f"No rule {rule_id}."})
             return
         await _write_json(writer, 200, {"deleted": rule_id})
+
+    async def _mail_analytics(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            values = urllib.parse.parse_qs(query, keep_blank_values=True).get("days", ["7"])
+            if len(values) != 1:
+                raise ValueError
+            days = None if values[0] == "all" else int(values[0])
+            if days is not None and not 1 <= days <= 36500:
+                raise ValueError
+        except ValueError:
+            await _write_json(writer, 400, {"error": "days must be 1..36500 or all"})
+            return
+        self.history.session_api._sweep()
+        await _write_json(writer, 200, mail_analytics.snapshot(self.history._conn, days))
 
     async def _control_tower(self, writer: asyncio.StreamWriter) -> None:
         """Fleet insights for the control tower page. Session states and
