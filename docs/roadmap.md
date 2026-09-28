@@ -624,6 +624,23 @@ passed while the WKWebView shell was broken. The acceptance test that
 settles it is the simplest one — **the owner typing across ~23 sessions and
 noticing it is no longer slow.**
 
+B11. **Copy from a remote session's terminal — unresolved, untracked
+     until now** (`ui-dev` flagged it 2026-09-28 as "remote-copy report
+     remains unresolved pending affected session/view"). Recorded here so
+     it stops living only in an inbox message.
+     Why it is plausible rather than speculative: the Mac app's clipboard
+     path is a bridge (`__rtCopy`/`__rtPaste` in `clipboardBridge.ts`),
+     added because **xterm renders selection on canvas so WKWebView's
+     responder-chain copy is inert** (RETRO 2026-09-20). Remote sessions
+     reach the app through a *different* path again — `hostTransport`'s
+     SSH `session-request` proxy. So "copy works locally" does not imply
+     "copy works on a remote session"; they are two different routes to the
+     same-looking UI.
+     What is needed to act on it: the affected session and view. Whoever
+     hit it should say whether it was a remote terminal in the unified
+     window, which density, and whether ⌘C did nothing or copied the wrong
+     thing — those point at different layers.
+
 ## Bugs — open
 
 B9. **Terminal typing latency — FIXED, awaiting release** (PR #95,
