@@ -57,6 +57,7 @@ These are blocked on a decision only the owner can make.
 | **F7** | Plan hand-off | unassigned | Design merged ([plan-handoff-design.md](plan-handoff-design.md), PR #22); preview pending |
 | **F8** | DuckCloud: setup flow, cost and idle shutdown, AWS | feature-remote-session | Remote work merged; design merged ([duckcloud-design.md](duckcloud-design.md)); setup flow not built |
 | — | Folder view + Feature tracker | unassigned | Proposed ([folder-view-spec.md](folder-view-spec.md)); needs rework after the F12 revert |
+| — | Session controls: right-panel actions, Restart, Change model, Switch harness (includes F4) | architect (design requested) | Proposed ([session-controls-spec.md](session-controls-spec.md)) |
 | **F14** | Cross-host session discovery and messaging | unassigned | Designed ([cross-host-collaboration-design.md](cross-host-collaboration-design.md), PR #110) |
 | **F10** | Request status updates (received / in progress / done, chain-aware) | unassigned | Removed with the F12 revert; not on main |
 | — | Urgent inbox messages and an explicit Interrupt control | ui-dev | Designed; not built |
