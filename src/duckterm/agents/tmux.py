@@ -36,9 +36,14 @@ def has_tmux() -> bool:
     return shutil.which("tmux") is not None
 
 
+def client_command(*args: str) -> list[str]:
+    """One client/socket selection for commands and ordered terminal streams."""
+    return ["tmux", "-L", socket_name(), *args]
+
+
 def _tmux(*args: str) -> tuple[bool, str]:
     result = subprocess.run(
-        ["tmux", "-L", socket_name(), *args],
+        client_command(*args),
         capture_output=True,
         text=True,
     )
