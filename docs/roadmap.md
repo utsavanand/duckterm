@@ -1,27 +1,29 @@
 # DuckTerm — Roadmap
 
-As of 2026-09-27, **v0.4.73** is released and installed. The sections below
+As of 2026-09-27, **v0.4.79** is released and installed. The sections below
 are a dated log; **the status table directly below is the current truth**,
 and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-27 against `main` 4876a2a)
+## Status at a glance (reconciled 2026-09-27 against `main` f6575b3, installed v0.4.79)
 
 | Item | Status |
 | --- | --- |
-| F3 Artifacts | Shipped v0.4.55; Mac preview fix (B8) v0.4.69; full-window view implemented (`0c6436f`), awaiting release |
-| F9 Focus | **Shipped v0.4.71** (PR #78) |
-| F10 Request status updates | Shipped inside F12 in v0.4.72 (received/done updates, `--parent-request` chains). PR #96 would revert it with F12. |
-| F12 Work tracking | Shipped v0.4.72 **after the owner deferred it**. Revert PR #96 open; owner decides. |
-| B9 Terminal typing latency | Fixed in PR #95; awaiting release |
-| B4 Header icon/favicons | **Fixed** (verified on installed v0.4.73) |
-| B7 Opus 5 context readout, B8 blank Mac previews | Fixed, v0.4.70 and v0.4.69 |
-| Control Tower | Merged (PR #39) and shipped; menu wording v0.4.73 |
+| F3 Artifacts | Shipped v0.4.55; Mac preview fix (B8) v0.4.69; **full-window view shipped v0.4.75** (PR #98) |
+| F9 Focus | Shipped v0.4.71 (PR #78) |
+| F12 Work tracking | **Reverted in v0.4.74** (PR #96) per the owner's deferral; schema stays v5. Back on the roadmap for a lighter redesign. |
+| F10 Request status updates | Removed with the F12 revert. Received/done updates and request chains are **not** on main. |
+| B9 Terminal typing latency | **Shipped v0.4.78** (PR #95); native Mac confirmation still open (PR #112) |
+| Local and remote sessions in one window | Shipped v0.4.75 (PR #68); location icons v0.4.76-0.4.77; remote clouds on the Oracle page v0.4.79 |
+| B4, B7, B8 | Fixed (B4 verified on installed v0.4.73; B7 v0.4.70; B8 v0.4.69) |
+| Control Tower | Shipped (PR #39); menu wording v0.4.73 |
 | Inbox redesign | Shipped v0.4.68 |
-| B3, B6, F6, duck settle, waiting lifecycle | Open; see bugs-and-backlog |
-| B2, F7, F8, F11, Oracle on WhatsApp | Designed; waiting on owner review or scheduling |
-| Folder view + Feature tracker | Proposed 2026-09-27: [folder-view-spec.md](folder-view-spec.md) |
+| B3, B6, B10, F6, duck settle, waiting lifecycle | Open; see [bugs-and-backlog.md](bugs-and-backlog.md) |
+| F11 Answer agents without typing | Stop-hook path now carries inbox reminders (`cd25224`); relaying owner answers not built |
+| B2, F7, F8, Oracle on WhatsApp | Designed; waiting on owner review or scheduling |
+| F14 Cross-host discovery and messaging | Designed ([cross-host-collaboration-design.md](cross-host-collaboration-design.md), PR #110) |
+| Folder view + Feature tracker | Proposed: [folder-view-spec.md](folder-view-spec.md); needs rework now that F12 is reverted |
 | F1, F2, F4, F5, urgent messages, Interrupt, approvals re-home | Not started |
 
 Shipped since this doc was first written (2026-09-20 → 22):
