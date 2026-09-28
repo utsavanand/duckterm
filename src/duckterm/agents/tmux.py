@@ -9,10 +9,12 @@ Ported from uv-suite's watchtower tmux service. All calls are synchronous
 subprocess; drive them from async code via asyncio.to_thread.
 """
 
+import os
 import shlex
 import shutil
 import subprocess
 import sys
+from functools import lru_cache
 
 from duckterm.helpers import instance
 
@@ -32,13 +34,63 @@ def socket_name() -> str:
     return instance.tmux_socket()
 
 
+@lru_cache(maxsize=16)
+def _bundled_selection(bundle: str, system: str | None, socket: str) -> tuple[str, str]:
+    """Probe once per environment/socket, without creating or replacing a server.
+
+    A protocol mismatch may use the system client on the SAME socket. Unknown
+    socket errors are not evidence that existing sessions have disappeared.
+    """
+    for binary, source in ((bundle, "bundled"), (system, "system")):
+        if not binary:
+            continue
+        try:
+            version = subprocess.run([binary, "-V"], capture_output=True, timeout=3)
+            if version.returncode:
+                continue
+            result = subprocess.run(
+                [binary, "-L", socket, "list-sessions"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        error = result.stderr
+        if (
+            result.returncode == 0
+            or "no server running on " in error
+            or ("error connecting to " in error and "(No such file or directory)" in error)
+        ):
+            return binary, source
+        if "protocol version mismatch" in error:
+            continue
+        raise RuntimeError(f"cannot probe existing tmux server: {error.strip()}")
+    # Exceptions are not cached: Recheck may succeed after installing tmux.
+    raise FileNotFoundError("No usable tmux client (bundled or system)")
+
+
+def selected_client() -> tuple[str, str]:
+    bundle = os.environ.get("DUCKTERM_BUNDLED_TMUX")
+    if bundle:
+        return _bundled_selection(bundle, shutil.which("tmux"), socket_name())
+    return "tmux", "system"
+
+
 def has_tmux() -> bool:
-    return shutil.which("tmux") is not None
+    if not os.environ.get("DUCKTERM_BUNDLED_TMUX"):
+        return shutil.which("tmux") is not None
+    try:
+        selected_client()
+        return True
+    except FileNotFoundError:
+        return False
 
 
 def _tmux(*args: str) -> tuple[bool, str]:
+    binary, _ = selected_client()
     result = subprocess.run(
-        ["tmux", "-L", socket_name(), *args],
+        [binary, "-L", socket_name(), *args],
         capture_output=True,
         text=True,
     )
@@ -208,3 +260,12 @@ def kill_session(target: str) -> bool:
 def session_exists(target: str) -> bool:
     ok, _ = _tmux("has-session", "-t", target)
     return ok
+
+
+if __name__ == "__main__":
+    # Native setup check shares the backend resolver. Distinguish a missing
+    # executable from a socket error; installing tmux cannot fix permissions.
+    try:
+        sys.exit(0 if has_tmux() else 1)
+    except RuntimeError:
+        sys.exit(2)

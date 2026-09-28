@@ -89,6 +89,7 @@ PLIST
 # Both production and test apps carry the interpreter and this exact backend.
 # No build-machine interpreter path may be stored in the distributed bundle.
 ./bundle-python.sh "$CONTENTS/Resources"
+./bundle-tmux.sh "$CONTENTS/Resources"
 "${PYTHON:-../.venv/bin/python}" - "$CONTENTS" "$TEST_BUILD" <<'PYBUILD'
 import os, plistlib, runpy, shutil, sys
 from pathlib import Path

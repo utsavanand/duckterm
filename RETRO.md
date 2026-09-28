@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-28 — Bundle the terminal engine, not its build-machine dependencies
+
+A self-contained Python backend still leaves first-time terminal launch dependent
+on tmux. Build pinned tmux and static dependencies, reject non-system dylibs,
+and test without host tool lookup. Client selection must preserve the existing
+socket and prove server/pane PIDs survive a system-to-bundled transition; socket
+errors must never masquerade as an empty session list.
+
 ## 2026-09-28 — A downloaded app must not depend on the developer's CLI
 
 The Mac shell found an installed CLI or a hardcoded developer checkout, so a

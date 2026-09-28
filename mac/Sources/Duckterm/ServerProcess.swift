@@ -22,10 +22,7 @@ final class ServerProcess {
                       "/opt/homebrew/bin", "/usr/local/bin", NSHomeDirectory() + "/.local/bin",
                       "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         env["PATH"] = search.filter { !$0.isEmpty }.joined(separator: ":")
-        missingTmux = !env["PATH"]!.split(separator: ":").contains {
-            FileManager.default.isExecutableFile(atPath: String($0) + "/tmux")
-        }
-        if missingTmux { AppDiagnostics.shared.record("tmux is not installed") }
+        env["DUCKTERM_BUNDLED_TMUX"] = resources + "/tmux/bin/tmux"
         if bundledPython != nil {
             env.removeValue(forKey: "PYTHONHOME")
             env["PYTHONPATH"] = resources + "/backend"
@@ -37,6 +34,30 @@ final class ServerProcess {
             }
             env["DUCKTERM_INSTANCE"] = Bundle.main.object(forInfoDictionaryKey: "DucktermTestInstance") as? String ?? "test"
         }
+        // A test-only allowlist proves first launch without host-installed tools.
+        if AppIdentity.isTest,
+           Bundle.main.object(forInfoDictionaryKey: "DucktermTestSystemTools") as? Bool == false {
+            env["PATH"] = resources + "/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        }
+        missingTmux = !env["PATH"]!.split(separator: ":").contains {
+            FileManager.default.isExecutableFile(atPath: String($0) + "/tmux")
+        }
+        if let python = bundledPython {
+            let probe = Process()
+            probe.executableURL = URL(fileURLWithPath: python)
+            probe.arguments = ["-s", "-B", "-m", "duckterm.agents.tmux"]
+            probe.environment = env
+            probe.standardOutput = FileHandle.nullDevice
+            probe.standardError = FileHandle.nullDevice
+            do {
+                try probe.run()
+                let deadline = Date().addingTimeInterval(15)
+                while probe.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+                if probe.isRunning { probe.terminate() }
+                else { missingTmux = probe.terminationStatus == 1 }
+            } catch { AppDiagnostics.shared.record("tmux availability check failed") }
+        }
+        if missingTmux { AppDiagnostics.shared.record("No usable bundled or system tmux") }
         env["DUCKTERM_NO_BROWSER"] = "1"
         return env
     }

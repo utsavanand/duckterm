@@ -131,9 +131,16 @@ class SessionSupervisor:
         ):
             raise ValueError(f"command not found: {argv[0] if argv else '(empty)'}")
         # Register and enroll synchronously before the child can use its inbox.
-        self._emit(events.SESSION_START, command=shlex.join(argv))
+        use_tmux = tmux.has_tmux()
+        binary, source = tmux.selected_client() if use_tmux else ("", "pty")
+        self._emit(
+            events.SESSION_START,
+            command=shlex.join(argv),
+            tmux_binary=shutil.which(binary) or binary,
+            tmux_source=source,
+        )
         try:
-            if tmux.has_tmux():
+            if use_tmux:
                 await self._start_tmux(argv)
             else:
                 await self._start_pty(argv)

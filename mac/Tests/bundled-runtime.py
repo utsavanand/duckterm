@@ -7,7 +7,6 @@ only the copied bundle's test identity/instance change. No production data used.
 import hashlib
 import json
 import os
-from pathlib import Path
 import plistlib
 import shutil
 import signal
@@ -18,6 +17,8 @@ import tempfile
 import time
 import urllib.request
 import uuid
+from contextlib import suppress
+from pathlib import Path
 
 source = Path(sys.argv[1]).resolve()
 with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
@@ -36,6 +37,7 @@ with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
     info.update(
         CFBundleIdentifier="com.duckterm.smoke." + instance,
         DucktermTestBuild=True,
+        DucktermTestSystemTools=False,
         DucktermTestInstance=instance,
         DucktermTestPort=port,
     )
@@ -64,6 +66,8 @@ with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
         stderr=subprocess.DEVNULL,
     )
     children = []
+    bundled_tmux = str(contents / "Resources/tmux/bin/tmux")
+    tmux_socket = "duckterm-" + instance
     try:
         for _ in range(100):
             if native.poll() is not None:
@@ -91,6 +95,66 @@ with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
             if len(line.split(None, 2)) == 3
         ), "Native process did not launch bundled Python"
         assert (home / (".duckterm-" + instance) / "db.sqlite").is_file()
+        state_home = home / (".duckterm-" + instance)
+        token = (state_home / "token").read_text().strip()
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/sessions/launch",
+            data=json.dumps(
+                {
+                    "command": "/bin/cat",
+                    "cwd": scratch,
+                    "name": "bundle-smoke-test",
+                    "test": True,
+                    "in_terminal": False,
+                }
+            ).encode(),
+            headers={"Content-Type": "application/json", "X-Duckterm-Token": token},
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            key = json.load(response)["session_key"]
+        # Resolve the instance's socket scheme from the bundled helper.
+        probe_env = dict(
+            env, PYTHONPATH=str(contents / "Resources/backend"), DUCKTERM_INSTANCE=instance
+        )
+        probe_env.pop("PYTHONHOME")
+        tmux_socket = subprocess.check_output(
+            [
+                str(contents / "Resources/python/bin/python3.13"),
+                "-s",
+                "-B",
+                "-c",
+                "from duckterm.helpers.instance import tmux_socket; print(tmux_socket())",
+            ],
+            env=probe_env,
+            text=True,
+        ).strip()
+        pane = subprocess.check_output(
+            [
+                bundled_tmux,
+                "-L",
+                tmux_socket,
+                "display-message",
+                "-p",
+                "-t",
+                "rd_" + key,
+                "#{pane_pid}",
+            ],
+            env=env,
+            text=True,
+        ).strip()
+        assert pane.isdigit(), "Session did not launch under bundled tmux"
+        import sqlite3
+
+        with sqlite3.connect(state_home / "db.sqlite") as db:
+            payloads = [
+                json.loads(row[0])
+                for row in db.execute("SELECT payload_json FROM events WHERE session_key=?", (key,))
+            ]
+        assert any(
+            p.get("tmux_source") == "bundled" and p.get("tmux_binary") == bundled_tmux
+            for p in payloads
+        )
+
         subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
         print(
             json.dumps(
@@ -101,6 +165,8 @@ with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
                     "relocated": True,
                     "empty_home": True,
                     "signature_unchanged": True,
+                    "bundled_tmux_session": True,
+                    "system_tools_disabled": True,
                 }
             )
         )
@@ -118,11 +184,15 @@ with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
         except subprocess.TimeoutExpired:
             native.kill()
             native.wait()
+        subprocess.run(
+            [bundled_tmux, "-L", tmux_socket, "kill-server"],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
         for pid in set(children):
-            try:
+            with suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
         subprocess.run(
             ["/usr/bin/defaults", "delete", info["CFBundleIdentifier"]],
             stdout=subprocess.DEVNULL,

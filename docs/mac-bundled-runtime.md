@@ -26,11 +26,25 @@ Intel/universal bundles are not supplied by this build.
 
 ## Remaining external tools
 
-Agent CLIs, Git, and tmux are still external tools. Install tmux with
-`brew install tmux`. ServerProcess exposes `missingTmux` for native first-launch
-messaging; that UI is a separate UI-dev handoff and must be integrated before
-claiming the complete first-launch guidance is shipped. The dashboard itself
-can start without tmux. Bundling tmux is deferred.
+Agent CLIs and Git remain external tools. Apple Silicon apps include tmux 3.7c
+with statically linked libevent 2.1.13 and utf8proc 2.12.0. The only dynamic
+libraries are macOS system libraries; Homebrew is not required. Licenses ship
+in `Contents/Resources/tmux/licenses`.
+
+The backend selects the bundled client first, then a working system client if
+the bundle cannot execute or its protocol cannot talk to the existing server.
+Both use the same instance socket; changing clients never changes session
+identity. Unknown socket errors fail rather than treating live panes as gone.
+SessionStart records the selected binary and source. CLI-only installations
+continue to use system tmux. The native missing-tmux screen remains UI-dev's
+fallback when neither client works; that visual handoff is separate.
+
+Bundling makes DuckTerm responsible for tmux and embedded-library security
+updates. At each release, review the pinned versions and upstream advisories,
+update hashes deliberately, rebuild, and rerun the compatibility test. Official
+sources and SHA-256 pins are in `mac/bundle-tmux.sh`; every cache hit is verified.
+The build uses the macOS system allocator (`--disable-jemalloc`), system ncurses,
+and a macOS 13 deployment target. It never copies Homebrew build artifacts.
 
 ## CLI and hooks
 
@@ -66,3 +80,9 @@ native app with an empty home and stripped PATH, verifies its bundled Python
 child and dashboard HTTP 200, tests the optional CLI symlink, and verifies the
 signature stayed intact. The temporary app/home/database are removed. This is
 an isolated local test, not a notarized-download/Gatekeeper acceptance test.
+
+The native smoke test also disables host tool lookup in its copied test bundle,
+launches a `test:true` terminal, and confirms the launch event names bundled
+tmux. `PYTHONPATH=src .venv/bin/python mac/Tests/bundled-tmux.py
+/path/to/bundled/tmux /path/to/system/tmux` verifies an existing private server
+and pane keep the same PIDs. All fixture processes and data are removed.

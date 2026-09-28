@@ -10,4 +10,5 @@ RESOURCES=$(CDPATH= cd -- "$(dirname -- "$ENTRY")/.." && pwd)
 unset PYTHONHOME
 export PYTHONPATH="$RESOURCES/backend"
 export PYTHONDONTWRITEBYTECODE=1
+export DUCKTERM_BUNDLED_TMUX="$RESOURCES/tmux/bin/tmux"
 exec "$RESOURCES/python/bin/python3.13" -s -B -m duckterm.cli "$@"
