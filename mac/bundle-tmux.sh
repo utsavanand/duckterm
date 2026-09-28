@@ -48,6 +48,8 @@ unset CPATH LIBRARY_PATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH PKG_CONFIG_PATH
 )
 (
   cd "$BUILD/tmux-3.7c"
+  # Use the longstanding tparm ABI, not newer ncurses symbols found by the host SDK.
+  ac_cv_func_tiparm=no ac_cv_func_tiparm_s=no \
   LIBEVENT_CORE_CFLAGS="-I$BUILD/prefix/include" LIBEVENT_CORE_LIBS="$BUILD/prefix/lib/libevent_core.a" \
   LIBUTF8PROC_CFLAGS="-I$BUILD/prefix/include" LIBUTF8PROC_LIBS="$BUILD/prefix/lib/libutf8proc.a" \
     ./configure --prefix=/usr --enable-utf8proc --disable-systemd --disable-jemalloc
