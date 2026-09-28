@@ -35,10 +35,8 @@ APP="build/$APP_NAME.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 
-if [[ "$TEST_BUILD" == 1 ]]; then
-  echo "==> building Test dashboard"
-  (cd ../web && npm run build --silent)
-fi
+echo "==> building dashboard"
+(cd ../web && npm run build --silent)
 
 echo "==> compiling"
 rm -rf "$APP"
@@ -88,9 +86,10 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </plist>
 PLIST
 
-if [[ "$TEST_BUILD" == 1 ]]; then
-  # Snapshot this worktree's backend; never fall back to the installed production CLI.
-  "${PYTHON:-../.venv/bin/python}" - "$CONTENTS" <<'PYBUILD'
+# Both production and test apps carry the interpreter and this exact backend.
+# No build-machine interpreter path may be stored in the distributed bundle.
+./bundle-python.sh "$CONTENTS/Resources"
+"${PYTHON:-../.venv/bin/python}" - "$CONTENTS" "$TEST_BUILD" <<'PYBUILD'
 import os, plistlib, runpy, shutil, sys
 from pathlib import Path
 contents = Path(sys.argv[1])
@@ -102,21 +101,20 @@ if dashboard.exists():
 shutil.copytree('../web/dist', dashboard)
 with (contents / 'Info.plist').open('rb') as f:
     info = plistlib.load(f)
-info['DucktermTestBuild'] = True
+info['DucktermTestBuild'] = sys.argv[2] == '1'
 if remote_host := os.environ.get('DUCKTERM_TEST_REMOTE_HOST'):
     info['DucktermTestRemoteHost'] = remote_host
-info['DucktermTestPython'] = os.path.abspath(sys.executable)
 # Compute the existing instance scheme without inheriting per-facet overrides.
 for key in ('DUCKTERM_PORT', 'DUCKTERM_URL', 'DUCKTERM_HOME', 'DUCKTERM_TMUX_SOCKET'):
     os.environ.pop(key, None)
-os.environ['DUCKTERM_INSTANCE'] = 'test'
+info['DucktermTestInstance'] = os.environ.get('DUCKTERM_TEST_INSTANCE', 'test')
+os.environ['DUCKTERM_INSTANCE'] = info['DucktermTestInstance']
 # Read the stdlib-only helper from this checkout; no installed package is needed.
 instance = runpy.run_path('../src/duckterm/helpers/instance.py')
 info['DucktermTestPort'] = instance['port']()
 with (contents / 'Info.plist').open('wb') as f:
     plistlib.dump(info, f)
 PYBUILD
-fi
 
 # Optional support recipient is supplied at build time, never committed to source.
 # Read the environment directly so the address is never logged or parsed as code.
@@ -134,7 +132,11 @@ PYCONFIG
 fi
 
 echo "==> ad-hoc signing (runs locally; not notarized for distribution)"
+# Sign embedded Mach-O code explicitly before signing the outer bundle.
+find "$CONTENTS/Resources/python" -type f \( -name '*.so' -o -name '*.dylib' -o -name 'python3.13' \) \
+  -exec codesign --force --sign - {} \;
 codesign --force --deep --sign - "$APP"
+codesign --verify --deep --strict "$APP"
 
 echo "==> done: $APP"
 if [[ "$RUN_APP" == 1 ]]; then

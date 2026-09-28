@@ -6,21 +6,51 @@ import Foundation
 final class ServerProcess {
     let url = URL(string: "http://127.0.0.1:\(AppIdentity.localPort)")!
     private var task: Process?
+    private(set) var missingTmux = false
+
+    private var bundledPython: String? {
+        guard let path = Bundle.main.resourceURL?
+            .appendingPathComponent("python/bin/python3.13").path,
+            FileManager.default.isExecutableFile(atPath: path) else { return nil }
+        return path
+    }
+
+    private func serverEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let resources = Bundle.main.resourceURL!.path
+        let search = [resources + "/bin", env["PATH"] ?? "",
+                      "/opt/homebrew/bin", "/usr/local/bin", NSHomeDirectory() + "/.local/bin",
+                      "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        env["PATH"] = search.filter { !$0.isEmpty }.joined(separator: ":")
+        missingTmux = !env["PATH"]!.split(separator: ":").contains {
+            FileManager.default.isExecutableFile(atPath: String($0) + "/tmux")
+        }
+        if missingTmux { AppDiagnostics.shared.record("tmux is not installed") }
+        if bundledPython != nil {
+            env.removeValue(forKey: "PYTHONHOME")
+            env["PYTHONPATH"] = resources + "/backend"
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+        }
+        if AppIdentity.isTest {
+            for key in ["DUCKTERM_HOME", "DUCKTERM_TMUX_SOCKET", "DUCKTERM_URL", "DUCKTERM_PORT", "DUCKTERM_HOSTED"] {
+                env.removeValue(forKey: key)
+            }
+            env["DUCKTERM_INSTANCE"] = Bundle.main.object(forInfoDictionaryKey: "DucktermTestInstance") as? String ?? "test"
+        }
+        env["DUCKTERM_NO_BROWSER"] = "1"
+        return env
+    }
 
     /// Locate the `duckterm` executable. We can't rely on a GUI app inheriting
     /// the user's shell PATH, so check the usual install locations explicitly.
     private func findBinary() -> String? {
-        if AppIdentity.isTest {
-            guard let python = Bundle.main.object(forInfoDictionaryKey: "DucktermTestPython") as? String,
-                  FileManager.default.isExecutableFile(atPath: python) else { return nil }
-            return python
-        }
+        if let python = bundledPython { return python }
+        // A malformed test bundle must never touch the installed production CLI.
+        if AppIdentity.isTest { return nil }
         let candidates = [
             "/opt/homebrew/bin/duckterm",
             "/usr/local/bin/duckterm",
             "\(NSHomeDirectory())/.local/bin/duckterm",
-            // Dev checkout: the venv the dashboard is developed against.
-            "\(NSHomeDirectory())/workspace-2026/duckterm/.venv/bin/duckterm",
         ]
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
             return path
@@ -45,6 +75,7 @@ final class ServerProcess {
     /// Returns true once the server is reachable. Starts it if it isn't already
     /// running (an external `duckterm serve` is reused, not duplicated).
     func start() async -> Bool {
+        let env = serverEnvironment()
         if await isUp() {
             AppDiagnostics.shared.record("Connected to existing local server")
             return true
@@ -55,19 +86,9 @@ final class ServerProcess {
         }
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bin)
-        proc.arguments = AppIdentity.isTest ? ["-m", "duckterm.cli", "serve"] : ["serve"]
+        proc.arguments = bundledPython != nil ? ["-s", "-B", "-m", "duckterm.cli", "serve"] : ["serve"]
         // The app IS the dashboard window — without this, serve would also
         // open the default browser on the same URL.
-        var env = ProcessInfo.processInfo.environment
-        if AppIdentity.isTest {
-            for key in ["DUCKTERM_HOME", "DUCKTERM_TMUX_SOCKET", "DUCKTERM_URL", "DUCKTERM_PORT", "DUCKTERM_HOSTED"] {
-                env.removeValue(forKey: key)
-            }
-            env["DUCKTERM_INSTANCE"] = "test"
-            env["PYTHONPATH"] = Bundle.main.resourceURL!.appendingPathComponent("backend").path
-            env["PYTHONDONTWRITEBYTECODE"] = "1"
-        }
-        env["DUCKTERM_NO_BROWSER"] = "1"
         proc.environment = env
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice

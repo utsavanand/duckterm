@@ -1,0 +1,13 @@
+#!/bin/sh
+# App-local CLI for spawned agents. Resolve symlinks for optional shell access.
+ENTRY="$0"
+while [ -L "$ENTRY" ]; do
+  BASE=$(CDPATH= cd -- "$(dirname -- "$ENTRY")" && pwd)
+  LINK=$(readlink "$ENTRY")
+  case "$LINK" in /*) ENTRY="$LINK" ;; *) ENTRY="$BASE/$LINK" ;; esac
+done
+RESOURCES=$(CDPATH= cd -- "$(dirname -- "$ENTRY")/.." && pwd)
+unset PYTHONHOME
+export PYTHONPATH="$RESOURCES/backend"
+export PYTHONDONTWRITEBYTECODE=1
+exec "$RESOURCES/python/bin/python3.13" -s -B -m duckterm.cli "$@"

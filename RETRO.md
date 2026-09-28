@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-09-28 — A downloaded app must not depend on the developer's CLI
+
+The Mac shell found an installed CLI or a hardcoded developer checkout, so a
+fresh download could not start its server. Bundle the pinned interpreter,
+backend and dashboard together, verify the archive checksum on every build,
+and test a relocated app with an empty home and stripped PATH. Include the
+agent-facing CLI wrapper and check the signature after runtime imports so the
+first launch cannot silently modify the signed bundle.
+
+
 ## 2026-09-27 — Put keyboard tooltip behavior on the actual focus owner
 
 Oracle Needs-you buttons own focus so their nested remote duck adds no tab
