@@ -4,6 +4,21 @@ Status: proposed by product for the owner, 2026-09-27. Owner asked to "think
 deeply, spec out these features, then ask the architect to design them".
 Not designed or built.
 
+## Owner decisions (2026-09-27)
+
+1. **No inline action buttons in the sidebar, in any density.** All session
+   actions live in the right panel's Session card. The row's `⋯` goes too.
+   If the design finds an action truly crucial in the row (e.g. Resume on a
+   stopped session), flag it for the owner rather than adding it.
+2. **Switch harness stays on the same card.** No child session.
+3. **Change model is a restart with the new model.** The Restart dialog
+   itself offers the model choice, so restarting is also the moment to move
+   to the best model.
+4. **Restart waits for the current turn to end.** It never interrupts.
+
+These replace the recommendations and open questions below where they
+differ.
+
 ## Summary
 
 Move a session's actions into a **Session** card at the top of the right
@@ -41,9 +56,8 @@ Top of the right panel, above Edit file:
   non-git session, no Resume on an archived one, and so on.
 - Destructive actions (Stop, Archive, Delete) stay in `More` and keep their
   confirmations.
-- The left sidebar keeps a `⋯` on each row in **every** density, opening a
-  popover menu with the same actions instead of expanding the row. Standard
-  and Relaxed can keep the inline buttons; the owner decides (question 1).
+- The sidebar has **no** action buttons or `⋯` in any density (owner
+  decision 1); rows only select and show state.
 - Nothing new on the server for this part; it moves existing buttons.
 
 ## 2. Restart
@@ -64,9 +78,11 @@ without losing the conversation.
 
 **Safety:**
 
-- If the agent is **busy**, confirm first: "The current turn will be
-  interrupted and its unfinished work lost." Idle or waiting: restart
-  without asking.
+- If the agent is **busy**, Restart is queued: the card shows "Restart
+  pending — after this turn" with a Cancel, and it runs when the turn ends
+  (owner decision 4). Idle or waiting: restart immediately.
+- The Restart dialog includes the model picker from section 3, preset to
+  the current model (owner decision 3).
 - An unsent draft in the terminal is lost; warn when the pane has one (the
   supervisor already tracks owner keystrokes).
 - Out-of-band processes the agent started (dev servers, background jobs)
