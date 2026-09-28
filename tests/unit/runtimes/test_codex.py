@@ -35,10 +35,8 @@ def test_codex_has_no_transcript_yet() -> None:
     ]
 
 
-def test_codex_find_resumable_id_from_rollout_filename(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
-    """In-process launches never report Codex's session_id, so with nothing
-    recorded the id must come from the newest rollout whose session_meta names
-    this cwd — the UUID is in the filename."""
+def test_codex_resume_requires_recorded_identity(tmp_path, monkeypatch):  # type: ignore[no-untyped-def]
+    """A directory match cannot establish which conversation belongs to a row."""
     import json
 
     uuid = "0192b256-a4a4-435c-b154-a9fe4be2c2a8"
@@ -54,8 +52,8 @@ def test_codex_find_resumable_id_from_rollout_filename(tmp_path, monkeypatch):  
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
 
     rt = CodexRuntime()
-    assert rt.find_resumable_id(cwd=tmp_path / "repo", recorded=None) == uuid
-    # A recorded id whose rollout exists wins over the filename fallback.
+    assert rt.find_resumable_id(cwd=tmp_path / "repo", recorded=None) is None
+    # Only a recorded id whose rollout exists is eligible.
     assert rt.find_resumable_id(cwd=tmp_path / "repo", recorded=uuid) == uuid
     # Nothing for an unknown cwd.
     assert rt.find_resumable_id(cwd=tmp_path / "nowhere", recorded=None) is None

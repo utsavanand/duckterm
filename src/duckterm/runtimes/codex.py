@@ -42,7 +42,7 @@ _WAITING = re.compile(
     re.IGNORECASE,
 )
 
-_ROLLOUT_ID = re.compile(r"-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$")
+_SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 class CodexRuntime(Harness):
@@ -134,16 +134,19 @@ class CodexRuntime(Harness):
         return [*self._argv, "resume", session_key]
 
     def find_resumable_id(self, *, cwd: Path, recorded: str | None) -> str | None:
-        if recorded and self.locate_transcript(cwd=cwd, session_id=recorded):
+        # Cwd is not conversation identity: multiple agents can share a repo.
+        # Session-key-bound hooks persist the native ID in history; never
+        # substitute a newer rollout when that identity is missing or stale.
+        if (
+            recorded
+            and _SESSION_ID.fullmatch(recorded)
+            and self.locate_transcript(cwd=cwd, session_id=recorded)
+        ):
             return recorded
-        # In-process launches never report Codex's session_id, but the newest
-        # rollout whose session_meta names this cwd carries the id in its
-        # filename (rollout-<timestamp>-<uuid>.jsonl).
-        latest = self.latest_transcript(cwd=cwd)
-        if latest is None:
-            return None
-        m = _ROLLOUT_ID.search(latest.name)
-        return m.group(1) if m else None
+        return None
+
+    def can_resume_unambiguously(self, *, cwd: Path, recorded: str | None) -> bool:
+        return self.find_resumable_id(cwd=cwd, recorded=recorded) is not None
 
 
 def _rollout_cwd(path: Path) -> str | None:

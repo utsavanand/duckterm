@@ -1699,6 +1699,32 @@ class Server:
             )
             return
         runtime = row.get("runtime") or "generic"
+        if runtime == "codex":
+            rt = runtime_for(runtime, "codex")
+            recorded = self.history.session_id_for(session_key)
+            if not rt.can_resume_unambiguously(cwd=Path(cwd), recorded=recorded):
+                # Even a stopped peer can own the newer rollout. Never infer
+                # ownership from which process happens to still be alive.
+                shared = any(
+                    other["session_key"] != session_key
+                    and other.get("runtime") == "codex"
+                    and Path(str(other.get("worktree_path") or other.get("cwd") or ".")).resolve()
+                    == Path(cwd).resolve()
+                    for other in self.history.sessions()
+                )
+                if shared:
+                    await _write_json(
+                        writer,
+                        409,
+                        {
+                            "error": "Cannot safely resume this Codex session: its conversation ID "
+                            "was not recorded or its rollout is unavailable, and another Codex "
+                            "session shares this directory. Resume the intended conversation "
+                            "explicitly in Codex instead of guessing the newest one.",
+                            "code": "ambiguous_resume_identity",
+                        },
+                    )
+                    return
         argv, carried = self._resume_argv(session_key, runtime, row)
         # Report honestly whether the conversation is carried, so the UI can
         # warn — before this, resume always claimed success even when it
