@@ -6,7 +6,7 @@ snapshot came from tmux while live output came from a file downstream of tmux's
 pipe. Bytes already visible in the snapshot could arrive from that file later
 and appear twice, including in an unfinished prompt.
 
-Each attached view uses a read-only, ignore-size client on the existing instance
+Each attached view uses an output-only, ignore-size client on the existing instance
 socket. One command list attaches, reads pane/cursor metadata, captures up to
 2,000 history rows plus the screen, and captures any pending escape sequence.
 The reader discards output before those replies and then delivers the ordered
@@ -22,13 +22,18 @@ protects a stalled viewer from an indefinitely growing tmux backlog; receiving
 limited to 8 MiB and each protocol line to 256 KiB. The app's existing three-view
 cache limits idle view connections per dashboard.
 
+The private control channel sends only the initial capture commands. It does not
+set tmux’s `read-only` flag: tmux 3.7 can select that client for a separate
+`send-keys` command and reject normal terminal input. Input tests run with
+viewers attached to guard against this version-specific regression.
+
 The file spool and tail remain in place for state detection, logs and summaries.
 Their delayed bytes never enter tmux-backed terminal viewers. Direct PTY-backed
 sessions retain their existing bounded replay path. This is a backend transport
 fix; panel fitting and Messages table layout remain separate UI work.
 
 The control flags require tmux 3.2 or later. Acceptance was exercised against
-system tmux 3.6b; the bundled build uses 3.7c. Both synchronous commands and
+system tmux 3.6b and bundled tmux 3.7c. Both synchronous commands and
 control streams must use the same `tmux.client_command` binary/socket selection
 when integrating this change with bundled tmux.
 
