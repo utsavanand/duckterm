@@ -20,9 +20,10 @@ test("delete removes the session from the UI and the backend", async ({
   // Actions are hover-revealed; hover the row. For a watched session the button
   // reads "Stop watching" and double-confirms: the first click arms ("Confirm?"),
   // the second removes it.
-  await row.hover();
-  await row.getByRole("button", { name: "Stop watching" }).click();
-  await row.getByRole("button", { name: "Confirm?" }).click();
+  await row.locator(".rd-row-click").click();
+  await page.locator(".rd-session-controls-more > summary").click();
+  await page.locator(".rd-session-controls").getByRole("button", { name: "Stop watching" }).click();
+  await page.locator(".rd-session-controls").getByRole("button", { name: "Confirm?" }).click();
 
   // UI: the row disappears.
   await expect(row).toHaveCount(0);
