@@ -12,6 +12,13 @@ make the fake tmux response depend on loop progress and verify the tail remains
 alive until tmux actually reports exit. Approval keystrokes use the existing
 ordered input queue rather than synchronously calling tmux from callbacks.
 
+Screen capture -C doubles literal backslashes, while live output octal-escapes
+them. Assuming one encoding rejected real TUI captures. Decode both forms,
+preserve unknown escapes, and test OSC8, colours, Unicode, invalid UTF-8 and
+literal backslashes through real tmux. Drain each viewer independently into a
+bounded queue; overflow closes its client even if the browser never reads again.
+During cleanup, drain subprocess pipes too: wait() can hang on a full pipe.
+
 ## 2026-09-28 — Terminal snapshots and live bytes need the same ordering source
 
 A tmux capture could include bytes still buffered before the pane log, then a
@@ -45,6 +52,7 @@ Also: the e2e harness shares `$TMPDIR/rd-e2e-state.json` across concurrent runs,
 so parallel sessions' gates overwrite each other's token (all-401 failures).
 Set `RD_TEST_STATE_FILE` and `RD_TEST_PORT` per run until the harness isolates
 itself.
+
 
 
 ## 2026-09-28 — A local gate must include the checks that can reject CI

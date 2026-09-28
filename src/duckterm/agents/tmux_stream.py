@@ -14,25 +14,18 @@ from collections.abc import AsyncGenerator
 from duckterm.agents import tmux
 
 _GUARD = re.compile(rb"%(begin|end|error) (\d+ \d+ \d+)\Z")
-_OCTAL = re.compile(rb"\\([0-3][0-7]{2})")
+_ESCAPE = re.compile(rb"\\(?:([0-3][0-7]{2})|(\\))")
 _MAX_SNAPSHOT = 8 * 1024 * 1024
+_MAX_QUEUED_CHUNKS = 32
 
 
 def unescape(payload: bytes) -> bytes:
-    """Decode tmux's byte escapes, preserving UTF-8 and literal backslashes."""
-    parts: list[bytes] = []
-    position = 0
-    for match in _OCTAL.finditer(payload):
-        plain = payload[position : match.start()]
-        if b"\\" in plain:
-            raise ValueError("invalid tmux control escape")
-        parts.extend((plain, bytes([int(match[1], 8)])))
-        position = match.end()
-    plain = payload[position:]
-    if b"\\" in plain:
-        raise ValueError("invalid tmux control escape")
-    parts.append(plain)
-    return b"".join(parts)
+    """Decode octal output and capture-pane's doubled backslashes.
+
+    Unknown escapes remain literal: a future tmux encoding must not terminate
+    a viewer. Capture -C uses doubled backslashes, unlike %output's \134.
+    """
+    return _ESCAPE.sub(lambda match: bytes([int(match[1], 8)]) if match[1] else b"\\", payload)
 
 
 class Decoder:
@@ -165,41 +158,63 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
         stderr=asyncio.subprocess.DEVNULL,
         limit=256 * 1024,
     )
-    assert proc.stdout is not None
-    decoder = Decoder()
+    queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=_MAX_QUEUED_CHUNKS)
+
+    async def drain() -> None:
+        # Read independently of WebSocket writes and resize requests. A slow
+        # browser must never leave a live tmux client with nobody draining it.
+        assert proc.stdout is not None
+        decoder = Decoder()
+        try:
+            while True:
+                if decoder.completed < 4:
+                    line = await asyncio.wait_for(proc.stdout.readline(), 10)
+                else:
+                    line = await proc.stdout.readline()
+                if not line:
+                    break
+                if not line.endswith(b"\n"):
+                    raise ValueError("truncated tmux control frame")
+                chunk = decoder.accept(line[:-1])
+                if chunk:
+                    queue.put_nowait(chunk)
+        except (EOFError, asyncio.QueueFull):
+            # Close only this viewer. A fresh connection gets a new snapshot;
+            # never drop arbitrary output and continue a corrupted screen.
+            pass
+        except (ValueError, TimeoutError) as exc:
+            print(
+                f"[duckterm] ordered terminal stream ended: {type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+        finally:
+            if proc.stdin is not None:
+                proc.stdin.close()
+            if proc.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.terminate()
+            try:
+                # communicate drains remaining pipe bytes; wait() alone can
+                # hang after exit when asyncio has paused a full stdout pipe.
+                await asyncio.wait_for(proc.communicate(), 2)
+            except TimeoutError:
+                with contextlib.suppress(ProcessLookupError):
+                    proc.kill()
+                await proc.communicate()
+            if queue.full():
+                while not queue.empty():
+                    queue.get_nowait()
+            queue.put_nowait(None)
+
+    reader = asyncio.create_task(drain())
     try:
         while True:
-            # A command failure must not leave the browser waiting forever for
-            # its first frame. Idle *live* terminals have no read timeout.
-            if decoder.completed < 4:
-                line = await asyncio.wait_for(proc.stdout.readline(), 10)
-            else:
-                line = await proc.stdout.readline()
-            if not line:
-                return
-            if not line.endswith(b"\n"):
-                raise ValueError("truncated tmux control frame")
-            chunk = decoder.accept(line[:-1])
-            if chunk:
-                yield chunk
-    except EOFError:
-        return
-    except (ValueError, TimeoutError) as exc:
-        # No fallback to the file tail: that would reintroduce the overlap.
-        print(
-            f"[duckterm] ordered terminal stream ended: {type(exc).__name__}: {exc}",
-            file=sys.stderr,
-        )
-        return
+            chunk = await queue.get()
+            if chunk is None:
+                break
+            yield chunk
     finally:
-        if proc.stdin is not None:
-            proc.stdin.close()
-        if proc.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), 2)
-        except TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-            await proc.wait()
+        if not reader.done():
+            reader.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reader
