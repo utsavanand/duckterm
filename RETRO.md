@@ -37,6 +37,22 @@ with a directory guess. Refuse unknown identity when another Codex row shares
 the directory, including stopped rows. Test independent IDs through a database
 restart and keep fork/snapshot paths from reintroducing the same fallback.
 
+## 2026-09-28 — Move action behavior and verify adjacent views
+
+Moving session actions out of the sidebar must retain lifecycle gates, remote
+routing and delete confirmation, while making the card independent of density.
+Keep only stopped-row Resume as a quiet recovery shortcut. Use distinct styles
+from the Inbox session card, and dismiss action menus after
+Stop so they cannot cover Resume. Exercise both the moved actions and Inbox.
+
+## 2026-09-28 — Saved comments need a safe read-and-render path
+
+Persisting a comment alone makes previous feedback invisible. Fetch annotations
+alongside messages and after saving, match rendered text nodes rather than HTML
+strings, and preserve overlapping/inline-formatted quotes. Count unlocated notes
+against the whole transcript; notes on older turns are not missing. Keep saved
+notes readable when their original text disappears and expose notes on focus.
+
 
 ## 2026-09-28 — An idle agent cannot notice inbox mail by itself
 
