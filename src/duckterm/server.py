@@ -3942,6 +3942,7 @@ class Server:
             if not mail:
                 continue
             screen = await asyncio.to_thread(sup.visible_screen)
+            previous = self._oracle_nudges.get(key) or self._last_nudge(key)
             picked = oracle.should_nudge(
                 state="idle",
                 turn_ended_ms=self.history.last_event_ts(key, events.STOP),
@@ -3952,7 +3953,7 @@ class Server:
                     row.get("runtime"), str(row.get("command") or "")
                 ).prompt_is_empty(screen),
                 mail=mail,
-                previous=self._oracle_nudges.get(key) or self._last_nudge(key),
+                previous=previous,
                 now_ms=now,
             )
             if not picked:
@@ -3962,7 +3963,8 @@ class Server:
             if status == "failed":
                 continue
             ids = sorted(str(m["id"]) for m in picked)
-            self._oracle_nudges[key] = oracle.Nudge(frozenset(ids), now)
+            nudge = oracle.record_nudge(previous, picked, mail, now)
+            self._oracle_nudges[key] = nudge
             self.bus.publish(
                 {
                     "event_type": "OracleNudge",
@@ -3970,6 +3972,8 @@ class Server:
                     "text": text,
                     "submitted": status == "submitted",
                     "mail_ids": ids,
+                    "seen_mail_ids": sorted(nudge.ids),
+                    "read_reminder_ids": sorted(nudge.read_ids),
                 }
             )
 
@@ -3981,7 +3985,11 @@ class Server:
         if found is None or "mail_ids" not in found[0]:
             return None
         event, ts = found
-        return oracle.Nudge(frozenset(str(i) for i in event["mail_ids"]), ts)
+        return oracle.Nudge(
+            frozenset(str(i) for i in event.get("seen_mail_ids", event["mail_ids"])),
+            ts,
+            frozenset(str(i) for i in event.get("read_reminder_ids", [])),
+        )
 
     def _archive_swept(self, key: str) -> None:
         """Archive a session whose terminal is gone (auto-sweep)."""

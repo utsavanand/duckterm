@@ -69,20 +69,20 @@ GATES = dict(
         # A stray key after the turn ended no longer blocks until the next turn;
         # the screen check covers a real draft.
         ({"last_owner_input_ms": NOW - 30 * 60_000}, True),
-        ({"mail": [{**OLD_PEER, "created_at": NOW - 60_000}]}, False),  # fresh peer mail
+        ({"mail": [{**OLD_PEER, "created_at": NOW - 60_000}]}, True),  # idle recipient, fresh mail
         ({"mail": [{**OLD_PEER, "last_read_at": NOW - HOUR}]}, False),  # read, left queued
         ({"mail": [{**OLD_PEER, "status": "accepted", "last_read_at": NOW - HOUR}]}, True),
         ({"mail": [{**OLD_PEER, "kind": "broadcast", "created_at": NOW - 60_000}]}, True),
         ({"previous": oracle.Nudge(frozenset({"q1"}), NOW - 5 * HOUR)}, False),  # same mail
         # New mail, earlier nudged mail handled: no need to wait out the hour.
         ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000)}, True),
-        # New mail while earlier nudged mail is still open: wait out the hour.
+        # New mail must not be suppressed by an older open item.
         (
             {
                 "previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000),
                 "mail": [OLD_PEER, {**OLD_PEER, "id": "q0"}],
             },
-            False,
+            True,
         ),
         ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 2 * HOUR)}, True),  # new mail
     ],
@@ -326,3 +326,72 @@ def test_fresh_waiting_badge_is_left_alone(waiting_session) -> None:
     )
     asyncio.run(server._oracle_tick())
     assert history.session("w")["state"] == "waiting"
+
+
+def test_busy_peer_grace_and_idle_safety() -> None:
+    fresh = [{**OLD_PEER, "created_at": NOW - 1}]
+    assert oracle.pick_mail(fresh, NOW) == []
+    assert oracle.pick_mail(fresh, NOW, idle=True) == fresh
+    assert oracle.should_nudge(**{**GATES, "state": "busy", "mail": fresh}) == []
+
+
+def test_new_mail_does_not_repeat_old_mail_or_erase_its_history() -> None:
+    previous = oracle.Nudge(frozenset({"q0"}), NOW - 1)
+    mail = [{**OLD_PEER, "id": "q0"}, OLD_PEER]
+    picked = oracle.should_nudge(**{**GATES, "mail": mail, "previous": previous})
+    assert picked == [OLD_PEER]
+    recorded = oracle.record_nudge(previous, picked, mail, NOW)
+    assert recorded.ids == frozenset({"q0", "q1"})
+    assert oracle.should_nudge(**{**GATES, "mail": mail, "previous": recorded}) == []
+
+
+def test_read_question_gets_one_delayed_reminder_even_after_new_mail() -> None:
+    read = {**OLD_PEER, "last_read_at": NOW - oracle.READ_REMINDER_MS}
+    previous = oracle.Nudge(frozenset({"q1"}), NOW - 5 * HOUR)
+    assert oracle.should_nudge(**{**GATES, "mail": [read], "previous": previous}) == [read]
+    recorded = oracle.record_nudge(previous, [read], [read], NOW)
+    # A new read and a later nudge about other mail cannot reset the once-only marker.
+    read["last_read_at"] = NOW
+    new = {**OLD_PEER, "id": "q2"}
+    recorded = oracle.record_nudge(recorded, [new], [read, new], NOW + HOUR)
+    assert (
+        oracle.should_nudge(
+            **{
+                **GATES,
+                "mail": [read, new],
+                "previous": recorded,
+                "now_ms": NOW + 10 * HOUR,
+            }
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize("status", ["answered", "expired", "cancelled", "declined"])
+def test_closed_read_mail_does_not_wake(status) -> None:
+    mail = [{**OLD_PEER, "status": status, "last_read_at": NOW - 5 * HOUR}]
+    assert oracle.should_nudge(**{**GATES, "mail": mail}) == []
+
+
+def test_read_followup_obeys_delay_and_repeat_cooldown() -> None:
+    read = {**OLD_PEER, "last_read_at": NOW - oracle.READ_REMINDER_MS + 1}
+    assert oracle.should_nudge(**{**GATES, "mail": [read]}) == []
+    read["last_read_at"] -= 1
+    previous = oracle.Nudge(frozenset({"q1"}), NOW - oracle.RENUDGE_MS + 1)
+    assert oracle.should_nudge(**{**GATES, "mail": [read], "previous": previous}) == []
+
+
+def test_delayed_read_reminder_survives_server_restart(idle_recipient, monkeypatch) -> None:
+    server, sup = idle_recipient
+    server.history.session_api.inbox("b")
+    old = int(time.time() * 1000) - 5 * HOUR
+    server.history._conn.execute("UPDATE session_inbox_delivery SET last_read_at = ?", (old,))
+    server.history._conn.commit()
+    asyncio.run(server._oracle_tick())
+    assert len(sup.pasted) == 2
+    restarted = Server(history=server.history)
+    monkeypatch.setattr(restarted.orchestrator, "get", lambda key: sup if key == "b" else None)
+    previous = restarted._last_nudge("b")
+    assert previous and previous.read_ids == previous.ids
+    asyncio.run(restarted._oracle_tick())
+    assert len(sup.pasted) == 2
