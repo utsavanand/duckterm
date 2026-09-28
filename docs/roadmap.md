@@ -546,6 +546,60 @@ F13. **Compact session-location indicators — IMPLEMENTED, awaiting
      row text into an icon. Evidence caveat: browser checks used a
      controlled remote bridge, **not live SSH**.
 
+F15. **Session controls: right-panel card, Restart, Change model, Switch
+     harness** (owner-directed 2026-09-27 via `product`; spec:
+     [session-controls-spec.md](session-controls-spec.md), **on main via
+     PR #114**, reviewed by the architect and **sent to `main-dev` to build
+     2026-09-28**).
+     Owner decisions, recorded in the spec: no inline action buttons in the
+     sidebar in **any** density — everything lives in a right-panel Session
+     card, and the row `⋯` goes too; Switch harness stays on the same card
+     (no child session); Change model **is** a restart with the new model,
+     so the Restart dialog offers the model choice; Restart **waits for the
+     current turn to end** and never interrupts.
+     **BLOCKING on Restart — the Codex hazard is live, not theoretical.**
+     Verified 2026-09-28: two live Codex sessions share
+     `/Users/utsava/workspace-2026/duckterm`, and
+     `runtimes/codex.py find_resumable_id()` resolves the resume target by
+     the **newest rollout in that cwd** (in-process launches never report
+     Codex's session id). Both therefore resolve to the same rollout, so
+     restarting either can **silently attach to the other session's
+     conversation**. Tolerable for Resume — deliberate and occasional —
+     but not for Restart, which this spec makes routine on every session
+     *and* the mechanism for Change model. Required first: pin the rollout
+     id **at launch** when it is unambiguous, or disable Restart/Change
+     model for Codex sessions sharing a cwd, with the reason shown.
+     Treat "can resume be targeted unambiguously" as a per-harness
+     capability, default false (RETRO: the empty-Messages-tab rule).
+     Other design calls sent with the review: **Resume on stopped rows —
+     APPROVED by the owner 2026-09-28** ("makes sense") as the single
+     exception to decision 1: stopped sessions keep one quiet Resume
+     affordance on their row, Resume only, stopped only, no return of the
+     row `⋯`. A row Resume for Codex inherits the 4d0bff7 refusal
+     behaviour, so its failure must carry the legible cannot-verify
+     message rather than a silent no-op; Restart should **refuse** on an unsent draft rather than
+     warn-and-proceed (losing typed input to a routine action is what stops
+     people using a feature); define "turn ended" as the Stop hook event,
+     not an idle heuristic; a queued restart must be visible and
+     cancelable; Change model must use the harness's model flag, never
+     typed `/model` (that is the mechanism F11 exists to remove); Switch
+     harness is **seeded, not resumed** — a transcript is harness-specific
+     and the UI must say so.
+     Sequencing: Session card first (pure UI, immediate value in compact),
+     then Restart *after* the Codex fix, then Change model, then Switch
+     harness with a preview.
+     **Preview ready, awaiting owner review** (`ui-dev`, 2026-09-28):
+     http://127.0.0.1:4388/session-controls.html, registered in Artifacts —
+     right-panel actions, same-card editable harness handoff,
+     **queued/cancelable restart**, and **draft/identity blocks**. Design
+     only; no production implementation and no F15 build approval inferred.
+     Worth noting the preview already encodes the review constraints rather
+     than deferring them: the queued restart is cancelable, the draft block
+     is present, and `main-dev` holds the exact Codex conversation-identity
+     requirement, Stop-completion sequencing, draft **recheck at execution**
+     (not only at queue time — a draft can be typed while a restart waits),
+     and persisted-queue requirements.
+
 F14. **Cross-host session discovery and messaging** (owner-requested
      2026-09-28). Design:
      [cross-host-collaboration-design.md](cross-host-collaboration-design.md).
