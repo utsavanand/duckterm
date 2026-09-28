@@ -1,3 +1,7 @@
+## 2026-09-28 — Test servers can leave Unix socket files behind
+
+Killing a test tmux server is not filesystem cleanup. Centralize teardown for run-owned sockets and suffix variants; unlink only owned socket files with a confirmed no-server response and refused connection. Dead-only maintenance must preserve live and unknown sockets, especially production. SIGKILL cannot run teardown, so retain an explicit conservative sweep.
+
 # Retro — lessons from real breakage
 
 ## 2026-10-02 — Filters must agree with the rows they hide

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 export default async function globalTeardown() {
@@ -22,7 +23,7 @@ export default async function globalTeardown() {
     // runs and make tmux slow enough to flake the terminal specs.
     if (tmuxSocket) {
       try {
-        execFileSync("tmux", ["-L", tmuxSocket, "kill-server"]);
+        execFileSync("python", [fileURLToPath(new URL("../../scripts/cleanup_test_sockets.py", import.meta.url)), "--owned", tmuxSocket]);
       } catch {
         // no server on the socket — nothing was launched
       }

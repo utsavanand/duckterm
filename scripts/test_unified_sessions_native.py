@@ -227,5 +227,14 @@ for row in rows:
     server.terminate()
     server.wait(timeout=20)
     log.close()
-    subprocess.run(["tmux", "-L", "unified-qa-" + run, "kill-server"], capture_output=True)
+    subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).with_name("cleanup_test_sockets.py")),
+            "--owned",
+            "unified-qa-" + run,
+        ],
+        check=True,
+        capture_output=True,
+    )
     print("QA work directory", case)
