@@ -5,18 +5,25 @@ const EMPTY: RelayState = { notes: [], rules: [], open: 0 };
 
 // Oracle Relay notes and rules, refreshed every few seconds while mounted and
 // enabled (voice mode reads them only while it is on).
-export function useRelay(enabled = true): RelayState & { refresh: () => void } {
+export function useRelay(enabled = true): RelayState & { refresh: () => void; loaded: boolean } {
   const [state, setState] = useState<RelayState>(EMPTY);
+  const [loaded, setLoaded] = useState(false);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled) {
+      setLoaded(false);
+      return;
+    }
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     async function load() {
       try {
         const next = await api.relay();
-        if (!stopped) setState(next);
+        if (!stopped) {
+          setState(next);
+          setLoaded(true);
+        }
       } catch {
         /* keep the last state while the server is briefly unreachable */
       } finally {
@@ -26,7 +33,7 @@ export function useRelay(enabled = true): RelayState & { refresh: () => void } {
     void load();
     return () => { stopped = true; clearTimeout(timer); };
   }, [tick, enabled]);
-  return { ...state, refresh };
+  return { ...state, refresh, loaded };
 }
 
 // Just the open count, for the topbar's Oracle button.

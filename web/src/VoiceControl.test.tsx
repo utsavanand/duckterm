@@ -1,17 +1,17 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { RelayNote } from "./api";
-import { useVoice, VoiceMenu, VoiceToast } from "./VoiceControl";
+import { useVoice, VoiceMenu, VoicePausedPill, VoiceToast } from "./VoiceControl";
 import { Speaker, VoiceSession } from "./voice";
 
 const relay = vi.hoisted(() => ({ notes: [] as RelayNote[] }));
-vi.mock("./relay", () => ({ useRelay: () => ({ notes: relay.notes, rules: [], open: 0, refresh: () => {} }) }));
+vi.mock("./relay", () => ({ useRelay: () => ({ notes: relay.notes, rules: [], open: 0, refresh: () => {}, loaded: true }) }));
 afterEach(() => { cleanup(); localStorage.clear(); relay.notes = []; });
 
-const sessions: VoiceSession[] = [{ key: "a", label: "architect", group: "Duckterm", state: "idle" }];
+const idle: VoiceSession[] = [{ key: "a", label: "architect", group: "Duckterm", state: "idle" }];
+const approval: VoiceSession[] = [{ ...idle[0], state: "waiting", waitingSince: 5, waitingCause: "approval" }];
 
-function Harness({ speaker, notes }: { speaker: Speaker; notes: number }) {
-  void notes; // re-render trigger
+function Harness({ speaker, sessions = idle }: { speaker: Speaker; sessions?: VoiceSession[] }) {
   const voice = useVoice(sessions, speaker);
   return (
     <>
@@ -21,13 +21,12 @@ function Harness({ speaker, notes }: { speaker: Speaker; notes: number }) {
   );
 }
 
-it("speaks a new needs-you note, shows it, and drops to needs-you in one click that persists", async () => {
+it("chimes and speaks a session that starts waiting on an approval, and drops to needs-you in one click that persists", async () => {
   const said: string[] = [];
-  const speaker: Speaker = { say: async (t) => { said.push(t); }, chime: async () => {}, stop: () => {} };
-  const view = render(<Harness speaker={speaker} notes={0} />);
-  relay.notes = [{ id: "n1", session_key: "a", name: "architect", folder: "Duckterm", runtime: "codex", kind: "approval", status: "open", created_at: 1 }];
-  view.rerender(<Harness speaker={speaker} notes={1} />);
-  await waitFor(() => expect(said).toEqual(["architect needs your input"]), { timeout: 4000 });
+  const speaker: Speaker = { say: async (t) => { said.push(t); }, chime: async () => { said.push("<chime>"); }, stop: () => {} };
+  const view = render(<Harness speaker={speaker} />);
+  view.rerender(<Harness speaker={speaker} sessions={approval} />);
+  await waitFor(() => expect(said).toEqual(["<chime>", "architect needs your input"]), { timeout: 4000 });
   expect(screen.getByRole("status")).toHaveTextContent("architect needs your input");
 
   fireEvent.click(screen.getByRole("button", { name: "Only needs-you" }));
@@ -35,17 +34,51 @@ it("speaks a new needs-you note, shows it, and drops to needs-you in one click t
   expect(localStorage.getItem("rd.voice")).toBe("needs");
 
   cleanup(); // a reload reads the stored choice back
-  render(<Harness speaker={speaker} notes={2} />);
+  render(<Harness speaker={speaker} />);
   expect(screen.getByLabelText("Voice announcements")).toHaveValue("needs");
 });
 
 it("turning voice off stops speech at once", async () => {
   const stop = vi.fn();
   const speaker: Speaker = { say: async () => {}, chime: async () => {}, stop };
-  render(<Harness speaker={speaker} notes={0} />);
+  render(<Harness speaker={speaker} />);
   await act(async () => {
     fireEvent.change(screen.getByLabelText("Voice announcements"), { target: { value: "off" } });
   });
   expect(stop).toHaveBeenCalled();
   expect(localStorage.getItem("rd.voice")).toBe("off");
+});
+
+it("speaks a turn that ended on a question, from the relay's note", async () => {
+  const said: string[] = [];
+  const speaker: Speaker = { say: async (t) => { said.push(t); }, chime: async () => {}, stop: () => {} };
+  const view = render(<Harness speaker={speaker} />);
+  relay.notes = [{ id: "q1", session_key: "a", name: "architect", folder: "Duckterm", runtime: "codex", kind: "question", status: "open", urgency: "blocked", created_at: 1 }];
+  view.rerender(<Harness speaker={speaker} sessions={[...idle]} />);
+  await waitFor(() => expect(said).toEqual(["architect needs your input"]), { timeout: 4000 });
+});
+
+it("shows the paused pill after a reload until the page gets a click", () => {
+  localStorage.setItem("rd.voice", "done");
+  Object.defineProperty(navigator, "userActivation", { value: { hasBeenActive: false }, configurable: true });
+  function Paused() {
+    const voice = useVoice(idle, { say: async () => {}, chime: async () => {}, stop: () => {} });
+    return voice.paused ? <VoicePausedPill /> : null;
+  }
+  render(<Paused />);
+  expect(screen.getByRole("status")).toHaveTextContent("Voice paused. Click anywhere to resume.");
+  fireEvent.pointerDown(document.body);
+  expect(screen.queryByRole("status")).toBeNull();
+  Object.defineProperty(navigator, "userActivation", { value: undefined, configurable: true });
+});
+
+it("shows the paused pill when the browser refuses to speak", async () => {
+  const speaker: Speaker = { say: async () => false, chime: async () => {}, stop: () => {} };
+  function Refused({ sessions }: { sessions: VoiceSession[] }) {
+    const voice = useVoice(sessions, speaker);
+    return voice.paused ? <VoicePausedPill /> : null;
+  }
+  const view = render(<Refused sessions={idle} />);
+  view.rerender(<Refused sessions={approval} />);
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Voice paused"), { timeout: 4000 });
 });

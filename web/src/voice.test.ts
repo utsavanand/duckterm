@@ -1,16 +1,17 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { RelayNote } from "./api";
 import {
+  announce,
   Announcement,
   Announcer,
-  COMPLETION_HOLD_MS,
   loadVoiceLevel,
   phrases,
   REANNOUNCE_MS,
   saveVoiceLevel,
   Speaker,
+  VoiceLevel,
   VoiceSession,
-  VoiceTracker,
+  VoiceSnapshot,
 } from "./voice";
 
 afterEach(() => { localStorage.clear(); vi.restoreAllMocks(); });
@@ -20,79 +21,58 @@ const note = (p: Partial<RelayNote> & { id: string; session_key: string }): Rela
   name: p.session_key, folder: "Duckterm", runtime: "claude-code", kind: "question", status: "open",
   created_at: T0, urgency: "blocked", ...p,
 });
-const sessions: VoiceSession[] = [
+const base: VoiceSession[] = [
   { key: "a", label: "architect", group: "Duckterm", state: "busy" },
   { key: "m1", label: "main-dev", group: "Duckterm", state: "busy" },
   { key: "m2", label: "main-dev", group: "Nourish/app", state: "busy" },
 ];
-const withState = (key: string, state: string) => sessions.map((s) => (s.key === key ? { ...s, state } : s));
+const set = (key: string, p: Partial<VoiceSession>) => base.map((s) => (s.key === key ? { ...s, ...p } : s));
+const snap = (at: number, sessions = base, notes: RelayNote[] | null = []): VoiceSnapshot => ({ at, sessions, notes });
+const say = (prev: VoiceSnapshot | null, next: VoiceSnapshot, level: VoiceLevel = "done") => announce(prev, next, level);
 
-function seeded(notes: RelayNote[] = []) {
-  const t = new VoiceTracker();
-  expect(t.update(sessions, notes, "done", T0)).toEqual([]); // the backlog on page load stays quiet
-  return t;
-}
-
-it("announces a new needs-you note once, with a chime flag for approvals", () => {
-  const t = seeded([note({ id: "old", session_key: "a" })]);
-  const approval = note({ id: "n1", session_key: "a", kind: "approval" });
-  expect(t.update(sessions, [approval], "done", T0 + 1)).toEqual([
-    { kind: "needs", key: "a", name: "architect", approval: true },
-  ]);
-  expect(t.update(sessions, [approval], "done", T0 + 2)).toEqual([]);
+it("stays quiet on page load, then announces a session that starts waiting, chiming for approvals", () => {
+  const waiting = set("a", { state: "waiting", waitingSince: T0, waitingCause: "approval" });
+  expect(say(null, snap(T0, waiting))).toEqual([]);
+  expect(say(snap(T0), snap(T0 + 1, waiting))).toEqual([{ kind: "needs", key: "a", name: "architect", approval: true }]);
+  expect(say(snap(T0 + 1, waiting), snap(T0 + 2, waiting))).toEqual([]); // same wait
 });
 
-it("re-announces a still-open note once after 15 minutes, then stays silent", () => {
-  const t = seeded();
-  const n = note({ id: "n1", session_key: "a" });
-  t.update(sessions, [n], "needs", T0);
-  expect(t.update(sessions, [n], "needs", T0 + REANNOUNCE_MS - 1)).toEqual([]);
-  expect(t.update(sessions, [n], "needs", T0 + REANNOUNCE_MS)).toHaveLength(1);
-  expect(t.update(sessions, [n], "needs", T0 + 3 * REANNOUNCE_MS)).toEqual([]);
+it("re-announces a wait once as it crosses 15 minutes, and a new wait announces afresh", () => {
+  const w = set("a", { state: "waiting", waitingSince: T0, waitingCause: "question" });
+  expect(say(snap(T0 + REANNOUNCE_MS - 5000, w), snap(T0 + REANNOUNCE_MS, w))).toHaveLength(1);
+  expect(say(snap(T0 + REANNOUNCE_MS, w), snap(T0 + 3 * REANNOUNCE_MS, w))).toEqual([]);
+  const again = set("a", { state: "waiting", waitingSince: T0 + 60_000 });
+  expect(say(snap(T0 + 30_000, w), snap(T0 + 60_000, again))).toHaveLength(1); // unblocked and re-blocked
 });
 
-it("speaks offers only at Everything, and never replays offers seen at a lower level", () => {
-  const t = seeded();
+it("announces a turn that ended on a question, which never shows as waiting", () => {
+  const q = note({ id: "q1", session_key: "a" });
+  expect(say(snap(T0, base, []), snap(T0 + 1, base, [q]))).toEqual([{ kind: "needs", key: "a", name: "architect", approval: false }]);
+  expect(say(snap(T0, base, null), snap(T0 + 1, base, [q]))).toEqual([]); // the relay's first load is not news
+  const waitingToo = set("a", { state: "waiting", waitingSince: T0 });
+  expect(say(snap(T0, waitingToo, []), snap(T0 + 1, waitingToo, [q]))).toEqual([]); // the wait was already said
+});
+
+it("says complete on effective busy-to-idle, not while a question is open, and not below done", () => {
+  const idle = set("a", { state: "idle" });
+  expect(say(snap(T0), snap(T0 + 1, idle))).toEqual([{ kind: "done", key: "a", name: "architect", approval: false }]);
+  const q = note({ id: "q1", session_key: "a" });
+  expect(say(snap(T0, base, [q]), snap(T0 + 1, idle, [q]))).toEqual([]);
+  expect(say(snap(T0), snap(T0 + 1, idle), "needs")).toEqual([]);
+});
+
+it("speaks offers only at Everything, and nothing when off", () => {
   const offer = note({ id: "o1", session_key: "a", urgency: "offer" });
-  expect(t.update(sessions, [offer], "done", T0 + 1)).toEqual([]);
-  expect(t.update(sessions, [offer], "all", T0 + 2)).toEqual([]);
-  const fresh = note({ id: "o2", session_key: "a", urgency: "offer" });
-  expect(t.update(sessions, [offer, fresh], "all", T0 + 3)).toEqual([
-    { kind: "offer", key: "a", name: "architect", approval: false },
-  ]);
-});
-
-it("says a session is complete only after the hold, and not if it turned out to ask something", () => {
-  const t = seeded();
-  t.update(withState("a", "idle"), [], "done", T0 + 1);
-  expect(t.update(withState("a", "idle"), [], "done", T0 + COMPLETION_HOLD_MS)).toEqual([]);
-  expect(t.update(withState("a", "idle"), [], "done", T0 + 1 + COMPLETION_HOLD_MS)).toEqual([
-    { kind: "done", key: "a", name: "architect", approval: false },
-  ]);
-
-  const asks = seeded();
-  asks.update(withState("a", "idle"), [], "done", T0 + 1);
-  const q = note({ id: "q", session_key: "a" });
-  expect(asks.update(withState("a", "idle"), [q], "done", T0 + 30_000)).toHaveLength(1); // needs you
-  expect(asks.update(withState("a", "idle"), [q], "done", T0 + 2 * COMPLETION_HOLD_MS)).toEqual([]);
-
-  const resumed = seeded();
-  resumed.update(withState("a", "idle"), [], "done", T0 + 1);
-  resumed.update(sessions, [], "done", T0 + 10_000); // busy again before the hold ended
-  expect(resumed.update(sessions, [], "done", T0 + 2 * COMPLETION_HOLD_MS)).toEqual([]);
-});
-
-it("keeps completions out of the Needs-you level and says nothing when off", () => {
-  const t = seeded();
-  t.update(withState("a", "idle"), [], "needs", T0 + 1);
-  expect(t.update(withState("a", "idle"), [], "needs", T0 + 1 + COMPLETION_HOLD_MS)).toEqual([]);
-  expect(t.update(sessions, [note({ id: "n", session_key: "a" })], "off", T0 + 2)).toEqual([]);
+  expect(say(snap(T0), snap(T0 + 1, base, [offer]))).toEqual([]);
+  expect(say(snap(T0), snap(T0 + 1, base, [offer]), "all")).toEqual([{ kind: "offer", key: "a", name: "architect", approval: false }]);
+  const waiting = set("a", { state: "waiting", waitingSince: T0 });
+  expect(say(snap(T0), snap(T0 + 1, waiting), "off")).toEqual([]);
 });
 
 it("adds the folder only when two sessions share a name", () => {
-  const t = seeded();
-  const out = t.update(sessions, [note({ id: "x", session_key: "m2" }), note({ id: "y", session_key: "a" })], "done", T0 + 1);
-  expect(out.map((a) => a.name)).toEqual(["main-dev in Nourish", "architect"]);
+  const out = say(snap(T0), snap(T0 + 1, set("m2", { state: "waiting", waitingSince: T0 })));
+  expect(out.map((a) => a.name)).toEqual(["main-dev in Nourish"]);
+  expect(say(snap(T0), snap(T0 + 1, set("a", { state: "waiting", waitingSince: T0 }))).map((a) => a.name)).toEqual(["architect"]);
 });
 
 const ann = (kind: Announcement["kind"], name: string, approval = false): Announcement => ({ kind, key: name, name, approval });

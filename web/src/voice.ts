@@ -1,9 +1,8 @@
 // Oracle voice mode: short spoken announcements ("architect needs your
 // input", "main-dev is complete") so the owner can leave the screen.
-// Spec: docs/oracle-voice-spec.md. Owner decisions, 2026-09-29: default level
-// "needs you + done", a chime before approvals, one re-announcement after 15
-// minutes, and speech through window.speechSynthesis, so it only speaks while
-// a dashboard is open.
+// Requirements: docs/oracle-voice-spec.md (owner decisions, 2026-09-29).
+// Design: architect's "Design — Oracle voice mode". Speech goes through
+// window.speechSynthesis, so it only speaks while a dashboard is open.
 
 import { RelayNote } from "./api";
 
@@ -16,6 +15,8 @@ export const VOICE_LEVELS: { value: VoiceLevel; label: string }[] = [
   { value: "all", label: "Everything" },
 ];
 
+// Per device on purpose: the office Mac and a phone browser shouldn't share
+// audio settings. (Desktop notifications, B6, are a separate setting.)
 const STORAGE_KEY = "rd.voice";
 const DEFAULT_LEVEL: VoiceLevel = "done";
 
@@ -35,75 +36,71 @@ export function saveVoiceLevel(level: VoiceLevel): void {
 
 export type Announcement = { kind: "needs" | "done" | "offer"; key: string; name: string; approval: boolean };
 
-export type VoiceSession = { key: string; label: string; group?: string; state: string };
+export type VoiceSession = {
+  key: string;
+  label: string;
+  group?: string;
+  state: string; // effective state: idle only after the post-Stop settle grace
+  waitingSince?: number;
+  waitingCause?: string;
+};
 
-// A turn that ends on a question becomes a needs-you note about 30 s after
-// Stop (the relay's settle wait plus one classifier call), so a completion
-// waits this long and is dropped if a note or new work shows up meanwhile.
-export const COMPLETION_HOLD_MS = 45_000;
+// notes is null until the relay has loaded, so a late first load isn't
+// mistaken for a burst of new questions.
+export type VoiceSnapshot = { at: number; sessions: VoiceSession[]; notes: RelayNote[] | null };
+
 export const REANNOUNCE_MS = 15 * 60_000;
 
-// Turns snapshots of sessions and relay notes into announcements. Pure apart
-// from its own memory, so tests drive it with plain objects and a clock.
-export class VoiceTracker {
-  private seeded = false;
-  private announced = new Map<string, number>(); // note id -> first announced at
-  private reannounced = new Set<string>();
-  private prevState = new Map<string, string>();
-  private pendingDone = new Map<string, number>(); // session key -> idle since
+// Every rule lives here, as a pure diff of two snapshots (architect's design,
+// 2026-09-29): what changed between them is what gets said.
+//   needs you: a session that starts waiting (approvals get the chime), or a
+//     relay "question" note for a turn that ended asking the owner, which
+//     never shows as waiting in the fold.
+//   re-announce: a wait or question still open 15 minutes after it began,
+//     said once as the boundary is crossed.
+//   done: effective busy -> idle, skipped while a question is open for it.
+//   offers: new offer notes, at Everything only.
+export function announce(prev: VoiceSnapshot | null, next: VoiceSnapshot, level: VoiceLevel): Announcement[] {
+  if (!prev || level === "off") return []; // page load: the backlog stays quiet
+  const out: Announcement[] = [];
+  const name = (key: string, fallback: string) => spokenName(key, next.sessions, fallback);
+  const before = new Map(prev.sessions.map((s) => [s.key, s]));
+  const crossed = (since: number) => since + REANNOUNCE_MS > prev.at && since + REANNOUNCE_MS <= next.at;
 
-  update(sessions: VoiceSession[], notes: RelayNote[], level: VoiceLevel, now: number): Announcement[] {
-    const open = notes.filter((n) => n.status === "open");
-    const out: Announcement[] = [];
-    const byKey = new Map(sessions.map((s) => [s.key, s]));
-    const name = (key: string, fallback: string) => spokenName(key, sessions, fallback);
-
-    if (!this.seeded) {
-      // Don't read out the backlog on page load: only what happens from now on.
-      for (const n of open) this.announced.set(n.id, now);
-      for (const s of sessions) this.prevState.set(s.key, s.state);
-      this.seeded = true;
-      return [];
+  for (const s of next.sessions) {
+    if (s.state !== "waiting") continue;
+    const p = before.get(s.key);
+    const since = s.waitingSince ?? next.at;
+    const fresh = !(p?.state === "waiting" && p.waitingSince === s.waitingSince);
+    if (fresh || crossed(since)) {
+      out.push({ kind: "needs", key: s.key, name: name(s.key, s.label), approval: s.waitingCause === "approval" });
     }
-
-    for (const n of open) {
-      const offer = n.urgency === "offer";
-      const first = this.announced.get(n.id);
-      if (offer && level !== "all") {
-        // Seen but not spoken, so switching to Everything later doesn't read out old offers.
-        if (first === undefined) this.announced.set(n.id, now);
-        continue;
-      }
-      const approval = n.kind === "approval";
-      if (first === undefined) {
-        this.announced.set(n.id, now);
-        out.push({ kind: offer ? "offer" : "needs", key: n.session_key, name: name(n.session_key, n.name), approval });
-      } else if (!offer && now - first >= REANNOUNCE_MS && !this.reannounced.has(n.id)) {
-        this.reannounced.add(n.id);
-        out.push({ kind: "needs", key: n.session_key, name: name(n.session_key, n.name), approval });
-      }
-    }
-
-    const asking = new Set(open.map((n) => n.session_key));
-    for (const s of sessions) {
-      const prev = this.prevState.get(s.key);
-      if (prev === "busy" && s.state === "idle") this.pendingDone.set(s.key, now);
-      if (s.state !== "idle") this.pendingDone.delete(s.key);
-      this.prevState.set(s.key, s.state);
-    }
-    for (const [key, since] of this.pendingDone) {
-      if (asking.has(key) || !byKey.has(key)) {
-        this.pendingDone.delete(key);
-      } else if (now - since >= COMPLETION_HOLD_MS) {
-        this.pendingDone.delete(key);
-        if (level === "done" || level === "all") {
-          out.push({ kind: "done", key, name: name(key, key), approval: false });
-        }
-      }
-    }
-    if (level === "off") return [];
-    return out;
   }
+
+  const waiting = new Set(next.sessions.filter((s) => s.state === "waiting").map((s) => s.key));
+  const openQuestions = (next.notes ?? []).filter((n) => n.status === "open" && n.kind === "question");
+  if (next.notes && prev.notes) {
+    const seen = new Set(prev.notes.filter((n) => n.status === "open").map((n) => n.id));
+    for (const n of openQuestions) {
+      if (waiting.has(n.session_key)) continue; // the wait itself is announced
+      const offer = n.urgency === "offer";
+      if (offer && level !== "all") continue;
+      if (!seen.has(n.id) || (!offer && crossed(n.created_at))) {
+        out.push({ kind: offer ? "offer" : "needs", key: n.session_key, name: name(n.session_key, n.name), approval: false });
+      }
+    }
+  }
+
+  if (level === "done" || level === "all") {
+    const asking = new Set(openQuestions.filter((n) => n.urgency !== "offer").map((n) => n.session_key));
+    for (const s of next.sessions) {
+      const p = before.get(s.key);
+      if (s.state === "idle" && p?.state === "busy" && !asking.has(s.key)) {
+        out.push({ kind: "done", key: s.key, name: name(s.key, s.label), approval: false });
+      }
+    }
+  }
+  return out;
 }
 
 // Several sessions share names like "main-dev"; add the folder only then.
@@ -138,7 +135,8 @@ export function phrases(batch: Announcement[]): { text: string; chime: boolean }
   return out;
 }
 
-export type Speaker = { say: (text: string) => Promise<void>; chime: () => Promise<void>; stop: () => void };
+// say resolves false when the browser refuses to speak (no user gesture yet).
+export type Speaker = { say: (text: string) => Promise<boolean | void>; chime: () => Promise<void>; stop: () => void };
 
 // Speaks batches one line at a time, never overlapping. Holds while the owner
 // is typing, and mute() drops everything queued and stops the current line.
@@ -197,11 +195,11 @@ export function browserSpeaker(): Speaker {
   let audio: AudioContext | null = null;
   return {
     say: (text) =>
-      new Promise<void>((resolve) => {
-        if (!("speechSynthesis" in window)) return resolve();
+      new Promise<boolean>((resolve) => {
+        if (!("speechSynthesis" in window)) return resolve(true);
         const u = new SpeechSynthesisUtterance(text);
-        u.onend = () => resolve();
-        u.onerror = () => resolve();
+        u.onend = () => resolve(true);
+        u.onerror = (e) => resolve(e.error !== "not-allowed");
         window.speechSynthesis.speak(u);
       }),
     chime: async () => {

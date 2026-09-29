@@ -51,7 +51,7 @@ import { useTheme } from "./useTheme";
 import { useSidebarDensity } from "./useSidebarDensity";
 import { useFolders } from "./useFolders";
 import "./sidebarDensity.css";
-import { useVoice, VoiceMenu, VoiceToast } from "./VoiceControl";
+import { useVoice, VoiceMenu, VoicePausedPill, VoiceToast } from "./VoiceControl";
 
 function useNow(intervalMs: number): number {
   const [now, setNow] = useState(Date.now());
@@ -230,7 +230,14 @@ function Dashboard() {
   const voiceSessions = useMemo(
     () =>
       sessions
-        .map((s) => ({ key: s.key, label: s.label, group: s.group, state: effectiveState(s, now) }))
+        .map((s) => ({
+          key: s.key,
+          label: s.label,
+          group: s.group,
+          state: effectiveState(s, now),
+          waitingSince: s.waitingSince,
+          waitingCause: s.waitingCause,
+        }))
         .filter((s) => s.state !== "archived"),
     [sessions, now],
   );
@@ -604,6 +611,7 @@ function Dashboard() {
           }}
         />
       )}
+      {voice.paused && !voice.spoken && <VoicePausedPill />}
       {voice.spoken && (
         <VoiceToast text={voice.spoken} level={voice.level} onLevel={voice.setLevel} onMute={voice.mute} onDismiss={voice.dismiss} />
       )}

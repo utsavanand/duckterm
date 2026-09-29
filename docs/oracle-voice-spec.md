@@ -118,32 +118,43 @@ per-folder voice settings.
 
 ## Design choices made in the build
 
-- **The chime** is two soft sine notes, 660 Hz then 880 Hz, 0.14 s each at
-  low volume, generated with Web Audio. There's no audio file to ship.
-- **"is complete" stays bare in v1.** The progress digest behind a clause
-  is written for reading, not listening, and often runs to a paragraph.
-  A clause can come later, once there is a one-line summary worth speaking.
-- **Where needs-you comes from.** Relay notes, not the waiting badge: notes
-  already exclude offers and Codex's auto-reviewed requests, and they carry
-  the note kind that decides the chime.
-- **Where completions come from.** A session going from busy to idle. The
-  announcement waits 45 s, because a turn that ends on a question becomes a
-  needs-you note about 30 s after it stops (the relay's settle wait plus one
-  classifier call). It's dropped if a note or new work arrives first.
-- **One click.** Each spoken line shows a small toast with "Only needs-you",
-  "Stop" and "Turn off". The level picker also sits in the header, next to
+The architect's design ("Design — Oracle voice mode", 2026-09-29) is the
+design; this spec is the requirements. As built:
+
+- **One pure diff.** `announce(prev, next, level)` in web/src/voice.ts holds
+  every rule. It compares two snapshots of sessions and relay notes, so there
+  is no timer registry and no second state machine.
+- **Needs you** comes from two sources, one for each kind of moment. A session
+  that starts waiting (the fold's waiting state, which the desktop
+  notification also uses) covers approvals and Claude menus. A relay
+  `question` note covers a turn that ended by asking the owner: that turn
+  never shows as waiting (Stop keeps a session busy, then idle), so the
+  waiting diff alone would miss the owner's own "needs your input" example.
+  A question isn't announced when its session is already waiting.
+- **The chime** plays when the wait's cause is an approval (`waitingCause`,
+  kept by the fold). It is two soft sine notes, 660 Hz then 880 Hz, from Web
+  Audio, with no audio file.
+- **Re-announce** is derived: a wait (from `waitingSince`) or a question
+  (from the note's time) is said again once, as it crosses 15 minutes. A
+  session that unblocks and blocks again gets a new wait time, so it is
+  announced afresh.
+- **"is complete"** is said on the effective busy-to-idle transition, after
+  the dashboard's 5-minute settle grace, so a pause between turns doesn't
+  count. It is skipped while a question note is open for that session, and
+  said bare, without a clause.
+- **One click.** Each spoken line shows a toast with "Only needs-you",
+  "Stop" and "Turn off". The level picker is also in the header and in
   Settings.
-- **Typing.** Any keystroke in the dashboard holds announcements until 5 s
-  after the last key. Typing in a terminal outside the dashboard isn't seen.
-- **Persistence.** The level is stored under `rd.voice` in the browser's
-  local storage and read back on load. Unknown or blocked storage falls back
-  to the default.
-- **Page load.** Notes already open when a dashboard loads are not read out.
-  Only what happens from then on is spoken.
-- **Browsers allow speech only after a user gesture.** Turning voice on
-  speaks "Voice announcements on", and that click unlocks speech for the page.
-  After a reload, the first announcement may be silent until the owner
-  clicks or types in the dashboard once.
+- **Typing** in a dashboard terminal holds announcements until 5 s after the
+  last key. It counts this device's keystrokes only.
+- **Persistence.** The level is stored per device under `rd.voice` in local
+  storage and read back on load. Unknown or blocked storage falls back to the
+  default.
+- **Page load and first relay load** are not news. Nothing already open is
+  read out.
+- **Browsers allow speech only after a user gesture.** After a reload with
+  voice on, a "Voice paused. Click anywhere to resume." pill shows until the
+  first click or key. It also shows if the browser refuses to speak.
 
 ## Delivery
 
