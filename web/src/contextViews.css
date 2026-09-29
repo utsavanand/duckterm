@@ -7,3 +7,12 @@
 .rd-context-connectors-view { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
 .rd-context-connectors-view > .rd-connectors { border-top: 0; }
 .rd-context-views > [hidden] { display: none; }
+
+/* Tab content must not redistribute the terminal's row in the stacked layout. */
+@media (max-width: 1100px) {
+  .rd-workspace .rd-panels-3 {
+    grid-template-rows: var(--agents-height, minmax(0, 1fr)) minmax(0, 2fr) var(--context-height, minmax(0, 2fr));
+  }
+  .rd-panels-3.rd-agents-collapsed { --agents-height: 40px; }
+  .rd-panels-3.rd-context-collapsed { --context-height: 40px; }
+}
