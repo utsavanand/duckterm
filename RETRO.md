@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-09-29 — Essential controls cannot depend on leftover height
+
+The expanded Session card left Connectors only 13–24 pixels of the right panel.
+Give Session and Connectors separate, persistent views with their own scrolling
+area. Check populated cards at real window heights, panel reopening and host
+changes; presence in the DOM alone does not prove controls are reachable.
+
 ## 2026-09-29 — Visible session actions need no overflow menu
 
 Moving actions out of the sidebar but hiding them again behind More retained

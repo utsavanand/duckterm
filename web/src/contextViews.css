@@ -1,0 +1,9 @@
+.rd-context-views { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; }
+.rd-context-tabs { display: flex; flex: none; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.rd-context-tabs > button { flex: 1; min-width: 0; padding: 9px; border: 0; border-radius: 6px; font: inherit; font-size: 13px; color: var(--text-soft); background: transparent; cursor: pointer; }
+.rd-context-tabs > button[aria-selected="true"] { background: color-mix(in srgb, var(--brand-green) 12%, transparent); color: var(--brand-green); }
+.rd-context-tabs > button:focus-visible, .rd-context-views > [role="tabpanel"]:focus-visible { outline: 2px solid var(--brand-green); outline-offset: -2px; }
+.rd-context-pane .rd-context-views > .rd-context-body { flex: 1; }
+.rd-context-connectors-view { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
+.rd-context-connectors-view > .rd-connectors { border-top: 0; }
+.rd-context-views > [hidden] { display: none; }

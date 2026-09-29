@@ -43,7 +43,13 @@ binary and carries the conversation for Claude Code, Codex and Copilot.
 
 ## 1. Session card in the right panel
 
-Top of the right panel, above Edit file:
+The owner-approved right panel has two persistent views: **Session** and
+**Connectors**. The viewer remembers the selected view locally. Each view gets
+the available panel height and scrolls independently; a long Session card must
+not squeeze Connectors out of sight. Closing and reopening the panel retains
+the selected view, and Connectors follows the selected session’s host.
+
+The Session view starts with the card, above Edit file:
 
 | Row | Contents |
 | --- | --- |
