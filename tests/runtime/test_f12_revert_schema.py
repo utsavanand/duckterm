@@ -25,7 +25,7 @@ def test_f12_v5_database_opens_after_revert_and_keeps_its_rows(tmp_path, monkeyp
     _stamp_f12_v5(path)
     store = HistoryStore(path)
     try:
-        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 8
         cols = {r["name"] for r in store._conn.execute("PRAGMA table_info(sessions)")}
         assert "pinned" in cols
         assert "restart_json" in cols

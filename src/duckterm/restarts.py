@@ -86,6 +86,8 @@ class Restarts:
         return self.read(key).get("status") == "restarting"
 
     def plan(self, key: str) -> tuple[dict[str, Any], Any, Any, str]:
+        if self.server.archives.pending(key):
+            raise APIError(409, "Archive pending; undo it first")
         from duckterm import transfers
 
         row = self.server.history.session(key)
