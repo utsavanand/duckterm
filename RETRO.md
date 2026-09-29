@@ -1,5 +1,16 @@
 # Retro — lessons from real breakage
 
+## 2026-09-29 — Prove restart race ordering and report its durable outcome
+
+A CI restart regression failed with zero launch calls while an unrelated
+progress worker also crashed against an incomplete terminal fixture. The log
+did not include the saved restart status, so it could not distinguish a lost
+queue from a rejected preflight. Isolate digest/relay workers in lifecycle rigs,
+hold the version probe with explicit events, exercise Stop both before and after
+the old attempt exits, and drain replacement tasks with a deadline. Report the
+durable state and last hook before asserting call counts. Removing the retry
+handoff must fail the test; repeated green runs alone do not explain a CI failure.
+
 ## 2026-09-29 — Visible session actions need no overflow menu
 
 Moving actions out of the sidebar but hiding them again behind More retained
