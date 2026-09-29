@@ -395,6 +395,16 @@ def request(server, command="touch probe-file.txt"):
     )
 
 
+async def until(condition, timeout=5.0):
+    """Wait for the relay watcher, which polls the screen through threads; a
+    fixed sleep was too short when the machine was busy."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not condition():
+        assert loop.time() < deadline, "timed out waiting for the relay watcher"
+        await asyncio.sleep(0.01)
+
+
 def test_codex_request_its_reviewer_approves_never_becomes_a_note(codex_world) -> None:
     server, _, _ = codex_world
 
@@ -420,7 +430,7 @@ def test_codex_request_becomes_a_note_once_its_prompt_shows_and_approve_presses_
         await asyncio.sleep(0.05)
         assert server.relay.notes == []
         sup.screen = CODEX_APPROVAL
-        await asyncio.sleep(0.05)
+        await until(lambda: server.relay.notes)
 
     asyncio.run(scenario())
     [note] = notes(server)
@@ -441,7 +451,7 @@ def test_codex_approval_answered_after_its_prompt_left_presses_nothing(codex_wor
     async def scenario():
         request(server)
         sup.screen = CODEX_APPROVAL
-        await asyncio.sleep(0.05)
+        await until(lambda: server.relay.notes)
 
     asyncio.run(scenario())
     [note] = notes(server)
@@ -474,7 +484,7 @@ def test_codex_request_keeps_it_busy_until_its_prompt_shows(codex_world) -> None
         await asyncio.sleep(0.05)
         assert state(server) == "busy"  # its reviewer is running the command
         sup.screen = CODEX_APPROVAL
-        await asyncio.sleep(0.05)
+        await until(lambda: server.relay.notes)
 
     asyncio.run(scenario())
     assert state(server) == "waiting"
