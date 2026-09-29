@@ -21,7 +21,6 @@ test("delete removes the session from the UI and the backend", async ({
   // reads "Stop watching" and double-confirms: the first click arms ("Confirm?"),
   // the second removes it.
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls-more > summary").click();
   await page.locator(".rd-session-controls").getByRole("button", { name: "Stop watching" }).click();
   await page.locator(".rd-session-controls").getByRole("button", { name: "Confirm?" }).click();
 

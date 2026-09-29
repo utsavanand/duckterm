@@ -50,12 +50,17 @@ Top of the right panel, above Edit file:
 | Identity | Session name (click to rename), folder, state |
 | Harness | e.g. "Claude Code 2.1.283", with **Switch harness…** |
 | Model | e.g. "claude-opus-5-5", with **Change model…** |
-| Actions | Restart, Checkpoint, Fork, Notes, then a `More` menu: Ungroup, Move to remote, Stop, Archive, Delete |
+| Actions | All applicable actions directly visible: Resume, Checkpoint, Fork, Notes, Ungroup, Move to remote, Continue locally, Open remote session, Stop, Archive |
+| Destructive footer | Delete (or Stop watching) remains visible below a divider, using danger styling |
 
 - The actions shown follow the same rules as today: no Fork on a
   non-git session, no Resume on an archived one, and so on.
-- Destructive actions (Stop, Archive, Delete) stay in `More` and keep their
-  confirmations.
+- Owner-approved follow-up: remove the More menu; available actions must be
+  discoverable without an extra click. Preserve existing lifecycle conditions
+  and action behavior. Delete retains its two-click confirmation and downstream
+  validation; Continue locally retains its confirmation. Stop and Archive keep
+  their existing direct behavior. Restart and model/harness switching remain
+  separate work.
 - The sidebar has **no** action buttons or `⋯` in any density (owner
   decision 1); rows only select and show state.
 - Nothing new on the server for this part; it moves existing buttons.
