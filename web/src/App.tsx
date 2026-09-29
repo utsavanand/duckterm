@@ -7,6 +7,8 @@ import { api } from "./api";
 import { desktop } from "./desktop";
 import { Connectors } from "./Connectors";
 import { ContextPanel } from "./ContextPanel";
+import { Analytics } from "./Analytics";
+import { AnalyticsTab } from "./analyticsData";
 import { ControlTower } from "./ControlTower";
 import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
@@ -75,6 +77,7 @@ function Dashboard() {
     "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
   >(desktop()?.draft ? "launch" : null);
   const [towerOpen, setTowerOpen] = useState(false);
+  const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
   const relayOpen = useRelayCount();
   const defaultSelection = sessions.find(s => effectiveState(s, now) !== "archived")?.key ?? null;
   const { selectedKey, selectSession: setSelectedKey } = useSessionSelection(sessions, defaultSelection, loadedHosts);
@@ -330,7 +333,8 @@ function Dashboard() {
           width (B5). inert keeps keystrokes and focus out of the hidden panes. */}
       {towerOpen && !focusOpen && gridFolder === null && (
         <div className="rd-tower-layer">
-          <ControlTower
+          {analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <ControlTower
+            onAnalytics={setAnalyticsTab}
             agents={agents.map((s) => ({ ...s, shownState: effectiveState(s, now) }))}
             now={now}
             onBack={() => setTowerOpen(false)}
@@ -339,7 +343,7 @@ function Dashboard() {
               setView("terminal");
               setTowerOpen(false);
             }}
-          />
+          />}
         </div>
       )}
       <div className="rd-workspace-panes" {...(towerOpen && !focusOpen && gridFolder === null ? { inert: "" } : {})}>
