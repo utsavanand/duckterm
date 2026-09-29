@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-29 by release-dev at the v0.4.88 release)
+## Status at a glance (reconciled 2026-09-29 by release-dev at the v0.4.89 release)
 
 | Item | Status |
 | --- | --- |
@@ -25,6 +25,9 @@ the session API.
 | Session card and comment highlights (F6) | **Shipped v0.4.85** (PR #140, re-land of #127) |
 | Session card: all actions visible | **Shipped v0.4.87** (PR #145): no More menu; every applicable action shown; Delete in its own bottom section |
 | F15 Restart + Change model | **Shipped v0.4.88** (PR #133): same-session restart keeps the conversation; model change persists; busy restarts queue and cancel; drafts protected. **Schema v7.** Local sessions only. Known limits: Codex model shows 'Not reported yet' (transcript stats are Claude-only); a sandboxed Codex can't run the `duckterm session` CLI after resume |
+| Session / Connectors views | **Shipped v0.4.89** (PR #147): separate right-panel views; the terminal size is stable at every width |
+| Archive Undo | **Shipped v0.4.89** (PR #152): 8-second durable Undo window, crash-safe. **Schema v8.** |
+| Connectors Check now + last used (B2) | In QA rework (PR #149): verify must reject handshake/tool-list errors |
 | Analytics page | **Shipped v0.4.85** (PR #131): exact model usage and Agent Mail history |
 | Codex false waiting | **Shipped v0.4.85**: auto-reviewed requests stay busy; confirmed prompts give a note plus waiting. Restart recovery and unreadable-prompt notes follow (oracle-codex-waiting 23890c2) |
 | Router mode (DuckTerm picks the model per task) | **Not started.** Owner-requested 2026-09-28; this is F5 step (c), the model router. Options and open questions: [pie-in-the-sky.md, 'Idea: router mode'](pie-in-the-sky.md#idea-router-mode-duckterm-picks-the-model) |
