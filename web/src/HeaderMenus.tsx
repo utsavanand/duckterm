@@ -3,9 +3,10 @@ import { AUTO, TermMode, themesForMode } from "./termThemes";
 import { Theme } from "./useTheme";
 import { SidebarDensity } from "./useSidebarDensity";
 import "./headerMenus.css";
+import { VOICE_LEVELS, VoiceLevel } from "./voice";
 
 type Menu = "settings" | "new";
-export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, termTheme, onTermTheme, notifyOn, onNotify, onAction }: {
+export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, termTheme, onTermTheme, notifyOn, onNotify, voiceLevel, onVoiceLevel, onAction }: {
   density: SidebarDensity;
   onDensity: (density: SidebarDensity) => void;
   theme: Theme;
@@ -15,6 +16,8 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
   onTermTheme: (theme: string) => void;
   notifyOn: boolean;
   onNotify: () => void;
+  voiceLevel: VoiceLevel;
+  onVoiceLevel: (level: VoiceLevel) => void;
   onAction: (action: "launch" | "folder" | "harnesses" | "backup") => void;
 }) {
   const [open, setOpen] = useState<Menu | null>(null);
@@ -72,6 +75,12 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
         <div className="rd-header-notifications">
           <label>Desktop notifications<input type="checkbox" checked={notifyOn} disabled={!notificationsAvailable} onChange={onNotify} aria-describedby="header-notification-help" /></label>
           <p id="header-notification-help">{notificationsAvailable ? "Notify when an agent needs an answer." : "Desktop notifications are unavailable in this browser."}</p>
+        </div>
+        <div className="rd-header-notifications">
+          <label>Voice announcements<select value={voiceLevel} onChange={(event) => onVoiceLevel(event.target.value as VoiceLevel)} aria-describedby="header-voice-help">
+            {VOICE_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+          </select></label>
+          <p id="header-voice-help">Oracle says when an agent needs your input or finishes. It only speaks while a dashboard is open.</p>
         </div>
         <div className="rd-header-menu-divider" />
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>

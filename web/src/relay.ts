@@ -3,12 +3,14 @@ import { api, RelayState } from "./api";
 
 const EMPTY: RelayState = { notes: [], rules: [], open: 0 };
 
-// Oracle Relay notes and rules, refreshed every few seconds while mounted.
-export function useRelay(): RelayState & { refresh: () => void } {
+// Oracle Relay notes and rules, refreshed every few seconds while mounted and
+// enabled (voice mode reads them only while it is on).
+export function useRelay(enabled = true): RelayState & { refresh: () => void } {
   const [state, setState] = useState<RelayState>(EMPTY);
   const [tick, setTick] = useState(0);
   const refresh = useCallback(() => setTick((t) => t + 1), []);
   useEffect(() => {
+    if (!enabled) return;
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     async function load() {
@@ -23,7 +25,7 @@ export function useRelay(): RelayState & { refresh: () => void } {
     }
     void load();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [tick]);
+  }, [tick, enabled]);
   return { ...state, refresh };
 }
 

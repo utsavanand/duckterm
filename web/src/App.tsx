@@ -51,6 +51,7 @@ import { useTheme } from "./useTheme";
 import { useSidebarDensity } from "./useSidebarDensity";
 import { useFolders } from "./useFolders";
 import "./sidebarDensity.css";
+import { useVoice, VoiceMenu, VoiceToast } from "./VoiceControl";
 
 function useNow(intervalMs: number): number {
   const [now, setNow] = useState(Date.now());
@@ -226,6 +227,15 @@ function Dashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [waitingKeys, notifyOn]);
 
+  const voiceSessions = useMemo(
+    () =>
+      sessions
+        .map((s) => ({ key: s.key, label: s.label, group: s.group, state: effectiveState(s, now) }))
+        .filter((s) => s.state !== "archived"),
+    [sessions, now],
+  );
+  const voice = useVoice(voiceSessions);
+
   async function toggleNotify() {
     if (!("Notification" in window)) return;
     if (Notification.permission !== "granted") {
@@ -326,7 +336,8 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} onAction={(action) => {
+        <VoiceMenu level={voice.level} onLevel={voice.setLevel} />
+        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} voiceLevel={voice.level} onVoiceLevel={voice.setLevel} onAction={(action) => {
           if (action === "launch") setLaunchGroup(undefined);
           setModal(action);
         }} />
@@ -592,6 +603,9 @@ function Dashboard() {
             setModal(null);
           }}
         />
+      )}
+      {voice.spoken && (
+        <VoiceToast text={voice.spoken} level={voice.level} onLevel={voice.setLevel} onMute={voice.mute} onDismiss={voice.dismiss} />
       )}
     </div>
   );
