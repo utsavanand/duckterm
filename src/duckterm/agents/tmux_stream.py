@@ -178,6 +178,9 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
                 chunk = decoder.accept(line[:-1])
                 if chunk:
                     queue.put_nowait(chunk)
+                    # Buffered readline() may complete without yielding. Let a
+                    # ready consumer drain before judging it a stalled viewer.
+                    await asyncio.sleep(0)
         except (EOFError, asyncio.QueueFull):
             # Close only this viewer. A fresh connection gets a new snapshot;
             # never drop arbitrary output and continue a corrupted screen.
