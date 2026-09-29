@@ -22,6 +22,15 @@ so parallel sessions' gates overwrite each other's token (all-401 failures).
 Set `RD_TEST_STATE_FILE` and `RD_TEST_PORT` per run until the harness isolates
 itself.
 
+## 2026-09-28 — Load rules before accepting edits
+
+The AGENTS.md editor allowed Add while its initial GET was pending. The response
+replaced the new rule, then Save reported success for an empty list. Gate edits
+and saves on successful loading, ignore stale responses, and block saving after
+load failures. Test delayed responses and Enter as well as clicks; a passing retry
+does not explain an intermittent failure.
+
+
 ## 2026-09-28 — A local gate must include the checks that can reject CI
 
 Mail analytics passed the local gate but failed CI strict typing because the
