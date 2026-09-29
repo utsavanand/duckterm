@@ -2387,7 +2387,11 @@ class Server:
                 continue
             harness = self._relay_harness(a.session_key)
             sup = self.orchestrator.get(a.session_key)
-            if not harness.auto_approves_requests or sup is None or not sup.running:
+            if (
+                not harness.auto_approves_requests
+                or sup is None
+                or not await asyncio.to_thread(getattr, sup, "running")
+            ):
                 continue
             screen = await asyncio.to_thread(sup.visible_screen)
             if harness.approval_prompt_visible(screen):
