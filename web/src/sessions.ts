@@ -26,9 +26,16 @@ function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
     return prev;
   if (e.lifecycle === "terminated" || e.event_type === "SessionEnd")
     return "terminated";
+  // Mirrors the server's derive_state (persistence/history.py). The server
+  // tags these events before they reach the stream, so the badge the stream
+  // drives must read them the same way or the two disagree.
   switch (e.event_type) {
     case "PermissionRequest":
+      return e.auto_reviewed ? "busy" : "waiting";
     case "Notification":
+      if (e.notification_type === "idle_prompt" || (e.message ?? "").startsWith("Claude is waiting for your input"))
+        return "idle";
+      if (e.notification_type === "auth_success") return prev ?? "busy";
       return "waiting";
     case "PreToolUse":
     case "PostToolUse":

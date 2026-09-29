@@ -534,3 +534,17 @@ def test_busy_codex_screen_is_not_logged_as_a_missed_prompt(codex_world, tmp_pat
     asyncio.run(server._relay_check_stuck(int(time.time() * 1000) + LATER))
     assert state(server) == "busy"
     assert not (tmp_path / "relay-missed-prompts.json").exists()
+
+
+def test_dashboard_stream_carries_the_auto_reviewed_tag(codex_world) -> None:
+    """The dashboard folds live events itself; without the tag it would show
+    every Codex request as waiting even though the server keeps it busy."""
+    server, _, _ = codex_world
+
+    async def scenario():
+        with server.bus.subscribe() as feed:
+            request(server)
+            return await asyncio.wait_for(feed.next(), 1)
+
+    streamed = asyncio.run(scenario())
+    assert (streamed["event_type"], streamed.get("auto_reviewed")) == ("PermissionRequest", True)

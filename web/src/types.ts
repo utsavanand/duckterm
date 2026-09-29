@@ -22,6 +22,11 @@ export interface DucktermEvent {
   // in_terminal:true) — launched, but with no PTY the browser can attach.
   pty_owned?: boolean;
   runtime?: string;
+  // Set by the server on a PermissionRequest from an agent that reviews its
+  // own requests (Codex); it stays busy until its prompt shows on screen.
+  auto_reviewed?: boolean;
+  notification_type?: string;
+  message?: string;
 }
 
 export type SessionState =
