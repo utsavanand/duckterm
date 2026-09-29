@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## Restart action labels — 2026-09-29
+
+Owner found trailing ellipses on Restart and Change model confusing. Use the requested plain action labels; dialog behavior stays explicit in the dialog itself. Updated existing Restart UI tests and browser locators to use the visible labels.
+
 ## 2026-09-29 — Visible session actions need no overflow menu
 
 Moving actions out of the sidebar but hiding them again behind More retained

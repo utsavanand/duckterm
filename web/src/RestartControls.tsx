@@ -61,8 +61,8 @@ export function RestartControls({ session, showActions = true }: { session: Sess
   const disabled = remote || !status?.can_restart || pending || acting || !!error;
   const reason = remote ? "Restart and Change model are available on This Mac only for now." : error || status?.reason;
   return <>
-    {showActions && <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={disabled} title={reason} onClick={e => void show(e.currentTarget)}>Restart…</button>}
-    {showActions && <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={disabled} title={reason} onClick={e => void show(e.currentTarget)}>Change model…</button>}
+    {showActions && <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={disabled} title={reason} onClick={e => void show(e.currentTarget)}>Restart</button>}
+    {showActions && <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={disabled} title={reason} onClick={e => void show(e.currentTarget)}>Change model</button>}
     {reason && showActions && !pending && <p className="rd-restart-message">{reason}</p>}
     {pending && <div className="rd-restart-message rd-restart-notice" role="status">
       {status?.status === "queued" ? "Restart pending — after this turn." : "Restarting…"}

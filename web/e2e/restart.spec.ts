@@ -16,7 +16,7 @@ test("Restart dialog edits model, queues visibly, survives reload, and cancels",
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("/");
     await page.getByText("Restart review", { exact: true }).first().click();
-    const restart = page.getByRole("button", { name: "Restart…", exact: true });
+    const restart = page.getByRole("button", { name: "Restart", exact: true });
     await expect(restart).toBeEnabled();
     await restart.click();
     const dialog = page.getByRole("dialog", { name: "Restart session" });
