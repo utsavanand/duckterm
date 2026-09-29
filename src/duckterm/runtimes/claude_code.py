@@ -103,6 +103,9 @@ class ClaudeCodeRuntime(Harness):
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return [*self._argv, "--resume", session_key]
 
+    def model_arguments(self, model: str) -> list[str]:
+        return ["--model", model]
+
     def can_resume_unambiguously(self, *, cwd: Path, recorded: str | None) -> bool:
         return bool(recorded and self.locate_transcript(cwd=cwd, session_id=recorded))
 

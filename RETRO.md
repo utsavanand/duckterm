@@ -8,6 +8,25 @@ the viewer task ran. A healthy viewer was reaped as stalled. Yield after each
 queued output chunk without adding a timed delay. Test a prebuffered burst
 larger than the queue with a ready consumer; retain separate real stalled-view
 cleanup tests and exact no-missing/no-duplicate output assertions.
+## 2026-09-28 — Rebased lifecycle controls must preserve off-loop tmux checks
+
+Restart initially brought synchronous liveness properties back onto the server
+loop after main moved tmux operations off-loop. A probe can depend on that same
+loop draining output. Run liveness probes in a worker, keep database access on
+the loop, recheck supervisor identity after awaits, and inspect drafts after the
+last blocking probe. Cover status and execution with a probe that requires loop
+progress rather than relying only on fast fake booleans.
+
+## 2026-09-28 — Restart needs positive turn-end evidence and a second draft check
+
+A terminal can look idle during a tool call, and a user can type after queuing
+an action. Persist the restart request with its exact native conversation ID,
+release it only on the matching parent Stop hook, and recheck input immediately
+before stopping. Order hook events by insertion, not millisecond timestamps.
+Keep pending/failure state visible even when the session becomes stopped, and
+never present a fresh installed-binary probe as the old running CLI version.
+If a model change fails to launch, restore the previous preference so Resume
+does not repeatedly launch the rejected model.
 
 ## 2026-09-28 — Never wait for tmux on the loop that drains its output
 

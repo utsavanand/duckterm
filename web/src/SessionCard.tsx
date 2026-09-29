@@ -7,9 +7,9 @@ import { SessionView } from "./types";
 import { useResumeSession } from "./useResumeSession";
 import { useToast } from "./ui";
 import "./sessionCard.css";
+import { RestartControls } from "./RestartControls";
 
-// Existing actions share one home in every sidebar density. Restart/model/
-// harness switching are deliberately absent until their server paths exist.
+// Session actions share one home in every sidebar density.
 export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUngroup }: {
   session: SessionView; now: number;
   onFork: (key: string) => void;
@@ -150,6 +150,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
     <dl className="rd-session-controls-meta"><div><dt>Harness</dt><dd>{s.runtime ?? "—"}</dd></div>
       <div><dt>Model</dt><dd>{s.model ?? "Not reported yet"}</dd></div></dl>
     <fieldset className="rd-session-controls-actions" disabled={ending || archiving || resuming}>
+          {s.launched && <RestartControls key={s.key} session={s} showActions={live} />}
           {resumable && (
             <button
               className="rd-btn rd-btn-sm rd-btn-primary"

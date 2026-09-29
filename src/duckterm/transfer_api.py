@@ -15,11 +15,15 @@ if TYPE_CHECKING:
 
 
 async def source_session(server: "Server", key: str) -> tuple[dict[str, Any], dict[str, str]]:
+    if server.restarts.running(key):
+        raise ValueError("Wait for the session restart to finish before moving it")
     row = server.history.session(key)
     if not row or row.get("state") not in ("stopped", "terminated"):
         raise ValueError("Stop the source session before reviewing or moving it")
     if await asyncio.to_thread(tmux.session_exists, tmux.target_for(key)):
         raise ValueError("Source process is still running; wait for it to stop")
+    if server.restarts.running(key):
+        raise ValueError("Wait for the session restart to finish before moving it")
     row = {**row, "cwd": row.get("worktree_path") or row.get("cwd")}
     if not row["cwd"]:
         raise ValueError("Source project is unavailable")

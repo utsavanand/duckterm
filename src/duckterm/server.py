@@ -279,6 +279,8 @@ _ROUTES: list[Route] = [
           prefix="/folders/"),
     Route("PATCH", "", lambda s, r, w, h, b, seg: s._update_session(w, seg, b),
           prefix="/sessions/"),
+    Route("DELETE", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "DELETE"),
+          **_mid("/sessions/", "/restart")),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._delete_session(w, seg, b),
           prefix="/sessions/"),
     Route("POST", "", lambda s, r, w, h, b, seg: s._fork_conversation(w, seg, b),
@@ -289,6 +291,10 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/promote")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._stop(w, seg),
           **_mid("/sessions/", "/stop")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "GET"),
+          **_mid("/sessions/", "/restart")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "POST", b),
+          **_mid("/sessions/", "/restart")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._resume(w, seg),
           **_mid("/sessions/", "/resume")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._archive(w, seg),
@@ -355,6 +361,9 @@ class Server:
         # transcript path -> (mtime, context_tokens): /sessions is fetched
         # often and an unchanged transcript can't have new usage.
         self._context_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        from duckterm.restarts import Restarts
+
+        self.restarts = Restarts(self)
 
     # Activity that means a session moved past an *earlier* permission prompt:
     # any of these arriving AFTER a request means it was answered and the agent
@@ -398,6 +407,8 @@ class Server:
                 # polling. Clear it so it doesn't linger in "Needs human".
                 self.approvals.drop_abandoned_blocking(str(key), ts, _BLOCKING_POLL_MS)
         self._relay_observe(event)
+        if hasattr(self, "restarts"):
+            self.restarts.observe(event)
 
     def _enrich_git(self, event: dict[str, Any]) -> None:
         """If an event has a cwd but no repo/branch yet (a watched session),
@@ -627,13 +638,17 @@ class Server:
             return
         # Check before publishing Stop: folding that event changes waiting to idle.
         hook_output = self._inbox_hook_output(raw, str(key or ""))
+        raw["hook_event"] = True
         event = self.bus.publish(raw)
         response = dict(event)
         if hook_output:
             response["hook_output"] = hook_output
         await _write_json(writer, 200, response)
+        self.restarts.hook_finished(event)
 
     def _inbox_hook_output(self, raw: dict[str, Any], key: str) -> dict[str, Any] | None:
+        if self.restarts.pending(key):
+            return None
         if raw.get("event_type") != events.STOP or raw.get("stop_hook_active") is not False:
             return None
         row = self.history.session(key)
@@ -1637,6 +1652,10 @@ class Server:
         return out
 
     async def _stop(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        if self.restarts.running(session_key):
+            await _write_json(writer, 409, {"error": "Restart is already in progress"})
+            return
+        self.restarts.cancel(session_key)
         # An in-process supervised session has a PTY we can terminate directly.
         # A session running in the user's own terminal (duckterm run / a tab we
         # opened) isn't ours to kill — the user stops it there.
@@ -1669,6 +1688,37 @@ class Server:
         await handle(self, writer, operation, body)
 
     async def _resume(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        if self.restarts.running(session_key):
+            await _write_json(writer, 409, {"error": "Restart is already in progress"})
+            return
+        self.restarts.cancel(session_key)
+        status, result = await self._resume_session(session_key)
+        await _write_json(writer, status, result)
+
+    async def _restart(
+        self, writer: asyncio.StreamWriter, key: str, method: str, body: bytes = b""
+    ) -> None:
+        try:
+            if method == "GET":
+                result = await self.restarts.describe(key)
+            elif method == "DELETE":
+                if self.history.session(key) is None:
+                    raise APIError(404, "Session not found")
+                result = self.restarts.cancel(key)
+            else:
+                request = json.loads(body or b"{}")
+                if not isinstance(request, dict):
+                    raise APIError(400, "Expected a JSON object")
+                result = await self.restarts.request(key, request.get("model", ""))
+            await _write_json(writer, 202 if method == "POST" else 200, result)
+        except (ValueError, APIError) as exc:
+            await _write_json(
+                writer, exc.status if isinstance(exc, APIError) else 400, {"error": str(exc)}
+            )
+
+    async def _resume_session(
+        self, session_key: str, *, exact: bool = False
+    ) -> tuple[int, dict[str, Any]]:
         """Resume a stopped/terminated launched session: relaunch its agent in the
         saved worktree/cwd under the same session_key. For claude-code, continue
         the conversation with `--resume <claude session_id>`; other runtimes
@@ -1677,46 +1727,33 @@ class Server:
         from duckterm import transfers
 
         if session_key in self._transfer_sources or transfers.session_transfer(session_key):
-            await _write_json(
-                writer,
-                409,
-                {
-                    "error": "This session has a remote transfer. Use Continue locally "
-                    "to explicitly create a separate continuation."
-                },
-            )
-            return
+            return 409, {
+                "error": (
+                    "This session has a remote transfer. Use Continue locally to "
+                    "explicitly create a separate continuation."
+                )
+            }
         row = self.history.session(session_key)
         if row is None:
-            await _write_json(writer, 404, {"error": f"no session {session_key}"})
-            return
+            return 404, {"error": f"no session {session_key}"}
         if not row.get("heartbeat") and not row.get("launched"):
-            await _write_json(
-                writer, 400, {"error": "only Duckterm-launched sessions can be resumed"}
-            )
-            return
+            return 400, {"error": "only Duckterm-launched sessions can be resumed"}
         # Stop is a pause; archive is final. An archived session keeps its
         # history but is done — resuming it would contradict what Archive means.
         if row.get("state") == "archived":
-            await _write_json(
-                writer, 400, {"error": "archived sessions can't be resumed (archive is final)"}
-            )
-            return
+            return 400, {"error": "archived sessions can't be resumed (archive is final)"}
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
         # The saved worktree/dir may be gone (deleted worktree, pruned, wiped
         # home). Relaunching into a missing dir lands the agent in $HOME with no
         # branch — refuse with a clear reason instead.
         if not Path(cwd).is_dir():
-            await _write_json(
-                writer,
-                409,
-                {
-                    "error": "the session's working directory no longer exists — "
-                    "its worktree was likely removed",
-                    "cwd": cwd,
-                },
-            )
-            return
+            return 409, {
+                "error": (
+                    "the session's working directory no longer exists — its worktree "
+                    "was likely removed"
+                ),
+                "cwd": cwd,
+            }
         runtime = row.get("runtime") or "generic"
         if runtime == "codex":
             rt = runtime_for(runtime, "codex")
@@ -1732,18 +1769,26 @@ class Server:
                     for other in self.history.sessions()
                 )
                 if shared:
-                    await _write_json(
-                        writer,
-                        409,
-                        {
-                            "error": "Cannot safely resume this Codex session: its conversation ID "
-                            "was not recorded or its rollout is unavailable, and another Codex "
+                    return 409, {
+                        "error": (
+                            "Cannot safely resume this Codex session: its conversation ID was "
+                            "not recorded or its rollout is unavailable, and another Codex "
                             "session shares this directory. Resume the intended conversation "
-                            "explicitly in Codex instead of guessing the newest one.",
-                            "code": "ambiguous_resume_identity",
-                        },
-                    )
-                    return
+                            "explicitly in Codex instead of guessing the newest one."
+                        ),
+                        "code": "ambiguous_resume_identity",
+                    }
+        if exact:
+            rt = runtime_for(
+                runtime, {"claude-code": "claude", "codex": "codex"}.get(runtime, runtime)
+            )
+            if not rt.can_resume_unambiguously(
+                cwd=Path(cwd), recorded=self.history.session_id_for(session_key)
+            ):
+                return 409, {
+                    "error": "Cannot verify the exact conversation to restart",
+                    "code": "ambiguous_resume_identity",
+                }
         argv, carried = self._resume_argv(session_key, runtime, row)
         # Report honestly whether the conversation is carried, so the UI can
         # warn — before this, resume always claimed success even when it
@@ -1767,19 +1812,16 @@ class Server:
             session_key=session_key,
             prompt=prompt,
             record_intention=False,
+            test=bool(row.get("test")),
         )
         self.history.clear_heartbeat(session_key)
-        await _write_json(
-            writer,
-            200,
-            {
-                "resumed": True,
-                "session_key": session_key,
-                "command": argv,
-                "carried_conversation": carried,
-                "context": "native" if carried else ("brief" if prompt else "none"),
-            },
-        )
+        return 200, {
+            "resumed": True,
+            "session_key": session_key,
+            "command": argv,
+            "carried_conversation": carried,
+            "context": "native" if carried else "brief" if prompt else "none",
+        }
 
     def _resume_argv(self, key: str, runtime: str, row: dict[str, Any]) -> tuple[list[str], bool]:
         """The command to relaunch a session, and whether it carries the
@@ -1793,7 +1835,11 @@ class Server:
             cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
             sid = rt.find_resumable_id(cwd=cwd, recorded=self.history.session_id_for(key))
             if sid:
-                return rt.restore_command(cwd=cwd, session_key=sid), True
+                argv = rt.restore_command(cwd=cwd, session_key=sid)
+                model = self.history.restart_control(key).get("configured_model")
+                if model:
+                    argv[1:1] = rt.model_arguments(model)
+                return argv, True
         argv = shlex.split(str(row.get("command"))) if row.get("command") else []
         if binary:
             # The recorded command is the previous launch's full argv — binary,
@@ -1833,6 +1879,10 @@ class Server:
         """Put a session away for good: history is kept, the row leaves the
         list, and it can't be resumed (archive is FINAL — stop is the pause).
         Stops its PTY first if it's still live."""
+        if self.restarts.running(session_key):
+            await _write_json(writer, 409, {"error": "Restart is already in progress"})
+            return
+        self.restarts.cancel(session_key)
         row = self.history.session(session_key)
         if row is None:
             await _write_json(writer, 404, {"error": f"no session {session_key}"})
@@ -1856,6 +1906,10 @@ class Server:
         # Stop it first if it's live (best-effort), remove its worktree (if any),
         # then drop it from the DB. If the worktree has unmerged commits and the
         # caller didn't pass force, refuse so agent work isn't silently lost.
+        if self.restarts.running(session_key):
+            await _write_json(writer, 409, {"error": "Restart is already in progress"})
+            return
+        self.restarts.cancel(session_key)
         force = False
         with contextlib.suppress(json.JSONDecodeError):
             force = bool(json.loads(body or b"{}").get("force"))
@@ -1955,7 +2009,7 @@ class Server:
         skipped: list[str] = []
         for key in self.history.terminated_keys():
             row = self.history.session(key)
-            if self._worktree_unmerged(row) != 0:
+            if self.restarts.running(key) or self._worktree_unmerged(row) != 0:
                 skipped.append(key)
                 continue
             await self._teardown_session(key, row)
@@ -2825,9 +2879,15 @@ class Server:
         Returns "submitted", "stuck" (still sitting in the prompt after a
         second Enter), or "failed" (couldn't write to the terminal)."""
         sup = self.orchestrator.get(key)
-        if sup is None or not await asyncio.to_thread(getattr, sup, "running"):
+        if (
+            self.restarts.pending(key)
+            or sup is None
+            or not await asyncio.to_thread(getattr, sup, "running")
+        ):
             return "failed"
         typed_at = int(time.time() * 1000)
+        if self.restarts.pending(key):
+            return "failed"
         if not await asyncio.to_thread(
             sup.write_bytes, b"\x1b[200~" + text.encode() + b"\x1b[201~"
         ):
@@ -2855,6 +2915,8 @@ class Server:
         sup = self.orchestrator.get(session_key)
         if row is None or sup is None or not await asyncio.to_thread(getattr, sup, "running"):
             return "This session has no live terminal."
+        if self.restarts.pending(session_key):
+            return "A restart is pending. Cancel it before sending a new prompt."
         inbox = "Send it to the inbox instead."
         if row.get("state") != "idle":
             return f"It isn't idle, so typing could interrupt it. {inbox}"
@@ -4052,6 +4114,7 @@ class Server:
                     await server.serve_forever()
                 finally:
                     sweeper.cancel()
+                    await self.restarts.close()
         finally:
             _release_home_lock(lock)
 
@@ -4120,7 +4183,8 @@ class Server:
             key = str(row["session_key"])
             sup = self.orchestrator.get(key)
             if (
-                row.get("state") != "idle"
+                self.restarts.pending(key)
+                or row.get("state") != "idle"
                 or sup is None
                 or not await asyncio.to_thread(getattr, sup, "running")
             ):

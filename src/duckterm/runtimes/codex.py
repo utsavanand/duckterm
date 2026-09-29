@@ -145,6 +145,9 @@ class CodexRuntime(Harness):
             return recorded
         return None
 
+    def model_arguments(self, model: str) -> list[str]:
+        return ["-c", "model=" + json.dumps(model)]
+
     def can_resume_unambiguously(self, *, cwd: Path, recorded: str | None) -> bool:
         return self.find_resumable_id(cwd=cwd, recorded=recorded) is not None
 
