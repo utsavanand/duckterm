@@ -26,6 +26,10 @@ the old attempt exits, and drain replacement tasks with a deadline. Report the
 durable state and last hook before asserting call counts. Removing the retry
 handoff must fail the test; repeated green runs alone do not explain a CI failure.
 
+## Archive Undo must precede teardown — 2026-09-29
+
+Archiving stops the PTY and drops pending approvals, so reversing only the lifecycle flag cannot restore the session. Persist the eight-second grace period before acknowledging Archive, leave all session state untouched until expiry, and durably claim the operation before stopping anything. Recover pending and committing operations after app restart. Test full metadata/enrollment equality on Undo, expiry, stale cancellation, owner authentication, competing lifecycle actions and viewer reload.
+
 ## 2026-09-29 — Visible session actions need no overflow menu
 
 Moving actions out of the sidebar but hiding them again behind More retained

@@ -1,0 +1,5 @@
+.rd-archive-notices { position: fixed; bottom: 20px; right: 20px; z-index: 210; display: flex; flex-direction: column; gap: 8px; max-width: calc(100vw - 40px); }
+.rd-archive-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 14px 16px; border: 1px solid var(--brand-green); border-radius: 9px; background: var(--card); color: var(--text); box-shadow: 0 8px 24px #0003; font-size: 13px; max-width: 450px; }
+.rd-archive-notice small { display: block; color: var(--text-soft); max-width: 220px; overflow-wrap: anywhere; margin-top: 3px; }
+.rd-archive-notice button { border: 1px solid var(--border-strong); border-radius: 6px; padding: 6px 10px; background: var(--bg-soft); color: var(--brand-green); cursor: pointer; font: inherit; }
+.rd-archive-notice button:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 3px; }
