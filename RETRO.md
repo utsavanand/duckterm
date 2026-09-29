@@ -1,5 +1,36 @@
 # Retro — lessons from real breakage
 
+## 2026-09-28 — Never wait for tmux on the loop that drains its output
+
+The terminal control stream exposed synchronous tmux calls on the asyncio loop.
+A liveness probe could block that loop while tmux waited for its output client
+to drain, freezing the dashboard and hooks too. Move blocking tmux operations
+off-loop, including property reads, screen capture, resize, transfer and lifecycle
+paths. Keep database and state mutations on-loop. A slow liveness response is
+not a dead session: do not replace it with a timeout returning False. Regressions
+make the fake tmux response depend on loop progress and verify the tail remains
+alive until tmux actually reports exit. Approval keystrokes use the existing
+ordered input queue rather than synchronously calling tmux from callbacks.
+
+Screen capture -C doubles literal backslashes, while live output octal-escapes
+them. Assuming one encoding rejected real TUI captures. Decode both forms,
+preserve unknown escapes, and test OSC8, colours, Unicode, invalid UTF-8 and
+literal backslashes through real tmux. Drain each viewer independently into a
+bounded queue; overflow closes its client even if the browser never reads again.
+During cleanup, drain subprocess pipes too: wait() can hang on a full pipe.
+
+## 2026-09-28 — Terminal snapshots and live bytes need the same ordering source
+
+A tmux capture could include bytes still buffered before the pane log, then a
+new viewer replayed those bytes again as the file reader caught up. File offsets
+and sleeps cannot identify that boundary. Use one ordered control stream for
+each viewer's capture and live output; keep logging separate. Test with a frozen
+file reader, mid-output attachments, and disconnected or paused viewers. Preserve
+the cursor's blank row so post-snapshot output cannot overwrite the previous line.
+Test input with viewers attached on the bundled version too: tmux 3.7 selects
+read-only control clients for send-keys and rejects otherwise valid input. Keep
+the viewer's private command channel output-only without that client flag.
+
 ## 2026-09-28 — A green gate on synthetic panes shipped a server hang (v0.4.83)
 **Broke:** v0.4.83's new ordered terminal replay (#130) raised `ValueError:
 invalid tmux control escape` on the owner's real agent panes. The dashboard
@@ -31,6 +62,7 @@ load failures. Test delayed responses and Enter as well as clicks; a passing ret
 does not explain an intermittent failure.
 
 
+
 ## 2026-09-28 — A local gate must include the checks that can reject CI
 
 Mail analytics passed the local gate but failed CI strict typing because the
@@ -46,6 +78,7 @@ session removal and Oracle event retention; query remaining live rows separately
 Fault-inject deletion to prove a failed transfer leaves neither missing nor double
 counts. Keep completion-day activity separate from sent-day cohorts, and label
 histogram percentiles approximate rather than deriving fake medians from totals.
+
 
 ## 2026-09-28 — A shared directory cannot identify a conversation
 

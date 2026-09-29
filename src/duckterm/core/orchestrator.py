@@ -26,7 +26,7 @@ from collections import deque
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from duckterm.agents import tmux
+from duckterm.agents import tmux, tmux_stream
 from duckterm.core import events
 from duckterm.core.eventbus import EventBus
 from duckterm.git.worktrees import WorktreeManager
@@ -133,7 +133,7 @@ class SessionSupervisor:
         # Register and enroll synchronously before the child can use its inbox.
         self._emit(events.SESSION_START, command=shlex.join(argv))
         try:
-            if tmux.has_tmux():
+            if await asyncio.to_thread(tmux.has_tmux):
                 await self._start_tmux(argv)
             else:
                 await self._start_pty(argv)
@@ -180,7 +180,8 @@ class SessionSupervisor:
         self._pipe_path = str(paths.home() / "panes" / f"{self.session_key}.log")
         Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
         private_write(Path(self._pipe_path), "")
-        self._tmux_target = tmux.spawn_piped(
+        self._tmux_target = await asyncio.to_thread(
+            tmux.spawn_piped,
             self.session_key,
             command,
             self.cwd,
@@ -259,7 +260,7 @@ class SessionSupervisor:
                         fh.close()
                         fh = path.open("rb")
                         continue
-                    if not tmux.session_exists(target):
+                    if not await asyncio.to_thread(tmux.session_exists, target):
                         break
                     active = max(last_output, self._last_input)
                     await asyncio.sleep(0.025 if loop.time() - active < 5 else 0.2)
@@ -378,6 +379,16 @@ class SessionSupervisor:
         tmux, clear + capture-pane of the live pane; for a PTY, a small recent
         tail. Replaying 2000 chunks of history made the terminal redraw its entire
         backlog every time you (re)attached or switched tabs."""
+        if self._tmux_target is not None:
+            # Snapshot and output must share tmux's own timeline. A spool-file
+            # offset cannot exclude bytes still buffered upstream of the file.
+            feed = tmux_stream.stream(self._tmux_target)
+            try:
+                async for chunk in feed:
+                    yield chunk
+            finally:
+                await feed.aclose()
+            return
         # Bounded: ~2000 chunks ≈ 8MB of 4KB reads. _record_bytes drops the
         # subscriber (with an EOF) if it ever fills — see backpressure there.
         queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2000)
@@ -395,15 +406,8 @@ class SessionSupervisor:
             self._byte_subs.discard(queue)
 
     def _attach_snapshot(self) -> bytes:
-        """The bytes to send a freshly-attached terminal so it shows the current
-        state without replaying all history."""
-        if self._tmux_target is not None and tmux.session_exists(self._tmux_target):
-            screen = tmux.capture_screen(self._tmux_target)
-            if screen:
-                # Clear + home, then paint the captured screen.
-                return b"\x1b[2J\x1b[H" + screen
-        # PTY (or tmux capture failed): a bounded recent tail — enough for
-        # context, not the whole backlog.
+        """A bounded replay for a directly owned PTY (tmux uses its control stream)."""
+        # PTY snapshots and live chunks are both recorded on this event loop.
         recent = list(self._byte_tail)[-40:]
         return b"".join(recent)
 
@@ -499,7 +503,7 @@ class SessionSupervisor:
         if self._input_task is not None:
             self._input_task.cancel()
         if self._tmux_target is not None:
-            tmux.kill_session(self._tmux_target)
+            await asyncio.to_thread(tmux.kill_session, self._tmux_target)
         elif self._proc is not None and self._proc.returncode is None:
             os.killpg(os.getpgid(self._proc.pid), signal.SIGTERM)
         if self._task is not None:
@@ -540,11 +544,11 @@ class Orchestrator:
 
         adopted: list[str] = []
         # Missing tmux on a GUI app's PATH is not evidence that its panes died.
-        if not tmux.has_tmux():
+        if not await asyncio.to_thread(tmux.has_tmux):
             print("[duckterm] skipping reconciliation: tmux unavailable", file=sys.stderr)
             return adopted
         try:
-            live_keys = tmux.list_duckterm_sessions()
+            live_keys = await asyncio.to_thread(tmux.list_duckterm_sessions)
         except (OSError, RuntimeError) as exc:
             print(f"[duckterm] skipping reconciliation: {exc}", file=sys.stderr)
             return adopted
@@ -724,4 +728,7 @@ class Orchestrator:
         if supervisor is None:
             return False
         text = {"Escape": "\x1b", "Enter": "\r"}.get(key, key + "\r")
-        return supervisor.write_input(text)
+        # Approval callbacks run on the event loop. Queue in the same ordered
+        # drain as terminal input rather than synchronously waiting on tmux.
+        supervisor.queue_bytes(text.encode())
+        return True

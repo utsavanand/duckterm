@@ -734,7 +734,11 @@ class Server:
             await _write_json(writer, 409, {"error": "Resume the session first"})
             return
         supervisor = self.orchestrator.get(session_key)
-        if send and (row.get("state") != "idle" or supervisor is None or not supervisor.running):
+        if send and (
+            row.get("state") != "idle"
+            or supervisor is None
+            or not await asyncio.to_thread(getattr, supervisor, "running")
+        ):
             await _write_json(
                 writer,
                 409,
@@ -953,7 +957,7 @@ class Server:
         sent = False
         if supervisor is not None:
             prompt = f'Re: "{quote}" — {note}' if quote else note
-            sent = supervisor.write_bytes(prompt.encode() + b"\r")
+            sent = await asyncio.to_thread(supervisor.write_bytes, prompt.encode() + b"\r")
         await _write_json(writer, 200, {"id": ann_id, "sent": sent})
 
     async def _add_artifact_annotation(
@@ -987,7 +991,7 @@ class Server:
             )
             return
         supervisor = self.orchestrator.get(session_key)
-        if supervisor is None or not supervisor.running:
+        if supervisor is None or not await asyncio.to_thread(getattr, supervisor, "running"):
             await _write_json(
                 writer,
                 409,
@@ -1072,10 +1076,10 @@ class Server:
                 self.history.set_model(str(s["session_key"]), str(live_model))
             s["model"] = live_model or s.get("model")
             s["suites"] = self._suites_for(s.get("worktree_path") or s.get("cwd"))
-            self._reconcile_waiting(s)
+            await self._reconcile_waiting(s)
         await _write_json(writer, 200, {"sessions": sessions})
 
-    def _reconcile_waiting(self, row: dict[str, Any]) -> None:
+    async def _reconcile_waiting(self, row: dict[str, Any]) -> None:
         """Before reporting a pty-owned session as 'waiting', glance at its
         actual screen. Codex answers approvals IN the terminal without firing a
         hook, so a PermissionRequest can stay the last event for the entire run
@@ -1090,7 +1094,7 @@ class Server:
         if sup is None:
             return
         runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
-        screen = sup.screen_text(8)
+        screen = await asyncio.to_thread(sup.screen_text, 8)
         if screen and runtime.detect_state(screen) == "busy":
             row["state"] = "busy"
 
@@ -1871,7 +1875,7 @@ class Server:
             # No supervisor (launched before a server restart and never
             # re-adopted) — kill any leftover tmux session by its canonical
             # name so DB deletes never orphan panes.
-            tmux.kill_session(tmux.target_for(session_key))
+            await asyncio.to_thread(tmux.kill_session, tmux.target_for(session_key))
         self._remove_worktree(row)
         deleted = self.history.delete_session(session_key, now=int(time.time() * 1000))
         self.approvals.drop_session(session_key)
@@ -2104,7 +2108,7 @@ class Server:
                 return [{"role": "terminal", "text": screen}]
         return []
 
-    def _fleet_digest(self, row: dict[str, Any], question: str) -> str:
+    async def _fleet_digest(self, row: dict[str, Any], question: str) -> str:
         key = str(row.get("session_key") or "")
         name = str(row.get("name") or row.get("source_app") or key)
         # A question that names a session gets a deeper look at that session.
@@ -2127,7 +2131,7 @@ class Server:
             lines.append(f"last checkpoint: {cps[0].get('summary') or cps[0].get('label')}")
         sup = self.orchestrator.get(key)
         if sup is not None:
-            screen = sup.screen_text(120 if focus else 30)
+            screen = await asyncio.to_thread(sup.screen_text, 120 if focus else 30)
             if screen:
                 lines.append("recent terminal output:")
                 lines.append(screen)
@@ -2156,7 +2160,7 @@ class Server:
             exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
             await _write_json(writer, 200, {"answer": answer, "exchange": exchange, "sessions": []})
             return
-        digests = "\n\n".join(self._fleet_digest(r, question) for r in running)
+        digests = "\n\n".join([await self._fleet_digest(r, question) for r in running])
         history = [
             f"Q: {h.get('q')}\nA: {h.get('a')}"
             for h in oracle.load_chat(chat_path)[-2:]
@@ -2327,7 +2331,7 @@ class Server:
                 if pending is None or pending.decided is not None:
                     return
                 sup = self.orchestrator.get(key)
-                if sup is None or not sup.running:
+                if sup is None or not await asyncio.to_thread(getattr, sup, "running"):
                     return
                 screen = await asyncio.to_thread(sup.visible_screen)
                 if harness.approval_prompt_visible(screen):
@@ -2478,7 +2482,11 @@ class Server:
             keys = None if note.get("blocking") else harness.approval_keys(decision)
             if keys is not None:
                 sup = self.orchestrator.get(note["session_key"])
-                screen = await asyncio.to_thread(sup.visible_screen) if sup and sup.running else ""
+                screen = (
+                    await asyncio.to_thread(sup.visible_screen)
+                    if sup is not None and await asyncio.to_thread(getattr, sup, "running")
+                    else ""
+                )
                 if not harness.approval_prompt_visible(screen):
                     self.relay.close(note, "handled", closed_at=now)
                     await _write_json(
@@ -2692,7 +2700,7 @@ class Server:
         Returns "submitted", "stuck" (still sitting in the prompt after a
         second Enter), or "failed" (couldn't write to the terminal)."""
         sup = self.orchestrator.get(key)
-        if sup is None or not sup.running:
+        if sup is None or not await asyncio.to_thread(getattr, sup, "running"):
             return "failed"
         typed_at = int(time.time() * 1000)
         if not await asyncio.to_thread(
@@ -2720,7 +2728,7 @@ class Server:
         or None. The same gates Oracle applies before pasting a nudge."""
         row = self.history.session(session_key)
         sup = self.orchestrator.get(session_key)
-        if row is None or sup is None or not sup.running:
+        if row is None or sup is None or not await asyncio.to_thread(getattr, sup, "running"):
             return "This session has no live terminal."
         inbox = "Send it to the inbox instead."
         if row.get("state") != "idle":
@@ -3545,7 +3553,7 @@ class Server:
             await _write_json(writer, 404, {"error": "no live session (not launched by Duckterm)"})
             return
         text = json.loads(body or b"{}").get("text", "")
-        wrote = supervisor.write_input(text)
+        wrote = await asyncio.to_thread(supervisor.write_input, text)
         await _write_json(writer, 200 if wrote else 409, {"written": wrote})
 
     async def _output(
@@ -3604,7 +3612,7 @@ class Server:
         # attaching to it would hang a silent, never-ending connection. Refuse
         # instead, so a reconnecting client keeps retrying and lands on the NEW
         # supervisor the moment a Resume replaces the dead one.
-        if supervisor is None or not supervisor.running:
+        if supervisor is None or not await asyncio.to_thread(getattr, supervisor, "running"):
             await _write_json(writer, 404, {"error": "no live session to attach"})
             return
         key = headers.get("sec-websocket-key")
@@ -3637,7 +3645,7 @@ class Server:
                     frame = incoming.result()
                     if frame is None or frame[0] == 0x8:  # EOF or client close
                         break
-                    self._handle_terminal_frame(supervisor, frame)
+                    await self._handle_terminal_frame(supervisor, frame)
                     incoming = asyncio.ensure_future(read_frame(reader))
                 if outgoing in done:
                     writer.write(encode_binary_frame(outgoing.result()))
@@ -3659,7 +3667,7 @@ class Server:
                 await writer.drain()
 
     @staticmethod
-    def _handle_terminal_frame(supervisor: Any, frame: tuple[int, bytes]) -> None:
+    async def _handle_terminal_frame(supervisor: Any, frame: tuple[int, bytes]) -> None:
         opcode, payload = frame
         if opcode == 0x2:  # binary: raw keystrokes
             # queue_bytes, not write_bytes: tmux send-keys is a ~10ms
@@ -3675,7 +3683,7 @@ class Server:
             if isinstance(resize, dict):
                 cols, rows = resize.get("cols"), resize.get("rows")
                 if isinstance(cols, int) and isinstance(rows, int):
-                    supervisor.resize(cols, rows)
+                    await asyncio.to_thread(supervisor.resize, cols, rows)
 
     async def _compare(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         try:
@@ -3959,7 +3967,7 @@ class Server:
             if now - int(row.get("updated_at") or now) < 60_000:
                 continue  # a dialog may still be drawing
             sup = self.orchestrator.get(key)
-            if sup is None or not sup.running:
+            if sup is None or not await asyncio.to_thread(getattr, sup, "running"):
                 continue
             screen = await asyncio.to_thread(sup.visible_screen)
             harness = _build_runtime(row.get("runtime"), str(row.get("command") or ""))
@@ -3981,7 +3989,11 @@ class Server:
         for row in self.history.sessions():
             key = str(row["session_key"])
             sup = self.orchestrator.get(key)
-            if row.get("state") != "idle" or sup is None or not sup.running:
+            if (
+                row.get("state") != "idle"
+                or sup is None
+                or not await asyncio.to_thread(getattr, sup, "running")
+            ):
                 continue
             try:
                 mail = self.history.session_api.open_mail(key)
