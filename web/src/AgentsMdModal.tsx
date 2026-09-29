@@ -56,21 +56,39 @@ export function AgentsMdModal({
   const [legacyText, setLegacyText] = useState<string | null>(null); // hand-written AGENTS.md, not yet typed
   const [draft, setDraft] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setLoadFailed(false);
+    setRules([]);
+    setLegacyText(null);
+    setDraft("");
     sessionFetch(sessionKey, `/agents-md?dir=${encodeURIComponent(dir)}`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`Could not read rules (HTTP ${r.status})`);
+        return r.json();
+      })
       .then((d: { rules?: Rule[]; text?: string; managed?: boolean }) => {
+        if (cancelled) return;
         setRules(d.rules ?? []);
         // A hand-written AGENTS.md that predates the typed format: offer an
         // import instead of silently replacing it on the first save.
         setLegacyText(!d.managed && d.text ? d.text : null);
       })
-      .catch(() => undefined)
-      .finally(() => setLoading(false));
-  }, [dir, sessionKey]);
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setLoadFailed(true);
+        toast(`Load failed: ${e.message}. Close and reopen to retry.`, "err");
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [dir, sessionKey, toast]);
+
+  const unavailable = loading || loadFailed;
 
   const patch = (id: string, changes: Partial<Rule>) =>
     setRules((rs) => rs.map((r) => (r.id === id ? { ...r, ...changes } : r)));
@@ -127,6 +145,7 @@ export function AgentsMdModal({
   }
 
   async function save() {
+    if (unavailable || saving) return;
     setSaving(true);
     try {
       const res = await sessionFetch(sessionKey, "/agents-md", {
@@ -145,6 +164,7 @@ export function AgentsMdModal({
   }
 
   function addDraft() {
+    if (unavailable || !draft.trim()) return;
     const rule = blankRule(draft.trim());
     if (rules.some((r) => r.id === rule.id)) {
       toast(`A rule with id "${rule.id}" already exists`, "err");
@@ -178,7 +198,7 @@ export function AgentsMdModal({
 
       <div className="rd-rules-list">
         {loading && <div className="rd-rules-empty">Loading…</div>}
-        {!loading && rules.length === 0 && legacyText === null && (
+        {!unavailable && rules.length === 0 && legacyText === null && (
           <div className="rd-rules-empty">
             No rules yet. Add one below, or distill them from past corrections.
           </div>
@@ -263,19 +283,19 @@ export function AgentsMdModal({
             if (e.key === "Enter" && draft.trim()) addDraft();
           }}
         />
-        <Button variant="ghost" disabled={!draft.trim()} onClick={addDraft}>
+        <Button variant="ghost" disabled={unavailable || !draft.trim()} onClick={addDraft}>
           Add
         </Button>
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-        <Button variant="ghost" onClick={suggest} disabled={suggesting || loading}>
+        <Button variant="ghost" onClick={suggest} disabled={suggesting || unavailable}>
           {suggesting ? "Observing…" : "Suggest from corrections"}
         </Button>
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={save} disabled={saving || loading}>
+        <Button onClick={save} disabled={saving || unavailable}>
           {saving ? "Saving…" : "Save"}
         </Button>
       </div>
