@@ -41,7 +41,8 @@ Event = dict[str, Any]
 # (now unused) tables and session_questions columns. Keep those rows on migration.
 # v6 retains analytics at deletion. Older sweep code would lose these counts.
 # v7 persists restart requests and model preferences on the session.
-_SCHEMA_VERSION = 7
+# v8 persists archive grace periods so a quit cannot lose an acknowledged archive.
+_SCHEMA_VERSION = 8
 
 
 class SchemaTooNewError(RuntimeError):
@@ -214,6 +215,7 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
 # EXISTS won't add these to a pre-existing DB, so we ALTER them in on open.
 _SESSIONS_COLUMNS = {
     "restart_json": "TEXT",
+    "archive_json": "TEXT",
     "pinned": "INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))",
     "runtime": "TEXT",
     # Model id observed in the session's transcript (e.g. "claude-fable-5").
@@ -594,6 +596,27 @@ class HistoryStore:
         self._conn.execute(
             "UPDATE sessions SET restart_json = ? WHERE session_key = ?",
             (json.dumps(value), key),
+        )
+        self._conn.commit()
+
+    def archive_request(self, key: str) -> dict[str, Any]:
+        row = self._conn.execute(
+            "SELECT archive_json FROM sessions WHERE session_key = ?", (key,)
+        ).fetchone()
+        return json.loads(row[0]) if row and row[0] else {}
+
+    def archive_requests(self) -> list[dict[str, Any]]:
+        return [
+            json.loads(row[0])
+            for row in self._conn.execute(
+                "SELECT archive_json FROM sessions WHERE archive_json IS NOT NULL"
+            )
+        ]
+
+    def set_archive_request(self, key: str, value: dict[str, Any] | None) -> None:
+        self._conn.execute(
+            "UPDATE sessions SET archive_json = ? WHERE session_key = ?",
+            (json.dumps(value) if value else None, key),
         )
         self._conn.commit()
 

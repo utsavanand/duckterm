@@ -1,5 +1,44 @@
 # Retro — lessons from real breakage
 
+
+## 2026-09-29 — Assert terminal input bytes, not competing echo order
+
+Canonical terminal echo and cat output can interleave: AAA + LF + BBB rendered as AAABBAAAB while all input bytes were correct. A batching change exposed this false gate failure. Use a raw-PTY child to record exact received bytes; this also distinguishes LF from CR, which canonical input maps together. Preserve the original failure, verify the replacement rejects a CR mutation, and clean up its test session.
+
+## 2026-09-29 — Feedback bypassed queued terminal input
+
+Artifact and message feedback wrote directly from a worker thread while keyboard bytes waited in a separate FIFO. Under backlog, feedback split an unfinished draft. Route feedback through the existing FIFO and await its actual delivery result; cancellation and write errors must release waiting requests. A blocked-writer regression reproduces the old overtaking without relying on CPU load. A separate per-character drain made a backlog require two tmux subprocesses per character. Coalesce already queued bytes in bounded batches with no added delay; preserve the exact byte stream and all browser assertions. Browser timeouts alone do not establish where latency occurs.
+
+## Stacked context tabs must not resize the terminal — 2026-09-29
+
+At the 1100px breakpoint the three panes become automatic grid rows. Different tab contents then redistributed height and reflowed the terminal. Give stacked rows explicit fractional allocations, retaining the collapsed 40px controls. Compare terminal geometry after both tab directions at the breakpoint and below it, as well as on desktop.
+
+## 2026-09-29 — Essential controls cannot depend on leftover height
+
+The expanded Session card left Connectors only 13–24 pixels of the right panel.
+Give Session and Connectors separate, persistent views with their own scrolling
+area. Check populated cards at real window heights, panel reopening and host
+changes; presence in the DOM alone does not prove controls are reachable.
+
+## Restart action labels — 2026-09-29
+
+Owner found trailing ellipses on Restart and Change model confusing. Use the requested plain action labels; dialog behavior stays explicit in the dialog itself. Updated existing Restart UI tests and browser locators to use the visible labels.
+
+## 2026-09-29 — Prove restart race ordering and report its durable outcome
+
+A CI restart regression failed with zero launch calls while an unrelated
+progress worker also crashed against an incomplete terminal fixture. The log
+did not include the saved restart status, so it could not distinguish a lost
+queue from a rejected preflight. Isolate digest/relay workers in lifecycle rigs,
+hold the version probe with explicit events, exercise Stop both before and after
+the old attempt exits, and drain replacement tasks with a deadline. Report the
+durable state and last hook before asserting call counts. Removing the retry
+handoff must fail the test; repeated green runs alone do not explain a CI failure.
+
+## Archive Undo must precede teardown — 2026-09-29
+
+Archiving stops the PTY and drops pending approvals, so reversing only the lifecycle flag cannot restore the session. Persist the eight-second grace period before acknowledging Archive, leave all session state untouched until expiry, and durably claim the operation before stopping anything. Recover pending and committing operations after app restart. Test full metadata/enrollment equality on Undo, expiry, stale cancellation, owner authentication, competing lifecycle actions and viewer reload.
+
 ## 2026-09-29 — Visible session actions need no overflow menu
 
 Moving actions out of the sidebar but hiding them again behind More retained

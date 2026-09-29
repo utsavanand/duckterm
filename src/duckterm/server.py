@@ -281,6 +281,8 @@ _ROUTES: list[Route] = [
           prefix="/sessions/"),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "DELETE"),
           **_mid("/sessions/", "/restart")),
+    Route("DELETE", "", lambda s, r, w, h, b, seg: s._archive_request(w, seg, "DELETE", b),
+          **_mid("/sessions/", "/archive-undo")),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._delete_session(w, seg, b),
           prefix="/sessions/"),
     Route("POST", "", lambda s, r, w, h, b, seg: s._fork_conversation(w, seg, b),
@@ -297,6 +299,11 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/restart")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._resume(w, seg),
           **_mid("/sessions/", "/resume")),
+    Route("GET", "/archive-requests",
+          lambda s, r, w, h, b, seg: _write_json(
+              w, 200, {"requests": s.history.archive_requests()})),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._archive_request(w, seg, "POST", b),
+          **_mid("/sessions/", "/archive-undo")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._archive(w, seg),
           **_mid("/sessions/", "/archive")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._checkpoint(w, seg, b),
@@ -364,6 +371,9 @@ class Server:
         from duckterm.restarts import Restarts
 
         self.restarts = Restarts(self)
+        from duckterm.archives import Archives
+
+        self.archives = Archives(self)
 
     # Activity that means a session moved past an *earlier* permission prompt:
     # any of these arriving AFTER a request means it was answered and the agent
@@ -984,7 +994,7 @@ class Server:
         sent = False
         if supervisor is not None:
             prompt = f'Re: "{quote}" — {note}' if quote else note
-            sent = await asyncio.to_thread(supervisor.write_bytes, prompt.encode() + b"\r")
+            sent = await supervisor.write_queued_bytes(prompt.encode() + b"\r")
         await _write_json(writer, 200, {"id": ann_id, "sent": sent})
 
     async def _add_artifact_annotation(
@@ -1041,7 +1051,7 @@ class Server:
         }
         prompt = "Artifact feedback: " + json.dumps({**context, "feedback": note.strip()})
         try:
-            sent = await asyncio.to_thread(supervisor.write_bytes, prompt.encode() + b"\r")
+            sent = await supervisor.write_queued_bytes(prompt.encode() + b"\r")
         except OSError:
             sent = False
         if not sent:
@@ -1652,6 +1662,9 @@ class Server:
         return out
 
     async def _stop(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        if self.archives.pending(session_key):
+            await _write_json(writer, 409, {"error": "Archive pending; undo it first"})
+            return
         if self.restarts.running(session_key):
             await _write_json(writer, 409, {"error": "Restart is already in progress"})
             return
@@ -1688,6 +1701,9 @@ class Server:
         await handle(self, writer, operation, body)
 
     async def _resume(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        if self.archives.pending(session_key):
+            await _write_json(writer, 409, {"error": "Archive pending; undo it first"})
+            return
         if self.restarts.running(session_key):
             await _write_json(writer, 409, {"error": "Restart is already in progress"})
             return
@@ -1875,10 +1891,40 @@ class Server:
             "notes (verify before relying on them):\n- " + "\n- ".join(facts)
         )
 
+    async def _archive_request(
+        self, writer: asyncio.StreamWriter, key: str, method: str, body: bytes
+    ) -> None:
+        try:
+            if method == "POST":
+                result = self.archives.request(key)
+            else:
+                data = json.loads(body or b"{}")
+                if not isinstance(data, dict) or not isinstance(data.get("id"), str):
+                    raise APIError(400, "archive request id is required")
+                self.archives.cancel(key, data["id"])
+                result = {"undone": True}
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
+
+    async def _commit_archive(self, key: str) -> None:
+        if self.history.session(key) is None:
+            return
+        await self.orchestrator.stop(key)
+        self._set_lifecycle(key, "archived")
+        self.approvals.drop_session(key)
+
     async def _archive(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """Put a session away for good: history is kept, the row leaves the
         list, and it can't be resumed (archive is FINAL — stop is the pause).
         Stops its PTY first if it's still live."""
+        if self.archives.pending(session_key):
+            await _write_json(writer, 409, {"error": "Archive pending; undo it first"})
+            return
         if self.restarts.running(session_key):
             await _write_json(writer, 409, {"error": "Restart is already in progress"})
             return
@@ -1895,9 +1941,7 @@ class Server:
                 writer, 400, {"error": "only Duckterm-launched sessions can be archived"}
             )
             return
-        await self.orchestrator.stop(session_key)
-        self._set_lifecycle(session_key, "archived")
-        self.approvals.drop_session(session_key)
+        await self._commit_archive(session_key)
         await _write_json(writer, 200, {"archived": True, "session_key": session_key})
 
     async def _delete_session(
@@ -1906,6 +1950,9 @@ class Server:
         # Stop it first if it's live (best-effort), remove its worktree (if any),
         # then drop it from the DB. If the worktree has unmerged commits and the
         # caller didn't pass force, refuse so agent work isn't silently lost.
+        if self.archives.pending(session_key):
+            await _write_json(writer, 409, {"error": "Archive pending; undo it first"})
+            return
         if self.restarts.running(session_key):
             await _write_json(writer, 409, {"error": "Restart is already in progress"})
             return
@@ -2009,7 +2056,11 @@ class Server:
         skipped: list[str] = []
         for key in self.history.terminated_keys():
             row = self.history.session(key)
-            if self.restarts.running(key) or self._worktree_unmerged(row) != 0:
+            if (
+                self.archives.pending(key)
+                or self.restarts.running(key)
+                or self._worktree_unmerged(row) != 0
+            ):
                 skipped.append(key)
                 continue
             await self._teardown_session(key, row)
@@ -4108,12 +4159,14 @@ class Server:
             self.history.session_api.set_url(f"http://127.0.0.1:{actual_port}")
             if on_listening is not None:
                 on_listening(host, port)
+            self.archives.recover()
             sweeper = asyncio.create_task(self._sweep_dead_loop())
             async with server:
                 try:
                     await server.serve_forever()
                 finally:
                     sweeper.cancel()
+                    await self.archives.close()
                     await self.restarts.close()
         finally:
             _release_home_lock(lock)
@@ -4247,6 +4300,8 @@ class Server:
 
     def _archive_swept(self, key: str) -> None:
         """Archive a session whose terminal is gone (auto-sweep)."""
+        if self.archives.pending(key):
+            return
         self._set_lifecycle(key, "archived")
         self.approvals.drop_session(key)
 

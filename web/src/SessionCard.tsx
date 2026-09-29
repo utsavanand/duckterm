@@ -1,3 +1,4 @@
+import { requestArchive } from "./ArchiveUndo";
 import { useEffect, useState } from "react";
 import { api } from "./api";
 import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
@@ -101,8 +102,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
     if (archiving) return;
     setArchiving(true);
     try {
-      await api.archive(s.key);
-      toast("Archived");
+      await requestArchive(s.key);
       // The archive event removes it from this view; no need to un-set.
     } catch (e) {
       toast(`Archive failed: ${(e as Error).message}`, "err");

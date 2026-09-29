@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { apiPost, findSession, seedSession } from "./helpers";
+import { apiDelete, apiPost, findSession, seedSession } from "./helpers";
 
-// Archive is FINAL: the row leaves the agents list, history is kept in the
+// After the undo window, archive is FINAL: the row leaves the agents list, history is kept in the
 // backend, and resume is refused. (Stop is the pause; archive is the end.)
 test("archive hides the session for good; resume is refused", async ({
   page,
@@ -10,6 +10,7 @@ test("archive hides the session for good; resume is refused", async ({
   const key = `e2e-archive-${Date.now()}`;
   await seedSession(key, { name: key, launched: true });
 
+  try {
   await page.goto("/");
 
   const row = page.locator(".rd-row", { hasText: key });
@@ -23,11 +24,12 @@ test("archive hides the session for good; resume is refused", async ({
   await expect(page.locator(".rd-row", { hasText: key })).toHaveCount(0);
   // ...the backend marks it archived with history kept...
   await expect
-    .poll(async () => (await findSession((s) => s.session_key === key))?.state)
+    .poll(async () => (await findSession((s) => s.session_key === key))?.state, {timeout: 12000})
     .toBe("archived");
 
   // ...and it cannot be resumed.
   const res = await apiPost(`/sessions/${key}/resume`);
   expect(res.status).toBe(400);
   expect(String(res.body.error)).toContain("archive is final");
+  } finally { await apiDelete(`/sessions/${key}`); }
 });

@@ -1,3 +1,4 @@
+import { ArchiveUndo, useArchiveRequests } from "./ArchiveUndo";
 import { SessionCard } from "./SessionCard";
 import { sessionFetch, sessionRef } from "./hostTransport";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -6,6 +7,7 @@ import { AgentTree } from "./AgentTree";
 import { api } from "./api";
 import { desktop } from "./desktop";
 import { Connectors } from "./Connectors";
+import { ContextViews } from "./ContextViews";
 import { ContextPanel } from "./ContextPanel";
 import { Analytics } from "./Analytics";
 import { AnalyticsTab } from "./analyticsData";
@@ -63,10 +65,11 @@ function Dashboard() {
   const { sessions: sourceSessions, connected, loadedHosts, removeSessions, patchSession } =
     useEventStream();
   const inboxCounts = useInboxCounts();
+  const archives = useArchiveRequests();
   const sidePanels = useSidePanels();
   const sessions = useMemo(
-    () => sourceSessions.map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 })),
-    [sourceSessions, inboxCounts],
+    () => sourceSessions.filter(s => !archives.requests.some(r => r.session_key === s.key)).map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 })),
+    [sourceSessions, inboxCounts, archives.requests],
   );
   const toast = useToast();
   const now = useNow(1000);
@@ -238,8 +241,9 @@ function Dashboard() {
   // Grid membership includes every owned PTY; the single-session view keeps
   // only recently visited terminals mounted so hidden output stays bounded.
   const terminalAgents = useMemo(
-    () => agents.filter((s) => s.ptyOwned),
-    [agents],
+    // Pending archives leave their cached terminal mounted during Undo.
+    () => sourceSessions.filter(s => s.ptyOwned && effectiveState(s, now) !== "archived"),
+    [sourceSessions, now],
   );
 
   const mountedTerminalKeys = useTerminalCache(
@@ -273,6 +277,7 @@ function Dashboard() {
 
   return (
     <div className="rd-app" data-density={density}>
+      <ArchiveUndo {...archives} />
       <header className="rd-topbar">
         <span className="rd-brand">
           <img
@@ -504,7 +509,7 @@ function Dashboard() {
               {selected && <SessionPin session={selected} onToggle={toggleSessionPin} label />}
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
-            <div className="rd-context-body">
+            <ContextViews session={<>
               {selected && <SessionCard key={selected.key} session={selected} now={now}
                 onFork={setForkKey} onDelete={deleteSession}
                 onRename={(key, name) => patchSession(key, { label: name })}
@@ -532,8 +537,7 @@ function Dashboard() {
                   </select>
                 </label>
               )}
-            </div>
-            <Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} />
+            </>} connectors={<Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} />} />
           </section>
         </div>
       )}

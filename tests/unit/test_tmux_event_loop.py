@@ -137,10 +137,10 @@ def test_approval_callback_queues_keys_in_order(tmp_path, monkeypatch):
             assert orch.inject_key(sup.session_key, "Escape")
             assert orch.inject_key(sup.session_key, "Enter")
             async with asyncio.timeout(5):
-                while len(sent) < 3:
+                while len(b"".join(sent)) < 4:
                     await asyncio.sleep(0.01)
-            assert sent == [b"1\r", b"\x1b", b"\r"]
-            assert observations == [True, True, True]
+            assert b"".join(sent) == b"1\r\x1b\r"
+            assert observations and all(observations)
         finally:
             if sup._input_task:
                 sup._input_task.cancel()
