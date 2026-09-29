@@ -107,7 +107,10 @@ export function NoteCard({
       {note.detected_without_model && (
         <span className="rd-relay-meta">Spotted without Oracle's classifier (no model was available), so it may not need you.</span>
       )}
-      {open && note.kind === "approval" && (
+      {open && note.unreadable && (
+        <span className="rd-relay-meta">Oracle can't read this prompt yet, so answer it in its terminal.</span>
+      )}
+      {open && note.kind === "approval" && !note.unreadable && (
         <div className="rd-relay-actions">
           <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={busy} onClick={() => void answer("approve")}>Approve</button>
           <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy} onClick={() => void answer("deny")}>Deny</button>

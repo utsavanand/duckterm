@@ -145,10 +145,17 @@ auto-reviewed requests pending for over 2 minutes. If the known prompt is on
 screen, the request becomes a note, which covers prompts that appear late. If
 the screen shows neither the known prompt nor Codex's busy markers ("Working",
 "esc to interrupt"), the prompt is probably a shape Oracle can't read yet, such
-as an MCP or network approval. The session shows waiting, with no note since
-Oracle can't answer it, and its screen is saved to `relay-missed-prompts.json`
-beside `relay.json` (last 100 entries). New shapes get added from those real
-screens.
+as an MCP or network approval. The session shows waiting and gets an
+approval note marked `unreadable`. The note has no Approve or Deny, since
+Oracle doesn't know that prompt's keys, and links to the terminal. Its screen
+is saved to `relay-missed-prompts.json` beside `relay.json` (last 100
+entries), and new shapes get added from those real screens.
+
+Pending requests live in memory, so a server restart used to forget a prompt
+still on screen. The same check now rebuilds them from history: a Codex
+session whose last `PermissionRequest` has no later tool, prompt, stop, or
+end event is still being asked. Notes close as handled when the owner answers
+in the terminal, because the tool's next event resolves the request.
 
 **Detecting a turn that waits on the owner.** The first version flagged a
 final paragraph ending in "?". Scored against 104 real turn endings from
