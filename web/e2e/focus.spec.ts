@@ -13,10 +13,12 @@ test("Focus pins: cap, live input, saved layout, stopped sessions and unpin", as
     await page.goto(base());
     await expect(page.getByRole("button", {name:"Focus · 0",exact:true})).toBeDisabled();
     for (const name of ["focus-a", "focus-b", "focus-c"]) {
-      await page.locator(".rd-agents").getByRole("button", {name:`Pin ${name}`,exact:true}).click();
-      await expect(page.locator(".rd-agents").getByRole("button", {name:`Unpin ${name}`,exact:true})).toHaveAttribute("aria-pressed","true");
+      await page.locator(".rd-row-name", {hasText: name}).click();
+      await page.locator(".rd-context-pane").getByRole("button", {name:`Pin ${name}`,exact:true}).click();
+      await expect(page.locator(".rd-context-pane").getByRole("button", {name:`Unpin ${name}`,exact:true})).toHaveAttribute("aria-pressed","true");
     }
-    await page.locator(".rd-agents").getByRole("button", {name:"Pin focus-d",exact:true}).click();
+    await page.locator(".rd-row-name", {hasText: "focus-d"}).click();
+    await page.locator(".rd-context-pane").getByRole("button", {name:"Pin focus-d",exact:true}).click();
     await expect(page.getByText("Unpin one first", {exact:true})).toBeVisible();
     await expect(page.getByRole("button", {name:"Focus · 3",exact:true})).toBeEnabled();
     await page.locator(".rd-row-name",{hasText:"focus-a"}).click();

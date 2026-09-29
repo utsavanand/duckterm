@@ -1,0 +1,12 @@
+.rd-annotation-highlight { background: var(--amber-bg); color: inherit; border-bottom: 2px dotted var(--amber-text); cursor: help; border-radius: 2px; }
+.rd-annotation-highlight:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
+.rd-annotation-tooltip { position: fixed; z-index: 150; width: 320px; max-width: calc(100vw - 24px); max-height: 40vh; overflow: auto; padding: 10px 14px; color: var(--text); background: var(--card); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: 0 5px 24px #0003; font: 13px/1.5 system-ui, sans-serif; pointer-events: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rd-annotation-tooltip p { margin: 4px 0; }
+.rd-message-comments { margin: 0 0 16px; border: 1px solid var(--border); padding: 10px 12px; border-radius: 7px; color: var(--text-soft); font-size: 12px; }
+.rd-message-comments summary { cursor: pointer; color: var(--text); }
+.rd-message-comments > p { margin: 10px 0; }
+.rd-message-comments article { padding: 10px 0; border-top: 1px solid var(--border); }
+.rd-message-comments article p, .rd-message-comments blockquote { white-space: pre-wrap; overflow-wrap: anywhere; margin: 4px 0; }
+.rd-message-comments article p { color: var(--text); }
+.rd-message-comments blockquote { border-left: 2px solid var(--amber-text); padding-left: 10px; }
+.rd-message-comments small, .rd-comment-error { color: var(--text-soft); font-size: 12px; }

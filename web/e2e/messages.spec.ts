@@ -118,6 +118,11 @@ test("annotating a span stores it and sends it back to the agent", async ({
     })
     .toBeGreaterThan(0);
 
+  // A newly saved note becomes visible immediately without changing tabs.
+  await expect(page.locator(".rd-msg-text mark")).toHaveText("demo");
+  await page.locator(".rd-msg-text mark").hover();
+  await expect(page.getByRole("tooltip")).toHaveText("explain this");
+
   // Sent to the agent: cat echoes the follow-up into the terminal.
   await page.locator(".rd-view-toggle button", { hasText: "Terminal" }).click();
   await expect(

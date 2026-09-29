@@ -1,3 +1,4 @@
+import { SessionCard } from "./SessionCard";
 import { sessionFetch, sessionRef } from "./hostTransport";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
@@ -243,10 +244,6 @@ function Dashboard() {
   );
   const mountedTerminals = terminalAgents.filter(s => mountedTerminalKeys.includes(s.key));
 
-  const labels = useMemo(
-    () => Object.fromEntries(sessions.map((s) => [s.key, s.label])),
-    [sessions],
-  );
   // The selected agent's working directory anchors AGENTS.md (per-folder file).
   const agentsMdDir = selected?.worktreePath ?? selected?.cwd ?? null;
 
@@ -380,19 +377,14 @@ function Dashboard() {
               <AgentTree
                 sessions={agents}
                 now={now}
-                labels={labels}
                 folders={folders}
                 selectedKey={selectedKey}
                 onOpen={setSelectedKey}
-                onPin={toggleSessionPin}
                 onOpenInbox={(key) => { setSelectedKey(key); setView("inbox"); }}
-                onFork={setForkKey}
-                onDelete={deleteSession}
                 onFoldersChanged={refreshFolders}
                 onSessionMoved={(key, group) =>
                   patchSession(key, { group: group || undefined })
                 }
-                onRename={(key, name) => patchSession(key, { label: name })}
                 onOpenGrid={setGridFolder}
                 onOpenFolderInbox={setInboxFolder}
                 onNewSessionIn={(folder) => {
@@ -509,6 +501,14 @@ function Dashboard() {
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
             <div className="rd-context-body">
+              {selected && <SessionCard key={selected.key} session={selected} now={now}
+                onFork={setForkKey} onDelete={deleteSession}
+                onRename={(key, name) => patchSession(key, { label: name })}
+                onUngroup={selected.group && !selected.parentKey ? async () => {
+                  await api.setGroup(selected.key, "");
+                  patchSession(selected.key, { group: undefined });
+                  refreshFolders();
+                } : undefined} />}
               {selected && <ContextPanel session={selected} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
