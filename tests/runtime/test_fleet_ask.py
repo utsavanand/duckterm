@@ -42,31 +42,39 @@ def test_fleet_ask_digests_running_sessions_only(
     async def scenario() -> tuple[int, dict[str, object]]:
         server = Server(history=HistoryStore(tmp_path / "db.sqlite"))
         orch = server.orchestrator
-        await orch.launch(
-            runtime=GenericRuntime("sh -c 'echo pondering; sleep 5'"),
-            cwd=str(tmp_path),
-            session_key="fleet-live",
-            name="refactor-auth",
-        )
-        stopped = await orch.launch(
-            runtime=GenericRuntime("sh -c 'sleep 5'"),
-            cwd=str(tmp_path),
-            session_key="fleet-stopped",
-            name="old-work",
-        )
-        sup = orch.get("fleet-live")
-        assert sup is not None
-        for _ in range(80):  # the tmux pipe can lag the spawn by ~a second
-            if "pondering" in "".join(sup.output_tail()):
-                break
-            await asyncio.sleep(0.05)
-        await orch.stop(stopped)
-        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
-        port = srv.sockets[0].getsockname()[1]
-        async with srv:
-            out = await asyncio.to_thread(_ask, port, {"question": "what is refactor-auth doing?"})
-        await orch.stop("fleet-live")
-        return out
+        try:
+            await orch.launch(
+                runtime=GenericRuntime("cat"),
+                cwd=str(tmp_path),
+                session_key="fleet-live",
+                name="refactor-auth",
+                test=True,
+            )
+            stopped = await orch.launch(
+                runtime=GenericRuntime("cat"),
+                cwd=str(tmp_path),
+                session_key="fleet-stopped",
+                name="old-work",
+                test=True,
+            )
+            sup = orch.get("fleet-live")
+            assert sup is not None
+            # Send readiness text only after the output pipe is attached. The
+            # fixture stays alive until cleanup, independent of request latency.
+            assert await asyncio.to_thread(sup.write_bytes, b"pondering\n")
+            async with asyncio.timeout(4):
+                while "pondering" not in "".join(sup.output_tail()):
+                    await asyncio.sleep(0.05)
+            await orch.stop(stopped)
+            srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+            port = srv.sockets[0].getsockname()[1]
+            async with srv:
+                return await asyncio.to_thread(
+                    _ask, port, {"question": "what is refactor-auth doing?"}
+                )
+        finally:
+            await orch.stop("fleet-live")
+            await orch.stop("fleet-stopped")
 
     status, body = asyncio.run(scenario())
     assert status == 200
@@ -90,20 +98,22 @@ def test_fleet_ask_requires_a_question_and_reports_missing_backend(
 
     async def scenario() -> list[tuple[int, dict[str, object]]]:
         server = Server(history=HistoryStore(tmp_path / "db.sqlite"))
-        await server.orchestrator.launch(
-            runtime=GenericRuntime("sh -c 'sleep 5'"),
-            cwd=str(tmp_path),
-            session_key="fleet-x",
-        )
-        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
-        port = srv.sockets[0].getsockname()[1]
-        async with srv:
-            out = [
-                await asyncio.to_thread(_ask, port, {"question": ""}),
-                await asyncio.to_thread(_ask, port, {"question": "anyone stuck?"}),
-            ]
-        await server.orchestrator.stop("fleet-x")
-        return out
+        try:
+            await server.orchestrator.launch(
+                runtime=GenericRuntime("cat"),
+                cwd=str(tmp_path),
+                session_key="fleet-x",
+                test=True,
+            )
+            srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+            port = srv.sockets[0].getsockname()[1]
+            async with srv:
+                return [
+                    await asyncio.to_thread(_ask, port, {"question": ""}),
+                    await asyncio.to_thread(_ask, port, {"question": "anyone stuck?"}),
+                ]
+        finally:
+            await server.orchestrator.stop("fleet-x")
 
     (empty_status, empty_body), (off_status, off_body) = asyncio.run(scenario())
     assert empty_status == 400
@@ -146,7 +156,7 @@ def test_headless_launch_persists_the_name_for_the_digest(
             f"http://127.0.0.1:{port}/sessions/launch",
             data=json.dumps(
                 {
-                    "command": "sh -c 'sleep 3'",
+                    "command": "cat",
                     "cwd": str(tmp_path),
                     "name": "digest-me",
                     "session_key": "fleet-named",
@@ -166,10 +176,12 @@ def test_headless_launch_persists_the_name_for_the_digest(
         server = Server(history=HistoryStore(tmp_path / "db.sqlite"))
         srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
         port = srv.sockets[0].getsockname()[1]
-        async with srv:
-            await asyncio.to_thread(_launch, port)
-        row = server.history.session("fleet-named")
-        await server.orchestrator.stop("fleet-named")
-        return str(row["name"]) if row and row.get("name") else None
+        try:
+            async with srv:
+                await asyncio.to_thread(_launch, port)
+            row = server.history.session("fleet-named")
+            return str(row["name"]) if row and row.get("name") else None
+        finally:
+            await server.orchestrator.stop("fleet-named")
 
     assert asyncio.run(scenario()) == "digest-me"
