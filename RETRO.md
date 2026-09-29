@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-09-29 — Visible session actions need no overflow menu
+
+Moving actions out of the sidebar but hiding them again behind More retained
+the discoverability problem. Show applicable actions directly at real panel
+width, separate Delete below, and preserve existing lifecycle gates and
+confirmation behavior. Verify actual code before claiming an action confirms.
+
 ## 2026-09-29 — Buffered reads can starve an already-ready consumer
 
 The independent tmux reader could consume a buffered burst without yielding:

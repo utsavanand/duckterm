@@ -116,7 +116,6 @@ test("Ungroup button moves a session out of its folder", async ({ page }) => {
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls-more > summary").click();
   await page.locator(".rd-session-controls").getByRole("button", { name: "Ungroup" }).click();
 
   // The row now renders in the root drop zone, not inside any folder body.
@@ -169,7 +168,6 @@ test("terminated session rows show only end-state actions", async ({
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls-more > summary").click();
   await expect(page.locator(".rd-session-controls").getByRole("button", { name: "Delete" })).toBeVisible();
   for (const gone of ["Rename", "Notes", "Checkpoint", "Fork", "Stop watching"]) {
     await expect(page.locator(".rd-session-controls").getByRole("button", { name: gone })).toHaveCount(0);
@@ -248,7 +246,6 @@ test("folder remains visible after its last session is ungrouped", async ({ page
     await expandFolder(page, folder);
     const row = page.locator(".rd-row", { has: page.getByText("Last session", { exact: true }) });
     await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls-more > summary").click();
     await page.locator(".rd-session-controls").getByRole("button", { name: "Ungroup", exact: true }).click();
     const header = page.getByRole("button", { name: `View interactions in ${folder}`, exact: true }).locator("..");
     await expect(header).toBeVisible();

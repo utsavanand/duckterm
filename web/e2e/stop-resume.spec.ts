@@ -24,7 +24,6 @@ test("stop pauses a PTY session; resume relaunches its recorded command", async 
   await expect(row).toBeVisible({ timeout: 10_000 });
 
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls-more > summary").click();
   await page.locator(".rd-session-controls").getByRole("button", { name: "Stop", exact: true }).click();
   // Stopping a tmux-backed session waits for its tail loop to notice the pane
   // died — give it the same headroom as the resume poll (the 5s default flakes

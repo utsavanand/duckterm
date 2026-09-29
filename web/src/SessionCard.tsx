@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "./api";
 import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
 import { splitSessionRef } from "./hostTransport";
@@ -18,14 +18,6 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
   onUngroup?: () => Promise<void>;
 }) {
   const toast = useToast();
-  const menu = useRef<HTMLDetailsElement>(null);
-  useEffect(() => {
-    const closeOutside = (event: PointerEvent) => {
-      if (menu.current && event.target instanceof Node && !menu.current.contains(event.target)) menu.current.open = false;
-    };
-    document.addEventListener("pointerdown", closeOutside);
-    return () => document.removeEventListener("pointerdown", closeOutside);
-  }, []);
   const effState = effectiveState(s, now);
   const archived = effState === "archived";
   const ended = effState === "terminated";
@@ -75,7 +67,6 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
 
   async function stopSession() {
     if (ending) return;
-    if (menu.current) menu.current.open = false;
     setEnding(true);
     try {
       await api.stop(s.key);
@@ -205,9 +196,6 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
               Notes{savedNotes ? " •" : ""}
             </button>
           )}
-    <details className="rd-session-controls-more" ref={menu} onKeyDown={(e) => {
-      if (e.key === "Escape" && menu.current) { menu.current.open = false; menu.current.querySelector("summary")?.focus(); }
-    }}><summary>More</summary><div className="rd-session-controls-menu">
           {onUngroup && (
             <button
               className="rd-btn rd-btn-sm rd-btn-ghost"
@@ -265,25 +253,6 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
               )}
             </button>
           )}
-          <button
-            className={`rd-btn rd-btn-sm rd-btn-danger${confirmDelete ? " armed" : ""}`}
-            title={
-              confirmDelete
-                ? "Click again to confirm"
-                : s.launched || !live
-                  ? "Delete this session and its history"
-                  : "Stop watching — remove it from the dashboard (the agent keeps running in its own terminal)"
-            }
-            disabled={ending}
-            onClick={requestDelete}
-          >
-            {confirmDelete
-              ? "Confirm?"
-              : s.launched || !live
-                ? "Delete"
-                : "Stop watching"}
-          </button>
-    </div></details>
     </fieldset>
         {notesOpen && (
           <div className="rd-row-notes-wrap">
@@ -310,5 +279,25 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
           </div>
         )}
 
+    <fieldset className="rd-session-controls-danger" disabled={ending || archiving || resuming}>
+          <button
+            className={`rd-btn rd-btn-sm rd-btn-danger${confirmDelete ? " armed" : ""}`}
+            title={
+              confirmDelete
+                ? "Click again to confirm"
+                : s.launched || !live
+                  ? "Delete this session and its history"
+                  : "Stop watching — remove it from the dashboard (the agent keeps running in its own terminal)"
+            }
+            disabled={ending}
+            onClick={requestDelete}
+          >
+            {confirmDelete
+              ? "Confirm?"
+              : s.launched || !live
+                ? "Delete"
+                : "Stop watching"}
+          </button>
+    </fieldset>
   </section>;
 }
