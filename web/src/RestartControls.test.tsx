@@ -15,7 +15,7 @@ it("queues a model change with the current model preset and a cancelable status"
   vi.mocked(api.restart).mockResolvedValue({ ...ready, status: "queued", requested_model: "new-model" });
   vi.mocked(api.cancelRestart).mockResolvedValue({ ...ready, status: "canceled" });
   render(<RestartControls session={session} />);
-  const open = screen.getByRole("button", { name: "Change model…" });
+  const open = screen.getByRole("button", { name: "Change model" });
   await waitFor(() => expect(open).toBeEnabled());
   fireEvent.click(open);
   expect(screen.getByLabelText("Model after restart")).toHaveValue("current-model");
@@ -30,13 +30,13 @@ it("queues a model change with the current model preset and a cancelable status"
 
 it("shows why drafts block restart without sending a restart request", async () => {
   render(<RestartControls session={session} />);
-  await waitFor(() => expect(screen.getByRole("button", { name: "Restart…" })).toBeEnabled());
-  fireEvent.click(screen.getByRole("button", { name: "Restart…" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
   fireEvent.change(screen.getByLabelText("Model after restart"), { target: { value: "my-choice" } });
   vi.mocked(api.restartStatus).mockResolvedValue({ ...ready, draft_clear: false, reason: "Unsent text — clear your draft first." });
   // Re-open fetches an execution eligibility check; the dialog never silently sends.
   fireEvent.keyDown(window, { key: "Escape" });
-  fireEvent.click(screen.getByRole("button", { name: "Restart…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
   await waitFor(() => expect(screen.getByRole("button", { name: "Restart after this turn" })).toBeDisabled());
   expect(screen.getAllByText("Unsent text — clear your draft first.").length).toBeGreaterThan(0);
   expect(api.restart).not.toHaveBeenCalled();
@@ -46,7 +46,7 @@ it("refuses unsupported identities and explains local-only availability without 
   vi.mocked(api.restartStatus).mockResolvedValue({ can_restart: false, reason: "Cannot verify this conversation." });
   const view = render(<RestartControls session={session} />);
   expect(await screen.findByText("Cannot verify this conversation.")).toBeVisible();
-  expect(screen.getByRole("button", { name: "Restart…" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
   vi.mocked(api.restartStatus).mockClear();
   view.rerender(<RestartControls session={{ ...session, key: sessionRef("remote", "a") }} />);
   expect(screen.getByText(/available on This Mac only/)).toBeVisible();
