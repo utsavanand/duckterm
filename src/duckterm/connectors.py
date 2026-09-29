@@ -684,19 +684,29 @@ def verify(name: str, *, timeout: float = 30.0) -> dict[str, object]:
                 },
             }
         )
-        if await_reply(1) is None:
+        handshake = await_reply(1)
+        if handshake is None:
             return _verify_failure(proc, "The connector did not start")
+        # A server that rejects the handshake is unusable no matter what it
+        # answers next, so this must be checked before tools/list is sent.
+        if "error" in handshake:
+            return _rpc_failure(handshake, "The connector rejected the connection")
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
         listing = await_reply(2)
         if listing is None:
             return _verify_failure(proc, "The connector did not list its tools")
         if "error" in listing:
-            message = listing["error"]
-            detail = message.get("message") if isinstance(message, dict) else None
-            return {"ok": False, "detail": str(detail or message)[:200], "tools": 0}
+            return _rpc_failure(listing, "The connector could not list its tools")
         result = listing.get("result")
-        tools = result.get("tools", []) if isinstance(result, dict) else []
+        tools = result.get("tools") if isinstance(result, dict) else None
+        # Only a real tool array counts. `len("invalid")` reported 7 tools.
+        if not isinstance(tools, list) or not all(isinstance(t, dict) for t in tools):
+            return {
+                "ok": False,
+                "detail": "The connector did not list its tools in a usable form",
+                "tools": 0,
+            }
         return {"ok": True, "detail": None, "tools": len(tools)}
     except OSError as exc:
         return {"ok": False, "detail": str(exc)[:200], "tools": 0}
@@ -710,6 +720,13 @@ def verify(name: str, *, timeout: float = 30.0) -> dict[str, object]:
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def _rpc_failure(reply: dict[str, object], summary: str) -> dict[str, object]:
+    """Prefer the server's own message — it names the version or scope at fault."""
+    error = reply.get("error")
+    message = error.get("message") if isinstance(error, dict) else None
+    return {"ok": False, "detail": str(message or error or summary)[:200], "tools": 0}
 
 
 def _verify_failure(proc: "subprocess.Popen[str]", summary: str) -> dict[str, object]:
