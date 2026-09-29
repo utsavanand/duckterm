@@ -1,7 +1,6 @@
 # Analytics: tokens and Agent Mail — spec
 
-Status: Agent Mail backend implemented; Analytics page and token extensions pending.
-Backend contract and retention details: [mail-analytics.md](mail-analytics.md).
+Status: proposed by product for the owner, 2026-09-28. Not designed or built.
 Owner's ask: click the Oracle page's Tokens tile and the Agent Mail tile to
 get "deeper analytics … a small kind of analytics app within DuckTerm".
 
@@ -103,3 +102,25 @@ All answered; see Owner decisions at the top.
 The architect designs, the owner reviews a preview (visible UI change,
 AGENTS.md), main-dev builds the ledger, rollup and routes, ui-dev builds the
 page, release-dev ships.
+
+## Implemented behavior (owner approved 2026-09-28)
+
+The owner approved the preview and required specific model identifiers. The
+implementation keeps raw transcript model IDs, attributes each usage event to
+its model at that time, and labels missing identifiers “Model not reported.” It
+never infers a model from the harness or applies today's model to older usage.
+
+The shared range is Today (UTC), 7 days, 30 days, or All. Today resets at 00:00
+UTC; the calendar-day rollups cannot provide a rolling 24-hour window. Token
+filters cover agent, folder and session. Mail filters are unavailable in the
+current mail API and remain disabled with an explicit explanation. Mail outcomes
+are completion-day activity; open questions are independent of the range.
+
+`GET /analytics/tokens` requires owner authentication and accepts `days`, `agent`,
+`folder`, and `session`. It returns usage rows grouped within each transcript by
+UTC day and exact model ID, plus filter options and earliest available day. The
+UI aggregates these rows for all displayed dimensions. Session correlation uses
+recorded native session IDs only; ambiguous identities remain Outside DuckTerm.
+Folder names reflect current placement. Test sessions are excluded where their
+native identity is known. Local transcript roots honor CLAUDE_CONFIG_DIR and
+CODEX_HOME. No transcript text or filesystem paths are returned.

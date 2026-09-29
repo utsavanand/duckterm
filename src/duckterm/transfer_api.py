@@ -14,11 +14,11 @@ if TYPE_CHECKING:
     from duckterm.server import Server
 
 
-def source_session(server: "Server", key: str) -> tuple[dict[str, Any], dict[str, str]]:
+async def source_session(server: "Server", key: str) -> tuple[dict[str, Any], dict[str, str]]:
     row = server.history.session(key)
     if not row or row.get("state") not in ("stopped", "terminated"):
         raise ValueError("Stop the source session before reviewing or moving it")
-    if tmux.session_exists(tmux.target_for(key)):
+    if await asyncio.to_thread(tmux.session_exists, tmux.target_for(key)):
         raise ValueError("Source process is still running; wait for it to stop")
     row = {**row, "cwd": row.get("worktree_path") or row.get("cwd")}
     if not row["cwd"]:
@@ -37,7 +37,7 @@ async def dispatch(server: "Server", operation: str, req: dict[str, Any]) -> dic
         conv = None
         source = str(req.get("source", ""))
         if source_key:
-            row, conv = source_session(server, source_key)
+            row, conv = await source_session(server, source_key)
             source = row["cwd"]
         selected = req.get("selected", [])
         if not isinstance(selected, list) or any(not isinstance(p, str) for p in selected):
@@ -137,7 +137,9 @@ async def dispatch(server: "Server", operation: str, req: dict[str, Any]) -> dic
             old = transfers.status(identifier)
             if old.get("stage") in ("launching", "launched"):
                 key = str(old["session_key"])
-                if server.history.session(key) and tmux.session_exists(tmux.target_for(key)):
+                if server.history.session(key) is not None and await asyncio.to_thread(
+                    tmux.session_exists, tmux.target_for(key)
+                ):
                     return transfers.mark_launched(identifier)
                 raise ValueError(
                     "A launch was already attempted. Check the destination session; "
@@ -161,7 +163,7 @@ async def dispatch(server: "Server", operation: str, req: dict[str, Any]) -> dic
             if state["name"]:
                 server.history.set_meta(key, name=state["name"])
             await asyncio.sleep(1)
-            if not tmux.session_exists(tmux.target_for(key)):
+            if not await asyncio.to_thread(tmux.session_exists, tmux.target_for(key)):
                 raise ValueError(
                     "Destination agent exited before attachment; "
                     "inspect its terminal before continuing"

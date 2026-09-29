@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { AnalyticsTab } from "./analyticsData";
 import { api, TowerInsights } from "./api";
 import { Duck, poseFor } from "./Duck";
 import { SessionLocationDuck, sessionLocation } from "./SessionLocationDuck";
@@ -37,11 +38,13 @@ export function ControlTower({
   now,
   onBack,
   onOpenTerminal,
+  onAnalytics,
 }: {
   agents: TowerAgent[];
   now: number;
   onBack: () => void;
   onOpenTerminal: (key: string) => void;
+  onAnalytics: (tab: AnalyticsTab) => void;
 }) {
   const [insights, setInsights] = useState<TowerInsights | null>(null);
   const [insightsError, setInsightsError] = useState("");
@@ -102,6 +105,7 @@ export function ControlTower({
         <h1 className="rd-tower-title">
           Control tower <small>Oracle · fleet monitor</small>
         </h1>
+        <button className="rd-btn rd-btn-ghost rd-btn-sm rd-analytics-link" onClick={() => onAnalytics("tokens")}>Analytics ↗</button>
       </div>
 
       <section className="rd-tower-tiles" aria-label="Fleet insights">
@@ -121,8 +125,8 @@ export function ControlTower({
             ? `Oldest: ${needs[0].name}${needs[0].folder ? ` (${needs[0].folder.split("/")[0]})` : ""}, ${ago(now - needs[0].created_at)} ago`
             : "Nothing needs you"}
         </Tile>
-        <TokensTile insights={insights} />
-        <Tile label="Agent mail · 24h" value={insights ? String(insights.mail.sent) : "…"}>
+        <TokensTile insights={insights} onClick={() => onAnalytics("tokens")} />
+        <Tile onClick={() => onAnalytics("mail")} label="Agent mail · 24h" value={insights ? String(insights.mail.sent) : "…"}>
           {insights
             ? `${insights.mail.answered} answered · ${insights.mail.nudges} Oracle nudge${insights.mail.nudges === 1 ? "" : "s"}`
             : "Loading"}
@@ -224,18 +228,19 @@ export function ControlTower({
   );
 }
 
-function Tile({ label, value, warn, children }: { label: string; value: string; warn?: boolean; children: React.ReactNode }) {
+function Tile({ label, value, warn, children, onClick }: { label: string; value: string; warn?: boolean; children: React.ReactNode; onClick?: () => void }) {
+  const Tag = onClick ? "button" : "div";
   return (
-    <div className={`rd-tower-tile${warn ? " warn" : ""}`}>
+    <Tag onClick={onClick} className={`rd-tower-tile${warn ? " warn" : ""}${onClick ? " rd-tower-tile-button" : ""}`}>
       <span className="rd-tower-label">{label}</span>
       <span className="rd-tower-num">{value}</span>
       <span className="rd-tower-sub">{children}</span>
-    </div>
+    </Tag>
   );
 }
 
-function TokensTile({ insights }: { insights: TowerInsights | null }) {
-  if (!insights) return <Tile label="Tokens · 7 days" value="…">Counting transcripts</Tile>;
+function TokensTile({ insights, onClick }: { insights: TowerInsights | null; onClick: () => void }) {
+  if (!insights) return <Tile onClick={onClick} label="Tokens · 7 days" value="…">Counting transcripts</Tile>;
   const agents = Object.entries(insights.tokens.by_agent);
   const sum = (t: { input: number; cache_read: number; cache_write: number; output: number }) =>
     t.input + t.cache_read + t.cache_write + t.output;
@@ -245,7 +250,7 @@ function TokensTile({ insights }: { insights: TowerInsights | null }) {
   const written = agents.reduce((n, [, t]) => n + t.output, 0);
   const names: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
   return (
-    <Tile label={`Tokens · ${insights.tokens.days} days`} value={compact(total)}>
+    <Tile onClick={onClick} label={`Tokens · ${insights.tokens.days} days`} value={compact(total)}>
       <span title="All Claude Code and Codex transcripts on this Mac">
         {inputs ? `${Math.round((cached / inputs) * 100)}% read from cache · ` : ""}
         {compact(written)} written

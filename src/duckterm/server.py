@@ -54,7 +54,7 @@ from duckterm import connectors, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events, oracle, progress
-from duckterm.core.approvals import ApprovalRegistry
+from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.orchestrator import Orchestrator
@@ -83,7 +83,7 @@ from duckterm.helpers import (
     session_credentials,
     session_instructions,
 )
-from duckterm.helpers.private_files import private_read
+from duckterm.helpers.private_files import private_read, private_write
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize
 from duckterm.persistence import backup_sync, mail_analytics
@@ -338,13 +338,15 @@ class Server:
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
         self._oracle_nudges: dict[str, oracle.Nudge] = {}
         self._tokens = TokenLedger(
-            Path.home() / ".claude" / "projects", Path.home() / ".codex" / "sessions"
+            Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects",
+            Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "sessions",
         )
         # The ledger isn't thread-safe; one scan at a time.
         self._tokens_lock = asyncio.Lock()
         self.relay = Relay(paths.home() / "relay.json")
         self._relay_confirmed: set[str] = set()  # approvals seen asking on screen
         self._relay_watching: set[str] = set()
+        self._relay_logged: set[str] = set()  # requests whose screen was logged
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
@@ -373,6 +375,13 @@ class Server:
         Enrich watched sessions with git state detected from their cwd, so they
         too can show repo/branch and be forked into a worktree."""
         self._enrich_git(event)
+        key = event.get("session_key") or event.get("session_id")
+        if (
+            event.get("event_type") == events.PERMISSION_REQUEST
+            and key
+            and self._relay_harness(str(key)).auto_approves_requests
+        ):
+            event["auto_reviewed"] = True
         self.history.record(event)
         self.approvals.from_event(event)
         if event.get("event_type") == events.STOP:
@@ -489,6 +498,9 @@ class Server:
             await self._message_pins(writer, headers, pin_match[1], pin_match[2], method, body)
             return
         inbox_path = urllib.parse.urlsplit(path)
+        if method == "GET" and inbox_path.path == "/analytics/tokens":
+            await self._token_analytics(writer, headers, inbox_path.query)
+            return
         if method == "GET" and inbox_path.path == "/analytics/mail":
             await self._mail_analytics(writer, headers, inbox_path.query)
             return
@@ -734,7 +746,11 @@ class Server:
             await _write_json(writer, 409, {"error": "Resume the session first"})
             return
         supervisor = self.orchestrator.get(session_key)
-        if send and (row.get("state") != "idle" or supervisor is None or not supervisor.running):
+        if send and (
+            row.get("state") != "idle"
+            or supervisor is None
+            or not await asyncio.to_thread(getattr, supervisor, "running")
+        ):
             await _write_json(
                 writer,
                 409,
@@ -953,7 +969,7 @@ class Server:
         sent = False
         if supervisor is not None:
             prompt = f'Re: "{quote}" — {note}' if quote else note
-            sent = supervisor.write_bytes(prompt.encode() + b"\r")
+            sent = await asyncio.to_thread(supervisor.write_bytes, prompt.encode() + b"\r")
         await _write_json(writer, 200, {"id": ann_id, "sent": sent})
 
     async def _add_artifact_annotation(
@@ -987,7 +1003,7 @@ class Server:
             )
             return
         supervisor = self.orchestrator.get(session_key)
-        if supervisor is None or not supervisor.running:
+        if supervisor is None or not await asyncio.to_thread(getattr, supervisor, "running"):
             await _write_json(
                 writer,
                 409,
@@ -1072,10 +1088,10 @@ class Server:
                 self.history.set_model(str(s["session_key"]), str(live_model))
             s["model"] = live_model or s.get("model")
             s["suites"] = self._suites_for(s.get("worktree_path") or s.get("cwd"))
-            self._reconcile_waiting(s)
+            await self._reconcile_waiting(s)
         await _write_json(writer, 200, {"sessions": sessions})
 
-    def _reconcile_waiting(self, row: dict[str, Any]) -> None:
+    async def _reconcile_waiting(self, row: dict[str, Any]) -> None:
         """Before reporting a pty-owned session as 'waiting', glance at its
         actual screen. Codex answers approvals IN the terminal without firing a
         hook, so a PermissionRequest can stay the last event for the entire run
@@ -1090,7 +1106,7 @@ class Server:
         if sup is None:
             return
         runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
-        screen = sup.screen_text(8)
+        screen = await asyncio.to_thread(sup.screen_text, 8)
         if screen and runtime.detect_state(screen) == "busy":
             row["state"] = "busy"
 
@@ -1871,7 +1887,7 @@ class Server:
             # No supervisor (launched before a server restart and never
             # re-adopted) — kill any leftover tmux session by its canonical
             # name so DB deletes never orphan panes.
-            tmux.kill_session(tmux.target_for(session_key))
+            await asyncio.to_thread(tmux.kill_session, tmux.target_for(session_key))
         self._remove_worktree(row)
         deleted = self.history.delete_session(session_key, now=int(time.time() * 1000))
         self.approvals.drop_session(session_key)
@@ -2104,7 +2120,7 @@ class Server:
                 return [{"role": "terminal", "text": screen}]
         return []
 
-    def _fleet_digest(self, row: dict[str, Any], question: str) -> str:
+    async def _fleet_digest(self, row: dict[str, Any], question: str) -> str:
         key = str(row.get("session_key") or "")
         name = str(row.get("name") or row.get("source_app") or key)
         # A question that names a session gets a deeper look at that session.
@@ -2127,7 +2143,7 @@ class Server:
             lines.append(f"last checkpoint: {cps[0].get('summary') or cps[0].get('label')}")
         sup = self.orchestrator.get(key)
         if sup is not None:
-            screen = sup.screen_text(120 if focus else 30)
+            screen = await asyncio.to_thread(sup.screen_text, 120 if focus else 30)
             if screen:
                 lines.append("recent terminal output:")
                 lines.append(screen)
@@ -2156,7 +2172,7 @@ class Server:
             exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
             await _write_json(writer, 200, {"answer": answer, "exchange": exchange, "sessions": []})
             return
-        digests = "\n\n".join(self._fleet_digest(r, question) for r in running)
+        digests = "\n\n".join([await self._fleet_digest(r, question) for r in running])
         history = [
             f"Q: {h.get('q')}\nA: {h.get('a')}"
             for h in oracle.load_chat(chat_path)[-2:]
@@ -2327,15 +2343,82 @@ class Server:
                 if pending is None or pending.decided is not None:
                     return
                 sup = self.orchestrator.get(key)
-                if sup is None or not sup.running:
+                if sup is None or not await asyncio.to_thread(getattr, sup, "running"):
                     return
                 screen = await asyncio.to_thread(sup.visible_screen)
                 if harness.approval_prompt_visible(screen):
-                    self._relay_confirmed.add(approval_id)
-                    self._relay_sync_approvals()
+                    self._relay_confirm(approval_id, key)
                     return
         finally:
             self._relay_watching.discard(approval_id)
+
+    def _relay_confirm(self, approval_id: str, key: str) -> None:
+        self._relay_confirmed.add(approval_id)
+        self._relay_sync_approvals()
+        self._mark_waiting(key)
+
+    def _mark_waiting(self, key: str) -> None:
+        self.bus.publish(
+            {
+                "event_type": events.NOTIFICATION,
+                "notification_type": "permission_prompt",
+                "session_key": key,
+                "reconciled": True,
+            }
+        )
+
+    # An auto-reviewed request still pending this long, on a screen that
+    # neither shows a known prompt nor looks busy, is probably a prompt shape
+    # Oracle can't read yet.
+    _RELAY_STUCK_MS = 120_000
+    _RELAY_MISSED_KEEP = 100
+
+    async def _relay_check_stuck(self, now: int) -> None:
+        """Catch auto-reviewed requests the 10-minute watch can't: a prompt that
+        shows later becomes a note, and an unknown prompt shape shows waiting and
+        logs its screen to relay-missed-prompts.json, so new shapes can be added
+        from real screens."""
+        for a in self.approvals.pending():
+            if (
+                a.blocking
+                or a.id in self._relay_confirmed
+                or now - a.created_at < self._RELAY_STUCK_MS
+            ):
+                continue
+            harness = self._relay_harness(a.session_key)
+            sup = self.orchestrator.get(a.session_key)
+            if (
+                not harness.auto_approves_requests
+                or sup is None
+                or not await asyncio.to_thread(getattr, sup, "running")
+            ):
+                continue
+            screen = await asyncio.to_thread(sup.visible_screen)
+            if harness.approval_prompt_visible(screen):
+                self._relay_confirm(a.id, a.session_key)
+            elif harness.detect_state(screen) != "busy" and a.id not in self._relay_logged:
+                self._relay_logged.add(a.id)
+                self._mark_waiting(a.session_key)
+                self._log_missed_prompt(a, plain_screen(screen), now)
+
+    def _log_missed_prompt(self, a: Approval, screen: str, now: int) -> None:
+        path = self.relay.path.with_name("relay-missed-prompts.json")
+        raw = private_read(path)
+        entries = json.loads(raw) if raw else []
+        fields = self._relay_session_fields(a.session_key)
+        entries.append(
+            {
+                "at": now,
+                "session": fields["name"],
+                "runtime": fields["runtime"],
+                "tool": a.tool_name,
+                "detail": a.detail,
+                "pending_ms": now - a.created_at,
+                "screen": "\n".join(screen.splitlines()[-40:]),
+            }
+        )
+        private_write(path, json.dumps(entries[-self._RELAY_MISSED_KEEP :], indent=1))
+        print(f"relay: unrecognized prompt on {entries[-1]['session']}, screen saved to {path}")
 
     # Seconds to wait after a turn ends before classifying it: an owner who is
     # watching usually answers in the terminal first, and then no note or model
@@ -2478,7 +2561,11 @@ class Server:
             keys = None if note.get("blocking") else harness.approval_keys(decision)
             if keys is not None:
                 sup = self.orchestrator.get(note["session_key"])
-                screen = await asyncio.to_thread(sup.visible_screen) if sup and sup.running else ""
+                screen = (
+                    await asyncio.to_thread(sup.visible_screen)
+                    if sup is not None and await asyncio.to_thread(getattr, sup, "running")
+                    else ""
+                )
                 if not harness.approval_prompt_visible(screen):
                     self.relay.close(note, "handled", closed_at=now)
                     await _write_json(
@@ -2582,6 +2669,52 @@ class Server:
             await _write_json(writer, 404, {"error": f"No rule {rule_id}."})
             return
         await _write_json(writer, 200, {"deleted": rule_id})
+
+    async def _token_analytics(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            params = urllib.parse.parse_qs(query, keep_blank_values=True)
+            if any(len(v) != 1 for v in params.values()):
+                raise ValueError
+            raw_days = params.get("days", ["7"])[0]
+            days = None if raw_days == "all" else int(raw_days)
+            if days is not None and not 1 <= days <= 36500:
+                raise ValueError
+        except ValueError:
+            await _write_json(writer, 400, {"error": "days must be 1..36500 or all"})
+            return
+        native_ids: dict[str, set[str]] = {}
+        for row in self.history._conn.execute(
+            "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
+            "FROM events WHERE sid IS NOT NULL"
+        ):
+            native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
+        identities = [
+            dict(
+                key=r["session_key"],
+                runtime=r["runtime"],
+                name=r["name"] or r["session_key"],
+                folder=r["grp"],
+                test=bool(r["test"]),
+                native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
+            )
+            for r in self.history._conn.execute("SELECT * FROM sessions")
+        ]
+        async with self._tokens_lock:
+            result = await asyncio.to_thread(
+                self._tokens.analytics,
+                days,
+                time.time(),
+                identities,
+                agent=params.get("agent", [""])[0],
+                folder=params.get("folder", [""])[0],
+                session=params.get("session", [""])[0],
+            )
+        await _write_json(writer, 200, result)
 
     async def _mail_analytics(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
@@ -2692,7 +2825,7 @@ class Server:
         Returns "submitted", "stuck" (still sitting in the prompt after a
         second Enter), or "failed" (couldn't write to the terminal)."""
         sup = self.orchestrator.get(key)
-        if sup is None or not sup.running:
+        if sup is None or not await asyncio.to_thread(getattr, sup, "running"):
             return "failed"
         typed_at = int(time.time() * 1000)
         if not await asyncio.to_thread(
@@ -2720,7 +2853,7 @@ class Server:
         or None. The same gates Oracle applies before pasting a nudge."""
         row = self.history.session(session_key)
         sup = self.orchestrator.get(session_key)
-        if row is None or sup is None or not sup.running:
+        if row is None or sup is None or not await asyncio.to_thread(getattr, sup, "running"):
             return "This session has no live terminal."
         inbox = "Send it to the inbox instead."
         if row.get("state") != "idle":
@@ -3545,7 +3678,7 @@ class Server:
             await _write_json(writer, 404, {"error": "no live session (not launched by Duckterm)"})
             return
         text = json.loads(body or b"{}").get("text", "")
-        wrote = supervisor.write_input(text)
+        wrote = await asyncio.to_thread(supervisor.write_input, text)
         await _write_json(writer, 200 if wrote else 409, {"written": wrote})
 
     async def _output(
@@ -3604,7 +3737,7 @@ class Server:
         # attaching to it would hang a silent, never-ending connection. Refuse
         # instead, so a reconnecting client keeps retrying and lands on the NEW
         # supervisor the moment a Resume replaces the dead one.
-        if supervisor is None or not supervisor.running:
+        if supervisor is None or not await asyncio.to_thread(getattr, supervisor, "running"):
             await _write_json(writer, 404, {"error": "no live session to attach"})
             return
         key = headers.get("sec-websocket-key")
@@ -3637,7 +3770,7 @@ class Server:
                     frame = incoming.result()
                     if frame is None or frame[0] == 0x8:  # EOF or client close
                         break
-                    self._handle_terminal_frame(supervisor, frame)
+                    await self._handle_terminal_frame(supervisor, frame)
                     incoming = asyncio.ensure_future(read_frame(reader))
                 if outgoing in done:
                     writer.write(encode_binary_frame(outgoing.result()))
@@ -3659,7 +3792,7 @@ class Server:
                 await writer.drain()
 
     @staticmethod
-    def _handle_terminal_frame(supervisor: Any, frame: tuple[int, bytes]) -> None:
+    async def _handle_terminal_frame(supervisor: Any, frame: tuple[int, bytes]) -> None:
         opcode, payload = frame
         if opcode == 0x2:  # binary: raw keystrokes
             # queue_bytes, not write_bytes: tmux send-keys is a ~10ms
@@ -3675,7 +3808,7 @@ class Server:
             if isinstance(resize, dict):
                 cols, rows = resize.get("cols"), resize.get("rows")
                 if isinstance(cols, int) and isinstance(rows, int):
-                    supervisor.resize(cols, rows)
+                    await asyncio.to_thread(supervisor.resize, cols, rows)
 
     async def _compare(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         try:
@@ -3931,6 +4064,11 @@ class Server:
         while True:
             await asyncio.sleep(20)
             ticks += 1
+            if ticks % 3 == 0:
+                try:
+                    await self._relay_check_stuck(int(time.time() * 1000))
+                except Exception:
+                    traceback.print_exc()
             if ticks % 3 == 0 and os.environ.get("DUCKTERM_ORACLE") != "off":
                 # An exception here would end this loop, silently stopping both
                 # Oracle and the dead-session sweep below.
@@ -3959,7 +4097,7 @@ class Server:
             if now - int(row.get("updated_at") or now) < 60_000:
                 continue  # a dialog may still be drawing
             sup = self.orchestrator.get(key)
-            if sup is None or not sup.running:
+            if sup is None or not await asyncio.to_thread(getattr, sup, "running"):
                 continue
             screen = await asyncio.to_thread(sup.visible_screen)
             harness = _build_runtime(row.get("runtime"), str(row.get("command") or ""))
@@ -3981,7 +4119,11 @@ class Server:
         for row in self.history.sessions():
             key = str(row["session_key"])
             sup = self.orchestrator.get(key)
-            if row.get("state") != "idle" or sup is None or not sup.running:
+            if (
+                row.get("state") != "idle"
+                or sup is None
+                or not await asyncio.to_thread(getattr, sup, "running")
+            ):
                 continue
             try:
                 mail = self.history.session_api.open_mail(key)

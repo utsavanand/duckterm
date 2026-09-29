@@ -1,5 +1,53 @@
 # Retro — lessons from real breakage
 
+## 2026-09-28 — Never wait for tmux on the loop that drains its output
+
+The terminal control stream exposed synchronous tmux calls on the asyncio loop.
+A liveness probe could block that loop while tmux waited for its output client
+to drain, freezing the dashboard and hooks too. Move blocking tmux operations
+off-loop, including property reads, screen capture, resize, transfer and lifecycle
+paths. Keep database and state mutations on-loop. A slow liveness response is
+not a dead session: do not replace it with a timeout returning False. Regressions
+make the fake tmux response depend on loop progress and verify the tail remains
+alive until tmux actually reports exit. Approval keystrokes use the existing
+ordered input queue rather than synchronously calling tmux from callbacks.
+
+Screen capture -C doubles literal backslashes, while live output octal-escapes
+them. Assuming one encoding rejected real TUI captures. Decode both forms,
+preserve unknown escapes, and test OSC8, colours, Unicode, invalid UTF-8 and
+literal backslashes through real tmux. Drain each viewer independently into a
+bounded queue; overflow closes its client even if the browser never reads again.
+During cleanup, drain subprocess pipes too: wait() can hang on a full pipe.
+
+## 2026-09-28 — Terminal snapshots and live bytes need the same ordering source
+
+A tmux capture could include bytes still buffered before the pane log, then a
+new viewer replayed those bytes again as the file reader caught up. File offsets
+and sleeps cannot identify that boundary. Use one ordered control stream for
+each viewer's capture and live output; keep logging separate. Test with a frozen
+file reader, mid-output attachments, and disconnected or paused viewers. Preserve
+the cursor's blank row so post-snapshot output cannot overwrite the previous line.
+Test input with viewers attached on the bundled version too: tmux 3.7 selects
+read-only control clients for send-keys and rejects otherwise valid input. Keep
+the viewer's private command channel output-only without that client flag.
+
+## 2026-09-28 — A request is not a wait
+**Broke:** Codex agents showed "waiting" while running commands, and Oracle
+had no note for them. The owner saw a badge and nothing to answer.
+**Cause:** every PermissionRequest set the session to waiting. Codex's own
+reviewer approves nearly all of them, over a thousand in three days.
+**Rule:** for an auto-reviewing harness, only the prompt on screen means
+waiting. When a request is stuck on a screen Oracle can't read, show waiting
+and save the screen, so the missing prompt shapes come from real data.
+
+## 2026-09-29 — Live test agents must not expire during setup
+
+The fleet digest fixture exited after five seconds while readiness polling alone
+could use four. CI then correctly reported no live agents and failed the digest
+assertions. Keep fixture processes alive until explicit finally cleanup, mark
+them test:true, and send readiness output after pipe attachment. Verify with a
+request delayed beyond the old lifetime; increasing sleeps only moves the race.
+
 ## 2026-09-28 — A green gate on synthetic panes shipped a server hang (v0.4.83)
 **Broke:** v0.4.83's new ordered terminal replay (#130) raised `ValueError:
 invalid tmux control escape` on the owner's real agent panes. The dashboard
@@ -29,6 +77,15 @@ replaced the new rule, then Save reported success for an empty list. Gate edits
 and saves on successful loading, ignore stale responses, and block saving after
 load failures. Test delayed responses and Enter as well as clicks; a passing retry
 does not explain an intermittent failure.
+## 2026-09-28 — Analytics must preserve the model at usage time
+
+Harness names are not model identities. Claude assistant records carry model IDs,
+while Codex model metadata lives on turn-context lines without token usage. Read
+both record types, bucket deltas under the then-current exact model, and retain an
+explicit unknown bucket. Tests cover model switches, duplicate blocks, incremental
+rescans, UTC dates and unmapped identities. Never average daily medians: combine
+histograms and keep the result labelled approximate.
+
 
 
 ## 2026-09-28 — A local gate must include the checks that can reject CI
@@ -47,6 +104,7 @@ Fault-inject deletion to prove a failed transfer leaves neither missing nor doub
 counts. Keep completion-day activity separate from sent-day cohorts, and label
 histogram percentiles approximate rather than deriving fake medians from totals.
 
+
 ## 2026-09-28 — A shared directory cannot identify a conversation
 
 Codex Resume used the newest rollout in a cwd when its recorded native ID was
@@ -55,6 +113,21 @@ Use only the native ID recorded by a session-key-bound hook; never replace it
 with a directory guess. Refuse unknown identity when another Codex row shares
 the directory, including stopped rows. Test independent IDs through a database
 restart and keep fork/snapshot paths from reintroducing the same fallback.
+## 2026-09-28 — Move action behavior and verify adjacent views
+
+Moving session actions out of the sidebar must retain lifecycle gates, remote
+routing and delete confirmation, while making the card independent of density.
+Keep only stopped-row Resume as a quiet recovery shortcut. Use distinct styles
+from the Inbox session card, and dismiss action menus after
+Stop so they cannot cover Resume. Exercise both the moved actions and Inbox.
+
+## 2026-09-28 — Saved comments need a safe read-and-render path
+
+Persisting a comment alone makes previous feedback invisible. Fetch annotations
+alongside messages and after saving, match rendered text nodes rather than HTML
+strings, and preserve overlapping/inline-formatted quotes. Count unlocated notes
+against the whole transcript; notes on older turns are not missing. Keep saved
+notes readable when their original text disappears and expose notes on focus.
 
 
 ## 2026-09-28 — An idle agent cannot notice inbox mail by itself
