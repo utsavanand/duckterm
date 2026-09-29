@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-28 by release-dev at the v0.4.85 release)
+## Status at a glance (reconciled 2026-09-28 by release-dev at the v0.4.86 release)
 
 | Item | Status |
 | --- | --- |
@@ -21,6 +21,7 @@ the session API.
 | Mail analytics | **Backend shipped v0.4.82** (PR #128): inbox counts survive retention; owner-only API, no UI yet. **Schema v6.** |
 | AGENTS.md rules editor load race | **Fixed v0.4.84** (PR #136): Add waits for the initial load; a late load no longer wipes new rules or saves an empty list |
 | Terminal reattach replay | **Shipped v0.4.85** (PR #138): corrected re-land of #130; total control-escape decoder, independent drain, no event-loop tmux calls |
+| Terminal reader fairness | **Hotfix v0.4.86** (PR #143): a buffered output burst no longer starves a ready viewer into being dropped as stalled |
 | Session card and comment highlights (F6) | **Shipped v0.4.85** (PR #140, re-land of #127) |
 | Analytics page | **Shipped v0.4.85** (PR #131): exact model usage and Agent Mail history |
 | Codex false waiting | **Shipped v0.4.85**: auto-reviewed requests stay busy; confirmed prompts give a note plus waiting. Restart recovery and unreadable-prompt notes follow (oracle-codex-waiting 23890c2) |
