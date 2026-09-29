@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-09-29 — Buffered reads can starve an already-ready consumer
+
+The independent tmux reader could consume a buffered burst without yielding:
+readline returned immediately and put_nowait filled the bounded queue before
+the viewer task ran. A healthy viewer was reaped as stalled. Yield after each
+queued output chunk without adding a timed delay. Test a prebuffered burst
+larger than the queue with a ready consumer; retain separate real stalled-view
+cleanup tests and exact no-missing/no-duplicate output assertions.
+
 ## 2026-09-28 — Never wait for tmux on the loop that drains its output
 
 The terminal control stream exposed synchronous tmux calls on the asyncio loop.

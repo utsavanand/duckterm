@@ -79,3 +79,38 @@ def test_exact_guard_text_in_snapshot_cannot_end_the_frame():
 def test_capture_backslash_and_hyperlink_terminator():
     assert unescape(rb"C:\\work\\file") == rb"C:\work\file"
     assert unescape(rb"\033]8;;https://example.test\033\\") == b"\x1b]8;;https://example.test\x1b\\"
+
+
+def test_buffered_burst_does_not_evict_a_ready_consumer(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from duckterm.agents import tmux_stream
+
+    async def scenario():
+        stdout = asyncio.StreamReader()
+        frames = []
+        for number, rows in enumerate([[], [b"%7 0 0 1 0"], [b"READY"], []], 1):
+            frames.extend(
+                [f"%begin 123 {number} 0".encode(), *rows, f"%end 123 {number} 0".encode()]
+            )
+        # Simulate a scheduled reader finding a full pipe after CPU contention.
+        # The consumer is ready throughout; this is not a stalled browser.
+        expected = b"".join(f"R{i:06d}\n".encode() for i in range(100)) + b"DONE\n"
+        for line in expected.splitlines():
+            frames.append(b"%output %7 " + line + rb"\012")
+        stdout.feed_data(b"\n".join(frames) + b"\n")
+        stdout.feed_eof()
+
+        async def communicate():
+            return b"", b""
+
+        async def create(*args, **kwargs):
+            return SimpleNamespace(stdout=stdout, stdin=None, returncode=0, communicate=communicate)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+        chunks = [chunk async for chunk in tmux_stream.stream("rd_test")]
+        assert chunks and b"READY" in chunks[0]
+        assert b"".join(chunks[1:]) == expected
+
+    asyncio.run(scenario())
