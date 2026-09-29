@@ -14,16 +14,11 @@
 .rd-session-controls-meta dt { font-size: 11px; color: var(--text-soft); }
 .rd-session-controls-meta dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
 .rd-session-controls-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; margin: 0; padding: 14px 16px; border: 0; border-top: 1px solid var(--border); min-width: 0; }
-.rd-session-controls-actions > .rd-btn, .rd-session-controls-more > summary { width: 100%; min-height: 36px; margin: 0; padding: 7px 5px; font-size: 12px; font-weight: 400; text-align: center; border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer; }
-.rd-session-controls-more { position: relative; }
-.rd-session-controls-more > summary { list-style: none; }
-.rd-session-controls-more > summary::-webkit-details-marker { display: none; }
-.rd-session-controls-more > summary::after { content: ' ▾'; }
-.rd-session-controls-more > summary:hover { background: var(--bg); }
-.rd-session-controls-menu { position: absolute; z-index: 10; right: 0; bottom: calc(100% + 6px); width: 200px; max-width: calc(100cqi - 12px); padding: 5px; background: var(--card); border: 1px solid var(--border-strong); border-radius: 7px; box-shadow: 0 8px 20px #0003; }
-.rd-session-controls-more:nth-child(3n + 1) .rd-session-controls-menu { left: 0; right: auto; }
-.rd-session-controls-menu > button { display: block; width: 100%; text-align: left; border: 0; white-space: normal; }
+.rd-session-controls-actions > .rd-btn { width: 100%; min-height: 36px; margin: 0; padding: 7px 5px; font-size: 12px; font-weight: 400; text-align: center; border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer; }
 .rd-session-controls .rd-row-notes-wrap { padding: 0 16px 16px; }
 .rd-session-controls .rd-row-notes { width: 100%; }
-.rd-session-controls button:focus-visible, .rd-session-controls summary:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
-@container(max-width: 300px) { .rd-session-controls-actions { grid-template-columns: repeat(2, minmax(0,1fr)); } .rd-session-controls-more:nth-child(n) .rd-session-controls-menu { left: auto; right: 0; } .rd-session-controls-more:nth-child(2n + 1) .rd-session-controls-menu { left: 0; right: auto; } }
+.rd-session-controls button:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
+@container(max-width: 300px) { .rd-session-controls-actions { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+.rd-session-controls-actions > .rd-btn { white-space: normal; overflow-wrap: anywhere; }
+.rd-session-controls-danger { margin: 0; padding: 14px 16px; border: 0; border-top: 1px solid var(--border); min-width: 0; }
+.rd-session-controls-danger > .rd-btn { min-height: 36px; min-width: 90px; font-size: 12px; }
