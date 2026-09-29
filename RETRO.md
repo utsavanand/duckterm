@@ -31,6 +31,15 @@ Test input with viewers attached on the bundled version too: tmux 3.7 selects
 read-only control clients for send-keys and rejects otherwise valid input. Keep
 the viewer's private command channel output-only without that client flag.
 
+## 2026-09-28 — A request is not a wait
+**Broke:** Codex agents showed "waiting" while running commands, and Oracle
+had no note for them. The owner saw a badge and nothing to answer.
+**Cause:** every PermissionRequest set the session to waiting. Codex's own
+reviewer approves nearly all of them, over a thousand in three days.
+**Rule:** for an auto-reviewing harness, only the prompt on screen means
+waiting. When a request is stuck on a screen Oracle can't read, show waiting
+and save the screen, so the missing prompt shapes come from real data.
+
 ## 2026-09-28 — A green gate on synthetic panes shipped a server hang (v0.4.83)
 **Broke:** v0.4.83's new ordered terminal replay (#130) raised `ValueError:
 invalid tmux control escape` on the owner's real agent panes. The dashboard

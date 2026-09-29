@@ -36,6 +36,9 @@ def _waiting_codex_server(screen: str) -> Server:
         {"event_type": "SessionStart", "session_key": "S", "runtime": "codex", "cwd": "/tmp"}
     )
     server.bus.publish({"event_type": "PermissionRequest", "session_key": "S"})
+    # A codex request alone keeps it busy (its reviewer usually approves);
+    # the relay marks it waiting once the prompt is confirmed on screen.
+    server._mark_waiting("S")
     server.orchestrator._supervisors["S"] = _StubSupervisor(screen)  # type: ignore[assignment]
     return server
 

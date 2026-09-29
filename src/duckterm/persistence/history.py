@@ -193,6 +193,10 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
             return "idle"
         case "Notification" if event.get("notification_type") == "auth_success":
             return prev or "busy"
+        case "PermissionRequest" if event.get("auto_reviewed"):
+            # Codex's own reviewer settles nearly every request and the command
+            # runs on; the server flips it to waiting once a prompt shows.
+            return "busy"
         case "PermissionRequest" | "Notification":
             return "waiting"
         case "PreToolUse" | "PostToolUse" | "UserPromptSubmit" | "SessionStart":
