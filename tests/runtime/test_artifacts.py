@@ -225,7 +225,13 @@ def test_artifact_feedback_checks_revision_scope_and_actual_delivery(app, tmp_pa
     assert send()[0] == 409  # stopped; never claim delivery or discard into storage
     assert not server.history.annotations("a")
     writes = []
-    sup = SimpleNamespace(running=True, write_bytes=lambda b: writes.append(b) or True)
+
+    async def write(data):
+        return sup.write_bytes(data)
+
+    sup = SimpleNamespace(
+        running=True, write_bytes=lambda b: writes.append(b) or True, write_queued_bytes=write
+    )
     monkeypatch.setattr(server.orchestrator, "get", lambda _: sup)
     assert send()[1]["sent"] is True
     assert len(writes) == 1 and writes[0].endswith(b"\r")
