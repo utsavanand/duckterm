@@ -1,8 +1,30 @@
 # Session controls: right-panel actions, Restart, Change model, Switch harness — spec
 
-Status: proposed by product for the owner, 2026-09-27. Owner asked to "think
-deeply, spec out these features, then ask the architect to design them".
-Not designed or built.
+Status: Restart + Change Model (F15) implemented on the feature branch,
+2026-09-28; pending independent QA and release. The owner approved the dialog
+preview with “lgtm”. Builds on the restored Session card (#140) and replay fixes on current main. Switch harness
+remains a separate, unimplemented feature.
+
+F15 implementation decisions supersede the earlier proposals below:
+
+- First release is local-only; remote cards explicitly explain that Restart
+  and Change model are not yet available there.
+- Exact recorded native resume is required per session (Claude Code or Codex).
+  There is no fallback to notes or the newest conversation in the folder.
+- Busy requests persist in SQLite and wait for a matching parent Stop hook,
+  never an output-derived idle state. The request is visible and cancelable.
+  After a server restart, a queued request waits for the next confirmed turn;
+  an interrupted execution is shown as failed and is never silently replayed.
+- A non-empty or unrecognized prompt refuses the request. It is checked again
+  at execution; a new turn defers execution. Automated nudges do not run while
+  a restart is pending. No draft is cleared by DuckTerm.
+- Model is free text, preset from the saved preference or observed model.
+  It is passed through the harness flag and retained for later Resume/Restart.
+  A failed restart restores the prior preference so Resume remains usable.
+- The new CLI version is probed after relaunch. A previous version is shown
+  only when recorded by an earlier successful restart; otherwise it is unknown.
+- Schema v7 adds one session JSON column for the durable request and model
+  preference. No task/work tracking tables or UI are introduced.
 
 ## Owner decisions (2026-09-27)
 

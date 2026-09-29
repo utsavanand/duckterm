@@ -108,6 +108,7 @@ def test_request_tmux_wait_leaves_event_loop_available(tmp_path, monkeypatch, op
             await sup.stop()
         else:
             server.history = SimpleNamespace(session=lambda key: {"state": "stopped"})
+            server.restarts = SimpleNamespace(running=lambda key: False)
             with pytest.raises(ValueError, match="still running"):
                 await transfer_api.source_session(server, "test-loop")
         assert observations and all(observations)

@@ -132,6 +132,9 @@ class Harness(ABC):
     @abstractmethod
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]: ...
 
+    def model_arguments(self, model: str) -> list[str]:
+        raise ValueError("This harness does not support model selection")
+
     def can_resume_unambiguously(self, *, cwd: Path, recorded: str | None) -> bool:
         """Whether this exact recorded conversation can be resumed, without
         guessing by cwd or recency. Harnesses must explicitly prove support."""

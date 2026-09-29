@@ -178,10 +178,28 @@ def test_v5_migration_counts_retained_rows_only(store, tmp_path):
     store._conn.execute("PRAGMA user_version=5")
     store._conn.commit()
     reopened = HistoryStore(tmp_path / "db.sqlite")
-    assert reopened._conn.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert reopened._conn.execute("PRAGMA user_version").fetchone()[0] == 7
     assert sum(d["sent"] for d in snapshot(reopened)["daily"]) == 1
     assert reopened._conn.execute("SELECT COUNT(*) FROM session_questions").fetchone()[0] == 0
     reopened.close()
+
+
+def test_v6_restart_migration_preserves_retired_mail_counts(store, tmp_path):
+    seed(store)
+    store.session_api._sweep()
+    before = snapshot(store)
+    store._conn.execute("ALTER TABLE sessions DROP COLUMN restart_json")
+    store._conn.execute("PRAGMA user_version=6")
+    store._conn.commit()
+    reopened = HistoryStore(tmp_path / "db.sqlite")
+    try:
+        assert reopened._conn.execute("PRAGMA user_version").fetchone()[0] == 7
+        assert snapshot(reopened) == before
+        assert "restart_json" in {
+            row["name"] for row in reopened._conn.execute("PRAGMA table_info(sessions)")
+        }
+    finally:
+        reopened.close()
 
 
 @pytest.mark.parametrize(

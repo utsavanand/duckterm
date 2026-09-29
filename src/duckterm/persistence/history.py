@@ -38,10 +38,10 @@ Event = dict[str, Any]
 # v4 persists session pins for the owner's Focus view (PR #78).
 # v5 added collaboration work tables (PR #84). The owner deferred that feature and
 # its code was reverted, but installed DBs are already stamped v5 and keep the
-# (now unused) tables and session_questions columns. Staying at v5 lets those
-# DBs open; dropping back to 4 would raise SchemaTooNewError.
+# (now unused) tables and session_questions columns. Keep those rows on migration.
 # v6 retains analytics at deletion. Older sweep code would lose these counts.
-_SCHEMA_VERSION = 6
+# v7 persists restart requests and model preferences on the session.
+_SCHEMA_VERSION = 7
 
 
 class SchemaTooNewError(RuntimeError):
@@ -213,6 +213,7 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
 # Columns added to `sessions` after the first release. CREATE TABLE IF NOT
 # EXISTS won't add these to a pre-existing DB, so we ALTER them in on open.
 _SESSIONS_COLUMNS = {
+    "restart_json": "TEXT",
     "pinned": "INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))",
     "runtime": "TEXT",
     # Model id observed in the session's transcript (e.g. "claude-fable-5").
@@ -564,6 +565,35 @@ class HistoryStore:
         """Record what a session set out to do (its launch prompt)."""
         self._conn.execute(
             "UPDATE sessions SET intention = ? WHERE session_key = ?", (intention, key)
+        )
+        self._conn.commit()
+
+    def latest_turn_event(self, key: str) -> dict[str, Any] | None:
+        # Insertion order resolves multiple hooks within the same millisecond.
+        types = (
+            events.SESSION_START,
+            events.USER_PROMPT_SUBMIT,
+            events.PRE_TOOL_USE,
+            events.POST_TOOL_USE,
+            events.PERMISSION_REQUEST,
+            events.SESSION_END,
+            events.STOP,
+        )
+        row = self._conn.execute(
+            "SELECT payload_json FROM events WHERE session_key = ? AND event_type IN "
+            "(?, ?, ?, ?, ?, ?, ?) ORDER BY rowid DESC LIMIT 1",
+            (key, *types),
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def restart_control(self, key: str) -> dict[str, Any]:
+        row = self.session(key)
+        return json.loads(row.get("restart_json") or "{}") if row else {}
+
+    def set_restart_control(self, key: str, value: dict[str, Any]) -> None:
+        self._conn.execute(
+            "UPDATE sessions SET restart_json = ? WHERE session_key = ?",
+            (json.dumps(value), key),
         )
         self._conn.commit()
 

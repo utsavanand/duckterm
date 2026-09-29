@@ -15,6 +15,20 @@ export function authHeaders(extra?: Record<string, string>): HeadersInit {
 }
 
 // One Ask Oracle exchange, as stored server-side (at = epoch ms).
+export interface RestartStatus {
+  status?: "queued" | "restarting" | "completed" | "failed" | "canceled";
+  can_restart?: boolean;
+  draft_clear?: boolean;
+  after_turn?: boolean;
+  model?: string;
+  requested_model?: string;
+  configured_model?: string;
+  cli_version?: string;
+  previous_cli_version?: string;
+  reason?: string;
+  error?: string;
+}
+
 export interface OracleExchange {
   q: string;
   a: string;
@@ -470,6 +484,14 @@ export const api = {
       `/sessions/${key}/fork-conversation`,
       { in_terminal: false },
     ),
+  restartStatus: (key: string) => get<RestartStatus>(`/sessions/${key}/restart`),
+  restart: (key: string, model: string) => post<RestartStatus>(`/sessions/${key}/restart`, { model }),
+  cancelRestart: async (key: string): Promise<RestartStatus> => {
+    const response = await fetch(`/sessions/${key}/restart`, { method: "DELETE", headers: authHeaders() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Could not cancel restart");
+    return data;
+  },
   stop: (key: string) => post<{ stopped: boolean }>(`/sessions/${key}/stop`),
   resume: (key: string) =>
     post<{
