@@ -6,6 +6,7 @@ import { AgentTree } from "./AgentTree";
 import { api } from "./api";
 import { desktop } from "./desktop";
 import { Connectors } from "./Connectors";
+import { ContextViews } from "./ContextViews";
 import { ContextPanel } from "./ContextPanel";
 import { Analytics } from "./Analytics";
 import { AnalyticsTab } from "./analyticsData";
@@ -504,7 +505,7 @@ function Dashboard() {
               {selected && <SessionPin session={selected} onToggle={toggleSessionPin} label />}
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
-            <div className="rd-context-body">
+            <ContextViews session={<>
               {selected && <SessionCard key={selected.key} session={selected} now={now}
                 onFork={setForkKey} onDelete={deleteSession}
                 onRename={(key, name) => patchSession(key, { label: name })}
@@ -532,8 +533,7 @@ function Dashboard() {
                   </select>
                 </label>
               )}
-            </div>
-            <Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} />
+            </>} connectors={<Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} />} />
           </section>
         </div>
       )}

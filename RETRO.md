@@ -1,5 +1,16 @@
 # Retro — lessons from real breakage
 
+## Stacked context tabs must not resize the terminal — 2026-09-29
+
+At the 1100px breakpoint the three panes become automatic grid rows. Different tab contents then redistributed height and reflowed the terminal. Give stacked rows explicit fractional allocations, retaining the collapsed 40px controls. Compare terminal geometry after both tab directions at the breakpoint and below it, as well as on desktop.
+
+## 2026-09-29 — Essential controls cannot depend on leftover height
+
+The expanded Session card left Connectors only 13–24 pixels of the right panel.
+Give Session and Connectors separate, persistent views with their own scrolling
+area. Check populated cards at real window heights, panel reopening and host
+changes; presence in the DOM alone does not prove controls are reachable.
+
 ## 2026-09-29 — Visible session actions need no overflow menu
 
 Moving actions out of the sidebar but hiding them again behind More retained
