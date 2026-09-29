@@ -89,7 +89,7 @@ class SessionSupervisor:
         self._byte_tail = deque[bytes](maxlen=2000)  # recent raw chunks, for replay
         self._byte_subs: set[asyncio.Queue[bytes]] = set()
         # Terminal keystrokes: drained by one task so writes stay ordered.
-        self._input_queue: asyncio.Queue[bytes] | None = None
+        self._input_queue: asyncio.Queue[tuple[bytes, asyncio.Future[bool] | None]] | None = None
         self._input_task: asyncio.Task[None] | None = None
         self._last_input = 0.0
         # Wall-clock ms of the owner's last keystroke, for Oracle: no nudge is
@@ -464,19 +464,54 @@ class SessionSupervisor:
         loop stalled every session's I/O on each keypress. A single drain task
         does the writes off-loop, one at a time, so ordering is exact ('ab'
         can never land as 'ba', which a thread pool wouldn't guarantee)."""
+        self._enqueue_input(data)
+
+    async def write_queued_bytes(self, data: bytes) -> bool:
+        """Deliver owner feedback after earlier keystrokes and report its result."""
+        result: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        self._enqueue_input(data, result)
+        return await result
+
+    def _enqueue_input(self, data: bytes, result: asyncio.Future[bool] | None = None) -> None:
+        if self._input_task is not None and (
+            self._input_task.done() or self._input_task.cancelling()
+        ):
+            if result is not None:
+                result.set_result(False)
+            return
         self._last_input = time.monotonic()
         if not is_terminal_report(data):
             self.last_owner_input_ms = int(time.time() * 1000)
         if self._input_queue is None:
             self._input_queue = asyncio.Queue()
             self._input_task = asyncio.create_task(self._drain_input())
-        self._input_queue.put_nowait(data)
+        self._input_queue.put_nowait((data, result))
 
     async def _drain_input(self) -> None:
         assert self._input_queue is not None
-        while True:
-            data = await self._input_queue.get()
-            await asyncio.to_thread(self.write_bytes, data)
+        result = None
+        try:
+            while True:
+                data, result = await self._input_queue.get()
+                try:
+                    wrote = await asyncio.to_thread(self.write_bytes, data)
+                except OSError:
+                    wrote = False
+                if result is not None and not result.done():
+                    result.set_result(wrote)
+                result = None
+        finally:
+            # Stop/cancellation must not leave feedback requests waiting forever.
+            if result is not None and not result.done():
+                result.set_result(False)
+            self._fail_pending_input()
+
+    def _fail_pending_input(self) -> None:
+        if self._input_queue is not None:
+            while not self._input_queue.empty():
+                _, pending = self._input_queue.get_nowait()
+                if pending is not None and not pending.done():
+                    pending.set_result(False)
 
     def write_input(self, text: str) -> bool:
         """Write to the agent's stdin (terminal-attach / approvals). Routes to
@@ -502,6 +537,8 @@ class SessionSupervisor:
     async def stop(self) -> None:
         if self._input_task is not None:
             self._input_task.cancel()
+            # A task cancelled before its first run never enters its finally.
+            self._fail_pending_input()
         if self._tmux_target is not None:
             await asyncio.to_thread(tmux.kill_session, self._tmux_target)
         elif self._proc is not None and self._proc.returncode is None:

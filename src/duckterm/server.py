@@ -984,7 +984,7 @@ class Server:
         sent = False
         if supervisor is not None:
             prompt = f'Re: "{quote}" — {note}' if quote else note
-            sent = await asyncio.to_thread(supervisor.write_bytes, prompt.encode() + b"\r")
+            sent = await supervisor.write_queued_bytes(prompt.encode() + b"\r")
         await _write_json(writer, 200, {"id": ann_id, "sent": sent})
 
     async def _add_artifact_annotation(
@@ -1041,7 +1041,7 @@ class Server:
         }
         prompt = "Artifact feedback: " + json.dumps({**context, "feedback": note.strip()})
         try:
-            sent = await asyncio.to_thread(supervisor.write_bytes, prompt.encode() + b"\r")
+            sent = await supervisor.write_queued_bytes(prompt.encode() + b"\r")
         except OSError:
             sent = False
         if not sent:

@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-09-29 — Feedback bypassed queued terminal input
+
+Artifact and message feedback wrote directly from a worker thread while keyboard bytes waited in a separate FIFO. Under backlog, feedback split an unfinished draft. Route feedback through the existing FIFO and await its actual delivery result; cancellation and write errors must release waiting requests. A blocked-writer regression reproduces the old overtaking without relying on CPU load. Slow echo in other browser tests remains a separate investigation, not evidence to weaken assertions.
+
 ## Restart action labels — 2026-09-29
 
 Owner found trailing ellipses on Restart and Change model confusing. Use the requested plain action labels; dialog behavior stays explicit in the dialog itself. Updated existing Restart UI tests and browser locators to use the visible labels.
