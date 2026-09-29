@@ -26,6 +26,10 @@ def rig(tmp_path, monkeypatch):
     seed(history, conversations, "a", A)
     history.set_state("a", "busy", now=int(time.time() * 1000) - 100)
     server = Server(history=history)
+    # Restart tests own the hook lifecycle, not digest/relay workers. Those
+    # workers need a full terminal and can invoke a summarizer outside this rig.
+    monkeypatch.setattr(server, "_maybe_refresh_progress", lambda key: None)
+    monkeypatch.setattr(server, "_relay_observe", lambda event: None)
     screen = ["────────────────\n› \n────────────────"]
     sup = SimpleNamespace(running=True, last_owner_input_ms=0, visible_screen=lambda: screen[0])
     monkeypatch.setattr(server.orchestrator, "get", lambda key: sup if key == "a" else None)
@@ -62,7 +66,6 @@ def rig(tmp_path, monkeypatch):
 
 
 async def hook(server, **overrides):
-    await asyncio.sleep(0.003)  # real ordering beyond the launch event's ms tick
     await server._ingest(
         Writer(),
         json.dumps(
@@ -79,9 +82,11 @@ async def hook(server, **overrides):
 
 
 async def drain(server):
-    tasks = list(server.restarts.tasks.values())
-    if tasks:
-        await asyncio.gather(*tasks)
+    # An obsolete attempt can register its replacement in finally. Await that
+    # attempt too, with a deadline so a scheduling regression cannot hang CI.
+    async with asyncio.timeout(10):
+        while server.restarts.tasks:
+            await asyncio.gather(*list(server.restarts.tasks.values()))
 
 
 def test_busy_waits_for_real_hook_then_same_key_model_version_and_resume(rig):
@@ -292,27 +297,55 @@ def test_restart_blocks_transfer_and_bulk_delete_during_relaunch(rig):
     assert server.history.session("a") and not calls
 
 
-def test_turn_finishing_during_prior_probe_is_not_lost(rig, monkeypatch):
+@pytest.mark.parametrize("finish_during_probe", [True, False])
+def test_turn_finishing_during_prior_probe_is_not_lost(rig, monkeypatch, finish_during_probe):
     server, _, _, calls = rig
     probes = 0
+    probe_started = asyncio.Event()
+    release_probe = asyncio.Event()
 
     async def version(_):
         nonlocal probes
         probes += 1
         if probes == 1:
-            await hook(server, event_type="UserPromptSubmit")
-            await hook(server)
+            probe_started.set()
+            await release_probe.wait()
         return "codex 2"
 
     monkeypatch.setattr("duckterm.restarts.cli_version", version)
 
     async def run():
         await server.restarts.request("a", "new-model")
-        await hook(server)
-        while server.restarts.tasks:
+        try:
+            await hook(server)
+            async with asyncio.timeout(5):
+                await probe_started.wait()
+            first = server.restarts.tasks["a"]
+            await hook(server, event_type="UserPromptSubmit")
+            if finish_during_probe:
+                await hook(server)
+                # The Stop cannot replace the attempt while its probe owns the
+                # slot. The obsolete attempt must hand off when it unwinds.
+                assert server.restarts.tasks["a"] is first
+            release_probe.set()
+            await asyncio.wait_for(first, timeout=5)
+            if not finish_during_probe:
+                assert not calls and not server.restarts.tasks
+                assert server.restarts.read("a")["status"] == "queued"
+                await hook(server)
             await drain(server)
-        assert len(calls) == 2
-        assert server.restarts.read("a")["status"] == "completed"
+            state = server.restarts.read("a")
+            assert state["status"] == "completed", {
+                "control": state,
+                "calls": calls,
+                "probes": probes,
+                "last_event": server.history.latest_turn_event("a"),
+            }
+            assert len(calls) == 2 and probes == 3
+            assert not server.restarts.tasks
+        finally:
+            release_probe.set()
+            await server.restarts.close()
 
     asyncio.run(run())
 
