@@ -67,6 +67,11 @@ def cleanup(owned: str | None = None) -> dict[str, list[str]]:
                         before.st_dev,
                         before.st_ino,
                     ) == (after.st_dev, after.st_ino):
+                        # Best effort: a same-user process can still bind/listen
+                        # between the last probe/lstat and unlink. POSIX has no
+                        # atomic "unlink only if this inode is still dead".
+                        # Run dead sweeps while test launches are quiescent;
+                        # owned teardown must exclusively own its namespace.
                         path.unlink()
                         result["removed"].append(path.name)
                     else:
