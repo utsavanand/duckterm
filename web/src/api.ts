@@ -15,6 +15,8 @@ export function authHeaders(extra?: Record<string, string>): HeadersInit {
 }
 
 // One Ask Oracle exchange, as stored server-side (at = epoch ms).
+export interface ModelChoice { id: string; label: string; }
+
 export interface RestartStatus {
   status?: "queued" | "restarting" | "completed" | "failed" | "canceled";
   can_restart?: boolean;
@@ -484,6 +486,7 @@ export const api = {
       `/sessions/${key}/fork-conversation`,
       { in_terminal: false },
     ),
+  models: (key: string) => get<{ models: ModelChoice[] }>(`/sessions/${key}/models`),
   restartStatus: (key: string) => get<RestartStatus>(`/sessions/${key}/restart`),
   restart: (key: string, model: string) => post<RestartStatus>(`/sessions/${key}/restart`, { model }),
   cancelRestart: async (key: string): Promise<RestartStatus> => {
