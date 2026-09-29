@@ -41,6 +41,7 @@ export interface RelayNote {
   tool?: string;
   detail?: string;
   blocking?: boolean;
+  unreadable?: boolean; // approval: a prompt Oracle can't read or answer; the owner answers in the terminal
   answer?: string;
   answered_by?: string; // "owner" or a rule id like "R2"
   route?: "approval" | "keystroke" | "prompt" | "prompt-stuck" | "inbox";

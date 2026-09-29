@@ -153,3 +153,15 @@ it("labels offers apart from needs-you notes and turns listed options into one-c
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Yes, make it" })); });
   expect(api.relayAnswer).toHaveBeenCalledWith("o1", "Yes, make it");
 });
+
+it("sends an approval Oracle can't read to the agent's terminal instead of offering buttons", () => {
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
+  const onOpenTerminal = vi.fn();
+  const stuck: RelayNote = { ...question, id: "u1", kind: "approval", session_key: "cx", name: "main-qa", question: undefined, tool: "Bash", detail: "curl localhost:4300", unreadable: true };
+  render(<OracleChat relay={{ notes: [stuck], rules: [], open: 1 }} onRelayChange={() => {}} onOpenTerminal={onOpenTerminal} />);
+  expect(screen.getByText("curl localhost:4300")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+  expect(screen.getByText(/can't read this prompt yet/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Open main-qa's terminal" }));
+  expect(onOpenTerminal).toHaveBeenCalledWith("cx");
+});

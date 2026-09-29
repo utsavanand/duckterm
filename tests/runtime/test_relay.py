@@ -508,7 +508,7 @@ def test_prompt_that_shows_after_the_watch_ends_still_becomes_a_note(codex_world
 
 
 def test_unknown_prompt_shape_shows_waiting_and_logs_its_screen_once(codex_world, tmp_path) -> None:
-    server, _, sup = codex_world
+    server, owner, sup = codex_world
     server.history.set_meta("cx", name="feature-remote-session")
     request(server, "curl https://example.com")
     now = int(time.time() * 1000)
@@ -518,7 +518,15 @@ def test_unknown_prompt_shape_shows_waiting_and_logs_its_screen_once(codex_world
     asyncio.run(server._relay_check_stuck(now + LATER))
     asyncio.run(server._relay_check_stuck(now + LATER + 60_000))
     assert state(server) == "waiting"
-    assert notes(server) == []  # Oracle can't answer a shape it can't read
+    [note] = notes(server)  # a shape Oracle can't read links to the terminal instead
+    assert (note["kind"], note["unreadable"], note["detail"]) == (
+        "approval",
+        True,
+        "curl https://example.com",
+    )
+    status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": "approve"})
+    assert status == 409 and "in its terminal" in body["error"]
+    assert sup.pasted == []
     [entry] = json.loads((tmp_path / "relay-missed-prompts.json").read_text())
     assert (entry["session"], entry["runtime"], entry["detail"]) == (
         "feature-remote-session",
@@ -534,3 +542,49 @@ def test_busy_codex_screen_is_not_logged_as_a_missed_prompt(codex_world, tmp_pat
     asyncio.run(server._relay_check_stuck(int(time.time() * 1000) + LATER))
     assert state(server) == "busy"
     assert not (tmp_path / "relay-missed-prompts.json").exists()
+
+
+def restart(server, sup, monkeypatch):
+    """A fresh server on the same database: in-memory approvals are gone."""
+    fresh = Server(history=server.history)
+    monkeypatch.setattr(fresh.orchestrator, "get", lambda key: sup if key == "cx" else None)
+    return fresh
+
+
+def test_prompt_still_on_screen_after_a_server_restart_becomes_a_note(
+    codex_world, monkeypatch
+) -> None:
+    server, owner, sup = codex_world
+    request(server)
+    sup.screen = CODEX_APPROVAL
+    fresh = restart(server, sup, monkeypatch)
+    assert fresh.approvals.pending() == []
+    asyncio.run(fresh._relay_check_stuck(int(time.time() * 1000) + LATER))
+    [note] = notes(fresh)
+    assert (note["kind"], note["detail"]) == ("approval", "touch probe-file.txt")
+    status, _ = post(fresh, owner, f"/relay/{note['id']}/answer", {"answer": "approve"})
+    assert status == 200 and sup.pasted == [b"y"]
+
+
+def test_restart_does_not_revive_a_request_that_already_resolved(codex_world, monkeypatch) -> None:
+    server, _, sup = codex_world
+    request(server)
+    time.sleep(0.002)  # the tool's events must come after the request
+    server.bus.publish({"event_type": "PostToolUse", "session_key": "cx", "tool_name": "Bash"})
+    sup.screen = CODEX_APPROVAL  # stale text; the request itself is over
+    fresh = restart(server, sup, monkeypatch)
+    asyncio.run(fresh._relay_check_stuck(int(time.time() * 1000) + LATER))
+    assert fresh.approvals.pending() == []
+    assert notes(fresh) == []
+
+
+def test_codex_note_clears_when_the_owner_answers_in_the_terminal(codex_world) -> None:
+    server, _, sup = codex_world
+    request(server)
+    sup.screen = CODEX_APPROVAL
+    asyncio.run(server._relay_check_stuck(int(time.time() * 1000) + LATER))
+    assert [n["status"] for n in notes(server)] == ["open"]
+    time.sleep(0.002)
+    server.bus.publish({"event_type": "PreToolUse", "session_key": "cx", "tool_name": "Bash"})
+    assert [n["status"] for n in notes(server)] == ["handled"]
+    assert state(server) == "busy"

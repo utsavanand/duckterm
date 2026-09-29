@@ -2369,7 +2369,9 @@ class Server:
         """Catch auto-reviewed requests the 10-minute watch can't: a prompt that
         shows later becomes a note, and an unknown prompt shape shows waiting and
         logs its screen to relay-missed-prompts.json, so new shapes can be added
-        from real screens."""
+        from real screens. Unreadable prompts get a note that links to the
+        terminal, since Oracle doesn't know their keys."""
+        self._relay_recover_pending()
         for a in self.approvals.pending():
             if (
                 a.blocking
@@ -2388,6 +2390,52 @@ class Server:
                 self._relay_logged.add(a.id)
                 self._mark_waiting(a.session_key)
                 self._log_missed_prompt(a, plain_screen(screen), now)
+                self.relay.add(
+                    {
+                        **self._relay_session_fields(a.session_key),
+                        "kind": "approval",
+                        "created_at": a.created_at,
+                        "approval_id": a.id,
+                        "tool": a.tool_name,
+                        "detail": a.detail,
+                        "blocking": False,
+                        "unreadable": True,
+                    }
+                )
+
+    _RESOLVING_EVENTS = (
+        events.PRE_TOOL_USE,
+        events.POST_TOOL_USE,
+        events.USER_PROMPT_SUBMIT,
+        events.STOP,
+        events.SESSION_END,
+    )
+
+    def _relay_recover_pending(self) -> None:
+        """Pending requests live in memory, so a server restart forgets a Codex
+        prompt that is still on screen. Rebuild them from history: a session
+        whose last PermissionRequest has no later tool, prompt, or stop event
+        is still being asked."""
+        asking = {a.session_key for a in self.approvals.pending()}
+        for row in self.history.sessions():
+            key = str(row["session_key"])
+            if key in asking or row.get("state") in AT_REST_STATES:
+                continue
+            if not self._relay_harness(key).auto_approves_requests:
+                continue
+            found = self.history.last_event(key, events.PERMISSION_REQUEST)
+            if found is None:
+                continue
+            event, ts = found
+            if any(self.history.last_event_ts(key, t) > ts for t in self._RESOLVING_EVENTS):
+                continue
+            self.approvals.register(
+                key,
+                str(event.get("tool_name") or "unknown"),
+                event.get("tool_input") or {},
+                ts,
+                blocking=False,
+            )
 
     def _log_missed_prompt(self, a: Approval, screen: str, now: int) -> None:
         path = self.relay.path.with_name("relay-missed-prompts.json")
@@ -2544,6 +2592,9 @@ class Server:
             decision = req.get("answer")
             if decision not in ("approve", "deny"):
                 await _write_json(writer, 400, {"error": "answer must be approve or deny"})
+                return
+            if note.get("unreadable"):
+                await _write_json(writer, 409, {"error": "Answer it in its terminal."})
                 return
             harness = self._relay_harness(note["session_key"])
             keys = None if note.get("blocking") else harness.approval_keys(decision)
