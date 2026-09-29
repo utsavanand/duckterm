@@ -2,7 +2,7 @@
 
 ## 2026-09-29 — Feedback bypassed queued terminal input
 
-Artifact and message feedback wrote directly from a worker thread while keyboard bytes waited in a separate FIFO. Under backlog, feedback split an unfinished draft. Route feedback through the existing FIFO and await its actual delivery result; cancellation and write errors must release waiting requests. A blocked-writer regression reproduces the old overtaking without relying on CPU load. Slow echo in other browser tests remains a separate investigation, not evidence to weaken assertions.
+Artifact and message feedback wrote directly from a worker thread while keyboard bytes waited in a separate FIFO. Under backlog, feedback split an unfinished draft. Route feedback through the existing FIFO and await its actual delivery result; cancellation and write errors must release waiting requests. A blocked-writer regression reproduces the old overtaking without relying on CPU load. A separate per-character drain made a backlog require two tmux subprocesses per character. Coalesce already queued bytes in bounded batches with no added delay; preserve the exact byte stream and all browser assertions. Browser timeouts alone do not establish where latency occurs.
 
 ## Restart action labels — 2026-09-29
 

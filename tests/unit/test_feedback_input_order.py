@@ -46,10 +46,10 @@ def test_feedback_cannot_overtake_pending_keyboard_input(tmp_path, monkeypatch):
             history=SimpleNamespace(add_annotation=annotation),
         )
         sup.queue_bytes(b"DRAFT_")
-        sup.queue_bytes(b"END")
         task = None
         try:
             await asyncio.wait_for(first_started.wait(), 2)
+            sup.queue_bytes(b"END")
             task = asyncio.create_task(
                 Server._add_annotation(
                     server,
@@ -65,7 +65,7 @@ def test_feedback_cannot_overtake_pending_keyboard_input(tmp_path, monkeypatch):
             assert sent == []
             release_first.set()
             await asyncio.wait_for(task, 2)
-            assert sent == [b"DRAFT_", b"END", b"feedback\r"]
+            assert b"".join(sent) == b"DRAFT_ENDfeedback\r"
         finally:
             release_first.set()
             if task:
@@ -150,5 +150,30 @@ def test_stop_before_drain_starts_rejects_feedback(tmp_path):
         assert await asyncio.wait_for(receipt, 2) is False
         assert await asyncio.wait_for(sup.write_queued_bytes(b"after stop"), 2) is False
         await asyncio.gather(sup._input_task, return_exceptions=True)
+
+    asyncio.run(scenario())
+
+
+def test_keyboard_backlog_uses_bounded_batches(tmp_path, monkeypatch):
+    async def scenario():
+        sup = SessionSupervisor(
+            bus=EventBus(),
+            runtime=GenericRuntime("cat"),
+            session_key="test-burst",
+            cwd=str(tmp_path),
+            extra={"test": True},
+        )
+        writes = []
+        monkeypatch.setattr(sup, "write_bytes", lambda data: writes.append(data) or True)
+        draft = b"DRAFT_" + bytes(range(256)) * 20 + b"_END"
+        try:
+            for value in draft:
+                sup.queue_bytes(bytes([value]))
+            assert await asyncio.wait_for(sup.write_queued_bytes(b"feedback\r"), 5)
+            assert b"".join(writes) == draft + b"feedback\r"
+            assert len(writes) <= 22  # bounded 256-item batches, not 5000 subprocess pairs
+        finally:
+            sup._input_task.cancel()
+            await asyncio.gather(sup._input_task, return_exceptions=True)
 
     asyncio.run(scenario())

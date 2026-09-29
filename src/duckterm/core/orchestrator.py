@@ -489,21 +489,32 @@ class SessionSupervisor:
 
     async def _drain_input(self) -> None:
         assert self._input_queue is not None
-        result = None
+        batch: list[tuple[bytes, asyncio.Future[bool] | None]] = []
         try:
             while True:
-                data, result = await self._input_queue.get()
+                batch = [await self._input_queue.get()]
+                size = len(batch[0][0])
+                # Drain already accepted bytes without adding a batching delay.
+                # Bound each batch so busy sessions yield to other loop work.
+                while size < 4096 and len(batch) < 256 and not self._input_queue.empty():
+                    item = self._input_queue.get_nowait()
+                    batch.append(item)
+                    size += len(item[0])
                 try:
-                    wrote = await asyncio.to_thread(self.write_bytes, data)
+                    wrote = await asyncio.to_thread(
+                        self.write_bytes, b"".join(data for data, _ in batch)
+                    )
                 except OSError:
                     wrote = False
-                if result is not None and not result.done():
-                    result.set_result(wrote)
-                result = None
+                for _, result in batch:
+                    if result is not None and not result.done():
+                        result.set_result(wrote)
+                batch = []
         finally:
             # Stop/cancellation must not leave feedback requests waiting forever.
-            if result is not None and not result.done():
-                result.set_result(False)
+            for _, result in batch:
+                if result is not None and not result.done():
+                    result.set_result(False)
             self._fail_pending_input()
 
     def _fail_pending_input(self) -> None:
