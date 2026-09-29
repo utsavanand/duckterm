@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-29 — Live test agents must not expire during setup
+
+The fleet digest fixture exited after five seconds while readiness polling alone
+could use four. CI then correctly reported no live agents and failed the digest
+assertions. Keep fixture processes alive until explicit finally cleanup, mark
+them test:true, and send readiness output after pipe attachment. Verify with a
+request delayed beyond the old lifetime; increasing sleeps only moves the race.
+
 ## 2026-09-28 — A green gate on synthetic panes shipped a server hang (v0.4.83)
 **Broke:** v0.4.83's new ordered terminal replay (#130) raised `ValueError:
 invalid tmux control escape` on the owner's real agent panes. The dashboard
