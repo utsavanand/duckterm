@@ -38,8 +38,8 @@ test("fork modal offers both kinds; no-conversation fork starts fresh with a not
   const row = page.locator(".rd-row", { hasText: key }).first();
   await expect(row).toBeVisible();
 
-  await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").locator("button", { hasText: "Fork" }).click();
+  await row.hover();
+  await row.locator("button", { hasText: "Fork" }).click();
 
   // The modal opened and offers both fork kinds.
   await expect(page.getByText(`Fork ${key}`)).toBeVisible();

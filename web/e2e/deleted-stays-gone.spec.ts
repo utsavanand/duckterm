@@ -17,10 +17,9 @@ test("a deleted watched session is not resurrected by its later events", async (
   await expect(row).toBeVisible();
 
   // Remove it from the UI (watched session: "Stop watching", double-confirm).
-  await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls-more > summary").click();
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Stop watching" }).click();
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Confirm?" }).click();
+  await row.hover();
+  await row.getByRole("button", { name: "Stop watching" }).click();
+  await row.getByRole("button", { name: "Confirm?" }).click();
   await expect(row).toHaveCount(0);
 
   // The watched session's hooks keep firing — simulate more events for the key.
