@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-28 by release-dev at the v0.4.86 release)
+## Status at a glance (reconciled 2026-09-28 by release-dev at the v0.4.87 release)
 
 | Item | Status |
 | --- | --- |
@@ -23,6 +23,7 @@ the session API.
 | Terminal reattach replay | **Shipped v0.4.85** (PR #138): corrected re-land of #130; total control-escape decoder, independent drain, no event-loop tmux calls |
 | Terminal reader fairness | **Hotfix v0.4.86** (PR #143): a buffered output burst no longer starves a ready viewer into being dropped as stalled |
 | Session card and comment highlights (F6) | **Shipped v0.4.85** (PR #140, re-land of #127) |
+| Session card: all actions visible | **Shipped v0.4.87** (PR #145): no More menu; every applicable action shown; Delete in its own bottom section |
 | Analytics page | **Shipped v0.4.85** (PR #131): exact model usage and Agent Mail history |
 | Codex false waiting | **Shipped v0.4.85**: auto-reviewed requests stay busy; confirmed prompts give a note plus waiting. Restart recovery and unreadable-prompt notes follow (oracle-codex-waiting 23890c2) |
 | Router mode (DuckTerm picks the model per task) | **Not started.** Owner-requested 2026-09-28; this is F5 step (c), the model router. Options and open questions: [pie-in-the-sky.md, 'Idea: router mode'](pie-in-the-sky.md#idea-router-mode-duckterm-picks-the-model) |
