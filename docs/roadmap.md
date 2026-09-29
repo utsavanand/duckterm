@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-28 by release-dev at the v0.4.84 release)
+## Status at a glance (reconciled 2026-09-28 by release-dev at the v0.4.85 release)
 
 | Item | Status |
 | --- | --- |
@@ -20,7 +20,10 @@ the session API.
 | F16 Self-contained Mac app | Bundled Python and tmux ready (PR #124, draft); waiting on the missing-tmux fallback screen. **Releases are Developer ID signed and notarized from v0.4.82** (owner's team, `sotto-notary` profile for now) |
 | Mail analytics | **Backend shipped v0.4.82** (PR #128): inbox counts survive retention; owner-only API, no UI yet. **Schema v6.** |
 | AGENTS.md rules editor load race | **Fixed v0.4.84** (PR #136): Add waits for the initial load; a late load no longer wipes new rules or saves an empty list |
-| Terminal reattach replay + Session card (F6) | **Withdrawn**: shipped in v0.4.83, rolled back (the replay stream hung the server on real panes); #130 and #127 reverted from main, to re-land after main-dev's fix passes QA on real panes. The Analytics page (#131) waits too, because it trips the same replay race in e2e |
+| Terminal reattach replay | **Shipped v0.4.85** (PR #138): corrected re-land of #130; total control-escape decoder, independent drain, no event-loop tmux calls |
+| Session card and comment highlights (F6) | **Shipped v0.4.85** (PR #140, re-land of #127) |
+| Analytics page | **Shipped v0.4.85** (PR #131): exact model usage and Agent Mail history |
+| Codex false waiting | **Shipped v0.4.85**: auto-reviewed requests stay busy; confirmed prompts give a note plus waiting. Restart recovery and unreadable-prompt notes follow (oracle-codex-waiting 23890c2) |
 | Router mode (DuckTerm picks the model per task) | **Not started.** Owner-requested 2026-09-28; this is F5 step (c), the model router. Options and open questions: [pie-in-the-sky.md, 'Idea: router mode'](pie-in-the-sky.md#idea-router-mode-duckterm-picks-the-model) |
 | Local and remote sessions in one window | Shipped v0.4.75 (PR #68); location icons v0.4.76-0.4.77; remote clouds on the Oracle page v0.4.79 |
 | B4, B7, B8 | Fixed (B4 verified on installed v0.4.73; B7 v0.4.70; B8 v0.4.69) |
