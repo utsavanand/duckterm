@@ -1,7 +1,12 @@
-.rd-row-density-detail { display: none; }
-.rd-row-click:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
 /* Density changes the sidebar's information hierarchy, never terminal geometry. */
 .rd-app .rd-row-name { font-weight: 400; }
+.rd-row-density-detail, .rd-density-actions { display: none; }
+.rd-app .rd-row-actions { margin-top: 0; }
+.rd-app .rd-row:hover .rd-row-actions,
+.rd-app .rd-row.expanded .rd-row-actions,
+.rd-app .rd-row.actions-open .rd-row-actions { margin-top: 6px; }
+.rd-row.actions-open .rd-row-actions { max-height: 124px; opacity: 1; }
+.rd-row-click:focus-visible, .rd-density-actions:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
 
 [data-density="compact"] .rd-row { padding-top: 3px; padding-bottom: 3px; }
 [data-density="compact"] .rd-row-main { gap: 5px; }
@@ -11,6 +16,8 @@
 [data-density="compact"] .rd-group-head { padding-top: 5px; padding-bottom: 5px; }
 [data-density="compact"] .rd-row .rd-state { font-size: 0; }
 [data-density="compact"] .rd-row .rd-state::before { content: ""; display: block; width: 6px; height: 6px; background: currentColor; border-radius: 50%; }
+[data-density="compact"] .rd-density-actions { display: block; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; padding: 0 4px; }
+[data-density="compact"] .rd-row:not(.expanded):not(.actions-open) .rd-row-actions { max-height: 0; opacity: 0; margin-top: 0; visibility: hidden; }
 
 [data-density="standard"] .rd-row { padding-top: 6px; padding-bottom: 6px; }
 [data-density="standard"] .rd-row-name { font-size: 14px; }
@@ -21,9 +28,4 @@
 [data-density="relaxed"] .rd-row-main > svg { width: 28px; height: 28px; }
 [data-density="relaxed"] .rd-row-meta { font-size: 12px; margin-top: 6px; white-space: normal; }
 [data-density="relaxed"] .rd-row-density-detail { display: block; font-size: 11px; line-height: 1.6; color: var(--muted); margin-top: 5px; }
-
-/* The sole row action: recovery of an explicitly stopped, owned session. */
-.rd-row-resume { flex: 0 0 auto; border: 1px solid var(--border-strong); background: transparent; color: var(--text-soft); font: inherit; font-size: 11px; padding: 3px 7px; border-radius: 5px; cursor: pointer; }
-.rd-row-resume:hover:not(:disabled) { color: var(--brand-green); border-color: var(--brand-green); }
-.rd-row-resume:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
-.rd-row-resume:disabled { opacity: .5; cursor: wait; }
+[data-density="relaxed"] .rd-row.selected .rd-row-actions { max-height: 124px; opacity: 1; margin-top: 10px; }

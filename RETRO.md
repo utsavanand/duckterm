@@ -1,5 +1,27 @@
 # Retro — lessons from real breakage
 
+## 2026-09-28 — A green gate on synthetic panes shipped a server hang (v0.4.83)
+**Broke:** v0.4.83's new ordered terminal replay (#130) raised `ValueError:
+invalid tmux control escape` on the owner's real agent panes. The dashboard
+stopped responding, and its `tmux -C attach-session … pause-after` control
+clients stopped being read, which wedged `tmux ls`. Rolled back to v0.4.82 (all
+25 panes preserved), withdrew the release, and reverted #130 and #127 on main.
+**Cause:** the control-mode escape decoder was strict (it raised on input it
+didn't expect), and a stream error left tmux control clients attached with no
+reader. Every test and QA run used synthetic panes; real Claude/Codex TUIs emit
+output those fixtures never produced. The post-install check was a single
+immediate HTTP 200, before any terminal stream had attached.
+**Rule:** parsers of tmux or terminal output must be total, never raising on
+unexpected bytes, and a failed reader must detach its tmux client. Changes to
+the terminal/tmux stream path need QA against real agent panes. After every
+install, soak for about 60 s: dashboard, inbox CLI, `tmux ls`, and the server
+log clean. Roll back immediately if any of them fails.
+
+Also: the e2e harness shares `$TMPDIR/rd-e2e-state.json` across concurrent runs,
+so parallel sessions' gates overwrite each other's token (all-401 failures).
+Set `RD_TEST_STATE_FILE` and `RD_TEST_PORT` per run until the harness isolates
+itself.
+
 ## 2026-09-28 — A local gate must include the checks that can reject CI
 
 Mail analytics passed the local gate but failed CI strict typing because the
@@ -16,18 +38,6 @@ Fault-inject deletion to prove a failed transfer leaves neither missing nor doub
 counts. Keep completion-day activity separate from sent-day cohorts, and label
 histogram percentiles approximate rather than deriving fake medians from totals.
 
-## 2026-09-28 — Terminal snapshots and live bytes need the same ordering source
-
-A tmux capture could include bytes still buffered before the pane log, then a
-new viewer replayed those bytes again as the file reader caught up. File offsets
-and sleeps cannot identify that boundary. Use one ordered control stream for
-each viewer's capture and live output; keep logging separate. Test with a frozen
-file reader, mid-output attachments, and disconnected or paused viewers. Preserve
-the cursor's blank row so post-snapshot output cannot overwrite the previous line.
-Test input with viewers attached on the bundled version too: tmux 3.7 selects
-read-only control clients for send-keys and rejects otherwise valid input. Keep
-the viewer's private command channel output-only without that client flag.
-
 ## 2026-09-28 — A shared directory cannot identify a conversation
 
 Codex Resume used the newest rollout in a cwd when its recorded native ID was
@@ -36,22 +46,6 @@ Use only the native ID recorded by a session-key-bound hook; never replace it
 with a directory guess. Refuse unknown identity when another Codex row shares
 the directory, including stopped rows. Test independent IDs through a database
 restart and keep fork/snapshot paths from reintroducing the same fallback.
-
-## 2026-09-28 — Move action behavior and verify adjacent views
-
-Moving session actions out of the sidebar must retain lifecycle gates, remote
-routing and delete confirmation, while making the card independent of density.
-Keep only stopped-row Resume as a quiet recovery shortcut. Use distinct styles
-from the Inbox session card, and dismiss action menus after
-Stop so they cannot cover Resume. Exercise both the moved actions and Inbox.
-
-## 2026-09-28 — Saved comments need a safe read-and-render path
-
-Persisting a comment alone makes previous feedback invisible. Fetch annotations
-alongside messages and after saving, match rendered text nodes rather than HTML
-strings, and preserve overlapping/inline-formatted quotes. Count unlocated notes
-against the whole transcript; notes on older turns are not missing. Keep saved
-notes readable when their original text disappears and expose notes on focus.
 
 
 ## 2026-09-28 — An idle agent cannot notice inbox mail by itself

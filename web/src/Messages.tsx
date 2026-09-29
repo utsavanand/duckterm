@@ -1,9 +1,7 @@
 import { routedFetch as fetch } from "./hostTransport";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, authHeaders } from "./api";
-import { AnnotatedText, messageMarkup } from "./AnnotatedText";
-import { Annotation, locatedAnnotations } from "./annotationHighlights";
-import "./messageAnnotations.css";
+import { html } from "./render";
 import { useToast } from "./ui";
 import { Message, MessagePin, PinTarget } from "./MessagePins";
 
@@ -29,10 +27,6 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
   onClearTarget?: () => void;
 }) {
   const toast = useToast();
-  const [annotationSnapshot, setAnnotationSnapshot] = useState<{ key: string; items: Annotation[]; error: string }>({ key: "", items: [], error: "" });
-  const [annotationVersion, setAnnotationVersion] = useState(0);
-  const annotations = useMemo(() => annotationSnapshot.key === sessionKey ? annotationSnapshot.items : [], [annotationSnapshot, sessionKey]);
-  const annotationError = annotationSnapshot.key === sessionKey ? annotationSnapshot.error : "";
   const [messages, setMessages] = useState<Message[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -133,7 +127,6 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
       const d = await res.json();
       if (!res.ok) throw new Error(d.error ?? "failed");
       toast(d.sent ? "Sent to the agent" : "Saved (agent not live)");
-      setAnnotationVersion(version => version + 1);
     } catch (e) {
       toast(`Annotation failed: ${(e as Error).message}`, "err");
     } finally {
@@ -175,52 +168,6 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
     };
   }, [sessionKey]);
 
-  useEffect(() => {
-    let live = true;
-    async function loadAnnotations() {
-      try {
-        const response = await fetch(`/sessions/${encodeURIComponent(sessionKey)}/annotations`);
-        if (response.ok === false) throw new Error("Could not load comments");
-        const data = await response.json();
-        if (!live) return;
-        const items: Annotation[] = (Array.isArray(data.annotations) ? data.annotations : []).filter((note: Annotation) =>
-          typeof note.id === "string" && typeof note.quote === "string" && typeof note.note === "string");
-        setAnnotationSnapshot(previous => previous.key === sessionKey && !previous.error && JSON.stringify(previous.items) === JSON.stringify(items)
-          ? previous : { key: sessionKey, items, error: "" });
-      } catch {
-        if (live) setAnnotationSnapshot(previous => ({ key: sessionKey,
-          items: previous.key === sessionKey ? previous.items : [], error: "Could not load comments. Retrying…" }));
-      }
-    }
-    void loadAnnotations();
-    const timer = setInterval(loadAnnotations, 3000);
-    return () => { live = false; clearInterval(timer); };
-  }, [sessionKey, annotationVersion]);
-
-  // Check the whole transcript: a note on another turn is not an unlocated note.
-  const unlocated = useMemo(() => {
-    if (!annotations.length) return [];
-    const found = new Set<string>();
-    for (const message of messages) for (const block of message.blocks) {
-      if (block.type !== "text") continue;
-      const element = document.createElement("div");
-      element.innerHTML = messageMarkup(block.text, message.role === "user");
-      for (const id of locatedAnnotations(element, annotations)) found.add(id);
-    }
-    return annotations.filter(note => !found.has(note.id));
-  }, [messages, annotations]);
-  const comments = <>
-    {annotationError && <div role="status" className="rd-comment-error">{annotationError}</div>}
-    {!!annotations.length && <details className="rd-message-comments" onMouseUp={event => event.stopPropagation()}>
-      <summary>{annotations.length} {annotations.length === 1 ? "comment" : "comments"}{loaded && !!unlocated.length && ` · ${unlocated.length} not located in transcript`}</summary>
-      <p>All matching occurrences are highlighted. Hover or focus a highlight to read its note.</p>
-      {annotations.map(note => <article key={note.id}>
-        <blockquote>{note.quote || "No quoted text"}</blockquote><p>{note.note}</p>
-        {loaded && unlocated.some(item => item.id === note.id) && <small>Quoted text not located in this transcript. Your comment is saved here.</small>}
-      </article>)}
-    </details>}
-  </>;
-
   // One interaction turn at a time, defaulting to the newest. `back` counts
   // turns from the end, so while you're on the latest (back=0) new turns keep
   // appearing in place; while browsing older ones your position holds steady.
@@ -239,8 +186,8 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
       jumped.current = target.request;
     }
   }, [target, messages, loaded, loadError]);
-  if (!latest) return <div className="rd-messages">{comments}<div className="rd-panel-empty">{loadError || (loaded
-    ? "No agent reply yet (claude-code and codex sessions only)." : "Loading messages…")}</div></div>;
+  if (!latest) return <div className="rd-panel-empty">{loadError || (loaded
+    ? "No agent reply yet (claude-code and codex sessions only)." : "Loading messages…")}</div>;
   const showingLatest = currentIndex === turns.length - 1;
   function navigate(index: number) {
     onClearTarget?.();
@@ -249,7 +196,6 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
 
   return (
     <div className="rd-messages" ref={wrapRef} onMouseUp={onMouseUp}>
-      {comments}
       {/* Step through interaction turns; ‹ goes to the previous exchange. */}
       {!savedCopy && turns.length > 1 && (
         <div className="rd-turn-nav">
@@ -295,8 +241,8 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
             ? <div key={i} className="rd-message-tool">Tool: {block.name}</div>
             : message.role === "user" && block.type === "text"
               ? <div key={i} className="rd-turn-user"><span className="rd-prompt-mark">❯</span>
-                <AnnotatedText className="rd-turn-prompt" source={block.text} plain annotations={annotations} /></div>
-              : <AnnotatedText key={i} className="rd-msg-text" source={block.text} annotations={annotations} />)}
+                <span className="rd-turn-prompt">{block.text}</span></div>
+              : <div key={i} className="rd-msg-text" dangerouslySetInnerHTML={{ __html: html(block.text) }} />)}
         </article>;
       })}
       {latest.texts.length === 0 && (latest.prompt || latest.tools.length) && <div className="rd-msg-pending">

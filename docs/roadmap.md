@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-28 by release-dev at the v0.4.83 release)
+## Status at a glance (reconciled 2026-09-28 by release-dev at the v0.4.82 release)
 
 | Item | Status |
 | --- | --- |
@@ -19,8 +19,7 @@ the session API.
 | Codex Resume identity | **Stopgap shipped v0.4.81** (PR #125): Resume uses only the session's recorded ID and refuses (409) instead of guessing in a shared folder. Lifetime ID pinning stays with F15. |
 | F16 Self-contained Mac app | Bundled Python and tmux ready (PR #124, draft); waiting on the missing-tmux fallback screen. **Releases are Developer ID signed and notarized from v0.4.82** (owner's team, `sotto-notary` profile for now) |
 | Mail analytics | **Backend shipped v0.4.82** (PR #128): inbox counts survive retention; owner-only API, no UI yet. **Schema v6.** |
-| Session card and comment highlights (F6) | **Shipped v0.4.83** (PR #127): session actions live in the selected session's card; saved comments highlighted inline |
-| Terminal reattach replay | **Fixed v0.4.83** (PR #130): switching back to a terminal no longer duplicates recent characters (bug since v0.4.78's view eviction) |
+| Terminal reattach replay + Session card (F6) | **Withdrawn**: shipped in v0.4.83, rolled back (the replay stream hung the server on real panes); #130 and #127 reverted from main, to re-land after main-dev's fix passes QA on real panes. The Analytics page (#131) waits too, because it trips the same replay race in e2e |
 | Router mode (DuckTerm picks the model per task) | **Not started.** Owner-requested 2026-09-28; this is F5 step (c), the model router. Options and open questions: [pie-in-the-sky.md, 'Idea: router mode'](pie-in-the-sky.md#idea-router-mode-duckterm-picks-the-model) |
 | Local and remote sessions in one window | Shipped v0.4.75 (PR #68); location icons v0.4.76-0.4.77; remote clouds on the Oracle page v0.4.79 |
 | B4, B7, B8 | Fixed (B4 verified on installed v0.4.73; B7 v0.4.70; B8 v0.4.69) |

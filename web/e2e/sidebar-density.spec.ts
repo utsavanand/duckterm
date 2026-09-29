@@ -22,8 +22,10 @@ test("sidebar density changes information and actions, remembers choice, and kee
     await expect(row.locator(".rd-row-meta")).toBeHidden();
     expect((await row.boundingBox())!.height).toBeLessThan(standard);
     await expect(row).toHaveAttribute("title", /codex/);
-    await expect(row.locator(".rd-density-actions, .rd-row-actions, .rd-session-pin")).toHaveCount(0);
-    await expect(page.locator(".rd-session-controls").getByRole("button", { name: "Notes", exact: true })).toBeVisible();
+    await row.getByRole("button", { name: "Actions for density-agent" }).click();
+    await expect(row.getByRole("button", { name: "Notes", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(row.getByRole("button", { name: "Notes", exact: true })).toBeHidden();
     await page.reload();
     await expect(page.locator(".rd-app")).toHaveAttribute("data-density", "compact");
     await row.locator(".rd-row-click").click();
@@ -32,7 +34,7 @@ test("sidebar density changes information and actions, remembers choice, and kee
     await page.keyboard.press("Escape");
     await page.mouse.move(900, 80);
     await expect(row.locator(".rd-row-density-detail")).toContainText("codex");
-    await expect(page.locator(".rd-session-controls").getByRole("button", { name: "Notes", exact: true })).toBeVisible();
+    await expect(row.getByRole("button", { name: "Notes", exact: true })).toBeVisible();
     expect((await row.boundingBox())!.height).toBeGreaterThan(standard);
     await expect(row.locator(".rd-row-name")).toHaveCSS("font-weight", "400");
     await page.reload();

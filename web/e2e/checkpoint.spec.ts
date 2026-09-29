@@ -33,8 +33,8 @@ test("checkpoint captures the session's prompts and commands", async ({
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
 
-  await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").locator("button", { hasText: "Checkpoint" }).click();
+  await row.hover();
+  await row.locator("button", { hasText: "Checkpoint" }).click();
 
   // UI: success toast.
   await expect(page.getByText("Checkpoint recorded")).toBeVisible();

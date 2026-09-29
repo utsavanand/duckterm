@@ -26,7 +26,7 @@ from collections import deque
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from duckterm.agents import tmux, tmux_stream
+from duckterm.agents import tmux
 from duckterm.core import events
 from duckterm.core.eventbus import EventBus
 from duckterm.git.worktrees import WorktreeManager
@@ -378,16 +378,6 @@ class SessionSupervisor:
         tmux, clear + capture-pane of the live pane; for a PTY, a small recent
         tail. Replaying 2000 chunks of history made the terminal redraw its entire
         backlog every time you (re)attached or switched tabs."""
-        if self._tmux_target is not None:
-            # Snapshot and output must share tmux's own timeline. A spool-file
-            # offset cannot exclude bytes still buffered upstream of the file.
-            feed = tmux_stream.stream(self._tmux_target)
-            try:
-                async for chunk in feed:
-                    yield chunk
-            finally:
-                await feed.aclose()
-            return
         # Bounded: ~2000 chunks ≈ 8MB of 4KB reads. _record_bytes drops the
         # subscriber (with an EOF) if it ever fills — see backpressure there.
         queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2000)
@@ -405,8 +395,15 @@ class SessionSupervisor:
             self._byte_subs.discard(queue)
 
     def _attach_snapshot(self) -> bytes:
-        """A bounded replay for a directly owned PTY (tmux uses its control stream)."""
-        # PTY snapshots and live chunks are both recorded on this event loop.
+        """The bytes to send a freshly-attached terminal so it shows the current
+        state without replaying all history."""
+        if self._tmux_target is not None and tmux.session_exists(self._tmux_target):
+            screen = tmux.capture_screen(self._tmux_target)
+            if screen:
+                # Clear + home, then paint the captured screen.
+                return b"\x1b[2J\x1b[H" + screen
+        # PTY (or tmux capture failed): a bounded recent tail — enough for
+        # context, not the whole backlog.
         recent = list(self._byte_tail)[-40:]
         return b"".join(recent)
 
