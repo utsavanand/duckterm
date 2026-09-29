@@ -27,6 +27,7 @@ the session API.
 | F15 Restart + Change model | **Shipped v0.4.88** (PR #133): same-session restart keeps the conversation; model change persists; busy restarts queue and cancel; drafts protected. **Schema v7.** Local sessions only. Known limits: Codex model shows 'Not reported yet' (transcript stats are Claude-only); a sandboxed Codex can't run the `duckterm session` CLI after resume |
 | Session / Connectors views | **Shipped v0.4.89** (PR #147): separate right-panel views; the terminal size is stable at every width |
 | Archive Undo | **Shipped v0.4.89** (PR #152): 8-second durable Undo window, crash-safe. **Schema v8.** |
+| Feedback vs typed keys ordering | **Fixed v0.4.89** (PR #153): artifact/message feedback shares the terminal input FIFO, so it can't overtake a half-typed draft; queued bytes are batched |
 | Connectors Check now + last used (B2) | In QA rework (PR #149): verify must reject handshake/tool-list errors |
 | Analytics page | **Shipped v0.4.85** (PR #131): exact model usage and Agent Mail history |
 | Codex false waiting | **Shipped v0.4.85**: auto-reviewed requests stay busy; confirmed prompts give a note plus waiting. Restart recovery and unreadable-prompt notes follow (oracle-codex-waiting 23890c2) |
