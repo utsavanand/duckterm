@@ -167,7 +167,14 @@ def create(destination: str | None = None) -> str:
                         "database": "duckterm/db.sqlite",
                         "database_consistency": "sqlite-online-backup",
                         "files_consistency": "per-file; pause agents for a common point in time",
-                        "excluded": ["credential/config files", "worktrees", "logs", "symlinks"],
+                        "excluded": [
+                            "credential/config files",
+                            "worktrees",
+                            "logs",
+                            "symlinks",
+                            # About 800 MB and reinstallable from Settings.
+                            "voice (natural-voice environment, model, and cache)",
+                        ],
                     },
                     indent=2,
                 ).encode()

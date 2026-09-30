@@ -81,6 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument(
         "--sync", action="store_true", help="Sync changed files to GCS; retain a full local archive"
     )
+    voice = sub.add_parser(
+        "voice", help="install or remove Oracle's natural voice (Kokoro, local, Apple Silicon)"
+    )
+    voice.add_argument("action", choices=["status", "install", "remove"])
     sub.add_parser("dashboard", help="build (if needed) and open the dashboard in a browser")
     sub.add_parser("purge-test", help="delete all test/seed sessions and their data (test=1)")
     sub.add_parser("doctor", help="check deps, server, hooks, and trust; print what's missing")
@@ -489,6 +493,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
             print(f"duckterm: {exc}", file=sys.stderr)
             return 1
+    if args.command == "voice":
+        return _voice(args.action)
     if args.command == "snapshot":
         return _snapshot()
     if args.command == "dashboard":
@@ -550,6 +556,36 @@ def _purge_test() -> int:
 
     purged = HistoryStore().purge_test_sessions()
     print(f"purged {len(purged)} test session(s) and all their data")
+    return 0
+
+
+def _voice(action: str) -> int:
+    """Oracle's optional local voice. A running server picks up an install on
+    its next status check; stop the worker there before removing."""
+    from duckterm.helpers import paths
+    from duckterm.voice.service import SIZE_NOTE, LocalVoice, VoiceError
+
+    voice = LocalVoice(paths.home() / "voice")
+    if action == "status":
+        print(json.dumps(voice.status(), indent=2))
+        return 0
+    if action == "remove":
+        voice.remove()
+        print("Removed Oracle's natural voice.")
+        return 0
+    print(f"Installing Oracle's natural voice ({SIZE_NOTE}, into {voice.root}).")
+    last = [""]
+
+    def report(step: str, done: float) -> None:
+        if step != last[0]:
+            print(f"  {done:4.0%}  {step}")
+            last[0] = step
+
+    try:
+        voice.install(report)
+    except VoiceError as exc:
+        print(f"duckterm: {exc}", file=sys.stderr)
+        return 1
     return 0
 
 

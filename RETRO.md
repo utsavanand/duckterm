@@ -1,5 +1,36 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — The slop check passed in worktrees without reading a file
+**Broke:** PR #161 failed CI on an existence-only test assert, while the same
+commit's local gate printed "slop-check: clean".
+**Cause:** `scripts/slop_check.py` skipped any path with a `.duckterm` part,
+matching against the absolute path. Every DuckTerm-managed worktree lives
+under `~/.duckterm/worktrees/`, so the check skipped every file there and
+passed.
+**Rule:** match skip rules against paths relative to the repo root. A check
+that finds nothing should be suspected until it has been seen to catch
+something; `tests/unit/test_slop_check_paths.py` now proves it reads a
+worktree.
+
+## 2026-09-29 — A neural voice that drops words it doesn't know
+**Broke:** in the first Kokoro trial without the GPL espeak fallback,
+"main-dev" was spoken as "main", and "duckterm", "qa" and "utsava.xyz"
+vanished from the audio with no error.
+**Cause:** misaki, Kokoro's English front end, drops out-of-dictionary words
+unless espeak is installed, and session names are mostly such words.
+**Rule:** anything spoken passes through `voice/names.py`, which keeps every
+word (known, pronounced, split into known halves, or spelled). The tests use
+the observed failures verbatim.
+
+Also: the first natural-voice build was 785 MB, mostly Python runtime (MLX,
+transformers), not the model. The owner turned it down. The same weights
+through ONNX Runtime are 303 MB and run on Intel too. Measure what the bulk
+actually is before quoting a size to the owner.
+
+Also: a test server given its own `DUCKTERM_HOME` still used the live
+`duckterm` tmux socket and could have adopted the owner's agents. Set
+`DUCKTERM_TMUX_SOCKET` as well for any second server on the machine.
+
 ## 2026-09-29 — A folder view should not duplicate its sidebar
 
 The first folder preview repeated the full session list already visible in the tree. Keep the approved surface to Chat and Artifacts, with name selection independent from chevron expansion. Preserve mounted terminals while browsing folders, use each artifact's producing session for the existing viewer, and keep folder chat history isolated. Rename every descendant conversation, recover JSON changes across DB commits, and reject answers that finish after the folder or its membership changes. Replay a pending operation at server startup before a deleted folder name can be recreated; lazy recovery can otherwise attach old history to the new folder. Verify these behaviors through the actual authenticated routes and browser flow.

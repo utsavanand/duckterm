@@ -1,9 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api, LocalVoiceStatus } from "./api";
 import { useRelay } from "./relay";
 import {
   announce,
   Announcer,
+  audioPlayer,
   browserSpeaker,
+  DEFAULT_NATURAL,
+  NATURAL_PREFIX,
+  naturalChoices,
+  naturalSpeaker,
   defaultVoice,
   hasQualityVoice,
   loadVoiceLevel,
@@ -40,6 +46,24 @@ export function useSpeechVoices(): VoiceChoice[] {
   return voices;
 }
 
+// The optional local Kokoro voice: its status, polled quickly while installing.
+export function useLocalVoice() {
+  const [status, setStatus] = useState<LocalVoiceStatus | null>(null);
+  const refresh = useCallback(() => {
+    api.voiceStatus().then(setStatus).catch(() => setStatus(null));
+  }, []);
+  useEffect(() => {
+    refresh();
+    const timer = setInterval(refresh, status?.state === "installing" ? 2000 : 60_000);
+    return () => clearInterval(timer);
+  }, [refresh, status?.state]);
+  return {
+    status,
+    install: () => { api.voiceInstall().then(setStatus).catch(() => refresh()); },
+    remove: () => { api.voiceRemove().then(setStatus).catch(() => refresh()); },
+  };
+}
+
 // Browsers refuse speech until the page has had a click or keypress, so after
 // a reload voice is on but silent. Say so instead of looking broken.
 function needsGesture(): boolean {
@@ -50,8 +74,25 @@ function needsGesture(): boolean {
 // Wires the pure diff and the announcer to live data: sessions from the
 // dashboard, notes from the relay (polled only while voice is on), and
 // keystrokes into a terminal, which hold announcements while the owner types.
-export function useVoice(sessions: VoiceSession[], speaker: Speaker = browserSpeaker()) {
+export function useVoice(sessions: VoiceSession[], injected?: Speaker) {
   const [level, setLevelState] = useState<VoiceLevel>(loadVoiceLevel);
+  const [fallbackReason, setFallbackReason] = useState<string | null>(null);
+  const local = useLocalVoice();
+  const chosenRef = useRef<string | null>(null);
+  const speaker = useMemo(() => {
+    if (injected) return injected;
+    const player = audioPlayer();
+    return naturalSpeaker({
+      fetchWav: api.voiceSay,
+      play: player.play,
+      stopPlayback: player.stop,
+      fallback: browserSpeaker(() => chosenRef.current),
+      chosen: () => chosenRef.current,
+      onFallback: setFallbackReason,
+    });
+    // Built once for the page's life; it reads the current choice through a ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [spoken, setSpoken] = useState<string | null>(null);
   const [paused, setPaused] = useState(() => level !== "off" && needsGesture());
   const relay = useRelay(level !== "off");
@@ -114,6 +155,7 @@ export function useVoice(sessions: VoiceSession[], speaker: Speaker = browserSpe
     if (next === "off") {
       announcer.mute();
       setSpoken(null);
+      void api.voiceStop().catch(() => {}); // the worker process goes when voice does
     } else if (level === "off") {
       void speaker.say("Voice announcements on");
     }
@@ -122,15 +164,32 @@ export function useVoice(sessions: VoiceSession[], speaker: Speaker = browserSpe
   const allVoices = useSpeechVoices();
   const [voiceName, setVoiceNameState] = useState<string | null>(loadVoiceName);
   const language = navigator.language || "en-US";
-  const voices = usableVoices(allVoices, language);
-  const selectedVoice = voices.find((v) => v.name === voiceName)?.name ?? defaultVoice(allVoices, language)?.name ?? null;
+  const natural = local.status?.state === "ready" ? naturalChoices(local.status.voices) : [];
+  const voices = [...natural, ...usableVoices(allVoices, language)];
+  // The stored choice if it's still available; otherwise a natural voice when
+  // installed, otherwise the best macOS voice.
+  const selectedVoice =
+    voices.find((v) => v.name === voiceName)?.name ??
+    (natural.length ? natural.find((v) => v.name === DEFAULT_NATURAL)?.name ?? natural[0].name : null) ??
+    defaultVoice(allVoices, language)?.name ??
+    null;
+  chosenRef.current = selectedVoice;
+  const naturalChosen = selectedVoice?.startsWith(NATURAL_PREFIX) ?? false;
+
+  // Starting the natural voice takes about 12 s, so load it before the first
+  // announcement rather than during it.
+  useEffect(() => {
+    if (level !== "off" && naturalChosen) void api.voiceWarm().catch(() => {});
+  }, [level, naturalChosen, selectedVoice]);
 
   return {
     level,
     setLevel,
     voices,
     selectedVoice,
-    qualityVoices: hasQualityVoice(allVoices, language),
+    qualityVoices: hasQualityVoice(allVoices, language) || natural.length > 0,
+    local,
+    fallbackReason: naturalChosen ? fallbackReason : null,
     setVoice: (name: string) => {
       saveVoiceName(name);
       setVoiceNameState(name);
@@ -165,9 +224,9 @@ export function VoicePicker({ voices, selected, qualityVoices, onSelect, onPrevi
             <div key={v.name} className="rd-voice-picker-row">
               <label>
                 <input type="radio" name="rd-voice-name" checked={v.name === selected} onChange={() => onSelect(v.name)} />
-                {v.name}
+                {v.label ?? v.name}
               </label>
-              <button type="button" className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Preview ${v.name}`} onClick={() => onPreview(v.name)}>
+              <button type="button" className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Preview ${v.label ?? v.name}`} onClick={() => onPreview(v.name)}>
                 Preview
               </button>
             </div>
@@ -177,6 +236,52 @@ export function VoicePicker({ voices, selected, qualityVoices, onSelect, onPrevi
       {!qualityVoices && (
         <p className="rd-voice-picker-hint">
           For a more natural voice, download an Enhanced or Premium voice for free: System Settings, Accessibility, Spoken Content, then the System voice menu, Manage Voices. Reload DuckTerm afterwards.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Natural voices are opt-in: say what they cost before anything downloads.
+export function NaturalVoicePanel({ status, fallbackReason, onInstall, onRemove }: {
+  status: LocalVoiceStatus | null;
+  fallbackReason: string | null;
+  onInstall: () => void;
+  onRemove: () => void;
+}) {
+  if (!status) return null;
+  return (
+    <div className="rd-voice-natural" aria-live="polite">
+      <div className="rd-voice-picker-label">Natural voices</div>
+      {status.state === "unsupported" && <p className="rd-voice-picker-hint">{status.reason}</p>}
+      {status.state === "absent" && (
+        <>
+          <p className="rd-voice-picker-hint">
+            Kokoro, an open-source voice that runs on this Mac. Nothing leaves the machine, and there is no per-announcement cost. The download is {status.size}.
+          </p>
+          <button type="button" className="rd-btn rd-btn-sm" onClick={onInstall}>Download natural voices ({status.size})</button>
+        </>
+      )}
+      {status.state === "installing" && (
+        <p className="rd-voice-picker-hint" role="status">
+          {status.step}… {Math.round(status.done * 100)}%
+        </p>
+      )}
+      {status.state === "failed" && (
+        <>
+          <p className="rd-voice-picker-hint">The download didn't finish: {status.reason}</p>
+          <button type="button" className="rd-btn rd-btn-sm" onClick={onInstall}>Try again</button>
+        </>
+      )}
+      {status.state === "ready" && (
+        <p className="rd-voice-picker-hint">
+          Installed. Natural voices are at the top of the list.{" "}
+          <button type="button" className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onRemove}>Remove</button>
+        </p>
+      )}
+      {fallbackReason && (
+        <p className="rd-voice-picker-hint" role="alert">
+          The natural voice couldn't speak ({fallbackReason}), so a macOS voice is speaking instead.
         </p>
       )}
     </div>
