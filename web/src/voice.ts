@@ -165,17 +165,22 @@ export class Announcer {
     this.speaker.stop();
   }
 
+  private async quiet(gen: number): Promise<void> {
+    while (this.now() - this.typingAt() < this.opts.typingQuietMs && gen === this.generation) {
+      await this.sleep(this.opts.pollMs);
+    }
+  }
+
   private async run(): Promise<void> {
     this.running = true;
     const gen = this.generation;
     try {
       while (this.queue.length && gen === this.generation) {
         await this.sleep(this.opts.gatherMs); // let a pile-up arrive, then speak it as one
-        while (this.now() - this.typingAt() < this.opts.typingQuietMs && gen === this.generation) {
-          await this.sleep(this.opts.pollMs);
-        }
         const batch = this.queue.splice(0);
         for (const line of phrases(batch)) {
+          // Typing can start mid-batch, so wait before every line, not once per batch.
+          await this.quiet(gen);
           if (gen !== this.generation) return;
           if (line.chime) await this.speaker.chime();
           if (gen !== this.generation) return;

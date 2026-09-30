@@ -156,3 +156,20 @@ it("stores the level and reads it back, defaulting to needs-you plus done", () =
   vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("blocked"); });
   expect(loadVoiceLevel()).toBe("done");
 });
+
+// From main-qa's PR #156 report: typing that starts during one line must hold the next.
+it("holds the next line when typing starts during the current one", async () => {
+  let clock = T0;
+  let typed = 0;
+  const saidAt: number[] = [];
+  const speaker: Speaker = {
+    say: async () => { saidAt.push(clock); if (saidAt.length === 1) typed = clock; },
+    chime: async () => {},
+    stop: () => {},
+  };
+  const a = new Announcer(speaker, () => typed, { gatherMs: 1500, typingQuietMs: 5000, pollMs: 500 }, async (ms) => { clock += ms; }, () => clock);
+  a.add([ann("needs", "architect"), ann("needs", "main-dev")]);
+  await settle();
+  expect(saidAt).toHaveLength(2);
+  expect(saidAt[1] - saidAt[0]).toBeGreaterThanOrEqual(5000);
+});
