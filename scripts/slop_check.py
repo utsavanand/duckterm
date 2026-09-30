@@ -36,7 +36,10 @@ def iter_files(suffixes: tuple[str, ...]) -> list[Path]:
     for p in ROOT.rglob("*"):
         if p.is_dir() or p.name in SKIP_FILES:
             continue
-        if any(part in SKIP_DIRS for part in p.parts):
+        # Relative parts: DuckTerm's own worktrees live under ~/.duckterm, and
+        # checking the absolute path skipped every file there, so the check
+        # passed without reading anything.
+        if any(part in SKIP_DIRS for part in p.relative_to(ROOT).parts):
             continue
         if p.suffix in suffixes:
             out.append(p)

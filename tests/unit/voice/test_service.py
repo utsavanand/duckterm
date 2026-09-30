@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 import platform
+import signal
 import sys
 import threading
 import time
@@ -179,7 +180,8 @@ def test_stop_reaps_the_worker(voice) -> None:
     voice.say("hello", "af_heart")
     worker = voice._worker
     voice.stop()
-    assert worker.poll() is not None
+    assert worker.poll() == -signal.SIGTERM  # terminated by stop(), not left running
+    assert voice._worker is None
 
 
 def test_worker_script_never_imports_into_the_server() -> None:

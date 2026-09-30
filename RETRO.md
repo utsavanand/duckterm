@@ -1,5 +1,17 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — The slop check passed in worktrees without reading a file
+**Broke:** PR #161 failed CI on an existence-only test assert, while the same
+commit's local gate printed "slop-check: clean".
+**Cause:** `scripts/slop_check.py` skipped any path with a `.duckterm` part,
+matching against the absolute path. Every DuckTerm-managed worktree lives
+under `~/.duckterm/worktrees/`, so the check skipped every file there and
+passed.
+**Rule:** match skip rules against paths relative to the repo root. A check
+that finds nothing should be suspected until it has been seen to catch
+something; `tests/unit/test_slop_check_paths.py` now proves it reads a
+worktree.
+
 ## 2026-09-29 — A neural voice that drops words it doesn't know
 **Broke:** in the first Kokoro trial without the GPL espeak fallback,
 "main-dev" was spoken as "main", and "duckterm", "qa" and "utsava.xyz"
