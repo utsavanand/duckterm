@@ -1,8 +1,9 @@
 import { ArchiveUndo, useArchiveRequests } from "./ArchiveUndo";
 import { SessionCard } from "./SessionCard";
 import { sessionFetch, sessionRef } from "./hostTransport";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
+import { FolderView } from "./FolderView";
 import { AgentTree } from "./AgentTree";
 import { api } from "./api";
 import { desktop } from "./desktop";
@@ -84,7 +85,12 @@ function Dashboard() {
   const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
   const relayOpen = useRelayCount();
   const defaultSelection = sessions.find(s => effectiveState(s, now) !== "archived")?.key ?? null;
-  const { selectedKey, selectSession: setSelectedKey } = useSessionSelection(sessions, defaultSelection, loadedHosts);
+  const { selectedKey, selectSession } = useSessionSelection(sessions, defaultSelection, loadedHosts);
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const setSelectedKey = useCallback((key: string | null) => {
+    setSelectedFolder(null);
+    selectSession(key);
+  }, [selectSession]);
   useEffect(() => {
     const select = (event: Event) => {
       const key = (event as CustomEvent<string>).detail;
@@ -264,7 +270,7 @@ function Dashboard() {
   );
 
   const mountedTerminalKeys = useTerminalCache(
-    terminalAgents.map(s => s.key), view === "terminal" ? selectedKey : null,
+    terminalAgents.map(s => s.key), view === "terminal" && selectedFolder === null ? selectedKey : null,
   );
   const mountedTerminals = terminalAgents.filter(s => mountedTerminalKeys.includes(s.key));
 
@@ -390,7 +396,7 @@ function Dashboard() {
           onClose={() => setGridFolder(null)}
         />
       ) : (
-        <div className={`rd-panels-3${sidePanels.collapsed.left ? " rd-agents-collapsed" : ""}${sidePanels.collapsed.right ? " rd-context-collapsed" : ""}`}>
+        <div className={`rd-panels-3${selectedFolder !== null ? " rd-folder-selected" : ""}${sidePanels.collapsed.left ? " rd-agents-collapsed" : ""}${sidePanels.collapsed.right ? " rd-context-collapsed" : ""}`}>
           <section className={`rd-agents${sidePanels.collapsed.left ? " rd-side-collapsed" : ""}`}>
             <div className="rd-panel-head">
               <span>Agents</span>
@@ -405,7 +411,11 @@ function Dashboard() {
                 sessions={agents}
                 now={now}
                 folders={folders}
-                selectedKey={selectedKey}
+                selectedKey={selectedFolder === null ? selectedKey : null}
+                selectedFolder={selectedFolder}
+                onOpenFolder={setSelectedFolder}
+                onFolderRenamed={(from, to) => setSelectedFolder(current => current === from ? to : current?.startsWith(from + "/") ? to + current.slice(from.length) : current)}
+                onFolderDeleted={path => setSelectedFolder(current => current === path || current?.startsWith(path + "/") ? null : current)}
                 onOpen={setSelectedKey}
                 onOpenInbox={(key) => { setSelectedKey(key); setView("inbox"); }}
                 onFoldersChanged={refreshFolders}
@@ -425,7 +435,8 @@ function Dashboard() {
             )}
           </section>
 
-          <section className="rd-terminal-pane">
+          {selectedFolder !== null && <FolderView key={selectedFolder} folder={selectedFolder} />}
+          <section className="rd-terminal-pane" style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-view-toggle">
               <button
                 className={view === "terminal" ? "active" : ""}
@@ -501,12 +512,12 @@ function Dashboard() {
                 className="rd-terminal-slot"
                 style={{
                   display:
-                    view === "terminal" && s.key === selectedKey
+                    selectedFolder === null && view === "terminal" && s.key === selectedKey
                       ? "flex"
                       : "none",
                 }}
               >
-                <Terminal sessionKey={s.key} active={view === "terminal" && s.key === selectedKey} theme={themeFor(s)} />
+                <Terminal sessionKey={s.key} active={selectedFolder === null && view === "terminal" && s.key === selectedKey} theme={themeFor(s)} />
               </div>
             ))}
             {view === "terminal" && selected && !selected.ptyOwned && !selected.worktreePath && (
@@ -521,7 +532,7 @@ function Dashboard() {
             )}
           </section>
 
-          <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`}>
+          <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`} style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-panel-head">
               <span>{selected ? selected.label : "Context"}</span>
               {selected && <SessionPin session={selected} onToggle={toggleSessionPin} label />}

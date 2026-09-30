@@ -19,6 +19,11 @@ Also: a test server given its own `DUCKTERM_HOME` still used the live
 `duckterm` tmux socket and could have adopted the owner's agents. Set
 `DUCKTERM_TMUX_SOCKET` as well for any second server on the machine.
 
+## 2026-09-29 — A folder view should not duplicate its sidebar
+
+The first folder preview repeated the full session list already visible in the tree. Keep the approved surface to Chat and Artifacts, with name selection independent from chevron expansion. Preserve mounted terminals while browsing folders, use each artifact's producing session for the existing viewer, and keep folder chat history isolated. Rename every descendant conversation, recover JSON changes across DB commits, and reject answers that finish after the folder or its membership changes. Replay a pending operation at server startup before a deleted folder name can be recreated; lazy recovery can otherwise attach old history to the new folder. Verify these behaviors through the actual authenticated routes and browser flow.
+
+
 ## 2026-09-29 — Preserve actionable server errors on reads
 
 Model discovery returned useful missing-CLI/sign-in guidance, but the shared GET helper replaced it with “503 Service Unavailable.” Parse string error messages for failed reads just as for writes; retain status fallback for malformed or non-JSON responses. Exercise the actual API wrapper and a failed catalog request followed by Retry, not only a mocked Error thrown into a component.
