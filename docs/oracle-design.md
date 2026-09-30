@@ -97,6 +97,42 @@ Nudges recorded before 2026-09-26 lack the IDs and count as no previous nudge.
 
 **Known limits.** Delivery is not proof the agent handled the mail.
 
+## Priority owner broadcasts
+
+The owner asked (2026-09-30) that broadcasts to a folder "should be
+prioritized and go into the chat windows of every agent". Architect's
+design, addendum 3 of "Design — Folder chat & artifacts": priority changes
+a message's standing, not how it's delivered, and never interrupts a turn.
+
+- **Owner only.** `POST /folders/:folder/broadcast` takes
+  `"priority": true`; only owner routes reach it, and the peer question API
+  rejects the field. Peers can't manufacture urgency for each other.
+- **Busy agents** get it at the next turn end: the Stop hook's notice pins
+  every open priority message, as ONE block newest first, ahead of the usual
+  reminder. It repeats at every turn end until the agent replies to it.
+  Reading it isn't enough. Broadcasts have no accept step, so a reply is the
+  acknowledgement.
+- **Idle agents** are reminded at once: the broadcast starts an Oracle pass
+  right away, and priority mail skips the 5-minute settle wait, though the
+  typing and empty-prompt checks still apply. The reminder quotes the
+  owner's words, which is safe because they're the owner's.
+- **Not swept while open.** Open priority messages are exempt from the
+  7-day cleanup. `DELETE /broadcasts/:request_key` (owner) cancels every
+  copy and retires the pins.
+- **Status per recipient**, from `GET /broadcasts/:request_key`: delivered,
+  pending next turn, inbox only, acknowledged or cancelled. Delivered means
+  the text reached the agent: the Stop hook returned it, or Oracle's
+  reminder was submitted. A reminder left stuck in the prompt, or one that
+  failed to paste, stays "pending next turn". The chips are ui-dev's.
+- **Retries.** A plain broadcast's `request_key` stores the same content
+  hash as before priority existed, so a retry from an older client still
+  matches. Priority is part of the hash, so reusing a key with a different
+  priority is a 409.
+- **Capability.** `priority_delivery` is a harness flag. Claude Code
+  declares it, since its turn-end notice is proven; Codex and Copilot don't
+  yet. Their copies show "inbox only" and get no pin or fast path, and are
+  never shown as delivered (contracts R1).
+
 ## Prerequisite fix: idle is not waiting
 
 Claude Code sends a Notification about 60 seconds after a turn ends with
