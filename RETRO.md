@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — Polling tests must update the server fixture after a mutation
+**Broke:** The restart test lost its pending message when a two-second refresh
+ran under full-gate load. The POST mock returned queued, but the GET mock kept
+returning the old ready state.
+**Fix:** The POST fixture also updates the subsequent GET response, matching the
+server’s durable restart behavior. The visible pending and cancel assertions stay.
+
 ## 2026-09-30 — Folder messages must outlive the inbox cleanup window
 **Broke:** Folder chat answered questions but could not address a session. Reusing
 inbox records without saving their replies would erase conversation content
