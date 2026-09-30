@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import builtins
 import hashlib
 import os
 import sqlite3
@@ -99,6 +100,21 @@ class ArtifactStore:
                 f"SELECT {FIELDS} FROM artifacts WHERE session_key = ? "
                 "ORDER BY updated_at DESC, id",
                 (session_key,),
+            )
+        ]
+
+    def list_folder(self, folder: str, limit: int = 500) -> builtins.list[dict[str, Any]]:
+        prefix = folder + "/"
+        fields = ", ".join("a." + field.strip() for field in FIELDS.split(","))
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                f"SELECT {fields}, COALESCE(NULLIF(s.name, ''), s.session_key) AS session_name, "
+                "s.state AS session_state, s.grp AS folder FROM artifacts a "
+                "JOIN sessions s ON s.session_key = a.session_key "
+                "WHERE s.grp = ? OR substr(s.grp, 1, ?) = ? "
+                "ORDER BY a.updated_at DESC, a.id LIMIT ?",
+                (folder, len(prefix), prefix, limit),
             )
         ]
 

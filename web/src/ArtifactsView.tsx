@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useArtifactExpansion } from "./useArtifactExpansion";
 import DOMPurify from "dompurify";
-import { api, Artifact, ArtifactContent } from "./api";
+import { api, Artifact, ArtifactContent, FolderArtifact } from "./api";
 import { html } from "./render";
 import "./artifacts.css";
 import { ArtifactFeedback, ArtifactSelection, FeedbackTarget } from "./ArtifactFeedback";
@@ -85,20 +85,33 @@ function ArtifactPreview({ artifact, onSelect, onEscape }: { artifact: ArtifactC
   return <div className="rd-artifact-empty"><h3>Download to view this file</h3><p>A preview is not available for this format.</p></div>;
 }
 
-export function ArtifactsView({ sessionKey, sessionName }: { sessionKey: string; sessionName: string }) {
+type ArtifactScope = { sessionKey: string; sessionName: string; folder?: never } | { folder: string; sessionKey?: never; sessionName?: never };
+export function ArtifactsView({ sessionKey, sessionName, folder }: ArtifactScope) {
   const [feedback, setFeedback] = useState<FeedbackTarget | null>(null);
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const feedbackButton = useRef<HTMLButtonElement>(null);
-  const [files, setFiles] = useState<Artifact[] | null>(null);
+  const [files, setFiles] = useState<(Artifact | FolderArtifact)[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [content, setContent] = useState<ArtifactContent | null>(null);
   const [error, setError] = useState("");
   const [previewError, setPreviewError] = useState("");
   const [retry, setRetry] = useState(0);
+  const [truncated, setTruncated] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [downloadUrl, setDownloadUrl] = useState("");
   const selected = files?.find((file) => file.id === selectedId) ?? files?.[0];
-  const { expanded, viewer, back, expand, close } = useArtifactExpansion(selected ? `${sessionKey}:${selected.id}` : undefined);
+  const producerKey = folder !== undefined ? selected?.session_key ?? "" : sessionKey ?? "";
+  const producerName = selected && "session_name" in selected && typeof selected.session_name === "string" ? selected.session_name : sessionName ?? "the agent";
+  const openFrom = useRef<HTMLElement | null>(null);
+  const [openRequest, setOpenRequest] = useState(0);
+  const { expanded, viewer, back, expand, close } = useArtifactExpansion(selected ? `${producerKey}:${selected.id}` : undefined);
+  useEffect(() => {
+    if (openFrom.current && selected) {
+      const button = openFrom.current;
+      openFrom.current = null;
+      expand(button);
+    }
+  }, [selected?.id, openRequest, expand, selected]);
   useEffect(() => {
     if (!expanded) return;
     const escape = (event: KeyboardEvent) => {
@@ -114,8 +127,8 @@ export function ArtifactsView({ sessionKey, sessionName }: { sessionKey: string;
     let timer: ReturnType<typeof setTimeout>;
     async function refresh() {
       try {
-        const result = await api.artifacts(sessionKey);
-        if (!cancelled) { setFiles(result.artifacts); setError(""); }
+        const result = await (folder !== undefined ? api.folderArtifacts(folder) : api.artifacts(sessionKey!));
+        if (!cancelled) { setFiles(result.artifacts); setTruncated("truncated" in result && result.truncated === true); setError(""); }
       } catch (cause) {
         if (!cancelled) setError((cause as Error).message);
       } finally {
@@ -124,19 +137,19 @@ export function ArtifactsView({ sessionKey, sessionName }: { sessionKey: string;
     }
     void refresh();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [sessionKey, retry]);
+  }, [sessionKey, folder, retry]);
 
   useEffect(() => {
     let cancelled = false;
     setContent(null);
     setPreviewError("");
     if (selected?.id) {
-      void api.artifact(sessionKey, selected.id).then((result) => {
+      void api.artifact(producerKey, selected.id).then((result) => {
         if (!cancelled) setContent(result.artifact);
       }).catch((cause: Error) => { if (!cancelled) setPreviewError(cause.message); });
     }
     return () => { cancelled = true; };
-  }, [sessionKey, selected?.id, selected?.sha256, selected?.updated_at, retry]);
+  }, [producerKey, selected?.id, selected?.sha256, selected?.updated_at, retry]);
 
   useEffect(() => {
     setDownloadUrl("");
@@ -151,24 +164,28 @@ export function ArtifactsView({ sessionKey, sessionName }: { sessionKey: string;
     if (!selected || removing || !window.confirm(`Remove the saved copy of “${selected.title}”? The original file will stay intact.`)) return;
     setRemoving(true);
     try {
-      await api.removeArtifact(sessionKey, selected.id);
+      await api.removeArtifact(producerKey, selected.id);
       setFeedback(null);
       setFiles((current) => current?.filter((file) => file.id !== selected.id) ?? []);
     } catch (cause) { setError((cause as Error).message); }
     finally { setRemoving(false); }
   }
 
-  return <section className="rd-artifacts" aria-label="Session artifacts">
-    <header className="rd-artifacts-heading"><div><h2>Artifacts</h2><p>Saved outputs from {sessionName}</p></div><button className="rd-btn rd-btn-sm" onClick={() => setRetry((value) => value + 1)}>Refresh</button></header>
+  return <section className={`rd-artifacts${folder !== undefined ? " rd-folder-artifacts" : ""}`} aria-label={folder !== undefined ? "Folder artifacts" : "Session artifacts"}>
+    <header className="rd-artifacts-heading"><div><h2>Artifacts</h2><p>{folder !== undefined ? "Saved files from this folder and subfolders, including archived sessions." : `Saved outputs from ${sessionName}`}</p></div><button className="rd-btn rd-btn-sm" onClick={() => setRetry((value) => value + 1)}>Refresh</button></header>
+    {truncated && <p className="rd-artifact-note">Showing the 500 most recently updated files. Open a subfolder to narrow the list.</p>}
     {error && <p className="rd-artifact-error" role="alert">{error}</p>}
     {files === null && !error && <p className="rd-artifact-note" role="status">Loading artifacts…</p>}
-    {files?.length === 0 && <div className="rd-artifact-empty"><h3>Your outputs will appear here</h3><p>When this agent registers a document, mockup, image, or exported file, it is saved here for you to preview and download.</p><p>Local to this Mac. Nothing is published or shared.</p></div>}
+    {files?.length === 0 && <div className="rd-artifact-empty"><h3>Your outputs will appear here</h3><p>{folder !== undefined ? "Files registered by this folder’s sessions will appear here." : "When this agent registers a document, mockup, image, or exported file, it is saved here for you to preview and download."}</p><p>Local to this Mac. Nothing is published or shared.</p></div>}
     {!!files?.length && <div className="rd-artifact-layout">
-      <nav className="rd-artifact-list" aria-label="Saved artifacts">{files.map((file) => <button key={file.id} className={`rd-artifact-item${file.id === selected?.id ? " selected" : ""}`} aria-pressed={file.id === selected?.id} onClick={() => { setSelectedId(file.id); setFeedback(null); setFeedbackStatus(""); }}>
+      {folder !== undefined ? <table className="rd-folder-files"><thead><tr><th>Artifact</th><th>Producing session</th><th>Type</th><th>Size</th><th>Updated</th></tr></thead><tbody>{files.map(file => <tr key={file.id}>
+        <td><button className="rd-artifact-title-button" onClick={event => { openFrom.current = event.currentTarget; setSelectedId(file.id); setOpenRequest(n => n + 1); setFeedback(null); setFeedbackStatus(""); }}>{file.title}</button>{"folder" in file && <small>{file.folder}</small>}</td>
+        <td>{"session_name" in file ? file.session_name : file.session_key}{"session_state" in file && <small>{file.session_state}</small>}</td><td>{label(file)}</td><td>{size(file.size)}</td><td>{new Date(file.updated_at).toLocaleString()}</td>
+      </tr>)}</tbody></table> : <nav className="rd-artifact-list" aria-label="Saved artifacts">{files.map((file) => <button key={file.id} className={`rd-artifact-item${file.id === selected?.id ? " selected" : ""}`} aria-pressed={file.id === selected?.id} onClick={() => { setSelectedId(file.id); setFeedback(null); setFeedbackStatus(""); }}>
         <span className="rd-artifact-type">{label(file)}</span><strong>{file.title}</strong><small>{file.source_path.split("/").pop()} · {size(file.size)}</small><small>{new Date(file.updated_at).toLocaleString()}</small>
-      </button>)}</nav>
-      {selected && <div ref={viewer} className={`rd-artifact-viewer${expanded ? " rd-artifact-expanded" : ""}`} role={expanded ? "dialog" : undefined} aria-modal={expanded ? true : undefined} aria-label={expanded ? selected.title : undefined}><header className="rd-artifact-detail">
-        {expanded && <button ref={back} className="rd-btn rd-btn-sm rd-artifact-back" onClick={close}>← Back to sessions</button>}
+      </button>)}</nav>}
+      {selected && <div ref={viewer} style={folder !== undefined && !expanded ? { display: "none" } : undefined} className={`rd-artifact-viewer${expanded ? " rd-artifact-expanded" : ""}`} role={expanded ? "dialog" : undefined} aria-modal={expanded ? true : undefined} aria-label={expanded ? selected.title : undefined}><header className="rd-artifact-detail">
+        {expanded && <button ref={back} className="rd-btn rd-btn-sm rd-artifact-back" onClick={close}>← Back to {folder !== undefined ? "folder" : "sessions"}</button>}
         <div className="rd-artifact-title"><h3><button className="rd-artifact-title-button" aria-label={`Expand ${selected.title}`} disabled={expanded} onClick={event => expand(event.currentTarget)}>{selected.title}</button></h3><p className="rd-artifact-path">{selected.source_path}</p></div><div className="rd-artifact-actions">
         <button hidden={expanded} className="rd-btn rd-btn-sm" onClick={event => expand(event.currentTarget)}>Expand</button>
         <button ref={feedbackButton} className="rd-btn rd-btn-sm" disabled={!visibleContent} onClick={event => {
@@ -179,11 +196,11 @@ export function ArtifactsView({ sessionKey, sessionName }: { sessionKey: string;
         {downloadUrl && visibleContent && <a className="rd-btn rd-btn-sm" href={downloadUrl} download={selected.source_path.split("/").pop() || "artifact"}>Download</a>}
         {!expanded && <button className="rd-btn rd-btn-sm" disabled={removing} onClick={() => void remove()}>{removing ? "Removing…" : "Remove"}</button>}
       </div></header>
-      {visibleContent?.media_type.startsWith("text/") && <p className="rd-artifact-note">Highlight text to send feedback to {sessionName}.</p>}
+      {visibleContent?.media_type.startsWith("text/") && <p className="rd-artifact-note">Highlight text to send feedback to {producerName}.</p>}
       {feedbackStatus && <p className="rd-artifact-note" role="status">{feedbackStatus}</p>}
       {previewError ? <p role="alert">Could not load the saved copy: {previewError}</p> : visibleContent ? <ArtifactPreview key={`${visibleContent.id}:${visibleContent.sha256}`} artifact={visibleContent} onEscape={() => { if (feedback) window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); else if (expanded) close(); }} onSelect={selection => { if (!feedback) { setFeedback({ artifact: visibleContent, ...selection }); setFeedbackStatus(""); } }} /> : <p role="status">Loading preview…</p>}
       <p className="rd-artifact-note">{selected.media_type === "text/html" ? "Saved HTML preview · Scripts and external resources are disabled." : "Saved copy · Available even if the original file moves."}</p>
-    {feedback && <ArtifactFeedback key={`feedback:${feedback.artifact.id}:${feedback.artifact.sha256}`} sessionKey={sessionKey} sessionName={sessionName} target={feedback} onClose={() => { setFeedback(null); feedbackButton.current?.focus(); }} onSent={() => { setFeedback(null); setFeedbackStatus("Sent to the agent"); feedbackButton.current?.focus(); }} />}
+    {feedback && <ArtifactFeedback key={`feedback:${feedback.artifact.id}:${feedback.artifact.sha256}`} sessionKey={producerKey} sessionName={producerName} target={feedback} onClose={() => { setFeedback(null); feedbackButton.current?.focus(); }} onSent={() => { setFeedback(null); setFeedbackStatus("Sent to the agent"); feedbackButton.current?.focus(); }} />}
       </div>}
     </div>}
   </section>;
