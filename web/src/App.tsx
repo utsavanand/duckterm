@@ -53,6 +53,8 @@ import { useSidebarDensity } from "./useSidebarDensity";
 import { useFolders } from "./useFolders";
 import "./sidebarDensity.css";
 import { useVoice, VoiceMenu, VoicePausedPill, VoiceToast } from "./VoiceControl";
+import { COMPLETION_SETTLE_MS } from "./voice";
+import { useAttended } from "./useAttended";
 
 function useNow(intervalMs: number): number {
   const [now, setNow] = useState(Date.now());
@@ -240,7 +242,7 @@ function Dashboard() {
           key: s.key,
           label: s.label,
           group: s.group,
-          state: effectiveState(s, now),
+          state: effectiveState(s, now, COMPLETION_SETTLE_MS),
           waitingSince: s.waitingSince,
           waitingCause: s.waitingCause,
         }))
@@ -260,6 +262,7 @@ function Dashboard() {
   }
 
   const selected = sessions.find((s) => s.key === selectedKey) ?? null;
+  useAttended(selected?.key ?? null, !!selected?.attentionSince);
   const forkSession = sessions.find((s) => s.key === forkKey) ?? null;
   // Grid membership includes every owned PTY; the single-session view keeps
   // only recently visited terminals mounted so hidden output stays bounded.
