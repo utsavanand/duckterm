@@ -15,6 +15,9 @@
 .rd-header-notifications { padding: 8px 10px; font-size: 13px; }
 .rd-header-notifications label { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .rd-header-notifications input { accent-color: var(--brand-green); }
+/* A select is too wide to share the row with its label, so it goes below at full width. */
+.rd-header-notifications label:has(> select) { display: grid; gap: 6px; justify-content: stretch; }
+.rd-header-notifications label > select { width: 100%; padding: 4px 24px 4px 8px; }
 .rd-header-notifications p { margin: 5px 20px 0 0; font-size: 11px; color: var(--text-soft); line-height: 1.5; }
 .rd-header-menus :is(button, select, input):focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
 @media (max-width: 650px) {

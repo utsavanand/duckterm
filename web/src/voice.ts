@@ -35,58 +35,31 @@ export function saveVoiceLevel(level: VoiceLevel): void {
 }
 
 // ── Choosing a voice ──
-// The owner's Mac had 41 English voices and no Enhanced or Premium one, so the
-// browser's first pick sounded robotic (2026-09-29). Prefer quality, let the
-// owner preview and choose, and say where better voices come from.
+// Natural (Kokoro) voices only. The owner turned the macOS voices down four
+// times ("Remove existing Mac voices from the options. They suck.", 2026-09-30),
+// so they are neither offered nor used as a fallback.
 
-// name is what gets stored; label, when set, is what the picker shows.
-export type VoiceChoice = { name: string; lang: string; default?: boolean; label?: string };
+// name is what gets stored ("kokoro:<id>"); label is what the picker shows.
+export type VoiceChoice = { name: string; label: string };
 
-// Kokoro voices are stored as "kokoro:<id>" next to macOS voice names.
 export const NATURAL_PREFIX = "kokoro:";
 export const DEFAULT_NATURAL = `${NATURAL_PREFIX}af_heart`;
 
 export function naturalChoices(voices: { id: string; label: string; accent: string }[]): VoiceChoice[] {
-  return voices.map((v) => ({ name: NATURAL_PREFIX + v.id, lang: "en-US", label: `${v.label} (natural, ${v.accent})` }));
+  return voices.map((v) => ({ name: NATURAL_PREFIX + v.id, label: `${v.label} (${v.accent})` }));
 }
 
-const VOICE_NAME_KEY = "rd.voice.name";
-
-// macOS sound-effect voices: fine as jokes, never as announcements.
-const NOVELTY = new Set([
-  "Albert", "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos", "Good News", "Jester",
-  "Organ", "Pipe Organ", "Superstar", "Trinoids", "Whisper", "Wobble", "Zarvox",
-]);
-
-export function voiceQuality(name: string): number {
-  if (/premium/i.test(name)) return 2;
-  if (/enhanced/i.test(name)) return 1;
-  return 0;
-}
-
-// Voices in the owner's language, best first. Chrome names macOS voices like
-// "Bells (English (United States))", so novelty names match on the first part.
-export function usableVoices<V extends VoiceChoice>(voices: V[], language: string): V[] {
-  const lang = language.toLowerCase().split(/[-_]/)[0];
-  return voices
-    .filter((v) => v.lang.toLowerCase().replace("_", "-").split("-")[0] === lang)
-    .filter((v) => !NOVELTY.has(v.name.split(" (")[0]))
-    .sort((a, b) => voiceQuality(b.name) - voiceQuality(a.name) || a.name.localeCompare(b.name));
-}
-
-export function defaultVoice<V extends VoiceChoice>(voices: V[], language: string): V | undefined {
-  const usable = usableVoices(voices, language);
+// The stored choice if it's installed, else Heart (US), the owner's pick.
+export function chosenVoice(voices: VoiceChoice[], stored: string | null): string | null {
   return (
-    usable.find((v) => voiceQuality(v.name) > 0) ??
-    usable.find((v) => v.name.split(" (")[0] === "Samantha") ??
-    usable.find((v) => v.default) ??
-    usable[0]
+    voices.find((v) => v.name === stored)?.name ??
+    voices.find((v) => v.name === DEFAULT_NATURAL)?.name ??
+    voices[0]?.name ??
+    null
   );
 }
 
-export function hasQualityVoice(voices: VoiceChoice[], language: string): boolean {
-  return usableVoices(voices, language).some((v) => voiceQuality(v.name) > 0);
-}
+const VOICE_NAME_KEY = "rd.voice.name";
 
 export function loadVoiceName(): string | null {
   try {
@@ -276,82 +249,63 @@ export class Announcer {
   }
 }
 
-// The browser's own speech and a short two-note chime. Nothing leaves the
-// machine. chosen() names the owner's voice; null means the best available.
-export function browserSpeaker(chosen: () => string | null = loadVoiceName): Speaker {
+// A short two-note chime from Web Audio: before approvals, and on its own
+// when the natural voice can't speak.
+export function chimePlayer(): () => Promise<void> {
   let audio: AudioContext | null = null;
-  return {
-    say: (text, voiceName) =>
-      new Promise<boolean>((resolve) => {
-        if (!("speechSynthesis" in window)) return resolve(true);
-        const u = new SpeechSynthesisUtterance(text);
-        const voices = window.speechSynthesis.getVoices?.() ?? [];
-        const wanted = voiceName ?? chosen();
-        const voice = voices.find((v) => v.name === wanted) ?? defaultVoice(voices, navigator.language);
-        if (voice) {
-          u.voice = voice;
-          u.lang = voice.lang;
-        }
-        u.onend = () => resolve(true);
-        u.onerror = (e) => resolve(e.error !== "not-allowed");
-        window.speechSynthesis.speak(u);
-      }),
-    chime: async () => {
-      const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!Ctx) return;
-      audio ??= new Ctx();
-      if (audio.state === "suspended") await audio.resume().catch(() => {});
-      const start = audio.currentTime;
-      for (const [i, freq] of [660, 880].entries()) {
-        const osc = audio.createOscillator();
-        const gain = audio.createGain();
-        osc.type = "sine";
-        osc.frequency.value = freq;
-        const t = start + i * 0.14;
-        gain.gain.setValueAtTime(0.0001, t);
-        gain.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
-        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
-        osc.connect(gain).connect(audio.destination);
-        osc.start(t);
-        osc.stop(t + 0.14);
-      }
-      await new Promise((r) => setTimeout(r, 350));
-    },
-    stop: () => {
-      if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-    },
+  return async () => {
+    const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!Ctx) return;
+    audio ??= new Ctx();
+    if (audio.state === "suspended") await audio.resume().catch(() => {});
+    const start = audio.currentTime;
+    for (const [i, freq] of [660, 880].entries()) {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const t = start + i * 0.14;
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.12, t + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(t);
+      osc.stop(t + 0.14);
+    }
+    await new Promise((r) => setTimeout(r, 350));
   };
 }
 
-// Speaks through Oracle's local Kokoro voice when one is chosen, and falls back
-// to the best macOS voice when it can't (not installed, worker failed, timed
-// out), so voice never goes silent. onFallback says why, for Settings.
+// Speaks through Oracle's local Kokoro voice. When it can't (worker failed,
+// timed out, not installed), it chimes instead and reports why; the owner
+// asked for no macOS voice, even as a fallback (2026-09-30). onFallback's
+// reason shows in the header; null clears it.
 export function naturalSpeaker(opts: {
   fetchWav: (text: string, voice: string) => Promise<Blob>;
   play: (wav: Blob) => Promise<boolean>;
   stopPlayback: () => void;
-  fallback: Speaker;
+  chime: () => Promise<void>;
   chosen: () => string | null;
   onFallback: (reason: string | null) => void;
 }): Speaker {
   return {
     say: async (text, voiceName) => {
       const name = voiceName ?? opts.chosen();
-      if (!name?.startsWith(NATURAL_PREFIX)) return opts.fallback.say(text, voiceName);
       try {
+        if (!name?.startsWith(NATURAL_PREFIX)) throw new Error("no natural voice is installed");
         const spoke = await opts.play(await opts.fetchWav(text, name.slice(NATURAL_PREFIX.length)));
         opts.onFallback(null);
         return spoke;
       } catch (e) {
-        opts.onFallback((e as Error).message || "the natural voice failed");
-        return opts.fallback.say(text); // no name: the best macOS voice
+        const reason = (e as Error).message || "the natural voice failed";
+        console.warn(`[duckterm] voice: couldn't say "${text}": ${reason}`);
+        opts.onFallback(reason);
+        await opts.chime();
+        return true;
       }
     },
-    chime: opts.fallback.chime,
-    stop: () => {
-      opts.stopPlayback();
-      opts.fallback.stop();
-    },
+    chime: opts.chime,
+    stop: opts.stopPlayback,
   };
 }
 

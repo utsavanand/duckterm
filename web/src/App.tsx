@@ -52,7 +52,7 @@ import { useTheme } from "./useTheme";
 import { useSidebarDensity } from "./useSidebarDensity";
 import { useFolders } from "./useFolders";
 import "./sidebarDensity.css";
-import { useVoice, VoiceMenu, VoicePausedPill, VoiceToast } from "./VoiceControl";
+import { useVoice, VoiceFallbackPill, VoiceMenu, VoicePausedPill, VoiceToast } from "./VoiceControl";
 import { COMPLETION_SETTLE_MS } from "./voice";
 import { useAttended } from "./useAttended";
 
@@ -352,8 +352,9 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <VoiceMenu level={voice.level} onLevel={voice.setLevel} />
-        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} voiceLevel={voice.level} onVoiceLevel={voice.setLevel} voice={{ voices: voice.voices, selected: voice.selectedVoice, qualityVoices: voice.qualityVoices, onSelect: voice.setVoice, onPreview: voice.preview, local: voice.local.status, fallbackReason: voice.fallbackReason, onInstall: voice.local.install, onRemove: voice.local.remove }} onAction={(action) => {
+        <VoiceMenu level={voice.level} ready={voice.ready} onLevel={voice.setLevel} />
+        {voice.fallbackReason && <VoiceFallbackPill reason={voice.fallbackReason} />}
+        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} voiceLevel={voice.level} onVoiceLevel={voice.setLevel} voice={{ voices: voice.voices, selected: voice.selectedVoice, ready: voice.ready, onSelect: voice.setVoice, onPreview: voice.preview, local: voice.local.status, fallbackReason: voice.fallbackReason, onInstall: voice.local.install, onRemove: voice.local.remove }} onAction={(action) => {
           if (action === "launch") setLaunchGroup(undefined);
           setModal(action);
         }} />
