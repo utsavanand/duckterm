@@ -347,6 +347,7 @@ class Server:
         self._transfer_sources: set[str] = set()
         self._transfer_launches: set[str] = set()
         self.history = history if history is not None else HistoryStore()
+        self.history.folder_chats.recover()
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
         self.snapshots = SnapshotManager(self.history)

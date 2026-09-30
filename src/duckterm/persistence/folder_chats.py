@@ -88,6 +88,12 @@ class FolderChats:
             self._save(data)
         return data
 
+    def recover(self) -> None:
+        # Run before serving requests, so recreating a deleted name cannot make
+        # an unfinished deletion look like a rolled-back DB transaction.
+        with _LOCK:
+            self._load()
+
     def snapshot(self, folder: str) -> tuple[str, list[dict[str, Any]]]:
         with _LOCK:
             data = self._load()

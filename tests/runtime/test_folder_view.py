@@ -163,3 +163,17 @@ def test_corrupt_history_degrades_to_empty_and_keeps_recovery_copy(app):
     for folder in ["../a", "a/../ab", "a//child"]:
         app.history.create_folder(folder)
         assert req(app, "POST", "/fleet/ask", {"folder": folder, "question": "x"})[0] == 400
+
+
+def test_startup_recovers_committed_delete_before_name_is_recreated(app):
+    chats = app.history.folder_chats
+    identity, _ = chats.snapshot("a")
+    chats.append("a", identity, "old private question", "old answer", 1)
+    data = json.loads(chats.path.read_text())
+    data["pending"] = {"old": "a", "new": None}
+    chats._save(data)
+    app.history.delete_folder("a")
+    # Restart after the DB commit but before JSON completion.
+    restarted = Server(history=app.history)
+    restarted.history.create_folder("a")
+    assert restarted.history.folder_chats.snapshot("a")[1] == []
