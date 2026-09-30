@@ -278,6 +278,8 @@ _ROUTES: list[Route] = [
           **_mid("/connectors/", "/enable")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._disable_connector(w, seg),
           **_mid("/connectors/", "/disable")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._layout(w, h, seg, "GET", b), prefix="/layouts/"),
+    Route("PUT", "", lambda s, r, w, h, b, seg: s._layout(w, h, seg, "PUT", b), prefix="/layouts/"),
     # ── left-panel folders ──
     Route("GET", "/session-inbox-counts", lambda s, r, w, h, b, seg: s._inbox_counts(w, h)),
     Route("GET", "/folders", lambda s, r, w, h, b, seg: s._list_folders(w)),
@@ -356,6 +358,7 @@ class Server:
         self._transfer_launches: set[str] = set()
         self.history = history if history is not None else HistoryStore()
         self.history.folder_chats.recover()
+        self.history.layouts.recover()
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
         self.snapshots = SnapshotManager(self.history)
@@ -859,6 +862,40 @@ class Server:
             return
         messages = await asyncio.to_thread(self._session_messages, session_key)
         await _write_json(writer, 200, {"messages": messages})
+
+    async def _layout(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        surface: str,
+        method: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        surface = urllib.parse.unquote(surface)
+        try:
+            if method == "GET":
+                result = self.history.layouts.get(surface)
+            else:
+                if len(body) > 16384:
+                    await _write_json(writer, 413, {"error": "Layout is too large"})
+                    return
+                req = json.loads(body)
+                if not isinstance(req, dict) or set(req) != {"instances", "revision"}:
+                    raise ValueError("Expected instances and revision")
+                result = self.history.layouts.put(surface, req["instances"], req["revision"])
+        except FileExistsError as exc:
+            await _write_json(writer, 409, {"error": str(exc)})
+            return
+        except KeyError:
+            await _write_json(writer, 404, {"error": "Folder no longer exists"})
+            return
+        except (ValueError, TypeError, UnicodeDecodeError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
 
     async def _folder_view(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], folder: str, view: str
@@ -2758,7 +2795,17 @@ class Server:
             writer,
             200,
             {
-                "notes": self.relay.notes[-200:],
+                "notes": [
+                    {
+                        **note,
+                        "urgency": (
+                            "approval"
+                            if note["kind"] == "approval"
+                            else note.get("urgency", "blocked")
+                        ),
+                    }
+                    for note in self.relay.notes[-200:]
+                ],
                 "rules": self.relay.rules,
                 "open": len(self.relay.needs_you()),
             },
@@ -3377,7 +3424,13 @@ class Server:
 
     async def _delete_folder(self, writer: asyncio.StreamWriter, name: str) -> None:
         folder = urllib.parse.unquote(name)
-        self.history.folder_chats.change(folder, None, lambda: self.history.delete_folder(folder))
+        self.history.layouts.change(
+            folder,
+            None,
+            lambda: self.history.folder_chats.change(
+                folder, None, lambda: self.history.delete_folder(folder)
+            ),
+        )
         await _write_json(writer, 200, {"deleted": urllib.parse.unquote(name)})
 
     async def _move_folder(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
@@ -3405,8 +3458,12 @@ class Server:
             await _write_json(writer, 200, {"moved": old, "to": new})
             return
         try:
-            moved = self.history.folder_chats.change(
-                old, new, lambda: self.history.move_folder(old, new)
+            moved = self.history.layouts.change(
+                old,
+                new,
+                lambda: self.history.folder_chats.change(
+                    old, new, lambda: self.history.move_folder(old, new)
+                ),
             )
         except ValueError as e:
             await _write_json(writer, 400, {"error": str(e)})

@@ -1,0 +1,44 @@
+.rd-tower.rd-tower-widgets { flex-direction:column; overflow:hidden }
+.rd-tower-widgets > .rd-tower-bar { position:static; flex:none; padding:14px 20px; margin:0; border-bottom:1px solid var(--border) }
+.rd-tower-columns { display:grid; grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); flex:1; min-height:0 }
+.rd-tower-widgets .rd-tower-oracle { width:auto; height:auto; border-left:0; border-right:1px solid var(--border); border-top:0; padding:14px 16px 8px; min-width:0 }
+.rd-tower-widgets .rd-oracle-head { padding:10px 12px 15px; border:0; flex-wrap:wrap }
+.rd-tower-widgets .rd-oracle-title { font-size:22px; font-weight:550 }
+.rd-tower-widgets .rd-oracle-log { padding:18px 12px }
+.rd-tower-widgets .rd-oracle-suggestions { flex-direction:row; flex-wrap:wrap; gap:8px }
+.rd-tower-widgets .rd-oracle-suggestion { font-size:11px }
+.rd-tower-widgets .rd-tower-scroll { padding:20px 22px 30px; overflow:auto }
+.rd-teams-title { font-size:13px; font-weight:550; display:flex; gap:12px; justify-content:space-between; margin:0 0 12px }
+.rd-teams-title small { font-size:11px; font-weight:400; color:var(--text-soft) }
+.rd-tower-widgets .rd-tower-teams { display:flex; gap:10px; overflow-x:auto; margin-bottom:20px; padding-bottom:8px }
+.rd-tower-widgets .rd-tower-team { flex:1 0 auto; width:max-content; min-width:160px; border-radius:8px }
+.rd-tower-widgets .rd-tower-team-head { padding:8px 10px 0; border:0; font-size:11px; justify-content:space-between }
+.rd-tower-widgets .rd-tower-team-name { font-weight:500 }
+.rd-tower-widgets .rd-tower-team-head small { color:var(--text-soft) }
+.rd-tower-widgets .rd-tower-field { display:flex; gap:4px; background:transparent; padding:8px }
+.rd-tower-widgets .rd-tower-duck { position:static; flex:none; width:52px; margin:0 }
+.rd-tower-widgets .rd-tower-duck-body { width:28px; height:30px }
+.rd-tower-widgets .rd-tower-duck-name { font-size:9px; max-width:52px }
+.rd-tower-widgets .rd-tower-mail { top:-3px; right:-10px; font-size:8px; padding:2px 3px }
+.rd-tower-widgets .rd-tower-ducklings { left:22px; bottom:-2px }
+.rd-tower-widgets .rd-tower-fact { font-size:10px; padding:3px 8px }
+.rd-tower-widgets .rd-tower-needs h2 { font-size:13px }
+.rd-tower-widgets .rd-tower-need { flex-wrap:wrap }
+.rd-tower-widgets .rd-tower-need-who { min-width:100px }
+.rd-tower-urgency { border:1px solid var(--amber-border); color:var(--amber-text); border-radius:4px; padding:2px 5px; font-size:9px }
+@media(max-width:900px) {
+ .rd-tower.rd-tower-widgets { overflow-y:auto; display:block }
+ .rd-tower-columns { display:flex; flex-direction:column }
+ .rd-tower-widgets .rd-tower-oracle { height:600px; flex:none; border-right:0; border-bottom:1px solid var(--border) }
+ .rd-tower-widgets .rd-tower-scroll { overflow:visible }
+ .rd-tower-widgets .rd-tower-title small { display:none }
+}
+@media(max-width:450px) {
+ .rd-tower-widgets > .rd-tower-bar { padding:12px; gap:8px; flex-wrap:wrap }
+ .rd-tower-widgets .rd-tower-title { font-size:16px }
+ .rd-tower-widgets .rd-tower-scroll { padding:20px 14px }
+ .rd-tower-widgets .rd-tower-oracle { padding:12px 4px }
+ .rd-widget > header { padding:10px 8px 0 }
+ .rd-widget h3 { font-size:10px }
+ .rd-widget-grid { gap:8px }
+}

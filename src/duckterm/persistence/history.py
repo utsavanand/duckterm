@@ -24,6 +24,7 @@ from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
 from duckterm.persistence import mail_analytics
 from duckterm.persistence.folder_chats import FolderChats
+from duckterm.persistence.layouts import Layouts
 from duckterm.runtimes.base import AT_REST_STATES, SessionState
 
 Event = dict[str, Any]
@@ -271,6 +272,7 @@ class HistoryStore:
     def __init__(self, db_path: Path | None = None) -> None:
         path = db_path if db_path is not None else paths.db_path()
         self.folder_chats = FolderChats(path.parent / "folder-chats.json", self.folders)
+        self.layouts = Layouts(path.parent / "layouts.json", self.folders)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row

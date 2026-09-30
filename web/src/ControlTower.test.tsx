@@ -1,14 +1,17 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, TowerInsights } from "./api";
+import { defaultLayout } from "./Widgets";
+import { oracleWidgets } from "./OracleWidgets";
 import { ControlTower } from "./ControlTower";
 import { TowerAgent } from "./tower";
-vi.mock("./api", () => ({ api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn() } }));
+vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn() } }));
 beforeEach(() => {
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ revision: "default", instances: defaultLayout("oracle", oracleWidgets(() => {})) }))));
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.relay).mockResolvedValue({ notes: [{ id: "n1", session_key: "qa", name: "qa", folder: "Nourish", runtime: "claude-code", kind: "question", status: "open", created_at: NOW - 4 * 86_400_000, question: "Deploy now?" }], rules: [], open: 1 });
 });
-afterEach(() => { cleanup(); vi.resetAllMocks(); });
+afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 
 const NOW = 10_000_000_000;
 const insights: TowerInsights = {
@@ -51,7 +54,7 @@ it("shows what an agent is working on when hovered, and sends a pinned message t
   fireEvent.change(box, { target: { value: "please rerun QA" } });
   await act(async () => { fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Send" })); });
   expect(api.messageSession).toHaveBeenCalledWith("main-qa", "please rerun QA", "inbox");
-  expect(screen.getByRole("status")).toHaveTextContent("In main-qa's inbox.");
+  expect(within(screen.getByRole("dialog")).getByRole("status")).toHaveTextContent("In main-qa's inbox.");
 });
 
 it("offers typing into the prompt only for idle agents and shows the server's refusal", async () => {

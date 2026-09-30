@@ -1,0 +1,63 @@
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { api, TowerInsights } from "./api";
+import { defaultLayout, Widgets, WidgetType } from "./Widgets";
+import { WidgetStreams } from "./widgetStreams";
+vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn() } }));
+const registry: WidgetType[] = ["tokens", "mail"].map(type => ({ type, title: type, slots: ["oracle"], streams: [type], render: ({ streams }) => <p>{type}: {streams[type].status === "ready" ? "Ready" : "Missing"}</p> }));
+const data = { tokens: { days: 7, by_agent: {} }, mail: { sent: 0, answered: 0, nudges: 0 }, backup: { destination: null, status: null, finished_at: null }, remote: { available: false, count: 0 } } as TowerInsights;
+let saved = { instances: defaultLayout("oracle", registry), revision: "default" };
+beforeEach(() => {
+  saved = { instances: defaultLayout("oracle", registry), revision: "default" };
+  vi.mocked(api.controlTower).mockResolvedValue(data);
+  vi.stubGlobal("fetch", vi.fn(async (_path, init) => {
+    if (init?.method === "PUT") saved = { ...JSON.parse(init.body), revision: "changed" };
+    return new Response(JSON.stringify(saved));
+  }));
+});
+afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+it("shares polling and stops when the last subscribing widget is removed", async () => {
+  vi.useFakeTimers();
+  const source = new WidgetStreams(), stops: ReturnType<typeof vi.fn>[] = [];
+  const original = source.subscribe.bind(source);
+  vi.spyOn(source, "subscribe").mockImplementation((name, listener) => { const stop = vi.fn(original(name, listener)); stops.push(stop); return stop; });
+  await act(async () => { render(<Widgets surface="oracle" slot="oracle" registry={registry} source={source} />); });
+  expect(api.controlTower).toHaveBeenCalledTimes(1);
+  expect(screen.getByText("tokens: Ready")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Options for tokens" }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Remove widget" })); });
+  expect(stops[0]).toHaveBeenCalledOnce(); expect(stops[1]).not.toHaveBeenCalled();
+  expect(saved.instances.map(item => item.type)).toEqual(["mail"]);
+  fireEvent.click(screen.getByRole("button", { name: "Options for mail" }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Remove widget" })); });
+  expect(stops[1]).toHaveBeenCalledOnce();
+  await act(async () => { await vi.advanceTimersByTimeAsync(120_000); });
+  expect(api.controlTower).toHaveBeenCalledTimes(1);
+  expect(screen.getByText(/No widgets here/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Add widget" }));
+  await act(async () => { fireEvent.click(screen.getByRole("checkbox", { name: "tokens" })); });
+  expect(api.controlTower).toHaveBeenCalledTimes(2);
+  expect(saved.instances.map(item => item.type)).toEqual(["tokens"]);
+});
+it("persists keyboard ordering and retains the saved layout on errors", async () => {
+  await act(async () => { render(<Widgets surface="oracle" slot="oracle" registry={registry} source={new WidgetStreams()} />); });
+  await act(async () => { fireEvent.keyDown(screen.getByRole("button", { name: "Reorder mail" }), { key: "ArrowUp" }); });
+  expect(saved.instances.map(item => item.type)).toEqual(["mail", "tokens"]);
+  expect(saved.instances.map(item => item.position)).toEqual([0, 1]);
+  vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify({ error: "Layout changed elsewhere" }), { status: 409 }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Reset" })); });
+  expect(screen.getByRole("alert")).toHaveTextContent("Layout changed elsewhere");
+  expect(screen.getAllByRole("article").map(item => item.getAttribute("aria-label"))).toEqual(["mail", "tokens"]);
+});
+it("shows absent data as unavailable and exposes only declared streams", async () => {
+  const source = new WidgetStreams(); source.emit("private", { status: "ready", value: "excluded" });
+  const renderWidget = vi.fn((props: { streams: Record<string, unknown> }) => <p>{Object.keys(props.streams).join(",")}</p>);
+  const types: WidgetType[] = [{ type: "artifacts-by-kind", title: "Artifacts", slots: ["folder"], streams: ["artifacts-by-kind"], render: renderWidget }];
+  saved = { instances: defaultLayout("folder", types, "a"), revision: "default" };
+  await act(async () => { render(<Widgets surface="folder:a" slot="folder" registry={types} source={source} />); });
+  expect(within(screen.getByRole("article")).getByText("Unavailable")).toBeVisible();
+  expect(renderWidget).not.toHaveBeenCalled();
+  act(() => source.emit("artifacts-by-kind", { status: "ready", value: { preview: 2 } }));
+  expect(renderWidget).toHaveBeenCalled();
+  expect(Object.keys(renderWidget.mock.calls.at(-1)![0].streams)).toEqual(["artifacts-by-kind"]);
+});
