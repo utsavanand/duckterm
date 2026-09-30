@@ -4,6 +4,7 @@ import {
   SessionView,
   repoNameFrom,
   sessionKeyOf,
+  waitingCauseOf,
 } from "./types";
 
 // After a Stop, a session keeps reading "busy" for this long before settling to
@@ -78,6 +79,8 @@ export function applyEvent(
 
   const next = new Map(sessions);
   const prev = next.get(key);
+  const state = deriveState(e, prev?.state);
+  const stillWaiting = state === "waiting" && prev?.state === "waiting";
   next.set(key, {
     // Preserve fields seeded from /sessions (metrics, intention, repoName, …);
     // only overwrite what this event actually carries.
@@ -95,7 +98,16 @@ export function applyEvent(
       e.session_name ||
       e.source_app ||
       key.slice(0, 8),
-    state: deriveState(e, prev?.state),
+    state,
+    // A wait keeps its start time until the session stops waiting, so voice
+    // mode can tell one long wait from a new one.
+    waitingSince: state !== "waiting" ? undefined : stillWaiting ? prev?.waitingSince ?? e._ts : e._ts,
+    waitingCause:
+      state !== "waiting"
+        ? undefined
+        : stillWaiting && prev?.waitingCause
+          ? prev.waitingCause
+          : waitingCauseOf(e.event_type, e.notification_type, e.tool_name),
     // Stamp when the agent stopped; clear it on any new activity. effectiveState
     // uses this to settle to idle only after a quiet grace period.
     idleSince:
