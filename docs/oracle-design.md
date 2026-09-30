@@ -120,8 +120,14 @@ a message's standing, not how it's delivered, and never interrupts a turn.
   7-day cleanup. `DELETE /broadcasts/:request_key` (owner) cancels every
   copy and retires the pins.
 - **Status per recipient**, from `GET /broadcasts/:request_key`: delivered,
-  pending next turn, inbox only, acknowledged or cancelled. The chips are
-  ui-dev's.
+  pending next turn, inbox only, acknowledged or cancelled. Delivered means
+  the text reached the agent: the Stop hook returned it, or Oracle's
+  reminder was submitted. A reminder left stuck in the prompt, or one that
+  failed to paste, stays "pending next turn". The chips are ui-dev's.
+- **Retries.** A plain broadcast's `request_key` stores the same content
+  hash as before priority existed, so a retry from an older client still
+  matches. Priority is part of the hash, so reusing a key with a different
+  priority is a 409.
 - **Capability.** `priority_delivery` is a harness flag. Claude Code
   declares it, since its turn-end notice is proven; Codex and Copilot don't
   yet. Their copies show "inbox only" and get no pin or fast path, and are

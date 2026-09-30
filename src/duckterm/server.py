@@ -700,8 +700,11 @@ class Server:
         api = self.history.session_api
         # Priority owner messages are pinned first, as one block, every turn
         # until replied to; the regular reminder follows.
+        pinned = api.priority_notice(key) if runtime.priority_delivery else None
+        if pinned:
+            api.mark_delivered(pinned[1])
         parts = [
-            runtime.priority_delivery and api.priority_notice(key),
+            pinned and pinned[0],
             runtime.turn_end_inbox_notice and api.turn_end_notice(key),
         ]
         notice = "\n\n".join(p for p in parts if p)
@@ -4507,7 +4510,7 @@ class Server:
             text = " ".join(
                 t
                 for t in (
-                    pinned and f"Duckterm Oracle: {pinned}",
+                    pinned and f"Duckterm Oracle: {pinned[0]}",
                     rest and oracle.reminder(rest, now),
                 )
                 if t
@@ -4517,6 +4520,10 @@ class Server:
             status = await self._submit_prompt(key, text)
             if status == "failed":
                 continue
+            if pinned and status == "submitted":
+                # A stuck paste isn't delivery: the status stays "pending
+                # next turn" and the Stop-hook notice still carries it.
+                self.history.session_api.mark_delivered(pinned[1])
             ids = sorted(str(m["id"]) for m in picked)
             nudge = oracle.record_nudge(previous, picked, mail, now)
             self._oracle_nudges[key] = nudge

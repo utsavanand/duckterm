@@ -3,6 +3,7 @@ agents reminded without the settle wait, never mid-turn, owner-only, and
 honest per-recipient status (design addendum 3, 2026-09-30)."""
 
 import asyncio
+import hashlib
 import json
 import time
 from urllib.parse import quote
@@ -206,3 +207,39 @@ def test_idle_claude_is_reminded_at_once_with_the_owners_words(scenario, monkeyp
     assert "PRIORITY from the owner" in typed and "Stop and write a status update" in typed
     assert codex.pasted == []  # inbox only: the usual settle wait applies
     assert status(server, owner, "f")["claude"] == "delivered"
+
+
+@pytest.mark.parametrize("outcome", ["stuck", "failed"])
+def test_a_nudge_that_did_not_submit_is_not_delivered(scenario, monkeypatch, outcome) -> None:
+    history, server, owner, _ = scenario
+    history.set_state("claude", "idle")
+    history.record(
+        {"_id": "s", "_ts": int(time.time() * 1000), "event_type": "Stop", "session_key": "claude"}
+    )
+    monkeypatch.setattr(
+        server.orchestrator,
+        "get",
+        lambda key: FakeSupervisor(CLAUDE_EMPTY) if key == "claude" else None,
+    )
+
+    async def not_submitted(key, text):
+        return outcome
+
+    monkeypatch.setattr(server, "_submit_prompt", not_submitted)
+    send(server, owner, "Stop and write a status update", "g")
+
+    asyncio.run(server._oracle_tick())
+    assert status(server, owner, "g")["claude"] == "pending next turn"
+    assert notice(server).startswith("PRIORITY")  # the turn-end notice still carries it
+    assert status(server, owner, "g")["claude"] == "delivered"
+
+
+def test_a_plain_broadcast_keeps_the_hash_older_servers_stored(scenario) -> None:
+    history, server, owner, _ = scenario
+    send(server, owner, "Rebase on main", "h", priority=False)
+    stored = history._conn.execute(
+        "SELECT content_hash FROM session_broadcasts WHERE request_key = 'h'"
+    ).fetchone()[0]
+    assert stored == hashlib.sha256(json.dumps(["work", "Rebase on main"]).encode()).hexdigest()
+    assert send(server, owner, "Rebase on main", "h", priority=False)[0] == 202  # a retry
+    assert send(server, owner, "Rebase on main", "h")[0] == 409  # priority is different content
