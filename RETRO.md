@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — A remote report bundle is bytes, not UTF-8 text
+**Broke:** The generic Mac request bridge rejected report routes, limited JSON
+bodies to 1 MiB, and decoded every response as UTF-8. That would reject valid
+attachments and corrupt ZIP downloads from a remote server.
+**Fix:** Report-specific method/path checks and bounded body/envelope limits;
+base64 binary replies for report bundles, decoded into bytes on the client.
+**Check:** Native tests exercise the full attachment budget, unchanged unrelated
+limits, invalid operations, and binary response equality. Browser tests keep the
+reviewed report and selected files unchanged through draft preparation/download.
+
 ## 2026-09-30 — A mail draft is not a delivered bug report
 
 Keep the preview's UTF-8 bytes unchanged through report Markdown, mailto and MIME export. Preparing a draft is not sending mail; attachments cannot travel in mailto, and long URL bodies need a complete file fallback rather than truncation. Remote users need an authenticated bundle download, not only a server path. Collect canonical event metadata without reading hook payloads or terminal content, and test attachment limits and private-file reads.

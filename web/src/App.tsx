@@ -18,6 +18,7 @@ import { ForkModal } from "./ForkModal";
 import { SessionPin } from "./SessionPin";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
+import { BugReport } from "./BugReport";
 import { HeaderMenus } from "./HeaderMenus";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
@@ -79,8 +80,9 @@ function Dashboard() {
   const { density, setDensity } = useSidebarDensity();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | null
   >(desktop()?.draft ? "launch" : null);
+  const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerOpen, setTowerOpen] = useState(false);
   const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
   const relayOpen = useRelayCount();
@@ -351,6 +353,7 @@ function Dashboard() {
         </button>
         <VoiceMenu level={voice.level} onLevel={voice.setLevel} />
         <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} voiceLevel={voice.level} onVoiceLevel={voice.setLevel} voice={{ voices: voice.voices, selected: voice.selectedVoice, qualityVoices: voice.qualityVoices, onSelect: voice.setVoice, onPreview: voice.preview }} onAction={(action) => {
+          if (action === "bugreport") setBugSession(selectedKey);
           if (action === "launch") setLaunchGroup(undefined);
           setModal(action);
         }} />
@@ -600,6 +603,7 @@ function Dashboard() {
       {modal === "agentsmd" && agentsMdDir && (
         <AgentsMdModal sessionKey={selected?.key} dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
+      {modal === "bugreport" && <BugReport session={bugSession} onClose={() => setModal(null)} />}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal

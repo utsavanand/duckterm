@@ -35,9 +35,13 @@ export async function hostFetch(host: string, path: string, init?: RequestInit):
     for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
     payload = { base64: btoa(binary), contentType: body.type };
   }
-  const response = await destinationRequest<{ status: number; body: string }>(host, "session-request", {
+  const response = await destinationRequest<{ status: number; body: string; base64?: string; contentType?: string }>(host, "session-request", {
     path, method: init?.method ?? "GET", ...payload,
   });
+  if (typeof response.base64 === "string") {
+    const bytes = Uint8Array.from(atob(response.base64), c => c.charCodeAt(0));
+    return new Response(bytes, { status: response.status, headers: { "Content-Type": response.contentType ?? "application/octet-stream" } });
+  }
   let result = response.body;
   try { result = JSON.stringify(qualifyResult(JSON.parse(result), host)); } catch { /* text response */ }
   return new Response(result, { status: response.status });

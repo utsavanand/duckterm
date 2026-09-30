@@ -102,6 +102,21 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         }
     }
 
+    static func envelopeLimit(operation: String, params: [String: Any]) -> Int {
+        if operation != "session-request" { return 131072 }
+        return params["path"] as? String == "/bugreport/submit" && params["method"] as? String == "POST"
+            ? 22 * 1024 * 1024 : 14 * 1024 * 1024
+    }
+
+    static func responsePayload(data: Data, response: HTTPURLResponse, path: String) -> [String: Any] {
+        if path.range(of: #"^/bugreport/bundles/[a-f0-9]{32}$"#, options: .regularExpression) != nil,
+           response.statusCode == 200 {
+            return ["status": response.statusCode, "base64": data.base64EncodedString(),
+                    "contentType": "application/zip"]
+        }
+        return ["status": response.statusCode, "body": String(decoding: data, as: UTF8.self)]
+    }
+
     static func request(base: URL, params: [String: Any]) throws -> URLRequest {
         guard base.scheme == "http", base.host == "127.0.0.1", base.user == nil, base.password == nil,
               let path = params["path"] as? String, path.utf8.count <= 16384,
@@ -128,7 +143,10 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         let approval = method == "POST" && route.range(of: #"^/approvals/[A-Za-z0-9_-]+/decide$"#, options: .regularExpression) != nil
         let connector = method == "POST" && route.range(of: #"^/connectors/[A-Za-z0-9_-]+/(enable|disable|forget)$"#, options: .regularExpression) != nil
         let harness = route.range(of: #"^/harnesses/[A-Za-z0-9._-]+(/(contents|install|uninstall))?$"#, options: .regularExpression) != nil
-        guard sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
+        let bugReport = (method == "GET" && route == "/bugreport/context")
+            || (method == "POST" && path == "/bugreport/submit")
+            || (method == "GET" && path.range(of: #"^/bugreport/bundles/[a-f0-9]{32}$"#, options: .regularExpression) != nil)
+        guard bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
             throw LaunchDestination.Failure.message("Unsupported session operation")
         }
         var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!
@@ -147,7 +165,8 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             request.httpBody = data
             request.setValue(type, forHTTPHeaderField: "Content-Type")
         } else if let body = params["body"] as? String {
-            guard body.utf8.count <= 1024 * 1024 else { throw LaunchDestination.Failure.message("Request too large") }
+            let limit = method == "POST" && path == "/bugreport/submit" ? 21 * 1024 * 1024 : 1024 * 1024
+            guard body.utf8.count <= limit else { throw LaunchDestination.Failure.message("Request too large") }
             request.httpBody = Data(body.utf8)
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
@@ -161,7 +180,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         guard let http = response as? HTTPURLResponse, data.count <= 16 * 1024 * 1024 else {
             throw LaunchDestination.Failure.message("Invalid or oversized response")
         }
-        return ["status": http.statusCode, "body": String(decoding: data, as: UTF8.self)]
+        return Self.responsePayload(data: data, response: http, path: request.url!.path)
     }
 
     func terminal(host: String, base: URL, api: LaunchDestination, operation: String, params: [String: Any]) async throws -> Any {

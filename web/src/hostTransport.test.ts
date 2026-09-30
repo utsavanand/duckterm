@@ -63,3 +63,12 @@ it("allows typing into a quiet native terminal as soon as its handshake complete
   socket.close();
   await vi.waitFor(() => expect(request).toHaveBeenCalledWith({ target: "remote", operation: "terminal-close", params: { id } }));
 });
+
+it("preserves remote ZIP bytes instead of decoding binary as text", async () => {
+  const bytes = new Uint8Array([80, 75, 0, 255, 128, 192, 254, 1]);
+  const remote = vi.fn().mockResolvedValue({ status: 200, base64: btoa(String.fromCharCode(...bytes)), contentType: "application/zip" });
+  window.webkit = { messageHandlers: { launchRequest: { postMessage: remote } } };
+  const response = await hostFetch("remote", "/bugreport/bundles/" + "a".repeat(32));
+  expect(response.headers.get("Content-Type")).toBe("application/zip");
+  expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+});

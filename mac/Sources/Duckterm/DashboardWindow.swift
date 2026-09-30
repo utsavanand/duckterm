@@ -83,7 +83,8 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
               let operation = body["operation"] as? String,
               ["session-request", "terminal-open", "terminal-send", "terminal-close", "browse", "branches", "themes", "launch", "project-mkdir", "project-repositories", "project-preview", "project-transfer", "project-clone", "project-launch", "project-status", "project-pause", "project-preflight", "project-continue"].contains(operation),
               let params = body["params"] as? [String: Any],
-              let encoded = try? JSONSerialization.data(withJSONObject: params), encoded.count <= (operation == "session-request" ? 14 * 1024 * 1024 : 131072),
+              let encoded = try? JSONSerialization.data(withJSONObject: params, options: [.withoutEscapingSlashes]),
+              encoded.count <= SessionTransport.envelopeLimit(operation: operation, params: params),
               let handler = onLaunchRequest else {
             replyHandler(nil, "Invalid launch request"); return
         }
@@ -250,6 +251,16 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             return
         }
         guard let destination = navigationAction.request.url else { decisionHandler(.cancel); return }
+        if destination.scheme == "mailto" {
+            let origin = navigationAction.sourceFrame.securityOrigin
+            if webView === web, navigationAction.sourceFrame.isMainFrame,
+               origin.protocol == url.scheme, origin.host == url.host, origin.port == url.port,
+               navigationAction.navigationType == .linkActivated {
+                NSWorkspace.shared.open(destination)
+            }
+            decisionHandler(.cancel)
+            return
+        }
         if dashboardAllowsNavigation(to: destination, dashboard: url,
                                      inMainFrame: navigationAction.targetFrame?.isMainFrame ?? true) {
             decisionHandler(.allow)
