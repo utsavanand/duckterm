@@ -114,7 +114,7 @@ test("Analytics opens from Oracle and shows actual transcript model IDs, filters
     await expect(
       page.getByRole("heading", { name: /Control tower/ }),
     ).toBeVisible();
-    await page.getByRole("button", { name: /Agent mail · 24h/ }).click();
+    await page.getByRole("button", { name: "Open mail analytics", exact: true }).click();
     await expect(
       page.getByRole("tab", { name: "Agent Mail", exact: true }),
     ).toHaveAttribute("aria-selected", "true");
