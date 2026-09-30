@@ -156,10 +156,12 @@ design; this spec is the requirements. As built:
   (from the note's time) is said again once, as it crosses 15 minutes. A
   session that unblocks and blocks again gets a new wait time, so it is
   announced afresh.
-- **"is complete"** is said on the effective busy-to-idle transition, after
-  the dashboard's 5-minute settle grace, so a pause between turns doesn't
-  count. It is skipped while a question note is open for that session, and
-  said bare, without a clause.
+- **"is complete"** is said 90 s after a turn ends, if the session hasn't
+  started working again (`COMPLETION_SETTLE_MS`). That is longer than the
+  ducks' 30 s settle (owner decision, 2026-09-30), because the relay needs
+  about 30 s plus a model call to turn a turn that ended on a question into a
+  needs-you note, which is announced instead. It is skipped while a question
+  note is open for that session, and said bare, without a clause.
 - **One click.** Each spoken line shows a toast with "Only needs-you",
   "Stop" and "Turn off". The level picker is also in the header and in
   Settings.
