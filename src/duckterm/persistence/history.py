@@ -704,12 +704,14 @@ class HistoryStore:
             "WHERE event_type = 'PreToolUse' AND tool LIKE 'mcp!_!_%' ESCAPE '!'"
         ).fetchall()
         used: dict[str, tuple[int, int]] = {}
-        for tool, ts in rows:  # positional: this connection has no row factory
-            parts = str(tool).split("__")
+        for row in rows:
+            # Index numerically: sqlite3.Row and a plain tuple both support it,
+            # so this survives the connection's row_factory changing either way.
+            parts = str(row[0]).split("__")
             if len(parts) < 3 or not parts[1]:
                 continue
             last, count = used.get(parts[1], (0, 0))
-            used[parts[1]] = (max(last, int(ts)), count + 1)
+            used[parts[1]] = (max(last, int(row[1])), count + 1)
         return used
 
     def last_event(self, session_key: str, event_type: str) -> tuple[dict[str, Any], int] | None:
