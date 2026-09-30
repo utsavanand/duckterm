@@ -606,6 +606,7 @@ class SessionAPI:
                 "answers.explicit",
                 "artifacts.register",
                 "artifacts.list",
+                "artifacts.read",
             ],
         }
 
@@ -750,7 +751,7 @@ class SessionAPI:
         self._sweep()
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path.removeprefix("/api/v1/session")
-        query = urllib.parse.parse_qs(parsed.query)
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
         limit = MAX_ARTIFACT_REQUEST_BYTES if path == "/artifacts" else MAX_BODY_BYTES
         if len(body) > limit:
             raise APIError(413, "request body too large")
@@ -764,8 +765,39 @@ class SessionAPI:
         if path == "/artifacts" and method in {"GET", "POST"}:
             try:
                 if method == "GET":
+                    if "folder" in query:
+                        folder = _text(query["folder"][0], "folder", 4096)
+                        if "\x00" in folder or any(
+                            part in ("", ".", "..") for part in folder.split("/")
+                        ):
+                            raise APIError(400, "invalid folder path")
+                        if not member["root"] or not _inside(folder, member["root"]):
+                            raise APIError(403, "folder exceeds the granted shared ancestor")
+                        rows = self.artifacts.list_folder(folder, 501, shared_root=member["root"])
+                        return 200, {"artifacts": rows[:500], "truncated": len(rows) > 500}
                     return 200, {"artifacts": self.artifacts.list(key)}
                 return 200, {"artifact": self.artifacts.register(key, req)}
+            except ArtifactError as exc:
+                raise APIError(exc.status, str(exc)) from exc
+        artifact_match = re.fullmatch(r"/artifacts/([a-f0-9]{32})", path)
+        if artifact_match and method == "GET":
+            artifact_id = artifact_match[1]
+            row = self.conn.execute(
+                "SELECT a.session_key FROM artifacts a JOIN sessions s "
+                "ON s.session_key = a.session_key WHERE a.id = ?",
+                (artifact_id,),
+            ).fetchone()
+            if row is None:
+                raise APIError(404, "Artifact not found")
+            if row["session_key"] != key:
+                # Saved work remains reviewable after its producer stops, but
+                # access always follows both sessions' current sharing grants.
+                try:
+                    self._peer(key, row["session_key"], live=False)
+                except APIError as exc:
+                    raise APIError(404, "Artifact not found") from exc
+            try:
+                return 200, {"artifact": self.artifacts.get(row["session_key"], artifact_id)}
             except ArtifactError as exc:
                 raise APIError(exc.status, str(exc)) from exc
         if path == "/self" and method == "GET":
