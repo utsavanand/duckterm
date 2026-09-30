@@ -14,7 +14,11 @@ import { DuckCelebration, SessionView } from "./types";
 
 export type DuckPose = "busy" | "waiting" | "idle" | "sleeping";
 
-export function poseFor(state: string): DuckPose {
+// raised: the session asked for the owner and they haven't attended yet, so
+// the hand stays up whatever the agent is doing now (owner decision, 2026-09-30).
+export function poseFor(state: string, raised = false): DuckPose {
+  const resting = !["busy", "waiting", "idle"].includes(state);
+  if (raised && !resting) return "waiting";
   if (state === "busy") return "busy";
   if (state === "waiting") return "waiting";
   if (state === "idle") return "idle";

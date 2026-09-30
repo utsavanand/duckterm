@@ -255,6 +255,8 @@ _ROUTES: list[Route] = [
           **_mid("/relay/", "/answer")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._session_message(w, seg, b),
           **_mid("/sessions/", "/message")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._session_attended(w, seg),
+          **_mid("/sessions/", "/attended")),
     Route("DELETE", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w, clear=True)),
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
@@ -1158,23 +1160,45 @@ class Server:
             await self._reconcile_waiting(s)
         await _write_json(writer, 200, {"sessions": sessions})
 
-    async def _reconcile_waiting(self, row: dict[str, Any]) -> None:
-        """Before reporting a pty-owned session as 'waiting', glance at its
-        actual screen. Codex answers approvals IN the terminal without firing a
-        hook, so a PermissionRequest can stay the last event for the entire run
-        of the approved command — the DB says 'waiting' while the screen says
-        'Working (17m)'. Output-detected states are authoritative for output-
-        driven runtimes; claude-code is excluded (its hooks fire per tool, so
-        this bug can't happen, and its output detector is too coarse to trust)."""
-        if row.get("state") != "waiting" or (row.get("runtime") or "") == "claude-code":
+    def _attend(self, key: str) -> None:
+        """The owner attended to this session: drop its raised hand. Only the
+        owner does this (opening it, answering its note or approval, or a rule
+        they made); the agent's own next event never does."""
+        row = self.history.session(key)
+        if row is not None and row.get("attention_since"):
+            event = {"event_type": events.ATTENDED, "session_key": key, "reconciled": True}
+            self.bus.publish(event)
+
+    async def _session_attended(self, writer: asyncio.StreamWriter, key: str) -> None:
+        if self.history.session(key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
             return
-        key = str(row.get("session_key") or "")
-        sup = self.orchestrator.get(key)
-        if sup is None:
+        self._attend(key)
+        await _write_json(writer, 200, {"attended": True})
+
+    async def _reconcile_waiting(self, row: dict[str, Any]) -> None:
+        """Hooks win over the screen (contracts F1). The one exception is a
+        wait the screen itself established: an auto-reviewing agent (Codex) is
+        only marked waiting once the relay sees its approval prompt, and after
+        the owner answers in the terminal no hook fires until the command
+        finishes, maybe many minutes later. So for those agents alone, a screen
+        with no prompt and visible work reports busy. A hook-driven wait
+        (Claude Code, Copilot) is never overridden. The owner's raised hand is
+        kept separately (attention_since) and isn't touched here."""
+        if row.get("state") != "waiting":
             return
         runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
+        if not runtime.auto_approves_requests:
+            return
+        sup = self.orchestrator.get(str(row.get("session_key") or ""))
+        if sup is None:
+            return
         screen = await asyncio.to_thread(sup.screen_text, 8)
-        if screen and runtime.detect_state(screen) == "busy":
+        if (
+            screen
+            and not runtime.approval_prompt_visible(screen)
+            and runtime.detect_state(screen) == "busy"
+        ):
             row["state"] = "busy"
 
     def _transcript_stats_for(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -2540,6 +2564,7 @@ class Server:
                 self.relay.close(
                     note, "answered", answer=rule["action"], answered_by=rule["id"], closed_at=now
                 )
+                self._attend(a.session_key)  # the owner's own rule answered it
 
     # How often and how long to look for an auto-reviewing agent's approval
     # prompt while its request is pending.
@@ -2719,6 +2744,7 @@ class Server:
         self.relay.update(note, suggestion={"rule_id": rule["id"], "reply": rule["reply"]})
         if rule.get("mode") == "live":
             await self._relay_deliver_question(note, rule["reply"], answered_by=rule["id"])
+            self._attend(note["session_key"])  # the owner's own rule answered it
 
     async def _relay_deliver_question(
         self, note: dict[str, Any], text: str, *, answered_by: str
@@ -2849,6 +2875,8 @@ class Server:
                 return
             if suggestion:
                 self.relay.record_send(suggestion["rule_id"], unchanged=text == suggestion["reply"])
+        if note.get("status") == "answered":
+            self._attend(note["session_key"])
         await _write_json(writer, 200, {"note": note})
 
     async def _relay_propose(self, writer: asyncio.StreamWriter, body: bytes) -> None:
@@ -3804,6 +3832,10 @@ class Server:
         # Record the decision. A blocking hook polling /decision picks it up and
         # returns it to the agent.
         decided = self.approvals.set_decision(approval_id, decision)
+        if decided:
+            approval = self.approvals.get(approval_id)
+            if approval is not None:
+                self._attend(approval.session_key)
         status = 200 if decided else 409
         await _write_json(writer, status, {"decided": decided, "decision": decision})
 
