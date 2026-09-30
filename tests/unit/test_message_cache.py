@@ -118,3 +118,15 @@ def test_new_runtime_instances_share_cache(tmp_path: Path, codex: bool) -> None:
         first = runtime().messages(cwd=tmp_path, session_id="native")
         with patch.object(Path, "open", side_effect=AssertionError("fresh adapter reread")):
             assert runtime().messages(cwd=tmp_path, session_id="native") == first
+
+
+def test_growing_rewrite_invalidates_old_messages_even_in_middle(tmp_path: Path) -> None:
+    path = tmp_path / "rewrite.jsonl"
+    prefix = line("x" * 8192)
+    suffix = line("y" * 8192)
+    path.write_bytes(prefix + line("old decision") + suffix)
+    cache = MessageCache(claude_lines)
+    assert cache.read(path)[1]["blocks"] == [{"type": "text", "text": "old decision"}]
+    path.write_bytes(prefix + line("different longer decision") + suffix)
+    assert cache.read(path) == claude_lines(path.read_text().splitlines(), 0)
+    assert cache.read(path)[1]["blocks"] == [{"type": "text", "text": "different longer decision"}]
