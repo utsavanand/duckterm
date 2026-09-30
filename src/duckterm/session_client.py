@@ -108,8 +108,12 @@ def main(args: argparse.Namespace) -> int:
             if args.folder is not None:
                 path += "?" + urllib.parse.urlencode({"folder": args.folder})
         elif action == "artifact":
-            if args.artifact_id is not None:
-                if args.file != Path("get") or not re.fullmatch(r"[a-f0-9]{32}", args.artifact_id):
+            if args.file == Path("get") or args.artifact_id is not None:
+                if (
+                    args.file != Path("get")
+                    or not args.artifact_id
+                    or not re.fullmatch(r"[a-f0-9]{32}", args.artifact_id)
+                ):
                     raise ValueError("Use: duckterm session artifact get <32-character ID>")
                 if args.title is not None:
                     raise ValueError("--title applies only when registering an artifact")

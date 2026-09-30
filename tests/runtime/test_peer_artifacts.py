@@ -16,7 +16,7 @@ from tests.runtime.test_artifacts import register
 from tests.runtime.test_session_api import dispatch
 
 from duckterm.cli import build_parser
-from duckterm.session_client import _save_artifact
+from duckterm.session_client import _save_artifact, main
 
 
 @pytest.fixture
@@ -224,3 +224,17 @@ def test_download_rejects_corruption_and_symlink_destinations(tmp_path):
     assert target.read_bytes() == b"preserve" and output.is_symlink()
     args = build_parser().parse_args(["session", "artifact", "get", "a" * 32])
     assert args.file == Path("get") and args.artifact_id == "a" * 32
+
+
+def test_download_without_id_never_registers_a_file_named_get(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "get").write_text("This is not an upload request")
+    monkeypatch.setattr(
+        "duckterm.session_client.client_credentials", lambda: ("http://127.0.0.1:1", "test")
+    )
+    monkeypatch.setattr(
+        "duckterm.session_client.registration", lambda *args: pytest.fail("unexpected upload")
+    )
+    assert main(build_parser().parse_args(["session", "artifact", "get"])) == 1
+    assert "get <32-character ID>" in capsys.readouterr().err
+    assert (tmp_path / "get").read_text() == "This is not an upload request"
