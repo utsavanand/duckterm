@@ -1426,6 +1426,7 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        is_test = bool(parent.get("test")) or req.get("test") is True
         command = req.get("command") or "claude"
         repo = Path(str(parent["repo_path"]))
         branch = req.get("branch") or f"fork/{parent_key[:8]}"
@@ -1451,6 +1452,7 @@ class Server:
                     branch=branch,
                     base=base,
                     parent_session_key=parent_key,
+                    test=is_test,
                     session_key=req.get("session_key"),
                     prompt=req.get("prompt", ""),
                 )
@@ -1514,6 +1516,7 @@ class Server:
                 "worktree_path": str(worktree.path),
                 "branch": worktree.branch,
                 "parent_session_key": parent_key,
+                "test": is_test,
                 "intention": f"fork of {parent.get('source_app') or parent_key} ({base})",
                 "launched": True,
                 "pty_owned": False,
@@ -1623,7 +1626,6 @@ class Server:
         note = None
         if session_id:
             argv = ["claude", "--resume", session_id, "--fork-session"]
-            child_key = f"convfork-{session_id[:8]}"
         else:
             note = "no conversation to fork yet — started a fresh session in the same folder"
             print(
@@ -1633,8 +1635,10 @@ class Server:
                 file=sys.stderr,
             )
             argv = ["claude"]
-            child_key = security.new_session_key("convfork")
+        # The native ID identifies resume context, never the new child session.
+        child_key = security.new_session_key("convfork")
         req = json.loads(body or b"{}")
+        is_test = bool(parent.get("test")) or req.get("test") is True
 
         if os.environ.get("DUCKTERM_HOSTED") or not req.get("in_terminal", True):
             key = await self.orchestrator.launch(
@@ -1642,6 +1646,7 @@ class Server:
                 cwd=cwd,
                 session_key=child_key,
                 parent_session_key=parent_key,
+                test=is_test,
                 name=f"{parent.get('name') or parent.get('source_app') or parent_key} (fork)",
             )
             self._inherit_group(parent, key)
@@ -1676,6 +1681,7 @@ class Server:
                 "runtime": "claude-code",
                 "cwd": cwd,
                 "parent_session_key": parent_key,
+                "test": is_test,
                 "intention": f"conversation fork of {parent.get('source_app') or parent_key}",
             }
         )
