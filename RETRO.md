@@ -1,5 +1,16 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — Priority status said "delivered" before anything was
+**Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
+got stuck in the prompt, or failed to paste, already showed "delivered". A
+plain broadcast retried with its old `request_key` would have hit a 409.
+**Cause:** rendering the pinned block also marked it delivered, before the
+paste was tried. Adding priority to the idempotency hash changed the hash of
+every plain broadcast too.
+**Rule:** record delivery from the result of the delivery, never from
+building the text. When adding a field to a stored hash, keep the old hash
+for the old shape.
+
 ## 2026-09-30 — A raised hand is the owner's to lower
 **Broke:** a session that asked for the owner dropped its raised hand on its
 next event, whether or not the owner had seen it, and the session list let a

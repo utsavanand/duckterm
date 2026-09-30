@@ -83,6 +83,10 @@ def plain_screen(screen: str) -> str:
 class Harness(ABC):
     name: str
     turn_end_inbox_notice = False
+    # Owner priority messages can be pinned into this agent's turn-end notice.
+    # Declared only where that notice path is proven (contracts §1); others
+    # show priority messages as "inbox only" rather than pretending.
+    priority_delivery = False
     # An agent's observe half; None for driven-only agents (no hook system).
     hook_spec: HookSpec | None = None
 
