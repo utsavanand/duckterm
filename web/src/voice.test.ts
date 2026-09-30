@@ -2,6 +2,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { RelayNote } from "./api";
 import {
   announce,
+  browserSpeaker,
+  defaultVoice,
+  hasQualityVoice,
+  loadVoiceName,
+  saveVoiceName,
+  usableVoices,
+  VoiceChoice,
   Announcement,
   Announcer,
   loadVoiceLevel,
@@ -172,4 +179,57 @@ it("holds the next line when typing starts during the current one", async () => 
   await settle();
   expect(saidAt).toHaveLength(2);
   expect(saidAt[1] - saidAt[0]).toBeGreaterThanOrEqual(5000);
+});
+
+const MAC: VoiceChoice[] = [
+  { name: "Albert", lang: "en-US" },
+  { name: "Bells (English (United States))", lang: "en-US" },
+  { name: "Fred", lang: "en-US", default: true },
+  { name: "Samantha", lang: "en-US" },
+  { name: "Daniel", lang: "en_GB" },
+  { name: "Amélie", lang: "fr-CA" },
+];
+
+it("lists voices in the owner's language, without novelty voices, best first", () => {
+  const withGood = [...MAC, { name: "Ava (Premium)", lang: "en-US" }, { name: "Zoe (Enhanced)", lang: "en-US" }];
+  expect(usableVoices(withGood, "en-US").map((v) => v.name)).toEqual(["Ava (Premium)", "Zoe (Enhanced)", "Daniel", "Fred", "Samantha"]);
+});
+
+it("prefers Premium, then Enhanced, then Samantha, over the browser's first pick", () => {
+  expect(defaultVoice(MAC, "en-US")?.name).toBe("Samantha");
+  expect(defaultVoice([...MAC, { name: "Zoe (Enhanced)", lang: "en-US" }], "en-US")?.name).toBe("Zoe (Enhanced)");
+  expect(defaultVoice([...MAC, { name: "Zoe (Enhanced)", lang: "en-US" }, { name: "Ava (Premium)", lang: "en-US" }], "en-GB")?.name).toBe("Ava (Premium)");
+  expect(defaultVoice([{ name: "Fred", lang: "en-US", default: true }, { name: "Alex", lang: "en-US" }], "en-US")?.name).toBe("Fred");
+  expect(defaultVoice([], "en-US")).toBeUndefined();
+  expect(hasQualityVoice(MAC, "en-US")).toBe(false);
+});
+
+it("stores the chosen voice and reads it back", () => {
+  expect(loadVoiceName()).toBeNull();
+  saveVoiceName("Samantha");
+  expect(loadVoiceName()).toBe("Samantha");
+});
+
+it("speaks in the chosen voice, or a previewed one", async () => {
+  const spoken: { text: string; voice?: string }[] = [];
+  const voices = MAC.map((v) => ({ ...v, voiceURI: v.name, localService: true }));
+  vi.stubGlobal("SpeechSynthesisUtterance", class {
+    text: string; voice?: { name: string }; lang = ""; onend?: () => void; onerror?: () => void;
+    constructor(t: string) { this.text = t; }
+  });
+  vi.stubGlobal("speechSynthesis", {
+    getVoices: () => voices,
+    speak: (u: { text: string; voice?: { name: string }; onend?: () => void }) => { spoken.push({ text: u.text, voice: u.voice?.name }); u.onend?.(); },
+    cancel: () => {},
+  });
+  const speaker = browserSpeaker(() => "Daniel");
+  await speaker.say("architect needs your input");
+  await speaker.say("architect needs your input", "Fred");
+  await browserSpeaker(() => null).say("main-dev is complete");
+  expect(spoken).toEqual([
+    { text: "architect needs your input", voice: "Daniel" },
+    { text: "architect needs your input", voice: "Fred" },
+    { text: "main-dev is complete", voice: "Samantha" },
+  ]);
+  vi.unstubAllGlobals();
 });

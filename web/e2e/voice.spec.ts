@@ -10,7 +10,13 @@ async function stubSpeech(page: Page) {
     w.spoken = [];
     w.SpeechSynthesisUtterance = class { text: string; onend?: () => void; constructor(t: string) { this.text = t; } };
     Object.defineProperty(window, 'speechSynthesis', {
-      value: { speak: (u: { text: string; onend?: () => void }) => { w.spoken.push(u.text); u.onend?.(); }, cancel: () => {} },
+      value: {
+        speak: (u: { text: string; onend?: () => void }) => { w.spoken.push(u.text); u.onend?.(); },
+        cancel: () => {},
+        getVoices: () => [{ name: 'Samantha', lang: 'en-US', default: true }],
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      },
       configurable: true,
     });
   });

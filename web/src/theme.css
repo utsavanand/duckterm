@@ -2963,3 +2963,9 @@ select {
 .rd-voice-menu select { font: inherit; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; }
 .rd-voice-toast { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--card); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); font-size: 13px; }
 .rd-voice-toast-text { font-weight: 600; overflow-wrap: anywhere; }
+.rd-voice-picker { display: grid; gap: 6px; margin-top: 6px; }
+.rd-voice-picker-label { font-weight: 600; font-size: 12px; }
+.rd-voice-picker-list { display: grid; gap: 2px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
+.rd-voice-picker-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.rd-voice-picker-row label { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.rd-voice-picker-hint { margin: 0; font-size: 12px; color: var(--muted); }

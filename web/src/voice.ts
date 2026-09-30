@@ -34,6 +34,65 @@ export function saveVoiceLevel(level: VoiceLevel): void {
   } catch { /* storage blocked: the choice lasts until reload */ }
 }
 
+// ── Choosing a voice ──
+// The owner's Mac had 41 English voices and no Enhanced or Premium one, so the
+// browser's first pick sounded robotic (2026-09-29). Prefer quality, let the
+// owner preview and choose, and say where better voices come from.
+
+export type VoiceChoice = { name: string; lang: string; default?: boolean };
+
+const VOICE_NAME_KEY = "rd.voice.name";
+
+// macOS sound-effect voices: fine as jokes, never as announcements.
+const NOVELTY = new Set([
+  "Albert", "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos", "Good News", "Jester",
+  "Organ", "Pipe Organ", "Superstar", "Trinoids", "Whisper", "Wobble", "Zarvox",
+]);
+
+export function voiceQuality(name: string): number {
+  if (/premium/i.test(name)) return 2;
+  if (/enhanced/i.test(name)) return 1;
+  return 0;
+}
+
+// Voices in the owner's language, best first. Chrome names macOS voices like
+// "Bells (English (United States))", so novelty names match on the first part.
+export function usableVoices<V extends VoiceChoice>(voices: V[], language: string): V[] {
+  const lang = language.toLowerCase().split(/[-_]/)[0];
+  return voices
+    .filter((v) => v.lang.toLowerCase().replace("_", "-").split("-")[0] === lang)
+    .filter((v) => !NOVELTY.has(v.name.split(" (")[0]))
+    .sort((a, b) => voiceQuality(b.name) - voiceQuality(a.name) || a.name.localeCompare(b.name));
+}
+
+export function defaultVoice<V extends VoiceChoice>(voices: V[], language: string): V | undefined {
+  const usable = usableVoices(voices, language);
+  return (
+    usable.find((v) => voiceQuality(v.name) > 0) ??
+    usable.find((v) => v.name.split(" (")[0] === "Samantha") ??
+    usable.find((v) => v.default) ??
+    usable[0]
+  );
+}
+
+export function hasQualityVoice(voices: VoiceChoice[], language: string): boolean {
+  return usableVoices(voices, language).some((v) => voiceQuality(v.name) > 0);
+}
+
+export function loadVoiceName(): string | null {
+  try {
+    return localStorage.getItem(VOICE_NAME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveVoiceName(name: string): void {
+  try {
+    localStorage.setItem(VOICE_NAME_KEY, name);
+  } catch { /* storage blocked: the choice lasts until reload */ }
+}
+
 export type Announcement = { kind: "needs" | "done" | "offer"; key: string; name: string; approval: boolean };
 
 export type VoiceSession = {
@@ -136,7 +195,12 @@ export function phrases(batch: Announcement[]): { text: string; chime: boolean }
 }
 
 // say resolves false when the browser refuses to speak (no user gesture yet).
-export type Speaker = { say: (text: string) => Promise<boolean | void>; chime: () => Promise<void>; stop: () => void };
+// voice names a specific voice, for previews; otherwise the chosen one is used.
+export type Speaker = {
+  say: (text: string, voice?: string) => Promise<boolean | void>;
+  chime: () => Promise<void>;
+  stop: () => void;
+};
 
 // Speaks batches one line at a time, never overlapping. Holds while the owner
 // is typing, and mute() drops everything queued and stops the current line.
@@ -195,14 +259,21 @@ export class Announcer {
 }
 
 // The browser's own speech and a short two-note chime. Nothing leaves the
-// machine; voice and rate are the OS defaults.
-export function browserSpeaker(): Speaker {
+// machine. chosen() names the owner's voice; null means the best available.
+export function browserSpeaker(chosen: () => string | null = loadVoiceName): Speaker {
   let audio: AudioContext | null = null;
   return {
-    say: (text) =>
+    say: (text, voiceName) =>
       new Promise<boolean>((resolve) => {
         if (!("speechSynthesis" in window)) return resolve(true);
         const u = new SpeechSynthesisUtterance(text);
+        const voices = window.speechSynthesis.getVoices?.() ?? [];
+        const wanted = voiceName ?? chosen();
+        const voice = voices.find((v) => v.name === wanted) ?? defaultVoice(voices, navigator.language);
+        if (voice) {
+          u.voice = voice;
+          u.lang = voice.lang;
+        }
         u.onend = () => resolve(true);
         u.onerror = (e) => resolve(e.error !== "not-allowed");
         window.speechSynthesis.speak(u);

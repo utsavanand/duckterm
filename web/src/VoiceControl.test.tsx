@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { RelayNote } from "./api";
-import { useVoice, VoiceMenu, VoicePausedPill, VoiceToast } from "./VoiceControl";
+import { useSpeechVoices, useVoice, VoiceMenu, VoicePausedPill, VoicePicker, VoiceToast } from "./VoiceControl";
 import { Speaker, VoiceSession } from "./voice";
 
 const relay = vi.hoisted(() => ({ notes: [] as RelayNote[] }));
@@ -81,4 +81,57 @@ it("shows the paused pill when the browser refuses to speak", async () => {
   const view = render(<Refused sessions={idle} />);
   view.rerender(<Refused sessions={approval} />);
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Voice paused"), { timeout: 4000 });
+});
+
+it("fills the voice list when the browser delivers it late", async () => {
+  let voices: { name: string; lang: string }[] = [];
+  const listeners: (() => void)[] = [];
+  vi.stubGlobal("speechSynthesis", {
+    getVoices: () => voices,
+    addEventListener: (_: string, fn: () => void) => listeners.push(fn),
+    removeEventListener: () => {},
+    speak: () => {},
+    cancel: () => {},
+  });
+  function Names() {
+    return <p>{useSpeechVoices().map((v) => v.name).join(",") || "empty"}</p>;
+  }
+  render(<Names />);
+  expect(screen.getByText("empty")).toBeVisible();
+  voices = [{ name: "Samantha", lang: "en-US" }];
+  act(() => listeners.forEach((fn) => fn()));
+  expect(screen.getByText("Samantha")).toBeVisible();
+  vi.unstubAllGlobals();
+});
+
+it("previews each voice by name, saves the choice, and says where better voices come from", () => {
+  const onPreview = vi.fn();
+  const onSelect = vi.fn();
+  const voices = [{ name: "Samantha", lang: "en-US" }, { name: "Daniel", lang: "en-GB" }];
+  const view = render(<VoicePicker voices={voices} selected="Samantha" qualityVoices={false} onSelect={onSelect} onPreview={onPreview} />);
+  fireEvent.click(screen.getByRole("button", { name: "Preview Daniel" }));
+  expect(onPreview).toHaveBeenCalledWith("Daniel");
+  fireEvent.click(screen.getByRole("radio", { name: "Daniel" }));
+  expect(onSelect).toHaveBeenCalledWith("Daniel");
+  expect(screen.getByText(/Spoken Content, then the System voice menu, Manage Voices/)).toBeVisible();
+  view.rerender(<VoicePicker voices={voices} selected="Samantha" qualityVoices onSelect={onSelect} onPreview={onPreview} />);
+  expect(screen.queryByText(/Manage Voices/)).toBeNull();
+});
+
+it("persists the chosen voice through the hook and previews with the sample line", () => {
+  const said: [string, string | undefined][] = [];
+  const speaker: Speaker = { say: async (t, v) => { said.push([t, v]); }, chime: async () => {}, stop: () => {} };
+  let setVoice!: (name: string) => void;
+  let preview!: (name: string) => void;
+  function Picker() {
+    const voice = useVoice(idle, speaker);
+    setVoice = voice.setVoice;
+    preview = voice.preview;
+    return null;
+  }
+  render(<Picker />);
+  act(() => setVoice("Daniel"));
+  expect(localStorage.getItem("rd.voice.name")).toBe("Daniel");
+  act(() => preview("Daniel"));
+  expect(said).toEqual([["architect needs your input", "Daniel"]]);
 });

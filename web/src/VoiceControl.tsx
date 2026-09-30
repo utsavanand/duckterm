@@ -4,8 +4,14 @@ import {
   announce,
   Announcer,
   browserSpeaker,
+  defaultVoice,
+  hasQualityVoice,
   loadVoiceLevel,
+  loadVoiceName,
   saveVoiceLevel,
+  saveVoiceName,
+  usableVoices,
+  VoiceChoice,
   Speaker,
   VOICE_LEVELS,
   VoiceLevel,
@@ -14,6 +20,25 @@ import {
 } from "./voice";
 
 const TOAST_MS = 8000;
+export const PREVIEW_LINE = "architect needs your input";
+
+// speechSynthesis fills its voice list asynchronously in some browsers, so the
+// first call can be empty; voiceschanged delivers the real list.
+export function useSpeechVoices(): VoiceChoice[] {
+  // Some embedded webviews have speak() without a voice list.
+  const [voices, setVoices] = useState<VoiceChoice[]>(() =>
+    "speechSynthesis" in window ? window.speechSynthesis.getVoices?.() ?? [] : [],
+  );
+  useEffect(() => {
+    const synth = "speechSynthesis" in window ? window.speechSynthesis : undefined;
+    if (!synth) return;
+    const load = () => setVoices(synth.getVoices?.() ?? []);
+    load();
+    synth.addEventListener?.("voiceschanged", load);
+    return () => synth.removeEventListener?.("voiceschanged", load);
+  }, []);
+  return voices;
+}
 
 // Browsers refuse speech until the page has had a click or keypress, so after
 // a reload voice is on but silent. Say so instead of looking broken.
@@ -94,14 +119,68 @@ export function useVoice(sessions: VoiceSession[], speaker: Speaker = browserSpe
     }
   }
 
+  const allVoices = useSpeechVoices();
+  const [voiceName, setVoiceNameState] = useState<string | null>(loadVoiceName);
+  const language = navigator.language || "en-US";
+  const voices = usableVoices(allVoices, language);
+  const selectedVoice = voices.find((v) => v.name === voiceName)?.name ?? defaultVoice(allVoices, language)?.name ?? null;
+
   return {
     level,
     setLevel,
+    voices,
+    selectedVoice,
+    qualityVoices: hasQualityVoice(allVoices, language),
+    setVoice: (name: string) => {
+      saveVoiceName(name);
+      setVoiceNameState(name);
+    },
+    preview: (name: string) => {
+      speaker.stop();
+      void speaker.say(PREVIEW_LINE, name);
+    },
     spoken,
     paused: paused && level !== "off",
     dismiss: () => setSpoken(null),
     mute: () => { announcer.mute(); setSpoken(null); },
   };
+}
+
+// Listen before choosing: each voice has its own Preview.
+export function VoicePicker({ voices, selected, qualityVoices, onSelect, onPreview }: {
+  voices: VoiceChoice[];
+  selected: string | null;
+  qualityVoices: boolean;
+  onSelect: (name: string) => void;
+  onPreview: (name: string) => void;
+}) {
+  return (
+    <div className="rd-voice-picker">
+      <div className="rd-voice-picker-label" id="voice-picker-label">Voice</div>
+      {voices.length === 0 ? (
+        <p className="rd-voice-picker-hint">No voices found for your language yet.</p>
+      ) : (
+        <div className="rd-voice-picker-list" role="radiogroup" aria-labelledby="voice-picker-label">
+          {voices.map((v) => (
+            <div key={v.name} className="rd-voice-picker-row">
+              <label>
+                <input type="radio" name="rd-voice-name" checked={v.name === selected} onChange={() => onSelect(v.name)} />
+                {v.name}
+              </label>
+              <button type="button" className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Preview ${v.name}`} onClick={() => onPreview(v.name)}>
+                Preview
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {!qualityVoices && (
+        <p className="rd-voice-picker-hint">
+          For a more natural voice, download an Enhanced or Premium voice for free: System Settings, Accessibility, Spoken Content, then the System voice menu, Manage Voices. Reload DuckTerm afterwards.
+        </p>
+      )}
+    </div>
+  );
 }
 
 export function VoicePausedPill() {

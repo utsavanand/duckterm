@@ -3,10 +3,11 @@ import { AUTO, TermMode, themesForMode } from "./termThemes";
 import { Theme } from "./useTheme";
 import { SidebarDensity } from "./useSidebarDensity";
 import "./headerMenus.css";
-import { VOICE_LEVELS, VoiceLevel } from "./voice";
+import { VOICE_LEVELS, VoiceChoice, VoiceLevel } from "./voice";
+import { VoicePicker } from "./VoiceControl";
 
 type Menu = "settings" | "new";
-export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, termTheme, onTermTheme, notifyOn, onNotify, voiceLevel, onVoiceLevel, onAction }: {
+export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, termTheme, onTermTheme, notifyOn, onNotify, voiceLevel, onVoiceLevel, voice, onAction }: {
   density: SidebarDensity;
   onDensity: (density: SidebarDensity) => void;
   theme: Theme;
@@ -18,6 +19,13 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
   onNotify: () => void;
   voiceLevel: VoiceLevel;
   onVoiceLevel: (level: VoiceLevel) => void;
+  voice: {
+    voices: VoiceChoice[];
+    selected: string | null;
+    qualityVoices: boolean;
+    onSelect: (name: string) => void;
+    onPreview: (name: string) => void;
+  };
   onAction: (action: "launch" | "folder" | "harnesses" | "backup") => void;
 }) {
   const [open, setOpen] = useState<Menu | null>(null);
@@ -81,6 +89,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
             {VOICE_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
           </select></label>
           <p id="header-voice-help">Oracle says when an agent needs your input or finishes. It only speaks while a dashboard is open.</p>
+          <VoicePicker {...voice} />
         </div>
         <div className="rd-header-menu-divider" />
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>

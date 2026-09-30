@@ -84,8 +84,21 @@ from wherever the voice is heard, not buried in Settings.
 
 `window.speechSynthesis` in the dashboard (owner decision 4) — built into the
 browser and the Mac app's web view, no dependency, no network, nothing leaves
-the machine. Voice and rate are whatever the OS provides; expose a voice
-picker only if the default sounds wrong.
+the machine. A voice picker is required, not optional (owner report, 2026-09-29: "really
+robotic"). The owner's Mac had 41 English voices and no Enhanced or Premium
+one, so the browser's first pick was a basic voice. Settings lists the
+voices for the owner's language, best first and without macOS's novelty
+voices, each with a Preview that speaks "architect needs your input". The
+default prefers a Premium voice, then Enhanced, then Samantha. The list
+fills when the browser's voiceschanged event fires, because the first call
+can be empty. The choice is stored per device under `rd.voice.name`. When
+no Enhanced or Premium voice is installed, Settings says where to download
+one for free: System Settings, Accessibility, Spoken Content, then the
+System voice menu, Manage Voices. On macOS 15.7 the labels "Spoken Content"
+and "System voice" are confirmed from the system's own strings; "Manage
+Voices" is Apple's documented menu item and was not read from this machine.
+No cloud voices: announcements, including session names, stay on the
+machine.
 
 Deliberately NOT the Mac app's native notifier (`main.swift`), which would be
 a second notification path — the app already double-notifies (B6). The cost
