@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, Artifact, ArtifactContent } from "./api";
 import { ArtifactsView, previewDocument } from "./ArtifactsView";
-vi.mock("./api", () => ({ api: { artifacts: vi.fn(), artifact: vi.fn(), removeArtifact: vi.fn() } }));
+vi.mock("./api", () => ({ api: { artifacts: vi.fn(), folderArtifacts: vi.fn(), artifact: vi.fn(), removeArtifact: vi.fn() } }));
 const first: Artifact = { id: "a", session_key: "session", title: "First report", source_path: "/tmp/first.md", media_type: "text/markdown", size: 8, sha256: "first", created_at: 1, updated_at: 1 };
 const second: Artifact = { ...first, id: "b", title: "Second report", sha256: "second", source_path: "/tmp/second.md" };
 const content = (artifact: Artifact): ArtifactContent => ({ ...artifact, content_base64: btoa(`# ${artifact.title}`) });
@@ -71,4 +71,16 @@ it("restores background access and history when an expanded session unmounts", a
   expect(background.inert).toBe(false);
   expect(history.state).toEqual({ existing: "preserved" });
   background.remove();
+});
+
+it("opens a folder artifact in the existing viewer using its producing session", async () => {
+  const archived = { ...second, session_key: "archived-producer", session_name: "Release", session_state: "archived", folder: "work/child" };
+  vi.mocked(api.folderArtifacts).mockResolvedValue({ artifacts: [archived] });
+  vi.mocked(api.artifact).mockResolvedValue({ artifact: content(archived) });
+  render(<ArtifactsView folder="work" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Second report" }));
+  expect(await screen.findByRole("dialog", { name: "Second report" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "← Back to folder" })).toBeVisible();
+  expect(api.artifact).toHaveBeenCalledWith("archived-producer", "b");
+  expect(screen.getByText("archived")).toBeInTheDocument();
 });

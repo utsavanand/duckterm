@@ -17,6 +17,10 @@ export function AgentTree({
   now,
   folders: savedFolders,
   selectedKey,
+  selectedFolder,
+  onOpenFolder,
+  onFolderRenamed,
+  onFolderDeleted,
   onOpen,
   onOpenInbox,
   onFoldersChanged,
@@ -32,6 +36,10 @@ export function AgentTree({
   now: number;
   folders: string[];
   selectedKey: string | null;
+  selectedFolder?: string | null;
+  onOpenFolder?: (folder: string) => void;
+  onFolderRenamed?: (from: string, to: string) => void;
+  onFolderDeleted?: (folder: string) => void;
   onOpen: (key: string) => void;
   onOpenInbox?: (key: string) => void;
   onFoldersChanged: () => void;
@@ -80,6 +88,7 @@ export function AgentTree({
         else if (s.group?.startsWith(name + "/"))
           onSessionMoved(s.key, r.to + s.group.slice(name.length));
       }
+      onFolderRenamed?.(name, r.to);
       toast(`Moved to ${r.to}`);
       onFoldersChanged();
     } catch (e) {
@@ -110,6 +119,7 @@ export function AgentTree({
           onSessionMoved(s.key, next + s.group.slice(path.length));
       }
       onFoldersChanged();
+      onFolderRenamed?.(path, next);
       toast(`Renamed to ${next}`);
     } catch (e) {
       toast(`Rename failed: ${(e as Error).message}`, "err");
@@ -141,6 +151,7 @@ export function AgentTree({
     }
     try {
       await api.deleteFolder(name);
+      onFolderDeleted?.(name);
       toast(`Deleted folder ${name}`);
       onFoldersChanged();
     } catch (e) {
@@ -199,6 +210,8 @@ export function AgentTree({
     <GroupHeader
       key={path}
       name={path}
+      selected={selectedFolder === path}
+      onOpen={() => onOpenFolder?.(path)}
       depth={depth}
       count={subtreeCount(path)}
       onDropSession={moveToGroup}
@@ -241,6 +254,8 @@ export function AgentTree({
 // source for nesting, with subfolder + grid actions. Folders are paths; the
 // header shows only the leaf name.
 function GroupHeader({
+  selected,
+  onOpen,
   onDelete,
   name,
   depth,
@@ -259,6 +274,8 @@ function GroupHeader({
   children,
 }: {
   name: string;
+  selected: boolean;
+  onOpen: () => void;
   depth: number;
   onRename: () => void;
   onDelete: () => void;
@@ -290,7 +307,7 @@ function GroupHeader({
   return (
     <div className={`rd-group${over ? " drop-over" : ""}`}>
       <div
-        className="rd-group-head"
+        className={`rd-group-head${selected ? " selected" : ""}`}
         style={{ paddingLeft: 14 + depth * 16 }}
         draggable
         onDragStart={(e) => {
@@ -298,7 +315,6 @@ function GroupHeader({
           e.dataTransfer.setData("text/rd-folder", name);
           e.dataTransfer.effectAllowed = "move";
         }}
-        onClick={() => setCollapsed((c) => !c)}
         onDragOver={(e) => {
           if (
             e.dataTransfer.types.includes("text/rd-session") ||
@@ -320,9 +336,11 @@ function GroupHeader({
           if (folder) onDropFolder(folder, name);
         }}
       >
-        <span className="rd-group-caret">{collapsed ? "▸" : "▾"}</span>
-        <span
+        <button className="rd-group-caret" aria-label={`${collapsed ? "Expand" : "Collapse"} ${name}`} aria-expanded={!collapsed} onClick={() => setCollapsed(c => !c)}>{collapsed ? "▸" : "▾"}</button>
+        <button
           className="rd-group-name"
+          aria-pressed={selected}
+          onClick={onOpen}
           title="Double-click to rename"
           onDoubleClick={(e) => {
             e.stopPropagation();
@@ -330,7 +348,7 @@ function GroupHeader({
           }}
         >
           {leaf}
-        </span>
+        </button>
         <span className="rd-group-count">{count}</span>
         <button
           className="rd-group-phone"

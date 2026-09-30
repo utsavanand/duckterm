@@ -250,6 +250,7 @@ export interface Artifact {
   created_at: number;
   updated_at: number;
 }
+export interface FolderArtifact extends Artifact { session_name: string; session_state: string; folder: string }
 export interface ArtifactContent extends Artifact { content_base64: string }
 
 async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
@@ -338,10 +339,12 @@ export const api = {
   forgetConnector: (name: string, context?: string) => post<Connector>(`/connectors/${name}/forget`, {}, context),
   disableConnector: (name: string, context?: string) =>
     post<Connector>(`/connectors/${name}/disable`, {}, context),
-  fleetAsk: (question: string) =>
+  folderArtifacts: (folder: string) => artifactRequest<{ artifacts: FolderArtifact[]; truncated?: boolean }>(`/folders/${encodeURIComponent(folder)}/artifacts`),
+  folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
+  fleetAsk: (question: string, folder?: string) =>
     post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
       "/fleet/ask",
-      { question },
+      { question, ...(folder !== undefined ? { folder } : {}) },
     ),
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
   controlTower: () => get<TowerInsights>("/control-tower"),
