@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-29 by release-dev at the v0.4.91 release)
+## Status at a glance (reconciled 2026-09-30 by release-dev at the v0.4.92 release)
 
 | Item | Status |
 | --- | --- |
@@ -45,7 +45,7 @@ the session API.
 | F11 Answer agents without typing | Stop-hook path now carries inbox reminders (`cd25224`); relaying owner answers not built |
 | B2, F7, F8, Oracle on WhatsApp | Designed; waiting on owner review or scheduling |
 | F14 Cross-host discovery and messaging | Designed ([cross-host-collaboration-design.md](cross-host-collaboration-design.md), PR #110) |
-| Folder view + Feature tracker | Proposed: [folder-view-spec.md](folder-view-spec.md); needs rework now that F12 is reverted |
+| Folder view | **Chat + Artifacts shipped v0.4.92** (PR #162): clicking a folder name opens a folder-scoped chat (running sessions in that subtree; its own history in `~/.duckterm/folder-chats.json`) and the artifacts its sessions produced; the chevron only expands the tree. The feature tracker part still needs rework now that F12 is reverted: [folder-view-spec.md](folder-view-spec.md) |
 | F1, F2, F4, F5, urgent messages, Interrupt, approvals re-home | Not started |
 
 Shipped since this doc was first written (2026-09-20 → 22):
