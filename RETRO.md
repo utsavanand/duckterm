@@ -214,6 +214,7 @@ replaced the new rule, then Save reported success for an empty list. Gate edits
 and saves on successful loading, ignore stale responses, and block saving after
 load failures. Test delayed responses and Enter as well as clicks; a passing retry
 does not explain an intermittent failure.
+
 ## 2026-09-28 — Analytics must preserve the model at usage time
 
 Harness names are not model identities. Claude assistant records carry model IDs,
@@ -250,6 +251,7 @@ Use only the native ID recorded by a session-key-bound hook; never replace it
 with a directory guess. Refuse unknown identity when another Codex row shares
 the directory, including stopped rows. Test independent IDs through a database
 restart and keep fork/snapshot paths from reintroducing the same fallback.
+
 ## 2026-09-28 — Move action behavior and verify adjacent views
 
 Moving session actions out of the sidebar must retain lifecycle gates, remote
