@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-30 by release-dev at the v0.4.93 release)
+## Status at a glance (reconciled 2026-09-30 by release-dev at the v0.4.94 release)
 
 | Item | Status |
 | --- | --- |
@@ -41,7 +41,10 @@ the session API.
 | B4, B7, B8 | Fixed (B4 verified on installed v0.4.73; B7 v0.4.70; B8 v0.4.69) |
 | Control Tower | Shipped (PR #39); menu wording v0.4.73 |
 | Inbox redesign | Shipped v0.4.68 |
-| B3, B6, B12, F6, duck settle, waiting lifecycle | Open; see [bugs-and-backlog.md](bugs-and-backlog.md) |
+| Waiting lifecycle + duck settle | **Shipped v0.4.94** (PR #168), per the owner's decisions: a raised hand stays up until the owner attends (opening the session in the dashboard, answering its note, deciding its approval, or an owner relay rule answering it) — the agent's own events never lower it; the duck settle is 30 s after a turn ends, and hooks always win over a screen reading for Claude Code and Copilot. New nullable column `attention_since`, added on open; schema stays v8 and older builds still open the DB |
+| B13 Peers can't read each other's artifacts | **In progress** (remote-session-dev, PR #167, in QA). `duckterm session artifacts` listed only the caller's own, which blocked the contracts review. Fix: `session artifacts --folder PATH` and `session artifact get ID`, session credentials only, root-scoped and read-only |
+| File a bug from DuckTerm (dashboard) | Backend PR #166 passed main-qa (backend only). Blocked on the Mac bridge (routes rejected, ZIPs corrupted by UTF-8 conversion, size caps below the 15 MiB maximum) and on the owner-reviewed frontend. Still **Deferred** on the roadmap until the owner un-defers it |
+| B3, B6, B12, F6 | Open; see [bugs-and-backlog.md](bugs-and-backlog.md) |
 | F11 Answer agents without typing | Stop-hook path now carries inbox reminders (`cd25224`); relaying owner answers not built |
 | B2, F7, F8, Oracle on WhatsApp | Designed; waiting on owner review or scheduling |
 | F14 Cross-host discovery and messaging | Designed ([cross-host-collaboration-design.md](cross-host-collaboration-design.md), PR #110) |
