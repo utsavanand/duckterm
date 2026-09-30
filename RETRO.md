@@ -25,6 +25,14 @@ session attended.
 ## E2E readiness must identify the spawned server
 A busy test port let global setup accept another QA server's public sessions response. Readiness now matches the dashboard token against the private test home, checks child exit/errors, and fails on deadline; failed setup reaps only its child and removes its home. Regressions cover a foreign listener, early child exit, timeout and matching identity.
 
+## 2026-09-30 — A shared artifact title must resolve through session credentials
+
+A peer review stalled because only the owner dashboard could read another
+session's saved artifact. Add scoped metadata and snapshot reads to the session
+API, checking both current sharing roots and folder membership. Filter before
+pagination; recheck on download; preserve access to stopped producers without
+granting writes. Download saved bytes rather than reopening a peer's source path,
+verify their digest, and create a new private file without overwriting user data.
 
 ## 2026-09-30 — The slop check passed in worktrees without reading a file
 **Broke:** PR #161 failed CI on an existence-only test assert, while the same
