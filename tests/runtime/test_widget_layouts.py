@@ -5,6 +5,7 @@ import json
 import pytest
 from tests.runtime.test_session_api import dispatch
 
+from duckterm.core.relay import Relay
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.layouts import defaults
 from duckterm.server import Server
@@ -15,7 +16,9 @@ def app(tmp_path):
     history = HistoryStore(tmp_path / "db.sqlite")
     for folder in ["a", "a/child", "ab", "a%_"]:
         history.create_folder(folder)
-    yield Server(history=history)
+    server = Server(history=history)
+    server.relay = Relay(tmp_path / "widget-test-relay.json")
+    yield server
     history.close()
 
 

@@ -42,3 +42,6 @@
  .rd-widget h3 { font-size:10px }
  .rd-widget-grid { gap:8px }
 }
+
+/* Switch foreground and background together when the system theme changes. */
+.rd-tower-widgets .rd-btn { transition: opacity .12s ease; }
