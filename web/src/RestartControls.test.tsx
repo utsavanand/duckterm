@@ -5,10 +5,10 @@ import { RestartControls } from "./RestartControls";
 import { SessionView } from "./types";
 import { sessionRef } from "./hostTransport";
 
-vi.mock("./api", () => ({ api: { restartStatus: vi.fn(), restart: vi.fn(), cancelRestart: vi.fn() } }));
+vi.mock("./api", () => ({ api: { restartStatus: vi.fn(), restart: vi.fn(), cancelRestart: vi.fn(), models: vi.fn() } }));
 const session: SessionView = { key: "a", label: "My project", state: "busy", runtime: "codex", model: "current-model", lastEventType: "PreToolUse", startedAt: 1, updatedAt: 1, eventCount: 1 };
 const ready = { can_restart: true, draft_clear: true, after_turn: true, model: "current-model" };
-beforeEach(() => { vi.mocked(api.restartStatus).mockResolvedValue(ready); });
+beforeEach(() => { vi.mocked(api.restartStatus).mockResolvedValue(ready); vi.mocked(api.models).mockResolvedValue({ models: [{ id: "new-model", label: "New model 1.0" }] }); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.useRealTimers(); });
 
 it("queues a model change with the current model preset and a cancelable status", async () => {
@@ -18,8 +18,9 @@ it("queues a model change with the current model preset and a cancelable status"
   const open = screen.getByRole("button", { name: "Change model" });
   await waitFor(() => expect(open).toBeEnabled());
   fireEvent.click(open);
-  expect(screen.getByLabelText("Model after restart")).toHaveValue("current-model");
-  fireEvent.change(screen.getByLabelText("Model after restart"), { target: { value: "new-model" } });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: /New model 1.0/ }));
+  expect(screen.getByLabelText("Model after restart")).toHaveValue("new-model");
   fireEvent.click(screen.getByRole("button", { name: "Restart after this turn" }));
   await waitFor(() => expect(api.restart).toHaveBeenCalledWith("a", "new-model"));
   expect(await screen.findByText(/Restart pending/)).toBeVisible();
@@ -32,7 +33,7 @@ it("shows why drafts block restart without sending a restart request", async () 
   render(<RestartControls session={session} />);
   await waitFor(() => expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  fireEvent.change(screen.getByLabelText("Model after restart"), { target: { value: "my-choice" } });
+  await waitFor(() => expect(screen.getByLabelText("Model after restart")).toBeEnabled());
   vi.mocked(api.restartStatus).mockResolvedValue({ ...ready, draft_clear: false, reason: "Unsent text — clear your draft first." });
   // Re-open fetches an execution eligibility check; the dialog never silently sends.
   fireEvent.keyDown(window, { key: "Escape" });
@@ -61,4 +62,19 @@ it("renders a durable pending request after remount and the reported new CLI ver
   vi.mocked(api.restartStatus).mockResolvedValue({ ...ready, status: "completed", cli_version: "codex 2.0", previous_cli_version: "codex 1.0" });
   await act(async () => { render(<RestartControls session={session} />); });
   expect(screen.getByText(/codex 1.0 → codex 2.0/)).toBeVisible();
+});
+
+it("keeps restart usable when catalog fails, retries, and never restarts from selecting current model", async () => {
+  vi.mocked(api.models).mockRejectedValueOnce(new Error("Sign in and retry"));
+  render(<RestartControls session={session} />);
+  const button = screen.getByRole("button", { name: "Change model" });
+  await waitFor(() => expect(button).toBeEnabled());
+  fireEvent.click(button);
+  expect(await screen.findByRole("alert")).toHaveTextContent("Sign in and retry");
+  expect(api.restart).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("menuitem", { name: "Retry model list" }));
+  fireEvent.click(await screen.findByRole("menuitemradio", { name: /current-model/ }));
+  expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  expect(api.restart).not.toHaveBeenCalled();
+  expect(button).toHaveFocus();
 });

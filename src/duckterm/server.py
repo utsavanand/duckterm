@@ -293,6 +293,8 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/promote")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._stop(w, seg),
           **_mid("/sessions/", "/stop")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._models(w, seg),
+          **_mid("/sessions/", "/models")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "GET"),
           **_mid("/sessions/", "/restart")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "POST", b),
@@ -371,6 +373,9 @@ class Server:
         from duckterm.restarts import Restarts
 
         self.restarts = Restarts(self)
+        from duckterm.model_catalog import ModelCatalog
+
+        self.model_catalog = ModelCatalog()
         from duckterm.archives import Archives
 
         self.archives = Archives(self)
@@ -1710,6 +1715,19 @@ class Server:
         self.restarts.cancel(session_key)
         status, result = await self._resume_session(session_key)
         await _write_json(writer, status, result)
+
+    async def _models(self, writer: asyncio.StreamWriter, key: str) -> None:
+        from duckterm.model_catalog import CatalogError
+
+        row = self.history.session(key)
+        if row is None:
+            await _write_json(writer, 404, {"error": "Session not found"})
+            return
+        try:
+            choices = await self.model_catalog.choices(str(row.get("runtime") or ""))
+            await _write_json(writer, 200, {"models": choices})
+        except CatalogError as exc:
+            await _write_json(writer, 503, {"error": str(exc)})
 
     async def _restart(
         self, writer: asyncio.StreamWriter, key: str, method: str, body: bytes = b""
