@@ -27,7 +27,7 @@ export function oracleWidgets(onAnalytics: (tab: AnalyticsTab) => void): WidgetT
 export function Tile({ label, value, warn, children, onClick }: { label: string; value: string; warn?: boolean; children: React.ReactNode; onClick?: () => void }) {
   const Tag = onClick ? "button" : "div";
   return (
-    <Tag onClick={onClick} className={`rd-tower-tile${warn ? " warn" : ""}${onClick ? " rd-tower-tile-button" : ""}`}>
+    <Tag onClick={onClick} aria-label={onClick ? `Open ${label.startsWith("Tokens") ? "token" : "mail"} analytics` : undefined} className={`rd-tower-tile${warn ? " warn" : ""}${onClick ? " rd-tower-tile-button" : ""}`}>
       <span className="rd-tower-label">{label}</span>
       <span className="rd-tower-num">{value}</span>
       <span className="rd-tower-sub">{children}</span>

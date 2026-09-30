@@ -63,7 +63,7 @@ test("Analytics opens from Oracle and shows actual transcript model IDs, filters
   try {
     await page.goto(base());
     await page.getByRole("button", { name: /^Oracle/ }).click();
-    await page.getByRole("button", { name: /Tokens · 7 days/ }).click();
+    await page.getByRole("button", { name: "Open token analytics", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "Analytics", exact: true }),
     ).toBeVisible();
