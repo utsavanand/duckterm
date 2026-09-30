@@ -302,3 +302,52 @@ def test_an_idle_agent_gets_a_note_at_once(scenario, monkeypatch) -> None:
     asyncio.run(server._oracle_tick())
     assert "Merged: branch fork-a at 1234abc" in b"".join(sup.pasted).decode()
     assert status(server, owner, "merge-1") == {"claude": "delivered"}
+
+
+def test_a_merge_summary_carries_its_child_and_key_through_the_inbox(scenario) -> None:
+    history, server, owner, creds = scenario
+    key = "merge:peer:1"
+    code, body = note(server, owner, "claude", "Fork summary", key, merged_from="peer")
+    assert code == 200
+    inbox = call(history, creds["claude"], "GET", "/inbox")[1]["messages"]
+    (merged,) = [m for m in inbox if m["id"] == body["message_id"]]
+    assert merged["request_key"] == key  # what GET /broadcasts takes, not the message id
+    assert merged["origin"] == {"kind": "merge", "from_session": "peer"}
+    assert status(server, owner, key) == {"claude": "pending next turn"}
+
+    send(server, owner, "Plain priority", "p")
+    call(
+        history,
+        {**creds["peer"], "idempotency-key": "q1"},
+        "POST",
+        "/questions",
+        {"target_session_id": "claude", "question": "hi"},
+    )
+    others = [
+        m
+        for m in call(history, creds["claude"], "GET", "/inbox")[1]["messages"]
+        if m["id"] != merged["id"]
+    ]
+    assert [m.get("origin") for m in others] == [None, None]
+    assert [m.get("request_key") for m in others if m["sender_kind"] == "session"] == [None]
+
+
+@pytest.mark.parametrize(
+    ("key", "extra", "code"),
+    [
+        ("merge:peer:2", {}, 400),  # the prefix without a named child
+        ("merge:codex:3", {"merged_from": "peer"}, 400),  # key names another child
+        ("merge:peer:", {"merged_from": "peer"}, 400),  # no unique part
+        ("merge:claude:4", {"merged_from": "claude"}, 400),  # merged into itself
+        ("merge:ghost:5", {"merged_from": "ghost"}, 404),
+        ("merge:peer:6", {"merged_from": "peer", "priority": False}, 400),
+    ],
+)
+def test_the_merge_origin_cannot_be_forged(scenario, key, extra, code) -> None:
+    _, server, owner, _ = scenario
+    assert note(server, owner, "claude", "x", key, **extra)[0] == code
+
+
+def test_a_folder_broadcast_cannot_use_the_merge_prefix(scenario) -> None:
+    _, server, owner, _ = scenario
+    assert send(server, owner, "x", "merge:peer:1")[0] == 400

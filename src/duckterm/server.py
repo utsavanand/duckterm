@@ -3104,6 +3104,7 @@ class Server:
                     session_key,
                     req.get("text"),
                     request_key=req.get("request_key") if priority else None,
+                    merged_from=req.get("merged_from"),
                     priority=priority,
                 )
             except APIError as exc:
