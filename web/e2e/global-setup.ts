@@ -1,8 +1,10 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { waitForOwnedServer } from "./server-readiness";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -76,21 +78,21 @@ export default async function globalSetup() {
     },
   );
 
-  // Wait for the server to answer before tests run.
-  const base = `http://127.0.0.1:${PORT}`;
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${base}/sessions`);
-      if (res.ok) break;
-    } catch {
-      // not up yet
+  // Setup failures do not run global teardown. Reap only our child and home.
+  try {
+    await waitForOwnedServer(proc, home, `http://127.0.0.1:${PORT}`);
+    writeFileSync(
+      process.env.RD_TEST_STATE_FILE || join(tmpdir(), "rd-e2e-state.json"),
+      JSON.stringify({ home, pid: proc.pid, port: PORT, tmuxSocket }),
+    );
+  } catch (error) {
+    if (proc.pid && proc.exitCode === null && proc.signalCode === null) {
+      await new Promise<void>((resolve) => {
+        proc.once("exit", () => resolve());
+        proc.kill("SIGKILL");
+      });
     }
-    await new Promise((r) => setTimeout(r, 200));
+    rmSync(home, { recursive: true, force: true });
+    throw error;
   }
-
-  writeFileSync(
-    process.env.RD_TEST_STATE_FILE || join(tmpdir(), "rd-e2e-state.json"),
-    JSON.stringify({ home, pid: proc.pid, port: PORT, tmuxSocket }),
-  );
 }

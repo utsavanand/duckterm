@@ -304,7 +304,7 @@ function AgentDuck({
   onPin: (el: HTMLElement) => void;
 }) {
   const state = agent.shownState;
-  const pose = stuck ? "idle" : poseFor(state);
+  const pose = stuck ? "idle" : poseFor(state, !!agent.attentionSince);
   const subs = runningSubagents(agent);
   const drifts = pose === "idle" && !stuck;
   return (

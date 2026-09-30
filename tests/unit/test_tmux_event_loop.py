@@ -100,7 +100,8 @@ def test_request_tmux_wait_leaves_event_loop_available(tmp_path, monkeypatch, op
                 {
                     "session_key": "test-loop",
                     "state": "waiting",
-                    "runtime": "generic",
+                    # Only an auto-reviewing agent's wait is ever read from the screen.
+                    "runtime": "codex",
                 },
             )
             assert captures == [True]

@@ -119,6 +119,12 @@ export type VoiceSnapshot = { at: number; sessions: VoiceSession[]; notes: Relay
 
 export const REANNOUNCE_MS = 15 * 60_000;
 
+// "is complete" waits this long after a turn ends. The relay turns a turn that
+// ended on a question into a needs-you note about 30 s after Stop plus one model
+// call, and that should be announced instead. The ducks' own settle is now 30 s
+// (owner decision, 2026-09-30), too short for that, so voice keeps its own.
+export const COMPLETION_SETTLE_MS = 90_000;
+
 // Every rule lives here, as a pure diff of two snapshots (architect's design,
 // 2026-09-29): what changed between them is what gets said.
 //   needs you: a session that starts waiting (approvals get the chime), or a
