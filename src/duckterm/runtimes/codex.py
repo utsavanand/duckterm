@@ -11,6 +11,7 @@ import contextlib
 import json
 import re
 import shlex
+from collections.abc import Iterable
 from pathlib import Path
 
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
@@ -21,6 +22,7 @@ from duckterm.runtimes.base import (
     plain_screen,
     prompt_line_rest,
 )
+from duckterm.runtimes.message_cache import MessageCache
 
 # Codex prints a spinner/working line while busy and a prompt glyph when idle.
 # "esc to interrupt" appears on every interruptible-active line (including
@@ -113,7 +115,7 @@ class CodexRuntime(Harness):
         path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
         if path is None:
             path = self.latest_transcript(cwd=cwd)
-        return parse_codex_messages(path) if path else []
+        return _MESSAGE_CACHE.read(path) if path else []
 
     def latest_transcript(self, *, cwd: Path) -> Path | None:
         """The newest rollout whose session_meta records this cwd. Sessions
@@ -202,8 +204,12 @@ def parse_codex_messages(path: Path) -> list[dict[str, object]]:
     and user turns that are machine context (<environment_context>,
     <user_instructions>) — rendering those as "you" would be wrong and would
     anchor the latest-reply view on a machine-generated turn."""
+    return _parse_message_lines(path.read_text(errors="replace").splitlines(), 0)
+
+
+def _parse_message_lines(lines: Iterable[str], start: int) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    for i, line in enumerate(path.read_text(errors="replace").splitlines()):
+    for i, line in enumerate(lines, start):
         if not line.strip():
             continue
         try:
@@ -255,3 +261,6 @@ def _codex_text(content: object) -> str:
         ]
         return "\n".join(parts)
     return ""
+
+
+_MESSAGE_CACHE = MessageCache(_parse_message_lines)
