@@ -39,7 +39,16 @@ export function saveVoiceLevel(level: VoiceLevel): void {
 // browser's first pick sounded robotic (2026-09-29). Prefer quality, let the
 // owner preview and choose, and say where better voices come from.
 
-export type VoiceChoice = { name: string; lang: string; default?: boolean };
+// name is what gets stored; label, when set, is what the picker shows.
+export type VoiceChoice = { name: string; lang: string; default?: boolean; label?: string };
+
+// Kokoro voices are stored as "kokoro:<id>" next to macOS voice names.
+export const NATURAL_PREFIX = "kokoro:";
+export const DEFAULT_NATURAL = `${NATURAL_PREFIX}af_heart`;
+
+export function naturalChoices(voices: { id: string; label: string; accent: string }[]): VoiceChoice[] {
+  return voices.map((v) => ({ name: NATURAL_PREFIX + v.id, lang: "en-US", label: `${v.label} (natural, ${v.accent})` }));
+}
 
 const VOICE_NAME_KEY = "rd.voice.name";
 
@@ -305,5 +314,57 @@ export function browserSpeaker(chosen: () => string | null = loadVoiceName): Spe
     stop: () => {
       if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     },
+  };
+}
+
+// Speaks through Oracle's local Kokoro voice when one is chosen, and falls back
+// to the best macOS voice when it can't (not installed, worker failed, timed
+// out), so voice never goes silent. onFallback says why, for Settings.
+export function naturalSpeaker(opts: {
+  fetchWav: (text: string, voice: string) => Promise<Blob>;
+  play: (wav: Blob) => Promise<boolean>;
+  stopPlayback: () => void;
+  fallback: Speaker;
+  chosen: () => string | null;
+  onFallback: (reason: string | null) => void;
+}): Speaker {
+  return {
+    say: async (text, voiceName) => {
+      const name = voiceName ?? opts.chosen();
+      if (!name?.startsWith(NATURAL_PREFIX)) return opts.fallback.say(text, voiceName);
+      try {
+        const spoke = await opts.play(await opts.fetchWav(text, name.slice(NATURAL_PREFIX.length)));
+        opts.onFallback(null);
+        return spoke;
+      } catch (e) {
+        opts.onFallback((e as Error).message || "the natural voice failed");
+        return opts.fallback.say(text); // no name: the best macOS voice
+      }
+    },
+    chime: opts.fallback.chime,
+    stop: () => {
+      opts.stopPlayback();
+      opts.fallback.stop();
+    },
+  };
+}
+
+// Plays a WAV and resolves when it ends. false means the browser refused
+// (no user gesture yet), which the dashboard shows as "Voice paused".
+export function audioPlayer(): { play: (wav: Blob) => Promise<boolean>; stop: () => void } {
+  let current: HTMLAudioElement | null = null;
+  return {
+    play: (wav) =>
+      new Promise<boolean>((resolve, reject) => {
+        const url = URL.createObjectURL(wav);
+        const audio = new Audio(url);
+        current = audio;
+        const done = (ok: boolean) => { URL.revokeObjectURL(url); if (current === audio) current = null; resolve(ok); };
+        audio.onended = () => done(true);
+        audio.onpause = () => done(true); // stopped by mute
+        audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error("the audio could not be played")); };
+        audio.play().catch((e: Error) => (e.name === "NotAllowedError" ? done(false) : reject(e)));
+      }),
+    stop: () => { current?.pause(); current = null; },
   };
 }

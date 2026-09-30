@@ -118,6 +118,7 @@ from duckterm.transport.websocket import (
     read_frame,
     read_frame_opcode,
 )
+from duckterm.voice.service import LocalVoice, VoiceError
 
 # How long the blocking hook polls for a decision before giving up (the
 # duckterm-hook.sh DEADLINE). A blocking approval older than this whose session
@@ -238,6 +239,13 @@ _ROUTES: list[Route] = [
     Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
     Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
     Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
+    # ── Oracle voice: the optional local neural voice ──
+    Route("GET", "/voice/status", lambda s, r, w, h, b, seg: s._voice_status(w)),
+    Route("POST", "/voice/install", lambda s, r, w, h, b, seg: s._voice_install(w)),
+    Route("POST", "/voice/say", lambda s, r, w, h, b, seg: s._voice_say(w, b)),
+    Route("POST", "/voice/warm", lambda s, r, w, h, b, seg: s._voice_warm(w)),
+    Route("POST", "/voice/stop", lambda s, r, w, h, b, seg: s._voice_stop(w)),
+    Route("DELETE", "/voice", lambda s, r, w, h, b, seg: s._voice_remove(w)),
     Route("GET", "/relay/count", lambda s, r, w, h, b, seg: s._relay_count(w)),
     Route("POST", "/relay/rules/propose", lambda s, r, w, h, b, seg: s._relay_propose(w, b)),
     Route("POST", "/relay/rules", lambda s, r, w, h, b, seg: s._relay_create_rule(w, b)),
@@ -361,6 +369,8 @@ class Server:
         # The ledger isn't thread-safe; one scan at a time.
         self._tokens_lock = asyncio.Lock()
         self.relay = Relay(paths.home() / "relay.json")
+        self.voice = LocalVoice(paths.home() / "voice")
+        self._voice_warming: asyncio.Task[None] | None = None
         self._relay_confirmed: set[str] = set()  # approvals seen asking on screen
         self._relay_watching: set[str] = set()
         self._relay_logged: set[str] = set()  # requests whose screen was logged
@@ -4284,10 +4294,68 @@ class Server:
                     await server.serve_forever()
                 finally:
                     sweeper.cancel()
+                    self.voice.stop()
                     await self.archives.close()
                     await self.restarts.close()
         finally:
             _release_home_lock(lock)
+
+    # ── Oracle voice ──
+    # Speech runs in a separately installed worker (duckterm/voice/service.py);
+    # every failure here is a 503 the dashboard answers with a macOS voice.
+
+    async def _voice_status(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, await asyncio.to_thread(self.voice.status))
+
+    async def _voice_install(self, writer: asyncio.StreamWriter) -> None:
+        status = self.voice.status()
+        if status["state"] == "unsupported":
+            await _write_json(writer, 409, status)
+            return
+        self.voice.install_in_background()
+        await _write_json(writer, 202, self.voice.status())
+
+    async def _voice_say(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            req = json.loads(body or b"{}")
+            path = await asyncio.to_thread(
+                self.voice.say, str(req.get("text") or ""), str(req.get("voice") or "")
+            )
+        except (ValueError, VoiceError) as exc:
+            await _write_json(writer, 503, {"error": str(exc)})
+            return
+        audio = await asyncio.to_thread(path.read_bytes)
+        head = (
+            "HTTP/1.1 200 OK\r\n"
+            f"Content-Length: {len(audio)}\r\n"
+            "Content-Type: audio/wav\r\n"
+            "Cache-Control: no-store\r\n"
+            "Connection: close\r\n\r\n"
+        )
+        writer.write(head.encode() + audio)
+        await writer.drain()
+
+    async def _voice_warm(self, writer: asyncio.StreamWriter) -> None:
+        """Load the model before the first announcement: starting the worker
+        takes about 12 s, too long for "needs your input" to wait."""
+
+        def warm() -> None:
+            # A failure here shows up as a fallback when the dashboard next speaks.
+            with contextlib.suppress(VoiceError):
+                self.voice.say("ready", "af_heart")
+
+        installed = await asyncio.to_thread(self.voice.installed)
+        if installed:
+            self._voice_warming = asyncio.create_task(asyncio.to_thread(warm))
+        await _write_json(writer, 202, {"warming": installed})
+
+    async def _voice_stop(self, writer: asyncio.StreamWriter) -> None:
+        await asyncio.to_thread(self.voice.stop)
+        await _write_json(writer, 200, {"stopped": True})
+
+    async def _voice_remove(self, writer: asyncio.StreamWriter) -> None:
+        await asyncio.to_thread(self.voice.remove)
+        await _write_json(writer, 200, await asyncio.to_thread(self.voice.status))
 
     async def _sweep_dead_loop(self) -> None:
         """Auto-archive sessions whose terminal is gone. Launched tabs ping every

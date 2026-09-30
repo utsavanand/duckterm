@@ -14,6 +14,14 @@ export function authHeaders(extra?: Record<string, string>): HeadersInit {
   return { "X-Duckterm-Token": TOKEN, ...extra };
 }
 
+// Oracle's optional local neural voice (Kokoro), from GET /voice/status.
+export type LocalVoiceStatus =
+  | { state: "unsupported"; reason: string }
+  | { state: "absent"; size: string }
+  | { state: "installing"; step: string; done: number; size: string }
+  | { state: "ready"; voices: { id: string; label: string; accent: string }[] }
+  | { state: "failed"; reason: string; size: string };
+
 // One Ask Oracle exchange, as stored server-side (at = epoch ms).
 export interface ModelChoice { id: string; label: string; }
 
@@ -349,6 +357,28 @@ export const api = {
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
   controlTower: () => get<TowerInsights>("/control-tower"),
   relay: () => get<RelayState>("/relay"),
+  voiceStatus: () => get<LocalVoiceStatus>("/voice/status"),
+  voiceInstall: async (): Promise<LocalVoiceStatus> => {
+    const res = await fetch("/voice/install", { method: "POST", headers: authHeaders() });
+    return (await res.json()) as LocalVoiceStatus;
+  },
+  // A WAV of the line, or an error the caller answers with a macOS voice.
+  voiceSay: async (text: string, voice: string): Promise<Blob> => {
+    const res = await fetch("/voice/say", {
+      method: "POST",
+      cache: "no-store",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ text, voice }),
+    });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
+    return res.blob();
+  },
+  voiceWarm: () => fetch("/voice/warm", { method: "POST", headers: authHeaders() }).then(() => undefined),
+  voiceStop: () => fetch("/voice/stop", { method: "POST", headers: authHeaders() }).then(() => undefined),
+  voiceRemove: async (): Promise<LocalVoiceStatus> => {
+    const res = await fetch("/voice", { method: "DELETE", headers: authHeaders() });
+    return (await res.json()) as LocalVoiceStatus;
+  },
   relayCount: () => get<{ open: number }>("/relay/count"),
   relayAnswer: (id: string, answer: string | number) =>
     post<{ note: RelayNote }>(`/relay/${encodeURIComponent(id)}/answer`, { answer }),
