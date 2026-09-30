@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
-import { base } from './helpers';
+import { apiDelete, base, postEvent, seedSession } from './helpers';
 
 // Oracle voice mode in a real browser, with speech stubbed so what would be
 // said is recorded instead. Adapted from main-qa's PR #156 reproducers.
@@ -62,4 +62,20 @@ test('voice: off stops relay polling and survives a reload', async ({ page }) =>
   expect(calls).toBe(0);
   await page.reload();
   await expect(page.getByLabel('Voice announcements').first()).toHaveValue('off');
+});
+
+// main-qa's PR #156 reproducer: a session already waiting before the page opens.
+test('voice: a session already waiting when the page loads is not read out', async ({ page }) => {
+  const key = `voice-waiting-${Date.now()}`;
+  await seedSession(key, { name: 'Old waiting fixture', runtime: 'codex' });
+  await postEvent({ session_key: key, runtime: 'codex', event_type: 'Notification', notification_type: 'permission_prompt' });
+  await stubSpeech(page);
+  try {
+    await page.goto(base());
+    await expect(page.locator('.rd-row-click').filter({ hasText: 'Old waiting fixture' }).locator('.rd-state')).toHaveText('waiting');
+    await page.waitForTimeout(2200);
+    expect(await spoken(page)).toEqual([]);
+  } finally {
+    await apiDelete(`/sessions/${key}`);
+  }
 });

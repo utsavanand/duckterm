@@ -44,6 +44,15 @@ it("stays quiet on page load, then announces a session that starts waiting, chim
   expect(say(snap(T0 + 1, waiting), snap(T0 + 2, waiting))).toEqual([]); // same wait
 });
 
+it("stays quiet about sessions that were already waiting when they first appear", () => {
+  // main-qa's PR #156 reproducer: the first session load arrives after the first snapshot.
+  const before = snap(T0 + 5000, []);
+  const old = set("a", { state: "waiting", waitingSince: T0, waitingCause: "approval" });
+  expect(say(before, snap(T0 + 6000, old))).toEqual([]);
+  const newcomer = set("a", { state: "waiting", waitingSince: T0 + 5500 });
+  expect(say(before, snap(T0 + 6000, newcomer))).toHaveLength(1); // a new session that starts waiting
+});
+
 it("re-announces a wait once as it crosses 15 minutes, and a new wait announces afresh", () => {
   const w = set("a", { state: "waiting", waitingSince: T0, waitingCause: "question" });
   expect(say(snap(T0 + REANNOUNCE_MS - 5000, w), snap(T0 + REANNOUNCE_MS, w))).toHaveLength(1);

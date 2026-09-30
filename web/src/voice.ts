@@ -130,7 +130,10 @@ export function announce(prev: VoiceSnapshot | null, next: VoiceSnapshot, level:
     if (s.state !== "waiting") continue;
     const p = before.get(s.key);
     const since = s.waitingSince ?? next.at;
-    const fresh = !(p?.state === "waiting" && p.waitingSince === s.waitingSince);
+    // A session seen for the first time (the page's first session load, a
+    // remote host, replayed events) is only news if its wait began after the
+    // last look; otherwise it was already waiting before voice could see it.
+    const fresh = p ? !(p.state === "waiting" && p.waitingSince === s.waitingSince) : since > prev.at;
     if (fresh || crossed(since)) {
       out.push({ kind: "needs", key: s.key, name: name(s.key, s.label), approval: s.waitingCause === "approval" });
     }
