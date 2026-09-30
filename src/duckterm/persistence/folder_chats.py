@@ -1,6 +1,7 @@
 """Private folder conversations with recoverable folder rename/delete operations."""
 
 import json
+import sqlite3
 import threading
 import uuid
 from collections.abc import Callable
@@ -24,6 +25,28 @@ def valid_folder(value: Any) -> bool:
 
 def within(path: str, folder: str) -> bool:
     return path == folder or path.startswith(folder + "/")
+
+
+def valid_dispatch(value: Any) -> bool:
+    if value is None:
+        return True
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("request_key"), str)
+        and isinstance(value.get("label"), str)
+        and isinstance(value.get("target"), dict)
+        and value["target"].get("kind") in ("session", "folder")
+        and isinstance(value["target"].get("id"), str)
+        and isinstance(value.get("recipients"), list)
+        and all(
+            isinstance(row, dict)
+            and all(isinstance(row.get(key), str) for key in ("session_id", "message_id", "name"))
+            and row.get("status")
+            in ("queued", "read", "accepted", "answered", "declined", "cancelled", "expired")
+            and (row.get("answer") is None or isinstance(row["answer"], str))
+            for row in value["recipients"]
+        )
+    )
 
 
 class FolderChats:
@@ -53,6 +76,7 @@ class FolderChats:
                     or not isinstance(message.get("q"), str)
                     or not isinstance(message.get("a"), str)
                     or not isinstance(message.get("at"), int)
+                    or not valid_dispatch(message.get("dispatch"))
                     for message in entry["messages"]
                 ):
                     raise ValueError("Invalid conversation message")
@@ -106,17 +130,52 @@ class FolderChats:
             return str(entry["id"]), list(entry["messages"])
 
     def append(
-        self, folder: str, identity: str, question: str, answer: str, at: int
+        self,
+        folder: str,
+        identity: str,
+        question: str,
+        answer: str,
+        at: int,
+        dispatch: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         with _LOCK:
             data = self._load()
             entry = data["chats"].get(folder)
             if folder not in self.folders() or not entry or entry["id"] != identity:
                 raise ValueError("Folder changed while answering. Reopen it and ask again.")
-            exchange = {"q": question, "a": answer, "at": at}
+            if dispatch is not None:
+                for old in entry["messages"]:
+                    if old.get("dispatch", {}).get("request_key") == dispatch["request_key"]:
+                        if old["q"] != question or old["dispatch"]["target"] != dispatch["target"]:
+                            raise ValueError("request_key already used for different content")
+                        return dict(old)
+            exchange: dict[str, Any] = {"q": question, "a": answer, "at": at}
+            if dispatch is not None:
+                exchange["dispatch"] = dispatch
             entry["messages"] = (entry["messages"] + [exchange])[-CHAT_LIMIT:]
             self._save(data)
             return exchange
+
+    def refresh_dispatches(self, conn: sqlite3.Connection) -> None:
+        """Save replies before the broker retires old mail, including unread replies."""
+        with _LOCK:
+            data = self._load()
+            changed = False
+            for entry in data["chats"].values():
+                for message in entry["messages"]:
+                    for recipient in message.get("dispatch", {}).get("recipients", []):
+                        row = conn.execute(
+                            "SELECT status, answer, answered_at FROM session_questions "
+                            "WHERE id = ?",
+                            (recipient["message_id"],),
+                        ).fetchone()
+                        if row:
+                            update = dict(row)
+                            if any(recipient.get(k) != v for k, v in update.items()):
+                                recipient.update(update)
+                                changed = True
+            if changed:
+                self._save(data)
 
     def change(self, old: str, new: str | None, mutate: Callable[[], Any]) -> Any:
         """No awaits between intent, DB commit and completion; serialize writers."""

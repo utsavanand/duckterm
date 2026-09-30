@@ -3,6 +3,22 @@
 ## 2026-09-30 — Saved widgets must stop reading when removed
 
 A hidden tile still polling is not a removed widget. Give each built-in widget only its declared streams, detach its readers on unmount, and stop the shared insights timer after the last subscriber leaves. Missing data must say Unavailable instead of reporting zero. Persist layouts on the server with revision checks and recoverable folder rename/delete intents so reloads and crashes do not lose the owner’s arrangement.
+## 2026-09-30 — Polling tests must update the server fixture after a mutation
+**Broke:** The restart test lost its pending message when a two-second refresh
+ran under full-gate load. The POST mock returned queued, but the GET mock kept
+returning the old ready state.
+**Fix:** The POST fixture also updates the subsequent GET response, matching the
+server’s durable restart behavior. The visible pending and cancel assertions stay.
+
+## 2026-09-30 — Folder messages must outlive the inbox cleanup window
+**Broke:** Folder chat answered questions but could not address a session. Reusing
+inbox records without saving their replies would erase conversation content
+when the broker retires closed mail after seven days.
+**Fix:** Explicit recipients use the existing owner inbox path with folder scope
+checks and idempotent sends. Replies are copied into bounded folder history
+before retirement, including replies the owner has not opened yet.
+**Check:** Regression coverage sends, retries, answers, retires the inbox row,
+restarts the store, and verifies the complete reply remains in folder chat.
 
 ## 2026-09-30 — The slop check passed in worktrees without reading a file
 **Broke:** PR #161 failed CI on an existence-only test assert, while the same
