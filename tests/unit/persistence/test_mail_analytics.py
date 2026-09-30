@@ -238,3 +238,18 @@ def test_mixed_live_and_retired_rows_merge_counts_and_durations(store):
     assert before["top_pairs"] == [dict(sender="a", recipient="b", sent=2)]
     mail.retire_mail(store._conn, "id=?", ("two",))
     assert snapshot(store) == before
+
+
+def test_folder_scope_includes_either_endpoint_once_before_and_after_retirement(store):
+    seed(store, "inside", sender="inside")
+    seed(store, "outside", sender="outside")
+    seed(store, "open", sender="inside", status="queued", created=NOW - 1000)
+    selected = mail.snapshot(store._conn, None, now=NOW, sessions={"inside"})
+    assert sum(row["sent"] for row in selected["daily"]) == 2
+    assert sum(row["answered"] for row in selected["daily"]) == 1
+    assert selected["open_now"]["queued"] == 1
+    both = mail.snapshot(store._conn, None, now=NOW, sessions={"inside", "b"})
+    assert sum(row["sent"] for row in both["daily"]) == 3
+    store.session_api._sweep()
+    assert mail.snapshot(store._conn, None, now=NOW, sessions={"inside"}) == selected
+    assert mail.snapshot(store._conn, None, now=NOW, sessions=set())["daily"] == []

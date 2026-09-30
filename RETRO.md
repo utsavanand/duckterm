@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — Artifact protection belongs in the store
+
+Keep must reject removal on the server, survive re-registration, and preserve the owner’s category. Removing an unkept saved copy should retain metadata in a separate table, not leave an empty downloadable file. Folder counts must use exact subtree membership and the same durable mail and transcript accounting as Analytics; test both live and retired mail. Automatic retention remains a separate owner decision.
+
 ## 2026-09-30 — Saved widgets must stop reading when removed
 
 A hidden tile still polling is not a removed widget. Give each built-in widget only its declared streams, detach its readers on unmount, and stop the shared insights timer after the last subscriber leaves. Missing data must say Unavailable instead of reporting zero. Persist layouts on the server with revision checks and recoverable folder rename/delete intents so reloads and crashes do not lose the owner’s arrangement.

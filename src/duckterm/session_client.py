@@ -51,6 +51,9 @@ def add_parser(sub: Any) -> None:
     artifact = actions.add_parser("artifact", help="register a generated file in the Mac app")
     artifact.add_argument("file", type=Path)
     artifact.add_argument("--title")
+    artifact.add_argument(
+        "--kind", choices=("kdd", "spec", "research", "preview", "evidence", "report", "other")
+    )
     publish = actions.add_parser("publish", help="update your purpose and current activity")
     publish.add_argument("--purpose")
     publish.add_argument("--activity")
@@ -69,7 +72,7 @@ def main(args: argparse.Namespace) -> int:
             path = "/artifacts"
         elif action == "artifact":
             method, path = "POST", "/artifacts"
-            body = registration(args.file, args.title)
+            body = registration(args.file, args.title, args.kind)
         elif action == "discover":
             query = {"scope": args.scope}
             if args.cursor:

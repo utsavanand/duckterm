@@ -259,7 +259,13 @@ export interface BackupState {
   } | null;
 }
 
+export type ArtifactKind = "kdd" | "spec" | "research" | "preview" | "evidence" | "report" | "other";
+export interface FolderStats { folder: string; updated_at: number; timezone: string; sessions: Record<string, number>; waiting: { key: string; name: string }[]; periods: Record<string, { tokens: number; sent: number; answered: number }>; artifacts: { by_kind: Partial<Record<ArtifactKind, number>>; available: number; removed: number }; }
 export interface Artifact {
+  kind?: ArtifactKind;
+  kind_source?: "inferred" | "declared" | "owner";
+  kept?: boolean;
+  removed_at?: number | null;
   id: string;
   session_key: string;
   title: string;
@@ -281,6 +287,11 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
 }
 
 export const api = {
+  folderStats: (folder: string) => artifactRequest<FolderStats>(`/folders/${encodeURIComponent(folder)}/stats`),
+  updateArtifact: async (key: string, id: string, patch: { kind?: ArtifactKind; kept?: boolean }): Promise<{ artifact: Artifact }> => {
+    const response = await fetch(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, { method: "PATCH", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(patch) });
+    const value = await response.json(); if (!response.ok) throw new Error(value.error || "Could not update artifact"); return value;
+  },
   setFocusPin: async (key: string, pinned: boolean): Promise<{ pinned: boolean }> => {
     const res = await fetch(`/sessions/${encodeURIComponent(key)}/focus-pin`, {
       method: "PUT", headers: authHeaders({ "Content-Type": "application/json" }),

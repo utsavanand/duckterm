@@ -6,13 +6,21 @@ import { ArtifactsView } from "./ArtifactsView";
 import { desktop } from "./desktop";
 import { html } from "./render";
 import "./folderView.css";
+import "./folderDetails.css";
+import { FolderDetails, FolderActions } from "./FolderDetails";
 
 // Folder panels are ordinary internal components; sessions remain in the tree.
-export function FolderView({ folder }: { folder: string }) {
+export function FolderView({ folder, ...actions }: { folder: string } & FolderActions) {
+  const [details, setDetails] = useState(() => window.innerWidth >= 1250);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 1249px)");
+    const collapse = () => { if (media.matches) setDetails(false); };
+    media.addEventListener("change", collapse); return () => media.removeEventListener("change", collapse);
+  }, []);
   const [tab, setTab] = useState<"chat" | "artifacts">("chat");
   const tabs = useRef<HTMLDivElement>(null);
-  return <section className="rd-folder-view" aria-label={`Folder ${folder}`}>
-    <header className="rd-folder-heading"><small>Folder</small><h1>{folder.split("/").pop()}</h1><p>{folder} · Includes subfolders{desktop() ? " · This Mac" : ""}</p></header>
+  return <section className={`rd-folder-view rd-folder-with-details${details ? " details-open" : ""}`} aria-label={`Folder ${folder}`}>
+    <div className="rd-folder-main"><header className="rd-folder-heading"><button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button><small>Folder</small><h1>{folder.split("/").pop()}</h1><p>{folder} · Includes subfolders{desktop() ? " · This Mac" : ""}</p></header>
     <div ref={tabs} className="rd-folder-tabs" role="tablist" aria-label="Folder views" onKeyDown={event => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
@@ -24,6 +32,7 @@ export function FolderView({ folder }: { folder: string }) {
     </div>
     <div id="folder-chat" role="tabpanel" aria-labelledby="folder-chat-tab" className="rd-folder-chat-panel" hidden={tab !== "chat"}><FolderChat key={folder} folder={folder} active={tab === "chat"} /></div>
     <div id="folder-artifacts" role="tabpanel" aria-labelledby="folder-artifacts-tab" className="rd-folder-artifacts-panel" hidden={tab !== "artifacts"}>{tab === "artifacts" && <ArtifactsView key={folder} folder={folder} />}</div>
+    </div>{details && <FolderDetails key={folder} folder={folder} onClose={() => setDetails(false)} {...actions} />}
   </section>;
 }
 
