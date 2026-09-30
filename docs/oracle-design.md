@@ -140,7 +140,9 @@ a message's standing, not how it's delivered, and never interrupts a turn.
   Inbox rows for priority owner messages carry `request_key`, and merge
   summaries also carry `origin: {kind: "merge", from_session}`, so the
   dashboard labels them without parsing the text. A retry of the same
-  submission reuses its key; a later re-merge needs a new one.
+  submission reuses its key; a later re-merge needs a new one. A key is
+  bound to its text and its priority: reusing it with either changed is a
+  409, including a plain message on a priority key.
 - **Capability.** `priority_delivery` is a harness flag. Claude Code
   declares it, since its turn-end notice is proven; Codex and Copilot don't
   yet. Their copies show "inbox only" and get no pin or fast path, and are

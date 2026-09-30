@@ -432,12 +432,15 @@ class SessionAPI:
         request_key: str | None = None,
         priority: bool = False,
         merged_from: object = None,
+        question: bool = False,
     ) -> str:
         """One owner notice to one session, the same record a folder broadcast
-        queues. Returns the message id. priority=True makes it a one-recipient
-        priority broadcast under request_key: the same pin, Oracle reminder,
-        status and cancel (GET/DELETE /broadcasts/:request_key). Fork
-        merge-back delivers its summary this way."""
+        queues, keyed like a broadcast copy when request_key is given. Returns
+        the message id. priority=True makes it a one-recipient priority
+        broadcast: the same pin, Oracle reminder, status and cancel
+        (GET/DELETE /broadcasts/:request_key). Fork merge-back delivers its
+        summary this way. question=True (folder chat) asks for an answer
+        instead, under request_key as given."""
         message = _text(text, "text", 16384)
         row = self.conn.execute(
             "SELECT s.grp, m.root FROM sessions s "
@@ -460,10 +463,12 @@ class SessionAPI:
             raise APIError(400, "a priority message needs a request_key")
         if merged_from is not None and not priority:
             raise APIError(400, "a merge summary is a priority message")
+        if question and (priority or request_key is None):
+            raise APIError(400, "an owner question needs a request_key and no priority")
         if request_key is not None:
             request_key = _text(request_key, "request_key", 128)
             _check_merge_key(self.conn, request_key, merged_from, key, priority)
-            if priority:
+            if not question:
                 request_key += ":" + key  # the broadcast copy's key shape
             existing = self.conn.execute(
                 "SELECT id, content_hash FROM session_questions "
@@ -474,7 +479,6 @@ class SessionAPI:
                 if existing["content_hash"] != digest:
                     raise APIError(409, "request_key already used for different content")
                 return str(existing["id"])
-        question = request_key is not None and not priority
         notice_id = ("q-" if question else "b-") + secrets.token_hex(16)
         with self.conn:
             self.conn.execute(

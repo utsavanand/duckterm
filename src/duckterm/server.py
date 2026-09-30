@@ -3103,7 +3103,7 @@ class Server:
                 message_id = self.history.session_api.owner_message(
                     session_key,
                     req.get("text"),
-                    request_key=req.get("request_key") if priority else None,
+                    request_key=req.get("request_key"),
                     merged_from=req.get("merged_from"),
                     priority=priority,
                 )

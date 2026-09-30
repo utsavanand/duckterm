@@ -351,3 +351,16 @@ def test_the_merge_origin_cannot_be_forged(scenario, key, extra, code) -> None:
 def test_a_folder_broadcast_cannot_use_the_merge_prefix(scenario) -> None:
     _, server, owner, _ = scenario
     assert send(server, owner, "x", "merge:peer:1")[0] == 400
+
+
+@pytest.mark.parametrize(
+    ("first", "retry", "code"), [(True, False, 409), (False, True, 409), (False, False, 200)]
+)
+def test_a_request_key_is_bound_to_its_priority(scenario, first, retry, code) -> None:
+    """main-qa, PR #176: a plain retry of a priority key returned 200."""
+    _, server, owner, _ = scenario
+    sent = note(server, owner, "claude", "same", "qa-priority", priority=first)
+    again = note(server, owner, "claude", "same", "qa-priority", priority=retry)
+    assert again[0] == code
+    if code == 200:
+        assert again[1]["message_id"] == sent[1]["message_id"]

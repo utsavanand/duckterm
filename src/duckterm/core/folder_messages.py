@@ -80,7 +80,10 @@ class FolderMessages:
         if target["kind"] == "session":
             row = eligible[0]
             mid = broker.owner_message(
-                row["session_id"], text, request_key=f"folder:{identity}:{request_key}"
+                row["session_id"],
+                text,
+                request_key=f"folder:{identity}:{request_key}",
+                question=True,
             )
             recipients = [
                 {
