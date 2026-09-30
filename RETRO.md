@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-09-29 — Preserve actionable server errors on reads
+
+Model discovery returned useful missing-CLI/sign-in guidance, but the shared GET helper replaced it with “503 Service Unavailable.” Parse string error messages for failed reads just as for writes; retain status fallback for malformed or non-JSON responses. Exercise the actual API wrapper and a failed catalog request followed by Retry, not only a mocked Error thrown into a component.
+
 ## 2026-09-29 — Model changes need choices from the installed harness
 
 Removing ellipses did not make Change model a dropdown. Open model choices directly from that action and confirm the restart only after selection. Discover exact IDs from the installed CLI without starting a conversation; resolve aliases, preserve context suffixes, bound and reap catalog subprocesses, and expose retry on failure. Keep current models available even when absent from a new catalog, and preserve all restart/draft safety gates.

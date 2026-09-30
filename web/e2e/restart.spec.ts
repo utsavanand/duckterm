@@ -12,7 +12,10 @@ test("Restart dialog edits model, queues visibly, survives reload, and cancels",
     if (method === "DELETE") state = { ...state, status: "canceled" };
     await route.fulfill({ json: state });
   });
-  await page.route(`**/sessions/${key}/models`, route => route.fulfill({ json: { models: [{ id: "current-model", label: "Current model 1.0" }, { id: "new-model", label: "New model 2.0" }] } }));
+  let catalogUnavailable = true;
+  await page.route(`**/sessions/${key}/models`, route => catalogUnavailable
+    ? route.fulfill({ status: 503, json: { error: "Could not read model choices. Check CLI sign-in and retry." } })
+    : route.fulfill({ json: { models: [{ id: "current-model", label: "Current model 1.0" }, { id: "new-model", label: "New model 2.0" }] } }));
   try {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("/");
@@ -22,6 +25,11 @@ test("Restart dialog edits model, queues visibly, survives reload, and cancels",
     const change = page.getByRole("button", { name: "Change model", exact: true });
     await change.click();
     await expect(page.getByRole("menu", { name: "Choose model" })).toBeVisible();
+    await expect(page.getByRole("alert")).toHaveText("Could not read model choices. Check CLI sign-in and retry.");
+    expect(submitted).toHaveLength(0);
+    catalogUnavailable = false;
+    await page.getByRole("menuitem", { name: "Retry model list" }).click();
+    await expect(page.getByRole("menuitemradio", { name: /New model 2.0/ })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(change).toBeFocused();
     await change.click();
