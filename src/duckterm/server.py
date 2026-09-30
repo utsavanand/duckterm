@@ -57,6 +57,7 @@ from duckterm.core import events, oracle, progress
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
+from duckterm.core.folder_messages import FolderMessages
 from duckterm.core.orchestrator import Orchestrator
 from duckterm.core.relay import (
     ASK_CUES,
@@ -521,6 +522,12 @@ class Server:
         if path == "/backup" and method in {"GET", "PUT", "POST"}:
             await self._backup(writer, headers, method, body)
             return
+        folder_message = re.fullmatch(r"/folders/(.+)/(recipients|dispatch)", path)
+        if folder_message and method == ("GET" if folder_message[2] == "recipients" else "POST"):
+            await self._folder_message(
+                writer, headers, urllib.parse.unquote(folder_message[1]), folder_message[2], body
+            )
+            return
         folder_view = re.fullmatch(r"/folders/(.+)/(chat|artifacts)", path)
         if folder_view and method == "GET":
             await self._folder_view(
@@ -860,6 +867,38 @@ class Server:
         messages = await asyncio.to_thread(self._session_messages, session_key)
         await _write_json(writer, 200, {"messages": messages})
 
+    async def _folder_message(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        folder: str,
+        action: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        if not valid_folder(folder):
+            await _write_json(writer, 400, {"error": "Invalid folder path"})
+            return
+        if folder not in self.history.folders():
+            await _write_json(writer, 404, {"error": "Folder no longer exists"})
+            return
+        try:
+            service = FolderMessages(self.history)
+            if action == "recipients":
+                result = service.recipients(folder)
+            else:
+                req = json.loads(body)
+                if not isinstance(req, dict):
+                    raise APIError(400, "Expected an object")
+                result = {"exchange": service.send(folder, req)}
+            await _write_json(writer, 200, result)
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+        except (ValueError, UnicodeError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+
     async def _folder_view(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], folder: str, view: str
     ) -> None:
@@ -873,6 +912,7 @@ class Server:
             await _write_json(writer, 404, {"error": "Folder no longer exists"})
             return
         if view == "chat":
+            self.history.session_api._sweep()
             _, messages = self.history.folder_chats.snapshot(folder)
             await _write_json(writer, 200, {"messages": messages})
         else:
@@ -2383,7 +2423,7 @@ class Server:
         history = [
             f"Q: {h.get('q')}\nA: {h.get('a')}"
             for h in (prior if folder is not None else oracle.load_chat(chat_path))[-2:]
-            if isinstance(h, dict)
+            if isinstance(h, dict) and "dispatch" not in h
         ]
         prompt = (
             "You oversee a fleet of coding-agent sessions. Below is a digest of "

@@ -293,6 +293,7 @@ class HistoryStore:
         self._conn.executescript(_SCHEMA)
         self._migrate()
         self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
+        self.session_api.before_retire = lambda: self.folder_chats.refresh_dispatches(self._conn)
         self.artifacts = self.session_api.artifacts
         mail_analytics.initialize(self._conn)
         self.session_api.backfill()
