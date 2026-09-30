@@ -22,6 +22,10 @@ SESSION_END = "SessionEnd"
 SUBAGENT_START = "SubagentStart"
 SUBAGENT_STOP = "SubagentStop"
 
+# Published by the server, never by a hook: the owner attended to a session
+# that asked for them (opened it, or answered its note or approval).
+ATTENDED = "Attended"
+
 # The full set an agent's hooks are wired for (order preserved for the installer).
 ALL = [
     SESSION_START,

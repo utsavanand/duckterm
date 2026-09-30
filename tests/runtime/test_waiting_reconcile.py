@@ -75,3 +75,15 @@ def test_claude_code_is_never_screen_overridden() -> None:
     server.bus.publish({"event_type": "PermissionRequest", "session_key": "S"})
     server.orchestrator._supervisors["S"] = _StubSupervisor("✻ Baking… (2s)")  # type: ignore[assignment]
     assert _listed_state(server) == "waiting"
+
+
+def test_copilot_hook_wait_is_never_screen_overridden() -> None:
+    """Hooks win (contracts F1): only a wait the screen itself established
+    (auto-reviewing Codex) may be lifted by the screen."""
+    server = Server(history=HistoryStore(Path(tempfile.mkdtemp()) / "db.sqlite"))
+    server.bus.publish(
+        {"event_type": "SessionStart", "session_key": "S", "runtime": "copilot", "cwd": "/tmp"}
+    )
+    server.bus.publish({"event_type": "PermissionRequest", "session_key": "S"})
+    server.orchestrator._supervisors["S"] = _StubSupervisor("Working (2m • esc to interrupt)")  # type: ignore[assignment]
+    assert _listed_state(server) == "waiting"

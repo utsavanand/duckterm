@@ -23,7 +23,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
   voice: {
     voices: VoiceChoice[];
     selected: string | null;
-    qualityVoices: boolean;
+    ready: boolean;
     onSelect: (name: string) => void;
     onPreview: (name: string) => void;
     local: LocalVoiceStatus | null;
@@ -90,11 +90,15 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
           <p id="header-notification-help">{notificationsAvailable ? "Notify when an agent needs an answer." : "Desktop notifications are unavailable in this browser."}</p>
         </div>
         <div className="rd-header-notifications">
-          <label>Voice announcements<select value={voiceLevel} onChange={(event) => onVoiceLevel(event.target.value as VoiceLevel)} aria-describedby="header-voice-help">
+          <label>Voice announcements<select value={voice.ready ? voiceLevel : "off"} disabled={!voice.ready} onChange={(event) => onVoiceLevel(event.target.value as VoiceLevel)} aria-describedby="header-voice-help">
             {VOICE_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
           </select></label>
-          <p id="header-voice-help">Oracle says when an agent needs your input or finishes. It only speaks while a dashboard is open.</p>
-          <VoicePicker voices={voice.voices} selected={voice.selected} qualityVoices={voice.qualityVoices} onSelect={voice.onSelect} onPreview={voice.onPreview} />
+          <p id="header-voice-help">
+            {voice.ready
+              ? "Oracle says when an agent needs your input or finishes. It only speaks while a dashboard is open."
+              : "Download a voice below to turn voice announcements on."}
+          </p>
+          <VoicePicker voices={voice.voices} selected={voice.selected} onSelect={voice.onSelect} onPreview={voice.onPreview} />
           <NaturalVoicePanel status={voice.local} fallbackReason={voice.fallbackReason} onInstall={voice.onInstall} onRemove={voice.onRemove} />
         </div>
         <div className="rd-header-menu-divider" />

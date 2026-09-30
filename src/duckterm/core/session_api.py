@@ -112,9 +112,9 @@ def _public_question(row: dict[str, Any]) -> dict[str, Any]:
         "kind",
     )
     result = {field: row[field] for field in fields}
-    result["sender_kind"] = "owner" if row["kind"] == "broadcast" else "session"
+    result["sender_kind"] = "owner" if row["sender"] == "owner" else "session"
     result["priority"] = bool(row.get("priority"))
-    # A priority owner message is acknowledged by replying; others need none.
+    # A priority owner message is acknowledged by replying.
     result["requires_reply"] = row["kind"] != "broadcast" or result["priority"]
     if result["expires_at"] == NO_DEADLINE:
         result["expires_at"] = 0
@@ -128,6 +128,7 @@ PRIORITY_SNIPPET = 400
 
 class SessionAPI:
     def __init__(self, conn: sqlite3.Connection, credential_dir: Path) -> None:
+        self.before_retire: Callable[[], None] = lambda: None
         self.conn = conn
         self.credential_dir = credential_dir
         self.artifacts = ArtifactStore(conn)
@@ -258,7 +259,7 @@ class SessionAPI:
             "SELECT id, sender, recipient, root, kind FROM session_questions"
         ).fetchall():
             target = roots.get(question["recipient"])
-            if question["kind"] == "broadcast":
+            if question["sender"] == "owner":
                 if moved and target and _inside(question["root"], moved[0]):
                     self.conn.execute(
                         "UPDATE session_questions SET root = ? WHERE id = ?",
@@ -279,7 +280,8 @@ class SessionAPI:
                 )
         self.conn.execute(
             "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
-            "WHERE kind = 'question' AND status IN ('queued', 'accepted') "
+            "WHERE kind = 'question' AND sender != 'owner' "
+            "AND status IN ('queued', 'accepted') "
             "AND NOT EXISTS (SELECT 1 FROM session_api_members a JOIN session_api_members b "
             "ON a.root = b.root WHERE a.session_key = sender AND b.session_key = recipient "
             "AND a.root = session_questions.root AND a.root != '')",
@@ -288,7 +290,7 @@ class SessionAPI:
 
         self.conn.execute(
             "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
-            "WHERE kind = 'broadcast' AND status = 'queued' AND NOT EXISTS "
+            "WHERE sender = 'owner' AND status IN ('queued', 'accepted') AND NOT EXISTS "
             "(SELECT 1 FROM session_api_members m WHERE m.session_key = recipient "
             "AND m.root = session_questions.root AND m.root != '')",
             (now,),
@@ -384,7 +386,7 @@ class SessionAPI:
             )
         return response
 
-    def owner_message(self, key: str, text: object) -> str:
+    def owner_message(self, key: str, text: object, *, request_key: str | None = None) -> str:
         """One owner notice to one session, the same record a folder broadcast
         queues. Returns the message id."""
         message = _text(text, "text", 16384)
@@ -402,13 +404,25 @@ class SessionAPI:
                 "This session has no inbox because it isn't in a shared folder. "
                 "Type into its prompt or open its terminal instead.",
             )
-        notice_id = "b-" + secrets.token_hex(16)
+        digest = hashlib.sha256(json.dumps([key, message]).encode()).hexdigest()
+        if request_key is not None:
+            request_key = _text(request_key, "request_key", 128)
+            existing = self.conn.execute(
+                "SELECT id, content_hash FROM session_questions "
+                "WHERE sender = 'owner' AND idempotency_key = ?",
+                (request_key,),
+            ).fetchone()
+            if existing:
+                if existing["content_hash"] != digest:
+                    raise APIError(409, "request_key already used for different content")
+                return str(existing["id"])
+        notice_id = ("q-" if request_key is not None else "b-") + secrets.token_hex(16)
         with self.conn:
             self.conn.execute(
                 "INSERT INTO session_questions "
                 "(id, sender, recipient, sender_name, root, question, created_at, "
                 "expires_at, idempotency_key, content_hash, kind) "
-                "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, 'broadcast')",
+                "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, ?)",
                 (
                     notice_id,
                     key,
@@ -416,8 +430,9 @@ class SessionAPI:
                     message,
                     int(time.time() * 1000),
                     NO_DEADLINE,
-                    notice_id,
-                    hashlib.sha256(message.encode()).hexdigest(),
+                    request_key or notice_id,
+                    digest,
+                    "question" if request_key is not None else "broadcast",
                 ),
             )
         return notice_id
@@ -448,7 +463,7 @@ class SessionAPI:
             "SELECT q.id, q.sender, q.root, q.kind FROM session_questions q "
             "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
             "WHERE q.recipient = ? AND q.priority = 0 AND (q.status = 'accepted' "
-            "OR (q.kind = 'broadcast' AND q.status = 'queued')) "
+            "OR (q.sender = 'owner' AND q.status = 'queued')) "
             "AND COALESCE(d.last_attempt_at, 0) = 0",
             (key,),
         ).fetchall()
@@ -456,11 +471,11 @@ class SessionAPI:
         owners = 0
         for row in rows:
             try:
-                if row["kind"] != "broadcast":
+                if row["sender"] != "owner":
                     self._peer(key, row["sender"], live=False)
                 if self._member(key)["root"] == row["root"]:
                     ids.append(row["id"])
-                    owners += row["kind"] == "broadcast"
+                    owners += row["sender"] == "owner"
             except APIError:
                 continue
         if not ids:
@@ -593,7 +608,7 @@ class SessionAPI:
         mail = []
         for row in rows:
             try:
-                if row["kind"] != "broadcast":
+                if row["sender"] != "owner":
                     self._peer(key, row["sender"], live=False)
                 if self._member(key)["root"] == row["root"]:
                     mail.append(dict(row))
@@ -726,6 +741,7 @@ class SessionAPI:
                 "answers.explicit",
                 "artifacts.register",
                 "artifacts.list",
+                "artifacts.read",
             ],
         }
 
@@ -737,6 +753,7 @@ class SessionAPI:
         return target
 
     def _sweep(self) -> None:
+        self.before_retire()
         now = int(time.time() * 1000)
         with self.conn:
             self.conn.execute(
@@ -780,7 +797,7 @@ class SessionAPI:
         for row in rows[:50]:
             if not owner:
                 try:
-                    if row["kind"] != "broadcast":
+                    if row["sender"] != "owner":
                         self._peer(key, row["sender"], live=False)
                     if self._member(key)["root"] != row["root"]:
                         continue
@@ -854,11 +871,11 @@ class SessionAPI:
         if row is None:
             raise APIError(404, "question not found")
         participants = {row["recipient"]}
-        if row["kind"] != "broadcast":
+        if row["sender"] != "owner":
             participants.add(row["sender"])
         if key not in participants:
             raise APIError(404, "question not found")
-        if row["kind"] != "broadcast":
+        if row["sender"] != "owner":
             self._peer(row["sender"], row["recipient"], live=False)
         if self._member(key)["root"] != row["root"]:
             raise APIError(404, "question not found")
@@ -871,7 +888,7 @@ class SessionAPI:
         self._sweep()
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path.removeprefix("/api/v1/session")
-        query = urllib.parse.parse_qs(parsed.query)
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
         limit = MAX_ARTIFACT_REQUEST_BYTES if path == "/artifacts" else MAX_BODY_BYTES
         if len(body) > limit:
             raise APIError(413, "request body too large")
@@ -885,8 +902,39 @@ class SessionAPI:
         if path == "/artifacts" and method in {"GET", "POST"}:
             try:
                 if method == "GET":
+                    if "folder" in query:
+                        folder = _text(query["folder"][0], "folder", 4096)
+                        if "\x00" in folder or any(
+                            part in ("", ".", "..") for part in folder.split("/")
+                        ):
+                            raise APIError(400, "invalid folder path")
+                        if not member["root"] or not _inside(folder, member["root"]):
+                            raise APIError(403, "folder exceeds the granted shared ancestor")
+                        rows = self.artifacts.list_folder(folder, 501, shared_root=member["root"])
+                        return 200, {"artifacts": rows[:500], "truncated": len(rows) > 500}
                     return 200, {"artifacts": self.artifacts.list(key)}
                 return 200, {"artifact": self.artifacts.register(key, req)}
+            except ArtifactError as exc:
+                raise APIError(exc.status, str(exc)) from exc
+        artifact_match = re.fullmatch(r"/artifacts/([a-f0-9]{32})", path)
+        if artifact_match and method == "GET":
+            artifact_id = artifact_match[1]
+            row = self.conn.execute(
+                "SELECT a.session_key FROM artifacts a JOIN sessions s "
+                "ON s.session_key = a.session_key WHERE a.id = ?",
+                (artifact_id,),
+            ).fetchone()
+            if row is None:
+                raise APIError(404, "Artifact not found")
+            if row["session_key"] != key:
+                # Saved work remains reviewable after its producer stops, but
+                # access always follows both sessions' current sharing grants.
+                try:
+                    self._peer(key, row["session_key"], live=False)
+                except APIError as exc:
+                    raise APIError(404, "Artifact not found") from exc
+            try:
+                return 200, {"artifact": self.artifacts.get(row["session_key"], artifact_id)}
             except ArtifactError as exc:
                 raise APIError(exc.status, str(exc)) from exc
         if path == "/self" and method == "GET":

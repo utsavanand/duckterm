@@ -43,6 +43,18 @@ export interface OracleExchange {
   q: string;
   a: string;
   at: number;
+  dispatch?: {
+    request_key: string;
+    target: { kind: "session" | "folder"; id: string };
+    label: string;
+    recipients: { session_id: string; name: string; message_id: string; status: InboxMessage["status"]; answer: string | null; answered_at?: number | null }[];
+  };
+}
+
+export interface FolderRecipients {
+  identity: string;
+  sessions: BroadcastTarget[];
+  folders: { path: string; name: string; recipients: BroadcastTarget[] }[];
 }
 
 // Oracle Relay: a note for something a session needs from the owner.
@@ -348,6 +360,9 @@ export const api = {
   disableConnector: (name: string, context?: string) =>
     post<Connector>(`/connectors/${name}/disable`, {}, context),
   folderArtifacts: (folder: string) => artifactRequest<{ artifacts: FolderArtifact[]; truncated?: boolean }>(`/folders/${encodeURIComponent(folder)}/artifacts`),
+  folderRecipients: (folder: string) => artifactRequest<FolderRecipients>(`/folders/${encodeURIComponent(folder)}/recipients`),
+  folderDispatch: (folder: string, request: { identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
+    post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request),
   folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
   fleetAsk: (question: string, folder?: string) =>
     post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
@@ -389,6 +404,8 @@ export const api = {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     if (!res.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
   },
+  // The owner has looked at this session: lower its raised hand.
+  sessionAttended: (key: string) => post<{ attended: boolean }>(`/sessions/${encodeURIComponent(key)}/attended`),
   messageSession: (key: string, text: string, mode: "inbox" | "prompt") =>
     post<{ delivered: "inbox" | "prompt" | null }>(
       `/sessions/${encodeURIComponent(key)}/message`,
