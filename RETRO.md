@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — A mail draft is not a delivered bug report
+
+Keep the preview's UTF-8 bytes unchanged through report Markdown, mailto and MIME export. Preparing a draft is not sending mail; attachments cannot travel in mailto, and long URL bodies need a complete file fallback rather than truncation. Remote users need an authenticated bundle download, not only a server path. Collect canonical event metadata without reading hook payloads or terminal content, and test attachment limits and private-file reads.
+
 ## 2026-09-29 — A folder view should not duplicate its sidebar
 
 The first folder preview repeated the full session list already visible in the tree. Keep the approved surface to Chat and Artifacts, with name selection independent from chevron expansion. Preserve mounted terminals while browsing folders, use each artifact's producing session for the existing viewer, and keep folder chat history isolated. Rename every descendant conversation, recover JSON changes across DB commits, and reject answers that finish after the folder or its membership changes. Replay a pending operation at server startup before a deleted folder name can be recreated; lazy recovery can otherwise attach old history to the new folder. Verify these behaviors through the actual authenticated routes and browser flow.

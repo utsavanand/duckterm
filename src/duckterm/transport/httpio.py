@@ -70,7 +70,9 @@ async def read_headers(reader: asyncio.StreamReader) -> dict[str, str]:
     return headers
 
 
-async def read_body(reader: asyncio.StreamReader, headers: dict[str, str]) -> bytes:
+async def read_body(
+    reader: asyncio.StreamReader, headers: dict[str, str], *, max_bytes: int = MAX_REQUEST_BYTES
+) -> bytes:
     """Read exactly Content-Length bytes (empty when absent or zero)."""
     if "transfer-encoding" in headers:
         raise ValueError("Transfer-Encoding is not supported")
@@ -78,7 +80,7 @@ async def read_body(reader: asyncio.StreamReader, headers: dict[str, str]) -> by
     if not raw.isascii() or not raw.isdecimal():
         raise ValueError("invalid Content-Length")
     length = int(raw)
-    if length > MAX_REQUEST_BYTES:
+    if length > max_bytes:
         raise ValueError("request body too large")
     return await reader.readexactly(length) if length else b""
 
