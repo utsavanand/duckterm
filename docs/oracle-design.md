@@ -128,6 +128,12 @@ a message's standing, not how it's delivered, and never interrupts a turn.
   hash as before priority existed, so a retry from an older client still
   matches. Priority is part of the hash, so reusing a key with a different
   priority is a 409.
+- **One recipient.** `POST /sessions/:key/message` with `"mode": "inbox"`,
+  `"priority": true` and a `request_key` sends a priority broadcast to that
+  one session. It is the same record, pin, reminder, status and cancel,
+  under `/broadcasts/:request_key`. Fork merge-back delivers the owner's
+  edited summary to the parent this way (architect's "Design — Fork
+  merge-back", 2026-09-30: one delivery path, not two).
 - **Capability.** `priority_delivery` is a harness flag. Claude Code
   declares it, since its turn-end notice is proven; Codex and Copilot don't
   yet. Their copies show "inbox only" and get no pin or fast path, and are

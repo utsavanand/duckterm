@@ -386,9 +386,14 @@ class SessionAPI:
             )
         return response
 
-    def owner_message(self, key: str, text: object, *, request_key: str | None = None) -> str:
+    def owner_message(
+        self, key: str, text: object, *, request_key: str | None = None, priority: bool = False
+    ) -> str:
         """One owner notice to one session, the same record a folder broadcast
-        queues. Returns the message id."""
+        queues. Returns the message id. priority=True makes it a one-recipient
+        priority broadcast under request_key: the same pin, Oracle reminder,
+        status and cancel (GET/DELETE /broadcasts/:request_key). Fork
+        merge-back delivers its summary this way."""
         message = _text(text, "text", 16384)
         row = self.conn.execute(
             "SELECT s.grp, m.root FROM sessions s "
@@ -404,9 +409,15 @@ class SessionAPI:
                 "This session has no inbox because it isn't in a shared folder. "
                 "Type into its prompt or open its terminal instead.",
             )
-        digest = hashlib.sha256(json.dumps([key, message]).encode()).hexdigest()
+        digest = hashlib.sha256(
+            json.dumps([key, message, 1] if priority else [key, message]).encode()
+        ).hexdigest()
+        if priority and request_key is None:
+            raise APIError(400, "a priority message needs a request_key")
         if request_key is not None:
             request_key = _text(request_key, "request_key", 128)
+            if priority:
+                request_key += ":" + key  # the broadcast copy's key shape
             existing = self.conn.execute(
                 "SELECT id, content_hash FROM session_questions "
                 "WHERE sender = 'owner' AND idempotency_key = ?",
@@ -416,13 +427,14 @@ class SessionAPI:
                 if existing["content_hash"] != digest:
                     raise APIError(409, "request_key already used for different content")
                 return str(existing["id"])
-        notice_id = ("q-" if request_key is not None else "b-") + secrets.token_hex(16)
+        question = request_key is not None and not priority
+        notice_id = ("q-" if question else "b-") + secrets.token_hex(16)
         with self.conn:
             self.conn.execute(
                 "INSERT INTO session_questions "
                 "(id, sender, recipient, sender_name, root, question, created_at, "
-                "expires_at, idempotency_key, content_hash, kind) "
-                "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, ?)",
+                "expires_at, idempotency_key, content_hash, kind, priority) "
+                "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     notice_id,
                     key,
@@ -432,7 +444,8 @@ class SessionAPI:
                     NO_DEADLINE,
                     request_key or notice_id,
                     digest,
-                    "question" if request_key is not None else "broadcast",
+                    "question" if question else "broadcast",
+                    int(priority),
                 ),
             )
         return notice_id

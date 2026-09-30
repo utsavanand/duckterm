@@ -243,3 +243,62 @@ def test_a_plain_broadcast_keeps_the_hash_older_servers_stored(scenario) -> None
     assert stored == hashlib.sha256(json.dumps(["work", "Rebase on main"]).encode()).hexdigest()
     assert send(server, owner, "Rebase on main", "h", priority=False)[0] == 202  # a retry
     assert send(server, owner, "Rebase on main", "h")[0] == 409  # priority is different content
+
+
+def note(server, owner, key, text, request_key="merge-1", **extra):
+    body = {"text": text, "mode": "inbox", "priority": True, "request_key": request_key, **extra}
+    return dispatch(server, "POST", f"/sessions/{key}/message", owner, json.dumps(body).encode())
+
+
+def test_a_one_recipient_note_is_a_priority_broadcast_in_every_way(scenario) -> None:
+    """Fork merge-back delivers its summary this way (design, 2026-09-30):
+    one delivery path, so the note shares the pin, status, reply and cancel."""
+    history, server, owner, creds = scenario
+    send(server, owner, "Freeze merges", "p")
+    time.sleep(0.002)
+    code, body = note(server, owner, "claude", "Summary of the fork, not the full thread")
+    assert code == 200
+    assert note(server, owner, "claude", "Summary of the fork, not the full thread")[1] == body
+    assert note(server, owner, "claude", "edited")[0] == 409
+    assert note(server, {}, "claude", "x")[0] == 401
+    assert status(server, owner, "merge-1") == {"claude": "pending next turn"}
+
+    text = notice(server)
+    assert "(2 open, newest first)" in text  # one block with the folder broadcast
+    assert text.index("Summary of the fork") < text.index("Freeze merges")
+    assert status(server, owner, "merge-1") == {"claude": "delivered"}
+    call(
+        history,
+        creds["claude"],
+        "POST",
+        f"/questions/{body['message_id']}/answer",
+        {"text": "Read it."},
+    )
+    assert status(server, owner, "merge-1") == {"claude": "acknowledged"}
+
+    note(server, owner, "codex", "Codex summary", "merge-2")
+    assert status(server, owner, "merge-2") == {"codex": "inbox only"}
+    note(server, owner, "peer", "Withdrawn", "merge-3")
+    dispatch(server, "DELETE", "/broadcasts/merge-3", owner)
+    assert status(server, owner, "merge-3") == {"peer": "cancelled"}
+    assert "Withdrawn" not in (notice(server, "peer") or "")
+
+
+def test_a_priority_note_needs_a_request_key(scenario) -> None:
+    _, server, owner, _ = scenario
+    body = json.dumps({"text": "x", "mode": "inbox", "priority": True}).encode()
+    assert dispatch(server, "POST", "/sessions/claude/message", owner, body)[0] == 400
+
+
+def test_an_idle_agent_gets_a_note_at_once(scenario, monkeypatch) -> None:
+    history, server, owner, _ = scenario
+    history.set_state("claude", "idle")
+    history.record(
+        {"_id": "s", "_ts": int(time.time() * 1000), "event_type": "Stop", "session_key": "claude"}
+    )
+    sup = FakeSupervisor(CLAUDE_EMPTY)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: sup if key == "claude" else None)
+    note(server, owner, "claude", "Merged: branch fork-a at 1234abc")
+    asyncio.run(server._oracle_tick())
+    assert "Merged: branch fork-a at 1234abc" in b"".join(sup.pasted).decode()
+    assert status(server, owner, "merge-1") == {"claude": "delivered"}

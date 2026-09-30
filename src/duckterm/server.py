@@ -3095,11 +3095,22 @@ class Server:
             await _write_json(writer, 400, {"error": "mode must be inbox or prompt"})
             return
         if req["mode"] == "inbox":
+            priority = req.get("priority", False)
+            if not isinstance(priority, bool):
+                await _write_json(writer, 400, {"error": "priority must be true or false"})
+                return
             try:
-                message_id = self.history.session_api.owner_message(session_key, req.get("text"))
+                message_id = self.history.session_api.owner_message(
+                    session_key,
+                    req.get("text"),
+                    request_key=req.get("request_key") if priority else None,
+                    priority=priority,
+                )
             except APIError as exc:
                 await _write_json(writer, exc.status, {"error": str(exc)})
                 return
+            if priority:
+                self._oracle_soon()  # an idle agent shouldn't wait for the next pass
             await _write_json(writer, 200, {"delivered": "inbox", "message_id": message_id})
             return
         text = req.get("text")
