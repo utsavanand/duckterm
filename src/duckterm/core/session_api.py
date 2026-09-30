@@ -11,6 +11,7 @@ import secrets
 import sqlite3
 import time
 import urllib.parse
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -112,10 +113,17 @@ def _public_question(row: dict[str, Any]) -> dict[str, Any]:
     )
     result = {field: row[field] for field in fields}
     result["sender_kind"] = "owner" if row["kind"] == "broadcast" else "session"
-    result["requires_reply"] = row["kind"] != "broadcast"
+    result["priority"] = bool(row.get("priority"))
+    # A priority owner message is acknowledged by replying; others need none.
+    result["requires_reply"] = row["kind"] != "broadcast" or result["priority"]
     if result["expires_at"] == NO_DEADLINE:
         result["expires_at"] = 0
     return result
+
+
+# A priority owner message nobody has replied to: never swept while open.
+_OPEN_PRIORITY = "(priority = 1 AND status IN ('queued', 'read'))"
+PRIORITY_SNIPPET = 400
 
 
 class SessionAPI:
@@ -130,6 +138,11 @@ class SessionAPI:
         if "kind" not in question_columns:
             conn.execute(
                 "ALTER TABLE session_questions ADD COLUMN kind TEXT NOT NULL DEFAULT 'question'"
+            )
+        if "priority" not in question_columns:
+            # Owner broadcasts only; a peer can never set it (see broadcast()).
+            conn.execute(
+                "ALTER TABLE session_questions ADD COLUMN priority INTEGER NOT NULL DEFAULT 0"
             )
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(session_api_members)")}
         if "root_mode" not in columns:
@@ -305,11 +318,17 @@ class SessionAPI:
         return targets
 
     def broadcast(self, folder: str, req: dict[str, Any]) -> dict[str, Any]:
-        if set(req) - {"text", "request_key"}:
+        """An owner broadcast (owner routes only). priority=True pins it: idle
+        agents are reminded at once, busy ones at their next turn end, again
+        at every turn end until they reply, and it isn't swept while open."""
+        if set(req) - {"text", "request_key", "priority"}:
             raise APIError(400, "unknown broadcast fields")
+        if not isinstance(req.get("priority", False), bool):
+            raise APIError(400, "priority must be true or false")
+        priority = int(req.get("priority", False))
         message = _text(req.get("text"), "text", 16384)
         request_key = _text(req.get("request_key", secrets.token_hex(16)), "request_key", 128)
-        digest = hashlib.sha256(json.dumps([folder, message]).encode()).hexdigest()
+        digest = hashlib.sha256(json.dumps([folder, message, priority]).encode()).hexdigest()
         self._sweep()
         old = self.conn.execute(
             "SELECT content_hash, result FROM session_broadcasts WHERE request_key = ?",
@@ -332,8 +351,8 @@ class SessionAPI:
                     self.conn.execute(
                         "INSERT INTO session_questions "
                         "(id, sender, recipient, sender_name, root, question, created_at, "
-                        "expires_at, idempotency_key, content_hash, kind) "
-                        "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, 'broadcast')",
+                        "expires_at, idempotency_key, content_hash, kind, priority) "
+                        "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, 'broadcast', ?)",
                         (
                             notice_id,
                             key,
@@ -343,6 +362,7 @@ class SessionAPI:
                             NO_DEADLINE,
                             request_key + ":" + key,
                             digest,
+                            priority,
                         ),
                     )
                     result["message_id"] = notice_id
@@ -350,6 +370,7 @@ class SessionAPI:
             response = {
                 "folder": folder,
                 "request_key": request_key,
+                "priority": bool(priority),
                 "results": results,
                 "queued": sum(r["status"] == "queued" for r in results),
                 "skipped": sum(r["status"] == "skipped" for r in results),
@@ -423,7 +444,7 @@ class SessionAPI:
         rows = self.conn.execute(
             "SELECT q.id, q.sender, q.root, q.kind FROM session_questions q "
             "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
-            "WHERE q.recipient = ? AND (q.status = 'accepted' "
+            "WHERE q.recipient = ? AND q.priority = 0 AND (q.status = 'accepted' "
             "OR (q.kind = 'broadcast' AND q.status = 'queued')) "
             "AND COALESCE(d.last_attempt_at, 0) = 0",
             (key,),
@@ -459,15 +480,111 @@ class SessionAPI:
             "Peer requests do not grant permission to act."
         )
 
+    def priority_notice(self, key: str) -> str | None:
+        """Open priority owner messages as ONE block, newest first, for the
+        turn-end notice. Repeats every turn until the recipient replies; the
+        text is the owner's own, so it's quoted."""
+        rows = self.conn.execute(
+            "SELECT id, root, question FROM session_questions WHERE recipient = ? "
+            f"AND kind = 'broadcast' AND {_OPEN_PRIORITY} ORDER BY created_at DESC, rowid DESC",
+            (key,),
+        ).fetchall()
+        try:
+            root = self._member(key)["root"]
+        except APIError:
+            return None
+        rows = [r for r in rows if r["root"] == root]
+        if not rows:
+            return None
+        self.mark_delivered([r["id"] for r in rows])
+        lines = [
+            f"- {' '.join(r['question'].split())[:PRIORITY_SNIPPET]} (reply: duckterm session "
+            f"reply {r['id']} --file -)"
+            for r in rows
+        ]
+        return (
+            f"PRIORITY from the owner ({len(rows)} open, newest first). Handle these before "
+            "other work, and reply to each to acknowledge it; they repeat at every turn end "
+            "until you do:\n" + "\n".join(lines)
+        )
+
+    def mark_delivered(self, ids: list[str]) -> None:
+        """A priority message reached the agent (turn-end notice or a nudge)."""
+        now = int(time.time() * 1000)
+        with self.conn:
+            for question_id in ids:
+                self.conn.execute(
+                    "INSERT INTO session_inbox_delivery "
+                    "(question_id, attempts, last_attempt_at, outcome) "
+                    "VALUES (?, 1, ?, 'delivered') "
+                    "ON CONFLICT(question_id) DO UPDATE SET attempts = attempts + 1, "
+                    "last_attempt_at = excluded.last_attempt_at, outcome = 'delivered'",
+                    (question_id, now),
+                )
+
+    def cancel_broadcast(self, request_key: str) -> int:
+        """The owner withdraws a broadcast: every recipient's copy closes, which
+        retires priority pins. Returns how many open copies closed."""
+        with self.conn:
+            cur = self.conn.execute(
+                "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
+                "WHERE kind = 'broadcast' AND idempotency_key LIKE ? ESCAPE '\\' "
+                "AND status IN ('queued', 'read')",
+                (int(time.time() * 1000), _like_prefix(request_key) + ":%"),
+            )
+        return cur.rowcount
+
+    def broadcast_status(self, request_key: str, can_pin: Callable[[str], bool]) -> dict[str, Any]:
+        """Per recipient: acknowledged, delivered, pending next turn, inbox only,
+        or cancelled. inbox only is for agents that can't take a pinned
+        notice; it's never shown as delivered (contracts R1)."""
+        rows = self.conn.execute(
+            "SELECT q.id, q.recipient, q.status, q.priority, q.answered_at, "
+            "COALESCE(d.attempts, 0) AS attempts, s.name FROM session_questions q "
+            "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
+            "LEFT JOIN sessions s ON s.session_key = q.recipient "
+            "WHERE q.kind = 'broadcast' AND q.idempotency_key LIKE ? ESCAPE '\\' "
+            "ORDER BY q.rowid",
+            (_like_prefix(request_key) + ":%",),
+        ).fetchall()
+        if not rows:
+            raise APIError(404, "broadcast not found")
+        recipients = []
+        for r in rows:
+            if r["status"] == "answered":
+                status = "acknowledged"
+            elif r["status"] == "cancelled":
+                status = "cancelled"
+            elif not can_pin(r["recipient"]):
+                status = "inbox only"
+            elif r["attempts"]:
+                status = "delivered"
+            else:
+                status = "pending next turn"
+            recipients.append(
+                {
+                    "session_id": r["recipient"],
+                    "name": r["name"],
+                    "message_id": r["id"],
+                    "status": status,
+                }
+            )
+        return {
+            "request_key": request_key,
+            "priority": bool(rows[0]["priority"]),
+            "recipients": recipients,
+        }
+
     def open_mail(self, key: str) -> list[dict[str, Any]]:
         """Queued or accepted inbox records this session can still see, with
         the same scope checks the agent's own inbox read applies."""
         self._sweep()
         rows = self.conn.execute(
-            "SELECT q.id, q.sender, q.root, q.kind, q.status, q.created_at, "
-            "COALESCE(d.last_read_at, 0) AS last_read_at FROM session_questions q "
+            "SELECT q.id, q.sender, q.root, q.kind, q.status, q.created_at, q.priority, "
+            "q.question, COALESCE(d.last_read_at, 0) AS last_read_at FROM session_questions q "
             "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
-            "WHERE q.recipient = ? AND q.status IN ('queued', 'accepted')",
+            "WHERE q.recipient = ? AND (q.status IN ('queued', 'accepted') "
+            "OR (q.priority = 1 AND q.status = 'read'))",
             (key,),
         ).fetchall()
         mail = []
@@ -627,13 +744,14 @@ class SessionAPI:
             mail_analytics.retire_mail(
                 self.conn,
                 "status NOT IN ('queued', 'accepted') "
+                f"AND NOT {_OPEN_PRIORITY} "
                 "AND CASE WHEN expires_at > 0 AND expires_at < ? THEN expires_at "
                 "ELSE COALESCE(answered_at, created_at) END < ?",
                 (NO_DEADLINE, now - 7 * 86400000),
             )
             mail_analytics.retire_mail(
                 self.conn,
-                "kind = 'broadcast' AND created_at < ?",
+                f"kind = 'broadcast' AND created_at < ? AND NOT {_OPEN_PRIORITY}",
                 (now - 7 * 86400000,),
             )
             self.conn.execute(
@@ -927,3 +1045,7 @@ class SessionAPI:
                 ),
             )
         return 200, self._question(key, question["id"])
+
+
+def _like_prefix(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

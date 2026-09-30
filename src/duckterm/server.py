@@ -362,6 +362,9 @@ class Server:
         self._backup_jobs: BackupJobs | None = None
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
         self._oracle_nudges: dict[str, oracle.Nudge] = {}
+        # One Oracle pass at a time: a priority broadcast starts one early.
+        self._oracle_lock = asyncio.Lock()
+        self._oracle_kick: asyncio.Task[None] | None = None
         self._tokens = TokenLedger(
             Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects",
             Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "sessions",
@@ -559,6 +562,10 @@ class Server:
         if method in {"GET", "POST"} and broadcast_match:
             await self._folder_broadcast(writer, headers, broadcast_match[1], method, body)
             return
+        sent_match = re.fullmatch(r"/broadcasts/([A-Za-z0-9._:-]{1,128})", inbox_path.path)
+        if method in {"GET", "DELETE"} and sent_match:
+            await self._broadcast_record(writer, headers, sent_match[1], method)
+            return
         for route in self._routes():
             if route.matches(method, path):
                 try:
@@ -690,9 +697,14 @@ class Server:
         if any(a.session_key == key for a in self.approvals.pending()):
             return None
         runtime = _build_runtime(row.get("runtime"), row.get("command") or "")
-        if not runtime.turn_end_inbox_notice:
-            return None
-        notice = self.history.session_api.turn_end_notice(key)
+        api = self.history.session_api
+        # Priority owner messages are pinned first, as one block, every turn
+        # until replied to; the regular reminder follows.
+        parts = [
+            runtime.priority_delivery and api.priority_notice(key),
+            runtime.turn_end_inbox_notice and api.turn_end_notice(key),
+        ]
+        notice = "\n\n".join(p for p in parts if p)
         if not notice:
             return None
         return {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": notice}}
@@ -3327,6 +3339,32 @@ class Server:
         except OSError as exc:
             await _write_json(writer, 500, {"error": str(exc)})
 
+    def _can_pin(self, key: str) -> bool:
+        row = self.history.session(key) or {}
+        return _build_runtime(row.get("runtime"), str(row.get("command") or "")).priority_delivery
+
+    async def _broadcast_record(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], request_key: str, method: str
+    ) -> None:
+        """GET: each recipient's delivery status. DELETE: cancel, which retires
+        every recipient's priority pin."""
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        api = self.history.session_api
+        try:
+            if method == "DELETE":
+                api.cancel_broadcast(request_key)
+            await _write_json(writer, 200, api.broadcast_status(request_key, self._can_pin))
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+
+    def _oracle_soon(self) -> None:
+        if os.environ.get("DUCKTERM_ORACLE") == "off":
+            return
+        with contextlib.suppress(RuntimeError):  # no running loop (sync callers, tests)
+            self._oracle_kick = asyncio.get_running_loop().create_task(self._oracle_tick())
+
     async def _folder_broadcast(
         self,
         writer: asyncio.StreamWriter,
@@ -3354,6 +3392,9 @@ class Server:
                 if not isinstance(req, dict):
                     raise APIError(400, "expected a JSON object")
                 result = self.history.session_api.broadcast(folder, req)
+                if result.get("priority"):
+                    # Idle agents shouldn't wait for the next Oracle pass.
+                    self._oracle_soon()
             await _write_json(writer, 200 if method == "GET" else 202, result)
         except (ValueError, UnicodeDecodeError):
             await _write_json(writer, 400, {"error": "invalid JSON"})
@@ -4416,6 +4457,10 @@ class Server:
     async def _oracle_tick(self) -> None:
         """Paste an inbox reminder into idle agents whose mail would otherwise
         wait until the owner happens to look. Gates live in core/oracle.py."""
+        async with self._oracle_lock:
+            await self._oracle_pass()
+
+    async def _oracle_pass(self) -> None:
         now = int(time.time() * 1000)
         await self._clear_stale_waiting(now)
         for row in self.history.sessions():
@@ -4434,6 +4479,11 @@ class Server:
                 continue
             if not mail:
                 continue
+            harness = _build_runtime(row.get("runtime"), str(row.get("command") or ""))
+            if not harness.priority_delivery:
+                # "Inbox only": no fast path or pinned text for agents that
+                # haven't declared priority delivery.
+                mail = [{**m, "priority": 0} for m in mail]
             screen = await asyncio.to_thread(sup.visible_screen)
             previous = self._oracle_nudges.get(key) or self._last_nudge(key)
             picked = oracle.should_nudge(
@@ -4451,7 +4501,19 @@ class Server:
             )
             if not picked:
                 continue
-            text = oracle.reminder(picked, now)
+            urgent = [m for m in picked if m.get("priority")]
+            rest = [m for m in picked if not m.get("priority")]
+            pinned = self.history.session_api.priority_notice(key) if urgent else None
+            text = " ".join(
+                t
+                for t in (
+                    pinned and f"Duckterm Oracle: {pinned}",
+                    rest and oracle.reminder(rest, now),
+                )
+                if t
+            )
+            if not text:
+                continue
             status = await self._submit_prompt(key, text)
             if status == "failed":
                 continue
