@@ -13,6 +13,40 @@ reviewed report and selected files unchanged through draft preparation/download.
 ## 2026-09-30 — A mail draft is not a delivered bug report
 
 Keep the preview's UTF-8 bytes unchanged through report Markdown, mailto and MIME export. Preparing a draft is not sending mail; attachments cannot travel in mailto, and long URL bodies need a complete file fallback rather than truncation. Remote users need an authenticated bundle download, not only a server path. Collect canonical event metadata without reading hook payloads or terminal content, and test attachment limits and private-file reads.
+## 2026-09-30 — The slop check passed in worktrees without reading a file
+**Broke:** PR #161 failed CI on an existence-only test assert, while the same
+commit's local gate printed "slop-check: clean".
+**Cause:** `scripts/slop_check.py` skipped any path with a `.duckterm` part,
+matching against the absolute path. Every DuckTerm-managed worktree lives
+under `~/.duckterm/worktrees/`, so the check skipped every file there and
+passed.
+**Rule:** match skip rules against paths relative to the repo root. A check
+that finds nothing should be suspected until it has been seen to catch
+something; `tests/unit/test_slop_check_paths.py` now proves it reads a
+worktree.
+
+## 2026-09-29 — A neural voice that drops words it doesn't know
+**Broke:** in the first Kokoro trial without the GPL espeak fallback,
+"main-dev" was spoken as "main", and "duckterm", "qa" and "utsava.xyz"
+vanished from the audio with no error.
+**Cause:** misaki, Kokoro's English front end, drops out-of-dictionary words
+unless espeak is installed, and session names are mostly such words.
+**Rule:** anything spoken passes through `voice/names.py`, which keeps every
+word (known, pronounced, split into known halves, or spelled). The tests use
+the observed failures verbatim.
+
+Also: the first natural-voice build was 785 MB, mostly Python runtime (MLX,
+transformers), not the model. The owner turned it down. The same weights
+through ONNX Runtime are 303 MB and run on Intel too. Measure what the bulk
+actually is before quoting a size to the owner.
+
+Also: a test server given its own `DUCKTERM_HOME` still used the live
+`duckterm` tmux socket and could have adopted the owner's agents. Set
+`DUCKTERM_TMUX_SOCKET` as well for any second server on the machine.
+
+## Settings contrast during theme changes (2026-09-30)
+
+The Settings header inherited a background fade while its text switched themes immediately. Both settled themes were readable, but a system appearance change briefly put the new text on the old fill. Keep this control's foreground and background changes synchronous; check the transition itself, not just settled light/dark screenshots.
 
 ## 2026-09-29 — A folder view should not duplicate its sidebar
 
@@ -193,6 +227,7 @@ replaced the new rule, then Save reported success for an empty list. Gate edits
 and saves on successful loading, ignore stale responses, and block saving after
 load failures. Test delayed responses and Enter as well as clicks; a passing retry
 does not explain an intermittent failure.
+
 ## 2026-09-28 — Analytics must preserve the model at usage time
 
 Harness names are not model identities. Claude assistant records carry model IDs,
@@ -229,6 +264,7 @@ Use only the native ID recorded by a session-key-bound hook; never replace it
 with a directory guess. Refuse unknown identity when another Codex row shares
 the directory, including stopped rows. Test independent IDs through a database
 restart and keep fork/snapshot paths from reintroducing the same fallback.
+
 ## 2026-09-28 — Move action behavior and verify adjacent views
 
 Moving session actions out of the sidebar must retain lifecycle gates, remote

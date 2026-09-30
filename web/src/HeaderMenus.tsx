@@ -4,7 +4,8 @@ import { Theme } from "./useTheme";
 import { SidebarDensity } from "./useSidebarDensity";
 import "./headerMenus.css";
 import { VOICE_LEVELS, VoiceChoice, VoiceLevel } from "./voice";
-import { VoicePicker } from "./VoiceControl";
+import { NaturalVoicePanel, VoicePicker } from "./VoiceControl";
+import { LocalVoiceStatus } from "./api";
 
 type Menu = "settings" | "new";
 export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, termTheme, onTermTheme, notifyOn, onNotify, voiceLevel, onVoiceLevel, voice, onAction }: {
@@ -25,6 +26,10 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
     qualityVoices: boolean;
     onSelect: (name: string) => void;
     onPreview: (name: string) => void;
+    local: LocalVoiceStatus | null;
+    fallbackReason: string | null;
+    onInstall: () => void;
+    onRemove: () => void;
   };
   onAction: (action: "launch" | "folder" | "harnesses" | "backup" | "bugreport") => void;
 }) {
@@ -89,7 +94,8 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
             {VOICE_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
           </select></label>
           <p id="header-voice-help">Oracle says when an agent needs your input or finishes. It only speaks while a dashboard is open.</p>
-          <VoicePicker {...voice} />
+          <VoicePicker voices={voice.voices} selected={voice.selected} qualityVoices={voice.qualityVoices} onSelect={voice.onSelect} onPreview={voice.onPreview} />
+          <NaturalVoicePanel status={voice.local} fallbackReason={voice.fallbackReason} onInstall={voice.onInstall} onRemove={voice.onRemove} />
         </div>
         <div className="rd-header-menu-divider" />
         <button className="rd-header-menu-item" onClick={() => action("bugreport")}>Report a bug <span aria-hidden="true">›</span></button>

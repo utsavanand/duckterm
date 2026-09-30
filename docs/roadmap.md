@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-30 by release-dev at the v0.4.92 release)
+## Status at a glance (reconciled 2026-09-30 by release-dev at the v0.4.93 release)
 
 | Item | Status |
 | --- | --- |
@@ -33,7 +33,7 @@ the session API.
 | Analytics page | **Shipped v0.4.85** (PR #131): exact model usage and Agent Mail history |
 | Codex false waiting | **Shipped v0.4.85**: auto-reviewed requests stay busy; confirmed prompts give a note plus waiting. **v0.4.90** (PR #157): the dashboard's live fold follows the same rule, so the badge no longer flickers to waiting. Restart recovery and unreadable-prompt notes follow (oracle-codex-waiting 23890c2) |
 | File a bug from DuckTerm | **Deferred** (owner, 2026-09-29). Local-only reporter exists in the Mac app (BugReport.swift). Missing: a dashboard entry (browser/remote) and a destination; recommended: a GitHub issue via the owner's connector, mail draft as fallback, payload preview first. Open question: 'anybody' = owner on any device, or other people (the latter needs accounts). Spec: product artifact 'Spec — File a bug from DuckTerm' |
-| Oracle voice mode | **Shipped v0.4.91** (PR #156): spoken 'needs your input' (chime before approvals) and 'is complete' after the settle, one re-announce at 15 min, held while you type, quiet about the backlog at page load, voice picker with previews. Browser speechSynthesis, so it speaks only while a dashboard is open. Native audio not yet verified by QA. Spec: [oracle-voice-spec.md](oracle-voice-spec.md) |
+| Oracle voice mode | **Shipped v0.4.91** (PR #156): spoken 'needs your input' (chime before approvals) and 'is complete' after the settle, one re-announce at 15 min, held while you type, quiet about the backlog at page load, voice picker with previews. Browser speechSynthesis, so it speaks only while a dashboard is open. **Optional natural voice shipped v0.4.93** (PR #161): local Kokoro ONNX int8 (about 310 MB, any Mac), Heart (US) default, installed only on request (Settings → Voice or `duckterm voice install`), hash-locked, no GPL, excluded from backups; falls back to the best macOS voice. Real download and audio are verified by the owner after install (owner's choice). Spec: [oracle-voice-spec.md](oracle-voice-spec.md) |
 | OpenCode harness with any model | **Deferred**; feasibility with the architect. OpenCode has hooks (25+ plugin events) and upstream model selection; risk: transcript storage moved to SQLite (v1.14) and changed again in 2.x. Detail: [pie-in-the-sky.md, 'Idea: OpenCode harness with any model'](pie-in-the-sky.md) |
 | User identity / accounts | **None, by design**: one machine, one human, loopback as the boundary. Backup-to-remote runs as the owner's own gcloud login into their own bucket. Accounts are needed only when two people share one DuckTerm; see [accounts-and-handoff-design.md](accounts-and-handoff-design.md) |
 | Router mode (DuckTerm picks the model per task) | **Not started.** Owner-requested 2026-09-28; this is F5 step (c), the model router. Options and open questions: [pie-in-the-sky.md, 'Idea: router mode'](pie-in-the-sky.md#idea-router-mode-duckterm-picks-the-model) |
