@@ -169,6 +169,57 @@ design; this spec is the requirements. As built:
   voice on, a "Voice paused. Click anywhere to resume." pill shows until the
   first click or key. It also shows if the browser refuses to speak.
 
+## Natural voice (Kokoro), optional
+
+Owner decision, 2026-09-29: "all mac voices are quite bad"; cloud voices were
+rejected ("open source"). Architect's ruling: an optional local component,
+installed on request, without espeak. The macOS voice picker stays as the
+fallback.
+
+- **What:** Kokoro-82M (Apache-2.0 weights), int8 ONNX export, run through
+  ONNX Runtime on the CPU of any Mac on macOS 13 or later, Intel included.
+  The owner turned down a first MLX build at 785 MB ("just for voice it will
+  be extra 1.4 gb?"). Measured on the owner's M4 Max, 2026-09-29:
+
+  | Build | Installed | New phrase |
+  | --- | --- | --- |
+  | ONNX int8 (shipped) | 303 MB | about 1 s |
+  | ONNX fp16 | about 400 MB | about 0.35 s |
+  | MLX | 785 MB | about 0.15 s, Apple Silicon only |
+
+  Cached repeats are instant in every build. An aligned log-mel distance from
+  the MLX output was 0.45 for int8 and 0.47 for fp16, against 1.40 between
+  two different voices, so no quality loss was measured. The dashboard warms
+  the worker (about 11 s on the first cold start) when a natural voice is
+  chosen, so the first announcement doesn't wait.
+- **Install:** Settings, "Download natural voices (about 310 MB)", or
+  `duckterm voice install`. The size is shown before anything downloads, and
+  that click is the consent. It installs into
+  `~/.duckterm/voice/{venv,model,cache}`, which is excluded from backups
+  (storage class: reinstallable). `duckterm voice remove`, or Remove in
+  Settings, deletes it.
+- **Pinned:** every package in `src/duckterm/voice/requirements-arm64.lock`
+  or `requirements-x86_64.lock`, installed with `--require-hashes
+  --no-deps`. The two model files (from kokoro-onnx's GitHub release) and
+  their SHA256s are in `kokoro-manifest.json`, checked while downloading.
+  A file that doesn't match is deleted.
+- **No GPL:** misaki's `[en]` extra pulls phonemizer-fork and espeak-ng
+  (GPL-3), and so does the kokoro-onnx package, which imports them at load.
+  Neither is used: the lock leaves the extra out, the worker calls ONNX
+  Runtime directly, and the installer checks every installed package's
+  license and fails closed on GPL. num2words (LGPL) is allowed.
+- **Names:** without espeak, misaki drops unknown words ("main-dev" became
+  "main"). `voice/names.py` keeps every word: separators become spaces, a
+  few words get an inline pronunciation ("dev"), compounds split into known
+  halves ("duckterm" becomes "duck term"), and anything else is spelled.
+- **Server:** stays stdlib. It runs the worker as a subprocess speaking JSON
+  lines, with a 15 s timeout per phrase and 60 s to start. The worker is
+  killed on voice-off and on server shutdown. The phrase cache is capped at
+  200 MB, oldest first.
+- **Fallback, never silence:** the chosen Kokoro voice; otherwise the best
+  macOS voice, with the reason shown in Settings; otherwise the browser's own
+  refusal, shown as "Voice paused".
+
 ## Delivery
 
 Visible and audible change, so: architect designs, owner reviews — for this

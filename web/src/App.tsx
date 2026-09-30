@@ -344,7 +344,7 @@ function Dashboard() {
           )}
         </button>
         <VoiceMenu level={voice.level} onLevel={voice.setLevel} />
-        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} voiceLevel={voice.level} onVoiceLevel={voice.setLevel} voice={{ voices: voice.voices, selected: voice.selectedVoice, qualityVoices: voice.qualityVoices, onSelect: voice.setVoice, onPreview: voice.preview }} onAction={(action) => {
+        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} voiceLevel={voice.level} onVoiceLevel={voice.setLevel} voice={{ voices: voice.voices, selected: voice.selectedVoice, qualityVoices: voice.qualityVoices, onSelect: voice.setVoice, onPreview: voice.preview, local: voice.local.status, fallbackReason: voice.fallbackReason, onInstall: voice.local.install, onRemove: voice.local.remove }} onAction={(action) => {
           if (action === "launch") setLaunchGroup(undefined);
           setModal(action);
         }} />

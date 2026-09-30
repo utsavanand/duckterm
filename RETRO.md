@@ -1,5 +1,24 @@
 # Retro — lessons from real breakage
 
+## 2026-09-29 — A neural voice that drops words it doesn't know
+**Broke:** in the first Kokoro trial without the GPL espeak fallback,
+"main-dev" was spoken as "main", and "duckterm", "qa" and "utsava.xyz"
+vanished from the audio with no error.
+**Cause:** misaki, Kokoro's English front end, drops out-of-dictionary words
+unless espeak is installed, and session names are mostly such words.
+**Rule:** anything spoken passes through `voice/names.py`, which keeps every
+word (known, pronounced, split into known halves, or spelled). The tests use
+the observed failures verbatim.
+
+Also: the first natural-voice build was 785 MB, mostly Python runtime (MLX,
+transformers), not the model. The owner turned it down. The same weights
+through ONNX Runtime are 303 MB and run on Intel too. Measure what the bulk
+actually is before quoting a size to the owner.
+
+Also: a test server given its own `DUCKTERM_HOME` still used the live
+`duckterm` tmux socket and could have adopted the owner's agents. Set
+`DUCKTERM_TMUX_SOCKET` as well for any second server on the machine.
+
 ## 2026-09-29 — Preserve actionable server errors on reads
 
 Model discovery returned useful missing-CLI/sign-in guidance, but the shared GET helper replaced it with “503 Service Unavailable.” Parse string error messages for failed reads just as for writes; retain status fallback for malformed or non-JSON responses. Exercise the actual API wrapper and a failed catalog request followed by Retry, not only a mocked Error thrown into a component.
