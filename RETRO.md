@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-09-29 — Model changes need choices from the installed harness
+
+Removing ellipses did not make Change model a dropdown. Open model choices directly from that action and confirm the restart only after selection. Discover exact IDs from the installed CLI without starting a conversation; resolve aliases, preserve context suffixes, bound and reap catalog subprocesses, and expose retry on failure. Keep current models available even when absent from a new catalog, and preserve all restart/draft safety gates.
+
+## 2026-09-29 — Light terminals need explicit selection colors
+
+The default translucent white xterm selection disappeared on the Paper background. Set both foreground and active/inactive selection backgrounds for each light palette, and verify actual selected text after focus moves away. Improve neutral borders and secondary labels without tinting the original white/gray palette blue. Keep dark palettes unchanged.
+
 
 ## 2026-09-29 — Assert terminal input bytes, not competing echo order
 

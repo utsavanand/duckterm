@@ -10,6 +10,9 @@ export interface TermTheme {
   background: string;
   foreground: string;
   cursor: string;
+  selectionBackground?: string;
+  selectionForeground?: string;
+  selectionInactiveBackground?: string;
   black: string;
   red: string;
   green: string;
@@ -141,6 +144,9 @@ export const TERM_THEMES: Record<string, TermTheme> = {
   },
   paper: {
     mode: "light",
+    selectionBackground: "#157347",
+    selectionForeground: "#ffffff",
+    selectionInactiveBackground: "#526359",
     background: "#ffffff",
     foreground: "#1f2328",
     cursor: "#157347",
@@ -163,6 +169,9 @@ export const TERM_THEMES: Record<string, TermTheme> = {
   },
   "solarized-light": {
     mode: "light",
+    selectionBackground: "#157347",
+    selectionForeground: "#ffffff",
+    selectionInactiveBackground: "#526359",
     background: "#fdf6e3",
     foreground: "#657b83",
     cursor: "#586e75",

@@ -51,3 +51,46 @@ test("terminal palette follows the app light/dark toggle", async ({ page }) => {
   await expect(picker.locator("option", { hasText: "paper" })).toHaveCount(1);
   await expect(picker.locator("option", { hasText: "duck" })).toHaveCount(0);
 });
+
+test("light selections stay readable when terminal focus moves away", async ({ page }) => {
+  const { apiDelete } = await import("./helpers");
+  const launched = await apiPost("/sessions/launch", {
+    command: "sh -c 'printf \"SELECTABLE terminal text\\n\"; exec cat'", cwd: "/tmp",
+    name: "Light contrast review", in_terminal: false, test: true,
+  });
+  expect(launched.status).toBe(200);
+  const key = String(launched.body.session_key);
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(base());
+    await page.evaluate(() => localStorage.setItem("rd-theme", "light"));
+    await page.reload();
+    await page.locator(".rd-row-click", { hasText: "Light contrast review" }).click();
+    const terminal = page.locator(".rd-terminal-slot:visible .xterm");
+    await expect(terminal).toContainText("SELECTABLE terminal text");
+    const screen = terminal.locator(".xterm-screen");
+    const bounds = (await screen.boundingBox())!;
+    await page.mouse.move(bounds.x + 1, bounds.y + 6);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + 78, bounds.y + 6, { steps: 10 });
+    await page.mouse.up();
+    await expect.poll(() => page.evaluate(() => window.__rtCopy?.())).toContain("SELECTABLE");
+    const selection = terminal.locator(".xterm-selection div").first();
+    await expect(selection).toHaveCSS("background-color", "rgb(21, 115, 71)");
+    await page.screenshot({ path: "/tmp/duckterm-light-implemented.png" });
+    await page.getByRole("button", { name: "Settings", exact: true }).focus();
+    await expect(selection).toHaveCSS("background-color", "rgb(82, 99, 89)");
+    await expect.poll(() => page.evaluate(() => window.__rtCopy?.())).toContain("SELECTABLE");
+    await page.screenshot({ path: "/tmp/duckterm-light-selection-inactive.png" });
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.locator(".rd-term-theme").selectOption("solarized-light");
+    await expect.poll(() => shownTermBg(page)).toBe("rgb(253, 246, 227)");
+    await expect(selection).toHaveCSS("background-color", "rgb(82, 99, 89)");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await terminal.locator("textarea").focus();
+    await expect(selection).toHaveCSS("background-color", "rgb(21, 115, 71)");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: "/tmp/duckterm-light-implemented-narrow.png", fullPage: true });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  } finally { await apiDelete(`/sessions/${key}`); }
+});
