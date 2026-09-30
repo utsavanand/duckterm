@@ -29,6 +29,16 @@ export interface DucktermEvent {
   message?: string;
 }
 
+export type WaitingCause = "approval" | "question" | "other";
+
+// A tool-permission prompt is an approval; Claude's AskUserQuestion menu also
+// arrives as a PermissionRequest but is a question.
+export function waitingCauseOf(eventType?: string, notificationType?: string, tool?: string): WaitingCause {
+  if (eventType === "PermissionRequest") return tool === "AskUserQuestion" ? "question" : "approval";
+  if (notificationType === "permission_prompt") return "approval";
+  return "other";
+}
+
 export type SessionState =
   | "idle"
   | "busy"
@@ -71,6 +81,8 @@ export interface SessionView {
   parentKey?: string; // session this was forked from, if any
   notes?: string; // personal, local-only notes
   idleSince?: number; // ts of the last Stop; drives the idle settling grace
+  waitingSince?: number; // when the current wait began; a new wait gets a new time
+  waitingCause?: WaitingCause; // what it is waiting on; approvals get voice mode's chime
   launched?: boolean; // true if Duckterm launched it (owns the tab); else watched
   ptyOwned?: boolean; // Duckterm owns a live PTY (in-process launch) — terminal-attachable
   contextTokens?: number; // current context size (claude-code), the compact-soon signal
@@ -176,6 +188,8 @@ export function viewFromPersisted(s: PersistedSession): SessionView {
     // so effectiveState shows idle immediately rather than after a fresh grace.
     state: s.state === "idle" ? "busy" : s.state,
     idleSince: s.state === "idle" ? 0 : undefined,
+    waitingSince: s.state === "waiting" ? s.updated_at : undefined,
+    waitingCause: s.state === "waiting" ? waitingCauseOf(s.last_event_type ?? undefined, undefined, s.last_tool ?? undefined) : undefined,
     lastEventType: s.last_event_type ?? "",
     lastTool: s.last_tool ?? undefined,
     cwd: s.cwd ?? undefined,

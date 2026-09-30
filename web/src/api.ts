@@ -117,7 +117,12 @@ async function post<T>(path: string, body?: unknown, context?: string): Promise<
 
 async function get<T>(path: string, context?: string): Promise<T> {
   const res = await (context === undefined ? fetch(path, { cache: "no-store" }) : sessionFetch(context, path, { cache: "no-store" }));
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  if (!res.ok) {
+    const data: unknown = await res.json().catch(() => null);
+    const detail = data !== null && typeof data === "object" && "error" in data && typeof data.error === "string"
+      ? data.error.trim() : "";
+    throw new Error(detail || `${res.status} ${res.statusText}`);
+  }
   return (await res.json()) as T;
 }
 
