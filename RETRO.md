@@ -15,6 +15,13 @@ itself established (auto-reviewing Codex); hooks win otherwise. The duck
 settle is 30 s (owner decision); a Stop starts it, so pauses inside a turn
 can't flicker a duck idle.
 
+Also, from the real-agent check: a second DuckTerm server on the machine
+needs `DUCKTERM_TMUX_SOCKET` (or it adopts the owner's agents), a port
+checked to be free (another session's browser tests had hit a fixed port),
+and `DUCKTERM_NO_BROWSER=1`. `duckterm serve` opens the dashboard in the
+owner's browser, and that tab then acts on the test; here it marked the test
+session attended.
+
 ## 2026-09-30 — The slop check passed in worktrees without reading a file
 **Broke:** PR #161 failed CI on an existence-only test assert, while the same
 commit's local gate printed "slop-check: clean".
