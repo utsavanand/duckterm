@@ -159,7 +159,7 @@ class LocalVoice:
         self.cache = root / "cache"
         self.record = root / "installed.json"
         self._lock = threading.Lock()
-        self._worker: subprocess.Popen[str] | None = None
+        self._worker: subprocess.Popen[bytes] | None = None
         self._install: dict[str, Any] | None = None  # progress while installing
 
     # ── status ──
@@ -322,16 +322,19 @@ class LocalVoice:
             os.utime(path)  # recently used, for pruning
             return path
         self.cache.mkdir(parents=True, exist_ok=True)
+        # The lock serializes requests to the one worker. stop() doesn't take it:
+        # voice-off and shutdown kill the worker, and a request in flight then
+        # fails fast instead of making them wait.
         with self._lock:
             worker = self._ensure_worker()
             request = {"id": uuid.uuid4().hex, "text": text, "voice": voice, "out": str(path)}
             try:
                 assert worker.stdin is not None
-                worker.stdin.write(json.dumps(request) + "\n")
+                worker.stdin.write((json.dumps(request) + "\n").encode())
                 worker.stdin.flush()
                 reply = self._read(worker, SAY_TIMEOUT_S)
-            except (OSError, VoiceError) as exc:
-                self._stop_locked()
+            except (OSError, ValueError, VoiceError) as exc:
+                self._retire(worker)
                 raise VoiceError(f"The voice worker stopped: {exc}") from exc
         if not reply.get("ok"):
             raise VoiceError(str(reply.get("error") or "synthesis failed"))
@@ -339,52 +342,57 @@ class LocalVoice:
         return path
 
     def stop(self) -> None:
-        with self._lock:
-            self._stop_locked()
+        """Kill the worker now, even mid-request (voice-off, server shutdown)."""
+        worker, self._worker = self._worker, None
+        _kill(worker)
 
-    def _ensure_worker(self) -> subprocess.Popen[str]:
+    def _retire(self, worker: "subprocess.Popen[bytes]") -> None:
+        """Kill a worker that failed, unless a newer one has replaced it."""
+        if self._worker is worker:
+            self._worker = None
+        _kill(worker)
+
+    def _ensure_worker(self) -> "subprocess.Popen[bytes]":
         if self._worker is not None and self._worker.poll() is None:
             return self._worker
-        self._stop_locked()
+        if self._worker is not None:
+            self._retire(self._worker)  # it exited on its own
         log = (self.root / "worker.log").open("a")
-        self._worker = subprocess.Popen(
+        worker = subprocess.Popen(
             [str(self.venv / "bin" / "python"), str(WORKER), str(self.model), str(MANIFEST)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=log,
-            text=True,
-            bufsize=1,
+            bufsize=0,
         )
         log.close()
+        self._worker = worker
         try:
-            self._read(self._worker, START_TIMEOUT_S)
-        except VoiceError:
-            self._stop_locked()
+            self._read(worker, START_TIMEOUT_S)
+        except (ValueError, VoiceError):
+            self._retire(worker)
             raise
-        return self._worker
+        return worker
 
     @staticmethod
-    def _read(worker: subprocess.Popen[str], timeout: float) -> dict[str, Any]:
+    def _read(worker: "subprocess.Popen[Any]", timeout: float) -> dict[str, Any]:
+        """One reply line, within `timeout` for the WHOLE line: a worker that
+        writes part of a line and stalls must not block past the deadline, so
+        this reads the pipe's raw bytes rather than a buffered readline."""
         assert worker.stdout is not None
-        ready, _, _ = select.select([worker.stdout], [], [], timeout)
-        if not ready:
-            raise VoiceError(f"no answer within {timeout:.0f} s")
-        line = worker.stdout.readline()
-        if not line:
-            raise VoiceError("the worker exited")
-        reply: dict[str, Any] = json.loads(line)
+        fd = worker.stdout.fileno()
+        deadline = time.monotonic() + timeout
+        line = b""
+        while not line.endswith(b"\n"):
+            left = deadline - time.monotonic()
+            if left <= 0 or not select.select([fd], [], [], left)[0]:
+                raise VoiceError(f"no answer within {timeout:.0f} s")
+            chunk = os.read(fd, 65536)
+            if not chunk:
+                raise VoiceError("the worker exited")
+            line += chunk
+        reply: dict[str, Any] = json.loads(line.split(b"\n", 1)[0])
         return reply
-
-    def _stop_locked(self) -> None:
-        worker, self._worker = self._worker, None
-        if worker is None:
-            return
-        worker.terminate()
-        try:
-            worker.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            worker.kill()
-            worker.wait()
 
     def _prune(self) -> None:
         files = sorted(self.cache.glob("*.wav"), key=lambda p: p.stat().st_mtime)
@@ -406,3 +414,14 @@ for d in md.distributions():
     rows.append({"name": m["Name"], "license": license, "classifiers": "; ".join(classifiers)})
 print(json.dumps(rows))
 """
+
+
+def _kill(worker: "subprocess.Popen[Any] | None") -> None:
+    if worker is None:
+        return
+    worker.terminate()
+    try:
+        worker.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        worker.kill()
+        worker.wait()

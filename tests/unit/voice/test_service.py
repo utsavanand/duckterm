@@ -3,6 +3,7 @@ import io
 import json
 import platform
 import sys
+import threading
 import time
 import zipfile
 from pathlib import Path
@@ -21,6 +22,8 @@ for line in sys.stdin:
         time.sleep(30)
     if req["text"] == "crash":
         sys.exit(3)
+    if req["text"] == "half a reply":
+        sys.stdout.write('{"id": '); sys.stdout.flush(); time.sleep(30)
     with wave.open(req["out"], "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000); w.writeframes(b"\\0\\0" * 2400)
     print(json.dumps({"id": req["id"], "ok": True}), flush=True)
@@ -206,3 +209,36 @@ def test_download_keeps_only_files_that_match_their_pinned_hash(tmp_path, monkey
         LocalVoice(tmp_path)._download(lambda step, done: None)
     assert (tmp_path / "model" / "voices.bin").read_bytes() == good
     assert not list((tmp_path / "model").glob("model.onnx*"))  # nothing unverified is kept
+
+
+# From main-qa's worker-contract probes on 5037a8d.
+def test_a_worker_that_stalls_mid_reply_still_times_out(voice, monkeypatch) -> None:
+    monkeypatch.setattr(service, "SAY_TIMEOUT_S", 0.5)
+    voice.say("warm up", "af_heart")
+    worker = voice._worker
+    started = time.monotonic()
+    with pytest.raises(VoiceError, match="no answer within"):
+        voice.say("half a reply", "af_heart")
+    assert time.monotonic() - started < 3
+    assert worker.poll() is not None
+
+
+def test_voice_off_interrupts_a_request_in_flight(voice) -> None:
+    voice.say("warm up", "af_heart")
+    worker = voice._worker
+    failed: list[Exception] = []
+
+    def speak() -> None:
+        try:
+            voice.say("slow", "af_heart")
+        except VoiceError as exc:
+            failed.append(exc)
+
+    thread = threading.Thread(target=speak)
+    thread.start()
+    time.sleep(0.3)  # the request is now waiting on the worker
+    started = time.monotonic()
+    voice.stop()
+    assert time.monotonic() - started < 2  # didn't wait for the 15 s timeout
+    thread.join(5)
+    assert worker.poll() is not None and failed and not thread.is_alive()
