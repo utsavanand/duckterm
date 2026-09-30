@@ -7,14 +7,14 @@ export function useArtifactExpansion(identity: string | undefined) {
   const back = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const entry = useRef<{ token: string; state: unknown } | null>(null);
-  const expand = (button: HTMLElement) => {
+  const expand = useCallback((button: HTMLElement) => {
     if (expanded) return;
     opener.current = button;
     const token = crypto.randomUUID();
     entry.current = { token, state: history.state };
     history.pushState({ ...history.state, artifactExpansion: token }, "");
     setExpanded(true);
-  };
+  }, [expanded]);
   const close = useCallback(() => {
     if (entry.current && history.state?.artifactExpansion === entry.current.token) history.back();
     else setExpanded(false);

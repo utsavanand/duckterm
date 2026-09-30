@@ -1,0 +1,46 @@
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { api } from "./api";
+import { FolderView } from "./FolderView";
+vi.mock("./api", () => ({ api: { folderChat: vi.fn(), fleetAsk: vi.fn(), folderArtifacts: vi.fn() } }));
+vi.mock("./ArtifactsView", () => ({ ArtifactsView: ({ folder }: { folder: string }) => <p>Files from {folder}</p> }));
+afterEach(() => { cleanup(); vi.resetAllMocks(); });
+it("sends only the selected folder and keeps the answer when switching tabs", async () => {
+  vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
+  vi.mocked(api.fleetAsk).mockResolvedValue({ answer: "Ready", exchange: { q: "Status?", a: "Ready", at: 1 }, sessions: [] });
+  render(<FolderView folder="Website/Research" />);
+  await act(async () => {});
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Status?" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
+  expect(api.fleetAsk).toHaveBeenCalledExactlyOnceWith("Status?", "Website/Research");
+  expect(screen.getByText("Ready")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "Sessions" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("tab", { name: "Artifacts" }));
+  expect(screen.getByText("Files from Website/Research")).toBeVisible();
+  fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+  expect(screen.getByText("Ready")).toBeVisible();
+});
+it("ignores in-flight answers after changing folders", async () => {
+  let finish!: (value: Awaited<ReturnType<typeof api.fleetAsk>>) => void;
+  vi.mocked(api.folderChat).mockImplementation(folder => Promise.resolve({ messages: [{ q: folder, a: folder + " history", at: 1 }] }));
+  vi.mocked(api.fleetAsk).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const view = render(<FolderView folder="a" />);
+  await screen.findByText("a history");
+  fireEvent.click(screen.getByRole("button", { name: "What needs my attention?" }));
+  view.rerender(<FolderView folder="b" />);
+  await screen.findByText("b history");
+  await act(async () => { finish({ answer: "Old answer", exchange: { q: "old", a: "Old answer", at: 2 }, sessions: [] }); });
+  expect(screen.queryByText("Old answer")).not.toBeInTheDocument();
+  expect(screen.getByText("b history")).toBeVisible();
+});
+it("preserves a failed question and lets history failures retry", async () => {
+  vi.mocked(api.folderChat).mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ messages: [] });
+  vi.mocked(api.fleetAsk).mockRejectedValue(new Error("summarizer unavailable"));
+  render(<FolderView folder="a" />);
+  fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
+  await act(async () => {});
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Keep my question" } });
+  fireEvent.click(screen.getByRole("button", { name: "Ask" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("summarizer unavailable");
+  expect(screen.getByRole("textbox")).toHaveValue("Keep my question");
+});
