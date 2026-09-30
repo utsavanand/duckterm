@@ -98,6 +98,15 @@ describe("applyEvent", () => {
     expect(revived.get("s1")!.state).toBe("busy");
   });
 
+  it("reads events the way the server does: auto-reviewed requests stay busy, idle notices are idle", () => {
+    const state = (e: Partial<DucktermEvent>) =>
+      applyEvent(empty(), ev({ event_type: "PermissionRequest", ...e })).get("s1")!.state;
+    expect(state({ auto_reviewed: true })).toBe("busy"); // Codex's reviewer settles it
+    expect(state({ event_type: "Notification", notification_type: "permission_prompt" })).toBe("waiting");
+    expect(state({ event_type: "Notification", notification_type: "idle_prompt" })).toBe("idle");
+    expect(state({ event_type: "Notification", message: "Claude is waiting for your input" })).toBe("idle");
+  });
+
   it("maps permission requests to waiting and SessionEnd to terminated", () => {
     expect(
       applyEvent(empty(), ev({ event_type: "PermissionRequest" })).get("s1")!

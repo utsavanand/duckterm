@@ -9,6 +9,16 @@ Removing ellipses did not make Change model a dropdown. Open model choices direc
 The default translucent white xterm selection disappeared on the Paper background. Set both foreground and active/inactive selection backgrounds for each light palette, and verify actual selected text after focus moves away. Improve neutral borders and secondary labels without tinting the original white/gray palette blue. Keep dark palettes unchanged.
 
 
+## 2026-09-29 — The dashboard derives state too; fix both folds
+**Broke:** v0.4.85 stopped the server from marking Codex "waiting" on every
+permission request, but the dashboard's badge still flipped to waiting on
+each one. The server's own stale-badge cleanup also showed as waiting there.
+**Cause:** the dashboard folds live events with its own copy of the state
+rules (web/src/sessions.ts). It ignored the new `auto_reviewed` tag and read
+every Notification as waiting, while the server reads idle notices as idle.
+**Rule:** a state rule change lands in persistence/history.py and
+web/src/sessions.ts together, with a test on each side.
+
 ## 2026-09-29 — Assert terminal input bytes, not competing echo order
 
 Canonical terminal echo and cat output can interleave: AAA + LF + BBB rendered as AAABBAAAB while all input bytes were correct. A batching change exposed this false gate failure. Use a raw-PTY child to record exact received bytes; this also distinguishes LF from CR, which canonical input maps together. Preserve the original failure, verify the replacement rejects a CR mutation, and clean up its test session.
