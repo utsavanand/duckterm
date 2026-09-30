@@ -12,7 +12,11 @@ beforeEach(() => { vi.mocked(api.restartStatus).mockResolvedValue(ready); vi.moc
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.useRealTimers(); });
 
 it("queues a model change with the current model preset and a cancelable status", async () => {
-  vi.mocked(api.restart).mockResolvedValue({ ...ready, status: "queued", requested_model: "new-model" });
+  vi.mocked(api.restart).mockImplementation(async () => {
+    const queued = { ...ready, status: "queued" as const, requested_model: "new-model" };
+    vi.mocked(api.restartStatus).mockResolvedValue(queued);
+    return queued;
+  });
   vi.mocked(api.cancelRestart).mockResolvedValue({ ...ready, status: "canceled" });
   render(<RestartControls session={session} />);
   const open = screen.getByRole("button", { name: "Change model" });
