@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-10-01 — An update control is not an updater
+Keep Install disabled until the detached installer, snapshot, restart verification
+and rollback contract is implemented. Read release information only when Settings
+opens or the owner explicitly checks again. A failed check clears the latest
+version, and a successful operation must not say Updated until the installed
+version matches the verified target.
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A

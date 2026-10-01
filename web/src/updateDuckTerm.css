@@ -1,0 +1,10 @@
+.rd-update-control { padding: 10px; font-size: 12px; line-height: 1.5; }
+.rd-update-control h3 { margin: 0 0 8px; font-size: 13px; font-weight: 550; }
+.rd-update-control p { margin: 7px 0; color: var(--text-soft); font-size: 11px; }
+.rd-update-control .rd-update-version { color: var(--text); font-size: 12px; }
+.rd-update-version span { display: block; color: var(--brand-green-strong); }
+.rd-update-actions { display: flex; flex-wrap: wrap; gap: 7px; margin: 12px 0 8px; }
+.rd-update-control a { color: var(--brand-green-strong); font-size: 11px; }
+.rd-update-progress { border: 1px solid var(--border); border-radius: 7px; padding: 10px; margin-top: 12px; }
+.rd-update-progress ol { padding: 0; list-style: none; display: flex; gap: 8px; flex-wrap: wrap; color: var(--text-soft); font-size: 10px; }
+.rd-update-progress [aria-current] { color: var(--text); text-decoration: underline; }

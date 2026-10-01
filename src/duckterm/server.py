@@ -217,6 +217,7 @@ _ROUTES: list[Route] = [
     Route("GET", "", lambda s, r, w, h, b, seg: s._approval_decision(w, seg),
           **_mid("/approvals/", "/decision")),
     Route("GET", "/terminals", lambda s, r, w, h, b, seg: s._terminals(w)),
+    Route("GET", "/update/status", lambda s, r, w, h, b, seg: s._update_status(w, h)),
     Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._diff(w, seg), **_mid("/sessions/", "/diff")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
@@ -3421,6 +3422,18 @@ class Server:
             await _write_json(writer, 400, {"error": str(exc)})
         except OSError as exc:
             await _write_json(writer, 500, {"error": str(exc)})
+
+    async def _update_status(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
+        from duckterm.update_status import status
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        result = await asyncio.to_thread(status)
+        result["backup_running"] = bool(
+            self._backup_jobs and self._backup_jobs.task and not self._backup_jobs.task.done()
+        )
+        await _write_json(writer, 200, result)
 
     def _can_pin(self, key: str) -> bool:
         row = self.history.session(key) or {}
