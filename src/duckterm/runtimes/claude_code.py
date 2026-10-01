@@ -20,10 +20,12 @@ every other runtime path stays generic.
 import json
 import re
 import shlex
+from collections.abc import Iterable
 from pathlib import Path
 
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
 from duckterm.runtimes.base import Harness, HookSpec, SessionState, prompt_line_rest
+from duckterm.runtimes.message_cache import MessageCache
 
 
 def project_slug(cwd: Path) -> str:
@@ -99,7 +101,13 @@ class ClaudeCodeRuntime(Harness):
         path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
         if path is None:
             path = self.latest_transcript(cwd=cwd)
-        return parse_messages(path) if path else []
+        return _MESSAGE_CACHE.read(path) if path else []
+
+    def messages_response(self, *, cwd: Path, session_id: str | None) -> bytes:
+        path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
+        if path is None:
+            path = self.latest_transcript(cwd=cwd)
+        return _MESSAGE_CACHE.response(path, self.name, session_id) if path else b'{"messages": []}'
 
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return [*self._argv, "--resume", session_key]
@@ -221,8 +229,12 @@ def parse_messages(path: Path) -> list[dict[str, object]]:
     `id` is the record's line index (stable for a given transcript), used as the
     annotation anchor.
     """
+    return _parse_message_lines(path.read_text(errors="replace").splitlines(), 0)
+
+
+def _parse_message_lines(lines: Iterable[str], start: int) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    for i, line in enumerate(path.read_text().splitlines()):
+    for i, line in enumerate(lines, start):
         if not line.strip():
             continue
         try:
@@ -274,3 +286,6 @@ def _blocks(content: object) -> list[dict[str, object]]:
         elif bt == "tool_result":
             out.append({"type": "tool_result", "text": _extract_text(block.get("content"))})
     return out
+
+
+_MESSAGE_CACHE = MessageCache(_parse_message_lines)
