@@ -3,6 +3,7 @@
 import hashlib
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from threading import RLock
@@ -28,7 +29,7 @@ class MessageCache:
     line, so a partially written JSON record is retried without duplicate IDs.
     Changed files verify the committed prefix before parsing the new suffix;
     a growing rewrite must not retain stale message contents or pin identities.
-    Returned record dicts are separate: the server adds session-specific keys.
+    Returned records are deeply detached, including nested tool input and blocks.
     """
 
     def __init__(self, parser: Parser, max_files: int = 8, max_bytes: int = 128 << 20) -> None:
@@ -48,7 +49,7 @@ class MessageCache:
                 state = self._states.get(path)
                 if state is not None and state.identity == identity and state.stamp == stamp:
                     self._states.move_to_end(path)
-                    return [dict(record) for record in (*state.records, *state.trailing)]
+                    return deepcopy([*state.records, *state.trailing])
                 if state is None or state.identity != identity or stat.st_size <= state.stamp[0]:
                     state = _State(identity)
                 with path.open("rb") as source:
@@ -88,7 +89,7 @@ class MessageCache:
                     or sum(item.stamp[0] for item in self._states.values()) > self._max_bytes
                 ):
                     self._states.popitem(last=False)
-                return [dict(record) for record in (*state.records, *state.trailing)]
+                return deepcopy([*state.records, *state.trailing])
             except OSError:
                 self._states.pop(path, None)
                 return []

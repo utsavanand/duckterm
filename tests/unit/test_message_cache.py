@@ -130,3 +130,49 @@ def test_growing_rewrite_invalidates_old_messages_even_in_middle(tmp_path: Path)
     path.write_bytes(prefix + line("different longer decision") + suffix)
     assert cache.read(path) == claude_lines(path.read_text().splitlines(), 0)
     assert cache.read(path)[1]["blocks"] == [{"type": "text", "text": "different longer decision"}]
+
+
+@pytest.mark.parametrize("codex", [False, True])
+@pytest.mark.parametrize("newline", [False, True])
+def test_returned_nested_data_cannot_mutate_cache(
+    tmp_path: Path, codex: bool, newline: bool
+) -> None:
+    parser = codex_lines if codex else claude_lines
+    cache = MessageCache(parser)
+    path = tmp_path / "nested.jsonl"
+    obj = (
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "tool",
+                "arguments": {"items": [{"value": "original"}]},
+            },
+        }
+        if codex
+        else {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "tool",
+                        "input": {"items": [{"value": "original"}]},
+                    }
+                ],
+            },
+        }
+    )
+    path.write_text(json.dumps(obj) + ("\n" if newline else ""))
+    expected = parser(path.read_text().splitlines(), 0)
+    for _ in range(2):  # cold and unchanged reads must both be detached
+        returned = cache.read(path)
+        blocks = returned[0]["blocks"]
+        assert isinstance(blocks, list)
+        blocks[0]["input"]["items"][0]["value"] = "corrupted"
+        blocks.append({"type": "text", "text": "injected"})
+        assert cache.read(path) == expected
+    with path.open("ab") as output:
+        output.write((b"" if newline else b"\n") + line("appended", codex))
+    assert cache.read(path) == parser(path.read_text().splitlines(), 0)
