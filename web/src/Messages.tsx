@@ -6,6 +6,7 @@ import { Annotation, locatedAnnotations } from "./annotationHighlights";
 import "./messageAnnotations.css";
 import { useToast } from "./ui";
 import { Message, MessagePin, PinTarget } from "./MessagePins";
+import { useSessionResource } from "./useSessionResource";
 
 // Structured view of an agent's latest reply (HTML-annotation mode,
 // docs/structured-render-design.md). Renders the response as HTML; select any
@@ -14,19 +15,15 @@ import { Message, MessagePin, PinTarget } from "./MessagePins";
 
 let mermaidSeq = 0; // unique ids for mermaid.render across re-renders
 
-interface TranscriptStatus {
-  status?: string;
-  reason?: string;
-}
-
 interface Selection {
   quote: string;
   x: number;
   y: number;
 }
 
-export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePin, target, onClearTarget }: {
+export function Messages({ sessionKey, active = true, pins = [], pinPending = false, onTogglePin, target, onClearTarget }: {
   sessionKey: string;
+  active?: boolean;
   pins?: MessagePin[];
   pinPending?: boolean;
   onTogglePin?: (message: Message) => void;
@@ -34,19 +31,22 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
   onClearTarget?: () => void;
 }) {
   const toast = useToast();
-  const [annotationSnapshot, setAnnotationSnapshot] = useState<{ key: string; items: Annotation[]; error: string }>({ key: "", items: [], error: "" });
   const [annotationVersion, setAnnotationVersion] = useState(0);
-  const annotations = useMemo(() => annotationSnapshot.key === sessionKey ? annotationSnapshot.items : [], [annotationSnapshot, sessionKey]);
-  const annotationError = annotationSnapshot.key === sessionKey ? annotationSnapshot.error : "";
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [transcript, setTranscript] = useState<TranscriptStatus | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const messageState = useSessionResource<Message>(sessionKey, "messages", active);
+  const annotationState = useSessionResource<Annotation>(sessionKey, "annotations", active, annotationVersion);
+  const annotations = useMemo(() => (annotationState.items ?? []).filter(note =>
+    typeof note.id === "string" && typeof note.quote === "string" && typeof note.note === "string"), [annotationState.items]);
+  const annotationError = annotationState.error ? "Could not load comments. Retrying…" : "";
+  const messages = useMemo(() => messageState.items ?? [], [messageState.items]);
+  const transcript = messageState.transcript;
+  const loaded = messageState.items !== undefined;
+  const loadError = messageState.error ? "Could not load messages. Retrying…" : "";
   const jumped = useRef<number | null>(null);
   // How many turns BACK from the newest we're viewing (0 = latest).
   const [back, setBack] = useState(0);
   useEffect(() => {
     setBack(0); // a different session starts at its latest turn
+    jumped.current = null;
   }, [sessionKey]);
   const [sel, setSel] = useState<Selection | null>(null);
   const [note, setNote] = useState("");
@@ -149,62 +149,6 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
     }
   }
 
-  useEffect(() => {
-    let live = true;
-    // Drop the previous session's turns before the first fetch resolves —
-    // otherwise switching sessions renders the old transcript for up to a
-    // poll interval.
-    setMessages([]);
-    setTranscript(null);
-    setLoaded(false);
-    setLoadError("");
-    jumped.current = null;
-    const load = () =>
-      fetch(`/sessions/${sessionKey}/messages`)
-        .then(async (r) => {
-          if (r.ok === false) throw new Error("Could not load messages");
-          return r.json();
-        })
-        .then((d: { messages?: Message[]; transcript?: TranscriptStatus }) => {
-          if (live) {
-            setMessages(d.messages ?? []);
-            setTranscript(d.transcript ?? null);
-            setLoaded(true);
-            setLoadError("");
-          }
-        })
-        .catch(() => { if (live) setLoadError("Could not load messages. Retrying…"); });
-    load();
-    // The transcript grows as the agent works; refresh on a light interval.
-    const t = setInterval(load, 3000);
-    return () => {
-      live = false;
-      clearInterval(t);
-    };
-  }, [sessionKey]);
-
-  useEffect(() => {
-    let live = true;
-    async function loadAnnotations() {
-      try {
-        const response = await fetch(`/sessions/${encodeURIComponent(sessionKey)}/annotations`);
-        if (response.ok === false) throw new Error("Could not load comments");
-        const data = await response.json();
-        if (!live) return;
-        const items: Annotation[] = (Array.isArray(data.annotations) ? data.annotations : []).filter((note: Annotation) =>
-          typeof note.id === "string" && typeof note.quote === "string" && typeof note.note === "string");
-        setAnnotationSnapshot(previous => previous.key === sessionKey && !previous.error && JSON.stringify(previous.items) === JSON.stringify(items)
-          ? previous : { key: sessionKey, items, error: "" });
-      } catch {
-        if (live) setAnnotationSnapshot(previous => ({ key: sessionKey,
-          items: previous.key === sessionKey ? previous.items : [], error: "Could not load comments. Retrying…" }));
-      }
-    }
-    void loadAnnotations();
-    const timer = setInterval(loadAnnotations, 3000);
-    return () => { live = false; clearInterval(timer); };
-  }, [sessionKey, annotationVersion]);
-
   // Check the whole transcript: a note on another turn is not an unlocated note.
   const unlocated = useMemo(() => {
     if (!annotations.length) return [];
@@ -232,7 +176,7 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
   // One interaction turn at a time, defaulting to the newest. `back` counts
   // turns from the end, so while you're on the latest (back=0) new turns keep
   // appearing in place; while browsing older ones your position holds steady.
-  const turns = turnsOf(messages);
+  const turns = useMemo(() => turnsOf(messages), [messages]);
   const targetIndex = target ? turns.findIndex((t) =>
     t.messages.some((m) => m.message_key === target.pin.message_key)) : -1;
   const savedCopy = !!target && (loaded || !!loadError) && targetIndex < 0;
