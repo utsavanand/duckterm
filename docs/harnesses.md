@@ -33,9 +33,16 @@ environment of whichever session started it. When the hook's parent is that
 daemon, it sends no `session_key` and no `agent_pid` (the daemon's pid), and
 marks the event `hook_host: "daemon"`. The agent's own `session_id` (its
 thread id, stable across daemon restarts, checked on 0.159.3) identifies the
-session; the server resolves it and parks what it can't. The server URL is
-per instance: `DUCKTERM_URL`, else `~/.duckterm/instance-url`, else port
-4300. Design: "Design — Shared-daemon identity (Codex 0.159)", 2026-10-01.
+session; the server resolves it and parks what it can't. Every other `DUCKTERM_*`
+variable the daemon holds belongs to another launch too: `DUCKTERM_URL`
+(on 2026-10-01 a dead port), `DUCKTERM_HOME` and `DUCKTERM_INTERNAL`. So
+under the daemon the hook ignores all of them and reports to the default
+instance: `~/.duckterm/instance-url` (else port 4300) and the token in
+`~/.duckterm`. A per-process agent still uses `DUCKTERM_URL` first.
+Daemon-hosted Codex on a second instance is unsupported.
+DuckTerm learns each launched Codex session's id (probe P2, 0.159.3) from a
+random nonce in the launch prompt. It comes back with the session's id in
+the first `UserPromptSubmit` and is also written to the rollout file. Design: "Design — Shared-daemon identity (Codex 0.159)", 2026-10-01.
 
 ## 2. Installable harnesses — suites of skills, hooks, and sub-agents
 

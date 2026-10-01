@@ -82,17 +82,26 @@ def test_a_per_process_agent_keeps_env_identity(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("env_url", "file_url", "expected"),
+    ("daemon", "env_url", "file_url", "expected"),
     [
-        ("http://127.0.0.1:5001", "http://127.0.0.1:5002", "http://127.0.0.1:5001"),
-        (None, "http://127.0.0.1:5002", "http://127.0.0.1:5002"),
-        (None, None, "http://127.0.0.1:4300"),
+        (False, "http://127.0.0.1:5001", "http://127.0.0.1:5002", "http://127.0.0.1:5001"),
+        (False, None, "http://127.0.0.1:5002", "http://127.0.0.1:5002"),
+        (False, None, None, "http://127.0.0.1:4300"),
+        # Under the daemon the env is another launcher's (this morning's was a
+        # dead port), so the instance file or the default wins.
+        (True, "http://127.0.0.1:1", "http://127.0.0.1:5002", "http://127.0.0.1:5002"),
+        (True, "http://127.0.0.1:1", None, "http://127.0.0.1:4300"),
     ],
 )
-def test_url_comes_from_env_then_the_instance_file(tmp_path, env_url, file_url, expected) -> None:
+def test_url_order(tmp_path, daemon, env_url, file_url, expected) -> None:
     if file_url:
         (tmp_path / ".duckterm").mkdir()
         (tmp_path / ".duckterm" / "instance-url").write_text(file_url + "\n")
     env = {"DUCKTERM_URL": env_url} if env_url else {}
-    url, _ = run_hook(tmp_path, daemon=True, env=env)
+    url, _ = run_hook(tmp_path, daemon=daemon, env=env)
     assert url == expected + "/events"
+
+
+def test_a_daemon_started_by_an_internal_run_does_not_silence_every_hook(tmp_path) -> None:
+    _, sent = run_hook(tmp_path, daemon=True, env={"DUCKTERM_INTERNAL": "1"})
+    assert sent["hook_host"] == "daemon"  # the server parks it if no session claims it

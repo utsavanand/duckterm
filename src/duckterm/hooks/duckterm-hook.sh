@@ -10,6 +10,19 @@
 #   duckterm-hook.sh PostToolUse
 # The event type is passed as $1; Claude's hook JSON arrives on stdin.
 
+# Codex 0.159+ runs every session's hooks in one shared daemon ("codex
+# app-server --managed-daemon"), whose environment is that of whichever
+# session started it. There, every DUCKTERM_* variable belongs to another
+# session (even another instance), and PPID is the daemon. Ignore them all:
+# the server attributes the event by the agent's own session_id, parks what it
+# can't, and an internal run's events park the same way. Daemon-hosted agents
+# report to the default instance (~/.duckterm).
+case "$(ps -o command= -p "$PPID" 2>/dev/null)" in
+  *" app-server "*|*" app-server")
+    unset DUCKTERM_INTERNAL DUCKTERM_URL DUCKTERM_HOME DUCKTERM_SESSION_KEY
+    HOOK_HOST="daemon" ;;
+  *) HOOK_HOST="" ;;
+esac
 # Duckterm spawns agents itself for internal work (e.g. `claude -p` to write a
 # checkpoint summary). Those subprocesses inherit these hooks and would report a
 # phantom session back into Duckterm. DUCKTERM_INTERNAL=1 marks such a
@@ -23,8 +36,9 @@ EVENT_TYPE="${1:-Unknown}"
 # claude-code so older installs that pass only the event type keep working.
 RUNTIME="${2:-claude-code}"
 INPUT=$(cat)
-# The server's address is per instance, not per session: env when set, else
-# the file the running server writes at startup, else the default port.
+# The server's address is per instance, not per session: env when set (never
+# under the daemon), else the file the running server writes at startup, else
+# the default port.
 URL="${DUCKTERM_URL:-$(cat "$HOME/.duckterm/instance-url" 2>/dev/null)}"
 URL="${URL:-http://127.0.0.1:4300}"
 # Set by Duckterm when it launches the agent in a terminal, so the agent's
@@ -32,15 +46,7 @@ URL="${URL:-http://127.0.0.1:4300}"
 # a duplicate session under Claude's own id. Empty for self-started sessions.
 SESSION_KEY="${DUCKTERM_SESSION_KEY:-}"
 AGENT_PID="$PPID"
-HOOK_HOST=""
-# Codex 0.159+ runs every session's hooks in one shared daemon ("codex
-# app-server --managed-daemon"), whose environment is that of whichever
-# session started it. There, DUCKTERM_SESSION_KEY names the wrong session and
-# PPID is the daemon. Send neither: the server attributes the event by the
-# agent's own session_id, and parks what it can't attribute.
-case "$(ps -o command= -p "$PPID" 2>/dev/null)" in
-  *" app-server "*|*" app-server") SESSION_KEY=""; AGENT_PID="null"; HOOK_HOST="daemon" ;;
-esac
+[ -n "$HOOK_HOST" ] && AGENT_PID="null"
 
 if command -v jq >/dev/null 2>&1; then
   # Field names differ across agents: Claude/Codex use snake_case (session_id,
