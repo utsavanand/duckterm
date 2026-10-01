@@ -1,3 +1,4 @@
+import { tasksWidget } from "./FolderTasks";
 import { useEffect, useRef, useState } from "react";
 import { AnalyticsTab } from "./analyticsData";
 import { api } from "./api";
@@ -51,7 +52,8 @@ export function ControlTower({
 }) {
   const [source] = useState(() => new WidgetStreams());
   const analyticsRef = useRef(onAnalytics); analyticsRef.current = onAnalytics;
-  const [registry] = useState(() => oracleWidgets(tab => analyticsRef.current(tab)));
+  const taskOpen = useRef(onOpenTerminal); taskOpen.current = onOpenTerminal;
+  const [registry] = useState(() => [...oracleWidgets(tab => analyticsRef.current(tab)), tasksWidget(key => taskOpen.current(key))]);
   const [hover, setHover] = useState<{ key: string; el: HTMLElement } | null>(null);
   const [pinned, setPinned] = useState<{ key: string; el: HTMLElement } | null>(null);
 

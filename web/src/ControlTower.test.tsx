@@ -7,7 +7,7 @@ import { ControlTower } from "./ControlTower";
 import { TowerAgent } from "./tower";
 vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn() } }));
 beforeEach(() => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ revision: "default", instances: defaultLayout("oracle", oracleWidgets(() => {})) }))));
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify(url === "/tasks" ? { tasks: [] } : { revision: "default", instances: defaultLayout("oracle", oracleWidgets(() => {})) }))));
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.relay).mockResolvedValue({ notes: [{ id: "n1", session_key: "qa", name: "qa", folder: "Nourish", runtime: "claude-code", kind: "question", status: "open", created_at: NOW - 4 * 86_400_000, question: "Deploy now?" }], rules: [], open: 1 });
 });

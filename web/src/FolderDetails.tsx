@@ -1,3 +1,4 @@
+import { tasksWidget } from "./FolderTasks";
 import { useEffect, useRef, useState } from "react";
 import { api, FolderStats } from "./api";
 import { ARTIFACT_KINDS } from "./artifactKinds";
@@ -11,6 +12,7 @@ export function FolderDetails({ folder, onClose, onOpenSession, onGrid, onMessag
   const [updated, setUpdated] = useState<number | null>(null);
   const open = useRef(onOpenSession); open.current = onOpenSession;
   const [registry] = useState<WidgetType[]>(() => [
+    tasksWidget(key => open.current?.(key)),
     { type: "folder-stats", title: "Activity", slots: ["folder"], streams: ["folder-stats"], render: ({ streams }) => <Activity stats={streams["folder-stats"].status === "ready" ? streams["folder-stats"].value as FolderStats : null} onOpen={key => open.current?.(key)} /> },
     { type: "artifacts-by-kind", title: "Artifacts by kind", slots: ["folder"], streams: ["artifacts-by-kind"], render: ({ streams }) => {
       const data = streams["artifacts-by-kind"].status === "ready" ? streams["artifacts-by-kind"].value as FolderStats["artifacts"] : null;

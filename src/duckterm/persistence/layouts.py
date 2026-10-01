@@ -11,8 +11,8 @@ from duckterm.helpers.private_files import private_read, private_write
 from duckterm.persistence.folder_chats import valid_folder, within
 
 TYPES = {
-    "oracle": ("agents", "needs-you", "tokens", "mail", "backup", "remote"),
-    "folder": ("folder-stats", "artifacts-by-kind"),
+    "oracle": ("agents", "needs-you", "tokens", "mail", "backup", "remote", "folder-tasks"),
+    "folder": ("folder-tasks", "folder-stats", "artifacts-by-kind"),
 }
 _LOCK = threading.RLock()
 

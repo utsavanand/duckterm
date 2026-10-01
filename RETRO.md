@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-10-01 — Assignment must be one transaction
+A task without its inbox message is invisible work; a message without its task is
+an invisible assignment. Create the explicit assignment inside the inbox broker's
+transaction, bind the assignment choice into retry identity, and retain the same
+task ID through handoffs. Archive retired Work rows to a private, durable JSON file
+before dropping their tables; a failed archive must leave the old tables intact.
+
 ## 2026-09-30 — Artifact protection belongs in the store
 
 Keep must reject removal on the server, survive re-registration, and preserve the owner’s category. Removing an unkept saved copy should retain metadata in a separate table, not leave an empty downloadable file. Folder counts must use exact subtree membership and the same durable mail and transcript accounting as Analytics; test both live and retired mail. Automatic retention remains a separate owner decision.

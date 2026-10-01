@@ -44,6 +44,7 @@ export interface OracleExchange {
   a: string;
   at: number;
   dispatch?: {
+    assigned?: boolean;
     request_key: string;
     target: { kind: "session" | "folder"; id: string };
     label: string;
@@ -372,7 +373,7 @@ export const api = {
     post<Connector>(`/connectors/${name}/disable`, {}, context),
   folderArtifacts: (folder: string) => artifactRequest<{ artifacts: FolderArtifact[]; truncated?: boolean }>(`/folders/${encodeURIComponent(folder)}/artifacts`),
   folderRecipients: (folder: string) => artifactRequest<FolderRecipients>(`/folders/${encodeURIComponent(folder)}/recipients`),
-  folderDispatch: (folder: string, request: { identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
+  folderDispatch: (folder: string, request: { assign?: boolean; identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
     post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request),
   folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
   fleetAsk: (question: string, folder?: string) =>

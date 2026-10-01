@@ -217,6 +217,7 @@ _ROUTES: list[Route] = [
     Route("GET", "", lambda s, r, w, h, b, seg: s._approval_decision(w, seg),
           **_mid("/approvals/", "/decision")),
     Route("GET", "/terminals", lambda s, r, w, h, b, seg: s._terminals(w)),
+    Route("GET", "/tasks", lambda s, r, w, h, b, seg: s._folder_tasks(w, h)),
     Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._diff(w, seg), **_mid("/sessions/", "/diff")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
@@ -3564,6 +3565,12 @@ class Server:
             await _write_json(writer, 400, {"error": str(exc)})
         except OSError as exc:
             await _write_json(writer, 500, {"error": str(exc)})
+
+    async def _folder_tasks(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        await _write_json(writer, 200, {"tasks": self.history.folder_tasks.list_tasks()})
 
     def _can_pin(self, key: str) -> bool:
         row = self.history.session(key) or {}

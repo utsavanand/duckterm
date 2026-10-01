@@ -44,7 +44,7 @@ Event = dict[str, Any]
 # v6 retains analytics at deletion. Older sweep code would lose these counts.
 # v7 persists restart requests and model preferences on the session.
 # v8 persists archive grace periods so a quit cannot lose an acknowledged archive.
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 10
 
 
 class SchemaTooNewError(RuntimeError):
@@ -298,6 +298,11 @@ class HistoryStore:
             )
         self._conn.executescript(_SCHEMA)
         self._migrate()
+        from duckterm.core.folder_tasks import FolderTasks, migrate
+
+        self._conn.commit()
+        migrate(self._conn, path.parent)
+        self.folder_tasks = FolderTasks(self._conn)
         self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
         self.session_api.before_retire = lambda: self.folder_chats.refresh_dispatches(self._conn)
         self.artifacts = self.session_api.artifacts
@@ -782,6 +787,11 @@ class HistoryStore:
         self._conn.execute(
             "UPDATE sessions SET grp = ? || substr(grp, ?) "
             "WHERE grp = ? OR substr(grp, 1, ?) = ?",
+            (new, cut, old, len(old) + 1, old + "/"),
+        )
+        self._conn.execute(
+            "UPDATE folder_tasks SET folder = ? || substr(folder, ?) "
+            "WHERE folder = ? OR substr(folder, 1, ?) = ?",
             (new, cut, old, len(old) + 1, old + "/"),
         )
         self.session_api.sync_memberships(moved=(old, new))

@@ -62,6 +62,19 @@ def add_parser(sub: Any) -> None:
         "--kind", choices=("kdd", "spec", "research", "preview", "evidence", "report", "other")
     )
     artifact.add_argument("--output", type=Path, help="download destination; must not exist")
+    task = actions.add_parser("task", help="report work explicitly, update it or hand it off")
+    verbs = task.add_subparsers(dest="task_action", required=True)
+    start = verbs.add_parser("start")
+    start.add_argument("title")
+    listing = verbs.add_parser("list")
+    listing.add_argument("--folder")
+    update = verbs.add_parser("update")
+    update.add_argument("task_id")
+    update.add_argument("--status", choices=("in_progress", "done", "parked"))
+    update.add_argument("--note")
+    handoff = verbs.add_parser("handoff")
+    handoff.add_argument("task_id")
+    handoff.add_argument("target")
     publish = actions.add_parser("publish", help="update your purpose and current activity")
     publish.add_argument("--purpose")
     publish.add_argument("--activity")
@@ -104,7 +117,25 @@ def main(args: argparse.Namespace) -> int:
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         action = args.session_action
         download = False
-        if action == "self":
+        if action == "task":
+            path = "/tasks"
+            if args.task_action == "start":
+                method, body = "POST", {"title": args.title}
+            elif args.task_action == "list":
+                if args.folder is not None:
+                    path += "?" + urllib.parse.urlencode({"folder": args.folder})
+            else:
+                path += "/" + urllib.parse.quote(args.task_id, safe="")
+                if args.task_action == "handoff":
+                    method, path, body = "POST", path + "/handoff", {"session": args.target}
+                else:
+                    method = "PATCH"
+                    body = {
+                        field: getattr(args, field)
+                        for field in ("status", "note")
+                        if getattr(args, field) is not None
+                    }
+        elif action == "self":
             path = "/self"
         elif action == "artifacts":
             path = "/artifacts"

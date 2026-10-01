@@ -43,6 +43,7 @@ def test_layout_slots_auth_revision_and_persistence(app, tmp_path):
         "mail",
         "backup",
         "remote",
+        "folder-tasks",
     ]
     edited = {"instances": [], "revision": initial["revision"]}
     status, saved = req(app, "PUT", "oracle", edited)

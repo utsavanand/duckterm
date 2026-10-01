@@ -1,5 +1,6 @@
 """A DB stamped v5 by the reverted F12 release (#84) must still open and work."""
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -25,11 +26,16 @@ def test_f12_v5_database_opens_after_revert_and_keeps_its_rows(tmp_path, monkeyp
     _stamp_f12_v5(path)
     store = HistoryStore(path)
     try:
-        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 8
+        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 10
         cols = {r["name"] for r in store._conn.execute("PRAGMA table_info(sessions)")}
         assert "pinned" in cols
         assert "restart_json" in cols
-        kept = store._conn.execute("SELECT recipient FROM session_work_updates").fetchall()
-        assert [r[0] for r in kept] == ["kept"]
+        tables = {
+            r[0] for r in store._conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        assert not {"session_work", "session_work_events", "session_work_updates"} & tables
+        archive = json.loads(next(tmp_path.glob("retired-f12-*.json")).read_text())
+        assert [r["recipient"] for r in archive["tables"]["session_work_updates"]] == ["kept"]
+        assert "folder_tasks" in tables
     finally:
         store.close()

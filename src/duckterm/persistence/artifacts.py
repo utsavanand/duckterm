@@ -141,7 +141,12 @@ class ArtifactStore:
         ]
 
     def list_folder(
-        self, folder: str, limit: int = 500, *, include_removed: bool = False, shared_root: str | None = None
+        self,
+        folder: str,
+        limit: int = 500,
+        *,
+        include_removed: bool = False,
+        shared_root: str | None = None,
     ) -> builtins.list[dict[str, Any]]:
         prefix = folder + "/"
         fields = ", ".join("a." + field.strip() for field in FIELDS.split(","))
@@ -175,7 +180,8 @@ class ArtifactStore:
                 "s.state AS session_state, s.grp AS folder FROM artifact_metadata m "
                 "JOIN sessions s ON s.session_key = m.session_key WHERE m.removed_at IS NOT NULL "
                 "AND (s.grp = ? OR substr(s.grp, 1, ?) = ?) "
-                + scope + "ORDER BY m.removed_at DESC LIMIT ?",
+                + scope
+                + "ORDER BY m.removed_at DESC LIMIT ?",
                 (*params, limit),
             ):
                 snapshot = json.loads(row["snapshot_json"])
