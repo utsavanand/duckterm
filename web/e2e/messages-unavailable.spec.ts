@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
@@ -6,7 +6,7 @@ import { apiDelete, apiPost, base, seedSession } from "./helpers";
 
 test("Messages explains missing identity and unavailable local transcript", async ({ page }) => {
   const key = `missing-conversation-${Date.now()}`;
-  const cwd = mkdtempSync(join(tmpdir(), "rd-transcript-availability-"));
+  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "rd-transcript-availability-")));
   const project = join(homedir(), ".claude", "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"));
   await seedSession(key, { name: "Conversation availability check", cwd });
   try {
