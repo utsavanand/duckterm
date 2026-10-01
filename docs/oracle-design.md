@@ -235,7 +235,10 @@ its own inbox reminders then discarded it: of 69 Codex questions in the
 owner's history, 14 were never answered, and for 8 of those the next prompt
 submitted was an Oracle reminder. So a Codex choice note closes only
 on a submitted prompt or the session ending, never on the agent's own tool
-use. The queued question also makes `prompt_is_empty` false, so Oracle doesn't
+use. Codex can queue several questions ("? 2 questions"), and each one gets
+its own note. Each answer is submitted on its own as `> <question>`, which
+closes that question's note and leaves the rest queued. Any other prompt
+closes them all, because Codex discards the whole queue. The queued question also makes `prompt_is_empty` false, so Oracle doesn't
 type into that session (no reminder, no relayed reply) until the owner
 answers. A question asked this way also suppresses the end-of-turn question
 classifier, so the owner isn't asked twice.

@@ -196,3 +196,35 @@ def test_the_hook_forwards_copilots_tool_args(tmp_path) -> None:
         time.sleep(0.05)
     payload = json.loads(capture.read_text())
     assert (payload["tool_name"], payload["tool_input"]) == ("ask_user", COPILOT_RAW["toolArgs"])
+
+
+def ask_codex(server, title, options):
+    tool_input = {"questions": [{"title": title, "options": options}]}
+    server.bus.publish(
+        event("ui", "PreToolUse", tool_name="request_user_input_async", tool_input=tool_input)
+    )
+
+
+def open_questions(server, key="ui"):
+    return [q["question"] for status, qs in choices(server, key) if status == "open" for q in qs]
+
+
+def test_queued_codex_questions_each_get_a_note_and_close_one_by_one(server) -> None:
+    """main-qa, PR #185: a second question asked before the first was answered
+    was dropped. Codex 0.155.1 queues both ("? 2 questions") and submits each
+    answer on its own, leaving the rest queued."""
+    ask_codex(server, "Pick a colour", ["Red", "Blue"])
+    ask_codex(server, "Pick a size", ["Small", "Large"])
+    ask_codex(server, "Pick a colour", ["Red", "Blue"])  # a repeat adds nothing
+    assert open_questions(server) == ["Pick a colour", "Pick a size"]
+
+    server.bus.publish(event("ui", "UserPromptSubmit", prompt="> Pick a colour\n\nRed"))
+    assert open_questions(server) == ["Pick a size"]
+    assert dispatch(server, "GET", "/relay/count", {})[1] == {"open": 1}
+
+
+def test_any_other_prompt_discards_every_queued_codex_question(server) -> None:
+    ask_codex(server, "Pick a colour", ["Red", "Blue"])
+    ask_codex(server, "Pick a size", ["Small", "Large"])
+    server.bus.publish(event("ui", "UserPromptSubmit", prompt="Never mind, ship it"))
+    assert open_questions(server) == []
