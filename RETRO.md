@@ -1,5 +1,24 @@
 # Retro — lessons from real breakage
 
+## 2026-10-01 — A "scratch" Codex test changed the owner's real Codex
+**Broke:** checking Codex's question tool, the Oracle main-dev session ran a
+fresh `codex` in its own tmux socket. It used the owner's real install and
+`~/.codex`. Keystrokes meant for the prompt landed on Codex's startup update
+prompt and chose "Update now", so the owner's Codex went from 0.155.1 to
+0.159.3. 0.159.3 starts a shared app-server daemon per `CODEX_HOME`, which
+outlives the session that started it. This one held the probe's environment
+(`DUCKTERM_URL` set to a dead port, the probe's session key), so the hooks
+of any new Codex session would have gone nowhere. The daemon was killed at
+09:50, and no owner agent was attached to it.
+**Cause:** "isolated" covered the DuckTerm side (own home, tmux socket, port)
+but not the agent's own home. An interactive agent start can update itself
+and leave processes behind. Keys were typed without first checking which
+screen was showing.
+**Rule:** real-agent checks run with a scratch agent home (`CODEX_HOME`,
+`COPILOT_HOME`, with update checks off). Never type into a fresh agent before
+reading its screen. Afterwards, list and stop every process the check
+started, daemons included.
+
 ## 2026-10-01 — Codex's questions to the owner never reached Oracle
 **Broke:** the owner was told to approve ui-dev's work in Oracle, and nothing
 was there. Codex asks the owner through `request_user_input_async`, and
