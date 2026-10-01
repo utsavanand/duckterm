@@ -3347,6 +3347,12 @@ class Server:
                 writer, 400, {"error": "expected an object with boolean write_access"}
             )
             return
+        harnesses = req.get("harnesses")
+        if harnesses is not None and not (
+            isinstance(harnesses, list) and all(isinstance(h, str) for h in harnesses)
+        ):
+            await _write_json(writer, 400, {"error": "harnesses must be a list of names"})
+            return
         token = str(req.get("token") or "").strip() or None
         secret = str(req.get("secret") or "").strip() or None
         try:
@@ -3357,6 +3363,7 @@ class Server:
                 secret,
                 source=req.get("source"),
                 write_access=req.get("write_access", False),
+                harnesses=harnesses,
             )
         except ValueError as e:
             await _write_json(writer, 404, {"error": str(e)})

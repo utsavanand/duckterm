@@ -852,6 +852,23 @@ code,
 .rd-connector-proof button {
   margin-left: auto;
 }
+.rd-connector-harnesses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.rd-connector-harnesses legend {
+  padding: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rd-connector-harnesses .dim {
+  color: var(--muted);
+}
 .rd-connector-token {
   display: flex;
   gap: 8px;

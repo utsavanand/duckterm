@@ -217,10 +217,41 @@ def huggingface_server_argv() -> list[str]:
     return [npx, "--yes", _MCP_REMOTE, _HF_URL, "--transport", "http-only", "--silent"]
 
 
-def _install(name: str, *, home: Path | None = None) -> None:
+_HARNESS_BINARIES = {"claude-code": "claude", "codex": "codex"}
+
+
+def harness_present(harness: str) -> bool:
+    """Whether the agent CLI exists here. A registration is written either way —
+    it applies when the harness arrives — but the panel must not claim a machine
+    without Codex is serving tools to Codex."""
+    return shutil.which(_HARNESS_BINARIES[harness]) is not None
+
+
+def harness_choice(name: str, *, home: Path | None = None) -> list[str]:
+    """Harnesses this connector is registered for, defaulting to all of them.
+
+    Stored per connector so a choice survives disable/enable; connectors that
+    predate the setting keep both, which is what they already had."""
+    stored = policy(name, home=home).get("harnesses")
+    if not isinstance(stored, list):
+        return list(HARNESSES)
+    chosen = [h for h in HARNESSES if h in stored]
+    return chosen or list(HARNESSES)
+
+
+def _install(name: str, *, home: Path | None = None, harnesses: list[str] | None = None) -> None:
     command, args = _duckterm_bin(), ["connector-run", name]
-    mcp_install.claude_install(name, command, args, home=home)
-    mcp_install.codex_install(name, command, args, home=home)
+    wanted = harnesses if harnesses is not None else harness_choice(name, home=home)
+    for harness, install, remove in (
+        ("claude-code", mcp_install.claude_install, mcp_install.claude_remove),
+        ("codex", mcp_install.codex_install, mcp_install.codex_remove),
+    ):
+        if harness in wanted:
+            install(name, command, args, home=home)
+        else:
+            # Deselecting must withdraw an existing entry, or the harness keeps
+            # serving the connector from a registration nobody can see.
+            remove(name, home=home)
 
 
 def railway_logged_in() -> bool:
@@ -256,8 +287,16 @@ def enable(
     home: Path | None = None,
     source: str | None = None,
     write_access: bool = False,
+    harnesses: list[str] | None = None,
 ) -> dict[str, object]:
     previous = policy(name, home=home)
+    if harnesses is not None:
+        unknown = [h for h in harnesses if h not in HARNESSES]
+        if unknown:
+            raise RuntimeError(f"Unknown harness {unknown[0]!r}")
+        if not harnesses:
+            raise RuntimeError("Choose at least one agent for this connector")
+    chosen = list(harnesses) if harnesses is not None else harness_choice(name, home=home)
     from duckterm import connector_client
 
     if os.environ.get("DUCKTERM_HOSTED"):
@@ -268,8 +307,8 @@ def enable(
         available = {row["name"]: row for row in connector_client.statuses()}
         if not available.get(name, {}).get("enabled"):
             raise RuntimeError("Connector is not enabled for this workspace on the shared host")
-        _install(name, home=home)
-        _save_policy(name, {"enabled": True, "generation": uuid.uuid4().hex})
+        _install(name, home=home, harnesses=chosen)
+        _save_policy(name, {"enabled": True, "harnesses": chosen, "generation": uuid.uuid4().hex})
         return status(name, home=home)
     identity: str | None = None
     if name == "github":
@@ -326,10 +365,8 @@ def enable(
         source = "google-oauth" if name == "gmail" else "gcloud-cli"
     # Publish disabled first: an old live runner must not use a replaced identity.
     _save_policy(name, {**previous, "enabled": False, "generation": uuid.uuid4().hex})
-    command, args = _duckterm_bin(), ["connector-run", name]
     try:
-        mcp_install.claude_install(name, command, args, home=home)
-        mcp_install.codex_install(name, command, args, home=home)
+        _install(name, home=home, harnesses=chosen)
     except Exception:
         mcp_install.claude_remove(name, home=home)
         mcp_install.codex_remove(name, home=home)
@@ -340,6 +377,7 @@ def enable(
             "enabled": True,
             "source": source,
             "identity": identity,
+            "harnesses": chosen,
             "write_access": name == "porkbun" and write_access,
             "generation": uuid.uuid4().hex,
         },
@@ -411,6 +449,7 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
         "claude-code": mcp_install.claude_installed(name, home=home),
         "codex": mcp_install.codex_installed(name, home=home),
     }
+    chosen = harness_choice(name, home=home)
     source = current.get("source")
     detail = None
     available: list[str] = []
@@ -473,7 +512,11 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
         "sources": available,
         "write_access": current.get("write_access", False),
         "installed": installed,
-        "enabled": bool(current.get("enabled")) and all(installed.values()),
+        "harnesses": chosen,
+        "harnesses_present": {h: harness_present(h) for h in HARNESSES},
+        # Only the chosen harnesses must carry an entry; a deselected one is
+        # meant to be absent, so requiring all of them would read as disabled.
+        "enabled": bool(current.get("enabled")) and all(installed[h] for h in chosen),
         "ready": ready,
         "detail": detail,
         "managed": bool(os.environ.get("DUCKTERM_HOSTED")),
@@ -512,8 +555,16 @@ def list_status(*, home: Path | None = None) -> list[dict[str, object]]:
                 "codex": mcp_install.codex_installed(name, home=home),
             },
             "enabled": bool(remote.get(name, {}).get("enabled"))
-            and mcp_install.claude_installed(name, home=home)
-            and mcp_install.codex_installed(name, home=home),
+            and all(
+                (
+                    mcp_install.claude_installed(name, home=home)
+                    if harness == "claude-code"
+                    else mcp_install.codex_installed(name, home=home)
+                )
+                for harness in harness_choice(name, home=home)
+            ),
+            "harnesses": harness_choice(name, home=home),
+            "harnesses_present": {h: harness_present(h) for h in HARNESSES},
             "ready": bool(remote.get(name, {}).get("enabled")),
             "managed": True,
             "hosted": bool(os.environ.get("DUCKTERM_HOSTED")),

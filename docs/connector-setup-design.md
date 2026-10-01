@@ -143,11 +143,24 @@ rather than a loopback callback, so the same flow works on both machines with
 one implementation. A browser-popup OAuth design would need a second mechanism
 for the VM.
 
-### 3. Availability checkboxes
+### 3. Availability checkboxes (built)
 
-Per harness, defaulted on, disabled with "Codex is not installed on this
-computer" when `shutil.which` says so. `_install()` takes the harness list
-instead of assuming both.
+Per harness, defaulted on. `_install()` takes the harness list instead of
+assuming both, and deselecting one withdraws its existing entry — leaving it
+behind would keep a harness serving a connector the panel no longer shows.
+The choice is stored per connector, so it survives disable/enable; connectors
+that predate the setting keep both, which is what they already had.
+
+One change from the sketch above: a missing harness is **labelled, not
+disabled**. A registration written for an absent Codex is not wrong — it
+applies the moment Codex is installed — so the checkbox stays usable and the
+row reads "Codex (not installed here)". What must not happen is the panel
+reporting that a machine without Codex is serving tools to Codex, so
+`status()` returns `harnesses_present` and the row names the agents it
+actually reaches instead of showing a bare checkmark per config entry.
+
+`enabled` now means every *chosen* harness carries an entry. Requiring all of
+them would read a deliberately single-harness connector as disabled.
 
 ```
 ┌─ GitHub ───────────────────── Connected as @utsavanand ─┐

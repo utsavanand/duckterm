@@ -1,5 +1,22 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — A written config entry is not a working integration
+**Broke:** the connectors panel reported `codex: ✓` on machines that had
+never had Codex installed, and `enable()` wrote both harness configs
+unconditionally with no way to choose.
+**Cause:** the checkmark reflected "we wrote a line into a file", which is
+the easiest thing to know and not the thing anyone wants to know. Nothing
+checked whether the agent CLI existed, and the credential (machine-wide) was
+welded to the registration (per harness) behind one switch.
+**Rule:** report the state the user cares about, not the state that is cheap
+to compute — name the agents a connector reaches and say which are missing,
+rather than printing a tick per config entry. When one action does two things
+at different scopes, let the user address them separately. A registration for
+an absent harness is still legitimate (it applies when that harness arrives),
+so label it rather than blocking it; the defect was the false claim, not the
+write. Deselecting must also withdraw the existing entry — otherwise the
+harness keeps serving a connector the panel no longer lists.
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A

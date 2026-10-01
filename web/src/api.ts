@@ -175,6 +175,8 @@ export interface Connector {
   revoke_url: string;
   credential: string | null; // "gh-cli" | "stored" | "railway-cli" | null
   installed: Record<string, boolean>; // per harness
+  harnesses: string[]; // the agents this connector is registered for
+  harnesses_present: Record<string, boolean>; // which agent CLIs exist here
   enabled: boolean;
   ready: boolean;
   detail: string | null;
@@ -359,11 +361,12 @@ export const api = {
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
   connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context),
-  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string) =>
+  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string, harnesses?: string[]) =>
     post<Connector>(`/connectors/${name}/enable`, {
       source, write_access,
       ...(token ? { token } : {}),
       ...(secret ? { secret } : {}),
+      ...(harnesses ? { harnesses } : {}),
     }, context),
   forgetConnector: (name: string, context?: string) => post<Connector>(`/connectors/${name}/forget`, {}, context),
   disableConnector: (name: string, context?: string) =>

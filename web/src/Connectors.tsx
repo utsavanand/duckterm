@@ -14,6 +14,22 @@ function lastUsedLabel(c: Connector): string {
   return `Used ${Math.round(hours / 24)}d ago · ${c.use_count} calls`;
 }
 
+const HARNESS_ORDER = ["claude-code", "codex"];
+const harnessNames: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
+
+// A registration is written whether or not the agent CLI exists here, so say
+// which agents can actually use it rather than that a config entry was written.
+function availabilityLabel(c: Connector): string {
+  const chosen = c.harnesses ?? HARNESS_ORDER;
+  const named = chosen.map(h => {
+    const label = harnessNames[h] ?? h;
+    return c.harnesses_present?.[h] === false ? `${label} (not installed here)` : label;
+  });
+  const omitted = HARNESS_ORDER.filter(h => !chosen.includes(h)).map(h => harnessNames[h] ?? h);
+  const tail = omitted.length ? ` · not ${omitted.join(", ")}` : "";
+  return `Available to ${named.join(", ")}${tail}`;
+}
+
 const sourceNames: Record<string, string> = {
   "gh-cli": "GitHub CLI login on this computer",
   stored: "Stored API credentials",
@@ -32,6 +48,7 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
   const [token, setToken] = useState("");
   const [secret, setSecret] = useState("");
   const [write, setWrite] = useState(false);
+  const [harnesses, setHarnesses] = useState<string[]>(HARNESS_ORDER);
   const [checks, setChecks] = useState<Record<string, ConnectorCheck & { at: number }>>({});
 
   async function verify(c: Connector) {
@@ -57,6 +74,7 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
     setEditing(c.name);
     setSource(c.credential ?? (c.sources?.length === 1 ? c.sources[0] : ""));
     setWrite(c.write_access);
+    setHarnesses(c.harnesses ?? HARNESS_ORDER);
     setToken("");
     setSecret("");
   }
@@ -66,7 +84,7 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
     setBusy(c.name);
     try {
       const next = action === "enable"
-        ? await api.enableConnector(c.name, editing === c.name ? token.trim() || undefined : undefined, editing === c.name ? secret.trim() || undefined : undefined, source, write, sessionKey)
+        ? await api.enableConnector(c.name, editing === c.name ? token.trim() || undefined : undefined, editing === c.name ? secret.trim() || undefined : undefined, source, write, sessionKey, editing === c.name ? harnesses : undefined)
         : action === "forget" ? await api.forgetConnector(c.name, sessionKey) : await api.disableConnector(c.name, sessionKey);
       setRows(rs => rs.map(r => r.name === next.name ? next : r));
       setEditing(null);
@@ -106,6 +124,7 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
           {busy === c.name ? "Checking…" : "Check now"}
         </button>
       </div>}
+      {c.enabled && <div className="rd-connector-desc">{availabilityLabel(c)}</div>}
           {!c.managed && c.name === "gmail" && !c.ready && (
             <details className="rd-connector-desc">
               <summary>Set up personal Gmail</summary>
@@ -149,8 +168,26 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
             <input aria-label={`${c.title} API key`} type="password" autoComplete="off" value={token} placeholder={c.credential === "stored" ? "Leave blank to reuse stored credentials" : "API key or personal access token"} onChange={e => setToken(e.target.value)} />
             {c.name === "porkbun" && <input aria-label="Porkbun secret key" type="password" autoComplete="off" value={secret} placeholder="Secret key" onChange={e => setSecret(e.target.value)} />}
           </>}
-          {c.name === "porkbun" && <label><input type="checkbox" checked={write} onChange={e => setWrite(e.target.checked)} />Allow changes to domains and DNS records</label>}
-          <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null || !source} onClick={() => change(c, "enable")}>Verify and enable</button>
+          {c.name === "porkbun" && <label><input type="checkbox" aria-label="Allow changes to domains and DNS records" checked={write} onChange={e => setWrite(e.target.checked)} />Allow changes to domains and DNS records</label>}
+          <fieldset className="rd-connector-harnesses">
+            <legend>Available to</legend>
+            {HARNESS_ORDER.map(h => {
+              const present = c.harnesses_present?.[h] ?? true;
+              return <label key={h}>
+                <input
+                  type="checkbox"
+                  aria-label={harnessNames[h]}
+                  checked={harnesses.includes(h)}
+                  onChange={e => setHarnesses(prev =>
+                    e.target.checked ? [...HARNESS_ORDER].filter(x => x === h || prev.includes(x))
+                                     : prev.filter(x => x !== h))}
+                />
+                {harnessNames[h]}
+                {!present && <span className="dim"> · not installed here</span>}
+              </label>;
+            })}
+          </fieldset>
+          <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null || !source || harnesses.length === 0} onClick={() => change(c, "enable")}>Verify and enable</button>
           <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => { setEditing(null); setToken(""); setSecret(""); }}>Cancel</button>
         </div>}
       </>}
