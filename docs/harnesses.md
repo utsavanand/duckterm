@@ -25,6 +25,18 @@ generic runtime — driven in a PTY, just without hook-powered smarts.
 
 Shipped adapters: `claude-code`, `codex`, `copilot`, `generic`.
 
+**Hook identity.** The hook names its session from `DUCKTERM_SESSION_KEY`,
+which DuckTerm puts in each agent's environment at launch. Codex 0.159 broke
+that assumption. It runs every session's hooks in one shared daemon (`codex
+app-server --managed-daemon`, one per `CODEX_HOME`), which inherits the
+environment of whichever session started it. When the hook's parent is that
+daemon, it sends no `session_key` and no `agent_pid` (the daemon's pid), and
+marks the event `hook_host: "daemon"`. The agent's own `session_id` (its
+thread id, stable across daemon restarts, checked on 0.159.3) identifies the
+session; the server resolves it and parks what it can't. The server URL is
+per instance: `DUCKTERM_URL`, else `~/.duckterm/instance-url`, else port
+4300. Design: "Design — Shared-daemon identity (Codex 0.159)", 2026-10-01.
+
 ## 2. Installable harnesses — suites of skills, hooks, and sub-agents
 
 A suite like [uv-suite](https://github.com/utsavanand/uv-suite) bundles

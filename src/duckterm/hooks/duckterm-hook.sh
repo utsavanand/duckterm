@@ -23,18 +23,31 @@ EVENT_TYPE="${1:-Unknown}"
 # claude-code so older installs that pass only the event type keep working.
 RUNTIME="${2:-claude-code}"
 INPUT=$(cat)
-URL="${DUCKTERM_URL:-http://127.0.0.1:4300}"
+# The server's address is per instance, not per session: env when set, else
+# the file the running server writes at startup, else the default port.
+URL="${DUCKTERM_URL:-$(cat "$HOME/.duckterm/instance-url" 2>/dev/null)}"
+URL="${URL:-http://127.0.0.1:4300}"
 # Set by Duckterm when it launches the agent in a terminal, so the agent's
 # hook events attach to the row Duckterm already created instead of spawning
 # a duplicate session under Claude's own id. Empty for self-started sessions.
 SESSION_KEY="${DUCKTERM_SESSION_KEY:-}"
+AGENT_PID="$PPID"
+HOOK_HOST=""
+# Codex 0.159+ runs every session's hooks in one shared daemon ("codex
+# app-server --managed-daemon"), whose environment is that of whichever
+# session started it. There, DUCKTERM_SESSION_KEY names the wrong session and
+# PPID is the daemon. Send neither: the server attributes the event by the
+# agent's own session_id, and parks what it can't attribute.
+case "$(ps -o command= -p "$PPID" 2>/dev/null)" in
+  *" app-server "*|*" app-server") SESSION_KEY=""; AGENT_PID="null"; HOOK_HOST="daemon" ;;
+esac
 
 if command -v jq >/dev/null 2>&1; then
   # Field names differ across agents: Claude/Codex use snake_case (session_id,
   # tool_name); Copilot uses camelCase (sessionId, toolName). Accept either.
   PAYLOAD=$(printf '%s' "$INPUT" | jq -c \
     --arg etype "$EVENT_TYPE" --arg skey "$SESSION_KEY" --arg rt "$RUNTIME" \
-    --argjson apid "$PPID" '
+    --arg host "$HOOK_HOST" --argjson apid "$AGENT_PID" '
     {
       event_type: $etype,
       session_key: (if $skey == "" then null else $skey end),
@@ -48,6 +61,7 @@ if command -v jq >/dev/null 2>&1; then
       notification_type: .notification_type,
       message: (if .message | type == "string" then .message[0:200] else null end),
       runtime: $rt,
+      hook_host: (if $host == "" then null else $host end),
       agent_pid: $apid,
       agent_id: .agent_id,
       agent_type: .agent_type,
@@ -66,9 +80,10 @@ if [ -z "$PAYLOAD" ] || [ "$PAYLOAD" = "null" ]; then
   [ -n "$SESSION_KEY" ] && SKEY_FIELD=$(printf '"session_key":"%s",' "$SESSION_KEY")
   PROMPT_FIELD=""
   [ -n "$PROMPT" ] && PROMPT_FIELD=$(printf '"prompt":"%s",' "$PROMPT")
+  [ -n "$HOOK_HOST" ] && PROMPT_FIELD="$PROMPT_FIELD\"hook_host\":\"$HOOK_HOST\","
   [ -z "$SID" ] && SID=$(printf '%s' "$INPUT" | grep -o '"sessionId"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
   PAYLOAD=$(printf '{"event_type":"%s",%s%s"session_id":"%s","cwd":"%s","source_app":"%s","tool_name":"%s","runtime":"%s","agent_pid":%s}' \
-    "$EVENT_TYPE" "$SKEY_FIELD" "$PROMPT_FIELD" "$SID" "$CWD" "$APP" "$TOOL" "$RUNTIME" "$PPID")
+    "$EVENT_TYPE" "$SKEY_FIELD" "$PROMPT_FIELD" "$SID" "$CWD" "$APP" "$TOOL" "$RUNTIME" "$AGENT_PID")
 fi
 
 # The server writes a per-install secret to this file (0600). We read it and
