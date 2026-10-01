@@ -590,9 +590,19 @@ class SessionAPI:
             "until you do:\n" + "\n".join(lines)
         ), [r["id"] for r in rows]
 
-    def mark_delivered(self, ids: list[str]) -> None:
-        """A priority message reached the agent (turn-end notice or a nudge)."""
+    def mark_delivered(self, ids: list[str]) -> list[dict[str, Any]]:
+        """A priority message reached the agent (turn-end notice or a nudge).
+        Returns the messages that reached it for the first time."""
         now = int(time.time() * 1000)
+        first = [
+            _public_question(dict(row))
+            for row in self.conn.execute(
+                "SELECT q.* FROM session_questions q LEFT JOIN session_inbox_delivery d "
+                f"ON d.question_id = q.id WHERE q.id IN ({','.join('?' * len(ids))}) "
+                "AND COALESCE(d.attempts, 0) = 0",
+                ids,
+            )
+        ]
         with self.conn:
             for question_id in ids:
                 self.conn.execute(
@@ -603,6 +613,7 @@ class SessionAPI:
                     "last_attempt_at = excluded.last_attempt_at, outcome = 'delivered'",
                     (question_id, now),
                 )
+        return first
 
     def cancel_broadcast(self, request_key: str) -> int:
         """The owner withdraws a broadcast: every recipient's copy closes, which

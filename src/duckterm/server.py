@@ -711,7 +711,7 @@ class Server:
         # until replied to; the regular reminder follows.
         pinned = api.priority_notice(key) if runtime.priority_delivery else None
         if pinned:
-            api.mark_delivered(pinned[1])
+            self._delivered(key, pinned[1])
         parts = [
             pinned and pinned[0],
             runtime.turn_end_inbox_notice and api.turn_end_notice(key),
@@ -1223,6 +1223,21 @@ class Server:
         if row is not None and row.get("attention_since"):
             event = {"event_type": events.ATTENDED, "session_key": key, "reconciled": True}
             self.bus.publish(event)
+
+    def _delivered(self, key: str, ids: list[str]) -> None:
+        """Record that priority messages reached this agent, and publish
+        MergeDelivered for a merge summary the first time it does."""
+        for message in self.history.session_api.mark_delivered(ids):
+            origin = message.get("origin")
+            if origin and origin["kind"] == "merge":
+                event = {
+                    "event_type": events.MERGE_DELIVERED,
+                    "session_key": key,
+                    "from_session": origin["from_session"],
+                    "message_id": message["id"],
+                    "request_key": message["request_key"],
+                }
+                self.bus.publish(event)
 
     async def _session_attended(self, writer: asyncio.StreamWriter, key: str) -> None:
         if self.history.session(key) is None:
@@ -4607,7 +4622,7 @@ class Server:
             if pinned and status == "submitted":
                 # A stuck paste isn't delivery: the status stays "pending
                 # next turn" and the Stop-hook notice still carries it.
-                self.history.session_api.mark_delivered(pinned[1])
+                self._delivered(key, pinned[1])
             ids = sorted(str(m["id"]) for m in picked)
             nudge = oracle.record_nudge(previous, picked, mail, now)
             self._oracle_nudges[key] = nudge
