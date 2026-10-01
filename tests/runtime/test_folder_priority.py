@@ -86,9 +86,7 @@ def test_priority_everyone_status_cancel_and_retained_history(app, monkeypatch):
         restarted.close()
 
 
-def test_enqueue_then_history_failure_retries_once_and_rejects_priority_flip(
-    app, monkeypatch  # noqa: F811
-):
+def test_history_failure_retry_and_priority_conflict(app, monkeypatch):  # noqa: F811
     creds = {key: enroll(app.history, key, "a") for key in ("one", "two")}
     request = everyone(app)
     original = app.history.folder_chats.append
