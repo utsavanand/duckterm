@@ -45,10 +45,20 @@ export interface OracleExchange {
   at: number;
   dispatch?: {
     request_key: string;
+    priority?: boolean;
+    delivery_key?: string;
+    delivery_status?: Record<string, BroadcastDeliveryStatus>;
     target: { kind: "session" | "folder"; id: string };
     label: string;
     recipients: { session_id: string; name: string; message_id: string; status: InboxMessage["status"]; answer: string | null; answered_at?: number | null }[];
   };
+}
+
+export type BroadcastDeliveryStatus = "delivered" | "pending next turn" | "inbox only" | "acknowledged" | "cancelled";
+export interface BroadcastStatus {
+  request_key: string;
+  priority: boolean;
+  recipients: { session_id: string; name: string | null; message_id: string; status: BroadcastDeliveryStatus }[];
 }
 
 export interface FolderRecipients {
@@ -276,7 +286,7 @@ export interface ArtifactContent extends Artifact { content_base64: string }
 async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
   const response = await fetch(path, { method, cache: "no-store", headers: authHeaders() });
   const result = await response.json();
-  if (!response.ok) throw new Error(result.error ?? "Could not load artifacts");
+  if (!response.ok) throw Object.assign(new Error(result.error ?? "Could not load data"), { status: response.status });
   return result as T;
 }
 
@@ -361,8 +371,10 @@ export const api = {
     post<Connector>(`/connectors/${name}/disable`, {}, context),
   folderArtifacts: (folder: string) => artifactRequest<{ artifacts: FolderArtifact[]; truncated?: boolean }>(`/folders/${encodeURIComponent(folder)}/artifacts`),
   folderRecipients: (folder: string) => artifactRequest<FolderRecipients>(`/folders/${encodeURIComponent(folder)}/recipients`),
-  folderDispatch: (folder: string, request: { identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
+  folderDispatch: (folder: string, request: { identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[]; priority?: boolean }) =>
     post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request),
+  broadcastStatus: (key: string) => artifactRequest<BroadcastStatus>(`/broadcasts/${encodeURIComponent(key)}`),
+  cancelBroadcast: (key: string) => artifactRequest<BroadcastStatus>(`/broadcasts/${encodeURIComponent(key)}`, "DELETE"),
   folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
   fleetAsk: (question: string, folder?: string) =>
     post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(

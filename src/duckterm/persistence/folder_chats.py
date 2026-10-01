@@ -12,6 +12,7 @@ from duckterm.core.oracle import CHAT_LIMIT
 from duckterm.helpers.private_files import private_read, private_write
 
 _LOCK = threading.RLock()
+DELIVERY_STATES = {"delivered", "pending next turn", "inbox only", "acknowledged", "cancelled"}
 
 
 def valid_folder(value: Any) -> bool:
@@ -33,6 +34,18 @@ def valid_dispatch(value: Any) -> bool:
     return (
         isinstance(value, dict)
         and isinstance(value.get("request_key"), str)
+        and isinstance(value.get("priority", False), bool)
+        and ("delivery_key" not in value or isinstance(value["delivery_key"], str))
+        and (
+            "delivery_status" not in value
+            or (
+                isinstance(value["delivery_status"], dict)
+                and all(
+                    isinstance(k, str) and isinstance(v, str) and v in DELIVERY_STATES
+                    for k, v in value["delivery_status"].items()
+                )
+            )
+        )
         and isinstance(value.get("label"), str)
         and isinstance(value.get("target"), dict)
         and value["target"].get("kind") in ("session", "folder")
@@ -146,7 +159,12 @@ class FolderChats:
             if dispatch is not None:
                 for old in entry["messages"]:
                     if old.get("dispatch", {}).get("request_key") == dispatch["request_key"]:
-                        if old["q"] != question or old["dispatch"]["target"] != dispatch["target"]:
+                        if (
+                            old["q"] != question
+                            or old["dispatch"]["target"] != dispatch["target"]
+                            or old["dispatch"].get("priority", False)
+                            != dispatch.get("priority", False)
+                        ):
                             raise ValueError("request_key already used for different content")
                         return dict(old)
             exchange: dict[str, Any] = {"q": question, "a": answer, "at": at}
@@ -155,6 +173,25 @@ class FolderChats:
             entry["messages"] = (entry["messages"] + [exchange])[-CHAT_LIMIT:]
             self._save(data)
             return exchange
+
+    def remember_delivery(self, request_key: str, recipients: list[dict[str, Any]]) -> None:
+        """Retain last known delivery separately from durable mail/reply lifecycle."""
+        statuses = {row["message_id"]: row["status"] for row in recipients}
+        with _LOCK:
+            data = self._load()
+            changed = False
+            for entry in data["chats"].values():
+                for message in entry["messages"]:
+                    dispatch = message.get("dispatch", {})
+                    if dispatch.get("delivery_key") != request_key:
+                        continue
+                    known = {r["message_id"] for r in dispatch["recipients"]}
+                    snapshot = {key: value for key, value in statuses.items() if key in known}
+                    if dispatch.get("delivery_status") != snapshot:
+                        dispatch["delivery_status"] = snapshot
+                        changed = True
+            if changed:
+                self._save(data)
 
     def refresh_dispatches(self, conn: sqlite3.Connection) -> None:
         """Save replies before the broker retires old mail, including unread replies."""

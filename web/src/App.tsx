@@ -439,7 +439,7 @@ function Dashboard() {
             )}
           </section>
 
-          {selectedFolder !== null && <FolderView key={selectedFolder} folder={selectedFolder} />}
+          {selectedFolder !== null && <FolderView key={selectedFolder} folder={selectedFolder} active={!towerOpen} />}
           <section className="rd-terminal-pane" style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-view-toggle">
               <button

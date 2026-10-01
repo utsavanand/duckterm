@@ -571,7 +571,9 @@ class Server:
         if method in {"GET", "POST"} and broadcast_match:
             await self._folder_broadcast(writer, headers, broadcast_match[1], method, body)
             return
-        sent_match = re.fullmatch(r"/broadcasts/([A-Za-z0-9._:-]{1,128})", inbox_path.path)
+        sent_match = re.fullmatch(
+            r"/broadcasts/([A-Za-z0-9._:-]{1,128})", urllib.parse.unquote(inbox_path.path)
+        )
         if method in {"GET", "DELETE"} and sent_match:
             await self._broadcast_record(writer, headers, sent_match[1], method)
             return
@@ -910,6 +912,8 @@ class Server:
                 if not isinstance(req, dict):
                     raise APIError(400, "Expected an object")
                 result = {"exchange": service.send(folder, req)}
+                if req.get("priority"):
+                    self._oracle_soon()
             await _write_json(writer, 200, result)
         except APIError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
@@ -3438,7 +3442,9 @@ class Server:
         try:
             if method == "DELETE":
                 api.cancel_broadcast(request_key)
-            await _write_json(writer, 200, api.broadcast_status(request_key, self._can_pin))
+            status = api.broadcast_status(request_key, self._can_pin)
+            self.history.folder_chats.remember_delivery(request_key, status["recipients"])
+            await _write_json(writer, 200, status)
         except APIError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
 
