@@ -102,6 +102,12 @@ class ClaudeCodeRuntime(Harness):
             path = self.latest_transcript(cwd=cwd)
         return _MESSAGE_CACHE.read(path) if path else []
 
+    def messages_response(self, *, cwd: Path, session_id: str | None) -> bytes:
+        path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
+        if path is None:
+            path = self.latest_transcript(cwd=cwd)
+        return _MESSAGE_CACHE.response(path, self.name, session_id) if path else b'{"messages": []}'
+
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return [*self._argv, "--resume", session_key]
 

@@ -117,6 +117,12 @@ class CodexRuntime(Harness):
             path = self.latest_transcript(cwd=cwd)
         return _MESSAGE_CACHE.read(path) if path else []
 
+    def messages_response(self, *, cwd: Path, session_id: str | None) -> bytes:
+        path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
+        if path is None:
+            path = self.latest_transcript(cwd=cwd)
+        return _MESSAGE_CACHE.response(path, self.name, session_id) if path else b'{"messages": []}'
+
     def latest_transcript(self, *, cwd: Path) -> Path | None:
         """The newest rollout whose session_meta records this cwd. Sessions
         launched in-process never report Codex's session_id, so locating by id
