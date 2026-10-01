@@ -365,6 +365,11 @@ class HistoryStore:
             ),
         )
         etype = event.get("event_type")
+        if etype == events.MERGE_DELIVERED:
+            # Server bookkeeping for the merge checkpoint, not agent activity:
+            # it must not move the session's state, last event or settle time.
+            self._conn.commit()
+            return
         if etype in (events.SUBAGENT_START, events.SUBAGENT_STOP):
             # A sub-agent event shares the parent's session_id, so it would
             # otherwise fold into the PARENT's row. Record it as a sub-agent
