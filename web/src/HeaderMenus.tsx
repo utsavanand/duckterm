@@ -1,3 +1,4 @@
+import { UpdateDuckTerm } from "./UpdateDuckTerm";
 import { useEffect, useRef, useState } from "react";
 import { AUTO, TermMode, themesForMode } from "./termThemes";
 import { Theme } from "./useTheme";
@@ -8,7 +9,7 @@ import { NaturalVoicePanel, VoicePicker } from "./VoiceControl";
 import { LocalVoiceStatus } from "./api";
 
 type Menu = "settings" | "new";
-export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, termTheme, onTermTheme, notifyOn, onNotify, voiceLevel, onVoiceLevel, voice, onAction }: {
+export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, termTheme, onTermTheme, notifyOn, onNotify, notificationHelp, voiceLevel, onVoiceLevel, voice, onAction }: {
   density: SidebarDensity;
   onDensity: (density: SidebarDensity) => void;
   theme: Theme;
@@ -18,6 +19,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
   onTermTheme: (theme: string) => void;
   notifyOn: boolean;
   onNotify: () => void;
+  notificationHelp?: string;
   voiceLevel: VoiceLevel;
   onVoiceLevel: (level: VoiceLevel) => void;
   voice: {
@@ -87,7 +89,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
         <div className="rd-header-menu-divider" />
         <div className="rd-header-notifications">
           <label>Desktop notifications<input type="checkbox" checked={notifyOn} disabled={!notificationsAvailable} onChange={onNotify} aria-describedby="header-notification-help" /></label>
-          <p id="header-notification-help">{notificationsAvailable ? "Notify when an agent needs an answer." : "Desktop notifications are unavailable in this browser."}</p>
+          <p id="header-notification-help">{notificationHelp ?? (notificationsAvailable ? "Notify when an agent needs an answer." : "Desktop notifications are unavailable in this browser.")}</p>
         </div>
         <div className="rd-header-notifications">
           <label>Voice announcements<select value={voice.ready ? voiceLevel : "off"} disabled={!voice.ready} onChange={(event) => onVoiceLevel(event.target.value as VoiceLevel)} aria-describedby="header-voice-help">
@@ -104,6 +106,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
         <div className="rd-header-menu-divider" />
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" title="Manage meta-harnesses for your projects" onClick={() => action("harnesses")}>Harnesses <span aria-hidden="true">›</span></button>
+        <div className="rd-header-menu-divider" /><UpdateDuckTerm />
       </section>}
     </div>
     <div className="rd-header-dropdown rd-header-new">

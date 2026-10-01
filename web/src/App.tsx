@@ -1,3 +1,4 @@
+import { useDesktopNotifications } from "./useDesktopNotifications";
 import { ArchiveUndo, useArchiveRequests } from "./ArchiveUndo";
 import { SessionCard } from "./SessionCard";
 import { sessionFetch, sessionRef } from "./hostTransport";
@@ -212,28 +213,12 @@ function Dashboard() {
     () => sessions.filter((s) => effectiveState(s, now) === "waiting"),
     [sessions, now],
   );
-  const waitingKeys = waiting.map((s) => s.key).join(",");
-  const prevWaiting = useRef<Set<string>>(new Set());
-  const [notifyOn, setNotifyOn] = useState(
-    () => "Notification" in window && Notification.permission === "granted",
-  );
+  const notificationSessions = useMemo(() => sessions.map(s => ({ key: s.key, label: s.label,
+    waiting: effectiveState(s, now) === "waiting" })), [sessions, now]);
+  const notifications = useDesktopNotifications(notificationSessions, loadedHosts);
   useEffect(() => {
-    document.title = waiting.length
-      ? `(${waiting.length}) DuckTerm`
-      : "DuckTerm";
-    const current = new Set(waiting.map((s) => s.key));
-    if (notifyOn) {
-      for (const s of waiting) {
-        if (!prevWaiting.current.has(s.key)) {
-          new Notification(`${s.label} needs you`, {
-            body: "The agent is waiting on an answer.",
-          });
-        }
-      }
-    }
-    prevWaiting.current = current;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waitingKeys, notifyOn]);
+    document.title = waiting.length ? `(${waiting.length}) DuckTerm` : "DuckTerm";
+  }, [waiting.length]);
 
   const voiceSessions = useMemo(
     () =>
@@ -251,15 +236,6 @@ function Dashboard() {
   );
   const voice = useVoice(voiceSessions);
 
-  async function toggleNotify() {
-    if (!("Notification" in window)) return;
-    if (Notification.permission !== "granted") {
-      const perm = await Notification.requestPermission();
-      setNotifyOn(perm === "granted");
-    } else {
-      setNotifyOn((v) => !v);
-    }
-  }
 
   const selected = sessions.find((s) => s.key === selectedKey) ?? null;
   useAttended(selected?.key ?? null, !!selected?.attentionSince);
@@ -354,7 +330,7 @@ function Dashboard() {
         </button>
         <VoiceMenu level={voice.level} ready={voice.ready} onLevel={voice.setLevel} />
         {voice.fallbackReason && <VoiceFallbackPill reason={voice.fallbackReason} />}
-        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} voiceLevel={voice.level} onVoiceLevel={voice.setLevel} voice={{ voices: voice.voices, selected: voice.selectedVoice, ready: voice.ready, onSelect: voice.setVoice, onPreview: voice.preview, local: voice.local.status, fallbackReason: voice.fallbackReason, onInstall: voice.local.install, onRemove: voice.local.remove }} onAction={(action) => {
+        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} voiceLevel={voice.level} onVoiceLevel={voice.setLevel} voice={{ voices: voice.voices, selected: voice.selectedVoice, ready: voice.ready, onSelect: voice.setVoice, onPreview: voice.preview, local: voice.local.status, fallbackReason: voice.fallbackReason, onInstall: voice.local.install, onRemove: voice.local.remove }} onAction={(action) => {
           if (action === "launch") setLaunchGroup(undefined);
           setModal(action);
         }} />
