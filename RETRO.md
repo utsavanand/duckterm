@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — Folder delivery needs durable status and retry identity
+Priority folder sends cross two stores: the broker queues mail before folder
+history is saved. A failed history write does not mean nothing was sent. Keep
+the original request key for an unchanged retry, reject priority/content changes,
+and use a new key after a confirmed send. Retain broker delivery snapshots
+separately from reply lifecycle so retired mail cannot erase saved replies. Test
+encoded broadcast keys through the actual HTTP route; the browser encodes colons.
+
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A

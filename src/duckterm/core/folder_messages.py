@@ -32,8 +32,11 @@ class FolderMessages:
         }
 
     def send(self, folder: str, req: dict[str, Any]) -> dict[str, Any]:
-        if set(req) != {"identity", "target", "text", "request_key", "recipients"}:
+        if set(req) - {"priority"} != {"identity", "target", "text", "request_key", "recipients"}:
             raise APIError(400, "Expected identity, target, text, request_key and recipients")
+        priority = req.get("priority", False)
+        if not isinstance(priority, bool):
+            raise APIError(400, "priority must be true or false")
         text = _text(req["text"], "text", 16384)
         request_key = _text(req["request_key"], "request_key", 64)
         target = req["target"]
@@ -50,15 +53,21 @@ class FolderMessages:
         for message in messages:
             old = message.get("dispatch", {})
             if old.get("request_key") == request_key:
-                if message["q"] != text or old["target"] != target:
+                if (
+                    message["q"] != text
+                    or old["target"] != target
+                    or old.get("priority", False) != priority
+                ):
                     raise APIError(409, "request_key already used for different content")
                 return message
+        if priority and target["kind"] != "folder":
+            raise APIError(400, "Priority folder dispatch requires a folder recipient")
         broker = self.history.session_api
         scope = folder
         if target["kind"] == "folder":
             scope = target["id"]
-            if scope == folder or not within(scope, folder) or scope not in self.history.folders():
-                raise APIError(400, "Select a subfolder of this folder")
+            if not within(scope, folder) or scope not in self.history.folders():
+                raise APIError(400, "Select this folder or one of its subfolders")
         candidates = broker.broadcast_targets(scope)
         if target["kind"] == "session":
             candidates = [r for r in candidates if r["session_id"] == target["id"]]
@@ -77,13 +86,15 @@ class FolderMessages:
         # There is no await between scope validation and enqueue. A retry uses
         # the same broker key even if the process stopped before saving JSON.
         recipients = []
+        delivery_key = f"folder:{identity}:{request_key}"
         if target["kind"] == "session":
             row = eligible[0]
             mid = broker.owner_message(
                 row["session_id"],
                 text,
-                request_key=f"folder:{identity}:{request_key}",
-                question=True,
+                request_key=delivery_key,
+                priority=priority,
+                question=not priority,
             )
             recipients = [
                 {
@@ -96,7 +107,7 @@ class FolderMessages:
             ]
         else:
             result = broker.broadcast(
-                scope, {"text": text, "request_key": f"folder:{identity}:{request_key}"}
+                scope, {"text": text, "request_key": delivery_key, "priority": priority}
             )
             recipients = [
                 {
@@ -117,6 +128,10 @@ class FolderMessages:
             int(time.time() * 1000),
             {
                 "request_key": request_key,
+                "priority": priority,
+                **(
+                    {"delivery_key": delivery_key} if priority or target["kind"] == "folder" else {}
+                ),
                 "target": target,
                 "label": eligible[0]["name"] if target["kind"] == "session" else scope,
                 "recipients": recipients,

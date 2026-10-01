@@ -62,3 +62,21 @@ button.rd-group-caret { color: var(--muted); min-width: 16px; }
 .rd-folder-delivery { padding: 10px 0 16px; }
 .rd-folder-delivery > div > small { color: var(--brand-green-strong); }
 .rd-folder-review-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--bg-soft); border-radius: 7px; }
+
+.rd-folder-compose .rd-folder-modes { justify-content: flex-start; flex-wrap: wrap; margin-bottom: 10px; }
+.rd-folder-everyone { border: 1px solid var(--border-strong); border-radius: 6px; padding: 5px 9px; background: transparent; color: var(--text-soft); font: inherit; font-size: 12px; cursor: pointer; }
+.rd-folder-everyone[aria-pressed=true] { border-color: var(--brand-green); color: var(--brand-green-strong); background: color-mix(in srgb, var(--idle) 14%, transparent); }
+.rd-folder-priority { display: flex; align-items: center; gap: 6px; margin-left: auto; color: var(--text); font-size: 12px; }
+.rd-folder-priority input { accent-color: var(--brand-green); }
+.rd-folder-everyone:focus-visible, .rd-folder-mention:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 3px; }
+.rd-broadcast-delivery { padding: 14px 0; }
+.rd-broadcast-recipients { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 20px; }
+.rd-broadcast-recipient { display: flex; align-items: center; justify-content: space-between; gap: 9px; font-size: 12px; }
+.rd-broadcast-recipient > span:first-child { overflow-wrap: anywhere; }
+.rd-delivery-chip { border: 1px solid var(--border-strong); border-radius: 5px; padding: 2px 6px; font-size: 10px; color: var(--text-soft); background: var(--bg-soft); white-space: nowrap; }
+.rd-delivery-chip[data-status=delivered], .rd-delivery-chip[data-status=acknowledged] { color: var(--brand-green-strong); }
+.rd-delivery-chip[data-status="pending next turn"] { color: var(--amber-text); }
+.rd-broadcast-footer { display: flex; align-items: center; gap: 12px; margin-top: 14px; font-size: 11px; color: var(--text-soft); }
+.rd-broadcast-footer > span { flex: 1; }
+.rd-broadcast-unavailable { font-size: 11px; color: var(--amber-text); }
+@media(max-width:650px) { .rd-broadcast-recipients { grid-template-columns: 1fr; } .rd-folder-priority { width: 100%; margin: 0; } .rd-folder-compose > div { flex-wrap: wrap; } }
