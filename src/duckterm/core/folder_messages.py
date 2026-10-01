@@ -1,5 +1,6 @@
 """Owner messages from a reviewed folder picker reuse the session inbox broker."""
 
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -39,6 +40,11 @@ class FolderMessages:
             raise APIError(400, "priority must be true or false")
         text = _text(req["text"], "text", 16384)
         request_key = _text(req["request_key"], "request_key", 64)
+        if not re.fullmatch(r"[A-Za-z0-9._:-]+", request_key):
+            raise APIError(
+                400,
+                "request_key may use only A-Z, a-z, 0-9, dots, underscores, colons and hyphens",
+            )
         target = req["target"]
         if (
             not isinstance(target, dict)
@@ -93,8 +99,7 @@ class FolderMessages:
                 row["session_id"],
                 text,
                 request_key=delivery_key,
-                priority=priority,
-                question=not priority,
+                question=True,
             )
             recipients = [
                 {

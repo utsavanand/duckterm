@@ -7,6 +7,8 @@ the original request key for an unchanged retry, reject priority/content changes
 and use a new key after a confirmed send. Retain broker delivery snapshots
 separately from reply lifecycle so retired mail cannot erase saved replies. Test
 encoded broadcast keys through the actual HTTP route; the browser encodes colons.
+Validate keys before enqueueing, and match each broker copy by the complete key
+plus recipient, never by a prefix that also matches another broadcast.
 
 
 ## 2026-09-30 — Priority status said "delivered" before anything was

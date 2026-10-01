@@ -126,3 +126,13 @@ def test_old_clients_remain_non_priority_and_cached_flip_conflicts(app):  # noqa
     assert req(app, "POST", "/folders/a/dispatch", {**request, "priority": True})[0] == 409
     message = call(app.history, credential, "GET", "/inbox")[1]["messages"][0]
     assert message["kind"] == "question" and message["priority"] is False
+
+
+@pytest.mark.parametrize("key", ["has space", "slash/key", "percent%key", "café", "line\nbreak"])
+def test_unroutable_delivery_key_is_rejected_before_enqueue(app, key):  # noqa: F811
+    credential = enroll(app.history, "one", "a")
+    result = req(app, "POST", "/folders/a/dispatch", everyone(app, key))
+    assert result[0] == 400
+    assert "request_key" in result[1]["error"]
+    assert call(app.history, credential, "GET", "/inbox")[1]["messages"] == []
+    assert req(app, "GET", "/folders/a/chat")[1]["messages"] == []
