@@ -11,6 +11,10 @@ every plain broadcast too.
 building the text. When adding a field to a stored hash, keep the old hash
 for the old shape.
 
+## Fork children need independent identity and inherited test scope
+Conversation forks derived their child key from the parent's native ID, so a second fork reused the first child's supervisor key. Generate a fresh DuckTerm key for every fork while retaining the native ID only in the resume command. Both conversation/worktree paths must inherit a test parent or explicit test request, including terminal SessionStart rows; test repeated forks and both launch modes without live inference.
+
+
 ## 2026-09-30 — A raised hand is the owner's to lower
 **Broke:** a session that asked for the owner dropped its raised hand on its
 next event, whether or not the owner had seen it, and the session list let a
@@ -61,6 +65,26 @@ checks and idempotent sends. Replies are copied into bounded folder history
 before retirement, including replies the owner has not opened yet.
 **Check:** Regression coverage sends, retries, answers, retires the inbox row,
 restarts the store, and verifies the complete reply remains in folder chat.
+
+## 2026-09-30 — Missing transcripts looked like empty conversations
+**Broke:** Messages ignored the API transcript status and said no reply existed when the conversation identity or local file was unavailable.
+**Fix:** Render the recorded unavailable reason and distinguish missing identity, missing local transcript, and a genuinely empty conversation; clear status on session changes and successful recovery.
+**Lesson:** A backend correctness fix needs its unavailable-state contract rendered at the user-facing boundary. Test both transitions and recovery.
+
+## Conversation identity and launch names must survive reopening
+A newest-transcript fallback showed a peer conversation when the recorded native ID or its local file was missing; Claude resume used the same guess. Require the recorded ID for Claude/Codex Messages and Claude resume, and report missing identity/file explicitly. Separately, launch names appeared in SSE but the session-row INSERT discarded them, so reload fell back to the folder label. Persist names and recover missing historical names only from explicit saved launch events, preserving owner renames. Regressions cover two conversations sharing a directory, missing local transcripts, unsafe resume refusal, and database reopen.
+
+## Measure Messages refreshes with many small records, not only large text blocks
+Deep-copying cache results fixed mutation leakage but made a 20,000-record warm read expensive. Keep detached object reads for callers that need them; cache immutable, fully serialized Messages HTTP bytes and session-specific keys for polling. Invalidate on transcript changes or native-ID scope changes. A 20,000-record timing regression and no-read/no-copy/no-serialization assertions cover the actual HTTP response path alongside the unchanged nested-mutation regressions.
+
+
+## Cached messages must detach nested response data
+Copying only each message dict protected added message keys but shared nested blocks and tool-input dictionaries. QA showed a caller mutation leaked into later reads. Deep-copy returned records on both cold and warm paths; regressions mutate nested tool inputs and block lists for Claude/Codex, with and without a final newline, then verify append behavior.
+
+
+## Messages refresh must reuse transcript parsing across runtime adapters
+Every Messages request constructs a fresh runtime adapter, so an adapter-local cache would still reread the entire transcript. Claude and Codex now share bounded per-runtime JSONL caches using TokenLedger's complete-line offset pattern. Unchanged files are stat-only; changed files verify the committed prefix before parsing appended records. Size growth does not prove an append: the first gate caught a growing rewrite keeping a stale pin target. Partial trailing records are retried, and replacement/truncation/rewrites invalidate cached state. Keep parser IDs and per-session message keys stable; test fresh adapters and large files, not only calls on one adapter. Full-response serialization and frontend polling are separate follow-ups.
+
 
 ## 2026-09-30 — The slop check passed in worktrees without reading a file
 **Broke:** PR #161 failed CI on an existence-only test assert, while the same

@@ -158,5 +158,9 @@ class Harness(ABC):
         simply unavailable for them."""
         return []
 
+    def messages_response(self, *, cwd: Path, session_id: str | None) -> bytes | None:
+        """Optional immutable cached Messages JSON, including stable message keys."""
+        return None
+
 
 AgentRuntime = Harness

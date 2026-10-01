@@ -14,6 +14,11 @@ import { Message, MessagePin, PinTarget } from "./MessagePins";
 
 let mermaidSeq = 0; // unique ids for mermaid.render across re-renders
 
+interface TranscriptStatus {
+  status?: string;
+  reason?: string;
+}
+
 interface Selection {
   quote: string;
   x: number;
@@ -34,6 +39,7 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
   const annotations = useMemo(() => annotationSnapshot.key === sessionKey ? annotationSnapshot.items : [], [annotationSnapshot, sessionKey]);
   const annotationError = annotationSnapshot.key === sessionKey ? annotationSnapshot.error : "";
   const [messages, setMessages] = useState<Message[]>([]);
+  const [transcript, setTranscript] = useState<TranscriptStatus | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState("");
   const jumped = useRef<number | null>(null);
@@ -149,6 +155,7 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
     // otherwise switching sessions renders the old transcript for up to a
     // poll interval.
     setMessages([]);
+    setTranscript(null);
     setLoaded(false);
     setLoadError("");
     jumped.current = null;
@@ -158,9 +165,10 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
           if (r.ok === false) throw new Error("Could not load messages");
           return r.json();
         })
-        .then((d: { messages?: Message[] }) => {
+        .then((d: { messages?: Message[]; transcript?: TranscriptStatus }) => {
           if (live) {
             setMessages(d.messages ?? []);
+            setTranscript(d.transcript ?? null);
             setLoaded(true);
             setLoadError("");
           }
@@ -239,8 +247,17 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
       jumped.current = target.request;
     }
   }, [target, messages, loaded, loadError]);
-  if (!latest) return <div className="rd-messages">{comments}<div className="rd-panel-empty">{loadError || (loaded
-    ? "No agent reply yet (claude-code and codex sessions only)." : "Loading messages…")}</div></div>;
+  const unavailable = transcript?.status === "identity_missing" || transcript?.status === "not_found";
+  const transcriptNotice = unavailable && <div className="rd-panel-empty" role="status">
+    <p>{transcript.status === "identity_missing"
+      ? "Conversation not identified yet"
+      : "Conversation transcript not found on this machine"}</p>
+    {transcript.reason && <p>{transcript.reason}</p>}
+    {transcript.status === "identity_missing" && <p>Messages will appear once the agent reports its conversation ID.</p>}
+  </div>;
+  if (!latest) return <div className="rd-messages">{comments}{loadError
+    ? <div className="rd-panel-empty" role="status">{loadError}</div>
+    : transcriptNotice || <div className="rd-panel-empty">{loaded ? "No agent reply yet." : "Loading messages…"}</div>}</div>;
   const showingLatest = currentIndex === turns.length - 1;
   function navigate(index: number) {
     onClearTarget?.();
@@ -250,6 +267,7 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
   return (
     <div className="rd-messages" ref={wrapRef} onMouseUp={onMouseUp}>
       {comments}
+      {transcriptNotice}
       {/* Step through interaction turns; ‹ goes to the previous exchange. */}
       {!savedCopy && turns.length > 1 && (
         <div className="rd-turn-nav">

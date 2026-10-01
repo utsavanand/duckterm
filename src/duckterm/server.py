@@ -108,6 +108,7 @@ from duckterm.transport.httpio import read_body as _read_body
 from duckterm.transport.httpio import read_headers as _read_headers
 from duckterm.transport.httpio import write_file as _write_file
 from duckterm.transport.httpio import write_json as _write_json
+from duckterm.transport.httpio import write_json_bytes as _write_json_bytes
 from duckterm.transport.httpio import write_response as _write_response
 from duckterm.transport.httpio import write_sse as _write_sse
 from duckterm.transport.websocket import (
@@ -877,12 +878,28 @@ class Server:
             message["message_key"] = hashlib.sha256(identity).hexdigest()
         return messages
 
+    def _session_messages_response(self, session_key: str) -> bytes:
+        row = self.history.session(session_key)
+        if row is None:
+            return b'{"messages": []}'
+        cwd = row.get("worktree_path") or row.get("cwd")
+        if cwd:
+            runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
+            snapshot = getattr(runtime, "messages_response", None)
+            if snapshot is not None:
+                response = snapshot(
+                    cwd=Path(str(cwd)), session_id=self.history.session_id_for(session_key)
+                )
+                if isinstance(response, bytes):
+                    return response
+        return json.dumps({"messages": self._session_messages(session_key)}).encode()
+
     async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         if self.history.session(session_key) is None:
             await _write_json(writer, 404, {"error": "no such session"})
             return
-        messages = await asyncio.to_thread(self._session_messages, session_key)
-        await _write_json(writer, 200, {"messages": messages})
+        response = await asyncio.to_thread(self._session_messages_response, session_key)
+        await _write_json_bytes(writer, 200, response)
 
     async def _folder_message(
         self,
@@ -1441,6 +1458,7 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        is_test = bool(parent.get("test")) or req.get("test") is True
         command = req.get("command") or "claude"
         repo = Path(str(parent["repo_path"]))
         branch = req.get("branch") or f"fork/{parent_key[:8]}"
@@ -1466,6 +1484,7 @@ class Server:
                     branch=branch,
                     base=base,
                     parent_session_key=parent_key,
+                    test=is_test,
                     session_key=req.get("session_key"),
                     prompt=req.get("prompt", ""),
                 )
@@ -1529,6 +1548,7 @@ class Server:
                 "worktree_path": str(worktree.path),
                 "branch": worktree.branch,
                 "parent_session_key": parent_key,
+                "test": is_test,
                 "intention": f"fork of {parent.get('source_app') or parent_key} ({base})",
                 "launched": True,
                 "pty_owned": False,
@@ -1638,7 +1658,6 @@ class Server:
         note = None
         if session_id:
             argv = ["claude", "--resume", session_id, "--fork-session"]
-            child_key = f"convfork-{session_id[:8]}"
         else:
             note = "no conversation to fork yet — started a fresh session in the same folder"
             print(
@@ -1648,8 +1667,10 @@ class Server:
                 file=sys.stderr,
             )
             argv = ["claude"]
-            child_key = security.new_session_key("convfork")
+        # The native ID identifies resume context, never the new child session.
+        child_key = security.new_session_key("convfork")
         req = json.loads(body or b"{}")
+        is_test = bool(parent.get("test")) or req.get("test") is True
 
         if os.environ.get("DUCKTERM_HOSTED") or not req.get("in_terminal", True):
             key = await self.orchestrator.launch(
@@ -1657,6 +1678,7 @@ class Server:
                 cwd=cwd,
                 session_key=child_key,
                 parent_session_key=parent_key,
+                test=is_test,
                 name=f"{parent.get('name') or parent.get('source_app') or parent_key} (fork)",
             )
             self._inherit_group(parent, key)
@@ -1675,7 +1697,7 @@ class Server:
             )
             return
 
-        fork_title = f"{parent.get('source_app') or parent_key} (fork)"
+        fork_title = f"{parent.get('name') or parent.get('source_app') or parent_key} (fork)"
         argv = _build_runtime("claude-code", shlex.join(argv)).launch_command(
             cwd=Path(cwd),
             session_key=child_key,
@@ -1691,6 +1713,8 @@ class Server:
                 "runtime": "claude-code",
                 "cwd": cwd,
                 "parent_session_key": parent_key,
+                "test": is_test,
+                "name": fork_title,
                 "intention": f"conversation fork of {parent.get('source_app') or parent_key}",
             }
         )
@@ -1905,6 +1929,18 @@ class Server:
                 "cwd": cwd,
             }
         runtime = row.get("runtime") or "generic"
+        if runtime == "claude-code":
+            rt = runtime_for(runtime, "claude")
+            if not rt.can_resume_unambiguously(
+                cwd=Path(cwd), recorded=self.history.session_id_for(session_key)
+            ):
+                return 409, {
+                    "error": (
+                        "Cannot safely resume this Claude session: its conversation ID "
+                        "was not recorded or its transcript is unavailable on this machine."
+                    ),
+                    "code": "ambiguous_resume_identity",
+                }
         if runtime == "codex":
             rt = runtime_for(runtime, "codex")
             recorded = self.history.session_id_for(session_key)
