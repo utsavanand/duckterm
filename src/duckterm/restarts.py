@@ -93,6 +93,8 @@ class Restarts:
         row = self.server.history.session(key)
         if row is None:
             raise APIError(404, "Session not found")
+        if row.get("state") == "merged" or self.server.history.fork_merges.closing(key):
+            raise APIError(409, "Closed or merging sessions cannot be restarted")
         sup = self.server.orchestrator.get(key)
         if not sup or not row.get("launched"):
             raise APIError(

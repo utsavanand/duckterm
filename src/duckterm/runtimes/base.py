@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 SessionState = Literal[
-    "idle", "busy", "waiting", "terminated", "stopped", "interrupted", "archived"
+    "idle", "busy", "waiting", "terminated", "stopped", "interrupted", "archived", "merged"
 ]
 
 # States that are "at rest" — the session is finished or put away, so the sweeps
@@ -27,7 +27,13 @@ SessionState = Literal[
 # involuntary sibling of "stopped": the backing terminal died (reboot, crash,
 # killed tmux) rather than the user pausing it — equally resumable, but the UI
 # should say what actually happened.
-AT_REST_STATES: tuple[SessionState, ...] = ("terminated", "stopped", "interrupted", "archived")
+AT_REST_STATES: tuple[SessionState, ...] = (
+    "terminated",
+    "stopped",
+    "interrupted",
+    "archived",
+    "merged",
+)
 
 
 @dataclass(frozen=True)

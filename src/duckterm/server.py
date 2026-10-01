@@ -229,6 +229,12 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/annotations")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._add_annotation(w, seg, b),
           **_mid("/sessions/", "/annotations")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "GET", b),
+          **_mid("/sessions/", "/merge")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "POST", b),
+          **_mid("/sessions/", "/merge")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "LIST", b),
+          **_mid("/sessions/", "/merges")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._list_checkpoints(w, seg),
           **_mid("/sessions/", "/checkpoints")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_digest(w, seg),
@@ -367,6 +373,7 @@ class Server:
         self._oracle_nudges: dict[str, oracle.Nudge] = {}
         # One Oracle pass at a time: a priority broadcast starts one early.
         self._oracle_lock = asyncio.Lock()
+        self._merge_lock = asyncio.Lock()
         self._oracle_kick: asyncio.Task[None] | None = None
         self._tokens = TokenLedger(
             Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects",
@@ -1230,6 +1237,7 @@ class Server:
         for message in self.history.session_api.mark_delivered(ids):
             origin = message.get("origin")
             if origin and origin["kind"] == "merge":
+                self.history.fork_merges.delivered(message["request_key"])
                 event = {
                     "event_type": events.MERGE_DELIVERED,
                     "session_key": key,
@@ -1836,6 +1844,18 @@ class Server:
 
         await handle(self, writer, operation, body)
 
+    async def _fork_merge(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        key: str,
+        method: str,
+        body: bytes,
+    ) -> None:
+        from duckterm.fork_merge_api import handle
+
+        await handle(self, writer, headers, key, method, body)
+
     async def _resume(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         if self.archives.pending(session_key):
             await _write_json(writer, 409, {"error": "Archive pending; undo it first"})
@@ -1907,6 +1927,8 @@ class Server:
         # history but is done — resuming it would contradict what Archive means.
         if row.get("state") == "archived":
             return 400, {"error": "archived sessions can't be resumed (archive is final)"}
+        if row.get("state") == "merged" or self.history.fork_merges.closing(session_key):
+            return 400, {"error": "Closed or merging sessions cannot be resumed"}
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
         # The saved worktree/dir may be gone (deleted worktree, pruned, wiped
         # home). Relaunching into a missing dir lands the agent in $HOME with no

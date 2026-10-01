@@ -15,6 +15,7 @@ import {
 export const IDLE_SETTLE_MS = 30_000;
 
 function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
+  if (prev === "merged" || e.lifecycle === "merged") return "merged";
   // An explicit lifecycle marker (deliberate stop/archive/sweep) always wins.
   if (e.lifecycle === "archived") return "archived";
   if (e.lifecycle === "stopped") return "stopped";
@@ -64,6 +65,7 @@ export function effectiveState(s: SessionView, now: number, settleMs = IDLE_SETT
     s.state === "stopped" ||
     s.state === "interrupted" ||
     s.state === "archived" ||
+    s.state === "merged" ||
     s.state === "waiting"
   )
     return s.state;

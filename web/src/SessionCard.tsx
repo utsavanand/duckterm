@@ -1,6 +1,7 @@
 import { requestArchive } from "./ArchiveUndo";
-import { useEffect, useState } from "react";
-import { api } from "./api";
+import { useEffect, useMemo, useState } from "react";
+import { ForkMergeDialog } from "./ForkMergeDialog";
+import { api, forkMergeService } from "./api";
 import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
 import { splitSessionRef } from "./hostTransport";
 import { effectiveState } from "./sessions";
@@ -20,9 +21,11 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
 }) {
   const toast = useToast();
   const effState = effectiveState(s, now);
-  const archived = effState === "archived";
+  const archived = effState === "archived" || effState === "merged";
+  const [merging, setMerging] = useState(false);
+  const mergeService = useMemo(() => forkMergeService(s.key), [s.key]);
   const ended = effState === "terminated";
-  const live = !["terminated", "stopped", "interrupted", "archived"].includes(effState);
+  const live = !["terminated", "stopped", "interrupted", "archived", "merged"].includes(effState);
   const resumable = ["stopped", "interrupted", "terminated"].includes(effState) && s.launched;
   const canStop = live && s.launched;
   const canArchive = !archived && s.launched;
@@ -123,6 +126,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
   }
 
   return <section className="rd-session-controls" aria-label="Session controls">
+    {merging && <ForkMergeDialog service={mergeService} onClose={() => setMerging(false)} onSaved={() => toast("Merge summary saved")} />}
     <div className="rd-session-controls-identity">
       <div className="rd-session-controls-caption">Session</div>
       <div className="rd-session-controls-title">
@@ -142,6 +146,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
       <div><dt>Model</dt><dd>{s.model ?? "Not reported yet"}</dd></div></dl>
     <fieldset className="rd-session-controls-actions" disabled={ending || archiving || resuming}>
           {s.launched && <RestartControls key={s.key} session={s} showActions={live} />}
+          {s.parentKey && !archived && <button className="rd-btn rd-btn-sm" onClick={() => setMerging(true)}>Merge back</button>}
           {resumable && (
             <button
               className="rd-btn rd-btn-sm rd-btn-primary"

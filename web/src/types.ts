@@ -46,7 +46,8 @@ export type SessionState =
   | "terminated"
   | "stopped"
   | "interrupted"
-  | "archived";
+  | "archived"
+  | "merged";
 
 export interface DuckCelebration {
   kind: "done" | "ready";

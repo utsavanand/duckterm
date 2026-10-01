@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-01 — Saving a merge is not delivering it
+A reviewed fork summary must survive retries without duplicating the parent's note.
+Persist the close-child choice before enqueueing through the shared priority broker;
+create the parent checkpoint only from confirmed delivery, with an idempotent ID and
+startup recovery for the delivery/checkpoint crash gap. Keep merged children final
+even when a delayed SessionStart arrives. A failed close remains visibly pending and
+can be finished from History using the same saved request.
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A
