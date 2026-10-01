@@ -5,6 +5,42 @@
 **Fix:** Retain and compare transcript status and reason atomically with the list, including cache size accounting; cover unavailable, empty, recovered, hidden and remounted states.
 **Lesson:** Cache the full user-visible response contract, not only its main collection.
 
+## 2026-09-30 — The verifier repeated the bug it was built to catch
+**Broke:** main-qa returned PR #149. `verify` reported ok for a connector
+listing `{tools: []}` and for one listing `{tools: [{}]}` — an empty set and
+a nameless object both read as "Verified".
+**Cause:** the validation checked that a reply arrived and was shaped like a
+list of objects, which is the cheap question. The real question is whether an
+agent can call anything, and an agent calls a tool by name. This is the same
+defect the feature exists to fix, one layer up: the panel used to assert "a
+config entry exists" while appearing to assert "this works", and the verifier
+then asserted "a reply parsed" while appearing to assert the same thing.
+Writing the check does not exempt it from the standard it enforces.
+**Rule:** when adding a check, state the claim it licenses in the UI's own
+words and test the weakest input that should fail it — here, an empty list
+and `{}`. Prefer failing a whole listing over skipping bad entries: counting
+2 of 3 overstates what the agent can reach. And a judgement call made alone
+is worth re-examining when a reviewer disagrees — the earlier "an honestly
+empty server is not broken" was defensible in isolation and wrong against the
+sentence the panel actually prints.
+
+## 2026-09-30 — A written config entry is not a working integration
+**Broke:** the connectors panel reported `codex: ✓` on machines that had
+never had Codex installed, and `enable()` wrote both harness configs
+unconditionally with no way to choose.
+**Cause:** the checkmark reflected "we wrote a line into a file", which is
+the easiest thing to know and not the thing anyone wants to know. Nothing
+checked whether the agent CLI existed, and the credential (machine-wide) was
+welded to the registration (per harness) behind one switch.
+**Rule:** report the state the user cares about, not the state that is cheap
+to compute — name the agents a connector reaches and say which are missing,
+rather than printing a tick per config entry. When one action does two things
+at different scopes, let the user address them separately. A registration for
+an absent harness is still legitimate (it applies when that harness arrives),
+so label it rather than blocking it; the defect was the false claim, not the
+write. Deselecting must also withdraw the existing entry — otherwise the
+harness keeps serving a connector the panel no longer lists.
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A
@@ -336,6 +372,23 @@ Fault-inject deletion to prove a failed transfer leaves neither missing nor doub
 counts. Keep completion-day activity separate from sent-day cohorts, and label
 histogram percentiles approximate rather than deriving fake medians from totals.
 
+
+## 2026-09-28 — Trace the thing before designing the fix for it
+**Broke:** B2 was filed as "connectors configured but not usable", and two
+rounds of design went into a setup wizard for connectors that could not be
+set up.
+**Cause:** nobody had run the connectors. Speaking MCP through the exact
+command the harness configs use (`duckterm connector-run NAME`) returned
+GitHub 45 tools, Railway 34, Porkbun 25 — all three working. The defect was
+that the panel could only say `enabled=True, detail=None`, which asserts a
+config entry, not a usable tool. The owner's "I don't know if I can really
+use them" described the UI precisely.
+**Rule:** before designing a fix, exercise the feature end to end through the
+real path a user's software takes, and let the result pick the fix. The
+evidence a trace produces is often the feature itself: here the probe became
+the Check now action. Corollary for probes — hold stdin open until the reply
+lands, because closing it early makes an MCP server exit with "server is
+closing: EOF", and a working connector reads as broken.
 
 ## 2026-09-28 — A shared directory cannot identify a conversation
 
