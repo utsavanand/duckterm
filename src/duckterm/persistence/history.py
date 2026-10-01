@@ -218,6 +218,10 @@ _SESSIONS_COLUMNS = {
     "restart_json": "TEXT",
     "archive_json": "TEXT",
     "pinned": "INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))",
+    # When the session last started waiting on the owner; NULL once the owner
+    # attended to it. The raised hand stays up until then, whatever the agent
+    # does next (owner decision, 2026-09-30).
+    "attention_since": "INTEGER",
     "runtime": "TEXT",
     # Model id observed in the session's transcript (e.g. "claude-fable-5").
     # Persisted so AGENTS.md rule scopes like "claude-code/fable-5" can match
@@ -293,6 +297,7 @@ class HistoryStore:
         self._conn.executescript(_SCHEMA)
         self._migrate()
         self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
+        self.session_api.before_retire = lambda: self.folder_chats.refresh_dispatches(self._conn)
         self.artifacts = self.session_api.artifacts
         mail_analytics.initialize(self._conn)
         self.session_api.backfill()
@@ -946,6 +951,12 @@ class HistoryStore:
         return "; ".join(parts) + "."
 
     def _upsert_session(self, key: str, event: Event) -> None:
+        if event.get("event_type") == events.ATTENDED:
+            # Only clears the raised hand; it isn't agent activity.
+            self._conn.execute(
+                "UPDATE sessions SET attention_since = NULL WHERE session_key = ?", (key,)
+            )
+            return
         row = self._conn.execute(
             "SELECT state, started_at FROM sessions WHERE session_key = ?", (key,)
         ).fetchone()
@@ -1034,6 +1045,12 @@ class HistoryStore:
                     event.get("command"),
                     key,
                 ),
+            )
+        if state == "waiting" and prev_state != "waiting":
+            self._conn.execute(
+                "UPDATE sessions SET attention_since = COALESCE(attention_since, ?) "
+                "WHERE session_key = ?",
+                (ts, key),
             )
 
     def sessions(self) -> list[dict[str, Any]]:

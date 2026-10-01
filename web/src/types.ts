@@ -83,6 +83,7 @@ export interface SessionView {
   idleSince?: number; // ts of the last Stop; drives the idle settling grace
   waitingSince?: number; // when the current wait began; a new wait gets a new time
   waitingCause?: WaitingCause; // what it is waiting on; approvals get voice mode's chime
+  attentionSince?: number; // set when it asked for the owner; cleared only when the owner attends
   launched?: boolean; // true if Duckterm launched it (owns the tab); else watched
   ptyOwned?: boolean; // Duckterm owns a live PTY (in-process launch) — terminal-attachable
   contextTokens?: number; // current context size (claude-code), the compact-soon signal
@@ -116,6 +117,7 @@ export interface PersistedSession {
   event_count: number;
   started_at: number;
   updated_at: number;
+  attention_since?: number | null;
   ended_at?: number | null;
   metrics?: Record<string, number>;
   intention?: string | null;
@@ -189,6 +191,7 @@ export function viewFromPersisted(s: PersistedSession): SessionView {
     state: s.state === "idle" ? "busy" : s.state,
     idleSince: s.state === "idle" ? 0 : undefined,
     waitingSince: s.state === "waiting" ? s.updated_at : undefined,
+    attentionSince: s.attention_since ?? undefined,
     waitingCause: s.state === "waiting" ? waitingCauseOf(s.last_event_type ?? undefined, undefined, s.last_tool ?? undefined) : undefined,
     lastEventType: s.last_event_type ?? "",
     lastTool: s.last_tool ?? undefined,

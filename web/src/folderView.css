@@ -44,3 +44,21 @@ button.rd-group-caret { color: var(--muted); min-width: 16px; }
 @media(max-width:650px) { .rd-folder-chat { padding: 20px 16px; } .rd-folder-files thead { display: none; } .rd-folder-files tr { display: grid; grid-template-columns: 1fr 90px; border-bottom: 1px solid var(--border); padding: 12px 0; } .rd-folder-files td { border: 0; padding: 6px; } .rd-folder-files td:first-child { grid-column: 1 / -1; } .rd-folder-files td:nth-child(3), .rd-folder-files td:nth-child(4) { text-align: right; } .rd-folder-files td:nth-child(4) { grid-column: 2; } .rd-folder-files td:nth-child(5) { grid-column: 1 / -1; color: var(--muted); } }
 
 @media(max-width:1100px) { .rd-workspace .rd-panels-3.rd-folder-selected { grid-template-rows: var(--agents-height, minmax(0, 1fr)) minmax(0, 3fr); } }
+
+.rd-folder-compose { position: relative; }
+.rd-folder-compose .rd-folder-target { display: inline-flex; justify-content: flex-start; margin-bottom: 8px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 5px; color: var(--brand-green-strong); background: color-mix(in srgb, var(--idle) 14%, transparent); }
+.rd-folder-target button, .rd-folder-mention { background: transparent; color: inherit; border: 0; cursor: pointer; font: inherit; }
+.rd-folder-mention { padding: 3px 7px; font-size: 16px; }
+.rd-folder-compose .rd-folder-picker { position: absolute; bottom: calc(100% + 9px); left: 0; display: block; width: min(450px, 100%); max-height: min(310px, 45dvh); overflow: auto; z-index: 5; padding: 6px; box-sizing: border-box; background: var(--card); border: 1px solid var(--border-strong); border-radius: 10px; box-shadow: 0 12px 36px #0004; }
+.rd-folder-picker-label { padding: 7px 10px; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; overflow-wrap: anywhere; }
+.rd-folder-picker button[role=option] { width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; color: var(--text); background: transparent; border: 0; padding: 9px 10px; border-radius: 5px; cursor: pointer; }
+.rd-folder-picker button[role=option]:hover, .rd-folder-picker button[role=option]:focus-visible { background: var(--bg-soft); outline: 2px solid var(--brand-green); outline-offset: -2px; }
+.rd-folder-picker button:disabled { opacity: .55; cursor: default; }
+.rd-folder-picker p { padding: 0 10px; }
+.rd-folder-pick-copy { flex: 1; min-width: 0; }
+.rd-folder-pick-copy strong { display: block; font-size: 13px; font-weight: 400; overflow-wrap: anywhere; }
+.rd-folder-pick-copy small { display: block; color: var(--text-soft); font-size: 11px; margin-top: 3px; }
+.rd-folder-picker button > span:last-child { font-size: 10px; color: var(--text-soft); }
+.rd-folder-delivery { padding: 10px 0 16px; }
+.rd-folder-delivery > div > small { color: var(--brand-green-strong); }
+.rd-folder-review-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--bg-soft); border-radius: 7px; }

@@ -5,18 +5,14 @@ import {
   announce,
   Announcer,
   audioPlayer,
-  browserSpeaker,
-  DEFAULT_NATURAL,
-  NATURAL_PREFIX,
+  chimePlayer,
+  chosenVoice,
   naturalChoices,
   naturalSpeaker,
-  defaultVoice,
-  hasQualityVoice,
   loadVoiceLevel,
   loadVoiceName,
   saveVoiceLevel,
   saveVoiceName,
-  usableVoices,
   VoiceChoice,
   Speaker,
   VOICE_LEVELS,
@@ -27,24 +23,6 @@ import {
 
 const TOAST_MS = 8000;
 export const PREVIEW_LINE = "architect needs your input";
-
-// speechSynthesis fills its voice list asynchronously in some browsers, so the
-// first call can be empty; voiceschanged delivers the real list.
-export function useSpeechVoices(): VoiceChoice[] {
-  // Some embedded webviews have speak() without a voice list.
-  const [voices, setVoices] = useState<VoiceChoice[]>(() =>
-    "speechSynthesis" in window ? window.speechSynthesis.getVoices?.() ?? [] : [],
-  );
-  useEffect(() => {
-    const synth = "speechSynthesis" in window ? window.speechSynthesis : undefined;
-    if (!synth) return;
-    const load = () => setVoices(synth.getVoices?.() ?? []);
-    load();
-    synth.addEventListener?.("voiceschanged", load);
-    return () => synth.removeEventListener?.("voiceschanged", load);
-  }, []);
-  return voices;
-}
 
 // The optional local Kokoro voice: its status, polled quickly while installing.
 export function useLocalVoice() {
@@ -86,16 +64,20 @@ export function useVoice(sessions: VoiceSession[], injected?: Speaker) {
       fetchWav: api.voiceSay,
       play: player.play,
       stopPlayback: player.stop,
-      fallback: browserSpeaker(() => chosenRef.current),
+      chime: chimePlayer(),
       chosen: () => chosenRef.current,
       onFallback: setFallbackReason,
     });
     // Built once for the page's life; it reads the current choice through a ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // Voice speaks only in a natural voice, so it stays off until one is
+  // installed; the owner's chosen level is kept for when it is.
+  const ready = local.status?.state === "ready";
+  const active: VoiceLevel = ready ? level : "off";
   const [spoken, setSpoken] = useState<string | null>(null);
   const [paused, setPaused] = useState(() => level !== "off" && needsGesture());
-  const relay = useRelay(level !== "off");
+  const relay = useRelay(active !== "off");
   const typingAt = useRef(0);
   const previous = useRef<VoiceSnapshot | null>(null);
   const [tick, setTick] = useState(0);
@@ -136,11 +118,11 @@ export function useVoice(sessions: VoiceSession[], injected?: Speaker) {
 
   useEffect(() => {
     const next: VoiceSnapshot = { at: Date.now(), sessions, notes: relay.loaded ? relay.notes : null };
-    announcer.add(announce(previous.current, next, level));
+    announcer.add(announce(previous.current, next, active));
     previous.current = next;
     // sessions is a fresh array each render; the key string captures what matters.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessions.map((s) => `${s.key}:${s.state}:${s.waitingSince ?? ""}`).join(","), relay.notes, relay.loaded, level, tick]);
+  }, [sessions.map((s) => `${s.key}:${s.state}:${s.waitingSince ?? ""}`).join(","), relay.notes, relay.loaded, active, tick]);
 
   useEffect(() => {
     if (!spoken) return;
@@ -149,6 +131,7 @@ export function useVoice(sessions: VoiceSession[], injected?: Speaker) {
   }, [spoken]);
 
   function setLevel(next: VoiceLevel) {
+    if (!ready && next !== "off") return; // nothing to speak with yet
     saveVoiceLevel(next);
     setLevelState(next);
     setPaused(false); // this change came from a click or key, which unlocks speech
@@ -161,35 +144,26 @@ export function useVoice(sessions: VoiceSession[], injected?: Speaker) {
     }
   }
 
-  const allVoices = useSpeechVoices();
   const [voiceName, setVoiceNameState] = useState<string | null>(loadVoiceName);
-  const language = navigator.language || "en-US";
-  const natural = local.status?.state === "ready" ? naturalChoices(local.status.voices) : [];
-  const voices = [...natural, ...usableVoices(allVoices, language)];
-  // The stored choice if it's still available; otherwise a natural voice when
-  // installed, otherwise the best macOS voice.
-  const selectedVoice =
-    voices.find((v) => v.name === voiceName)?.name ??
-    (natural.length ? natural.find((v) => v.name === DEFAULT_NATURAL)?.name ?? natural[0].name : null) ??
-    defaultVoice(allVoices, language)?.name ??
-    null;
+  const voices = local.status?.state === "ready" ? naturalChoices(local.status.voices) : [];
+  const selectedVoice = chosenVoice(voices, voiceName);
   chosenRef.current = selectedVoice;
-  const naturalChosen = selectedVoice?.startsWith(NATURAL_PREFIX) ?? false;
 
-  // Starting the natural voice takes about 12 s, so load it before the first
-  // announcement rather than during it.
+  // Starting the natural voice takes a few seconds, so load it before the
+  // first announcement rather than during it.
   useEffect(() => {
-    if (level !== "off" && naturalChosen) void api.voiceWarm().catch(() => {});
-  }, [level, naturalChosen, selectedVoice]);
+    if (active !== "off" && selectedVoice) void api.voiceWarm().catch(() => {});
+  }, [active, selectedVoice]);
 
   return {
     level,
+    active,
+    ready,
     setLevel,
     voices,
     selectedVoice,
-    qualityVoices: hasQualityVoice(allVoices, language) || natural.length > 0,
     local,
-    fallbackReason: naturalChosen ? fallbackReason : null,
+    fallbackReason: active !== "off" ? fallbackReason : null,
     setVoice: (name: string) => {
       saveVoiceName(name);
       setVoiceNameState(name);
@@ -199,45 +173,36 @@ export function useVoice(sessions: VoiceSession[], injected?: Speaker) {
       void speaker.say(PREVIEW_LINE, name);
     },
     spoken,
-    paused: paused && level !== "off",
+    paused: paused && active !== "off",
     dismiss: () => setSpoken(null),
     mute: () => { announcer.mute(); setSpoken(null); },
   };
 }
 
 // Listen before choosing: each voice has its own Preview.
-export function VoicePicker({ voices, selected, qualityVoices, onSelect, onPreview }: {
+export function VoicePicker({ voices, selected, onSelect, onPreview }: {
   voices: VoiceChoice[];
   selected: string | null;
-  qualityVoices: boolean;
   onSelect: (name: string) => void;
   onPreview: (name: string) => void;
 }) {
+  if (voices.length === 0) return null; // the download panel says what to do
   return (
     <div className="rd-voice-picker">
       <div className="rd-voice-picker-label" id="voice-picker-label">Voice</div>
-      {voices.length === 0 ? (
-        <p className="rd-voice-picker-hint">No voices found for your language yet.</p>
-      ) : (
-        <div className="rd-voice-picker-list" role="radiogroup" aria-labelledby="voice-picker-label">
-          {voices.map((v) => (
-            <div key={v.name} className="rd-voice-picker-row">
-              <label>
-                <input type="radio" name="rd-voice-name" checked={v.name === selected} onChange={() => onSelect(v.name)} />
-                {v.label ?? v.name}
-              </label>
-              <button type="button" className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Preview ${v.label ?? v.name}`} onClick={() => onPreview(v.name)}>
-                Preview
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-      {!qualityVoices && (
-        <p className="rd-voice-picker-hint">
-          For a more natural voice, download an Enhanced or Premium voice for free: System Settings, Accessibility, Spoken Content, then the System voice menu, Manage Voices. Reload DuckTerm afterwards.
-        </p>
-      )}
+      <div className="rd-voice-picker-list" role="radiogroup" aria-labelledby="voice-picker-label">
+        {voices.map((v) => (
+          <div key={v.name} className="rd-voice-picker-row">
+            <label>
+              <input type="radio" name="rd-voice-name" checked={v.name === selected} onChange={() => onSelect(v.name)} />
+              {v.label}
+            </label>
+            <button type="button" className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Preview ${v.label}`} onClick={() => onPreview(v.name)}>
+              Preview
+            </button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -252,12 +217,12 @@ export function NaturalVoicePanel({ status, fallbackReason, onInstall, onRemove 
   if (!status) return null;
   return (
     <div className="rd-voice-natural" aria-live="polite">
-      <div className="rd-voice-picker-label">Natural voices</div>
+      {status.state !== "ready" && <div className="rd-voice-picker-label">Voice</div>}
       {status.state === "unsupported" && <p className="rd-voice-picker-hint">{status.reason}</p>}
       {status.state === "absent" && (
         <>
           <p className="rd-voice-picker-hint">
-            Kokoro, an open-source voice that runs on this Mac. Nothing leaves the machine, and there is no per-announcement cost. The download is {status.size}.
+            Voice announcements use Kokoro, an open-source voice that runs on this Mac. Nothing leaves the machine, and there is no per-announcement cost.
           </p>
           <button type="button" className="rd-btn rd-btn-sm" onClick={onInstall}>Download natural voices ({status.size})</button>
         </>
@@ -275,13 +240,13 @@ export function NaturalVoicePanel({ status, fallbackReason, onInstall, onRemove 
       )}
       {status.state === "ready" && (
         <p className="rd-voice-picker-hint">
-          Installed. Natural voices are at the top of the list.{" "}
+          Natural voices installed ·{" "}
           <button type="button" className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onRemove}>Remove</button>
         </p>
       )}
       {fallbackReason && (
         <p className="rd-voice-picker-hint" role="alert">
-          The natural voice couldn't speak ({fallbackReason}), so a macOS voice is speaking instead.
+          The voice couldn't speak ({fallbackReason}), so Oracle chimed instead.
         </p>
       )}
     </div>
@@ -297,7 +262,18 @@ export function VoicePausedPill() {
   );
 }
 
-export function VoiceMenu({ level, onLevel }: { level: VoiceLevel; onLevel: (level: VoiceLevel) => void }) {
+export function VoiceMenu({ level, ready, onLevel }: { level: VoiceLevel; ready: boolean; onLevel: (level: VoiceLevel) => void }) {
+  if (!ready) {
+    // One line on why it can't be turned on yet.
+    return (
+      <label className="rd-voice-menu" title="Voice announcements need a natural voice. Download one in Settings, then Voice.">
+        <span aria-hidden="true">🔇</span>
+        <select aria-label="Voice announcements" value="off" disabled>
+          <option value="off">Voice: download a voice in Settings</option>
+        </select>
+      </label>
+    );
+  }
   return (
     <label className="rd-voice-menu" title="Oracle voice announcements. They only play while a dashboard is open.">
       <span aria-hidden="true">{level === "off" ? "🔇" : "🔊"}</span>
@@ -305,6 +281,15 @@ export function VoiceMenu({ level, onLevel }: { level: VoiceLevel; onLevel: (lev
         {VOICE_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
       </select>
     </label>
+  );
+}
+
+// The natural voice failed: Oracle chimes instead of speaking, and says why.
+export function VoiceFallbackPill({ reason }: { reason: string }) {
+  return (
+    <span className="rd-voice-fallback" role="status" title={reason}>
+      Voice unavailable: {reason}
+    </span>
   );
 }
 

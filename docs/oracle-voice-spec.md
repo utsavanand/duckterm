@@ -82,23 +82,28 @@ from wherever the voice is heard, not buried in Settings.
 
 ## Implementation
 
-`window.speechSynthesis` in the dashboard (owner decision 4) — built into the
-browser and the Mac app's web view, no dependency, no network, nothing leaves
-the machine. A voice picker is required, not optional (owner report, 2026-09-29: "really
-robotic"). The owner's Mac had 41 English voices and no Enhanced or Premium
-one, so the browser's first pick was a basic voice. Settings lists the
-voices for the owner's language, best first and without macOS's novelty
-voices, each with a Preview that speaks "architect needs your input". The
-default prefers a Premium voice, then Enhanced, then Samantha. The list
-fills when the browser's voiceschanged event fires, because the first call
-can be empty. The choice is stored per device under `rd.voice.name`. When
-no Enhanced or Premium voice is installed, Settings says where to download
-one for free: System Settings, Accessibility, Spoken Content, then the
-System voice menu, Manage Voices. On macOS 15.7 the labels "Spoken Content"
-and "System voice" are confirmed from the system's own strings; "Manage
-Voices" is Apple's documented menu item and was not read from this machine.
-No cloud voices: announcements, including session names, stay on the
-machine.
+Speech plays in the dashboard, so it works in a browser tab and in the Mac
+app's web view (owner decision 4). The voice is the local natural voice only
+(Kokoro, below); macOS voices are not used at all. The owner rejected them
+four times, ending with "Remove existing Mac voices from the options. They
+suck. Provide only the option to download voices if needed." (2026-09-30).
+
+- **Picker:** Settings, then Voice, lists only the installed natural
+  voices, each with a Preview that speaks "architect needs your input".
+  Heart (US) is the default (owner's pick, 2026-09-30). The choice is stored
+  per device under `rd.voice.name`.
+- **Nothing installed:** the only thing shown is "Download natural voices
+  (about 310 MB)". Voice can't be turned on until the download completes:
+  the header control is disabled and reads "Voice: download a voice in
+  Settings". The owner's chosen level is kept for when it is.
+- **When it fails:** if the natural voice can't speak (worker failed, timed
+  out, removed), Oracle plays the short chime instead, shows "Voice
+  unavailable: <reason>" in the header, and logs the reason to the console.
+  It never falls back to a macOS voice (product's call on the owner's
+  instruction, 2026-09-30). A chime with a visible reason keeps the owner
+  aware something needs them without the voice they asked to never hear.
+- No cloud voices: announcements, including session names, stay on the
+  machine.
 
 Deliberately NOT the Mac app's native notifier (`main.swift`), which would be
 a second notification path — the app already double-notifies (B6). The cost
@@ -151,10 +156,12 @@ design; this spec is the requirements. As built:
   (from the note's time) is said again once, as it crosses 15 minutes. A
   session that unblocks and blocks again gets a new wait time, so it is
   announced afresh.
-- **"is complete"** is said on the effective busy-to-idle transition, after
-  the dashboard's 5-minute settle grace, so a pause between turns doesn't
-  count. It is skipped while a question note is open for that session, and
-  said bare, without a clause.
+- **"is complete"** is said 90 s after a turn ends, if the session hasn't
+  started working again (`COMPLETION_SETTLE_MS`). That is longer than the
+  ducks' 30 s settle (owner decision, 2026-09-30), because the relay needs
+  about 30 s plus a model call to turn a turn that ended on a question into a
+  needs-you note, which is announced instead. It is skipped while a question
+  note is open for that session, and said bare, without a clause.
 - **One click.** Each spoken line shows a toast with "Only needs-you",
   "Stop" and "Turn off". The level picker is also in the header and in
   Settings.
@@ -169,12 +176,12 @@ design; this spec is the requirements. As built:
   voice on, a "Voice paused. Click anywhere to resume." pill shows until the
   first click or key. It also shows if the browser refuses to speak.
 
-## Natural voice (Kokoro), optional
+## Natural voice (Kokoro)
 
 Owner decision, 2026-09-29: "all mac voices are quite bad"; cloud voices were
 rejected ("open source"). Architect's ruling: an optional local component,
-installed on request, without espeak. The macOS voice picker stays as the
-fallback.
+installed on request, without espeak. Since 2026-09-30 it is the only voice:
+macOS voices are neither offered nor used as a fallback.
 
 - **What:** Kokoro-82M (Apache-2.0 weights), int8 ONNX export, run through
   ONNX Runtime on the CPU of any Mac on macOS 13 or later, Intel included.
@@ -216,9 +223,9 @@ fallback.
   lines, with a 15 s timeout per phrase and 60 s to start. The worker is
   killed on voice-off and on server shutdown. The phrase cache is capped at
   200 MB, oldest first.
-- **Fallback, never silence:** the chosen Kokoro voice; otherwise the best
-  macOS voice, with the reason shown in Settings; otherwise the browser's own
-  refusal, shown as "Voice paused".
+- **When it can't speak:** the chime plus "Voice unavailable: <reason>" in
+  the header and a console log; no macOS voice. When the browser refuses to
+  play audio (no click yet), the header shows "Voice paused".
 
 ## Delivery
 

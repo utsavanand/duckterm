@@ -5,6 +5,72 @@
 **Fix:** Retain and compare transcript status and reason atomically with the list, including cache size accounting; cover unavailable, empty, recovered, hidden and remounted states.
 **Lesson:** Cache the full user-visible response contract, not only its main collection.
 
+## 2026-09-30 — Priority status said "delivered" before anything was
+**Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
+got stuck in the prompt, or failed to paste, already showed "delivered". A
+plain broadcast retried with its old `request_key` would have hit a 409.
+**Cause:** rendering the pinned block also marked it delivered, before the
+paste was tried. Adding priority to the idempotency hash changed the hash of
+every plain broadcast too.
+**Rule:** record delivery from the result of the delivery, never from
+building the text. When adding a field to a stored hash, keep the old hash
+for the old shape.
+
+## Fork children need independent identity and inherited test scope
+Conversation forks derived their child key from the parent's native ID, so a second fork reused the first child's supervisor key. Generate a fresh DuckTerm key for every fork while retaining the native ID only in the resume command. Both conversation/worktree paths must inherit a test parent or explicit test request, including terminal SessionStart rows; test repeated forks and both launch modes without live inference.
+
+
+## 2026-09-30 — A raised hand is the owner's to lower
+**Broke:** a session that asked for the owner dropped its raised hand on its
+next event, whether or not the owner had seen it, and the session list let a
+screen reading override a hook-driven "waiting". Ducks also looked busy for 5
+minutes after an agent finished.
+**Cause:** "needs you" was modelled as a session state, which the agent's
+own events overwrite. The screen check also overrode hooks for every
+harness except Claude Code.
+**Rule:** keep attention apart from state. `attention_since` is set when a
+session starts waiting and is cleared only by the owner: opening it, or
+answering its note or approval. The screen may lift only a wait the screen
+itself established (auto-reviewing Codex); hooks win otherwise. The duck
+settle is 30 s (owner decision); a Stop starts it, so pauses inside a turn
+can't flicker a duck idle.
+
+Also, from the real-agent check: a second DuckTerm server on the machine
+needs `DUCKTERM_TMUX_SOCKET` (or it adopts the owner's agents), a port
+checked to be free (another session's browser tests had hit a fixed port),
+and `DUCKTERM_NO_BROWSER=1`. `duckterm serve` opens the dashboard in the
+owner's browser, and that tab then acts on the test; here it marked the test
+session attended.
+
+## E2E readiness must identify the spawned server
+A busy test port let global setup accept another QA server's public sessions response. Readiness now matches the dashboard token against the private test home, checks child exit/errors, and fails on deadline; failed setup reaps only its child and removes its home. Regressions cover a foreign listener, early child exit, timeout and matching identity.
+
+## 2026-09-30 — A shared artifact title must resolve through session credentials
+
+A peer review stalled because only the owner dashboard could read another
+session's saved artifact. Add scoped metadata and snapshot reads to the session
+API, checking both current sharing roots and folder membership. Filter before
+pagination; recheck on download; preserve access to stopped producers without
+granting writes. Download saved bytes rather than reopening a peer's source path,
+verify their digest, and create a new private file without overwriting user data.
+
+## 2026-09-30 — Polling tests must update the server fixture after a mutation
+**Broke:** The restart test lost its pending message when a two-second refresh
+ran under full-gate load. The POST mock returned queued, but the GET mock kept
+returning the old ready state.
+**Fix:** The POST fixture also updates the subsequent GET response, matching the
+server’s durable restart behavior. The visible pending and cancel assertions stay.
+
+## 2026-09-30 — Folder messages must outlive the inbox cleanup window
+**Broke:** Folder chat answered questions but could not address a session. Reusing
+inbox records without saving their replies would erase conversation content
+when the broker retires closed mail after seven days.
+**Fix:** Explicit recipients use the existing owner inbox path with folder scope
+checks and idempotent sends. Replies are copied into bounded folder history
+before retirement, including replies the owner has not opened yet.
+**Check:** Regression coverage sends, retries, answers, retires the inbox row,
+restarts the store, and verifies the complete reply remains in folder chat.
+
 ## 2026-09-30 — Missing transcripts looked like empty conversations
 **Broke:** Messages ignored the API transcript status and said no reply existed when the conversation identity or local file was unavailable.
 **Fix:** Render the recorded unavailable reason and distinguish missing identity, missing local transcript, and a genuinely empty conversation; clear status on session changes and successful recovery.

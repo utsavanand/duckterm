@@ -44,7 +44,7 @@ def pick_mail(
     return [
         m
         for m in mail
-        if m["status"] in {"queued", "accepted"}
+        if (m["status"] in {"queued", "accepted"} or (m.get("priority") and m["status"] == "read"))
         and (
             m["kind"] == "broadcast"
             or m["status"] == "accepted"
@@ -70,14 +70,17 @@ def should_nudge(
     """Only new eligible mail or one overdue read reminder can wake an idle agent."""
     if state != "idle" or not prompt_empty or turn_ended_ms <= 0:
         return []
-    if now_ms - turn_ended_ms < SETTLE_MS:
-        return []
     if now_ms - last_owner_input_ms < TYPING_QUIET_MS:
         return []
+    # The settle wait keeps peer mail from hammering an agent that just
+    # stopped; the owner's priority message skips it (design, 2026-09-30).
+    settled = now_ms - turn_ended_ms >= SETTLE_MS
     picked = pick_mail(mail, now_ms, idle=True)
     result = []
     for m in picked:
         key = str(m["id"])
+        if not settled and not m.get("priority"):
+            continue
         read_queued = m["kind"] == "question" and m["status"] == "queued" and m.get("last_read_at")
         if read_queued:
             if previous and (key in previous.read_ids or now_ms - previous.at_ms < RENUDGE_MS):
