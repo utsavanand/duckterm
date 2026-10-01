@@ -592,19 +592,22 @@ class SessionAPI:
 
     def mark_delivered(self, ids: list[str]) -> list[dict[str, Any]]:
         """A priority message reached the agent (turn-end notice or a nudge).
-        Returns the messages that reached it for the first time."""
+        Returns the messages that reached it for the first time. A message
+        cancelled meanwhile (the owner withdrew it while Oracle was pasting)
+        isn't counted: cancelled is final."""
         now = int(time.time() * 1000)
-        first = [
-            _public_question(dict(row))
+        rows = [
+            dict(row)
             for row in self.conn.execute(
-                "SELECT q.* FROM session_questions q LEFT JOIN session_inbox_delivery d "
-                f"ON d.question_id = q.id WHERE q.id IN ({','.join('?' * len(ids))}) "
-                "AND COALESCE(d.attempts, 0) = 0",
+                "SELECT q.*, COALESCE(d.attempts, 0) AS attempts FROM session_questions q "
+                "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
+                f"WHERE q.id IN ({','.join('?' * len(ids))}) AND q.status != 'cancelled'",
                 ids,
             )
         ]
+        first = [_public_question(row) for row in rows if not row["attempts"]]
         with self.conn:
-            for question_id in ids:
+            for question_id in (row["id"] for row in rows):
                 self.conn.execute(
                     "INSERT INTO session_inbox_delivery "
                     "(question_id, attempts, last_attempt_at, outcome) "
