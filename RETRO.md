@@ -1,5 +1,10 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — Missing transcripts looked like empty conversations
+**Broke:** Messages ignored the API transcript status and said no reply existed when the conversation identity or local file was unavailable.
+**Fix:** Render the recorded unavailable reason and distinguish missing identity, missing local transcript, and a genuinely empty conversation; clear status on session changes and successful recovery.
+**Lesson:** A backend correctness fix needs its unavailable-state contract rendered at the user-facing boundary. Test both transitions and recovery.
+
 ## Conversation identity and launch names must survive reopening
 A newest-transcript fallback showed a peer conversation when the recorded native ID or its local file was missing; Claude resume used the same guess. Require the recorded ID for Claude/Codex Messages and Claude resume, and report missing identity/file explicitly. Separately, launch names appeared in SSE but the session-row INSERT discarded them, so reload fell back to the folder label. Persist names and recover missing historical names only from explicit saved launch events, preserving owner renames. Regressions cover two conversations sharing a directory, missing local transcripts, unsafe resume refusal, and database reopen.
 
