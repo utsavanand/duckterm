@@ -167,7 +167,7 @@ What needs the owner becomes a note in the Ask Oracle chat. Notes live in
 | Note | Source | Answer route |
 | --- | --- | --- |
 | Approval | The approval registry, synced on every event and on `/approvals`. For agents that auto-review requests (Codex), only once the agent's own approval prompt is on screen | Claude Code and Copilot: `ApprovalRegistry.set_decision`, the dashboard's path. Codex: its prompt's keys (`y`, Esc), only while the prompt is still on screen |
-| Choice | Claude's `AskUserQuestion`, which arrives as a `PermissionRequest`. One note lists every question in the form with its options | Not answered from the chat. The note's "Open terminal" button jumps to the session, where the owner answers the menu. Pressing digits broke on 2026-09-26: a two-question form got its first answer, moved to the second question, and never submitted. Answering without keystrokes is roadmap work |
+| Choice | The tool each agent uses to ask the owner, declared per harness as `Harness.owner_prompt`: Claude's `AskUserQuestion` (a `PermissionRequest`), Codex's `request_user_input_async` and Copilot's `ask_user` (both a `PreToolUse`). One note lists every question with its options | Not answered from the chat. The note's "Open terminal" button jumps to the session, where the owner answers the menu. Pressing digits broke on 2026-09-26: a two-question form got its first answer, moved to the second question, and never submitted. Answering without keystrokes is roadmap work |
 | Question | 30 s after each `Stop` (skipped if the owner replied), a word-cue filter, then one Sonnet call classifying the ending as blocked, offer, or none | Typed into the prompt under the paste checks; otherwise an owner inbox message, which Oracle nudges |
 
 **Is the owner actually needed for an approval?** A permission request isn't
@@ -224,6 +224,21 @@ question-mark check is the fallback and the note says so.
 
 Notes close by themselves when the agent moves on: choice notes on the next
 tool event or turn end, question notes when the owner types a prompt.
+
+**Codex asks without waiting** (B16, 2026-10-01). Codex's
+`request_user_input_async` returns at once. The agent carries on and ends its
+turn, and the question stays queued above an empty input box ("? 1 question",
+"shift + ← to answer"). The owner's answer arrives as a prompt starting
+`> <question>`. Any other submitted prompt silently discards the question
+(checked on Codex 0.155.1). Before this fix Oracle made no note for it, and
+its own inbox reminders then discarded it: of 69 Codex questions in the
+owner's history, 14 were never answered, and for 8 of those the next prompt
+submitted was an Oracle reminder. So a Codex choice note closes only
+on a submitted prompt or the session ending, never on the agent's own tool
+use. The queued question also makes `prompt_is_empty` false, so Oracle doesn't
+type into that session (no reminder, no relayed reply) until the owner
+answers. A question asked this way also suppresses the end-of-turn question
+classifier, so the owner isn't asked twice.
 
 Rules are made in the chat ("always …", "when an agent asks …"): one model call
 proposes a structured rule, and nothing exists until the owner clicks Create.

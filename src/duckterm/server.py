@@ -2584,8 +2584,9 @@ class Server:
         if not key or event.get("reconciled"):
             return
         now = int(event.get("_ts") or time.time() * 1000)
-        if et == events.PERMISSION_REQUEST and event.get("tool_name") == "AskUserQuestion":
-            choices = choices_from(event.get("tool_input") or {})
+        harness = self._relay_harness(key)
+        if harness.owner_prompt == (et, event.get("tool_name")):
+            choices = choices_from(event.get("tool_input"))
             open_choice = any(
                 n["session_key"] == key and n["kind"] == "choice" for n in self.relay.open_notes()
             )
@@ -2598,7 +2599,16 @@ class Server:
                         "questions": [{"question": q, "options": o} for q, o in choices],
                     }
                 )
-        elif et in (events.PRE_TOOL_USE, events.POST_TOOL_USE, events.STOP, events.SESSION_END):
+        elif harness.owner_prompt_blocks and et in (
+            events.PRE_TOOL_USE,
+            events.POST_TOOL_USE,
+            events.STOP,
+            events.SESSION_END,
+        ):
+            # The agent moved on, so the question was answered. An agent whose
+            # question doesn't block (Codex) carries on with it still queued;
+            # only a submitted prompt (the answer, or one that discards it)
+            # or the session ending closes that note.
             self.relay.close_for_session(key, {"choice"}, "handled", now)
         if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END):
             self.relay.close_for_session(key, {"question", "choice"}, "handled", now)
@@ -2797,9 +2807,10 @@ class Server:
         if not final or not ASK_CUES.search(final[-900:]):
             return
         if any(
-            n["session_key"] == key and n["kind"] == "question" for n in self.relay.open_notes()
+            n["session_key"] == key and n["kind"] in ("question", "choice")
+            for n in self.relay.open_notes()
         ):
-            return
+            return  # the owner is already asked
         owner = next(
             (
                 self._message_text(m)
