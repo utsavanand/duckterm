@@ -41,6 +41,22 @@ so label it rather than blocking it; the defect was the false claim, not the
 write. Deselecting must also withdraw the existing entry — otherwise the
 harness keeps serving a connector the panel no longer lists.
 
+## 2026-10-01 — Codex's questions to the owner never reached Oracle
+**Broke:** the owner was told to approve ui-dev's work in Oracle, and nothing
+was there. Codex asks the owner through `request_user_input_async`, and
+Oracle only made choice notes for Claude's `AskUserQuestion`. Of 69 Codex
+questions, 14 were never answered. For 8 of those, the next prompt submitted
+was Oracle's own inbox reminder, which silently discards a queued Codex
+question. Copilot's `ask_user` arrived without its question, because the
+hook read `toolInput` and Copilot sends `toolArgs`.
+**Cause:** the choice note was keyed to one harness's tool name, and the
+empty-prompt check couldn't see Codex's queued question above an empty box.
+**Rule:** how an agent asks the owner is a declared harness capability
+(`Harness.owner_prompt`), checked against a real event for each harness. A
+harness that leaves it undeclared can't ask the owner through Oracle. Before
+Oracle types into an agent, it must know whether typing destroys something
+the owner hasn't seen.
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A

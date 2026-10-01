@@ -87,6 +87,13 @@ class Harness(ABC):
     # Declared only where that notice path is proven (contracts §1); others
     # show priority messages as "inbox only" rather than pretending.
     priority_delivery = False
+    # The (event type, tool name) this agent's hooks report when it asks the
+    # owner a question, which Oracle turns into a "choice" note. None means
+    # its questions can't reach Oracle (contracts §1: declared, not absent).
+    owner_prompt: tuple[str, str] | None = None
+    # Whether the agent stops until that question is answered. Codex's is
+    # async: the agent carries on and the question stays queued on screen.
+    owner_prompt_blocks = True
     # An agent's observe half; None for driven-only agents (no hook system).
     hook_spec: HookSpec | None = None
 
