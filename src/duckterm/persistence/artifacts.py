@@ -141,19 +141,31 @@ class ArtifactStore:
         ]
 
     def list_folder(
-        self, folder: str, limit: int = 500, *, include_removed: bool = False
+        self, folder: str, limit: int = 500, *, include_removed: bool = False, shared_root: str | None = None
     ) -> builtins.list[dict[str, Any]]:
         prefix = folder + "/"
         fields = ", ".join("a." + field.strip() for field in FIELDS.split(","))
+        scope = ""
+        params: tuple[Any, ...] = (folder, len(prefix), prefix)
+        if shared_root is not None:
+            # Filter before LIMIT; a narrower peer grant must not leak metadata
+            # or hide permitted artifacts behind an unauthorized page of rows.
+            scope = (
+                "AND EXISTS (SELECT 1 FROM session_api_members m "
+                "WHERE m.session_key = s.session_key AND m.folder = s.grp "
+                "AND m.root = ? AND m.root != '') "
+            )
+            params += (shared_root,)
         rows = [
             self.describe(dict(row))
             for row in self.conn.execute(
                 f"SELECT {fields}, COALESCE(NULLIF(s.name, ''), s.session_key) AS session_name, "
                 "s.state AS session_state, s.grp AS folder FROM artifacts a "
                 "JOIN sessions s ON s.session_key = a.session_key "
-                "WHERE s.grp = ? OR substr(s.grp, 1, ?) = ? "
-                "ORDER BY a.updated_at DESC, a.id LIMIT ?",
-                (folder, len(prefix), prefix, limit),
+                "WHERE (s.grp = ? OR substr(s.grp, 1, ?) = ?) "
+                + scope
+                + "ORDER BY a.updated_at DESC, a.id LIMIT ?",
+                (*params, limit),
             )
         ]
         if include_removed:
@@ -162,8 +174,9 @@ class ArtifactStore:
                 "s.session_key) AS session_name, "
                 "s.state AS session_state, s.grp AS folder FROM artifact_metadata m "
                 "JOIN sessions s ON s.session_key = m.session_key WHERE m.removed_at IS NOT NULL "
-                "AND (s.grp = ? OR substr(s.grp, 1, ?) = ?) ORDER BY m.removed_at DESC LIMIT ?",
-                (folder, len(prefix), prefix, limit),
+                "AND (s.grp = ? OR substr(s.grp, 1, ?) = ?) "
+                + scope + "ORDER BY m.removed_at DESC LIMIT ?",
+                (*params, limit),
             ):
                 snapshot = json.loads(row["snapshot_json"])
                 snapshot.update(

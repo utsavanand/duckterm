@@ -415,6 +415,8 @@ export const api = {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     if (!res.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
   },
+  // The owner has looked at this session: lower its raised hand.
+  sessionAttended: (key: string) => post<{ attended: boolean }>(`/sessions/${encodeURIComponent(key)}/attended`),
   messageSession: (key: string, text: string, mode: "inbox" | "prompt") =>
     post<{ delivered: "inbox" | "prompt" | null }>(
       `/sessions/${encodeURIComponent(key)}/message`,

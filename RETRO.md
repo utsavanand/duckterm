@@ -7,6 +7,51 @@ Keep must reject removal on the server, survive re-registration, and preserve th
 ## 2026-09-30 — Saved widgets must stop reading when removed
 
 A hidden tile still polling is not a removed widget. Give each built-in widget only its declared streams, detach its readers on unmount, and stop the shared insights timer after the last subscriber leaves. Missing data must say Unavailable instead of reporting zero. Persist layouts on the server with revision checks and recoverable folder rename/delete intents so reloads and crashes do not lose the owner’s arrangement.
+## 2026-09-30 — Priority status said "delivered" before anything was
+**Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
+got stuck in the prompt, or failed to paste, already showed "delivered". A
+plain broadcast retried with its old `request_key` would have hit a 409.
+**Cause:** rendering the pinned block also marked it delivered, before the
+paste was tried. Adding priority to the idempotency hash changed the hash of
+every plain broadcast too.
+**Rule:** record delivery from the result of the delivery, never from
+building the text. When adding a field to a stored hash, keep the old hash
+for the old shape.
+
+## 2026-09-30 — A raised hand is the owner's to lower
+**Broke:** a session that asked for the owner dropped its raised hand on its
+next event, whether or not the owner had seen it, and the session list let a
+screen reading override a hook-driven "waiting". Ducks also looked busy for 5
+minutes after an agent finished.
+**Cause:** "needs you" was modelled as a session state, which the agent's
+own events overwrite. The screen check also overrode hooks for every
+harness except Claude Code.
+**Rule:** keep attention apart from state. `attention_since` is set when a
+session starts waiting and is cleared only by the owner: opening it, or
+answering its note or approval. The screen may lift only a wait the screen
+itself established (auto-reviewing Codex); hooks win otherwise. The duck
+settle is 30 s (owner decision); a Stop starts it, so pauses inside a turn
+can't flicker a duck idle.
+
+Also, from the real-agent check: a second DuckTerm server on the machine
+needs `DUCKTERM_TMUX_SOCKET` (or it adopts the owner's agents), a port
+checked to be free (another session's browser tests had hit a fixed port),
+and `DUCKTERM_NO_BROWSER=1`. `duckterm serve` opens the dashboard in the
+owner's browser, and that tab then acts on the test; here it marked the test
+session attended.
+
+## E2E readiness must identify the spawned server
+A busy test port let global setup accept another QA server's public sessions response. Readiness now matches the dashboard token against the private test home, checks child exit/errors, and fails on deadline; failed setup reaps only its child and removes its home. Regressions cover a foreign listener, early child exit, timeout and matching identity.
+
+## 2026-09-30 — A shared artifact title must resolve through session credentials
+
+A peer review stalled because only the owner dashboard could read another
+session's saved artifact. Add scoped metadata and snapshot reads to the session
+API, checking both current sharing roots and folder membership. Filter before
+pagination; recheck on download; preserve access to stopped producers without
+granting writes. Download saved bytes rather than reopening a peer's source path,
+verify their digest, and create a new private file without overwriting user data.
+
 ## 2026-09-30 — Polling tests must update the server fixture after a mutation
 **Broke:** The restart test lost its pending message when a two-second refresh
 ran under full-gate load. The POST mock returned queued, but the GET mock kept

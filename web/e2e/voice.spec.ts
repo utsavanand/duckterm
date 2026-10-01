@@ -1,24 +1,33 @@
 import { expect, test, type Page } from '@playwright/test';
 import { apiDelete, base, postEvent, seedSession } from './helpers';
 
-// Oracle voice mode in a real browser, with speech stubbed so what would be
-// said is recorded instead. Adapted from main-qa's PR #156 reproducers.
+// Oracle voice mode in a real browser. The natural voice is stubbed as
+// installed, and every line Oracle asks it to speak (POST /voice/say) is
+// recorded. Adapted from main-qa's PR #156 reproducers.
 
-async function stubSpeech(page: Page) {
-  await page.addInitScript(() => {
-    const w = window as unknown as { spoken: string[] } & Record<string, unknown>;
-    w.spoken = [];
-    w.SpeechSynthesisUtterance = class { text: string; onend?: () => void; constructor(t: string) { this.text = t; } };
-    Object.defineProperty(window, 'speechSynthesis', {
-      value: {
-        speak: (u: { text: string; onend?: () => void }) => { w.spoken.push(u.text); u.onend?.(); },
-        cancel: () => {},
-        getVoices: () => [{ name: 'Samantha', lang: 'en-US', default: true }],
-        addEventListener: () => {},
-        removeEventListener: () => {},
-      },
-      configurable: true,
-    });
+const said = new WeakMap<Page, string[]>();
+
+// A valid, silent 24 kHz WAV, so playback completes.
+function silentWav(): Buffer {
+  const samples = 2400;
+  const b = Buffer.alloc(44 + samples * 2);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + samples * 2, 4); b.write('WAVE', 8);
+  b.write('fmt ', 12); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(24000, 24); b.writeUInt32LE(48000, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34);
+  b.write('data', 36); b.writeUInt32LE(samples * 2, 40);
+  return b;
+}
+
+async function stubSpeech(page: Page, installed = true) {
+  const lines: string[] = [];
+  said.set(page, lines);
+  await page.route('**/voice/status', (route) =>
+    route.fulfill({ json: installed ? { state: 'ready', voices: [{ id: 'af_heart', label: 'Heart', accent: 'US' }] } : { state: 'absent', size: 'about 310 MB' } }),
+  );
+  await page.route('**/voice/warm', (route) => route.fulfill({ status: 202, json: { warming: true } }));
+  await page.route('**/voice/say', async (route) => {
+    lines.push((route.request().postDataJSON() as { text: string }).text);
+    await route.fulfill({ status: 200, contentType: 'audio/wav', body: silentWav() });
   });
 }
 
@@ -31,7 +40,7 @@ async function relayWithBacklog(page: Page) {
   });
 }
 
-const spoken = (page: Page) => page.evaluate(() => (window as unknown as { spoken: string[] }).spoken);
+const spoken = async (page: Page) => said.get(page) ?? [];
 
 test('voice: notes already open when the page loads are not read out', async ({ page }) => {
   await stubSpeech(page);
@@ -54,6 +63,7 @@ test('voice: turning it on later does not read out the backlog either', async ({
 
 test('voice: off stops relay polling and survives a reload', async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('rd.voice', 'off'));
+  await stubSpeech(page);
   let calls = 0;
   await page.route('**/relay', (route) => { calls++; return route.fulfill({ json: { notes: [], rules: [], open: 0 } }); });
   await page.goto(base());
@@ -78,4 +88,14 @@ test('voice: a session already waiting when the page loads is not read out', asy
   } finally {
     await apiDelete(`/sessions/${key}`);
   }
+});
+
+test('voice: stays off, saying why, until a natural voice is downloaded', async ({ page }) => {
+  await stubSpeech(page, false);
+  await page.goto(base());
+  const menu = page.getByLabel('Voice announcements').first();
+  await expect(menu).toBeDisabled();
+  await expect(menu).toContainText('Voice: download a voice in Settings');
+  await page.waitForTimeout(1500);
+  expect(await spoken(page)).toEqual([]);
 });

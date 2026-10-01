@@ -256,6 +256,8 @@ _ROUTES: list[Route] = [
           **_mid("/relay/", "/answer")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._session_message(w, seg, b),
           **_mid("/sessions/", "/message")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._session_attended(w, seg),
+          **_mid("/sessions/", "/attended")),
     Route("DELETE", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w, clear=True)),
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
@@ -366,6 +368,9 @@ class Server:
         self._backup_jobs: BackupJobs | None = None
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
         self._oracle_nudges: dict[str, oracle.Nudge] = {}
+        # One Oracle pass at a time: a priority broadcast starts one early.
+        self._oracle_lock = asyncio.Lock()
+        self._oracle_kick: asyncio.Task[None] | None = None
         self._tokens = TokenLedger(
             Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects",
             Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "sessions",
@@ -571,6 +576,10 @@ class Server:
         if method in {"GET", "POST"} and broadcast_match:
             await self._folder_broadcast(writer, headers, broadcast_match[1], method, body)
             return
+        sent_match = re.fullmatch(r"/broadcasts/([A-Za-z0-9._:-]{1,128})", inbox_path.path)
+        if method in {"GET", "DELETE"} and sent_match:
+            await self._broadcast_record(writer, headers, sent_match[1], method)
+            return
         for route in self._routes():
             if route.matches(method, path):
                 try:
@@ -702,9 +711,17 @@ class Server:
         if any(a.session_key == key for a in self.approvals.pending()):
             return None
         runtime = _build_runtime(row.get("runtime"), row.get("command") or "")
-        if not runtime.turn_end_inbox_notice:
-            return None
-        notice = self.history.session_api.turn_end_notice(key)
+        api = self.history.session_api
+        # Priority owner messages are pinned first, as one block, every turn
+        # until replied to; the regular reminder follows.
+        pinned = api.priority_notice(key) if runtime.priority_delivery else None
+        if pinned:
+            api.mark_delivered(pinned[1])
+        parts = [
+            pinned and pinned[0],
+            runtime.turn_end_inbox_notice and api.turn_end_notice(key),
+        ]
+        notice = "\n\n".join(p for p in parts if p)
         if not notice:
             return None
         return {"hookSpecificOutput": {"hookEventName": "Stop", "additionalContext": notice}}
@@ -1328,23 +1345,45 @@ class Server:
             await self._reconcile_waiting(s)
         await _write_json(writer, 200, {"sessions": sessions})
 
-    async def _reconcile_waiting(self, row: dict[str, Any]) -> None:
-        """Before reporting a pty-owned session as 'waiting', glance at its
-        actual screen. Codex answers approvals IN the terminal without firing a
-        hook, so a PermissionRequest can stay the last event for the entire run
-        of the approved command — the DB says 'waiting' while the screen says
-        'Working (17m)'. Output-detected states are authoritative for output-
-        driven runtimes; claude-code is excluded (its hooks fire per tool, so
-        this bug can't happen, and its output detector is too coarse to trust)."""
-        if row.get("state") != "waiting" or (row.get("runtime") or "") == "claude-code":
+    def _attend(self, key: str) -> None:
+        """The owner attended to this session: drop its raised hand. Only the
+        owner does this (opening it, answering its note or approval, or a rule
+        they made); the agent's own next event never does."""
+        row = self.history.session(key)
+        if row is not None and row.get("attention_since"):
+            event = {"event_type": events.ATTENDED, "session_key": key, "reconciled": True}
+            self.bus.publish(event)
+
+    async def _session_attended(self, writer: asyncio.StreamWriter, key: str) -> None:
+        if self.history.session(key) is None:
+            await _write_json(writer, 404, {"error": "no such session"})
             return
-        key = str(row.get("session_key") or "")
-        sup = self.orchestrator.get(key)
-        if sup is None:
+        self._attend(key)
+        await _write_json(writer, 200, {"attended": True})
+
+    async def _reconcile_waiting(self, row: dict[str, Any]) -> None:
+        """Hooks win over the screen (contracts F1). The one exception is a
+        wait the screen itself established: an auto-reviewing agent (Codex) is
+        only marked waiting once the relay sees its approval prompt, and after
+        the owner answers in the terminal no hook fires until the command
+        finishes, maybe many minutes later. So for those agents alone, a screen
+        with no prompt and visible work reports busy. A hook-driven wait
+        (Claude Code, Copilot) is never overridden. The owner's raised hand is
+        kept separately (attention_since) and isn't touched here."""
+        if row.get("state") != "waiting":
             return
         runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
+        if not runtime.auto_approves_requests:
+            return
+        sup = self.orchestrator.get(str(row.get("session_key") or ""))
+        if sup is None:
+            return
         screen = await asyncio.to_thread(sup.screen_text, 8)
-        if screen and runtime.detect_state(screen) == "busy":
+        if (
+            screen
+            and not runtime.approval_prompt_visible(screen)
+            and runtime.detect_state(screen) == "busy"
+        ):
             row["state"] = "busy"
 
     def _transcript_stats_for(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -2710,6 +2749,7 @@ class Server:
                 self.relay.close(
                     note, "answered", answer=rule["action"], answered_by=rule["id"], closed_at=now
                 )
+                self._attend(a.session_key)  # the owner's own rule answered it
 
     # How often and how long to look for an auto-reviewing agent's approval
     # prompt while its request is pending.
@@ -2889,6 +2929,7 @@ class Server:
         self.relay.update(note, suggestion={"rule_id": rule["id"], "reply": rule["reply"]})
         if rule.get("mode") == "live":
             await self._relay_deliver_question(note, rule["reply"], answered_by=rule["id"])
+            self._attend(note["session_key"])  # the owner's own rule answered it
 
     async def _relay_deliver_question(
         self, note: dict[str, Any], text: str, *, answered_by: str
@@ -3029,6 +3070,8 @@ class Server:
                 return
             if suggestion:
                 self.relay.record_send(suggestion["rule_id"], unchanged=text == suggestion["reply"])
+        if note.get("status") == "answered":
+            self._attend(note["session_key"])
         await _write_json(writer, 200, {"note": note})
 
     async def _relay_propose(self, writer: asyncio.StreamWriter, body: bytes) -> None:
@@ -3195,11 +3238,23 @@ class Server:
             await _write_json(writer, 400, {"error": "mode must be inbox or prompt"})
             return
         if req["mode"] == "inbox":
+            priority = req.get("priority", False)
+            if not isinstance(priority, bool):
+                await _write_json(writer, 400, {"error": "priority must be true or false"})
+                return
             try:
-                message_id = self.history.session_api.owner_message(session_key, req.get("text"))
+                message_id = self.history.session_api.owner_message(
+                    session_key,
+                    req.get("text"),
+                    request_key=req.get("request_key"),
+                    merged_from=req.get("merged_from"),
+                    priority=priority,
+                )
             except APIError as exc:
                 await _write_json(writer, exc.status, {"error": str(exc)})
                 return
+            if priority:
+                self._oracle_soon()  # an idle agent shouldn't wait for the next pass
             await _write_json(writer, 200, {"delivered": "inbox", "message_id": message_id})
             return
         text = req.get("text")
@@ -3510,6 +3565,32 @@ class Server:
         except OSError as exc:
             await _write_json(writer, 500, {"error": str(exc)})
 
+    def _can_pin(self, key: str) -> bool:
+        row = self.history.session(key) or {}
+        return _build_runtime(row.get("runtime"), str(row.get("command") or "")).priority_delivery
+
+    async def _broadcast_record(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], request_key: str, method: str
+    ) -> None:
+        """GET: each recipient's delivery status. DELETE: cancel, which retires
+        every recipient's priority pin."""
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        api = self.history.session_api
+        try:
+            if method == "DELETE":
+                api.cancel_broadcast(request_key)
+            await _write_json(writer, 200, api.broadcast_status(request_key, self._can_pin))
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+
+    def _oracle_soon(self) -> None:
+        if os.environ.get("DUCKTERM_ORACLE") == "off":
+            return
+        with contextlib.suppress(RuntimeError):  # no running loop (sync callers, tests)
+            self._oracle_kick = asyncio.get_running_loop().create_task(self._oracle_tick())
+
     async def _folder_broadcast(
         self,
         writer: asyncio.StreamWriter,
@@ -3537,6 +3618,9 @@ class Server:
                 if not isinstance(req, dict):
                     raise APIError(400, "expected a JSON object")
                 result = self.history.session_api.broadcast(folder, req)
+                if result.get("priority"):
+                    # Idle agents shouldn't wait for the next Oracle pass.
+                    self._oracle_soon()
             await _write_json(writer, 200 if method == "GET" else 202, result)
         except (ValueError, UnicodeDecodeError):
             await _write_json(writer, 400, {"error": "invalid JSON"})
@@ -3997,6 +4081,10 @@ class Server:
         # Record the decision. A blocking hook polling /decision picks it up and
         # returns it to the agent.
         decided = self.approvals.set_decision(approval_id, decision)
+        if decided:
+            approval = self.approvals.get(approval_id)
+            if approval is not None:
+                self._attend(approval.session_key)
         status = 200 if decided else 409
         await _write_json(writer, status, {"decided": decided, "decision": decision})
 
@@ -4609,6 +4697,10 @@ class Server:
     async def _oracle_tick(self) -> None:
         """Paste an inbox reminder into idle agents whose mail would otherwise
         wait until the owner happens to look. Gates live in core/oracle.py."""
+        async with self._oracle_lock:
+            await self._oracle_pass()
+
+    async def _oracle_pass(self) -> None:
         now = int(time.time() * 1000)
         await self._clear_stale_waiting(now)
         for row in self.history.sessions():
@@ -4627,6 +4719,11 @@ class Server:
                 continue
             if not mail:
                 continue
+            harness = _build_runtime(row.get("runtime"), str(row.get("command") or ""))
+            if not harness.priority_delivery:
+                # "Inbox only": no fast path or pinned text for agents that
+                # haven't declared priority delivery.
+                mail = [{**m, "priority": 0} for m in mail]
             screen = await asyncio.to_thread(sup.visible_screen)
             previous = self._oracle_nudges.get(key) or self._last_nudge(key)
             picked = oracle.should_nudge(
@@ -4644,10 +4741,26 @@ class Server:
             )
             if not picked:
                 continue
-            text = oracle.reminder(picked, now)
+            urgent = [m for m in picked if m.get("priority")]
+            rest = [m for m in picked if not m.get("priority")]
+            pinned = self.history.session_api.priority_notice(key) if urgent else None
+            text = " ".join(
+                t
+                for t in (
+                    pinned and f"Duckterm Oracle: {pinned[0]}",
+                    rest and oracle.reminder(rest, now),
+                )
+                if t
+            )
+            if not text:
+                continue
             status = await self._submit_prompt(key, text)
             if status == "failed":
                 continue
+            if pinned and status == "submitted":
+                # A stuck paste isn't delivery: the status stays "pending
+                # next turn" and the Stop-hook notice still carries it.
+                self.history.session_api.mark_delivered(pinned[1])
             ids = sorted(str(m["id"]) for m in picked)
             nudge = oracle.record_nudge(previous, picked, mail, now)
             self._oracle_nudges[key] = nudge

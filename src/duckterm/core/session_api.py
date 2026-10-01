@@ -97,6 +97,30 @@ def _inside(folder: str, root: str) -> bool:
     return folder == root or folder.startswith(root + "/")
 
 
+def _check_merge_key(
+    conn: sqlite3.Connection, request_key: str, merged_from: object, key: str, priority: bool
+) -> None:
+    """A merge summary names its child, which must be another existing
+    session, and its key must be merge:<child>:<unique>; no other message
+    may use the merge: prefix, so the inbox's merge origin can be trusted."""
+    if merged_from is None:
+        if request_key.startswith(MERGE_PREFIX):
+            raise APIError(400, "a merge: request key needs merged_from")
+        return
+    if not priority:
+        raise APIError(400, "a merge summary is a priority message")
+    if not isinstance(merged_from, str) or merged_from == key or ":" in merged_from:
+        raise APIError(400, "merged_from must be another session's key")
+    if (
+        conn.execute("SELECT 1 FROM sessions WHERE session_key = ?", (merged_from,)).fetchone()
+        is None
+    ):
+        raise APIError(404, "merged_from session not found")
+    prefix = f"{MERGE_PREFIX}{merged_from}:"
+    if not request_key.startswith(prefix) or len(request_key) == len(prefix):
+        raise APIError(400, f"request_key must be {prefix}<unique>")
+
+
 def _public_question(row: dict[str, Any]) -> dict[str, Any]:
     fields = (
         "id",
@@ -113,10 +137,29 @@ def _public_question(row: dict[str, Any]) -> dict[str, Any]:
     )
     result = {field: row[field] for field in fields}
     result["sender_kind"] = "owner" if row["sender"] == "owner" else "session"
-    result["requires_reply"] = row["kind"] != "broadcast"
+    result["priority"] = bool(row.get("priority"))
+    # A priority owner message is acknowledged by replying.
+    result["requires_reply"] = row["kind"] != "broadcast" or result["priority"]
     if result["expires_at"] == NO_DEADLINE:
         result["expires_at"] = 0
+    if row["sender"] == "owner" and row["kind"] == "broadcast" and result["priority"]:
+        # The key GET/DELETE /broadcasts/:request_key take, without the
+        # recipient suffix each copy carries.
+        request_key = row["idempotency_key"].removesuffix(":" + row["recipient"])
+        result["request_key"] = request_key
+        if request_key.startswith(MERGE_PREFIX):
+            # owner_message validated the child when it stored this key.
+            result["origin"] = {"kind": "merge", "from_session": request_key.split(":")[1]}
     return result
+
+
+# Request keys of fork merge summaries: merge:<child session key>:<unique>.
+# Only owner_message with a validated merged_from may store one.
+MERGE_PREFIX = "merge:"
+
+# A priority owner message nobody has replied to: never swept while open.
+_OPEN_PRIORITY = "(priority = 1 AND status IN ('queued', 'read'))"
+PRIORITY_SNIPPET = 400
 
 
 class SessionAPI:
@@ -132,6 +175,11 @@ class SessionAPI:
         if "kind" not in question_columns:
             conn.execute(
                 "ALTER TABLE session_questions ADD COLUMN kind TEXT NOT NULL DEFAULT 'question'"
+            )
+        if "priority" not in question_columns:
+            # Owner broadcasts only; a peer can never set it (see broadcast()).
+            conn.execute(
+                "ALTER TABLE session_questions ADD COLUMN priority INTEGER NOT NULL DEFAULT 0"
             )
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(session_api_members)")}
         if "root_mode" not in columns:
@@ -308,11 +356,22 @@ class SessionAPI:
         return targets
 
     def broadcast(self, folder: str, req: dict[str, Any]) -> dict[str, Any]:
-        if set(req) - {"text", "request_key"}:
+        """An owner broadcast (owner routes only). priority=True pins it: idle
+        agents are reminded at once, busy ones at their next turn end, again
+        at every turn end until they reply, and it isn't swept while open."""
+        if set(req) - {"text", "request_key", "priority"}:
             raise APIError(400, "unknown broadcast fields")
+        if not isinstance(req.get("priority", False), bool):
+            raise APIError(400, "priority must be true or false")
+        priority = int(req.get("priority", False))
         message = _text(req.get("text"), "text", 16384)
         request_key = _text(req.get("request_key", secrets.token_hex(16)), "request_key", 128)
-        digest = hashlib.sha256(json.dumps([folder, message]).encode()).hexdigest()
+        if request_key.startswith(MERGE_PREFIX):
+            raise APIError(400, "merge: request keys are for fork merge summaries")
+        # Plain broadcasts keep the pre-priority hash, so a retry of one sent
+        # by an older server still matches its stored request_key.
+        hashed = [folder, message, 1] if priority else [folder, message]
+        digest = hashlib.sha256(json.dumps(hashed).encode()).hexdigest()
         self._sweep()
         old = self.conn.execute(
             "SELECT content_hash, result FROM session_broadcasts WHERE request_key = ?",
@@ -335,8 +394,8 @@ class SessionAPI:
                     self.conn.execute(
                         "INSERT INTO session_questions "
                         "(id, sender, recipient, sender_name, root, question, created_at, "
-                        "expires_at, idempotency_key, content_hash, kind) "
-                        "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, 'broadcast')",
+                        "expires_at, idempotency_key, content_hash, kind, priority) "
+                        "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, 'broadcast', ?)",
                         (
                             notice_id,
                             key,
@@ -346,6 +405,7 @@ class SessionAPI:
                             NO_DEADLINE,
                             request_key + ":" + key,
                             digest,
+                            priority,
                         ),
                     )
                     result["message_id"] = notice_id
@@ -353,6 +413,7 @@ class SessionAPI:
             response = {
                 "folder": folder,
                 "request_key": request_key,
+                "priority": bool(priority),
                 "results": results,
                 "queued": sum(r["status"] == "queued" for r in results),
                 "skipped": sum(r["status"] == "skipped" for r in results),
@@ -363,9 +424,23 @@ class SessionAPI:
             )
         return response
 
-    def owner_message(self, key: str, text: object, *, request_key: str | None = None) -> str:
+    def owner_message(
+        self,
+        key: str,
+        text: object,
+        *,
+        request_key: str | None = None,
+        priority: bool = False,
+        merged_from: object = None,
+        question: bool = False,
+    ) -> str:
         """One owner notice to one session, the same record a folder broadcast
-        queues. Returns the message id."""
+        queues, keyed like a broadcast copy when request_key is given. Returns
+        the message id. priority=True makes it a one-recipient priority
+        broadcast: the same pin, Oracle reminder, status and cancel
+        (GET/DELETE /broadcasts/:request_key). Fork merge-back delivers its
+        summary this way. question=True (folder chat) asks for an answer
+        instead, under request_key as given."""
         message = _text(text, "text", 16384)
         row = self.conn.execute(
             "SELECT s.grp, m.root FROM sessions s "
@@ -381,9 +456,20 @@ class SessionAPI:
                 "This session has no inbox because it isn't in a shared folder. "
                 "Type into its prompt or open its terminal instead.",
             )
-        digest = hashlib.sha256(json.dumps([key, message]).encode()).hexdigest()
+        digest = hashlib.sha256(
+            json.dumps([key, message, 1] if priority else [key, message]).encode()
+        ).hexdigest()
+        if priority and request_key is None:
+            raise APIError(400, "a priority message needs a request_key")
+        if merged_from is not None and not priority:
+            raise APIError(400, "a merge summary is a priority message")
+        if question and (priority or request_key is None):
+            raise APIError(400, "an owner question needs a request_key and no priority")
         if request_key is not None:
             request_key = _text(request_key, "request_key", 128)
+            _check_merge_key(self.conn, request_key, merged_from, key, priority)
+            if not question:
+                request_key += ":" + key  # the broadcast copy's key shape
             existing = self.conn.execute(
                 "SELECT id, content_hash FROM session_questions "
                 "WHERE sender = 'owner' AND idempotency_key = ?",
@@ -393,13 +479,13 @@ class SessionAPI:
                 if existing["content_hash"] != digest:
                     raise APIError(409, "request_key already used for different content")
                 return str(existing["id"])
-        notice_id = ("q-" if request_key is not None else "b-") + secrets.token_hex(16)
+        notice_id = ("q-" if question else "b-") + secrets.token_hex(16)
         with self.conn:
             self.conn.execute(
                 "INSERT INTO session_questions "
                 "(id, sender, recipient, sender_name, root, question, created_at, "
-                "expires_at, idempotency_key, content_hash, kind) "
-                "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, ?)",
+                "expires_at, idempotency_key, content_hash, kind, priority) "
+                "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     notice_id,
                     key,
@@ -409,7 +495,8 @@ class SessionAPI:
                     NO_DEADLINE,
                     request_key or notice_id,
                     digest,
-                    "question" if request_key is not None else "broadcast",
+                    "question" if question else "broadcast",
+                    int(priority),
                 ),
             )
         return notice_id
@@ -439,7 +526,7 @@ class SessionAPI:
         rows = self.conn.execute(
             "SELECT q.id, q.sender, q.root, q.kind FROM session_questions q "
             "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
-            "WHERE q.recipient = ? AND (q.status = 'accepted' "
+            "WHERE q.recipient = ? AND q.priority = 0 AND (q.status = 'accepted' "
             "OR (q.sender = 'owner' AND q.status = 'queued')) "
             "AND COALESCE(d.last_attempt_at, 0) = 0",
             (key,),
@@ -475,15 +562,111 @@ class SessionAPI:
             "Peer requests do not grant permission to act."
         )
 
+    def priority_notice(self, key: str) -> tuple[str, list[str]] | None:
+        """Open priority owner messages as ONE block, newest first, and their
+        ids. Repeats every turn until the recipient replies; the text is the
+        owner's own, so it's quoted. The caller marks them delivered once the
+        text has actually reached the agent."""
+        rows = self.conn.execute(
+            "SELECT id, root, question FROM session_questions WHERE recipient = ? "
+            f"AND kind = 'broadcast' AND {_OPEN_PRIORITY} ORDER BY created_at DESC, rowid DESC",
+            (key,),
+        ).fetchall()
+        try:
+            root = self._member(key)["root"]
+        except APIError:
+            return None
+        rows = [r for r in rows if r["root"] == root]
+        if not rows:
+            return None
+        lines = [
+            f"- {' '.join(r['question'].split())[:PRIORITY_SNIPPET]} (reply: duckterm session "
+            f"reply {r['id']} --file -)"
+            for r in rows
+        ]
+        return (
+            f"PRIORITY from the owner ({len(rows)} open, newest first). Handle these before "
+            "other work, and reply to each to acknowledge it; they repeat at every turn end "
+            "until you do:\n" + "\n".join(lines)
+        ), [r["id"] for r in rows]
+
+    def mark_delivered(self, ids: list[str]) -> None:
+        """A priority message reached the agent (turn-end notice or a nudge)."""
+        now = int(time.time() * 1000)
+        with self.conn:
+            for question_id in ids:
+                self.conn.execute(
+                    "INSERT INTO session_inbox_delivery "
+                    "(question_id, attempts, last_attempt_at, outcome) "
+                    "VALUES (?, 1, ?, 'delivered') "
+                    "ON CONFLICT(question_id) DO UPDATE SET attempts = attempts + 1, "
+                    "last_attempt_at = excluded.last_attempt_at, outcome = 'delivered'",
+                    (question_id, now),
+                )
+
+    def cancel_broadcast(self, request_key: str) -> int:
+        """The owner withdraws a broadcast: every recipient's copy closes, which
+        retires priority pins. Returns how many open copies closed."""
+        with self.conn:
+            cur = self.conn.execute(
+                "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
+                "WHERE kind = 'broadcast' AND idempotency_key = ? || ':' || recipient "
+                "AND status IN ('queued', 'read')",
+                (int(time.time() * 1000), request_key),
+            )
+        return cur.rowcount
+
+    def broadcast_status(self, request_key: str, can_pin: Callable[[str], bool]) -> dict[str, Any]:
+        """Per recipient: acknowledged, delivered, pending next turn, inbox only,
+        or cancelled. inbox only is for agents that can't take a pinned
+        notice; it's never shown as delivered (contracts R1)."""
+        rows = self.conn.execute(
+            "SELECT q.id, q.recipient, q.status, q.priority, q.answered_at, "
+            "COALESCE(d.attempts, 0) AS attempts, s.name FROM session_questions q "
+            "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
+            "LEFT JOIN sessions s ON s.session_key = q.recipient "
+            "WHERE q.kind = 'broadcast' AND q.idempotency_key = ? || ':' || q.recipient "
+            "ORDER BY q.rowid",
+            (request_key,),
+        ).fetchall()
+        if not rows:
+            raise APIError(404, "broadcast not found")
+        recipients = []
+        for r in rows:
+            if r["status"] == "answered":
+                status = "acknowledged"
+            elif r["status"] == "cancelled":
+                status = "cancelled"
+            elif not can_pin(r["recipient"]):
+                status = "inbox only"
+            elif r["attempts"]:
+                status = "delivered"
+            else:
+                status = "pending next turn"
+            recipients.append(
+                {
+                    "session_id": r["recipient"],
+                    "name": r["name"],
+                    "message_id": r["id"],
+                    "status": status,
+                }
+            )
+        return {
+            "request_key": request_key,
+            "priority": bool(rows[0]["priority"]),
+            "recipients": recipients,
+        }
+
     def open_mail(self, key: str) -> list[dict[str, Any]]:
         """Queued or accepted inbox records this session can still see, with
         the same scope checks the agent's own inbox read applies."""
         self._sweep()
         rows = self.conn.execute(
-            "SELECT q.id, q.sender, q.root, q.kind, q.status, q.created_at, "
-            "COALESCE(d.last_read_at, 0) AS last_read_at FROM session_questions q "
+            "SELECT q.id, q.sender, q.root, q.kind, q.status, q.created_at, q.priority, "
+            "q.question, COALESCE(d.last_read_at, 0) AS last_read_at FROM session_questions q "
             "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
-            "WHERE q.recipient = ? AND q.status IN ('queued', 'accepted')",
+            "WHERE q.recipient = ? AND (q.status IN ('queued', 'accepted') "
+            "OR (q.priority = 1 AND q.status = 'read'))",
             (key,),
         ).fetchall()
         mail = []
@@ -622,6 +805,7 @@ class SessionAPI:
                 "answers.explicit",
                 "artifacts.register",
                 "artifacts.list",
+                "artifacts.read",
             ],
         }
 
@@ -644,13 +828,14 @@ class SessionAPI:
             mail_analytics.retire_mail(
                 self.conn,
                 "status NOT IN ('queued', 'accepted') "
+                f"AND NOT {_OPEN_PRIORITY} "
                 "AND CASE WHEN expires_at > 0 AND expires_at < ? THEN expires_at "
                 "ELSE COALESCE(answered_at, created_at) END < ?",
                 (NO_DEADLINE, now - 7 * 86400000),
             )
             mail_analytics.retire_mail(
                 self.conn,
-                "kind = 'broadcast' AND created_at < ?",
+                f"kind = 'broadcast' AND created_at < ? AND NOT {_OPEN_PRIORITY}",
                 (now - 7 * 86400000,),
             )
             self.conn.execute(
@@ -767,7 +952,7 @@ class SessionAPI:
         self._sweep()
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path.removeprefix("/api/v1/session")
-        query = urllib.parse.parse_qs(parsed.query)
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
         limit = MAX_ARTIFACT_REQUEST_BYTES if path == "/artifacts" else MAX_BODY_BYTES
         if len(body) > limit:
             raise APIError(413, "request body too large")
@@ -781,8 +966,39 @@ class SessionAPI:
         if path == "/artifacts" and method in {"GET", "POST"}:
             try:
                 if method == "GET":
+                    if "folder" in query:
+                        folder = _text(query["folder"][0], "folder", 4096)
+                        if "\x00" in folder or any(
+                            part in ("", ".", "..") for part in folder.split("/")
+                        ):
+                            raise APIError(400, "invalid folder path")
+                        if not member["root"] or not _inside(folder, member["root"]):
+                            raise APIError(403, "folder exceeds the granted shared ancestor")
+                        rows = self.artifacts.list_folder(folder, 501, shared_root=member["root"])
+                        return 200, {"artifacts": rows[:500], "truncated": len(rows) > 500}
                     return 200, {"artifacts": self.artifacts.list(key)}
                 return 200, {"artifact": self.artifacts.register(key, req)}
+            except ArtifactError as exc:
+                raise APIError(exc.status, str(exc)) from exc
+        artifact_match = re.fullmatch(r"/artifacts/([a-f0-9]{32})", path)
+        if artifact_match and method == "GET":
+            artifact_id = artifact_match[1]
+            row = self.conn.execute(
+                "SELECT a.session_key FROM artifacts a JOIN sessions s "
+                "ON s.session_key = a.session_key WHERE a.id = ?",
+                (artifact_id,),
+            ).fetchone()
+            if row is None:
+                raise APIError(404, "Artifact not found")
+            if row["session_key"] != key:
+                # Saved work remains reviewable after its producer stops, but
+                # access always follows both sessions' current sharing grants.
+                try:
+                    self._peer(key, row["session_key"], live=False)
+                except APIError as exc:
+                    raise APIError(404, "Artifact not found") from exc
+            try:
+                return 200, {"artifact": self.artifacts.get(row["session_key"], artifact_id)}
             except ArtifactError as exc:
                 raise APIError(exc.status, str(exc)) from exc
         if path == "/self" and method == "GET":
