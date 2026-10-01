@@ -37,6 +37,11 @@ from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.base import AgentRuntime, SessionState, plain_screen
 
 # State -> the event_type whose derive_state yields that state. One vocabulary.
+_TAIL_TICK_BYTES = 64 * 1024
+_TAIL_ACTIVE_SLEEP = 0.025
+_TAIL_LIVENESS_INTERVAL = 1.0
+_SCREEN_SCAN_INTERVAL = 0.25
+
 _STATE_EVENT = {
     "busy": events.PRE_TOOL_USE,
     "idle": events.STOP,
@@ -76,6 +81,8 @@ class SessionSupervisor:
         self._env = {**session_credentials.launch_env(session_key), **(env or {})}
         self._proc: asyncio.subprocess.Process | None = None
         self._state: SessionState = "busy"
+        self._screen_pending: deque[str] = deque(maxlen=32)
+        self._next_screen_scan = 0.0
         self._task: asyncio.Task[None] | None = None
         self._primary_fd: int | None = None  # PTY master, for writing input
         self._tmux_target: str | None = None  # set when tmux-backed
@@ -224,31 +231,26 @@ class SessionSupervisor:
             # terminal felt), backing off to 200ms after 5s of quiet so an
             # idle session costs ~5 file reads a second, not 40.
             last_output = 0.0
+            next_liveness = 0.0
             loop = asyncio.get_running_loop()
             fh = path.open("rb")
             try:
                 while True:
-                    chunk = fh.read(4096)
-                    if chunk:
+                    # A constantly growing pane must yield even if EOF is never
+                    # reached. Keep byte chunks unchanged for terminal replay.
+                    remaining = _TAIL_TICK_BYTES
+                    while remaining:
+                        chunk = fh.read(min(4096, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
                         last_output = loop.time()
-                        # Terminal gets the raw bytes (CR-LF intact).
                         self._record_bytes(chunk)
-                        # The line view (state/tool detection, summaries, and the
-                        # legacy /output SSE) stays line-oriented: split the
-                        # decoded chunk on newlines so each record is one line,
-                        # as the PTY pump produces. \r is stripped — substring
-                        # checks don't care, and the SSE line view shouldn't show
-                        # carriage returns.
                         for raw_line in chunk.decode(errors="replace").splitlines():
-                            line = raw_line + "\n"
-                            self._record_output(line)
-                            tool = self.runtime.tool_in(line)
-                            if tool is not None:
-                                self._emit(events.PRE_TOOL_USE, tool_name=tool)
-                            new_state = self.runtime.detect_state(line)
-                            if new_state is not None and new_state != self._state:
-                                self._state = new_state
-                                self._emit(_STATE_EVENT[new_state])
+                            self._observe_output(raw_line + "\n")
+                    self._scan_pending_output(loop.time())
+                    if not remaining:
+                        await asyncio.sleep(_TAIL_ACTIVE_SLEEP)
                         continue
                     # The bounded writer rotates by rename. Drain the old inode,
                     # then follow the replacement without replaying the old file.
@@ -259,11 +261,17 @@ class SessionSupervisor:
                     if rotated:
                         fh.close()
                         fh = path.open("rb")
+                        await asyncio.sleep(_TAIL_ACTIVE_SLEEP)
                         continue
-                    if not await asyncio.to_thread(tmux.session_exists, target):
-                        break
+                    # Liveness is independent of display latency: spawning tmux
+                    # on every empty 25ms poll dominated many-session CPU cost.
+                    if loop.time() >= next_liveness:
+                        if not await asyncio.to_thread(tmux.session_exists, target):
+                            self._scan_pending_output(loop.time(), force=True)
+                            break
+                        next_liveness = loop.time() + _TAIL_LIVENESS_INTERVAL
                     active = max(last_output, self._last_input)
-                    await asyncio.sleep(0.025 if loop.time() - active < 5 else 0.2)
+                    await asyncio.sleep(_TAIL_ACTIVE_SLEEP if loop.time() - active < 5 else 0.2)
             finally:
                 fh.close()
         except Exception as e:  # noqa: BLE001 — boundary: a background task
@@ -285,20 +293,20 @@ class SessionSupervisor:
         # detection happens here on top of the chunks.
         pending = ""
 
-        def scan(line: str) -> None:
-            self._record_output(line)
-            tool = self.runtime.tool_in(line)
-            if tool is not None:
-                self._emit(events.PRE_TOOL_USE, tool_name=tool)
-            new_state = self.runtime.detect_state(line)
-            if new_state is not None and new_state != self._state:
-                self._state = new_state
-                self._emit(_STATE_EVENT[new_state])
-
         try:
             while True:
                 try:
-                    raw = await reader.read(4096)
+                    if self._screen_pending:
+                        try:
+                            raw = await asyncio.wait_for(
+                                reader.read(4096),
+                                max(0.001, self._next_screen_scan - loop.time()),
+                            )
+                        except TimeoutError:
+                            self._scan_pending_output(loop.time())
+                            continue
+                    else:
+                        raw = await reader.read(4096)
                 except OSError as e:
                     if e.errno != errno.EIO:
                         raise
@@ -309,14 +317,43 @@ class SessionSupervisor:
                 pending += raw.decode(errors="replace")
                 *lines, pending = pending.split("\n")
                 for line in lines:
-                    scan(line + "\n")
+                    self._observe_output(line + "\n")
+                self._scan_pending_output(loop.time())
             if pending:
-                scan(pending)
+                self._observe_output(pending)
+            self._scan_pending_output(loop.time(), force=True)
         except Exception as e:  # noqa: BLE001 — boundary: a background task
             print(f"[duckterm] output pump for {self.session_key} failed: {e}", file=sys.stderr)
         finally:
             transport.close()
             await self._finish()
+
+    def _observe_output(self, line: str) -> None:
+        self._record_output(line)
+        if self.runtime.hook_spec is not None:
+            # Hooks provide detailed events; screen parsing is a bounded fallback.
+            # Retain recent screen evidence without retaining the whole repaint.
+            self._screen_pending.append(line[-2048:])
+        else:
+            # Generic agents use explicit per-line protocol markers; preserve
+            # every tool/state transition for these hookless runtimes.
+            self._scan_output(line)
+
+    def _scan_pending_output(self, now: float, *, force: bool = False) -> None:
+        if self._screen_pending and (force or now >= self._next_screen_scan):
+            screen = "".join(self._screen_pending)
+            self._screen_pending.clear()
+            self._next_screen_scan = now + _SCREEN_SCAN_INTERVAL
+            self._scan_output(screen)
+
+    def _scan_output(self, output: str) -> None:
+        tool = self.runtime.tool_in(output)
+        if tool is not None:
+            self._emit(events.PRE_TOOL_USE, tool_name=tool)
+        new_state = self.runtime.detect_state(output)
+        if new_state is not None and new_state != self._state:
+            self._state = new_state
+            self._emit(_STATE_EVENT[new_state])
 
     def _record_output(self, line: str) -> None:
         self._output.append(line)

@@ -1,5 +1,8 @@
 # Retro — lessons from real breakage
 
+## Terminal display cadence must not drive tmux process creation
+The pane tail could drain continuously without yielding, scanned hook-capable TUI repaints per line, and launched a tmux liveness subprocess on every empty25–200ms poll. Bound each tick to64KiB before a25ms yield, check liveness at most once/second independently of display latency, and batch hook-capable screen fallback every250ms. Preserve raw bytes and generic per-line protocol events; flush pending PTY evidence even when output goes quiet. A28-session synthetic benchmark reduced process CPU from34.9% to6.7% with identical840,000 delivered bytes; this is not an installed-server CPU claim. Tests cover fairness, probe cadence, rotation, quiet prompts and replay.
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A
