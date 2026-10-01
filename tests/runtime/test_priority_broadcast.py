@@ -364,3 +364,13 @@ def test_a_request_key_is_bound_to_its_priority(scenario, first, retry, code) ->
     assert again[0] == code
     if code == 200:
         assert again[1]["message_id"] == sent[1]["message_id"]
+
+
+def test_status_and_cancel_touch_only_their_own_broadcast(scenario) -> None:
+    """A key that is a prefix of another (k vs k:x) must not reach its copies."""
+    _, server, owner, _ = scenario
+    send(server, owner, "Outer", "k")
+    send(server, owner, "Inner", "k:x")
+    assert set(status(server, owner, "k")) == {"claude", "peer", "codex"}
+    dispatch(server, "DELETE", "/broadcasts/k", owner)
+    assert set(status(server, owner, "k:x").values()) == {"pending next turn", "inbox only"}

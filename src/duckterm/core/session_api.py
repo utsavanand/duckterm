@@ -610,9 +610,9 @@ class SessionAPI:
         with self.conn:
             cur = self.conn.execute(
                 "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
-                "WHERE kind = 'broadcast' AND idempotency_key LIKE ? ESCAPE '\\' "
+                "WHERE kind = 'broadcast' AND idempotency_key = ? || ':' || recipient "
                 "AND status IN ('queued', 'read')",
-                (int(time.time() * 1000), _like_prefix(request_key) + ":%"),
+                (int(time.time() * 1000), request_key),
             )
         return cur.rowcount
 
@@ -625,9 +625,9 @@ class SessionAPI:
             "COALESCE(d.attempts, 0) AS attempts, s.name FROM session_questions q "
             "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
             "LEFT JOIN sessions s ON s.session_key = q.recipient "
-            "WHERE q.kind = 'broadcast' AND q.idempotency_key LIKE ? ESCAPE '\\' "
+            "WHERE q.kind = 'broadcast' AND q.idempotency_key = ? || ':' || q.recipient "
             "ORDER BY q.rowid",
-            (_like_prefix(request_key) + ":%",),
+            (request_key,),
         ).fetchall()
         if not rows:
             raise APIError(404, "broadcast not found")
@@ -1160,7 +1160,3 @@ class SessionAPI:
                 ),
             )
         return 200, self._question(key, question["id"])
-
-
-def _like_prefix(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
