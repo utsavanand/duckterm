@@ -60,6 +60,7 @@ test("folder priority preserves exact text, durable delivery status and acknowle
     await page.getByRole('button', { name: 'Cancel broadcast', exact: true }).scrollIntoViewIfNeeded();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: '/tmp/duckterm-priority-implemented-mobile.png' });
+    await page.getByRole('button', { name: 'Show Agents panel', exact: true }).click();
     await page.setViewportSize({ width: 1440, height: 1000 });
     const answer = await fetch(`${base()}/api/v1/session/questions/${inboxes[0][0].id}/answer`, { method: 'POST', headers: { Authorization: `Bearer ${credentials[0]}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: 'Check complete; summary saved.' }) });
     expect(answer.status).toBe(200);
