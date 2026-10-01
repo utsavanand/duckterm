@@ -60,6 +60,12 @@ the owner hasn't seen.
 ## Terminal display cadence must not drive tmux process creation
 The pane tail could drain continuously without yielding, scanned hook-capable TUI repaints per line, and launched a tmux liveness subprocess on every empty25–200ms poll. Bound each tick to64KiB before a25ms yield, check liveness at most once/second independently of display latency, and batch hook-capable screen fallback every250ms. Preserve raw bytes and generic per-line protocol events; flush pending PTY evidence even when output goes quiet. A28-session synthetic benchmark reduced process CPU from34.9% to6.7% with identical840,000 delivered bytes; this is not an installed-server CPU claim. Tests cover fairness, probe cadence, rotation, quiet prompts and replay.
 
+## Confirmed parent removal must survive frontend replay
+Removing a parent row left child controls gated by a stale parentKey; null-coalescing then restored the original edge from old fork events. Represent a confirmed absent parent as null, keep database lineage authoritative during seed, and clear direct links immediately on deletion. Check both seed/replay orders, late events, remote host isolation, and the real dashboard delete/reload flow while preserving descendants and historical provenance.
+
+## Deleting a parent must remove active child links, not child sessions
+Parent deletion left children pointing at a removed row. Clear direct child parent_session_key values in the deletion transaction while retaining their recorded fork events. Reject links to tombstoned parents in late supervisor events before live fan-out, and repair old tombstoned-parent edges on reopen without guessing about unknown parents. Tests verify descendants remain attached to their surviving parent and a real child PTY process stays responsive after its parent is deleted. Dashboard local-state cleanup is a separate UI integration requirement.
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A
