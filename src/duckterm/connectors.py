@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -216,10 +217,53 @@ def huggingface_server_argv() -> list[str]:
     return [npx, "--yes", _MCP_REMOTE, _HF_URL, "--transport", "http-only", "--silent"]
 
 
-def _install(name: str, *, home: Path | None = None) -> None:
+_HARNESS_BINARIES = {"claude-code": "claude", "codex": "codex"}
+
+
+def harness_present(harness: str) -> bool:
+    """Whether the agent CLI exists here. A registration is written either way —
+    it applies when the harness arrives — but the panel must not claim a machine
+    without Codex is serving tools to Codex."""
+    return shutil.which(_HARNESS_BINARIES[harness]) is not None
+
+
+def harness_choice(name: str, *, home: Path | None = None) -> list[str]:
+    """Harnesses this connector is registered for.
+
+    Stored per connector so a choice survives disable/enable. A connector that
+    predates the setting has no stored choice, so read the harness configs
+    instead of assuming both — otherwise the row would claim Codex on a machine
+    where only Claude Code was ever registered, which is the false checkmark
+    this setting exists to remove. Nothing registered yet means both, the
+    default for a fresh connect."""
+    stored = policy(name, home=home).get("harnesses")
+    if isinstance(stored, list):
+        chosen = [h for h in HARNESSES if h in stored]
+        return chosen or list(HARNESSES)
+    registered = [
+        harness
+        for harness, installed in (
+            ("claude-code", mcp_install.claude_installed(name, home=home)),
+            ("codex", mcp_install.codex_installed(name, home=home)),
+        )
+        if installed
+    ]
+    return registered or list(HARNESSES)
+
+
+def _install(name: str, *, home: Path | None = None, harnesses: list[str] | None = None) -> None:
     command, args = _duckterm_bin(), ["connector-run", name]
-    mcp_install.claude_install(name, command, args, home=home)
-    mcp_install.codex_install(name, command, args, home=home)
+    wanted = harnesses if harnesses is not None else harness_choice(name, home=home)
+    for harness, install, remove in (
+        ("claude-code", mcp_install.claude_install, mcp_install.claude_remove),
+        ("codex", mcp_install.codex_install, mcp_install.codex_remove),
+    ):
+        if harness in wanted:
+            install(name, command, args, home=home)
+        else:
+            # Deselecting must withdraw an existing entry, or the harness keeps
+            # serving the connector from a registration nobody can see.
+            remove(name, home=home)
 
 
 def railway_logged_in() -> bool:
@@ -255,8 +299,16 @@ def enable(
     home: Path | None = None,
     source: str | None = None,
     write_access: bool = False,
+    harnesses: list[str] | None = None,
 ) -> dict[str, object]:
     previous = policy(name, home=home)
+    if harnesses is not None:
+        unknown = [h for h in harnesses if h not in HARNESSES]
+        if unknown:
+            raise RuntimeError(f"Unknown harness {unknown[0]!r}")
+        if not harnesses:
+            raise RuntimeError("Choose at least one agent for this connector")
+    chosen = list(harnesses) if harnesses is not None else harness_choice(name, home=home)
     from duckterm import connector_client
 
     if os.environ.get("DUCKTERM_HOSTED"):
@@ -267,8 +319,8 @@ def enable(
         available = {row["name"]: row for row in connector_client.statuses()}
         if not available.get(name, {}).get("enabled"):
             raise RuntimeError("Connector is not enabled for this workspace on the shared host")
-        _install(name, home=home)
-        _save_policy(name, {"enabled": True, "generation": uuid.uuid4().hex})
+        _install(name, home=home, harnesses=chosen)
+        _save_policy(name, {"enabled": True, "harnesses": chosen, "generation": uuid.uuid4().hex})
         return status(name, home=home)
     identity: str | None = None
     if name == "github":
@@ -325,10 +377,8 @@ def enable(
         source = "google-oauth" if name == "gmail" else "gcloud-cli"
     # Publish disabled first: an old live runner must not use a replaced identity.
     _save_policy(name, {**previous, "enabled": False, "generation": uuid.uuid4().hex})
-    command, args = _duckterm_bin(), ["connector-run", name]
     try:
-        mcp_install.claude_install(name, command, args, home=home)
-        mcp_install.codex_install(name, command, args, home=home)
+        _install(name, home=home, harnesses=chosen)
     except Exception:
         mcp_install.claude_remove(name, home=home)
         mcp_install.codex_remove(name, home=home)
@@ -339,6 +389,7 @@ def enable(
             "enabled": True,
             "source": source,
             "identity": identity,
+            "harnesses": chosen,
             "write_access": name == "porkbun" and write_access,
             "generation": uuid.uuid4().hex,
         },
@@ -410,6 +461,7 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
         "claude-code": mcp_install.claude_installed(name, home=home),
         "codex": mcp_install.codex_installed(name, home=home),
     }
+    chosen = harness_choice(name, home=home)
     source = current.get("source")
     detail = None
     available: list[str] = []
@@ -472,7 +524,11 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
         "sources": available,
         "write_access": current.get("write_access", False),
         "installed": installed,
-        "enabled": bool(current.get("enabled")) and all(installed.values()),
+        "harnesses": chosen,
+        "harnesses_present": {h: harness_present(h) for h in HARNESSES},
+        # Only the chosen harnesses must carry an entry; a deselected one is
+        # meant to be absent, so requiring all of them would read as disabled.
+        "enabled": bool(current.get("enabled")) and all(installed[h] for h in chosen),
         "ready": ready,
         "detail": detail,
         "managed": bool(os.environ.get("DUCKTERM_HOSTED")),
@@ -511,8 +567,16 @@ def list_status(*, home: Path | None = None) -> list[dict[str, object]]:
                 "codex": mcp_install.codex_installed(name, home=home),
             },
             "enabled": bool(remote.get(name, {}).get("enabled"))
-            and mcp_install.claude_installed(name, home=home)
-            and mcp_install.codex_installed(name, home=home),
+            and all(
+                (
+                    mcp_install.claude_installed(name, home=home)
+                    if harness == "claude-code"
+                    else mcp_install.codex_installed(name, home=home)
+                )
+                for harness in harness_choice(name, home=home)
+            ),
+            "harnesses": harness_choice(name, home=home),
+            "harnesses_present": {h: harness_present(h) for h in HARNESSES},
             "ready": bool(remote.get(name, {}).get("enabled")),
             "managed": True,
             "hosted": bool(os.environ.get("DUCKTERM_HOSTED")),
@@ -622,6 +686,135 @@ def run(name: str) -> None:
         if workspace:
             workspace.cleanup()
     raise SystemExit(proc.returncode or 0)
+
+
+def verify(name: str, *, timeout: float = 30.0) -> dict[str, object]:
+    """Speak MCP to the connector the way a harness does and report what it serves.
+
+    Runs the registered command itself (`duckterm connector-run NAME`), so a
+    pass means the harness path works — not that a config entry exists. stdin
+    stays open until the reply arrives: closing it early makes servers exit
+    ("server is closing: EOF") and look broken when they are fine.
+    """
+    if name not in NAMES:
+        raise ValueError(f"unknown connector {name!r}")
+    argv = [_duckterm_bin(), "connector-run", name]
+    deadline = time.monotonic() + timeout
+    proc = subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+    replies: dict[int, dict[str, object]] = {}
+
+    def collect() -> None:
+        for line in proc.stdout or ():
+            if not line.startswith("{"):
+                continue
+            with contextlib.suppress(ValueError):
+                message = json.loads(line)
+                if isinstance(message, dict) and isinstance(message.get("id"), int):
+                    replies[message["id"]] = message
+
+    reader = threading.Thread(target=collect, daemon=True)
+    reader.start()
+
+    def send(message: dict[str, object]) -> None:
+        assert proc.stdin is not None
+        proc.stdin.write(json.dumps(message) + "\n")
+        proc.stdin.flush()
+
+    def await_reply(request_id: int) -> dict[str, object] | None:
+        while request_id not in replies and time.monotonic() < deadline:
+            if proc.poll() is not None and request_id not in replies:
+                return None
+            time.sleep(0.05)
+        return replies.get(request_id)
+
+    try:
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "clientInfo": {"name": "duckterm-verify", "version": "1"},
+                },
+            }
+        )
+        handshake = await_reply(1)
+        if handshake is None:
+            return _verify_failure(proc, "The connector did not start")
+        # A server that rejects the handshake is unusable no matter what it
+        # answers next, so this must be checked before tools/list is sent.
+        if "error" in handshake:
+            return _rpc_failure(handshake, "The connector rejected the connection")
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+        listing = await_reply(2)
+        if listing is None:
+            return _verify_failure(proc, "The connector did not list its tools")
+        if "error" in listing:
+            return _rpc_failure(listing, "The connector could not list its tools")
+        result = listing.get("result")
+        tools = result.get("tools") if isinstance(result, dict) else None
+        # Only a real tool array counts. `len("invalid")` reported 7 tools.
+        if not isinstance(tools, list):
+            return {
+                "ok": False,
+                "detail": "The connector did not list its tools in a usable form",
+                "tools": 0,
+            }
+        # An agent calls a tool by name, so an entry without a usable one is not
+        # a tool the owner can rely on; counting it would overstate the listing.
+        if not all(
+            isinstance(tool, dict) and isinstance(tool.get("name"), str) and tool["name"].strip()
+            for tool in tools
+        ):
+            return {
+                "ok": False,
+                "detail": "The connector listed a tool with no usable name",
+                "tools": 0,
+            }
+        # The panel's claim is "you can use this", and a server offering nothing
+        # to call cannot support it — report that rather than a verified zero.
+        if not tools:
+            return {"ok": False, "detail": "The connector offers no tools", "tools": 0}
+        return {"ok": True, "detail": None, "tools": len(tools)}
+    except OSError as exc:
+        return {"ok": False, "detail": str(exc)[:200], "tools": 0}
+    finally:
+        with contextlib.suppress(OSError):
+            if proc.stdin:
+                proc.stdin.close()
+        proc.terminate()
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=5)
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
+def _rpc_failure(reply: dict[str, object], summary: str) -> dict[str, object]:
+    """Prefer the server's own message — it names the version or scope at fault."""
+    error = reply.get("error")
+    message = error.get("message") if isinstance(error, dict) else None
+    return {"ok": False, "detail": str(message or error or summary)[:200], "tools": 0}
+
+
+def _verify_failure(proc: "subprocess.Popen[str]", summary: str) -> dict[str, object]:
+    """Surface the server's own complaint — it names the missing binary or login."""
+    with contextlib.suppress(OSError, ValueError):
+        if proc.poll() is not None and proc.stderr:
+            tail = (proc.stderr.read() or "").strip().splitlines()
+            if tail:
+                return {"ok": False, "detail": f"{summary}: {tail[-1][:160]}", "tools": 0}
+    return {"ok": False, "detail": summary, "tools": 0}
 
 
 def execution_state(name: str) -> dict[str, object]:

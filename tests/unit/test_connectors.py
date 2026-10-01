@@ -5,6 +5,7 @@ enable/disable writing (and cleaning) BOTH harness configs. CLI dependencies
 
 import json
 import stat
+import sys
 import tomllib
 from pathlib import Path
 
@@ -354,3 +355,133 @@ def test_huggingface_rejects_unsupported_node(
     with pytest.raises(RuntimeError, match="Node.js 22"):
         connectors.enable("huggingface", home=tmp_path)
     assert not (tmp_path / ".claude.json").exists()
+
+
+def _fake_mcp(path: Path, body: str) -> None:
+    """A stdio MCP server that answers initialize + tools/list over real pipes."""
+    path.write_text(f"#!{sys.executable}\nimport json,sys\n{body}\n")
+    path.chmod(0o755)
+
+
+_SERVES_TOOLS = """
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    msg = json.loads(line)
+    if msg.get('id') == 1:
+        ready = {'jsonrpc':'2.0','id':1,'result':{'protocolVersion':'2024-11-05'}}
+        print(json.dumps(ready), flush=True)
+    elif msg.get('id') == 2:
+        tools = [{'name': f'tool_{i}'} for i in range(3)]
+        print(json.dumps({'jsonrpc':'2.0','id':2,'result':{'tools':tools}}), flush=True)
+"""
+
+
+def test_verify_reports_the_tools_a_working_connector_serves(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = tmp_path / "server"
+    _fake_mcp(server, _SERVES_TOOLS)
+    monkeypatch.setattr(connectors, "_duckterm_bin", lambda: str(server))
+    assert connectors.verify("github") == {"ok": True, "detail": None, "tools": 3}
+
+
+def test_verify_surfaces_the_servers_own_error_when_it_cannot_start(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = tmp_path / "server"
+    _fake_mcp(server, "sys.stderr.write('uvx not found\\n')\nraise SystemExit(1)")
+    monkeypatch.setattr(connectors, "_duckterm_bin", lambda: str(server))
+    result = connectors.verify("porkbun")
+    assert result["ok"] is False and result["tools"] == 0
+    assert "uvx not found" in str(result["detail"])
+
+
+def test_verify_does_not_hang_on_a_server_that_never_answers(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = tmp_path / "server"
+    _fake_mcp(server, "import time\ntime.sleep(60)")
+    monkeypatch.setattr(connectors, "_duckterm_bin", lambda: str(server))
+    result = connectors.verify("github", timeout=1.0)
+    assert result["ok"] is False and "did not start" in str(result["detail"])
+
+
+def _gh_ready(env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _stub(env, "gh", "echo gh-token")
+    _stub(env, "github-mcp-server", "sleep 0")
+    monkeypatch.setattr(connectors, "github_identity", lambda token: "tester")
+
+
+def test_enable_registers_only_the_chosen_harness(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gh_ready(isolated_env, monkeypatch)
+    result = connectors.enable("github", source="gh-cli", home=tmp_path, harnesses=["claude-code"])
+    assert result["harnesses"] == ["claude-code"]
+    assert connectors.mcp_install.claude_installed("github", home=tmp_path)
+    assert not connectors.mcp_install.codex_installed("github", home=tmp_path)
+    # A connector serving one of two harnesses is enabled, not half-disabled.
+    assert result["enabled"] is True
+
+
+def test_deselecting_a_harness_withdraws_its_existing_entry(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Leaving the entry behind would keep serving a connector nobody can see."""
+    _gh_ready(isolated_env, monkeypatch)
+    connectors.enable("github", source="gh-cli", home=tmp_path)
+    assert connectors.mcp_install.codex_installed("github", home=tmp_path)
+    connectors.enable("github", source="gh-cli", home=tmp_path, harnesses=["claude-code"])
+    assert not connectors.mcp_install.codex_installed("github", home=tmp_path)
+
+
+def test_the_choice_survives_a_later_enable_that_does_not_restate_it(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gh_ready(isolated_env, monkeypatch)
+    connectors.enable("github", source="gh-cli", home=tmp_path, harnesses=["codex"])
+    again = connectors.enable("github", source="gh-cli", home=tmp_path)
+    assert again["harnesses"] == ["codex"]
+    assert not connectors.mcp_install.claude_installed("github", home=tmp_path)
+
+
+def test_a_connector_predating_the_setting_reports_what_is_registered(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a stored choice, read the configs: claiming Codex when only
+    Claude Code was ever registered is the false checkmark we are removing."""
+    _gh_ready(isolated_env, monkeypatch)
+    connectors.mcp_install.claude_install("github", "duckterm", ["connector-run"], home=tmp_path)
+    connectors._save_policy("github", {"enabled": True, "source": "gh-cli"})
+    assert connectors.harness_choice("github", home=tmp_path) == ["claude-code"]
+
+
+def test_a_connector_with_nothing_registered_defaults_to_both(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gh_ready(isolated_env, monkeypatch)
+    connectors._save_policy("github", {"enabled": False, "source": "gh-cli"})
+    assert connectors.harness_choice("github", home=tmp_path) == ["claude-code", "codex"]
+
+
+def test_enable_rejects_an_empty_or_unknown_harness_list(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gh_ready(isolated_env, monkeypatch)
+    with pytest.raises(RuntimeError, match="at least one agent"):
+        connectors.enable("github", source="gh-cli", home=tmp_path, harnesses=[])
+    with pytest.raises(RuntimeError, match="Unknown harness"):
+        connectors.enable("github", source="gh-cli", home=tmp_path, harnesses=["cursor"])
+
+
+def test_status_reports_which_agent_clis_exist_here(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Writing a Codex entry on a machine without Codex must not read as working."""
+    _gh_ready(isolated_env, monkeypatch)
+    _stub(isolated_env, "claude", "true")
+    connectors.enable("github", source="gh-cli", home=tmp_path)
+    present = connectors.status("github", home=tmp_path)["harnesses_present"]
+    assert present == {"claude-code": True, "codex": False}
