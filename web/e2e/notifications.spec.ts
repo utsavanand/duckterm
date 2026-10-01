@@ -3,7 +3,7 @@ import { apiDelete, base, postEvent, seedSession } from "./helpers";
 
 test("browser notification preference persists without replaying waiting sessions", async ({ page }) => {
   const key = await seedSession(`notification-${Date.now()}`, { name: "Notification check", runtime: "claude-code" });
-  await postEvent({ session_key: key, event_type: "Stop", runtime: "claude-code" });
+  await postEvent({ session_key: key, event_type: "Notification", notification_type: "permission_prompt", message: "Approval needed", runtime: "claude-code" });
   try {
     await page.addInitScript(() => {
       const notices: string[] = [];
@@ -16,6 +16,7 @@ test("browser notification preference persists without replaying waiting session
     });
     await page.goto(base());
     await expect(page.locator(".rd-row-name", { hasText: "Notification check" })).toBeVisible();
+    await expect(page.locator(".rd-row").filter({ has: page.locator(".rd-row-name", { hasText: "Notification check" }) })).toContainText("waiting");
     await page.getByRole("button", { name: /^Settings/ }).click();
     const toggle = page.getByLabel("Desktop notifications", { exact: true });
     await expect(toggle).toBeChecked();
@@ -29,7 +30,7 @@ test("browser notification preference persists without replaying waiting session
     await postEvent({ session_key: key, event_type: "UserPromptSubmit", runtime: "claude-code" });
     const row = page.locator(".rd-row").filter({ has: page.locator(".rd-row-name", { hasText: "Notification check" }) });
     await expect(row).toContainText("busy");
-    await postEvent({ session_key: key, event_type: "Stop", runtime: "claude-code" });
+    await postEvent({ session_key: key, event_type: "Notification", notification_type: "permission_prompt", message: "Approval needed", runtime: "claude-code" });
     await expect.poll(notices).toEqual(["Notification check needs you"]);
   } finally { await apiDelete(`/sessions/${key}`); }
 });
