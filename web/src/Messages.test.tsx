@@ -1,6 +1,6 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Messages } from "./Messages";
+import { Messages as ActualMessages } from "./Messages";
 
 // Messages fetches /sessions/:key/messages directly and polls it.
 const transcript = (prompt: string, reply: string) => ({
@@ -17,12 +17,17 @@ const transcripts: Record<string, unknown> = {
   empty: { messages: [], transcript: { status: "ready" } },
 };
 
+let scope = 0;
+function Messages(props: React.ComponentProps<typeof ActualMessages>) {
+  return <ActualMessages {...props} sessionKey={`${scope}-${props.sessionKey}`} />;
+}
 let resolvers: (() => void)[] = [];
 
 beforeEach(() => {
+  scope++;
   resolvers = [];
   vi.stubGlobal("fetch", (url: string) => {
-    const key = String(url).split("/sessions/")[1]?.split("/")[0] ?? "";
+    const key = String(url).split("/sessions/")[1]?.split("/")[0]?.replace(/^\d+-/, "") ?? "";
     // Hold each response open so the test can assert what renders BEFORE it lands.
     return new Promise((resolve) => {
       resolvers.push(() =>

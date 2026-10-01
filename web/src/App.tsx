@@ -476,7 +476,7 @@ function Dashboard() {
               select-to-annotate. */}
             {view === "messages" && selected && (
               <div className="rd-messages-wrap">
-                <Messages key={selected.key} sessionKey={selected.key}
+                <Messages key={selected.key} sessionKey={selected.key} active={!towerOpen && selectedFolder === null}
                   pins={messagePins.pins} pinPending={messagePins.pending || !!messagePins.error}
                   onTogglePin={messagePins.toggle}
                   target={pinTarget?.sessionKey === selected.key ? pinTarget : null}

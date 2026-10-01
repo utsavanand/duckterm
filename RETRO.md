@@ -1,5 +1,10 @@
 # Retro — lessons from real breakage
 
+## 2026-10-01 — Cached empty lists lost transcript availability
+**Broke:** The Messages snapshot retained only the message list, so unavailable reasons vanished on remount and status-only changes shared the same empty-list signature.
+**Fix:** Retain and compare transcript status and reason atomically with the list, including cache size accounting; cover unavailable, empty, recovered, hidden and remounted states.
+**Lesson:** Cache the full user-visible response contract, not only its main collection.
+
 ## 2026-09-30 — Missing transcripts looked like empty conversations
 **Broke:** Messages ignored the API transcript status and said no reply existed when the conversation identity or local file was unavailable.
 **Fix:** Render the recorded unavailable reason and distinguish missing identity, missing local transcript, and a genuinely empty conversation; clear status on session changes and successful recovery.
@@ -19,6 +24,9 @@ Copying only each message dict protected added message keys but shared nested bl
 ## Messages refresh must reuse transcript parsing across runtime adapters
 Every Messages request constructs a fresh runtime adapter, so an adapter-local cache would still reread the entire transcript. Claude and Codex now share bounded per-runtime JSONL caches using TokenLedger's complete-line offset pattern. Unchanged files are stat-only; changed files verify the committed prefix before parsing appended records. Size growth does not prove an append: the first gate caught a growing rewrite keeping a stale pin target. Partial trailing records are retried, and replacement/truncation/rewrites invalidate cached state. Keep parser IDs and per-session message keys stable; test fresh adapters and large files, not only calls on one adapter. Full-response serialization and frontend polling are separate follow-ups.
 
+## 2026-09-30 — Messages must not start empty after every tab switch
+
+Remounting a transcript view discarded its last good reply, and fixed-interval refreshes could pile up behind a slow full-transcript read. Retain a bounded memory snapshot under the host-qualified session URL, reuse unchanged arrays, and schedule each refresh after the prior request settles. Pause both transcript and comment reads while the document or pane is hidden; resume immediately on return. Verify delayed tab returns, covered Oracle panes, host isolation and pre-save comment races. A failed refresh should preserve content with an error, while denied/deleted content is cleared.
 
 ## 2026-09-30 — The slop check passed in worktrees without reading a file
 **Broke:** PR #161 failed CI on an existence-only test assert, while the same
