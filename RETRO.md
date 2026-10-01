@@ -11,6 +11,10 @@ every plain broadcast too.
 building the text. When adding a field to a stored hash, keep the old hash
 for the old shape.
 
+## Fork children need independent identity and inherited test scope
+Conversation forks derived their child key from the parent's native ID, so a second fork reused the first child's supervisor key. Generate a fresh DuckTerm key for every fork while retaining the native ID only in the resume command. Both conversation/worktree paths must inherit a test parent or explicit test request, including terminal SessionStart rows; test repeated forks and both launch modes without live inference.
+
+
 ## 2026-09-30 — A raised hand is the owner's to lower
 **Broke:** a session that asked for the owner dropped its raised hand on its
 next event, whether or not the owner had seen it, and the session list let a
