@@ -4268,6 +4268,16 @@ class Server:
             await _write_json(writer, 400, {"error": "bad restore path"})
             return
         snapshot_id, session_key = parts
+        current = self.history.session(session_key)
+        if (current and current.get("state") == "merged") or self.history.fork_merges.closing(
+            session_key
+        ):
+            await _write_json(
+                writer,
+                409,
+                {"error": "Merged sessions remain readable and cannot be restored as running"},
+            )
+            return
         manifest = self.snapshots.get(snapshot_id)
         if manifest is None:
             await _write_json(writer, 404, {"error": f"no snapshot {snapshot_id}"})

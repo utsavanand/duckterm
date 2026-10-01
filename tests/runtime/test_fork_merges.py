@@ -76,6 +76,7 @@ def test_exact_text_idempotency_close_and_late_events(rig):
         assert h.session("child")["state"] == "merged"
     assert dispatch(server, "POST", "/sessions/child/resume", auth)[0] == 400
     assert dispatch(server, "POST", "/sessions/child/restart", auth, b"{}")[0] == 409
+    assert dispatch(server, "POST", "/snapshots/old/sessions/child/restore", auth)[0] == 409
     assert len(h.fork_merges.list("child", server._can_pin)) == 1
     assert len(h.fork_merges.list("parent", server._can_pin)) == 1
 
