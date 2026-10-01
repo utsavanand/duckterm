@@ -1,5 +1,10 @@
 # Retro — lessons from real breakage
 
+## 2026-10-01 — Browser permission was mistaken for notification preference
+**Broke:** Turning notifications off did not survive reload; denied permission gave no explanation, and initial waiting sessions produced a burst.
+**Fix:** Persist preference independently, respect current permission, show actionable feedback in the existing help slot, and notify only observed non-waiting to waiting transitions after host loading and enablement. State explicitly that the independent native Mac notifier is separate.
+**Lesson:** Permission is a capability, not a saved preference; initial snapshots are not live transitions.
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A
