@@ -97,6 +97,30 @@ def _inside(folder: str, root: str) -> bool:
     return folder == root or folder.startswith(root + "/")
 
 
+def _check_merge_key(
+    conn: sqlite3.Connection, request_key: str, merged_from: object, key: str, priority: bool
+) -> None:
+    """A merge summary names its child, which must be another existing
+    session, and its key must be merge:<child>:<unique>; no other message
+    may use the merge: prefix, so the inbox's merge origin can be trusted."""
+    if merged_from is None:
+        if request_key.startswith(MERGE_PREFIX):
+            raise APIError(400, "a merge: request key needs merged_from")
+        return
+    if not priority:
+        raise APIError(400, "a merge summary is a priority message")
+    if not isinstance(merged_from, str) or merged_from == key or ":" in merged_from:
+        raise APIError(400, "merged_from must be another session's key")
+    if (
+        conn.execute("SELECT 1 FROM sessions WHERE session_key = ?", (merged_from,)).fetchone()
+        is None
+    ):
+        raise APIError(404, "merged_from session not found")
+    prefix = f"{MERGE_PREFIX}{merged_from}:"
+    if not request_key.startswith(prefix) or len(request_key) == len(prefix):
+        raise APIError(400, f"request_key must be {prefix}<unique>")
+
+
 def _public_question(row: dict[str, Any]) -> dict[str, Any]:
     fields = (
         "id",
@@ -118,8 +142,20 @@ def _public_question(row: dict[str, Any]) -> dict[str, Any]:
     result["requires_reply"] = row["kind"] != "broadcast" or result["priority"]
     if result["expires_at"] == NO_DEADLINE:
         result["expires_at"] = 0
+    if row["sender"] == "owner" and row["kind"] == "broadcast" and result["priority"]:
+        # The key GET/DELETE /broadcasts/:request_key take, without the
+        # recipient suffix each copy carries.
+        request_key = row["idempotency_key"].removesuffix(":" + row["recipient"])
+        result["request_key"] = request_key
+        if request_key.startswith(MERGE_PREFIX):
+            # owner_message validated the child when it stored this key.
+            result["origin"] = {"kind": "merge", "from_session": request_key.split(":")[1]}
     return result
 
+
+# Request keys of fork merge summaries: merge:<child session key>:<unique>.
+# Only owner_message with a validated merged_from may store one.
+MERGE_PREFIX = "merge:"
 
 # A priority owner message nobody has replied to: never swept while open.
 _OPEN_PRIORITY = "(priority = 1 AND status IN ('queued', 'read'))"
@@ -330,6 +366,8 @@ class SessionAPI:
         priority = int(req.get("priority", False))
         message = _text(req.get("text"), "text", 16384)
         request_key = _text(req.get("request_key", secrets.token_hex(16)), "request_key", 128)
+        if request_key.startswith(MERGE_PREFIX):
+            raise APIError(400, "merge: request keys are for fork merge summaries")
         # Plain broadcasts keep the pre-priority hash, so a retry of one sent
         # by an older server still matches its stored request_key.
         hashed = [folder, message, 1] if priority else [folder, message]
@@ -386,9 +424,23 @@ class SessionAPI:
             )
         return response
 
-    def owner_message(self, key: str, text: object, *, request_key: str | None = None) -> str:
+    def owner_message(
+        self,
+        key: str,
+        text: object,
+        *,
+        request_key: str | None = None,
+        priority: bool = False,
+        merged_from: object = None,
+        question: bool = False,
+    ) -> str:
         """One owner notice to one session, the same record a folder broadcast
-        queues. Returns the message id."""
+        queues, keyed like a broadcast copy when request_key is given. Returns
+        the message id. priority=True makes it a one-recipient priority
+        broadcast: the same pin, Oracle reminder, status and cancel
+        (GET/DELETE /broadcasts/:request_key). Fork merge-back delivers its
+        summary this way. question=True (folder chat) asks for an answer
+        instead, under request_key as given."""
         message = _text(text, "text", 16384)
         row = self.conn.execute(
             "SELECT s.grp, m.root FROM sessions s "
@@ -404,9 +456,20 @@ class SessionAPI:
                 "This session has no inbox because it isn't in a shared folder. "
                 "Type into its prompt or open its terminal instead.",
             )
-        digest = hashlib.sha256(json.dumps([key, message]).encode()).hexdigest()
+        digest = hashlib.sha256(
+            json.dumps([key, message, 1] if priority else [key, message]).encode()
+        ).hexdigest()
+        if priority and request_key is None:
+            raise APIError(400, "a priority message needs a request_key")
+        if merged_from is not None and not priority:
+            raise APIError(400, "a merge summary is a priority message")
+        if question and (priority or request_key is None):
+            raise APIError(400, "an owner question needs a request_key and no priority")
         if request_key is not None:
             request_key = _text(request_key, "request_key", 128)
+            _check_merge_key(self.conn, request_key, merged_from, key, priority)
+            if not question:
+                request_key += ":" + key  # the broadcast copy's key shape
             existing = self.conn.execute(
                 "SELECT id, content_hash FROM session_questions "
                 "WHERE sender = 'owner' AND idempotency_key = ?",
@@ -416,13 +479,13 @@ class SessionAPI:
                 if existing["content_hash"] != digest:
                     raise APIError(409, "request_key already used for different content")
                 return str(existing["id"])
-        notice_id = ("q-" if request_key is not None else "b-") + secrets.token_hex(16)
+        notice_id = ("q-" if question else "b-") + secrets.token_hex(16)
         with self.conn:
             self.conn.execute(
                 "INSERT INTO session_questions "
                 "(id, sender, recipient, sender_name, root, question, created_at, "
-                "expires_at, idempotency_key, content_hash, kind) "
-                "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, ?)",
+                "expires_at, idempotency_key, content_hash, kind, priority) "
+                "VALUES (?, 'owner', ?, 'You', ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     notice_id,
                     key,
@@ -432,7 +495,8 @@ class SessionAPI:
                     NO_DEADLINE,
                     request_key or notice_id,
                     digest,
-                    "question" if request_key is not None else "broadcast",
+                    "question" if question else "broadcast",
+                    int(priority),
                 ),
             )
         return notice_id
@@ -546,9 +610,9 @@ class SessionAPI:
         with self.conn:
             cur = self.conn.execute(
                 "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
-                "WHERE kind = 'broadcast' AND idempotency_key LIKE ? ESCAPE '\\' "
+                "WHERE kind = 'broadcast' AND idempotency_key = ? || ':' || recipient "
                 "AND status IN ('queued', 'read')",
-                (int(time.time() * 1000), _like_prefix(request_key) + ":%"),
+                (int(time.time() * 1000), request_key),
             )
         return cur.rowcount
 
@@ -561,9 +625,9 @@ class SessionAPI:
             "COALESCE(d.attempts, 0) AS attempts, s.name FROM session_questions q "
             "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
             "LEFT JOIN sessions s ON s.session_key = q.recipient "
-            "WHERE q.kind = 'broadcast' AND q.idempotency_key LIKE ? ESCAPE '\\' "
+            "WHERE q.kind = 'broadcast' AND q.idempotency_key = ? || ':' || q.recipient "
             "ORDER BY q.rowid",
-            (_like_prefix(request_key) + ":%",),
+            (request_key,),
         ).fetchall()
         if not rows:
             raise APIError(404, "broadcast not found")
@@ -1096,7 +1160,3 @@ class SessionAPI:
                 ),
             )
         return 200, self._question(key, question["id"])
-
-
-def _like_prefix(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")

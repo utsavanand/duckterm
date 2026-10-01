@@ -243,3 +243,134 @@ def test_a_plain_broadcast_keeps_the_hash_older_servers_stored(scenario) -> None
     assert stored == hashlib.sha256(json.dumps(["work", "Rebase on main"]).encode()).hexdigest()
     assert send(server, owner, "Rebase on main", "h", priority=False)[0] == 202  # a retry
     assert send(server, owner, "Rebase on main", "h")[0] == 409  # priority is different content
+
+
+def note(server, owner, key, text, request_key="merge-1", **extra):
+    body = {"text": text, "mode": "inbox", "priority": True, "request_key": request_key, **extra}
+    return dispatch(server, "POST", f"/sessions/{key}/message", owner, json.dumps(body).encode())
+
+
+def test_a_one_recipient_note_is_a_priority_broadcast_in_every_way(scenario) -> None:
+    """Fork merge-back delivers its summary this way (design, 2026-09-30):
+    one delivery path, so the note shares the pin, status, reply and cancel."""
+    history, server, owner, creds = scenario
+    send(server, owner, "Freeze merges", "p")
+    time.sleep(0.002)
+    code, body = note(server, owner, "claude", "Summary of the fork, not the full thread")
+    assert code == 200
+    assert note(server, owner, "claude", "Summary of the fork, not the full thread")[1] == body
+    assert note(server, owner, "claude", "edited")[0] == 409
+    assert note(server, {}, "claude", "x")[0] == 401
+    assert status(server, owner, "merge-1") == {"claude": "pending next turn"}
+
+    text = notice(server)
+    assert "(2 open, newest first)" in text  # one block with the folder broadcast
+    assert text.index("Summary of the fork") < text.index("Freeze merges")
+    assert status(server, owner, "merge-1") == {"claude": "delivered"}
+    call(
+        history,
+        creds["claude"],
+        "POST",
+        f"/questions/{body['message_id']}/answer",
+        {"text": "Read it."},
+    )
+    assert status(server, owner, "merge-1") == {"claude": "acknowledged"}
+
+    note(server, owner, "codex", "Codex summary", "merge-2")
+    assert status(server, owner, "merge-2") == {"codex": "inbox only"}
+    note(server, owner, "peer", "Withdrawn", "merge-3")
+    dispatch(server, "DELETE", "/broadcasts/merge-3", owner)
+    assert status(server, owner, "merge-3") == {"peer": "cancelled"}
+    assert "Withdrawn" not in (notice(server, "peer") or "")
+
+
+def test_a_priority_note_needs_a_request_key(scenario) -> None:
+    _, server, owner, _ = scenario
+    body = json.dumps({"text": "x", "mode": "inbox", "priority": True}).encode()
+    assert dispatch(server, "POST", "/sessions/claude/message", owner, body)[0] == 400
+
+
+def test_an_idle_agent_gets_a_note_at_once(scenario, monkeypatch) -> None:
+    history, server, owner, _ = scenario
+    history.set_state("claude", "idle")
+    history.record(
+        {"_id": "s", "_ts": int(time.time() * 1000), "event_type": "Stop", "session_key": "claude"}
+    )
+    sup = FakeSupervisor(CLAUDE_EMPTY)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: sup if key == "claude" else None)
+    note(server, owner, "claude", "Merged: branch fork-a at 1234abc")
+    asyncio.run(server._oracle_tick())
+    assert "Merged: branch fork-a at 1234abc" in b"".join(sup.pasted).decode()
+    assert status(server, owner, "merge-1") == {"claude": "delivered"}
+
+
+def test_a_merge_summary_carries_its_child_and_key_through_the_inbox(scenario) -> None:
+    history, server, owner, creds = scenario
+    key = "merge:peer:1"
+    code, body = note(server, owner, "claude", "Fork summary", key, merged_from="peer")
+    assert code == 200
+    inbox = call(history, creds["claude"], "GET", "/inbox")[1]["messages"]
+    (merged,) = [m for m in inbox if m["id"] == body["message_id"]]
+    assert merged["request_key"] == key  # what GET /broadcasts takes, not the message id
+    assert merged["origin"] == {"kind": "merge", "from_session": "peer"}
+    assert status(server, owner, key) == {"claude": "pending next turn"}
+
+    send(server, owner, "Plain priority", "p")
+    call(
+        history,
+        {**creds["peer"], "idempotency-key": "q1"},
+        "POST",
+        "/questions",
+        {"target_session_id": "claude", "question": "hi"},
+    )
+    others = [
+        m
+        for m in call(history, creds["claude"], "GET", "/inbox")[1]["messages"]
+        if m["id"] != merged["id"]
+    ]
+    assert [m.get("origin") for m in others] == [None, None]
+    assert [m.get("request_key") for m in others if m["sender_kind"] == "session"] == [None]
+
+
+@pytest.mark.parametrize(
+    ("key", "extra", "code"),
+    [
+        ("merge:peer:2", {}, 400),  # the prefix without a named child
+        ("merge:codex:3", {"merged_from": "peer"}, 400),  # key names another child
+        ("merge:peer:", {"merged_from": "peer"}, 400),  # no unique part
+        ("merge:claude:4", {"merged_from": "claude"}, 400),  # merged into itself
+        ("merge:ghost:5", {"merged_from": "ghost"}, 404),
+        ("merge:peer:6", {"merged_from": "peer", "priority": False}, 400),
+    ],
+)
+def test_the_merge_origin_cannot_be_forged(scenario, key, extra, code) -> None:
+    _, server, owner, _ = scenario
+    assert note(server, owner, "claude", "x", key, **extra)[0] == code
+
+
+def test_a_folder_broadcast_cannot_use_the_merge_prefix(scenario) -> None:
+    _, server, owner, _ = scenario
+    assert send(server, owner, "x", "merge:peer:1")[0] == 400
+
+
+@pytest.mark.parametrize(
+    ("first", "retry", "code"), [(True, False, 409), (False, True, 409), (False, False, 200)]
+)
+def test_a_request_key_is_bound_to_its_priority(scenario, first, retry, code) -> None:
+    """main-qa, PR #176: a plain retry of a priority key returned 200."""
+    _, server, owner, _ = scenario
+    sent = note(server, owner, "claude", "same", "qa-priority", priority=first)
+    again = note(server, owner, "claude", "same", "qa-priority", priority=retry)
+    assert again[0] == code
+    if code == 200:
+        assert again[1]["message_id"] == sent[1]["message_id"]
+
+
+def test_status_and_cancel_touch_only_their_own_broadcast(scenario) -> None:
+    """A key that is a prefix of another (k vs k:x) must not reach its copies."""
+    _, server, owner, _ = scenario
+    send(server, owner, "Outer", "k")
+    send(server, owner, "Inner", "k:x")
+    assert set(status(server, owner, "k")) == {"claude", "peer", "codex"}
+    dispatch(server, "DELETE", "/broadcasts/k", owner)
+    assert set(status(server, owner, "k:x").values()) == {"pending next turn", "inbox only"}
