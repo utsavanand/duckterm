@@ -7,7 +7,7 @@ items with their triggers; this page is the working list.
 Ownership means **asked and confirmed**, not "sent to". Where a session has
 said it has not started something, that is recorded as such.
 
-Status last updated at the **v0.4.96** release (2026-09-30) by `release-dev`; items
+Status last updated at the **v0.4.99** release (2026-10-01) by `release-dev`; items
 below were last reconciled against code by `product` on 2026-09-27. Every "verified" line below was checked
 against code or the installed app that day.
 

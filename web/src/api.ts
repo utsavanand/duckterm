@@ -176,8 +176,19 @@ export interface Connector {
   revoke_url: string;
   credential: string | null; // "gh-cli" | "stored" | "railway-cli" | null
   installed: Record<string, boolean>; // per harness
+  harnesses: string[]; // the agents this connector is registered for
+  harnesses_present: Record<string, boolean>; // which agent CLIs exist here
   enabled: boolean;
   ready: boolean;
+  detail: string | null;
+  last_used: number | null; // epoch ms of the newest hook-reported tool call
+  use_count: number;
+}
+
+export interface ConnectorCheck {
+  name: string;
+  ok: boolean;
+  tools: number;
   detail: string | null;
 }
 
@@ -351,15 +362,18 @@ export const api = {
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
   connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context),
-  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string) =>
+  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string, harnesses?: string[]) =>
     post<Connector>(`/connectors/${name}/enable`, {
       source, write_access,
       ...(token ? { token } : {}),
       ...(secret ? { secret } : {}),
+      ...(harnesses ? { harnesses } : {}),
     }, context),
   forgetConnector: (name: string, context?: string) => post<Connector>(`/connectors/${name}/forget`, {}, context),
   disableConnector: (name: string, context?: string) =>
     post<Connector>(`/connectors/${name}/disable`, {}, context),
+  verifyConnector: (name: string, context?: string) =>
+    post<ConnectorCheck>(`/connectors/${name}/verify`, {}, context),
   folderArtifacts: (folder: string) => artifactRequest<{ artifacts: FolderArtifact[]; truncated?: boolean }>(`/folders/${encodeURIComponent(folder)}/artifacts`),
   folderRecipients: (folder: string) => artifactRequest<FolderRecipients>(`/folders/${encodeURIComponent(folder)}/recipients`),
   folderDispatch: (folder: string, request: { identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>

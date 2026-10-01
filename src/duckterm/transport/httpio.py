@@ -109,7 +109,11 @@ async def write_response(
 
 
 async def write_json(writer: asyncio.StreamWriter, status: int, payload: Any) -> None:
-    body = json.dumps(payload).encode()
+    await write_json_bytes(writer, status, json.dumps(payload).encode())
+
+
+async def write_json_bytes(writer: asyncio.StreamWriter, status: int, body: bytes) -> None:
+    """Write an already serialized JSON snapshot without reconstructing its objects."""
     head = (
         f"HTTP/1.1 {status} {_REASON.get(status, 'OK')}\r\n"
         f"Content-Length: {len(body)}\r\n"

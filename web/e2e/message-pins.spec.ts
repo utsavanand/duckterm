@@ -25,6 +25,10 @@ test("pins persist, open the exact older message, preserve terminal drafts, and 
     });
     expect(launch.status).toBe(200);
     key = String(launch.body.session_key);
+    await apiPost("/events", {
+      event_type: "SessionStart", session_key: key,
+      session_id: "pin-test", runtime: "claude-code", cwd, test: true,
+    });
     await page.goto(base());
     await page.locator(".rd-row-name", { hasText: "pin-test-agent" }).click();
     const terminal = page.locator(".rd-terminal-slot:visible .xterm-helper-textarea");

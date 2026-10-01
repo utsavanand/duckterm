@@ -7,6 +7,46 @@ create the parent checkpoint only from confirmed delivery, with an idempotent ID
 startup recovery for the delivery/checkpoint crash gap. Keep merged children final
 even when a delayed SessionStart arrives. A failed close remains visibly pending and
 can be finished from History using the same saved request.
+## 2026-10-01 — Cached empty lists lost transcript availability
+**Broke:** The Messages snapshot retained only the message list, so unavailable reasons vanished on remount and status-only changes shared the same empty-list signature.
+**Fix:** Retain and compare transcript status and reason atomically with the list, including cache size accounting; cover unavailable, empty, recovered, hidden and remounted states.
+**Lesson:** Cache the full user-visible response contract, not only its main collection.
+
+## 2026-09-30 — The verifier repeated the bug it was built to catch
+**Broke:** main-qa returned PR #149. `verify` reported ok for a connector
+listing `{tools: []}` and for one listing `{tools: [{}]}` — an empty set and
+a nameless object both read as "Verified".
+**Cause:** the validation checked that a reply arrived and was shaped like a
+list of objects, which is the cheap question. The real question is whether an
+agent can call anything, and an agent calls a tool by name. This is the same
+defect the feature exists to fix, one layer up: the panel used to assert "a
+config entry exists" while appearing to assert "this works", and the verifier
+then asserted "a reply parsed" while appearing to assert the same thing.
+Writing the check does not exempt it from the standard it enforces.
+**Rule:** when adding a check, state the claim it licenses in the UI's own
+words and test the weakest input that should fail it — here, an empty list
+and `{}`. Prefer failing a whole listing over skipping bad entries: counting
+2 of 3 overstates what the agent can reach. And a judgement call made alone
+is worth re-examining when a reviewer disagrees — the earlier "an honestly
+empty server is not broken" was defensible in isolation and wrong against the
+sentence the panel actually prints.
+
+## 2026-09-30 — A written config entry is not a working integration
+**Broke:** the connectors panel reported `codex: ✓` on machines that had
+never had Codex installed, and `enable()` wrote both harness configs
+unconditionally with no way to choose.
+**Cause:** the checkmark reflected "we wrote a line into a file", which is
+the easiest thing to know and not the thing anyone wants to know. Nothing
+checked whether the agent CLI existed, and the credential (machine-wide) was
+welded to the registration (per harness) behind one switch.
+**Rule:** report the state the user cares about, not the state that is cheap
+to compute — name the agents a connector reaches and say which are missing,
+rather than printing a tick per config entry. When one action does two things
+at different scopes, let the user address them separately. A registration for
+an absent harness is still legitimate (it applies when that harness arrives),
+so label it rather than blocking it; the defect was the false claim, not the
+write. Deselecting must also withdraw the existing entry — otherwise the
+harness keeps serving a connector the panel no longer lists.
 
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
@@ -18,6 +58,10 @@ every plain broadcast too.
 **Rule:** record delivery from the result of the delivery, never from
 building the text. When adding a field to a stored hash, keep the old hash
 for the old shape.
+
+## Fork children need independent identity and inherited test scope
+Conversation forks derived their child key from the parent's native ID, so a second fork reused the first child's supervisor key. Generate a fresh DuckTerm key for every fork while retaining the native ID only in the resume command. Both conversation/worktree paths must inherit a test parent or explicit test request, including terminal SessionStart rows; test repeated forks and both launch modes without live inference.
+
 
 ## 2026-09-30 — A raised hand is the owner's to lower
 **Broke:** a session that asked for the owner dropped its raised hand on its
@@ -69,6 +113,29 @@ checks and idempotent sends. Replies are copied into bounded folder history
 before retirement, including replies the owner has not opened yet.
 **Check:** Regression coverage sends, retries, answers, retires the inbox row,
 restarts the store, and verifies the complete reply remains in folder chat.
+
+## 2026-09-30 — Missing transcripts looked like empty conversations
+**Broke:** Messages ignored the API transcript status and said no reply existed when the conversation identity or local file was unavailable.
+**Fix:** Render the recorded unavailable reason and distinguish missing identity, missing local transcript, and a genuinely empty conversation; clear status on session changes and successful recovery.
+**Lesson:** A backend correctness fix needs its unavailable-state contract rendered at the user-facing boundary. Test both transitions and recovery.
+
+## Conversation identity and launch names must survive reopening
+A newest-transcript fallback showed a peer conversation when the recorded native ID or its local file was missing; Claude resume used the same guess. Require the recorded ID for Claude/Codex Messages and Claude resume, and report missing identity/file explicitly. Separately, launch names appeared in SSE but the session-row INSERT discarded them, so reload fell back to the folder label. Persist names and recover missing historical names only from explicit saved launch events, preserving owner renames. Regressions cover two conversations sharing a directory, missing local transcripts, unsafe resume refusal, and database reopen.
+
+## Measure Messages refreshes with many small records, not only large text blocks
+Deep-copying cache results fixed mutation leakage but made a 20,000-record warm read expensive. Keep detached object reads for callers that need them; cache immutable, fully serialized Messages HTTP bytes and session-specific keys for polling. Invalidate on transcript changes or native-ID scope changes. A 20,000-record timing regression and no-read/no-copy/no-serialization assertions cover the actual HTTP response path alongside the unchanged nested-mutation regressions.
+
+
+## Cached messages must detach nested response data
+Copying only each message dict protected added message keys but shared nested blocks and tool-input dictionaries. QA showed a caller mutation leaked into later reads. Deep-copy returned records on both cold and warm paths; regressions mutate nested tool inputs and block lists for Claude/Codex, with and without a final newline, then verify append behavior.
+
+
+## Messages refresh must reuse transcript parsing across runtime adapters
+Every Messages request constructs a fresh runtime adapter, so an adapter-local cache would still reread the entire transcript. Claude and Codex now share bounded per-runtime JSONL caches using TokenLedger's complete-line offset pattern. Unchanged files are stat-only; changed files verify the committed prefix before parsing appended records. Size growth does not prove an append: the first gate caught a growing rewrite keeping a stale pin target. Partial trailing records are retried, and replacement/truncation/rewrites invalidate cached state. Keep parser IDs and per-session message keys stable; test fresh adapters and large files, not only calls on one adapter. Full-response serialization and frontend polling are separate follow-ups.
+
+## 2026-09-30 — Messages must not start empty after every tab switch
+
+Remounting a transcript view discarded its last good reply, and fixed-interval refreshes could pile up behind a slow full-transcript read. Retain a bounded memory snapshot under the host-qualified session URL, reuse unchanged arrays, and schedule each refresh after the prior request settles. Pause both transcript and comment reads while the document or pane is hidden; resume immediately on return. Verify delayed tab returns, covered Oracle panes, host isolation and pre-save comment races. A failed refresh should preserve content with an error, while denied/deleted content is cleared.
 
 ## 2026-09-30 — The slop check passed in worktrees without reading a file
 **Broke:** PR #161 failed CI on an existence-only test assert, while the same
@@ -312,6 +379,23 @@ Fault-inject deletion to prove a failed transfer leaves neither missing nor doub
 counts. Keep completion-day activity separate from sent-day cohorts, and label
 histogram percentiles approximate rather than deriving fake medians from totals.
 
+
+## 2026-09-28 — Trace the thing before designing the fix for it
+**Broke:** B2 was filed as "connectors configured but not usable", and two
+rounds of design went into a setup wizard for connectors that could not be
+set up.
+**Cause:** nobody had run the connectors. Speaking MCP through the exact
+command the harness configs use (`duckterm connector-run NAME`) returned
+GitHub 45 tools, Railway 34, Porkbun 25 — all three working. The defect was
+that the panel could only say `enabled=True, detail=None`, which asserts a
+config entry, not a usable tool. The owner's "I don't know if I can really
+use them" described the UI precisely.
+**Rule:** before designing a fix, exercise the feature end to end through the
+real path a user's software takes, and let the result pick the fix. The
+evidence a trace produces is often the feature itself: here the probe became
+the Check now action. Corollary for probes — hold stdin open until the reply
+lands, because closing it early makes an MCP server exit with "server is
+closing: EOF", and a working connector reads as broken.
 
 ## 2026-09-28 — A shared directory cannot identify a conversation
 
