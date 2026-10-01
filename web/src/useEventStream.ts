@@ -45,6 +45,11 @@ function mergeDefined(base: SessionView, over: SessionView): SessionView {
   return out;
 }
 
+function withoutDeletedParent(session: SessionView, tombstoned: Set<string>): SessionView {
+  return session.parentKey && tombstoned.has(session.parentKey)
+    ? { ...session, parentKey: null } : session;
+}
+
 // Exported for unit tests — this is the pure heart of the event stream (seed,
 // event-merge, remove/tombstone, optimistic patch), independent of React.
 export function reduce(state: State, action: Action): State {
@@ -58,12 +63,16 @@ export function reduce(state: State, action: Action): State {
     const next = new Map([...state.sessions].filter(([, s]) => s.host !== action.host));
     for (const row of action.sessions) {
       if (state.tombstoned.has(row.session_key)) continue;
-      next.set(row.session_key, { ...viewFromPersisted(row), host: action.host, hostLabel: action.label,
-        hostOffline: false, group: action.groups[row.session_key] ?? row.grp ?? undefined });
+      next.set(row.session_key, withoutDeletedParent({ ...viewFromPersisted(row), host: action.host, hostLabel: action.label,
+        hostOffline: false, group: action.groups[row.session_key] ?? row.grp ?? undefined }, state.tombstoned));
     }
     return { ...state, sessions: next };
   }
   if (action.kind === "seed") {
+    // A seed only lists live sessions; anything we'd tombstoned that the server
+    // confirms exists again can drop its tombstone.
+    const tombstoned = new Set(state.tombstoned);
+    for (const s of action.sessions) tombstoned.delete(s.session_key);
     const next = new Map(state.sessions);
     // Pins are server-owned metadata, including deletion in another window.
     for (const [key, session] of next) next.set(key, { ...session, pinned: false });
@@ -86,12 +95,11 @@ export function reduce(state: State, action: Action): State {
       merged.launched = persisted.launched;
       merged.ptyOwned = persisted.ptyOwned;
       merged.pinned = persisted.pinned;
-      next.set(s.session_key, merged);
+      // Active lineage is DB-owned. Historical fork events retain provenance,
+      // but cannot override a parent that was deleted while this page was away.
+      merged.parentKey = persisted.parentKey;
+      next.set(s.session_key, withoutDeletedParent(merged, tombstoned));
     }
-    // A seed only lists live sessions; anything we'd tombstoned that the server
-    // confirms exists again can drop its tombstone.
-    const tombstoned = new Set(state.tombstoned);
-    for (const s of action.sessions) tombstoned.delete(s.session_key);
     return { sessions: next, tombstoned };
   }
   if (action.kind === "remove") {
@@ -100,6 +108,9 @@ export function reduce(state: State, action: Action): State {
     for (const key of action.keys) {
       next.delete(key);
       tombstoned.add(key);
+    }
+    for (const [key, session] of next) {
+      next.set(key, withoutDeletedParent(session, tombstoned));
     }
     return { sessions: next, tombstoned };
   }
@@ -115,11 +126,11 @@ export function reduce(state: State, action: Action): State {
   // A live event for a tombstoned (deleted) session must not resurrect it —
   // unless it's a SessionStart, which means the key is genuinely a new session.
   const key = sessionKeyOf(action.event);
-  if (key && state.tombstoned.has(key)) {
+  let tombstoned = state.tombstoned;
+  if (key && tombstoned.has(key)) {
     if (action.event.event_type !== "SessionStart") return state;
-    const tombstoned = new Set(state.tombstoned);
+    tombstoned = new Set(tombstoned);
     tombstoned.delete(key);
-    return { sessions: applyEvent(state.sessions, action.event), tombstoned };
   }
   const sessions = applyEvent(state.sessions, action.event);
   const previous = key ? state.sessions.get(key) : undefined;
@@ -137,7 +148,8 @@ export function reduce(state: State, action: Action): State {
       current.celebration = undefined;
     }
   }
-  return { ...state, sessions };
+  if (key && current) sessions.set(key, withoutDeletedParent(current, tombstoned));
+  return { sessions, tombstoned };
 }
 
 export function useEventStream(): {

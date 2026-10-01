@@ -1,5 +1,8 @@
 # Retro — lessons from real breakage
 
+## Confirmed parent removal must survive frontend replay
+Removing a parent row left child controls gated by a stale parentKey; null-coalescing then restored the original edge from old fork events. Represent a confirmed absent parent as null, keep database lineage authoritative during seed, and clear direct links immediately on deletion. Check both seed/replay orders, late events, remote host isolation, and the real dashboard delete/reload flow while preserving descendants and historical provenance.
+
 ## Deleting a parent must remove active child links, not child sessions
 Parent deletion left children pointing at a removed row. Clear direct child parent_session_key values in the deletion transaction while retaining their recorded fork events. Reject links to tombstoned parents in late supervisor events before live fan-out, and repair old tombstoned-parent edges on reopen without guessing about unknown parents. Tests verify descendants remain attached to their surviving parent and a real child PTY process stays responsive after its parent is deleted. Dashboard local-state cleanup is a separate UI integration requirement.
 
