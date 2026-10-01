@@ -1,3 +1,4 @@
+import { UpdateDuckTerm } from "./UpdateDuckTerm";
 import { useEffect, useRef, useState } from "react";
 import { AUTO, TermMode, themesForMode } from "./termThemes";
 import { Theme } from "./useTheme";
@@ -105,6 +106,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
         <div className="rd-header-menu-divider" />
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" title="Manage meta-harnesses for your projects" onClick={() => action("harnesses")}>Harnesses <span aria-hidden="true">›</span></button>
+        <div className="rd-header-menu-divider" /><UpdateDuckTerm />
       </section>}
     </div>
     <div className="rd-header-dropdown rd-header-new">
