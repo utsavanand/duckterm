@@ -218,6 +218,7 @@ _ROUTES: list[Route] = [
     Route("GET", "", lambda s, r, w, h, b, seg: s._approval_decision(w, seg),
           **_mid("/approvals/", "/decision")),
     Route("GET", "/terminals", lambda s, r, w, h, b, seg: s._terminals(w)),
+    Route("GET", "/update/status", lambda s, r, w, h, b, seg: s._update_status(w, h)),
     Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._diff(w, seg), **_mid("/sessions/", "/diff")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
@@ -2601,24 +2602,51 @@ class Server:
         if not key or event.get("reconciled"):
             return
         now = int(event.get("_ts") or time.time() * 1000)
-        if et == events.PERMISSION_REQUEST and event.get("tool_name") == "AskUserQuestion":
-            choices = choices_from(event.get("tool_input") or {})
-            open_choice = any(
-                n["session_key"] == key and n["kind"] == "choice" for n in self.relay.open_notes()
+        harness = self._relay_harness(key)
+        if harness.owner_prompt == (et, event.get("tool_name")):
+            questions = [
+                {"question": q, "options": o} for q, o in choices_from(event.get("tool_input"))
+            ]
+            # One note per question asked. A repeat of an open one adds nothing,
+            # but Codex can queue several distinct questions at once.
+            repeat = any(
+                n["session_key"] == key and n["kind"] == "choice" and n["questions"] == questions
+                for n in self.relay.open_notes()
             )
-            if choices and not open_choice:
+            if questions and not repeat:
                 self.relay.add(
                     {
                         **self._relay_session_fields(key),
                         "kind": "choice",
                         "created_at": now,
-                        "questions": [{"question": q, "options": o} for q, o in choices],
+                        "questions": questions,
                     }
                 )
-        elif et in (events.PRE_TOOL_USE, events.POST_TOOL_USE, events.STOP, events.SESSION_END):
+        elif harness.owner_prompt_blocks and et in (
+            events.PRE_TOOL_USE,
+            events.POST_TOOL_USE,
+            events.STOP,
+            events.SESSION_END,
+        ):
+            # The agent moved on, so the question was answered. An agent whose
+            # question doesn't block (Codex) carries on with it still queued;
+            # only a submitted prompt (the answer, or one that discards it)
+            # or the session ending closes that note.
             self.relay.close_for_session(key, {"choice"}, "handled", now)
         if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END):
-            self.relay.close_for_session(key, {"question", "choice"}, "handled", now)
+            kinds = {"question", "choice"}
+            answered = (
+                self._answered_choice(key, str(event.get("prompt") or ""))
+                if et == events.USER_PROMPT_SUBMIT and not harness.owner_prompt_blocks
+                else None
+            )
+            if answered is not None:
+                # Codex submits each answer as "> <question>" then the answer,
+                # and the rest of its queue stays. Any other prompt discards
+                # the whole queue (Codex 0.155.1).
+                self.relay.close(answered, "handled", closed_at=now)
+                kinds = {"question"}
+            self.relay.close_for_session(key, kinds, "handled", now)
         if et == events.STOP:
             try:
                 loop = asyncio.get_running_loop()
@@ -2627,6 +2655,21 @@ class Server:
             if loop is not None:
                 loop.create_task(self._relay_detect_question(key, now))
         self._relay_sync_approvals()
+
+    def _answered_choice(self, key: str, prompt: str) -> dict[str, Any] | None:
+        first = prompt.split("\n", 1)[0]
+        if not first.startswith("> "):
+            return None
+        return next(
+            (
+                n
+                for n in self.relay.open_notes()
+                if n["session_key"] == key
+                and n["kind"] == "choice"
+                and any(q["question"].split("\n", 1)[0] == first[2:] for q in n["questions"])
+            ),
+            None,
+        )
 
     def _relay_sync_approvals(self) -> None:
         """Keep approval notes in step with the approval registry, and let
@@ -2814,9 +2857,10 @@ class Server:
         if not final or not ASK_CUES.search(final[-900:]):
             return
         if any(
-            n["session_key"] == key and n["kind"] == "question" for n in self.relay.open_notes()
+            n["session_key"] == key and n["kind"] in ("question", "choice")
+            for n in self.relay.open_notes()
         ):
-            return
+            return  # the owner is already asked
         owner = next(
             (
                 self._message_text(m)
@@ -3494,6 +3538,18 @@ class Server:
             await _write_json(writer, 400, {"error": str(exc)})
         except OSError as exc:
             await _write_json(writer, 500, {"error": str(exc)})
+
+    async def _update_status(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
+        from duckterm.update_status import status
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        result = await asyncio.to_thread(status)
+        result["backup_running"] = bool(
+            self._backup_jobs and self._backup_jobs.task and not self._backup_jobs.task.done()
+        )
+        await _write_json(writer, 200, result)
 
     def _can_pin(self, key: str) -> bool:
         row = self.history.session(key) or {}

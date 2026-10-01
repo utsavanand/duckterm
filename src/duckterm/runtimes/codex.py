@@ -43,6 +43,9 @@ _WAITING = re.compile(
     r"(\(y/n\)|continue\?|would you like to|press enter to confirm|do you want to proceed)",
     re.IGNORECASE,
 )
+# The owner's queued question above the input box: "? 1 question" (a timer
+# like "· 7s" comes and goes) over "shift + ← to answer".
+_QUEUED_QUESTION = re.compile(r"^\s*\? \d+ questions?\b|shift \+ ← to answer", re.MULTILINE)
 
 _SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
@@ -71,6 +74,11 @@ class CodexRuntime(Harness):
     # every gated command and its reviewer approves nearly all of them: 1,597
     # requests in 5 days on the owner's machine, typically done in ~20 s.
     auto_approves_requests = True
+    # Its PreToolUse carries questions[{title, options: [str]}]; the tool
+    # returns at once. An answer arrives as a prompt starting "> <title>";
+    # any other submitted prompt discards the queued question (0.155.1).
+    owner_prompt = ("PreToolUse", "request_user_input_async")
+    owner_prompt_blocks = False
 
     def approval_prompt_visible(self, screen: str) -> bool:
         # Codex 0.155's prompt: "Would you like to run the following command?"
@@ -83,7 +91,12 @@ class CodexRuntime(Harness):
 
     def prompt_is_empty(self, screen: str) -> bool:
         # Codex shows "›" plus a dimmed placeholder ("Ask Codex to do anything")
-        # when empty; typed text renders undimmed.
+        # when empty; typed text renders undimmed. A queued question for the
+        # owner ("? 1 question" over "shift + ← to answer") sits above an
+        # empty box, and anything submitted there discards it, so the box
+        # doesn't count as free.
+        if _QUEUED_QUESTION.search(plain_screen(screen)):
+            return False
         return prompt_line_rest(screen, "›", ignore_dim=True) == ""
 
     def detect_state(self, recent_output: str) -> SessionState | None:
