@@ -66,6 +66,9 @@ before retirement, including replies the owner has not opened yet.
 **Check:** Regression coverage sends, retries, answers, retires the inbox row,
 restarts the store, and verifies the complete reply remains in folder chat.
 
+## Conversation identity and launch names must survive reopening
+A newest-transcript fallback showed a peer conversation when the recorded native ID or its local file was missing; Claude resume used the same guess. Require the recorded ID for Claude/Codex Messages and Claude resume, and report missing identity/file explicitly. Separately, launch names appeared in SSE but the session-row INSERT discarded them, so reload fell back to the folder label. Persist names and recover missing historical names only from explicit saved launch events, preserving owner renames. Regressions cover two conversations sharing a directory, missing local transcripts, unsafe resume refusal, and database reopen.
+
 ## Measure Messages refreshes with many small records, not only large text blocks
 Deep-copying cache results fixed mutation leakage but made a 20,000-record warm read expensive. Keep detached object reads for callers that need them; cache immutable, fully serialized Messages HTTP bytes and session-specific keys for polling. Invalidate on transcript changes or native-ID scope changes. A 20,000-record timing regression and no-read/no-copy/no-serialization assertions cover the actual HTTP response path alongside the unchanged nested-mutation regressions.
 

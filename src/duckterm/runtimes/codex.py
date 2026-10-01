@@ -22,7 +22,7 @@ from duckterm.runtimes.base import (
     plain_screen,
     prompt_line_rest,
 )
-from duckterm.runtimes.message_cache import MessageCache
+from duckterm.runtimes.message_cache import MessageCache, unavailable_response
 
 # Codex prints a spinner/working line while busy and a prompt glyph when idle.
 # "esc to interrupt" appears on every interruptible-active line (including
@@ -113,20 +113,18 @@ class CodexRuntime(Harness):
 
     def messages(self, *, cwd: Path, session_id: str | None) -> list[dict[str, object]]:
         path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
-        if path is None:
-            path = self.latest_transcript(cwd=cwd)
         return _MESSAGE_CACHE.read(path) if path else []
 
     def messages_response(self, *, cwd: Path, session_id: str | None) -> bytes:
         path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
-        if path is None:
-            path = self.latest_transcript(cwd=cwd)
-        return _MESSAGE_CACHE.response(path, self.name, session_id) if path else b'{"messages": []}'
+        return (
+            _MESSAGE_CACHE.response(path, self.name, session_id)
+            if path
+            else unavailable_response(session_id)
+        )
 
     def latest_transcript(self, *, cwd: Path) -> Path | None:
-        """The newest rollout whose session_meta records this cwd. Sessions
-        launched in-process never report Codex's session_id, so locating by id
-        fails — but the rollout's first line names the cwd it ran in."""
+        """Newest rollout for directory-level discovery, never session identity."""
         root = Path.home() / ".codex" / "sessions"
         if not root.exists():
             return None

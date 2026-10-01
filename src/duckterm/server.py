@@ -1697,7 +1697,7 @@ class Server:
             )
             return
 
-        fork_title = f"{parent.get('source_app') or parent_key} (fork)"
+        fork_title = f"{parent.get('name') or parent.get('source_app') or parent_key} (fork)"
         argv = _build_runtime("claude-code", shlex.join(argv)).launch_command(
             cwd=Path(cwd),
             session_key=child_key,
@@ -1714,6 +1714,7 @@ class Server:
                 "cwd": cwd,
                 "parent_session_key": parent_key,
                 "test": is_test,
+                "name": fork_title,
                 "intention": f"conversation fork of {parent.get('source_app') or parent_key}",
             }
         )
@@ -1928,6 +1929,18 @@ class Server:
                 "cwd": cwd,
             }
         runtime = row.get("runtime") or "generic"
+        if runtime == "claude-code":
+            rt = runtime_for(runtime, "claude")
+            if not rt.can_resume_unambiguously(
+                cwd=Path(cwd), recorded=self.history.session_id_for(session_key)
+            ):
+                return 409, {
+                    "error": (
+                        "Cannot safely resume this Claude session: its conversation ID "
+                        "was not recorded or its transcript is unavailable on this machine."
+                    ),
+                    "code": "ambiguous_resume_identity",
+                }
         if runtime == "codex":
             rt = runtime_for(runtime, "codex")
             recorded = self.history.session_id_for(session_key)
