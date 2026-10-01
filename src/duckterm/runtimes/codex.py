@@ -43,8 +43,9 @@ _WAITING = re.compile(
     r"(\(y/n\)|continue\?|would you like to|press enter to confirm|do you want to proceed)",
     re.IGNORECASE,
 )
-# The owner's queued question above the input box: "? 1 question · 7s".
-_QUEUED_QUESTION = re.compile(r"^\s*\? \d+ questions? ·", re.MULTILINE)
+# The owner's queued question above the input box: "? 1 question" (a timer
+# like "· 7s" comes and goes) over "shift + ← to answer".
+_QUEUED_QUESTION = re.compile(r"^\s*\? \d+ questions?\b|shift \+ ← to answer", re.MULTILINE)
 
 _SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 

@@ -47,9 +47,12 @@ COPILOT_RAW = {
         },
     },
 }
-# Codex 0.155.1 with a question queued: the input box below is empty.
+# Codex 0.155.1 with a question queued, captured live (the timer after
+# "1 question" comes and goes); the input box below is empty.
 CODEX_QUEUED = (
-    "• Queued follow-up inputs\n  ? 1 question · 7s\n    shift + ← to answer\n" + CODEX_EMPTY
+    "• Queued follow-up inputs\n"
+    "\x1b[2m  ? \x1b[0;1m\x1b[38;5;6m1 question\x1b[0m\n"
+    "\x1b[2m    shift + ← to answer\x1b[0m\n" + CODEX_EMPTY
 )
 
 
@@ -156,6 +159,7 @@ def test_a_queued_codex_question_keeps_oracle_from_typing() -> None:
     codex = CodexRuntime()
     assert codex.prompt_is_empty(CODEX_EMPTY)
     assert not codex.prompt_is_empty(CODEX_QUEUED)
+    assert not codex.prompt_is_empty(CODEX_QUEUED.replace("1 question", "1 question · 7s"))
 
 
 def test_the_hook_forwards_copilots_tool_args(tmp_path) -> None:
