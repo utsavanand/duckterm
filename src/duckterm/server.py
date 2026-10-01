@@ -108,6 +108,7 @@ from duckterm.transport.httpio import read_body as _read_body
 from duckterm.transport.httpio import read_headers as _read_headers
 from duckterm.transport.httpio import write_file as _write_file
 from duckterm.transport.httpio import write_json as _write_json
+from duckterm.transport.httpio import write_json_bytes as _write_json_bytes
 from duckterm.transport.httpio import write_response as _write_response
 from duckterm.transport.httpio import write_sse as _write_sse
 from duckterm.transport.websocket import (
@@ -284,6 +285,8 @@ _ROUTES: list[Route] = [
           **_mid("/connectors/", "/disable")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._layout(w, h, seg, "GET", b), prefix="/layouts/"),
     Route("PUT", "", lambda s, r, w, h, b, seg: s._layout(w, h, seg, "PUT", b), prefix="/layouts/"),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._verify_connector(w, seg),
+          **_mid("/connectors/", "/verify")),
     # ── left-panel folders ──
     Route("GET", "/session-inbox-counts", lambda s, r, w, h, b, seg: s._inbox_counts(w, h)),
     Route("GET", "/folders", lambda s, r, w, h, b, seg: s._list_folders(w)),
@@ -717,7 +720,7 @@ class Server:
         # until replied to; the regular reminder follows.
         pinned = api.priority_notice(key) if runtime.priority_delivery else None
         if pinned:
-            api.mark_delivered(pinned[1])
+            self._delivered(key, pinned[1])
         parts = [
             pinned and pinned[0],
             runtime.turn_end_inbox_notice and api.turn_end_notice(key),
@@ -883,12 +886,28 @@ class Server:
             message["message_key"] = hashlib.sha256(identity).hexdigest()
         return messages
 
+    def _session_messages_response(self, session_key: str) -> bytes:
+        row = self.history.session(session_key)
+        if row is None:
+            return b'{"messages": []}'
+        cwd = row.get("worktree_path") or row.get("cwd")
+        if cwd:
+            runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
+            snapshot = getattr(runtime, "messages_response", None)
+            if snapshot is not None:
+                response = snapshot(
+                    cwd=Path(str(cwd)), session_id=self.history.session_id_for(session_key)
+                )
+                if isinstance(response, bytes):
+                    return response
+        return json.dumps({"messages": self._session_messages(session_key)}).encode()
+
     async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         if self.history.session(session_key) is None:
             await _write_json(writer, 404, {"error": "no such session"})
             return
-        messages = await asyncio.to_thread(self._session_messages, session_key)
-        await _write_json(writer, 200, {"messages": messages})
+        response = await asyncio.to_thread(self._session_messages_response, session_key)
+        await _write_json_bytes(writer, 200, response)
 
     async def _layout(
         self,
@@ -1355,6 +1374,21 @@ class Server:
             event = {"event_type": events.ATTENDED, "session_key": key, "reconciled": True}
             self.bus.publish(event)
 
+    def _delivered(self, key: str, ids: list[str]) -> None:
+        """Record that priority messages reached this agent, and publish
+        MergeDelivered for a merge summary the first time it does."""
+        for message in self.history.session_api.mark_delivered(ids):
+            origin = message.get("origin")
+            if origin and origin["kind"] == "merge":
+                event = {
+                    "event_type": events.MERGE_DELIVERED,
+                    "session_key": key,
+                    "from_session": origin["from_session"],
+                    "message_id": message["id"],
+                    "request_key": message["request_key"],
+                }
+                self.bus.publish(event)
+
     async def _session_attended(self, writer: asyncio.StreamWriter, key: str) -> None:
         if self.history.session(key) is None:
             await _write_json(writer, 404, {"error": "no such session"})
@@ -1572,6 +1606,7 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        is_test = bool(parent.get("test")) or req.get("test") is True
         command = req.get("command") or "claude"
         repo = Path(str(parent["repo_path"]))
         branch = req.get("branch") or f"fork/{parent_key[:8]}"
@@ -1597,6 +1632,7 @@ class Server:
                     branch=branch,
                     base=base,
                     parent_session_key=parent_key,
+                    test=is_test,
                     session_key=req.get("session_key"),
                     prompt=req.get("prompt", ""),
                 )
@@ -1660,6 +1696,7 @@ class Server:
                 "worktree_path": str(worktree.path),
                 "branch": worktree.branch,
                 "parent_session_key": parent_key,
+                "test": is_test,
                 "intention": f"fork of {parent.get('source_app') or parent_key} ({base})",
                 "launched": True,
                 "pty_owned": False,
@@ -1769,7 +1806,6 @@ class Server:
         note = None
         if session_id:
             argv = ["claude", "--resume", session_id, "--fork-session"]
-            child_key = f"convfork-{session_id[:8]}"
         else:
             note = "no conversation to fork yet — started a fresh session in the same folder"
             print(
@@ -1779,8 +1815,10 @@ class Server:
                 file=sys.stderr,
             )
             argv = ["claude"]
-            child_key = security.new_session_key("convfork")
+        # The native ID identifies resume context, never the new child session.
+        child_key = security.new_session_key("convfork")
         req = json.loads(body or b"{}")
+        is_test = bool(parent.get("test")) or req.get("test") is True
 
         if os.environ.get("DUCKTERM_HOSTED") or not req.get("in_terminal", True):
             key = await self.orchestrator.launch(
@@ -1788,6 +1826,7 @@ class Server:
                 cwd=cwd,
                 session_key=child_key,
                 parent_session_key=parent_key,
+                test=is_test,
                 name=f"{parent.get('name') or parent.get('source_app') or parent_key} (fork)",
             )
             self._inherit_group(parent, key)
@@ -1806,7 +1845,7 @@ class Server:
             )
             return
 
-        fork_title = f"{parent.get('source_app') or parent_key} (fork)"
+        fork_title = f"{parent.get('name') or parent.get('source_app') or parent_key} (fork)"
         argv = _build_runtime("claude-code", shlex.join(argv)).launch_command(
             cwd=Path(cwd),
             session_key=child_key,
@@ -1822,6 +1861,8 @@ class Server:
                 "runtime": "claude-code",
                 "cwd": cwd,
                 "parent_session_key": parent_key,
+                "test": is_test,
+                "name": fork_title,
                 "intention": f"conversation fork of {parent.get('source_app') or parent_key}",
             }
         )
@@ -2036,6 +2077,18 @@ class Server:
                 "cwd": cwd,
             }
         runtime = row.get("runtime") or "generic"
+        if runtime == "claude-code":
+            rt = runtime_for(runtime, "claude")
+            if not rt.can_resume_unambiguously(
+                cwd=Path(cwd), recorded=self.history.session_id_for(session_key)
+            ):
+                return 409, {
+                    "error": (
+                        "Cannot safely resume this Claude session: its conversation ID "
+                        "was not recorded or its transcript is unavailable on this machine."
+                    ),
+                    "code": "ambiguous_resume_identity",
+                }
         if runtime == "codex":
             rt = runtime_for(runtime, "codex")
             recorded = self.history.session_id_for(session_key)
@@ -3473,7 +3526,20 @@ class Server:
         # Credential/CLI probes can take seconds. Keep other dashboard requests
         # and terminal traffic responsive while they finish.
         statuses = await asyncio.to_thread(connectors.list_status)
+        used = await asyncio.to_thread(self.history.connector_last_used)
+        for row in statuses:
+            recorded = used.get(str(row["name"]))
+            row["last_used"] = recorded[0] if recorded else None
+            row["use_count"] = recorded[1] if recorded else 0
         await _write_json(writer, 200, {"connectors": statuses})
+
+    async def _verify_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
+        """Prove the harness path works, rather than that a config entry exists."""
+        if name not in connectors.NAMES:
+            await _write_json(writer, 404, {"error": "unknown connector"})
+            return
+        result = await asyncio.to_thread(connectors.verify, name)
+        await _write_json(writer, 200, {"name": name, **result})
 
     async def _enable_connector(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
         try:
@@ -3488,6 +3554,12 @@ class Server:
                 writer, 400, {"error": "expected an object with boolean write_access"}
             )
             return
+        harnesses = req.get("harnesses")
+        if harnesses is not None and not (
+            isinstance(harnesses, list) and all(isinstance(h, str) for h in harnesses)
+        ):
+            await _write_json(writer, 400, {"error": "harnesses must be a list of names"})
+            return
         token = str(req.get("token") or "").strip() or None
         secret = str(req.get("secret") or "").strip() or None
         try:
@@ -3498,6 +3570,7 @@ class Server:
                 secret,
                 source=req.get("source"),
                 write_access=req.get("write_access", False),
+                harnesses=harnesses,
             )
         except ValueError as e:
             await _write_json(writer, 404, {"error": str(e)})
@@ -4767,7 +4840,7 @@ class Server:
             if pinned and status == "submitted":
                 # A stuck paste isn't delivery: the status stays "pending
                 # next turn" and the Stop-hook notice still carries it.
-                self.history.session_api.mark_delivered(pinned[1])
+                self._delivered(key, pinned[1])
             ids = sorted(str(m["id"]) for m in picked)
             nudge = oracle.record_nudge(previous, picked, mail, now)
             self._oracle_nudges[key] = nudge
