@@ -317,6 +317,18 @@ class HistoryStore:
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE sessions ADD COLUMN {column} {sql_type}")
 
+        # Older versions displayed launch names from SSE but never persisted
+        # them on the row. Recover only missing names; owner renames (including
+        # an explicitly empty name) and existing source_app remain untouched.
+        self._conn.execute(
+            "UPDATE sessions SET name = ("
+            "SELECT json_extract(e.payload_json, '$.name') FROM events e "
+            "WHERE e.session_key = sessions.session_key AND e.event_type = 'SessionStart' "
+            "AND json_type(e.payload_json, '$.name') = 'text' "
+            "AND json_extract(e.payload_json, '$.name') != '' "
+            "ORDER BY e.ts ASC, e.rowid ASC LIMIT 1) WHERE name IS NULL"
+        )
+
         cp_cols = {
             row["name"] for row in self._conn.execute("PRAGMA table_info(checkpoints)").fetchall()
         }
@@ -948,8 +960,8 @@ class HistoryStore:
                 "(session_key, runtime, repo_path, worktree_path, branch, "
                 " parent_session_key, compare_group, state, source_app, cwd, "
                 " last_event_type, last_tool, event_count, started_at, updated_at, ended_at, "
-                " last_seen, launched, test, agent_pid, command) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " last_seen, launched, test, agent_pid, command, name) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     key,
                     event.get("runtime"),
@@ -971,11 +983,13 @@ class HistoryStore:
                     1 if event.get("test") else 0,
                     event.get("agent_pid"),
                     event.get("command"),
+                    event.get("name"),
                 ),
             )
         else:
             self._conn.execute(
                 "UPDATE sessions SET "
+                "name = COALESCE(name, ?), "
                 "runtime = COALESCE(?, runtime), "
                 "repo_path = COALESCE(?, repo_path), "
                 "worktree_path = COALESCE(?, worktree_path), "
@@ -1000,6 +1014,7 @@ class HistoryStore:
                 "command = COALESCE(?, command) "
                 "WHERE session_key = ?",
                 (
+                    event.get("name"),
                     event.get("runtime"),
                     event.get("repo_path"),
                     event.get("worktree_path"),

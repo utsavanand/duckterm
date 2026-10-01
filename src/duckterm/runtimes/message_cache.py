@@ -119,3 +119,20 @@ class MessageCache:
         except OSError:
             self._states.pop(path, None)
             return None
+
+
+def unavailable_response(session_id: str | None) -> bytes:
+    """An absent identity/file must not be disguised as another conversation."""
+    return json.dumps(
+        {
+            "messages": [],
+            "transcript": {
+                "status": "not_found" if session_id else "identity_missing",
+                "reason": (
+                    "The recorded conversation transcript is unavailable on this machine."
+                    if session_id
+                    else "No conversation ID has been recorded for this session yet."
+                ),
+            },
+        }
+    ).encode()

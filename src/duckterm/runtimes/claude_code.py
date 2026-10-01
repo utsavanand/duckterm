@@ -25,7 +25,7 @@ from pathlib import Path
 
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
 from duckterm.runtimes.base import Harness, HookSpec, SessionState, prompt_line_rest
-from duckterm.runtimes.message_cache import MessageCache
+from duckterm.runtimes.message_cache import MessageCache, unavailable_response
 
 
 def project_slug(cwd: Path) -> str:
@@ -78,10 +78,7 @@ class ClaudeCodeRuntime(Harness):
         return path if path.exists() else None
 
     def latest_transcript(self, *, cwd: Path) -> Path | None:
-        """The most recently modified transcript for a cwd. A session launched
-        in-process (PTY, no hooks) never reports Claude's own session_id, so we
-        can't locate its transcript by id — but the newest .jsonl in the project
-        slug dir IS the active session's. Used by the structured-messages view."""
+        """Newest transcript for directory-level discovery, never session identity."""
         slug = project_slug(cwd)
         proj = Path.home() / ".claude" / "projects" / slug
         if not proj.is_dir():
@@ -94,19 +91,17 @@ class ClaudeCodeRuntime(Harness):
         return parse_transcript(path) if path else []
 
     def messages(self, *, cwd: Path, session_id: str | None) -> list[dict[str, object]]:
-        # Prefer the exact transcript by session_id (hooked sessions report it);
-        # fall back to the newest transcript for the cwd (in-process PTY
-        # launches don't report Claude's session_id).
+        # A shared directory never identifies a conversation.
         path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
-        if path is None:
-            path = self.latest_transcript(cwd=cwd)
         return _MESSAGE_CACHE.read(path) if path else []
 
     def messages_response(self, *, cwd: Path, session_id: str | None) -> bytes:
         path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
-        if path is None:
-            path = self.latest_transcript(cwd=cwd)
-        return _MESSAGE_CACHE.response(path, self.name, session_id) if path else b'{"messages": []}'
+        return (
+            _MESSAGE_CACHE.response(path, self.name, session_id)
+            if path
+            else unavailable_response(session_id)
+        )
 
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return [*self._argv, "--resume", session_key]
@@ -118,15 +113,8 @@ class ClaudeCodeRuntime(Harness):
         return bool(recorded and self.locate_transcript(cwd=cwd, session_id=recorded))
 
     def find_resumable_id(self, *, cwd: Path, recorded: str | None) -> str | None:
-        # The recorded id isn't always valid (a forked/transient id, or its
-        # transcript was deleted) — verify the file exists. Falling back to the
-        # newest transcript in the project dir matches what the Messages view
-        # and snapshot restore already do for in-process launches, which never
-        # report Claude's own session_id.
-        if recorded and self.locate_transcript(cwd=cwd, session_id=recorded):
-            return recorded
-        latest = self.latest_transcript(cwd=cwd)
-        return latest.stem if latest else None
+        # Never substitute a peer's conversation in the same directory.
+        return recorded if self.can_resume_unambiguously(cwd=cwd, recorded=recorded) else None
 
 
 def parse_transcript(path: Path) -> list[dict[str, str]]:
