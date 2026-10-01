@@ -1,5 +1,10 @@
 # Retro — lessons from real breakage
 
+## 2026-10-01 — A zero-size layout callback discarded terminal resize
+**Broke:** Pane transitions could call the terminal resize observer before usable dimensions existed; returning silently left stale terminal columns.
+**Fix:** Retain the pending fit on the next animation frame until measurable, cancel it when hidden or disposed, and keep attach scrolling separate from ordinary reflow.
+**Lesson:** A temporary layout failure needs a retry, not an assumption that the observer will fire again.
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A
