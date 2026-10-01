@@ -143,6 +143,13 @@ a message's standing, not how it's delivered, and never interrupts a turn.
   submission reuses its key; a later re-merge needs a new one. A key is
   bound to its text and its priority: reusing it with either changed is a
   409, including a plain message on a priority key.
+- **Merge checkpoint trigger.** The first time a merge summary reaches the
+  parent (the Stop hook returns it, or Oracle's reminder is submitted), the
+  server records a `MergeDelivered` event on the parent:
+  `{from_session, message_id, request_key}`. That event is where the
+  parent's merge checkpoint is taken (architect, 2026-09-30). Enqueueing,
+  cancelling, a stuck or failed paste, and later re-notices never fire it.
+  It is bookkeeping, not agent activity, so it changes no session state.
 - **Capability.** `priority_delivery` is a harness flag. Claude Code
   declares it, since its turn-end notice is proven; Codex and Copilot don't
   yet. Their copies show "inbox only" and get no pin or fast path, and are

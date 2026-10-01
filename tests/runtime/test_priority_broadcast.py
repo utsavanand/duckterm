@@ -374,3 +374,65 @@ def test_status_and_cancel_touch_only_their_own_broadcast(scenario) -> None:
     assert set(status(server, owner, "k")) == {"claude", "peer", "codex"}
     dispatch(server, "DELETE", "/broadcasts/k", owner)
     assert set(status(server, owner, "k:x").values()) == {"pending next turn", "inbox only"}
+
+
+def merge_events(history, key="claude"):
+    rows = history._conn.execute(
+        "SELECT payload_json FROM events WHERE session_key = ? AND event_type = 'MergeDelivered'",
+        (key,),
+    ).fetchall()
+    return [json.loads(r[0]) for r in rows]
+
+
+def test_merge_delivered_fires_once_at_the_first_turn_end_notice(scenario) -> None:
+    history, server, owner, _ = scenario
+    note(server, owner, "claude", "Fork summary", "merge:peer:1", merged_from="peer")
+    send(server, owner, "Plain priority", "p")
+    note(server, owner, "codex", "Withdrawn summary", "merge:peer:2", merged_from="peer")
+    dispatch(server, "DELETE", "/broadcasts/merge:peer:2", owner)
+    assert (
+        merge_events(history) == [] and merge_events(history, "codex") == []
+    )  # not on enqueue or cancel
+
+    notice(server)
+    notice(server)  # re-noticed, but delivered only once
+    (event,) = merge_events(history)
+    assert {k: event[k] for k in ("from_session", "request_key")} == {
+        "from_session": "peer",
+        "request_key": "merge:peer:1",
+    }
+
+
+@pytest.mark.parametrize(("outcome", "fired"), [("submitted", 1), ("stuck", 0), ("failed", 0)])
+def test_merge_delivered_follows_the_idle_reminders_result(scenario, monkeypatch, outcome, fired):
+    history, server, owner, _ = scenario
+    history.set_state("claude", "idle")
+    history.record(
+        {"_id": "s", "_ts": int(time.time() * 1000), "event_type": "Stop", "session_key": "claude"}
+    )
+    monkeypatch.setattr(
+        server.orchestrator,
+        "get",
+        lambda key: FakeSupervisor(CLAUDE_EMPTY) if key == "claude" else None,
+    )
+
+    async def submit(key, text):
+        return outcome
+
+    monkeypatch.setattr(server, "_submit_prompt", submit)
+    note(server, owner, "claude", "Fork summary", "merge:peer:1", merged_from="peer")
+    asyncio.run(server._oracle_tick())
+    assert len(merge_events(history)) == fired
+
+
+def test_merge_delivered_does_not_touch_the_parents_session_row(scenario) -> None:
+    history, server, owner, _ = scenario
+    history.set_state("claude", "idle")
+    before = history.session("claude")
+    note(server, owner, "claude", "Fork summary", "merge:peer:1", merged_from="peer")
+    notice(server)
+    assert len(merge_events(history)) == 1
+    after = history.session("claude")
+    assert {k: after[k] for k in ("state", "last_event_type", "updated_at")} == {
+        k: before[k] for k in ("state", "last_event_type", "updated_at")
+    }
