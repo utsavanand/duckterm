@@ -334,6 +334,13 @@ class HistoryStore:
             "ORDER BY e.ts ASC, e.rowid ASC LIMIT 1) WHERE name IS NULL"
         )
 
+        # Repair active links to explicitly deleted parents without changing
+        # fork history or guessing about parents whose events have not arrived.
+        self._conn.execute(
+            "UPDATE sessions SET parent_session_key = NULL "
+            "WHERE parent_session_key IN (SELECT session_key FROM tombstones)"
+        )
+
         cp_cols = {
             row["name"] for row in self._conn.execute("PRAGMA table_info(checkpoints)").fetchall()
         }
@@ -353,6 +360,11 @@ class HistoryStore:
         # the only way back, for a session deleted by mistake.
         if key is not None and self._is_tombstoned(key):
             return
+        parent = event.get("parent_session_key")
+        if parent and self._is_tombstoned(str(parent)):
+            # Also sanitize the live event fan-out: a supervisor retains its
+            # original launch metadata after its parent has been removed.
+            event["parent_session_key"] = None
         self._conn.execute(
             "INSERT OR IGNORE INTO events (id, session_key, event_type, ts, payload_json) "
             "VALUES (?, ?, ?, ?, json(?))",
@@ -1085,6 +1097,11 @@ class HistoryStore:
         self._conn.execute("DELETE FROM session_api_members WHERE session_key = ?", (key,))
         mail_analytics.retire_mail(self._conn, "sender = ? OR recipient = ?", (key, key))
         mail_analytics.retire_events(self._conn, "session_key = ?", (key,))
+        # Children remain independent live sessions. Remove only their active
+        # tree edge; their own events retain the original fork provenance.
+        self._conn.execute(
+            "UPDATE sessions SET parent_session_key = NULL WHERE parent_session_key = ?", (key,)
+        )
         cur = self._conn.execute("DELETE FROM sessions WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))

@@ -1,5 +1,8 @@
 # Retro — lessons from real breakage
 
+## Deleting a parent must remove active child links, not child sessions
+Parent deletion left children pointing at a removed row. Clear direct child parent_session_key values in the deletion transaction while retaining their recorded fork events. Reject links to tombstoned parents in late supervisor events before live fan-out, and repair old tombstoned-parent edges on reopen without guessing about unknown parents. Tests verify descendants remain attached to their surviving parent and a real child PTY process stays responsive after its parent is deleted. Dashboard local-state cleanup is a separate UI integration requirement.
+
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
 got stuck in the prompt, or failed to paste, already showed "delivered". A
