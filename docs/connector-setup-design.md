@@ -33,6 +33,18 @@ Bounded claim: verification proves the server starts and serves tools. It does
 not prove an already-running session picked up a registration added after it
 started; per-session Restart is the honest remedy for that.
 
+What "verified" requires (settled after QA returned PR #149): the handshake
+succeeds, `tools/list` returns an array, **every** entry carries a non-empty
+string `name`, and the array is **not empty**. The last two were initially
+looser — an empty list reported "verified, 0 tools" and `{}` counted as a
+tool — which reproduced the original defect one layer up: a check answering
+the cheap question (did a reply arrive?) while appearing to answer the real
+one (can an agent call anything?). An agent invokes a tool by name, so an
+entry without one cannot be used, and a server offering nothing to call
+cannot support the claim the panel is making. One malformed entry fails the
+whole listing rather than being skipped, because reporting "2 of 3" would
+overstate what the agent can actually reach.
+
 ## The problem
 
 Connecting a provider works only when its prerequisites already happen to be
@@ -148,8 +160,14 @@ for the VM.
 Per harness, defaulted on. `_install()` takes the harness list instead of
 assuming both, and deselecting one withdraws its existing entry — leaving it
 behind would keep a harness serving a connector the panel no longer shows.
-The choice is stored per connector, so it survives disable/enable; connectors
-that predate the setting keep both, which is what they already had.
+The choice is stored per connector, so it survives disable/enable.
+
+A connector that predates the setting has no stored choice, so its row reads
+the harness configs rather than assuming both (the question release-dev
+raised: does a legacy row keep claiming Codex until the owner picks?). It
+reports what is actually registered — claiming Codex where only Claude Code
+was ever written is the same false checkmark this setting exists to remove.
+Nothing registered at all means both, the default for a fresh connect.
 
 One change from the sketch above: a missing harness is **labelled, not
 disabled**. A registration written for an absent Codex is not wrong — it

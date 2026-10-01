@@ -228,15 +228,27 @@ def harness_present(harness: str) -> bool:
 
 
 def harness_choice(name: str, *, home: Path | None = None) -> list[str]:
-    """Harnesses this connector is registered for, defaulting to all of them.
+    """Harnesses this connector is registered for.
 
-    Stored per connector so a choice survives disable/enable; connectors that
-    predate the setting keep both, which is what they already had."""
+    Stored per connector so a choice survives disable/enable. A connector that
+    predates the setting has no stored choice, so read the harness configs
+    instead of assuming both — otherwise the row would claim Codex on a machine
+    where only Claude Code was ever registered, which is the false checkmark
+    this setting exists to remove. Nothing registered yet means both, the
+    default for a fresh connect."""
     stored = policy(name, home=home).get("harnesses")
-    if not isinstance(stored, list):
-        return list(HARNESSES)
-    chosen = [h for h in HARNESSES if h in stored]
-    return chosen or list(HARNESSES)
+    if isinstance(stored, list):
+        chosen = [h for h in HARNESSES if h in stored]
+        return chosen or list(HARNESSES)
+    registered = [
+        harness
+        for harness, installed in (
+            ("claude-code", mcp_install.claude_installed(name, home=home)),
+            ("codex", mcp_install.codex_installed(name, home=home)),
+        )
+        if installed
+    ]
+    return registered or list(HARNESSES)
 
 
 def _install(name: str, *, home: Path | None = None, harnesses: list[str] | None = None) -> None:
@@ -752,12 +764,27 @@ def verify(name: str, *, timeout: float = 30.0) -> dict[str, object]:
         result = listing.get("result")
         tools = result.get("tools") if isinstance(result, dict) else None
         # Only a real tool array counts. `len("invalid")` reported 7 tools.
-        if not isinstance(tools, list) or not all(isinstance(t, dict) for t in tools):
+        if not isinstance(tools, list):
             return {
                 "ok": False,
                 "detail": "The connector did not list its tools in a usable form",
                 "tools": 0,
             }
+        # An agent calls a tool by name, so an entry without a usable one is not
+        # a tool the owner can rely on; counting it would overstate the listing.
+        if not all(
+            isinstance(tool, dict) and isinstance(tool.get("name"), str) and tool["name"].strip()
+            for tool in tools
+        ):
+            return {
+                "ok": False,
+                "detail": "The connector listed a tool with no usable name",
+                "tools": 0,
+            }
+        # The panel's claim is "you can use this", and a server offering nothing
+        # to call cannot support it — report that rather than a verified zero.
+        if not tools:
+            return {"ok": False, "detail": "The connector offers no tools", "tools": 0}
         return {"ok": True, "detail": None, "tools": len(tools)}
     except OSError as exc:
         return {"ok": False, "detail": str(exc)[:200], "tools": 0}

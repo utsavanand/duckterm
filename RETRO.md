@@ -1,5 +1,24 @@
 # Retro — lessons from real breakage
 
+## 2026-09-30 — The verifier repeated the bug it was built to catch
+**Broke:** main-qa returned PR #149. `verify` reported ok for a connector
+listing `{tools: []}` and for one listing `{tools: [{}]}` — an empty set and
+a nameless object both read as "Verified".
+**Cause:** the validation checked that a reply arrived and was shaped like a
+list of objects, which is the cheap question. The real question is whether an
+agent can call anything, and an agent calls a tool by name. This is the same
+defect the feature exists to fix, one layer up: the panel used to assert "a
+config entry exists" while appearing to assert "this works", and the verifier
+then asserted "a reply parsed" while appearing to assert the same thing.
+Writing the check does not exempt it from the standard it enforces.
+**Rule:** when adding a check, state the claim it licenses in the UI's own
+words and test the weakest input that should fail it — here, an empty list
+and `{}`. Prefer failing a whole listing over skipping bad entries: counting
+2 of 3 overstates what the agent can reach. And a judgement call made alone
+is worth re-examining when a reviewer disagrees — the earlier "an honestly
+empty server is not broken" was defensible in isolation and wrong against the
+sentence the panel actually prints.
+
 ## 2026-09-30 — A written config entry is not a working integration
 **Broke:** the connectors panel reported `codex: ✓` on machines that had
 never had Codex installed, and `enable()` wrote both harness configs

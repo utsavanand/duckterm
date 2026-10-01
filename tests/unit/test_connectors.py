@@ -447,11 +447,22 @@ def test_the_choice_survives_a_later_enable_that_does_not_restate_it(
     assert not connectors.mcp_install.claude_installed("github", home=tmp_path)
 
 
-def test_a_connector_predating_the_setting_keeps_both_harnesses(
+def test_a_connector_predating_the_setting_reports_what_is_registered(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without a stored choice, read the configs: claiming Codex when only
+    Claude Code was ever registered is the false checkmark we are removing."""
+    _gh_ready(isolated_env, monkeypatch)
+    connectors.mcp_install.claude_install("github", "duckterm", ["connector-run"], home=tmp_path)
+    connectors._save_policy("github", {"enabled": True, "source": "gh-cli"})
+    assert connectors.harness_choice("github", home=tmp_path) == ["claude-code"]
+
+
+def test_a_connector_with_nothing_registered_defaults_to_both(
     isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _gh_ready(isolated_env, monkeypatch)
-    connectors._save_policy("github", {"enabled": True, "source": "gh-cli"})
+    connectors._save_policy("github", {"enabled": False, "source": "gh-cli"})
     assert connectors.harness_choice("github", home=tmp_path) == ["claude-code", "codex"]
 
 

@@ -75,7 +75,9 @@ def test_a_tool_list_that_is_not_a_list_of_tools_is_a_failure(
     result = connectors.verify("github", timeout=10)
     assert result["ok"] is False
     assert result["tools"] == 0
-    assert "did not list its tools" in str(result["detail"])
+    # The wording differs between a malformed payload and a malformed entry;
+    # both must name the connector's listing as the problem.
+    assert "tool" in str(result["detail"])
 
 
 def test_a_missing_result_is_a_failure(isolated_env: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -89,14 +91,71 @@ def test_a_missing_result_is_a_failure(isolated_env: Path, monkeypatch: pytest.M
     assert result["ok"] is False and result["tools"] == 0
 
 
-def test_a_server_serving_no_tools_is_reported_honestly(
+def test_a_well_formed_listing_of_callable_tools_passes(
     isolated_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An empty list is well-formed: report zero rather than inventing a failure."""
+    _server(
+        isolated_env,
+        monkeypatch,
+        "INIT = {'jsonrpc':'2.0','id':1,'result':{'protocolVersion':'2024-11-05'}}\n"
+        "LIST = {'jsonrpc':'2.0','id':2,'result':{'tools':["
+        "{'name':'one'}, {'name':'two','description':'d'}]}}\n" + _READ_LOOP,
+    )
+    assert connectors.verify("github", timeout=10) == {"ok": True, "detail": None, "tools": 2}
+
+
+def test_a_connector_serving_no_tools_is_not_usable(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An empty list is well-formed but gives an agent nothing to call, and the
+    panel's claim is "you can use this" — so it must not read as verified."""
     _server(
         isolated_env,
         monkeypatch,
         "INIT = {'jsonrpc':'2.0','id':1,'result':{'protocolVersion':'2024-11-05'}}\n"
         "LIST = {'jsonrpc':'2.0','id':2,'result':{'tools':[]}}\n" + _READ_LOOP,
     )
-    assert connectors.verify("github", timeout=10) == {"ok": True, "detail": None, "tools": 0}
+    result = connectors.verify("github", timeout=10)
+    assert result["ok"] is False
+    assert result["tools"] == 0
+    assert "no tools" in str(result["detail"])
+
+
+@pytest.mark.parametrize(
+    "entry, label",
+    [
+        ("{}", "no name at all"),
+        ("{'name': ''}", "an empty name"),
+        ("{'name': 42}", "a non-string name"),
+        ("{'description': 'x'}", "a description but no name"),
+    ],
+)
+def test_a_tool_an_agent_cannot_call_does_not_count(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch, entry: str, label: str
+) -> None:
+    """A tool is callable by name; without one it inflates the count and lies."""
+    _server(
+        isolated_env,
+        monkeypatch,
+        "INIT = {'jsonrpc':'2.0','id':1,'result':{'protocolVersion':'2024-11-05'}}\n"
+        f"LIST = {{'jsonrpc':'2.0','id':2,'result':{{'tools':[{entry}]}}}}\n" + _READ_LOOP,
+    )
+    result = connectors.verify("github", timeout=10)
+    assert result["ok"] is False, label
+    assert result["tools"] == 0
+
+
+def test_one_unusable_tool_among_good_ones_fails_the_whole_listing(
+    isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reporting 2 of 3 would overstate what the agent can actually call."""
+    _server(
+        isolated_env,
+        monkeypatch,
+        "INIT = {'jsonrpc':'2.0','id':1,'result':{'protocolVersion':'2024-11-05'}}\n"
+        "LIST = {'jsonrpc':'2.0','id':2,'result':{'tools':["
+        "{'name':'ok_one'}, {}, {'name':'ok_two'}]}}\n" + _READ_LOOP,
+    )
+    result = connectors.verify("github", timeout=10)
+    assert result["ok"] is False
+    assert result["tools"] == 0
