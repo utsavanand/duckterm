@@ -436,3 +436,28 @@ def test_merge_delivered_does_not_touch_the_parents_session_row(scenario) -> Non
     assert {k: after[k] for k in ("state", "last_event_type", "updated_at")} == {
         k: before[k] for k in ("state", "last_event_type", "updated_at")
     }
+
+
+def test_a_summary_cancelled_while_oracle_pastes_is_not_delivered(scenario, monkeypatch) -> None:
+    """main-qa, PR #180: the owner cancelled during the paste and
+    MergeDelivered fired anyway."""
+    history, server, owner, _ = scenario
+    history.set_state("claude", "idle")
+    history.record(
+        {"_id": "s", "_ts": int(time.time() * 1000), "event_type": "Stop", "session_key": "claude"}
+    )
+    monkeypatch.setattr(
+        server.orchestrator,
+        "get",
+        lambda key: FakeSupervisor(CLAUDE_EMPTY) if key == "claude" else None,
+    )
+
+    async def cancelled_mid_paste(key, text):
+        history.session_api.cancel_broadcast("merge:peer:1")
+        return "submitted"
+
+    monkeypatch.setattr(server, "_submit_prompt", cancelled_mid_paste)
+    note(server, owner, "claude", "Fork summary", "merge:peer:1", merged_from="peer")
+    asyncio.run(server._oracle_tick())
+    assert merge_events(history) == []
+    assert status(server, owner, "merge:peer:1") == {"claude": "cancelled"}
