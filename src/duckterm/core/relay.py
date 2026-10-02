@@ -3,7 +3,9 @@
 Three kinds of note, each tied to one session and one moment:
 
   approval  a pending permission request (the approval registry)
-  choice    Claude's AskUserQuestion menu (arrives as a PermissionRequest)
+  choice    a question the agent's own tool put to the owner (Harness.owner_prompt):
+            Claude's AskUserQuestion, Codex's request_user_input_async,
+            Copilot's ask_user
   question  a turn that ended by asking the owner something (transcript)
 
 The Waiting badge alone is never a note: on 2026-09-26, 5 of 6 Waiting
@@ -16,6 +18,7 @@ approvals; answer rules only ever send the fixed reply the owner wrote, and
 start as drafts the owner sends by hand.
 """
 
+import contextlib
 import json
 import re
 import secrets
@@ -134,18 +137,40 @@ def question_from(text: str) -> str | None:
     return last[-600:]
 
 
-def choices_from(tool_input: dict[str, Any]) -> list[tuple[str, list[str]]]:
-    """(question, option labels) for each question of an AskUserQuestion form."""
+def choices_from(tool_input: Any) -> list[tuple[str, list[str]]]:
+    """(question, option labels) for each question an agent put to the owner.
+    Claude's AskUserQuestion: questions[{question, options: [{label}]}].
+    Codex's request_user_input_async: questions[{title, options: [str]}].
+    Copilot's ask_user: {message, requestedSchema: {properties: {field:
+    {oneOf: [{const, title}]} or {enum}}}}, sometimes as a JSON string."""
+    if isinstance(tool_input, str):
+        with contextlib.suppress(ValueError):
+            tool_input = json.loads(tool_input)
+    if not isinstance(tool_input, dict):
+        return []
+    if isinstance(tool_input.get("message"), str):
+        schema = tool_input.get("requestedSchema")
+        fields = schema.get("properties") if isinstance(schema, dict) else None
+        options = []
+        for field in fields.values() if isinstance(fields, dict) else []:
+            if not isinstance(field, dict):
+                continue
+            for o in field.get("oneOf") or []:
+                if isinstance(o, dict) and (o.get("title") or o.get("const")):
+                    options.append(str(o.get("title") or o.get("const")))
+            options += [str(o) for o in field.get("enum") or []]
+        return [(tool_input["message"], options)] if tool_input["message"] else []
     questions = tool_input.get("questions")
     choices = []
     for q in questions if isinstance(questions, list) else []:
-        if isinstance(q, dict) and q.get("question"):
-            options = [
-                str(o.get("label"))
-                for o in q.get("options") or []
-                if isinstance(o, dict) and o.get("label")
-            ]
-            choices.append((str(q["question"]), options))
+        if not isinstance(q, dict) or not (q.get("question") or q.get("title")):
+            continue
+        options = [
+            str(o.get("label") if isinstance(o, dict) else o)
+            for o in q.get("options") or []
+            if (isinstance(o, dict) and o.get("label")) or (isinstance(o, str) and o)
+        ]
+        choices.append((str(q.get("question") or q.get("title")), options))
     return choices
 
 

@@ -32,7 +32,10 @@ class FolderMessages:
         }
 
     def send(self, folder: str, req: dict[str, Any]) -> dict[str, Any]:
-        if set(req) != {"identity", "target", "text", "request_key", "recipients"}:
+        assign = req.get("assign", False)
+        if not isinstance(assign, bool):
+            raise APIError(400, "assign must be true or false")
+        if set(req) - {"assign"} != {"identity", "target", "text", "request_key", "recipients"}:
             raise APIError(400, "Expected identity, target, text, request_key and recipients")
         text = _text(req["text"], "text", 16384)
         request_key = _text(req["request_key"], "request_key", 64)
@@ -44,13 +47,19 @@ class FolderMessages:
             or not isinstance(target["id"], str)
         ):
             raise APIError(400, "Invalid recipient")
+        if assign and target["kind"] != "session":
+            raise APIError(400, "Assign a task to one session")
         identity, messages = self.history.folder_chats.snapshot(folder)
         if req["identity"] != identity:
             raise APIError(409, "Folder changed. Reopen it before sending.")
         for message in messages:
             old = message.get("dispatch", {})
             if old.get("request_key") == request_key:
-                if message["q"] != text or old["target"] != target:
+                if (
+                    message["q"] != text
+                    or old["target"] != target
+                    or old.get("assigned", False) != assign
+                ):
                     raise APIError(409, "request_key already used for different content")
                 return message
         broker = self.history.session_api
@@ -79,11 +88,16 @@ class FolderMessages:
         recipients = []
         if target["kind"] == "session":
             row = eligible[0]
+
+            def create_task(mid: str) -> None:
+                self.history.folder_tasks.start(folder, row["session_id"], text, identity=mid)
+
             mid = broker.owner_message(
                 row["session_id"],
                 text,
                 request_key=f"folder:{identity}:{request_key}",
                 question=True,
+                assignment=create_task if assign else None,
             )
             recipients = [
                 {
@@ -117,6 +131,7 @@ class FolderMessages:
             int(time.time() * 1000),
             {
                 "request_key": request_key,
+                "assigned": assign,
                 "target": target,
                 "label": eligible[0]["name"] if target["kind"] == "session" else scope,
                 "recipients": recipients,

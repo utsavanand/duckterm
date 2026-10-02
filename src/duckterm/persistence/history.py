@@ -24,6 +24,7 @@ from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
 from duckterm.persistence import mail_analytics
 from duckterm.persistence.folder_chats import FolderChats
+from duckterm.persistence.layouts import Layouts
 from duckterm.runtimes.base import AT_REST_STATES, SessionState
 
 Event = dict[str, Any]
@@ -43,8 +44,9 @@ Event = dict[str, Any]
 # v6 retains analytics at deletion. Older sweep code would lose these counts.
 # v7 persists restart requests and model preferences on the session.
 # v8 persists archive grace periods so a quit cannot lose an acknowledged archive.
-# v9 stores reviewed fork merges and their final child destination.
-_SCHEMA_VERSION = 9
+# v9 was the unreleased fork-merge candidate. v10 shipped Folder Tasks first.
+# v11 adds fork merges to v10, including installations that never had v9.
+_SCHEMA_VERSION = 11
 
 
 class SchemaTooNewError(RuntimeError):
@@ -285,6 +287,7 @@ class HistoryStore:
     def __init__(self, db_path: Path | None = None) -> None:
         path = db_path if db_path is not None else paths.db_path()
         self.folder_chats = FolderChats(path.parent / "folder-chats.json", self.folders)
+        self.layouts = Layouts(path.parent / "layouts.json", self.folders)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -306,6 +309,11 @@ class HistoryStore:
             )
         self._conn.executescript(_SCHEMA)
         self._migrate()
+        from duckterm.core.folder_tasks import FolderTasks, migrate
+
+        self._conn.commit()
+        migrate(self._conn, path.parent)
+        self.folder_tasks = FolderTasks(self._conn)
         self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
         from duckterm.core.fork_merges import ForkMerges
 
@@ -352,6 +360,13 @@ class HistoryStore:
             "ORDER BY e.ts ASC, e.rowid ASC LIMIT 1) WHERE name IS NULL"
         )
 
+        # Repair active links to explicitly deleted parents without changing
+        # fork history or guessing about parents whose events have not arrived.
+        self._conn.execute(
+            "UPDATE sessions SET parent_session_key = NULL "
+            "WHERE parent_session_key IN (SELECT session_key FROM tombstones)"
+        )
+
         cp_cols = {
             row["name"] for row in self._conn.execute("PRAGMA table_info(checkpoints)").fetchall()
         }
@@ -371,6 +386,11 @@ class HistoryStore:
         # the only way back, for a session deleted by mistake.
         if key is not None and self._is_tombstoned(key):
             return
+        parent = event.get("parent_session_key")
+        if parent and self._is_tombstoned(str(parent)):
+            # Also sanitize the live event fan-out: a supervisor retains its
+            # original launch metadata after its parent has been removed.
+            event["parent_session_key"] = None
         self._conn.execute(
             "INSERT OR IGNORE INTO events (id, session_key, event_type, ts, payload_json) "
             "VALUES (?, ?, ?, ?, json(?))",
@@ -839,6 +859,11 @@ class HistoryStore:
             "WHERE grp = ? OR substr(grp, 1, ?) = ?",
             (new, cut, old, len(old) + 1, old + "/"),
         )
+        self._conn.execute(
+            "UPDATE folder_tasks SET folder = ? || substr(folder, ?) "
+            "WHERE folder = ? OR substr(folder, 1, ?) = ?",
+            (new, cut, old, len(old) + 1, old + "/"),
+        )
         self.session_api.sync_memberships(moved=(old, new))
         self._conn.commit()
         return True
@@ -1133,6 +1158,11 @@ class HistoryStore:
         self._conn.execute("DELETE FROM session_api_members WHERE session_key = ?", (key,))
         mail_analytics.retire_mail(self._conn, "sender = ? OR recipient = ?", (key, key))
         mail_analytics.retire_events(self._conn, "session_key = ?", (key,))
+        # Children remain independent live sessions. Remove only their active
+        # tree edge; their own events retain the original fork provenance.
+        self._conn.execute(
+            "UPDATE sessions SET parent_session_key = NULL WHERE parent_session_key = ?", (key,)
+        )
         cur = self._conn.execute("DELETE FROM sessions WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))

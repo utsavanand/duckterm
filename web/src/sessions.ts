@@ -142,7 +142,8 @@ export function applyEvent(
     runtime: prev?.runtime ?? e.runtime,
     repoName: prev?.repoName ?? repoNameFrom(e.repo_path, e.source_app),
     worktreePath: prev?.worktreePath ?? e.worktree_path,
-    parentKey: prev?.parentKey ?? e.parent_session_key,
+    // A confirmed absence from /sessions or deletion must survive old fork events.
+    parentKey: prev?.parentKey !== undefined ? prev.parentKey : e.parent_session_key,
     // Sticky: once a session is known launched, stay launched — a later watched
     // hook event for the same key can't downgrade it.
     launched: prev?.launched || e.launched === true,

@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-10-02 — Schema numbers do not prove feature presence
+Folder Tasks shipped schema v10 without the unreleased v9 fork-merge tables.
+Integrate both lifecycles, create missing merge tables and columns by existence,
+and advance to v11 so older code refuses to reopen merged children. Test both
+v10 without merge tables and v9 with a delivered, final child; preserve Tasks
+and checkpoints across migration and repeated startup.
+
 ## 2026-10-01 — Saving a merge is not delivering it
 A reviewed fork summary must survive retries without duplicating the parent's note.
 Persist the close-child choice before enqueueing through the shared priority broker;
@@ -7,6 +14,22 @@ create the parent checkpoint only from confirmed delivery, with an idempotent ID
 startup recovery for the delivery/checkpoint crash gap. Keep merged children final
 even when a delayed SessionStart arrives. A failed close remains visibly pending and
 can be finished from History using the same saved request.
+
+## 2026-10-01 — Assignment must be one transaction
+A task without its inbox message is invisible work; a message without its task is
+an invisible assignment. Create the explicit assignment inside the inbox broker's
+transaction, bind the assignment choice into retry identity, and retain the same
+task ID through handoffs. Archive retired Work rows to a private, durable JSON file
+before dropping their tables; a failed archive must leave the old tables intact.
+
+## 2026-09-30 — Artifact protection belongs in the store
+
+Keep must reject removal on the server, survive re-registration, and preserve the owner’s category. Removing an unkept saved copy should retain metadata in a separate table, not leave an empty downloadable file. Folder counts must use exact subtree membership and the same durable mail and transcript accounting as Analytics; test both live and retired mail. Automatic retention remains a separate owner decision.
+
+## 2026-09-30 — Saved widgets must stop reading when removed
+
+A hidden tile still polling is not a removed widget. Give each built-in widget only its declared streams, detach its readers on unmount, and stop the shared insights timer after the last subscriber leaves. Missing data must say Unavailable instead of reporting zero. Persist layouts on the server with revision checks and recoverable folder rename/delete intents so reloads and crashes do not lose the owner’s arrangement.
+
 ## 2026-10-01 — Cached empty lists lost transcript availability
 **Broke:** The Messages snapshot retained only the message list, so unavailable reasons vanished on remount and status-only changes shared the same empty-list signature.
 **Fix:** Retain and compare transcript status and reason atomically with the list, including cache size accounting; cover unavailable, empty, recovered, hidden and remounted states.
@@ -47,6 +70,48 @@ an absent harness is still legitimate (it applies when that harness arrives),
 so label it rather than blocking it; the defect was the false claim, not the
 write. Deselecting must also withdraw the existing entry — otherwise the
 harness keeps serving a connector the panel no longer lists.
+
+## 2026-10-01 — Codex's questions to the owner never reached Oracle
+**Broke:** the owner was told to approve ui-dev's work in Oracle, and nothing
+was there. Codex asks the owner through `request_user_input_async`, and
+Oracle only made choice notes for Claude's `AskUserQuestion`. Of 69 Codex
+questions, 14 were never answered. For 8 of those, the next prompt submitted
+was Oracle's own inbox reminder, which silently discards a queued Codex
+question. Copilot's `ask_user` arrived without its question, because the
+hook read `toolInput` and Copilot sends `toolArgs`.
+**Cause:** the choice note was keyed to one harness's tool name, and the
+empty-prompt check couldn't see Codex's queued question above an empty box.
+**Rule:** how an agent asks the owner is a declared harness capability
+(`Harness.owner_prompt`), checked against a real event for each harness. A
+harness that leaves it undeclared can't ask the owner through Oracle. Before
+Oracle types into an agent, it must know whether typing destroys something
+the owner hasn't seen.
+
+## Terminal display cadence must not drive tmux process creation
+The pane tail could drain continuously without yielding, scanned hook-capable TUI repaints per line, and launched a tmux liveness subprocess on every empty25–200ms poll. Bound each tick to64KiB before a25ms yield, check liveness at most once/second independently of display latency, and batch hook-capable screen fallback every250ms. Preserve raw bytes and generic per-line protocol events; flush pending PTY evidence even when output goes quiet. A28-session synthetic benchmark reduced process CPU from34.9% to6.7% with identical840,000 delivered bytes; this is not an installed-server CPU claim. Tests cover fairness, probe cadence, rotation, quiet prompts and replay.
+
+## Confirmed parent removal must survive frontend replay
+Removing a parent row left child controls gated by a stale parentKey; null-coalescing then restored the original edge from old fork events. Represent a confirmed absent parent as null, keep database lineage authoritative during seed, and clear direct links immediately on deletion. Check both seed/replay orders, late events, remote host isolation, and the real dashboard delete/reload flow while preserving descendants and historical provenance.
+
+## Deleting a parent must remove active child links, not child sessions
+Parent deletion left children pointing at a removed row. Clear direct child parent_session_key values in the deletion transaction while retaining their recorded fork events. Reject links to tombstoned parents in late supervisor events before live fan-out, and repair old tombstoned-parent edges on reopen without guessing about unknown parents. Tests verify descendants remain attached to their surviving parent and a real child PTY process stays responsive after its parent is deleted. Dashboard local-state cleanup is a separate UI integration requirement.
+
+## 2026-10-01 — A zero-size layout callback discarded terminal resize
+**Broke:** Pane transitions could call the terminal resize observer before usable dimensions existed; returning silently left stale terminal columns.
+**Fix:** Retain the pending fit on the next animation frame until measurable, cancel it when hidden or disposed, and keep attach scrolling separate from ordinary reflow.
+**Lesson:** A temporary layout failure needs a retry, not an assumption that the observer will fire again.
+
+## 2026-10-01 — Browser permission was mistaken for notification preference
+**Broke:** Turning notifications off did not survive reload; denied permission gave no explanation, and initial waiting sessions produced a burst.
+**Fix:** Persist preference independently, respect current permission, show actionable feedback in the existing help slot, and notify only observed non-waiting to waiting transitions after host loading and enablement. State explicitly that the independent native Mac notifier is separate.
+**Lesson:** Permission is a capability, not a saved preference; initial snapshots are not live transitions.
+
+## 2026-10-01 — An update control is not an updater
+Keep Install disabled until the detached installer, snapshot, restart verification
+and rollback contract is implemented. Read release information only when Settings
+opens or the owner explicitly checks again. A failed check clears the latest
+version, and a successful operation must not say Updated until the installed
+version matches the verified target.
 
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder

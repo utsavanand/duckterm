@@ -20,9 +20,10 @@ class ForkMerges:
 
     def preview(self, key: str, can_pin: Callable[[str], bool]) -> dict[str, Any]:
         child = self.history.session(key)
-        if not child or not child.get("parent_session_key"):
+        destination = child and (child.get("parent_session_key") or child.get("merged_into"))
+        if not child or not destination:
             raise APIError(404, "This session is not a fork")
-        parent = self.history.session(child["parent_session_key"])
+        parent = self.history.session(destination)
         reason = None
         if parent is None:
             reason = "The original parent was deleted. This fork remains readable."

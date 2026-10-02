@@ -138,6 +138,7 @@ def test_deleted_parent_and_unsupported_runtime(rig):
     assert preview["parent"]["priorityDelivery"] is False
     assert send(rig, keep=True)[1]["delivery"] == "inbox only"
     h.delete_session("parent")
+    assert h.session("child")["parent_session_key"] is None
     preview = dispatch(server, "GET", "/sessions/child/merge", auth)[1]
     assert not preview["allowed"] and preview["parent"] is None
     assert h.session("child")["merged_into"] == "parent"
