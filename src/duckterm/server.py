@@ -218,6 +218,7 @@ _ROUTES: list[Route] = [
     Route("GET", "", lambda s, r, w, h, b, seg: s._approval_decision(w, seg),
           **_mid("/approvals/", "/decision")),
     Route("GET", "/terminals", lambda s, r, w, h, b, seg: s._terminals(w)),
+    Route("GET", "/tasks", lambda s, r, w, h, b, seg: s._folder_tasks(w, h)),
     Route("GET", "/update/status", lambda s, r, w, h, b, seg: s._update_status(w, h)),
     Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._diff(w, seg), **_mid("/sessions/", "/diff")),
@@ -283,6 +284,8 @@ _ROUTES: list[Route] = [
           **_mid("/connectors/", "/enable")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._disable_connector(w, seg),
           **_mid("/connectors/", "/disable")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._layout(w, h, seg, "GET", b), prefix="/layouts/"),
+    Route("PUT", "", lambda s, r, w, h, b, seg: s._layout(w, h, seg, "PUT", b), prefix="/layouts/"),
     Route("POST", "", lambda s, r, w, h, b, seg: s._verify_connector(w, seg),
           **_mid("/connectors/", "/verify")),
     # ── left-panel folders ──
@@ -363,6 +366,7 @@ class Server:
         self._transfer_launches: set[str] = set()
         self.history = history if history is not None else HistoryStore()
         self.history.folder_chats.recover()
+        self.history.layouts.recover()
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
         self.snapshots = SnapshotManager(self.history)
@@ -537,7 +541,7 @@ class Server:
                 writer, headers, urllib.parse.unquote(folder_message[1]), folder_message[2], body
             )
             return
-        folder_view = re.fullmatch(r"/folders/(.+)/(chat|artifacts)", path)
+        folder_view = re.fullmatch(r"/folders/(.+)/(chat|artifacts|stats)", path)
         if folder_view and method == "GET":
             await self._folder_view(
                 writer, headers, urllib.parse.unquote(folder_view[1]), folder_view[2]
@@ -546,8 +550,10 @@ class Server:
         artifact_match = re.fullmatch(
             r"/sessions/([A-Za-z0-9._-]+)/artifacts(?:/([a-f0-9]{32}))?", path
         )
-        if artifact_match and method in {"GET", "DELETE"}:
-            await self._artifacts(writer, headers, artifact_match[1], artifact_match[2], method)
+        if artifact_match and method in {"GET", "DELETE", "PATCH"}:
+            await self._artifacts(
+                writer, headers, artifact_match[1], artifact_match[2], method, body
+            )
             return
         focus_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/focus-pin", path)
         if focus_match and method == "PUT":
@@ -904,6 +910,40 @@ class Server:
         response = await asyncio.to_thread(self._session_messages_response, session_key)
         await _write_json_bytes(writer, 200, response)
 
+    async def _layout(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        surface: str,
+        method: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        surface = urllib.parse.unquote(surface)
+        try:
+            if method == "GET":
+                result = self.history.layouts.get(surface)
+            else:
+                if len(body) > 16384:
+                    await _write_json(writer, 413, {"error": "Layout is too large"})
+                    return
+                req = json.loads(body)
+                if not isinstance(req, dict) or set(req) != {"instances", "revision"}:
+                    raise ValueError("Expected instances and revision")
+                result = self.history.layouts.put(surface, req["instances"], req["revision"])
+        except FileExistsError as exc:
+            await _write_json(writer, 409, {"error": str(exc)})
+            return
+        except KeyError:
+            await _write_json(writer, 404, {"error": "Folder no longer exists"})
+            return
+        except (ValueError, TypeError, UnicodeDecodeError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
+
     async def _folder_message(
         self,
         writer: asyncio.StreamWriter,
@@ -936,6 +976,83 @@ class Server:
         except (ValueError, UnicodeError) as exc:
             await _write_json(writer, 400, {"error": str(exc)})
 
+    async def _folder_stats(self, writer: asyncio.StreamWriter, folder: str) -> None:
+        rows = [
+            dict(row)
+            for row in self.history._conn.execute("SELECT * FROM sessions")
+            if within(str(row["grp"] or ""), folder)
+        ]
+        keys = {row["session_key"] for row in rows}
+        now = time.time()
+        async with self._tokens_lock:
+            usage = await asyncio.to_thread(
+                self._tokens.analytics, 7, now, self._token_identities()
+            )
+        # Membership can change while transcript accounting runs in its worker.
+        current = {
+            row["session_key"]
+            for row in self.history._conn.execute("SELECT session_key,grp FROM sessions")
+            if within(str(row["grp"] or ""), folder)
+        }
+        if folder not in self.history.folders() or current != keys:
+            await _write_json(writer, 409, {"error": "Folder changed. Refresh its details."})
+            return
+        token_rows = [row for row in usage["rows"] if row["session"] in keys]
+        today = usage["today"]
+        periods = {}
+        for days in (1, 7):
+            mail = mail_analytics.snapshot(
+                self.history._conn, days, now=int(now * 1000), sessions=keys
+            )
+            periods[str(days)] = {
+                "tokens": sum(
+                    sum(
+                        int(row[field])
+                        for field in ("input", "cache_read", "cache_write", "output")
+                    )
+                    for row in token_rows
+                    if days == 7 or row["day"] == today
+                ),
+                "sent": sum(row["sent"] for row in mail["daily"]),
+                "answered": sum(row["answered"] for row in mail["daily"]),
+            }
+        artifacts = self.history.artifacts.list_folder(folder, -1, include_removed=True)
+        counts: dict[str, int] = {}
+        for artifact in artifacts:
+            counts[artifact["kind"]] = counts.get(artifact["kind"], 0) + 1
+        await _write_json(
+            writer,
+            200,
+            {
+                "folder": folder,
+                "updated_at": int(now * 1000),
+                "timezone": "UTC",
+                "sessions": {
+                    state: sum(row["state"] == state for row in rows)
+                    for state in (
+                        "busy",
+                        "idle",
+                        "waiting",
+                        "stopped",
+                        "interrupted",
+                        "terminated",
+                        "archived",
+                    )
+                },
+                "waiting": [
+                    {"key": row["session_key"], "name": row["name"] or row["session_key"]}
+                    for row in rows
+                    if row["state"] == "waiting"
+                ],
+                "periods": periods,
+                "artifacts": {
+                    "by_kind": counts,
+                    "available": sum(not row["removed_at"] for row in artifacts),
+                    "removed": sum(bool(row["removed_at"]) for row in artifacts),
+                },
+            },
+        )
+
     async def _folder_view(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], folder: str, view: str
     ) -> None:
@@ -948,12 +1065,14 @@ class Server:
         if folder not in self.history.folders():
             await _write_json(writer, 404, {"error": "Folder no longer exists"})
             return
-        if view == "chat":
+        if view == "stats":
+            await self._folder_stats(writer, folder)
+        elif view == "chat":
             self.history.session_api._sweep()
             _, messages = self.history.folder_chats.snapshot(folder)
             await _write_json(writer, 200, {"messages": messages})
         else:
-            rows = self.history.artifacts.list_folder(folder, 501)
+            rows = self.history.artifacts.list_folder(folder, 501, include_removed=True)
             await _write_json(writer, 200, {"artifacts": rows[:500], "truncated": len(rows) > 500})
 
     async def _artifacts(
@@ -963,6 +1082,7 @@ class Server:
         session_key: str,
         artifact_id: str | None,
         method: str,
+        body: bytes = b"",
     ) -> None:
         if not security.token_valid(headers, self.token):
             await _write_json(writer, 401, {"error": "owner credential required"})
@@ -972,7 +1092,15 @@ class Server:
             return
         result: dict[str, Any]
         try:
-            if method == "DELETE":
+            if method == "PATCH":
+                if artifact_id is None:
+                    raise ArtifactError(400, "An artifact ID is required")
+                result = {
+                    "artifact": self.history.artifacts.update_metadata(
+                        session_key, artifact_id, json.loads(body)
+                    )
+                }
+            elif method == "DELETE":
                 if artifact_id is None:
                     raise ArtifactError(400, "An artifact ID is required")
                 self.history.artifacts.remove(session_key, artifact_id)
@@ -983,6 +1111,9 @@ class Server:
                 result = {"artifact": self.history.artifacts.get(session_key, artifact_id)}
         except ArtifactError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except (ValueError, UnicodeDecodeError):
+            await _write_json(writer, 400, {"error": "Invalid artifact metadata"})
             return
         # Content travels as authenticated JSON, never as executable HTML on the
         # dashboard origin. The preview must render it in an isolated sandbox.
@@ -2936,7 +3067,17 @@ class Server:
             writer,
             200,
             {
-                "notes": self.relay.notes[-200:],
+                "notes": [
+                    {
+                        **note,
+                        "urgency": (
+                            "approval"
+                            if note["kind"] == "approval"
+                            else note.get("urgency", "blocked")
+                        ),
+                    }
+                    for note in self.relay.notes[-200:]
+                ],
                 "rules": self.relay.rules,
                 "open": len(self.relay.needs_you()),
             },
@@ -3080,6 +3221,25 @@ class Server:
             return
         await _write_json(writer, 200, {"deleted": rule_id})
 
+    def _token_identities(self) -> list[dict[str, Any]]:
+        native_ids: dict[str, set[str]] = {}
+        for row in self.history._conn.execute(
+            "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
+            "FROM events WHERE sid IS NOT NULL"
+        ):
+            native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
+        return [
+            dict(
+                key=r["session_key"],
+                runtime=r["runtime"],
+                name=r["name"] or r["session_key"],
+                folder=r["grp"],
+                test=bool(r["test"]),
+                native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
+            )
+            for r in self.history._conn.execute("SELECT * FROM sessions")
+        ]
+
     async def _token_analytics(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
     ) -> None:
@@ -3097,23 +3257,7 @@ class Server:
         except ValueError:
             await _write_json(writer, 400, {"error": "days must be 1..36500 or all"})
             return
-        native_ids: dict[str, set[str]] = {}
-        for row in self.history._conn.execute(
-            "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
-            "FROM events WHERE sid IS NOT NULL"
-        ):
-            native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
-        identities = [
-            dict(
-                key=r["session_key"],
-                runtime=r["runtime"],
-                name=r["name"] or r["session_key"],
-                folder=r["grp"],
-                test=bool(r["test"]),
-                native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
-            )
-            for r in self.history._conn.execute("SELECT * FROM sessions")
-        ]
+        identities = self._token_identities()
         async with self._tokens_lock:
             result = await asyncio.to_thread(
                 self._tokens.analytics,
@@ -3539,6 +3683,12 @@ class Server:
         except OSError as exc:
             await _write_json(writer, 500, {"error": str(exc)})
 
+    async def _folder_tasks(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        await _write_json(writer, 200, {"tasks": self.history.folder_tasks.list_tasks()})
+
     async def _update_status(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
         from duckterm.update_status import status
 
@@ -3630,7 +3780,13 @@ class Server:
 
     async def _delete_folder(self, writer: asyncio.StreamWriter, name: str) -> None:
         folder = urllib.parse.unquote(name)
-        self.history.folder_chats.change(folder, None, lambda: self.history.delete_folder(folder))
+        self.history.layouts.change(
+            folder,
+            None,
+            lambda: self.history.folder_chats.change(
+                folder, None, lambda: self.history.delete_folder(folder)
+            ),
+        )
         await _write_json(writer, 200, {"deleted": urllib.parse.unquote(name)})
 
     async def _move_folder(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
@@ -3658,8 +3814,12 @@ class Server:
             await _write_json(writer, 200, {"moved": old, "to": new})
             return
         try:
-            moved = self.history.folder_chats.change(
-                old, new, lambda: self.history.move_folder(old, new)
+            moved = self.history.layouts.change(
+                old,
+                new,
+                lambda: self.history.folder_chats.change(
+                    old, new, lambda: self.history.move_folder(old, new)
+                ),
             )
         except ValueError as e:
             await _write_json(writer, 400, {"error": str(e)})

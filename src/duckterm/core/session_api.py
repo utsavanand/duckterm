@@ -433,6 +433,7 @@ class SessionAPI:
         priority: bool = False,
         merged_from: object = None,
         question: bool = False,
+        assignment: Callable[[str], None] | None = None,
     ) -> str:
         """One owner notice to one session, the same record a folder broadcast
         queues, keyed like a broadcast copy when request_key is given. Returns
@@ -459,6 +460,8 @@ class SessionAPI:
         digest = hashlib.sha256(
             json.dumps([key, message, 1] if priority else [key, message]).encode()
         ).hexdigest()
+        if assignment is not None:
+            digest = hashlib.sha256((digest + ":task").encode()).hexdigest()
         if priority and request_key is None:
             raise APIError(400, "a priority message needs a request_key")
         if merged_from is not None and not priority:
@@ -499,6 +502,8 @@ class SessionAPI:
                     int(priority),
                 ),
             )
+            if assignment is not None:
+                assignment(notice_id)
         return notice_id
 
     def mail_stats(self, since_ms: int) -> dict[str, int]:
@@ -977,6 +982,12 @@ class SessionAPI:
         if not isinstance(req, dict):
             raise APIError(400, "expected a JSON object")
         member = self._member(key)
+        if path == "/tasks" or path.startswith("/tasks/"):
+            from duckterm.core.folder_tasks import FolderTasks
+
+            return 200, FolderTasks(self.conn).session_request(
+                self, member, method, path, query, req
+            )
         if path == "/artifacts" and method in {"GET", "POST"}:
             try:
                 if method == "GET":

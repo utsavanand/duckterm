@@ -1,0 +1,34 @@
+.rd-widgets { min-width:0; margin:0 0 18px }
+.rd-widgets-heading { display:flex; align-items:center; justify-content:space-between; position:relative; gap:10px; margin-bottom:12px }
+.rd-widgets-heading h2 { font-size:13px; font-weight:550; margin:0 }
+.rd-widgets-heading > div:not(.rd-widget-add) { display:flex; gap:7px }
+.rd-widgets-heading .rd-btn { font-size:11px }
+.rd-widget-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px }
+.rd-widget { border:1px solid var(--border); border-radius:10px; background:var(--card); position:relative; min-width:0 }
+.rd-widget > header { display:flex; justify-content:space-between; gap:6px; padding:10px 12px 0; align-items:start }
+.rd-widget h3 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--text-soft); font-weight:600; margin:0 }
+.rd-widget > header > div { display:flex; margin-left:auto }
+.rd-widget > header button { border:0; background:transparent; color:var(--text-soft); padding:0 4px; font-size:13px; cursor:pointer }
+.rd-widget .rd-widget-handle { cursor:grab }
+.rd-widget .rd-tower-tile { border:0; width:100%; text-align:left; background:transparent; padding-top:6px }
+.rd-widget .rd-tower-label { display:none }
+.rd-widget:has(.warn) { border-color:var(--amber-border); background:var(--amber-bg) }
+.rd-widget:focus-within { z-index:2 }
+.rd-widget.dragging { opacity:.45 }
+.rd-widget .rd-tower-num { margin:0 0 3px }
+.rd-widget .rd-tower-sub { min-height:35px }
+.rd-widget-add,.rd-widget-menu { position:absolute; top:34px; right:0; width:230px; background:var(--card); border:1px solid var(--border-strong); border-radius:8px; padding:7px; box-shadow:0 8px 25px #0004; z-index:8 }
+.rd-widget-add label { display:flex; gap:10px; align-items:center; padding:8px; cursor:pointer; font-size:12px }
+.rd-widget-add input { accent-color:var(--brand-green-strong) }
+.rd-widget-add p { font-size:10px; color:var(--text-soft); margin:8px }
+.rd-widget-menu { width:155px; right:8px }
+.rd-widget-menu button { display:block; width:100%; background:none; border:0; color:var(--text); text-align:left; font:inherit; font-size:12px; padding:8px; cursor:pointer; border-radius:5px }
+.rd-widget-menu button:hover,.rd-widget-add label:hover { background:var(--bg-soft) }
+.rd-widgets button:disabled { opacity:.45; cursor:default }
+.rd-widgets :is(button,input):focus-visible { outline:2px solid var(--brand-green); outline-offset:2px }
+.rd-widget-unavailable { padding:12px; font-size:12px; color:var(--text-soft); min-height:70px }
+.rd-widget-unavailable strong { color:var(--text); font-size:17px; font-weight:500 }
+.rd-widget-unavailable p { margin-bottom:0 }
+.rd-widget-empty { grid-column:1/-1; padding:25px; border:1px dashed var(--border-strong); border-radius:10px; color:var(--text-soft); font-size:13px }
+.rd-widget-error { font-size:12px; border:1px solid var(--border-strong); padding:10px; border-radius:7px }
+.rd-widget-status { display:block; font-size:11px; color:var(--text-soft); min-height:14px; margin-top:7px }
