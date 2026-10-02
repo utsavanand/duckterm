@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-30 by release-dev at the v0.4.100 release)
+## Status at a glance (reconciled 2026-09-30 by release-dev at the v0.4.101 release)
 
 | Item | Status |
 | --- | --- |
@@ -54,6 +54,7 @@ the session API.
 | B12 Terminal size after a panel collapse | **Fixed v0.4.100** (PR #190): a visible terminal at zero size refits on the next frame. Message-table readability is a separate preview awaiting owner review |
 | B6 Browser notification preference | **Fixed v0.4.100** (PR #191): the preference persists, denied permission wins, and enabling or loading never replays a backlog |
 | Update DuckTerm controls | **Read-only, v0.4.100** (PR #195): Settings shows installed and latest versions. Install deliberately disabled until a detached updater with checksum, snapshot/restore, backup mutual exclusion and rollback exists |
+| Folder Tasks | **Shipped v0.4.101** (PR #194, ui-dev; owner-approved feature). `duckterm session task start|update|handoff|list`, session-scoped; a Tasks widget in Folder details and Oracle; the owner's Assign & send creates the task and the inbox message in one transaction. **Schema v8 -> v10, approved by the owner 2026-10-02:** adds `folder_tasks`, and DROPS the retired F12 tables (`session_work`, `session_work_events`, `session_work_updates`) after archiving every row to a private `retired-f12-<content hash>.json` beside the DB; a failed archive aborts the drop. Older builds refuse a v10 DB, so rollback means restoring the pre-install backup. Fork merge-back (#193, v9) ships AFTER this, rebased onto it: shipping #193 first would let #194's code strip merged-state protection (main-qa, test_v9_merge_data_and_nonrevivable_state_survive) |
 | Fork child identity | **Fixed v0.4.97** (PR #179): repeated conversation forks reused `convfork-<native-id-prefix>`, so the second launch took over the first child's supervisor identity. Each fork now gets a fresh key; both fork types inherit `test:true` from parent or request |
 | Owner-approved UI awaiting publication | Bug-report UI plus the Mac bridge fix (ui-dev 59467fd, which unblocks backend PR #166), Oracle widgets (ef5f01e) and folder details (3aae5f8) are **implemented and verified locally, not shipped**. ui-dev's approval review blocks publishing to the public repo without the owner's explicit permission, given so far only for @ messaging |
 | B13 Peers can't read each other's artifacts | **Shipped v0.4.94** (PR #167, remote-session-dev). `duckterm session artifacts` listed only the caller's own, which blocked the contracts review. Fix: `session artifacts --folder PATH` and `session artifact get ID`, session credentials only, root-scoped and read-only |

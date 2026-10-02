@@ -138,7 +138,11 @@ def _percentile(histogram: list[int], fraction: float, maximum: int) -> float | 
 
 
 def snapshot(
-    conn: sqlite3.Connection, days: int | None = 7, *, now: int | None = None
+    conn: sqlite3.Connection,
+    days: int | None = 7,
+    *,
+    now: int | None = None,
+    sessions: set[str] | None = None,
 ) -> dict[str, Any]:
     """Calendar UTC days including today. None means all retained history."""
     now = int(time.time() * 1000) if now is None else now
@@ -185,6 +189,13 @@ def snapshot(
         enabled = conn.execute(
             "SELECT value FROM mail_analytics_meta WHERE key='enabled_at'"
         ).fetchone()[0]
+    if sessions is not None:
+        merged = {
+            key: value for key, value in merged.items() if key[1] in sessions or key[2] in sessions
+        }
+        open_rows = [
+            row for row in open_rows if row["sender"] in sessions or row["recipient"] in sessions
+        ]
     daily: dict[str, dict[str, Any]] = {}
     cohorts: dict[str, dict[str, int]] = {}
     pairs: dict[tuple[str, str], int] = defaultdict(int)
