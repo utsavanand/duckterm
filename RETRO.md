@@ -1,5 +1,30 @@
 # Retro — lessons from real breakage
 
+## 2026-10-01 — Measure a performance fix on the owner's machine, not just a benchmark
+
+**What happened:** #192 bounded terminal polling, with reads drained at most 64 KiB per tick, tmux liveness probed at most once a second, and screen scans batched. main-dev's synthetic benchmark used harmless `/usr/bin/true` liveness probes instead of real tmux, and predicted roughly an 81% cut (34.88% to 6.69%).
+**Measured on the owner's live server** (ps CPU time of the server process, six 10-second windows, 28 panes, compared at similar uptime): v0.4.99 **72.0%** to v0.4.100 **14.9%**, about 79%. Product independently saw 11-13% afterwards.
+**Rule:** take a live baseline BEFORE installing a performance fix, measure after at comparable uptime and pane count, and record both in the release PR. A synthetic number is a prediction, not a result; this one happened to hold, but the before-and-after on real panes is what makes the claim.
+
+## 2026-10-01 — A "scratch" Codex test changed the owner's real Codex
+**Broke:** checking Codex's question tool, the Oracle main-dev session ran a
+fresh `codex` in its own tmux socket. It used the owner's real install and
+`~/.codex`. Keystrokes meant for the prompt landed on Codex's startup update
+prompt and chose "Update now", so the owner's Codex went from 0.155.1 to
+0.159.3. 0.159.3 starts a shared app-server daemon per `CODEX_HOME`, which
+outlives the session that started it. This one held the probe's environment
+(`DUCKTERM_URL` set to a dead port, the probe's session key), so the hooks
+of any new Codex session would have gone nowhere. The daemon was killed at
+09:50, and no owner agent was attached to it.
+**Cause:** "isolated" covered the DuckTerm side (own home, tmux socket, port)
+but not the agent's own home. An interactive agent start can update itself
+and leave processes behind. Keys were typed without first checking which
+screen was showing.
+**Rule:** real-agent checks run with a scratch agent home (`CODEX_HOME`,
+`COPILOT_HOME`, with update checks off). Never type into a fresh agent before
+reading its screen. Afterwards, list and stop every process the check
+started, daemons included.
+
 ## 2026-10-01 — Assignment must be one transaction
 A task without its inbox message is invisible work; a message without its task is
 an invisible assignment. Create the explicit assignment inside the inbox broker's
@@ -14,6 +39,7 @@ Keep must reject removal on the server, survive re-registration, and preserve th
 ## 2026-09-30 — Saved widgets must stop reading when removed
 
 A hidden tile still polling is not a removed widget. Give each built-in widget only its declared streams, detach its readers on unmount, and stop the shared insights timer after the last subscriber leaves. Missing data must say Unavailable instead of reporting zero. Persist layouts on the server with revision checks and recoverable folder rename/delete intents so reloads and crashes do not lose the owner’s arrangement.
+
 ## 2026-10-01 — Cached empty lists lost transcript availability
 **Broke:** The Messages snapshot retained only the message list, so unavailable reasons vanished on remount and status-only changes shared the same empty-list signature.
 **Fix:** Retain and compare transcript status and reason atomically with the list, including cache size accounting; cover unavailable, empty, recovered, hidden and remounted states.
