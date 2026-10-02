@@ -24,6 +24,7 @@ from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
 from duckterm.persistence import mail_analytics
 from duckterm.persistence.folder_chats import FolderChats
+from duckterm.persistence.layouts import Layouts
 from duckterm.runtimes.base import AT_REST_STATES, SessionState
 
 Event = dict[str, Any]
@@ -43,7 +44,7 @@ Event = dict[str, Any]
 # v6 retains analytics at deletion. Older sweep code would lose these counts.
 # v7 persists restart requests and model preferences on the session.
 # v8 persists archive grace periods so a quit cannot lose an acknowledged archive.
-_SCHEMA_VERSION = 8
+_SCHEMA_VERSION = 10
 
 
 class SchemaTooNewError(RuntimeError):
@@ -275,6 +276,7 @@ class HistoryStore:
     def __init__(self, db_path: Path | None = None) -> None:
         path = db_path if db_path is not None else paths.db_path()
         self.folder_chats = FolderChats(path.parent / "folder-chats.json", self.folders)
+        self.layouts = Layouts(path.parent / "layouts.json", self.folders)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -296,6 +298,11 @@ class HistoryStore:
             )
         self._conn.executescript(_SCHEMA)
         self._migrate()
+        from duckterm.core.folder_tasks import FolderTasks, migrate
+
+        self._conn.commit()
+        migrate(self._conn, path.parent)
+        self.folder_tasks = FolderTasks(self._conn)
         self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
         self.session_api.before_retire = lambda: self.folder_chats.refresh_dispatches(self._conn)
         self.artifacts = self.session_api.artifacts
@@ -831,6 +838,11 @@ class HistoryStore:
         self._conn.execute(
             "UPDATE sessions SET grp = ? || substr(grp, ?) "
             "WHERE grp = ? OR substr(grp, 1, ?) = ?",
+            (new, cut, old, len(old) + 1, old + "/"),
+        )
+        self._conn.execute(
+            "UPDATE folder_tasks SET folder = ? || substr(folder, ?) "
+            "WHERE folder = ? OR substr(folder, 1, ?) = ?",
             (new, cut, old, len(old) + 1, old + "/"),
         )
         self.session_api.sync_memberships(moved=(old, new))

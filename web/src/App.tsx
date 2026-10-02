@@ -415,7 +415,7 @@ function Dashboard() {
             )}
           </section>
 
-          {selectedFolder !== null && <FolderView key={selectedFolder} folder={selectedFolder} />}
+          {selectedFolder !== null && <FolderView key={selectedFolder} folder={selectedFolder} onOpenSession={setSelectedKey} onGrid={() => setGridFolder(selectedFolder)} onMessage={() => setInboxFolder(selectedFolder)} onNewSession={() => { setLaunchGroup(selectedFolder); setModal("launch"); }} />}
           <section className="rd-terminal-pane" style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-view-toggle">
               <button
