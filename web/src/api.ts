@@ -135,8 +135,9 @@ async function post<T>(path: string, body?: unknown, context?: string): Promise<
   return data as T;
 }
 
-async function get<T>(path: string, context?: string): Promise<T> {
-  const res = await (context === undefined ? fetch(path, { cache: "no-store" }) : sessionFetch(context, path, { cache: "no-store" }));
+async function get<T>(path: string, context?: string, signal?: AbortSignal): Promise<T> {
+  const init: RequestInit = { cache: "no-store", signal };
+  const res = await (context === undefined ? fetch(path, init) : sessionFetch(context, path, init));
   if (!res.ok) {
     const data: unknown = await res.json().catch(() => null);
     const detail = data !== null && typeof data === "object" && "error" in data && typeof data.error === "string"
@@ -385,7 +386,7 @@ export const api = {
     ),
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
   controlTower: () => get<TowerInsights>("/control-tower"),
-  relay: () => get<RelayState>("/relay"),
+  relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, signal),
   voiceStatus: () => get<LocalVoiceStatus>("/voice/status"),
   voiceInstall: async (): Promise<LocalVoiceStatus> => {
     const res = await fetch("/voice/install", { method: "POST", headers: authHeaders() });
@@ -408,7 +409,7 @@ export const api = {
     const res = await fetch("/voice", { method: "DELETE", headers: authHeaders() });
     return (await res.json()) as LocalVoiceStatus;
   },
-  relayCount: () => get<{ open: number }>("/relay/count"),
+  relayCount: (signal?: AbortSignal) => get<{ open: number }>("/relay/count", undefined, signal),
   relayAnswer: (id: string, answer: string | number) =>
     post<{ note: RelayNote }>(`/relay/${encodeURIComponent(id)}/answer`, { answer }),
   proposeRule: (text: string) => post<{ rule: RelayRule }>("/relay/rules/propose", { text }),
