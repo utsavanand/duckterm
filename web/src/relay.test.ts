@@ -36,3 +36,19 @@ it("polls at once when the window comes back into view", async () => {
   });
   expect(result.current.notes.map((n) => n.id)).toEqual(["n-57fb8c050382"]);
 });
+
+it("coalesces a burst of focus and visibility changes into at most one extra poll", async () => {
+  // main-qa, PR #198: 20 focus/visibility cycles made 41 requests.
+  vi.mocked(api.relay).mockResolvedValue(withNote);
+  renderHook(() => useRelay());
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  const before = vi.mocked(api.relay).mock.calls.length;
+  await act(async () => {
+    for (let i = 0; i < 20; i++) {
+      window.dispatchEvent(new Event("focus"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(vi.mocked(api.relay).mock.calls.length - before).toBe(1);
+});

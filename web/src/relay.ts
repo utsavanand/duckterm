@@ -14,6 +14,7 @@ function poll(load: (signal: AbortSignal) => Promise<void>, intervalMs: number):
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inflight: AbortController | undefined;
+  let lastFocusRefresh = -Infinity;
   async function run() {
     clearTimeout(timer);
     inflight?.abort();
@@ -32,10 +33,18 @@ function poll(load: (signal: AbortSignal) => Promise<void>, intervalMs: number):
       /* keep the last state while the server is briefly unreachable */
     } finally {
       clearTimeout(deadline);
-      if (!stopped && inflight === attempt) timer = setTimeout(run, intervalMs);
+      if (inflight === attempt) {
+        inflight = undefined;
+        if (!stopped) timer = setTimeout(run, intervalMs);
+      }
     }
   }
-  const onVisible = () => { if (document.visibilityState === "visible") void run(); };
+  const onVisible = () => {
+    const now = Date.now();
+    if (document.visibilityState !== "visible" || inflight || now - lastFocusRefresh < 1000) return;
+    lastFocusRefresh = now;
+    void run();
+  };
   document.addEventListener("visibilitychange", onVisible);
   window.addEventListener("focus", onVisible);
   void run();

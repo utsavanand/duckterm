@@ -231,7 +231,9 @@ question-mark check is the fallback and the note says so.
 
 **Polling.** The dashboard reads notes from `/relay` every 4 s, and the
 open count every 5 s. Each poll is abandoned after 10 s, and the dashboard
-polls at once when its window comes back into view. Before 2026-10-02 a poll
+polls at once when its window comes back into view. That refocus poll is
+skipped while one is already in flight, and is limited to one a second, so a
+burst of focus changes can't flood the server. Before 2026-10-02 a poll
 had no timeout, so one request that never answered (for example in the Mac
 app's web view after sleep) froze Needs you and the Oracle chat with no
 error. That is one way the owner could miss a note the server had open for
