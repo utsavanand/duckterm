@@ -22,6 +22,21 @@ for a named SHA, confirm the interpreter resolves the package inside that
 worktree before trusting the verdict; a green gate on the wrong source is
 worse than a red one, because it is reported as evidence.
 
+## 2026-10-02 — Schema numbers do not prove feature presence
+Folder Tasks shipped schema v10 without the unreleased v9 fork-merge tables.
+Integrate both lifecycles, create missing merge tables and columns by existence,
+and advance to v11 so older code refuses to reopen merged children. Test both
+v10 without merge tables and v9 with a delivered, final child; preserve Tasks
+and checkpoints across migration and repeated startup.
+
+## 2026-10-01 — Saving a merge is not delivering it
+A reviewed fork summary must survive retries without duplicating the parent's note.
+Persist the close-child choice before enqueueing through the shared priority broker;
+create the parent checkpoint only from confirmed delivery, with an idempotent ID and
+startup recovery for the delivery/checkpoint crash gap. Keep merged children final
+even when a delayed SessionStart arrives. A failed close remains visibly pending and
+can be finished from History using the same saved request.
+
 ## 2026-10-01 — Measure a performance fix on the owner's machine, not just a benchmark
 
 **What happened:** #192 bounded terminal polling, with reads drained at most 64 KiB per tick, tmux liveness probed at most once a second, and screen scans batched. main-dev's synthetic benchmark used harmless `/usr/bin/true` liveness probes instead of real tmux, and predicted roughly an 81% cut (34.88% to 6.69%).

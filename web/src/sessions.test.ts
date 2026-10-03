@@ -19,6 +19,13 @@ function ev(
 const empty = () => new Map<string, SessionView>();
 
 describe("applyEvent", () => {
+  it("never revives a merged fork, even on a late SessionStart", () => {
+    let state = applyAll([ev({ event_type: "SessionStart" }), ev({ event_type: "Notification", lifecycle: "merged" })]);
+    for (const event_type of ["SessionStart", "PostToolUse", "SessionEnd"]) {
+      state = applyEvent(state, ev({ event_type }));
+      expect(effectiveState(state.get("s1")!, Date.now())).toBe("merged");
+    }
+  });
   it("lets a session settle to idle after a merge summary is delivered at its turn end", () => {
     const stopped = applyAll([ev({ event_type: "SessionStart" }), ev({ event_type: "Stop", _ts: 2000 })]);
     const after = applyEvent(stopped, ev({ event_type: "MergeDelivered", _ts: 2001 }));
