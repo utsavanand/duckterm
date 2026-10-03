@@ -22,7 +22,9 @@ it("uses the row's settled state and never brings archived sessions back", () =>
     expect(filterValue(session(state, { state }), "status", 0)).toBe("stopped");
   }
   const archived = session("archived", { state: "archived" });
-  expect(sidebarSessions([s, archived])).toEqual([s]);
+  const merged = session("merged", { state: "merged" });
+  expect(sidebarSessions([s, archived, merged])).toEqual([s]);
+  expect(matchesFilters(merged, EMPTY_FILTERS, 0)).toBe(false);
   expect(matchesFilters(archived, EMPTY_FILTERS, 0)).toBe(false);
 });
 
