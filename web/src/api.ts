@@ -139,8 +139,12 @@ async function post<T>(path: string, body?: unknown, context?: string): Promise<
 
 // `authed` is for the few reads the server gates on the owner token — reads
 // whose body describes the owner rather than the UI's own state.
-async function get<T>(path: string, context?: string, authed = false): Promise<T> {
-  const init: RequestInit = { cache: "no-store", ...(authed ? { headers: authHeaders() } : {}) };
+async function get<T>(
+  path: string,
+  context?: string,
+  { authed = false, signal }: { authed?: boolean; signal?: AbortSignal } = {},
+): Promise<T> {
+  const init: RequestInit = { cache: "no-store", signal, ...(authed ? { headers: authHeaders() } : {}) };
   const res = await (context === undefined ? fetch(path, init) : sessionFetch(context, path, init));
   if (!res.ok) {
     const data: unknown = await res.json().catch(() => null);
@@ -376,7 +380,7 @@ export const api = {
   branches: (path: string) =>
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
-  connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context, true),
+  connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context, { authed: true }),
   enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string, harnesses?: string[]) =>
     post<Connector>(`/connectors/${name}/enable`, {
       source, write_access,
@@ -401,7 +405,7 @@ export const api = {
     ),
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
   controlTower: () => get<TowerInsights>("/control-tower"),
-  relay: () => get<RelayState>("/relay"),
+  relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, { signal }),
   voiceStatus: () => get<LocalVoiceStatus>("/voice/status"),
   voiceInstall: async (): Promise<LocalVoiceStatus> => {
     const res = await fetch("/voice/install", { method: "POST", headers: authHeaders() });
@@ -424,7 +428,7 @@ export const api = {
     const res = await fetch("/voice", { method: "DELETE", headers: authHeaders() });
     return (await res.json()) as LocalVoiceStatus;
   },
-  relayCount: () => get<{ open: number }>("/relay/count"),
+  relayCount: (signal?: AbortSignal) => get<{ open: number }>("/relay/count", undefined, { signal }),
   relayAnswer: (id: string, answer: string | number) =>
     post<{ note: RelayNote }>(`/relay/${encodeURIComponent(id)}/answer`, { answer }),
   proposeRule: (text: string) => post<{ rule: RelayRule }>("/relay/rules/propose", { text }),
