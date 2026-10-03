@@ -192,6 +192,12 @@ def _mid(prefix: str, suffix: str) -> dict[str, str]:
     return {"prefix": prefix, "suffix": suffix}
 
 
+# GETs that require the owner token despite the open-read policy. /connectors
+# reports which providers the owner connected, under which identity, and when
+# each was last used — a description of the owner, not of the UI's own state.
+_OWNER_READS = frozenset({"/connectors"})
+
+
 # fmt: off
 _ROUTES: list[Route] = [
     Route("POST", "", lambda s, r, w, h, b, seg: s._transfer(w, seg, b), prefix="/transfers/"),
@@ -528,7 +534,12 @@ class Server:
         # which a blind CSRF can't read and therefore can't forge. GETs (the
         # dashboard, static assets, read-only data) stay open so the browser can
         # load the UI; they're already protected by the same-origin check above.
-        if method != "GET" and not security.token_valid(headers, self.token):
+        # _OWNER_READS are the exceptions: reads whose body describes the owner
+        # rather than the UI's own state, so they are worth the token even
+        # though the listener is loopback-only.
+        if (method != "GET" or path in _OWNER_READS) and not security.token_valid(
+            headers, self.token
+        ):
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
