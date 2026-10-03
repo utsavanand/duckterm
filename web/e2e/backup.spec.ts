@@ -14,7 +14,7 @@ test("manual backup remembers destination, reports a real local archive, and rec
     await destination.fill(directory);
     await page.screenshot({ path: "/tmp/backup-ui-real.png" });
     await page.getByRole("button", { name: "Back up now", exact: true }).click();
-    await expect(page.getByRole("status")).toHaveText("Backup complete", { timeout: 15000 });
+    await expect(page.getByRole("region", { name: "Backup result", exact: true }).getByRole("status")).toHaveText("Backup complete", { timeout: 15000 });
     const saved = await page.getByText(/^Saved to /).textContent();
     const archive = saved!.slice("Saved to ".length);
     expect(archive.startsWith(directory + "/")).toBeTruthy();
@@ -25,11 +25,11 @@ test("manual backup remembers destination, reports a real local archive, and rec
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("button", { name: "Back up to remote", exact: true }).click();
     await expect(destination).toHaveValue(directory);
-    await expect(page.getByRole("status")).toHaveText("Backup complete");
+    await expect(page.getByRole("region", { name: "Backup result", exact: true }).getByRole("status")).toHaveText("Backup complete");
     // Real backend refuses overwriting an existing archive and retains the form.
     await destination.fill(archive);
     await page.getByRole("button", { name: "Back up now", exact: true }).click();
-    await expect(page.getByRole("status")).toHaveText("Backup failed", { timeout: 15000 });
+    await expect(page.getByRole("region", { name: "Backup result", exact: true }).getByRole("status")).toHaveText("Backup failed", { timeout: 15000 });
     await expect(page.getByRole("alert")).toContainText("Refusing to overwrite");
     await expect(page.getByRole("button", { name: "Back up now", exact: true })).toBeEnabled();
     expect(readFileSync(archive)).toEqual(original);

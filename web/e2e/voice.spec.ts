@@ -93,9 +93,9 @@ test('voice: a session already waiting when the page loads is not read out', asy
 test('voice: stays off, saying why, until a natural voice is downloaded', async ({ page }) => {
   await stubSpeech(page, false);
   await page.goto(base());
-  const menu = page.getByLabel('Voice announcements').first();
-  await expect(menu).toBeDisabled();
-  await expect(menu).toContainText('Voice: download a voice in Settings');
+  const indicator = page.getByRole('img', { name: 'Voice off — download a voice in Settings' });
+  await expect(indicator).toBeVisible();
+  await expect(indicator).toHaveAttribute('title', 'Voice off — download a voice in Settings');
   await page.waitForTimeout(1500);
   expect(await spoken(page)).toEqual([]);
 });

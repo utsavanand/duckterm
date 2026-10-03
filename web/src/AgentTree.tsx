@@ -1,3 +1,5 @@
+import { SidebarFilters } from "./SidebarFilters";
+import { hasFilters, matchesFilters, sidebarSessions, useSidebarFilters } from "./sidebarFilterState";
 import { desktop } from "./desktop";
 import { SessionLocationDuck } from "./SessionLocationDuck";
 import { HelperAgents } from "./HelperAgents";
@@ -51,6 +53,19 @@ export function AgentTree({
   onSetFolderTheme: (folder: string, theme: string | null) => void;
   termMode: TermMode;
 }) {
+  const { filters, toggle, clear, saveError } = useSidebarFilters();
+  const visibleSessions = sidebarSessions(sessions);
+  const filtering = hasFilters(filters);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const reveal = (event: Event) => {
+      const path = (event as CustomEvent<string>).detail;
+      const parts = path.split("/");
+      setExpandedFolders(current => new Set([...current, ...parts.map((_, i) => parts.slice(0, i + 1).join("/"))]));
+    };
+    window.addEventListener("reveal-sidebar-folder", reveal);
+    return () => window.removeEventListener("reveal-sidebar-folder", reveal);
+  }, []);
   const folders = [...new Set([...savedFolders, ...sessions.flatMap(session => {
     // Local folders come from the catalog; stale session snapshots must not
     // resurrect their old paths while a rename or move refresh is in flight.
@@ -59,7 +74,7 @@ export function AgentTree({
     return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
   })])];
   const toast = useToast();
-  const roots = buildForest(sessions);
+  const roots = buildForest(visibleSessions);
 
   // Drop a session onto a folder header (or the ungrouped zone) to move it there.
   async function moveToGroup(key: string, group: string) {
@@ -210,6 +225,12 @@ export function AgentTree({
     <GroupHeader
       key={path}
       name={path}
+      collapsed={!expandedFolders.has(path)}
+      onToggle={() => setExpandedFolders(current => {
+        const next = new Set(current);
+        if (next.has(path)) next.delete(path); else next.add(path);
+        return next;
+      })}
       selected={selectedFolder === path}
       onOpen={() => onOpenFolder?.(path)}
       depth={depth}
@@ -233,7 +254,20 @@ export function AgentTree({
   );
 
   return (
+    <div className="rd-sidebar-content" onKeyDown={event => {
+      if (event.key === "Escape" && filtering) {
+        event.preventDefault();
+        event.stopPropagation();
+        clear();
+        event.currentTarget.querySelector<HTMLButtonElement>(".rd-filter-chip")?.focus();
+      }
+    }}>
+    <SidebarFilters sessions={visibleSessions} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} />
     <div className="rd-tree">
+      {filtering ? <>
+        {visibleSessions.filter(s => matchesFilters(s, filters, now)).map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} onOpen={onOpen} onOpenInbox={onOpenInbox} showFolder />)}
+        {!visibleSessions.some(s => matchesFilters(s, filters, now)) && <div className="rd-filter-empty">No sessions match these filters.<button onClick={clear}>Clear filters</button></div>}
+      </> : <>
       {/* All folders render (even empty ones) so you can create then fill them. */}
       {topLevel.map((name) => renderFolder(name, 0))}
       {/* Ungrouped sessions sit at the root; dropping here clears the folder
@@ -246,6 +280,8 @@ export function AgentTree({
       >
         {ungrouped.map((n) => renderNode(n, 0))}
       </DropZone>
+      </>}
+    </div>
     </div>
   );
 }
@@ -254,6 +290,8 @@ export function AgentTree({
 // source for nesting, with subfolder + grid actions. Folders are paths; the
 // header shows only the leaf name.
 function GroupHeader({
+  collapsed,
+  onToggle,
   selected,
   onOpen,
   onDelete,
@@ -274,6 +312,8 @@ function GroupHeader({
   children,
 }: {
   name: string;
+  collapsed: boolean;
+  onToggle: () => void;
   selected: boolean;
   onOpen: () => void;
   depth: number;
@@ -292,16 +332,6 @@ function GroupHeader({
   termMode: TermMode;
   children: ReactNode;
 }) {
-  // Start every folder closed when the dashboard opens or restarts.
-  const [collapsed, setCollapsed] = useState(true);
-  useEffect(() => {
-    const reveal = (event: Event) => {
-      const folder = (event as CustomEvent<string>).detail;
-      if (folder === name || folder.startsWith(name + "/")) setCollapsed(false);
-    };
-    window.addEventListener("reveal-sidebar-folder", reveal);
-    return () => window.removeEventListener("reveal-sidebar-folder", reveal);
-  }, [name]);
   const [over, setOver] = useState(false);
   const leaf = name.split("/").pop();
   return (
@@ -336,7 +366,7 @@ function GroupHeader({
           if (folder) onDropFolder(folder, name);
         }}
       >
-        <button className="rd-group-caret" aria-label={`${collapsed ? "Expand" : "Collapse"} ${name}`} aria-expanded={!collapsed} onClick={() => setCollapsed(c => !c)}>{collapsed ? "▸" : "▾"}</button>
+        <button className="rd-group-caret" aria-label={`${collapsed ? "Expand" : "Collapse"} ${name}`} aria-expanded={!collapsed} onClick={onToggle}>{collapsed ? "▸" : "▾"}</button>
         <button
           className="rd-group-name"
           aria-pressed={selected}
@@ -520,6 +550,7 @@ function TreeRow({
   node,
   depth,
   indent = 0,
+  showFolder = false,
   now,
   selectedKey,
   onOpen,
@@ -528,6 +559,7 @@ function TreeRow({
   node: Node;
   depth: number;
   indent?: number; // folder depth — visual offset only, unlike fork `depth`
+  showFolder?: boolean;
   now: number;
   selectedKey: string | null;
   onOpen: (key: string) => void;
@@ -548,7 +580,7 @@ function TreeRow({
         title={`${s.label} · ${s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")} · ${s.runtime ?? "agent"} · ${stateLabel} · ${s.eventCount} events`}
         style={{ paddingLeft: 12 + indent * 16 + depth * 18 }}
         // Only root sessions are draggable into groups; forks follow their parent.
-        draggable={depth === 0}
+        draggable={depth === 0 && !s.parentKey}
         onDragStart={(e) => {
           e.dataTransfer.setData("text/rd-session", s.key);
           e.dataTransfer.effectAllowed = "move";
@@ -611,6 +643,7 @@ function TreeRow({
             {resuming ? "Resuming…" : "Resume"}
           </button>}
         </div>
+        {showFolder && <div className="rd-row-folder" title={s.group || "Ungrouped"} onClick={() => onOpen(s.key)}>{s.group || "Ungrouped"}</div>}
         <div className="rd-row-meta" onClick={() => onOpen(s.key)}>
           {s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")}
           {" · "}

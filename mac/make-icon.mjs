@@ -22,8 +22,8 @@ let svg = readFileSync(join(here, "../web/public/favicon.svg"), "utf8");
 
 if (testBuild) {
   // A purple duck plus a high-contrast badge distinguishes Test in the Dock.
-  svg = svg.replaceAll("#5EE38B", "#D8B4FE").replaceAll("#1FA34C", "#8B5CF6")
-    .replaceAll("#0E7A38", "#6D28D9")
+  svg = svg.replaceAll("#FFD32B", "#D8B4FE").replaceAll("#F2BE0A", "#8B5CF6")
+    .replaceAll("#E0AD00", "#6D28D9")
     .replace("</svg>", '<rect x="6" y="46" width="42" height="15" rx="5" fill="#F5F3FF"/><text x="27" y="57" text-anchor="middle" fill="#5B21B6" font-family="Arial,sans-serif" font-weight="900" font-size="11">TEST</text></svg>');
 }
 const outputName = testBuild ? "AppIconTest.icns" : "AppIcon.icns";

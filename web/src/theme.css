@@ -1689,9 +1689,8 @@ code,
   display: block;
   border-radius: 6px;
 }
-.rd-brand-term {
-  color: var(--brand-green);
-}
+.rd-brand-name { white-space: nowrap; }
+.rd-brand-term { color: inherit; font-weight: 400; }
 .rd-live {
   font-size: 13px;
   display: inline-flex;

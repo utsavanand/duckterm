@@ -289,7 +289,7 @@ function Dashboard() {
             width={22}
             height={22}
           />
-          Duck<span className="rd-brand-term">Term</span>
+          <span className="rd-brand-name">Duck<span className="rd-brand-term">Term</span></span>
         </span>
         <span className="rd-live">
           <span className={`dot ${connected ? "on" : "off"}`} />
