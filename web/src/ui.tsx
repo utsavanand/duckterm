@@ -5,10 +5,12 @@ export function Modal({
   title,
   onClose,
   children,
+  width = 480,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
+  width?: number;
 }) {
   return (
     <div
@@ -30,7 +32,7 @@ export function Modal({
           color: "var(--text)",
           borderRadius: 16,
           padding: 28,
-          width: 480,
+          width,
           maxWidth: "90vw",
           maxHeight: "85vh",
           overflowY: "auto",

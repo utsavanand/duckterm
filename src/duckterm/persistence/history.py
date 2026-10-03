@@ -44,7 +44,9 @@ Event = dict[str, Any]
 # v6 retains analytics at deletion. Older sweep code would lose these counts.
 # v7 persists restart requests and model preferences on the session.
 # v8 persists archive grace periods so a quit cannot lose an acknowledged archive.
-_SCHEMA_VERSION = 10
+# v9 was the unreleased fork-merge candidate. v10 shipped Folder Tasks first.
+# v11 adds fork merges to v10, including installations that never had v9.
+_SCHEMA_VERSION = 11
 
 
 class SchemaTooNewError(RuntimeError):
@@ -52,6 +54,12 @@ class SchemaTooNewError(RuntimeError):
 
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS fork_merges (
+ id TEXT PRIMARY KEY, child TEXT NOT NULL, parent TEXT NOT NULL,
+ summary TEXT NOT NULL, keep_open INTEGER NOT NULL, created_at INTEGER NOT NULL,
+ message_id TEXT, delivery TEXT NOT NULL DEFAULT 'pending next turn'
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     session_key         TEXT PRIMARY KEY,
     runtime             TEXT,
@@ -169,6 +177,8 @@ def _is_idle_notice(event: Event) -> bool:
 
 def derive_state(event: Event, prev: SessionState | None) -> SessionState:
     # An explicit lifecycle marker (a deliberate stop/archive/sweep) always wins.
+    if prev == "merged" or event.get("lifecycle") == "merged":
+        return "merged"
     lifecycle = event.get("lifecycle")
     if lifecycle == "archived":
         return "archived"
@@ -216,6 +226,7 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
 # Columns added to `sessions` after the first release. CREATE TABLE IF NOT
 # EXISTS won't add these to a pre-existing DB, so we ALTER them in on open.
 _SESSIONS_COLUMNS = {
+    "merged_into": "TEXT",
     "restart_json": "TEXT",
     "archive_json": "TEXT",
     "pinned": "INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))",
@@ -304,7 +315,11 @@ class HistoryStore:
         migrate(self._conn, path.parent)
         self.folder_tasks = FolderTasks(self._conn)
         self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
-        self.session_api.before_retire = lambda: self.folder_chats.refresh_dispatches(self._conn)
+        from duckterm.core.fork_merges import ForkMerges
+
+        self.fork_merges = ForkMerges(self)
+        self.session_api.before_retire = self._retain_mail
+        self.fork_merges.refresh_checkpoints()
         self.artifacts = self.session_api.artifacts
         mail_analytics.initialize(self._conn)
         self.session_api.backfill()
@@ -318,6 +333,10 @@ class HistoryStore:
         cutoff = int((time.time() - 30 * 86400) * 1000)
         mail_analytics.retire_events(self._conn, "ts < ?", (cutoff,))
         self._conn.commit()
+
+    def _retain_mail(self) -> None:
+        self.folder_chats.refresh_dispatches(self._conn)
+        self.fork_merges.refresh_checkpoints()
 
     def _migrate(self) -> None:
         """Add any columns missing from an older sessions table; rebuild the
@@ -869,6 +888,9 @@ class HistoryStore:
 
         Stamps ended_at when a session ends; keeps the existing ended_at when
         archiving an already-ended session; clears it when reviving."""
+        row = self.session(key)
+        if row and row["state"] == "merged" and state != "merged":
+            return False
         if state in AT_REST_STATES:
             self.session_api.revoke(key, cancel_pending=state != "stopped")
         if state in ("stopped", "interrupted", "terminated"):

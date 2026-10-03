@@ -1,6 +1,6 @@
-import { routedFetch as fetch } from "./hostTransport";
+import { routedFetch as fetch, splitSessionRef } from "./hostTransport";
 import { useEffect, useState } from "react";
-import { api, CheckpointRecord } from "./api";
+import { api, forkMergeService, CheckpointRecord, forkMergeHistory, ForkMergeHistory } from "./api";
 import { SessionView } from "./types";
 
 // Middle-pane History tab: the session's accumulated digest archive — every
@@ -29,6 +29,8 @@ export function HistoryView({ session }: { session: SessionView }) {
   const p = session.progress;
   const started = new Date(session.startedAt);
   const updated = session.progressAt ? agoLabel(session.progressAt) : null;
+  const [merges, setMerges] = useState<ForkMergeHistory[]>([]);
+  const [mergeError, setMergeError] = useState("");
   const [items, setItems] = useState<DigestItem[] | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([]);
 
@@ -49,6 +51,19 @@ export function HistoryView({ session }: { session: SessionView }) {
       .then((d) => setCheckpoints(d.checkpoints))
       .catch(() => undefined);
     return () => clearInterval(t);
+  }, [session.key]);
+
+  useEffect(() => {
+    let live = true;
+    setMerges([]); setMergeError("");
+    const load = () => {
+      if (document.visibilityState === "hidden") return;
+      void forkMergeHistory(session.key).then(data => { if (live) { setMerges(data.merges); setMergeError(""); } })
+        .catch((e: Error) => { if (live) setMergeError(e.message); });
+    };
+    load();
+    const timer = setInterval(load, 10000);
+    return () => { live = false; clearInterval(timer); };
   }, [session.key]);
 
   const byBucket = (bucket: string): DigestItem[] =>
@@ -96,6 +111,19 @@ export function HistoryView({ session }: { session: SessionView }) {
           ))}
         </>
       )}
+      {mergeError && <p className="rd-panel-empty">Merge history unavailable: {mergeError}</p>}
+      {merges.length > 0 && <section className="rd-history-bucket"><h3>Fork merges</h3>
+        {merges.map(row => <details key={row.id} className="rd-history-checkpoint">
+          <summary>{new Date(row.createdAt).toLocaleString()} · {row.delivery}{row.statusAvailable === false ? " (last recorded)" : ""} · {row.parentDeleted ? "Parent deleted" : row.keepOpen ? "Child kept open" : row.childClosed ? "Child closed" : "Child closure pending"}</summary>
+          {!row.keepOpen && !row.childClosed && splitSessionRef(session.key).key === row.child && <button className="rd-btn rd-btn-sm" onClick={async () => {
+            try {
+              await forkMergeService(session.key).send({ summary: row.summary, keepOpen: false, requestKey: row.id.split(":").at(-1)! });
+              setMerges((await forkMergeHistory(session.key)).merges); setMergeError("");
+            } catch (cause) { setMergeError((cause as Error).message); }
+          }}>Finish closing child</button>}
+          <p>Parent checkpoint: {row.checkpoint}</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{row.summary}</pre>
+        </details>)}
+      </section>}
       {checkpoints.length > 0 && (
         <section className="rd-history-bucket">
           <h3>Checkpoints</h3>
