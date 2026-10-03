@@ -264,7 +264,16 @@ def main():
             raise
         finally:
             stop()
-            subprocess.run(["tmux", "-L", namespace, "kill-server"], capture_output=True)
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(Path(__file__).with_name("cleanup_test_sockets.py")),
+                    "--owned",
+                    namespace,
+                ],
+                check=True,
+                capture_output=True,
+            )
     print("Cleaned up disposable server, agents, database, and credentials.")
 
 
