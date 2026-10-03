@@ -10,3 +10,5 @@
   - a dedicated "needs you" filter in the left panel instead of a box.
   Backend is untouched (registry, decide endpoints, zombie expiry, the
   Approve/Deny e2e via API) — this is a UI-placement question only.
+
+- Header cleanup: voice installation help now lives in Settings → Voice; an empty pin strip stays hidden and pinning remains available in Messages.
