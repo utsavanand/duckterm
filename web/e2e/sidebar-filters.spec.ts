@@ -52,6 +52,12 @@ test("filters across folders, persists choices, and restores expansion and selec
     await page.screenshot({ path: "/tmp/sidebar-filters-implemented-light-compact.png" });
     const bounds = await page.locator(".rd-sidebar-filters").evaluate(el => ({ width: el.clientWidth, scroll: el.scrollWidth }));
     expect(bounds.scroll).toBeLessThanOrEqual(bounds.width);
+    await page.setViewportSize({ width: 1000, height: 780 });
+    const row = page.locator(".rd-row-name", { hasText: "filter-waiting" });
+    await row.scrollIntoViewIfNeeded();
+    await expect(row).toBeInViewport();
+    await row.click();
+    await expect(page.locator(".rd-row.selected")).toContainText("filter-waiting");
   } finally {
     for (const key of keys) await apiDelete(`/sessions/${key}`);
     for (const name of folders.reverse()) await apiDelete(`/folders/${encodeURIComponent(name)}`);

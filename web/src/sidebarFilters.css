@@ -23,3 +23,9 @@
 .rd-group-head:hover .rd-group-phone,.rd-group-head:hover .rd-group-add,
 .rd-group-head:focus-within .rd-group-phone,.rd-group-head:focus-within .rd-group-add { opacity:1; }
 @media(hover:none) { .rd-group-phone,.rd-group-add { opacity:1; } }
+/* The narrow dashboard stacks its panes. Let filters and rows share its
+   scrollbar instead of shrinking the row list to zero below fixed controls. */
+@media(max-width:1100px) {
+  .rd-sidebar-content { overflow-y:auto; }
+  .rd-sidebar-content > .rd-tree { flex:none; overflow:visible; }
+}
