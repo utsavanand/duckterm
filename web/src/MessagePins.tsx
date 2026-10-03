@@ -87,6 +87,7 @@ export function useMessagePins(sessionKey: string | null) {
 export function MessagePinStrip({ pins, error, onOpen }: {
   pins: MessagePin[]; error: string; onOpen: (pin: MessagePin) => void;
 }) {
+  if (!pins.length && !error) return null;
   return <div className="rd-pin-strip" aria-label="Pinned messages">
     <span className="rd-pin-label">Pinned {pins.length}</span>
     <div className="rd-pin-chips">
@@ -98,8 +99,7 @@ export function MessagePinStrip({ pins, error, onOpen }: {
           <path d="M16 3H8l1 7-4 4v2h6v6l2-6h6v-2l-4-4 1-7Z" />
         </svg>
       </button>)}
-      {error ? <span role="alert">Could not load pins. Reopen this session to retry.</span>
-        : !pins.length && <span className="rd-pin-empty">Pin a message in Messages to keep it here.</span>}
+      {error && <span role="alert">Could not load pins. Reopen this session to retry.</span>}
     </div>
   </div>;
 }

@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-10-02 — Filters must agree with the rows they hide
+Status shortcuts use the same effective state as session rows, including Stop
+settling. Keep folder expansion outside the filtered tree, preserve session
+selection, exclude archived rows at the filter boundary, and read preferences
+back after saving. Brand text belongs in one flex child so icon spacing does
+not split the wordmark; regenerate normal and Test icons together.
+
 ## 2026-10-01 — A shared .venv gates the wrong worktree
 **Broke:** a gate in a fresh worktree failed three tests whose fix was
 present in that worktree's source. An earlier gate of a specific SHA reported
