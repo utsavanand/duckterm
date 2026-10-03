@@ -229,6 +229,16 @@ Known miss: a plan hand-off buried mid-message ("next move is yours: review
 the plan and say go") read as none in every run. Without a model, the
 question-mark check is the fallback and the note says so.
 
+**Polling.** The dashboard reads notes from `/relay` every 4 s, and the
+open count every 5 s. Each poll is abandoned after 10 s, and the dashboard
+polls at once when its window comes back into view. That refocus poll is
+skipped while one is already in flight, and is limited to one a second, so a
+burst of focus changes can't flood the server. Before 2026-10-02 a poll
+had no timeout, so one request that never answered (for example in the Mac
+app's web view after sleep) froze Needs you and the Oracle chat with no
+error. That is one way the owner could miss a note the server had open for
+3 hours in the B16 live check. It is not proven to be that miss's cause.
+
 Notes close by themselves when the agent moves on: choice notes on the next
 tool event or turn end, question notes when the owner types a prompt.
 
