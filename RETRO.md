@@ -1,5 +1,20 @@
 # Retro — lessons from real breakage
 
+## 2026-10-01 — A shared .venv gates the wrong worktree
+**Broke:** a gate in a fresh worktree failed three tests whose fix was
+present in that worktree's source. An earlier gate of a specific SHA reported
+PASSED without having run that SHA's code at all.
+**Cause:** the worktree's `.venv` was a symlink to another worktree's venv, so
+the editable install still resolved `duckterm` to the *other* checkout.
+`python -c "import duckterm.server as s; print(s.__file__)"` pointed at a path
+the gate was not testing. Symlinking is tempting because `pip install -e`
+takes a minute per worktree.
+**Rule:** every worktree gets its own `python -m venv .venv` and editable
+install — never a symlink to another checkout's. When reporting a gate result
+for a named SHA, confirm the interpreter resolves the package inside that
+worktree before trusting the verdict; a green gate on the wrong source is
+worse than a red one, because it is reported as evidence.
+
 ## 2026-10-01 — Measure a performance fix on the owner's machine, not just a benchmark
 
 **What happened:** #192 bounded terminal polling, with reads drained at most 64 KiB per tick, tmux liveness probed at most once a second, and screen scans batched. main-dev's synthetic benchmark used harmless `/usr/bin/true` liveness probes instead of real tmux, and predicted roughly an 81% cut (34.88% to 6.69%).

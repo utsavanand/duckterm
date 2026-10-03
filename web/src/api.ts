@@ -136,8 +136,11 @@ async function post<T>(path: string, body?: unknown, context?: string): Promise<
   return data as T;
 }
 
-async function get<T>(path: string, context?: string): Promise<T> {
-  const res = await (context === undefined ? fetch(path, { cache: "no-store" }) : sessionFetch(context, path, { cache: "no-store" }));
+// `authed` is for the few reads the server gates on the owner token — reads
+// whose body describes the owner rather than the UI's own state.
+async function get<T>(path: string, context?: string, authed = false): Promise<T> {
+  const init: RequestInit = { cache: "no-store", ...(authed ? { headers: authHeaders() } : {}) };
+  const res = await (context === undefined ? fetch(path, init) : sessionFetch(context, path, init));
   if (!res.ok) {
     const data: unknown = await res.json().catch(() => null);
     const detail = data !== null && typeof data === "object" && "error" in data && typeof data.error === "string"
@@ -372,7 +375,7 @@ export const api = {
   branches: (path: string) =>
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
-  connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context),
+  connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context, true),
   enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string, harnesses?: string[]) =>
     post<Connector>(`/connectors/${name}/enable`, {
       source, write_access,
