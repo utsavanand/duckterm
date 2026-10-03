@@ -1,3 +1,5 @@
+- Test teardown cannot run after SIGKILL. Publish a locked, unique pytest namespace before launch; gate-start cleanup must acquire its abandoned lease and require zero sessions and clients. Leave legacy unregistered servers alone: age and a PID-shaped name do not prove ownership. Keep the lock through unlink so concurrent cooperating launches cannot revive the name.
+
 ## 2026-09-28 — Test servers can leave Unix socket files behind
 
 - Test-socket cleanup review: test owned teardown separately from dead sweeps, including failed kills and neighboring namespaces. Probe plus inode checks cannot make POSIX unlink atomic; require exclusive owned namespaces and quiescent launches for dead sweeps.

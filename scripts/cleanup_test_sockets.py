@@ -28,7 +28,9 @@ PREFIXES = (
 )
 
 
-def cleanup(owned: str | None = None) -> dict[str, list[str]]:
+def cleanup(
+    owned: str | None = None, *, stop: bool = True, exact: bool = False
+) -> dict[str, list[str]]:
     if owned is not None and (not owned.startswith(PREFIXES) or "/" in owned):
         raise ValueError("only named test namespaces can be owned")
     directory = Path(os.environ.get("TMUX_TMPDIR", "/tmp")) / f"tmux-{os.getuid()}"
@@ -38,12 +40,14 @@ def cleanup(owned: str | None = None) -> dict[str, list[str]]:
             continue
         if owned and path.name != owned and not path.name.startswith(owned + "-"):
             continue
+        if exact and path.name != owned:
+            continue
         try:
             before = path.lstat()
             if not stat.S_ISSOCK(before.st_mode) or before.st_uid != os.getuid():
                 result["preserved"].append(path.name)
                 continue
-            if owned:
+            if owned and stop:
                 subprocess.run(
                     ["tmux", "-S", str(path), "kill-server"], capture_output=True, timeout=3
                 )

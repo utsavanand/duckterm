@@ -55,7 +55,7 @@ export default async function globalSetup() {
 
   // A private tmux namespace for this run's fixture agents, swept wholesale
   // in global-teardown — never the user's real duckterm socket.
-  const tmuxSocket = `rd-e2e-${process.pid}`;
+  const tmuxSocket = `rd-e2e-${process.pid}-${home.split("-").pop()}`;
   // Playwright's normal teardown handles failures/SIGINT; this synchronous
   // fallback also runs if the worker exits after partial setup.
   process.once("exit", () => {

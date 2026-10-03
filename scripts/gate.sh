@@ -12,6 +12,9 @@ LOG="${GATE_LOG:-/tmp/duckterm-gate.log}"
 
 step() { echo "==> $1"; }
 
+step "abandoned test sockets"
+"$PY" scripts/test_socket_lease.py >> "$LOG" 2>&1
+
 step "pytest"
 "$PY" -m pytest tests -q >> "$LOG" 2>&1
 step "ruff check"

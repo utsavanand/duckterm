@@ -1,11 +1,10 @@
 """Point DUCKTERM_HOME at a throwaway dir for the whole test session so no
 test writes to the developer's real ~/.duckterm/."""
 
-import contextlib
 import os
+import runpy
 import signal
 import subprocess
-import sys
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -34,29 +33,20 @@ def _isolated_tmux_socket() -> Iterator[None]:
     leak panes onto the developer's real duckterm socket — leftovers
     accumulate and slow every tmux call down."""
     prev = os.environ.get("DUCKTERM_TMUX_SOCKET")
-    socket = f"duckterm-pytest-{os.getpid()}"
-    os.environ["DUCKTERM_TMUX_SOCKET"] = socket
+    managed = runpy.run_path(
+        str(Path(__file__).resolve().parents[1] / "scripts/test_socket_lease.py")
+    )
 
     def interrupted(signum, frame):
         raise KeyboardInterrupt
 
     previous_term = signal.signal(signal.SIGTERM, interrupted)
     try:
-        yield
+        with managed["lease"]() as socket:
+            os.environ["DUCKTERM_TMUX_SOCKET"] = socket
+            yield
     finally:
         signal.signal(signal.SIGTERM, previous_term)
-        # tmux may not exist at all (slim CI containers) — nothing to sweep then.
-        with contextlib.suppress(FileNotFoundError):
-            subprocess.run(
-                [
-                    sys.executable,
-                    str(Path(__file__).resolve().parents[1] / "scripts/cleanup_test_sockets.py"),
-                    "--owned",
-                    socket,
-                ],
-                check=True,
-                capture_output=True,
-            )
         if prev is None:
             os.environ.pop("DUCKTERM_TMUX_SOCKET", None)
         else:
