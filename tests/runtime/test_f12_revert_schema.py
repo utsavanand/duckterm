@@ -48,7 +48,7 @@ def test_retired_tables_are_archived_completely_before_drop(tmp_path, monkeypatc
         original = _legacy_rows(conn)
     store = HistoryStore(path)
     try:
-        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 10
+        assert store._conn.execute("PRAGMA user_version").fetchone()[0] == 11
         cols = {r["name"] for r in store._conn.execute("PRAGMA table_info(sessions)")}
         assert "pinned" in cols
         assert "restart_json" in cols

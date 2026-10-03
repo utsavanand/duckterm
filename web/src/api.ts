@@ -1,3 +1,4 @@
+import type { ForkMergePreview, ForkMergeRecord, ForkMergeService } from "./ForkMergeDialog";
 import { routedFetch as fetch, sessionFetch, splitSessionRef, setRemoteGroup, changeRemoteFolders } from "./hostTransport";
 // Thin wrapper over the Duckterm server. Every POST action the backend
 // exposes lives here so components never hand-roll fetches.
@@ -646,3 +647,24 @@ export interface CheckpointRecord {
 }
 
 export type { RawEvent };
+
+export type ForkMergeHistory = ForkMergeRecord & { child: string; parent: string; createdAt: number; parentDeleted: boolean };
+async function mergeRead<T>(key: string, suffix: string): Promise<T> {
+  const local = splitSessionRef(key).key;
+  const response = await sessionFetch(key, `/sessions/${encodeURIComponent(local)}/${suffix}`, { headers: authHeaders(), cache: "no-store" });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error ?? "Could not load merge history");
+  return data;
+}
+export const forkMergeHistory = (key: string) => mergeRead<{ merges: ForkMergeHistory[] }>(key, "merges");
+export function forkMergeService(key: string): ForkMergeService {
+  return {
+    preview: () => mergeRead<ForkMergePreview>(key, "merge"),
+    send: draft => post<ForkMergeRecord>(`/sessions/${encodeURIComponent(splitSessionRef(key).key)}/merge`, draft, key),
+    status: async id => {
+      const record = (await forkMergeHistory(key)).merges.find(row => row.id === id);
+      if (!record) throw new Error("Merge record is unavailable");
+      return record;
+    },
+  };
+}
