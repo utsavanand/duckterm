@@ -1,4 +1,6 @@
 import { useDesktopNotifications } from "./useDesktopNotifications";
+import { SidebarFilterToggle } from "./SidebarFilters";
+import { useSidebarFilters } from "./sidebarFilterState";
 import duckMark from "./assets/duckmark.svg?no-inline";
 import { ArchiveUndo, useArchiveRequests } from "./ArchiveUndo";
 import { SessionCard } from "./SessionCard";
@@ -73,6 +75,7 @@ function Dashboard() {
   const inboxCounts = useInboxCounts();
   const archives = useArchiveRequests();
   const sidePanels = useSidePanels();
+  const sidebarFilters = useSidebarFilters();
   const sessions = useMemo(
     () => sourceSessions.filter(s => !archives.requests.some(r => r.session_key === s.key)).map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 })),
     [sourceSessions, inboxCounts, archives.requests],
@@ -381,6 +384,7 @@ function Dashboard() {
           <section className={`rd-agents${sidePanels.collapsed.left ? " rd-side-collapsed" : ""}`}>
             <div className="rd-panel-head">
               <span>Agents</span>
+              {(agents.length > 0 || folders.length > 0) && <SidebarFilterToggle filters={sidebarFilters.filters} expanded={sidebarFilters.expanded} onToggle={sidebarFilters.toggleExpanded} />}
               <PanelToggle side="left" collapsed={sidePanels.collapsed.left} onToggle={() => sidePanels.toggle("left")} />
             </div>
             {agents.length === 0 && folders.length === 0 ? (
@@ -389,6 +393,7 @@ function Dashboard() {
               </p>
             ) : (
               <AgentTree
+                filterControls={sidebarFilters}
                 sessions={agents}
                 now={now}
                 folders={folders}

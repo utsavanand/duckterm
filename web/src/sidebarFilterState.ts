@@ -5,6 +5,7 @@ import { SessionView } from "./types";
 export type FilterGroup = "status" | "runtime" | "location";
 export type SidebarFilterState = Record<FilterGroup, string[]>;
 export const FILTER_KEY = "rd.sidebarFilters";
+export const FILTER_PANEL_KEY = "rd.sidebarFiltersExpanded";
 export const EMPTY_FILTERS: SidebarFilterState = { status: [], runtime: [], location: [] };
 export const STATUS_FILTERS = ["busy", "waiting", "idle", "stopped"];
 const RUNTIME_LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", copilot: "Copilot", opencode: "OpenCode", generic: "Shell" };
@@ -36,6 +37,9 @@ export function readFilters(value: string | null): SidebarFilterState {
   } catch { return EMPTY_FILTERS; }
 }
 export function useSidebarFilters() {
+  const [expanded, setExpanded] = useState(() => {
+    try { return localStorage.getItem(FILTER_PANEL_KEY) === "true"; } catch { return false; }
+  });
   const [filters, setFilters] = useState<SidebarFilterState>(() => {
     try { return readFilters(localStorage.getItem(FILTER_KEY)); } catch { return EMPTY_FILTERS; }
   });
@@ -44,11 +48,14 @@ export function useSidebarFilters() {
     try {
       const value = JSON.stringify(filters);
       localStorage.setItem(FILTER_KEY, value);
-      setSaveError(localStorage.getItem(FILTER_KEY) !== value);
+      localStorage.setItem(FILTER_PANEL_KEY, String(expanded));
+      setSaveError(localStorage.getItem(FILTER_KEY) !== value || localStorage.getItem(FILTER_PANEL_KEY) !== String(expanded));
     } catch { setSaveError(true); }
-  }, [filters]);
+  }, [filters, expanded]);
   const toggle = (group: FilterGroup, value: string) => setFilters(current => ({ ...current,
     [group]: current[group].includes(value) ? current[group].filter(v => v !== value) : [...current[group], value],
   }));
-  return { filters, toggle, clear: () => setFilters(EMPTY_FILTERS), saveError };
+  return { filters, toggle, clear: () => setFilters(EMPTY_FILTERS), saveError,
+    expanded, toggleExpanded: () => setExpanded(current => !current) };
 }
+export type SidebarFilterControls = ReturnType<typeof useSidebarFilters>;
