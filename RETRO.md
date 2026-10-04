@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — Isolate every clock that can redraw the terminal
+A one-second clock in Dashboard redrew terminal and connector components with
+30 sessions even when nothing changed. Moving only that clock would leave the
+voice scheduler and unchanged archive poll responses triggering the same work.
+Keep time subscriptions below the dashboard, retain identical poll snapshots,
+and give archive countdowns their own clock. Verify render counts while time
+advances, including the 30-second idle and 90-second voice grace. Pause History
+polling when hidden and discard late responses after changing sessions.
+
 ## 2026-10-04 — Hidden filters must not hide active filtering
 Filter controls competed with the session list and their compact layout crowded
 labels against chips. Keep the panel closed by default and remember its visibility
