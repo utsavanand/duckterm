@@ -23,10 +23,32 @@ def test_open_work_older_than_the_first_page_still_shows(store) -> None:  # noqa
             f"/questions/{owner_question(store, 'b', n)}/answer",
             {"text": "done"},
         )
-    page = call(store, creds, "GET", "/inbox")[1]
-    pending = [m for m in page["messages"] if m["status"] == "queued"]
-    assert [(m["id"], m.get("older_pending")) for m in pending] == [(old, True)]
-    assert page["next_cursor"] is not None  # history paging is unchanged
+    first = call(store, creds, "GET", "/inbox")[1]
+    assert [m["id"] for m in first["older_pending"]] == [old]
+    assert first["older_pending_truncated"] is False
+    # main-qa, PR #217: messages and paging are unchanged, so a client that
+    # ignores older_pending sees each record exactly once across pages.
+    second = call(store, creds, "GET", f"/inbox?before={first['next_cursor']}")[1]
+    ids = [m["id"] for m in first["messages"] + second["messages"]]
+    assert len(ids) == len(set(ids)) == 61 and old in ids
+    assert "older_pending" not in second
+
+
+def test_older_pending_says_when_it_is_cut_short(store, monkeypatch) -> None:  # noqa: F811
+    monkeypatch.setattr("duckterm.core.session_api.OLDER_PENDING_LIMIT", 2)
+    creds = enroll(store, "b")
+    for n in range(3):
+        owner_question(store, "b", n)  # three old open questions
+    for n in range(3, 54):
+        call(
+            store,
+            creds,
+            "POST",
+            f"/questions/{owner_question(store, 'b', n)}/answer",
+            {"text": "done"},
+        )
+    first = call(store, creds, "GET", "/inbox")[1]
+    assert len(first["older_pending"]) == 2 and first["older_pending_truncated"] is True
 
 
 def test_the_response_reports_this_read_not_the_previous_one(store) -> None:  # noqa: F811

@@ -160,6 +160,8 @@ MERGE_PREFIX = "merge:"
 # A priority owner message nobody has replied to: never swept while open.
 _OPEN_PRIORITY = "(priority = 1 AND status IN ('queued', 'read'))"
 PRIORITY_SNIPPET = 400
+# Open records older than an agent's first inbox page, returned alongside it.
+OLDER_PENDING_LIMIT = 200
 
 
 def _inbox_view(view: str, alias: str = "") -> str:
@@ -916,18 +918,19 @@ class SessionAPI:
         ).fetchall()
         page = rows[:50]
         older: list[sqlite3.Row] = []
-        if before is None and len(rows) > 50:
+        if before is None and view is None and len(rows) > 50:
             # Open work older than the first page would otherwise only show on
-            # page two, which an agent checking its inbox never reads.
+            # page two, which an agent checking its inbox never reads. It goes
+            # in its own list, so messages and paging stay exactly as before.
             older = self.conn.execute(
                 "SELECT rowid AS sequence, * FROM session_questions WHERE recipient = ? "
-                "AND rowid < ? AND (status IN ('queued', 'accepted') OR "
-                f"{_OPEN_PRIORITY}) ORDER BY rowid DESC LIMIT 200",
-                (key, page[-1]["sequence"]),
+                f"AND rowid < ? AND {_inbox_view('pending')} ORDER BY rowid DESC LIMIT ?",
+                (key, page[-1]["sequence"], OLDER_PENDING_LIMIT + 1),
             ).fetchall()
         now = int(time.time() * 1000)
-        messages = []
-        for row in [*page, *older]:
+        messages: list[dict[str, Any]] = []
+        older_pending: list[dict[str, Any]] = []
+        for row in [*page, *older[:OLDER_PENDING_LIMIT]]:
             if not owner:
                 try:
                     if row["sender"] != "owner":
@@ -946,9 +949,7 @@ class SessionAPI:
             message["delivery"] = (
                 dict(delivery) if delivery else {"attempts": 0, "outcome": "pending"}
             )
-            if row in older:
-                message["older_pending"] = True
-            messages.append(message)
+            (older_pending if row in older else messages).append(message)
             if not owner and row["status"] in ("queued", "accepted"):
                 self.conn.execute(
                     "INSERT INTO session_inbox_delivery (question_id, last_read_at) VALUES (?, ?) "
@@ -964,6 +965,10 @@ class SessionAPI:
         self.conn.commit()
         cursor = rows[49]["sequence"] if len(rows) > 50 else None
         result: dict[str, Any] = {"messages": messages, "next_cursor": cursor}
+        if before is None and view is None:
+            result["older_pending"] = older_pending
+            # More open work than the list holds: page on with next_cursor.
+            result["older_pending_truncated"] = len(older) > OLDER_PENDING_LIMIT
         if view is not None:
             result["counts"] = self._inbox_counts("recipient = ?", (key,))
         if owner:

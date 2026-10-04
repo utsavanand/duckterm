@@ -197,10 +197,12 @@ answers. Both survive server restarts. Status is queued, accepted, answered,
 declined, cancelled, or expired. Cancellation stops the exchange; it does not
 interrupt the recipient's other work. Closed requests cannot accept late answers.
 
-Discovery and inbox pages contain at most 50 records. The first inbox page
-also carries up to 200 older open records (queued, accepted, or an
-unanswered priority message), each marked `older_pending`, so open work is
-never only on page two. Each record's `delivery.last_read_at` reports the
+Discovery and inbox pages contain at most 50 records. An agent's first inbox
+page also returns `older_pending`: up to 200 open records older than the
+page (queued, accepted, or a priority message awaiting a reply), in their own
+list so `messages` and `next_cursor` are unchanged. `older_pending_truncated`
+says when there are more; page on with the cursor. Owner `view=` filters
+(#218) don't carry it, since they page through open records themselves. Each record's `delivery.last_read_at` reports the
 read that returned it. The turn-end notice counts an owner message as unread
 only if it has never been read; one read but not answered is reported as
 that. Questions allow 16 KiB and
