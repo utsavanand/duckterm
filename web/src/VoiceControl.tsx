@@ -264,15 +264,7 @@ export function VoicePausedPill() {
 
 export function VoiceMenu({ level, ready, onLevel }: { level: VoiceLevel; ready: boolean; onLevel: (level: VoiceLevel) => void }) {
   if (!ready) {
-    // One line on why it can't be turned on yet.
-    return (
-      <label className="rd-voice-menu" title="Voice announcements need a natural voice. Download one in Settings, then Voice.">
-        <span aria-hidden="true">🔇</span>
-        <select aria-label="Voice announcements" value="off" disabled>
-          <option value="off">Voice: download a voice in Settings</option>
-        </select>
-      </label>
-    );
+    return <span className="rd-voice-menu" role="img" aria-label="Voice off — download a voice in Settings" title="Voice off — download a voice in Settings">🔇</span>;
   }
   return (
     <label className="rd-voice-menu" title="Oracle voice announcements. They only play while a dashboard is open.">

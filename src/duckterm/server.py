@@ -58,7 +58,7 @@ from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.folder_messages import FolderMessages
-from duckterm.core.orchestrator import Orchestrator
+from duckterm.core.orchestrator import Orchestrator, SessionSupervisor
 from duckterm.core.relay import (
     ASK_CUES,
     RULE_PROMPT,
@@ -192,6 +192,12 @@ def _mid(prefix: str, suffix: str) -> dict[str, str]:
     return {"prefix": prefix, "suffix": suffix}
 
 
+# GETs that require the owner token despite the open-read policy. /connectors
+# reports which providers the owner connected, under which identity, and when
+# each was last used — a description of the owner, not of the UI's own state.
+_OWNER_READS = frozenset({"/connectors"})
+
+
 # fmt: off
 _ROUTES: list[Route] = [
     Route("POST", "", lambda s, r, w, h, b, seg: s._transfer(w, seg, b), prefix="/transfers/"),
@@ -218,6 +224,8 @@ _ROUTES: list[Route] = [
     Route("GET", "", lambda s, r, w, h, b, seg: s._approval_decision(w, seg),
           **_mid("/approvals/", "/decision")),
     Route("GET", "/terminals", lambda s, r, w, h, b, seg: s._terminals(w)),
+    Route("GET", "/tasks", lambda s, r, w, h, b, seg: s._folder_tasks(w, h)),
+    Route("GET", "/update/status", lambda s, r, w, h, b, seg: s._update_status(w, h)),
     Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._diff(w, seg), **_mid("/sessions/", "/diff")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
@@ -230,6 +238,12 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/annotations")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._add_annotation(w, seg, b),
           **_mid("/sessions/", "/annotations")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "GET", b),
+          **_mid("/sessions/", "/merge")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "POST", b),
+          **_mid("/sessions/", "/merge")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "LIST", b),
+          **_mid("/sessions/", "/merges")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._list_checkpoints(w, seg),
           **_mid("/sessions/", "/checkpoints")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_digest(w, seg),
@@ -282,6 +296,10 @@ _ROUTES: list[Route] = [
           **_mid("/connectors/", "/enable")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._disable_connector(w, seg),
           **_mid("/connectors/", "/disable")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._layout(w, h, seg, "GET", b), prefix="/layouts/"),
+    Route("PUT", "", lambda s, r, w, h, b, seg: s._layout(w, h, seg, "PUT", b), prefix="/layouts/"),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._verify_connector(w, seg),
+          **_mid("/connectors/", "/verify")),
     # ── left-panel folders ──
     Route("GET", "/session-inbox-counts", lambda s, r, w, h, b, seg: s._inbox_counts(w, h)),
     Route("GET", "/folders", lambda s, r, w, h, b, seg: s._list_folders(w)),
@@ -360,6 +378,7 @@ class Server:
         self._transfer_launches: set[str] = set()
         self.history = history if history is not None else HistoryStore()
         self.history.folder_chats.recover()
+        self.history.layouts.recover()
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
         self.snapshots = SnapshotManager(self.history)
@@ -368,6 +387,7 @@ class Server:
         self._oracle_nudges: dict[str, oracle.Nudge] = {}
         # One Oracle pass at a time: a priority broadcast starts one early.
         self._oracle_lock = asyncio.Lock()
+        self._merge_lock = asyncio.Lock()
         self._oracle_kick: asyncio.Task[None] | None = None
         self._tokens = TokenLedger(
             Path(os.environ.get("CLAUDE_CONFIG_DIR", str(Path.home() / ".claude"))) / "projects",
@@ -521,7 +541,12 @@ class Server:
         # which a blind CSRF can't read and therefore can't forge. GETs (the
         # dashboard, static assets, read-only data) stay open so the browser can
         # load the UI; they're already protected by the same-origin check above.
-        if method != "GET" and not security.token_valid(headers, self.token):
+        # _OWNER_READS are the exceptions: reads whose body describes the owner
+        # rather than the UI's own state, so they are worth the token even
+        # though the listener is loopback-only.
+        if (method != "GET" or path in _OWNER_READS) and not security.token_valid(
+            headers, self.token
+        ):
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
@@ -534,7 +559,7 @@ class Server:
                 writer, headers, urllib.parse.unquote(folder_message[1]), folder_message[2], body
             )
             return
-        folder_view = re.fullmatch(r"/folders/(.+)/(chat|artifacts)", path)
+        folder_view = re.fullmatch(r"/folders/(.+)/(chat|artifacts|stats)", path)
         if folder_view and method == "GET":
             await self._folder_view(
                 writer, headers, urllib.parse.unquote(folder_view[1]), folder_view[2]
@@ -543,8 +568,10 @@ class Server:
         artifact_match = re.fullmatch(
             r"/sessions/([A-Za-z0-9._-]+)/artifacts(?:/([a-f0-9]{32}))?", path
         )
-        if artifact_match and method in {"GET", "DELETE"}:
-            await self._artifacts(writer, headers, artifact_match[1], artifact_match[2], method)
+        if artifact_match and method in {"GET", "DELETE", "PATCH"}:
+            await self._artifacts(
+                writer, headers, artifact_match[1], artifact_match[2], method, body
+            )
             return
         focus_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/focus-pin", path)
         if focus_match and method == "PUT":
@@ -647,7 +674,9 @@ class Server:
                 },
             )
             return
-        await _write_file(writer, target)
+        await _write_file(
+            writer, target, immutable=target.is_relative_to((dist / "assets").resolve())
+        )
 
     async def _ingest(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         try:
@@ -712,7 +741,7 @@ class Server:
         # until replied to; the regular reminder follows.
         pinned = api.priority_notice(key) if runtime.priority_delivery else None
         if pinned:
-            api.mark_delivered(pinned[1])
+            self._delivered(key, pinned[1])
         parts = [
             pinned and pinned[0],
             runtime.turn_end_inbox_notice and api.turn_end_notice(key),
@@ -860,46 +889,93 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
-    def _session_messages(self, session_key: str) -> list[dict[str, object]]:
+    def _message_source(self, session_key: str) -> tuple[str, str, str | None] | None:
+        """Copy DB identity on the owner thread before dispatching file work."""
         row = self.history.session(session_key)
         if row is None:
+            return None
+        return (
+            str(row.get("runtime") or "generic"),
+            str(row.get("worktree_path") or row.get("cwd") or ""),
+            self.history.session_id_for(session_key),
+        )
+
+    @staticmethod
+    def _read_messages(source: tuple[str, str, str | None] | None) -> list[dict[str, object]]:
+        if source is None:
             return []
-        session_id = self.history.session_id_for(session_key)
-        cwd = row.get("worktree_path") or row.get("cwd")
-        runtime_name = str(row.get("runtime") or "generic")
+        runtime_name, cwd, session_id = source
         runtime = _build_runtime(runtime_name, "")
-        messages = runtime.messages(cwd=Path(str(cwd)), session_id=session_id) if cwd else []
+        messages = runtime.messages(cwd=Path(cwd), session_id=session_id) if cwd else []
         for message in messages:
-            # Line numbers alone can silently point elsewhere after a rewrite.
-            # Include contents and conversation scope; stale pins use their snapshot.
             identity = json.dumps(
                 [runtime_name, session_id, message], sort_keys=True, ensure_ascii=True
             ).encode()
             message["message_key"] = hashlib.sha256(identity).hexdigest()
         return messages
 
-    def _session_messages_response(self, session_key: str) -> bytes:
-        row = self.history.session(session_key)
-        if row is None:
+    @staticmethod
+    def _read_messages_response(source: tuple[str, str, str | None] | None) -> bytes:
+        if source is None:
             return b'{"messages": []}'
-        cwd = row.get("worktree_path") or row.get("cwd")
+        runtime_name, cwd, session_id = source
         if cwd:
-            runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
+            runtime = _build_runtime(runtime_name, "")
             snapshot = getattr(runtime, "messages_response", None)
             if snapshot is not None:
-                response = snapshot(
-                    cwd=Path(str(cwd)), session_id=self.history.session_id_for(session_key)
-                )
+                response = snapshot(cwd=Path(cwd), session_id=session_id)
                 if isinstance(response, bytes):
                     return response
-        return json.dumps({"messages": self._session_messages(session_key)}).encode()
+        return json.dumps({"messages": Server._read_messages(source)}).encode()
+
+    def _session_messages(self, session_key: str) -> list[dict[str, object]]:
+        return self._read_messages(self._message_source(session_key))
+
+    def _session_messages_response(self, session_key: str) -> bytes:
+        return self._read_messages_response(self._message_source(session_key))
 
     async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         if self.history.session(session_key) is None:
             await _write_json(writer, 404, {"error": "no such session"})
             return
-        response = await asyncio.to_thread(self._session_messages_response, session_key)
+        response = await asyncio.to_thread(
+            self._read_messages_response, self._message_source(session_key)
+        )
         await _write_json_bytes(writer, 200, response)
+
+    async def _layout(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        surface: str,
+        method: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        surface = urllib.parse.unquote(surface)
+        try:
+            if method == "GET":
+                result = self.history.layouts.get(surface)
+            else:
+                if len(body) > 16384:
+                    await _write_json(writer, 413, {"error": "Layout is too large"})
+                    return
+                req = json.loads(body)
+                if not isinstance(req, dict) or set(req) != {"instances", "revision"}:
+                    raise ValueError("Expected instances and revision")
+                result = self.history.layouts.put(surface, req["instances"], req["revision"])
+        except FileExistsError as exc:
+            await _write_json(writer, 409, {"error": str(exc)})
+            return
+        except KeyError:
+            await _write_json(writer, 404, {"error": "Folder no longer exists"})
+            return
+        except (ValueError, TypeError, UnicodeDecodeError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
 
     async def _folder_message(
         self,
@@ -933,6 +1009,83 @@ class Server:
         except (ValueError, UnicodeError) as exc:
             await _write_json(writer, 400, {"error": str(exc)})
 
+    async def _folder_stats(self, writer: asyncio.StreamWriter, folder: str) -> None:
+        rows = [
+            dict(row)
+            for row in self.history._conn.execute("SELECT * FROM sessions")
+            if within(str(row["grp"] or ""), folder)
+        ]
+        keys = {row["session_key"] for row in rows}
+        now = time.time()
+        async with self._tokens_lock:
+            usage = await asyncio.to_thread(
+                self._tokens.analytics, 7, now, self._token_identities()
+            )
+        # Membership can change while transcript accounting runs in its worker.
+        current = {
+            row["session_key"]
+            for row in self.history._conn.execute("SELECT session_key,grp FROM sessions")
+            if within(str(row["grp"] or ""), folder)
+        }
+        if folder not in self.history.folders() or current != keys:
+            await _write_json(writer, 409, {"error": "Folder changed. Refresh its details."})
+            return
+        token_rows = [row for row in usage["rows"] if row["session"] in keys]
+        today = usage["today"]
+        periods = {}
+        for days in (1, 7):
+            mail = mail_analytics.snapshot(
+                self.history._conn, days, now=int(now * 1000), sessions=keys
+            )
+            periods[str(days)] = {
+                "tokens": sum(
+                    sum(
+                        int(row[field])
+                        for field in ("input", "cache_read", "cache_write", "output")
+                    )
+                    for row in token_rows
+                    if days == 7 or row["day"] == today
+                ),
+                "sent": sum(row["sent"] for row in mail["daily"]),
+                "answered": sum(row["answered"] for row in mail["daily"]),
+            }
+        artifacts = self.history.artifacts.list_folder(folder, -1, include_removed=True)
+        counts: dict[str, int] = {}
+        for artifact in artifacts:
+            counts[artifact["kind"]] = counts.get(artifact["kind"], 0) + 1
+        await _write_json(
+            writer,
+            200,
+            {
+                "folder": folder,
+                "updated_at": int(now * 1000),
+                "timezone": "UTC",
+                "sessions": {
+                    state: sum(row["state"] == state for row in rows)
+                    for state in (
+                        "busy",
+                        "idle",
+                        "waiting",
+                        "stopped",
+                        "interrupted",
+                        "terminated",
+                        "archived",
+                    )
+                },
+                "waiting": [
+                    {"key": row["session_key"], "name": row["name"] or row["session_key"]}
+                    for row in rows
+                    if row["state"] == "waiting"
+                ],
+                "periods": periods,
+                "artifacts": {
+                    "by_kind": counts,
+                    "available": sum(not row["removed_at"] for row in artifacts),
+                    "removed": sum(bool(row["removed_at"]) for row in artifacts),
+                },
+            },
+        )
+
     async def _folder_view(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], folder: str, view: str
     ) -> None:
@@ -945,12 +1098,14 @@ class Server:
         if folder not in self.history.folders():
             await _write_json(writer, 404, {"error": "Folder no longer exists"})
             return
-        if view == "chat":
+        if view == "stats":
+            await self._folder_stats(writer, folder)
+        elif view == "chat":
             self.history.session_api._sweep()
             _, messages = self.history.folder_chats.snapshot(folder)
             await _write_json(writer, 200, {"messages": messages})
         else:
-            rows = self.history.artifacts.list_folder(folder, 501)
+            rows = self.history.artifacts.list_folder(folder, 501, include_removed=True)
             await _write_json(writer, 200, {"artifacts": rows[:500], "truncated": len(rows) > 500})
 
     async def _artifacts(
@@ -960,6 +1115,7 @@ class Server:
         session_key: str,
         artifact_id: str | None,
         method: str,
+        body: bytes = b"",
     ) -> None:
         if not security.token_valid(headers, self.token):
             await _write_json(writer, 401, {"error": "owner credential required"})
@@ -969,7 +1125,15 @@ class Server:
             return
         result: dict[str, Any]
         try:
-            if method == "DELETE":
+            if method == "PATCH":
+                if artifact_id is None:
+                    raise ArtifactError(400, "An artifact ID is required")
+                result = {
+                    "artifact": self.history.artifacts.update_metadata(
+                        session_key, artifact_id, json.loads(body)
+                    )
+                }
+            elif method == "DELETE":
                 if artifact_id is None:
                     raise ArtifactError(400, "An artifact ID is required")
                 self.history.artifacts.remove(session_key, artifact_id)
@@ -980,6 +1144,9 @@ class Server:
                 result = {"artifact": self.history.artifacts.get(session_key, artifact_id)}
         except ArtifactError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except (ValueError, UnicodeDecodeError):
+            await _write_json(writer, 400, {"error": "Invalid artifact metadata"})
             return
         # Content travels as authenticated JSON, never as executable HTML on the
         # dashboard origin. The preview must render it in an isolated sandbox.
@@ -1053,7 +1220,7 @@ class Server:
                 writer, 409, {"error": "unpin a message before adding more (limit 100)"}
             )
             return
-        messages = await asyncio.to_thread(self._session_messages, session_key)
+        messages = await asyncio.to_thread(self._read_messages, self._message_source(session_key))
         message = next((m for m in messages if m["message_key"] == key), None)
         if message is None:
             await _write_json(
@@ -1240,6 +1407,22 @@ class Server:
         if row is not None and row.get("attention_since"):
             event = {"event_type": events.ATTENDED, "session_key": key, "reconciled": True}
             self.bus.publish(event)
+
+    def _delivered(self, key: str, ids: list[str]) -> None:
+        """Record that priority messages reached this agent, and publish
+        MergeDelivered for a merge summary the first time it does."""
+        for message in self.history.session_api.mark_delivered(ids):
+            origin = message.get("origin")
+            if origin and origin["kind"] == "merge":
+                self.history.fork_merges.delivered(message["request_key"])
+                event = {
+                    "event_type": events.MERGE_DELIVERED,
+                    "session_key": key,
+                    "from_session": origin["from_session"],
+                    "message_id": message["id"],
+                    "request_key": message["request_key"],
+                }
+                self.bus.publish(event)
 
     async def _session_attended(self, writer: asyncio.StreamWriter, key: str) -> None:
         if self.history.session(key) is None:
@@ -1845,6 +2028,18 @@ class Server:
 
         await handle(self, writer, operation, body)
 
+    async def _fork_merge(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        key: str,
+        method: str,
+        body: bytes,
+    ) -> None:
+        from duckterm.fork_merge_api import handle
+
+        await handle(self, writer, headers, key, method, body)
+
     async def _resume(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         if self.archives.pending(session_key):
             await _write_json(writer, 409, {"error": "Archive pending; undo it first"})
@@ -1916,6 +2111,8 @@ class Server:
         # history but is done — resuming it would contradict what Archive means.
         if row.get("state") == "archived":
             return 400, {"error": "archived sessions can't be resumed (archive is final)"}
+        if row.get("state") == "merged" or self.history.fork_merges.closing(session_key):
+            return 400, {"error": "Closed or merging sessions cannot be resumed"}
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
         # The saved worktree/dir may be gone (deleted worktree, pruned, wiped
         # home). Relaunching into a missing dir lands the agent in $HOME with no
@@ -2275,7 +2472,11 @@ class Server:
         row = self.history.session(session_key)
         if row is None:
             return
-        transcript = await asyncio.to_thread(self._progress_transcript, row)
+        transcript = await asyncio.to_thread(
+            self._progress_transcript,
+            self._message_source(session_key),
+            self.orchestrator.get(session_key),
+        )
         if not transcript:
             return
         prior = None
@@ -2377,18 +2578,18 @@ class Server:
         History tab's growing lists (latest summary rides the session row)."""
         await _write_json(writer, 200, {"items": self.digests.items(session_key)})
 
-    def _progress_transcript(self, row: dict[str, Any]) -> list[dict[str, str]]:
-        """Conversation records for the digest: the harness transcript when one
-        exists, else the live terminal screen (generic agents)."""
-        key = str(row.get("session_key") or "")
-        cwd = row.get("worktree_path") or row.get("cwd")
-        session_id = self.history.session_id_for(key)
-        if cwd and session_id:
-            runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
-            records = runtime.read_transcript(cwd=Path(str(cwd)), session_id=session_id)
-            if records:
-                return records
-        sup = self.orchestrator.get(key)
+    @staticmethod
+    def _progress_transcript(
+        source: tuple[str, str, str | None] | None, sup: SessionSupervisor | None
+    ) -> list[dict[str, str]]:
+        """Read files or terminal output using inputs captured on the owner thread."""
+        if source is not None:
+            runtime_name, cwd, session_id = source
+            if cwd and session_id:
+                runtime = _build_runtime(runtime_name, "")
+                records = runtime.read_transcript(cwd=Path(cwd), session_id=session_id)
+                if records:
+                    return records
         if sup is not None:
             screen = sup.screen_text(120)
             if screen:
@@ -2584,24 +2785,51 @@ class Server:
         if not key or event.get("reconciled"):
             return
         now = int(event.get("_ts") or time.time() * 1000)
-        if et == events.PERMISSION_REQUEST and event.get("tool_name") == "AskUserQuestion":
-            choices = choices_from(event.get("tool_input") or {})
-            open_choice = any(
-                n["session_key"] == key and n["kind"] == "choice" for n in self.relay.open_notes()
+        harness = self._relay_harness(key)
+        if harness.owner_prompt == (et, event.get("tool_name")):
+            questions = [
+                {"question": q, "options": o} for q, o in choices_from(event.get("tool_input"))
+            ]
+            # One note per question asked. A repeat of an open one adds nothing,
+            # but Codex can queue several distinct questions at once.
+            repeat = any(
+                n["session_key"] == key and n["kind"] == "choice" and n["questions"] == questions
+                for n in self.relay.open_notes()
             )
-            if choices and not open_choice:
+            if questions and not repeat:
                 self.relay.add(
                     {
                         **self._relay_session_fields(key),
                         "kind": "choice",
                         "created_at": now,
-                        "questions": [{"question": q, "options": o} for q, o in choices],
+                        "questions": questions,
                     }
                 )
-        elif et in (events.PRE_TOOL_USE, events.POST_TOOL_USE, events.STOP, events.SESSION_END):
+        elif harness.owner_prompt_blocks and et in (
+            events.PRE_TOOL_USE,
+            events.POST_TOOL_USE,
+            events.STOP,
+            events.SESSION_END,
+        ):
+            # The agent moved on, so the question was answered. An agent whose
+            # question doesn't block (Codex) carries on with it still queued;
+            # only a submitted prompt (the answer, or one that discards it)
+            # or the session ending closes that note.
             self.relay.close_for_session(key, {"choice"}, "handled", now)
         if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END):
-            self.relay.close_for_session(key, {"question", "choice"}, "handled", now)
+            kinds = {"question", "choice"}
+            answered = (
+                self._answered_choice(key, str(event.get("prompt") or ""))
+                if et == events.USER_PROMPT_SUBMIT and not harness.owner_prompt_blocks
+                else None
+            )
+            if answered is not None:
+                # Codex submits each answer as "> <question>" then the answer,
+                # and the rest of its queue stays. Any other prompt discards
+                # the whole queue (Codex 0.155.1).
+                self.relay.close(answered, "handled", closed_at=now)
+                kinds = {"question"}
+            self.relay.close_for_session(key, kinds, "handled", now)
         if et == events.STOP:
             try:
                 loop = asyncio.get_running_loop()
@@ -2610,6 +2838,21 @@ class Server:
             if loop is not None:
                 loop.create_task(self._relay_detect_question(key, now))
         self._relay_sync_approvals()
+
+    def _answered_choice(self, key: str, prompt: str) -> dict[str, Any] | None:
+        first = prompt.split("\n", 1)[0]
+        if not first.startswith("> "):
+            return None
+        return next(
+            (
+                n
+                for n in self.relay.open_notes()
+                if n["session_key"] == key
+                and n["kind"] == "choice"
+                and any(q["question"].split("\n", 1)[0] == first[2:] for q in n["questions"])
+            ),
+            None,
+        )
 
     def _relay_sync_approvals(self) -> None:
         """Keep approval notes in step with the approval registry, and let
@@ -2791,15 +3034,16 @@ class Server:
         await asyncio.sleep(self._RELAY_SETTLE_S)
         if self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) > at:
             return
-        messages = await asyncio.to_thread(self._session_messages, key)
+        messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
         last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
         final = self._message_text(last)
         if not final or not ASK_CUES.search(final[-900:]):
             return
         if any(
-            n["session_key"] == key and n["kind"] == "question" for n in self.relay.open_notes()
+            n["session_key"] == key and n["kind"] in ("question", "choice")
+            for n in self.relay.open_notes()
         ):
-            return
+            return  # the owner is already asked
         owner = next(
             (
                 self._message_text(m)
@@ -2875,7 +3119,17 @@ class Server:
             writer,
             200,
             {
-                "notes": self.relay.notes[-200:],
+                "notes": [
+                    {
+                        **note,
+                        "urgency": (
+                            "approval"
+                            if note["kind"] == "approval"
+                            else note.get("urgency", "blocked")
+                        ),
+                    }
+                    for note in self.relay.notes[-200:]
+                ],
                 "rules": self.relay.rules,
                 "open": len(self.relay.needs_you()),
             },
@@ -3019,6 +3273,25 @@ class Server:
             return
         await _write_json(writer, 200, {"deleted": rule_id})
 
+    def _token_identities(self) -> list[dict[str, Any]]:
+        native_ids: dict[str, set[str]] = {}
+        for row in self.history._conn.execute(
+            "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
+            "FROM events WHERE sid IS NOT NULL"
+        ):
+            native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
+        return [
+            dict(
+                key=r["session_key"],
+                runtime=r["runtime"],
+                name=r["name"] or r["session_key"],
+                folder=r["grp"],
+                test=bool(r["test"]),
+                native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
+            )
+            for r in self.history._conn.execute("SELECT * FROM sessions")
+        ]
+
     async def _token_analytics(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
     ) -> None:
@@ -3036,23 +3309,7 @@ class Server:
         except ValueError:
             await _write_json(writer, 400, {"error": "days must be 1..36500 or all"})
             return
-        native_ids: dict[str, set[str]] = {}
-        for row in self.history._conn.execute(
-            "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
-            "FROM events WHERE sid IS NOT NULL"
-        ):
-            native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
-        identities = [
-            dict(
-                key=r["session_key"],
-                runtime=r["runtime"],
-                name=r["name"] or r["session_key"],
-                folder=r["grp"],
-                test=bool(r["test"]),
-                native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
-            )
-            for r in self.history._conn.execute("SELECT * FROM sessions")
-        ]
+        identities = self._token_identities()
         async with self._tokens_lock:
             result = await asyncio.to_thread(
                 self._tokens.analytics,
@@ -3365,7 +3622,25 @@ class Server:
         # Credential/CLI probes can take seconds. Keep other dashboard requests
         # and terminal traffic responsive while they finish.
         statuses = await asyncio.to_thread(connectors.list_status)
+        # Inline, NOT in a thread. HistoryStore shares one sqlite connection
+        # opened with check_same_thread=False and no lock, so every other
+        # caller reaches it from this thread; reading it from a worker raced
+        # the write paths and corrupted cursor state. This is a bounded
+        # indexed read, unlike the CLI probes above that earn their thread.
+        used = self.history.connector_last_used()
+        for row in statuses:
+            recorded = used.get(str(row["name"]))
+            row["last_used"] = recorded[0] if recorded else None
+            row["use_count"] = recorded[1] if recorded else 0
         await _write_json(writer, 200, {"connectors": statuses})
+
+    async def _verify_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
+        """Prove the harness path works, rather than that a config entry exists."""
+        if name not in connectors.NAMES:
+            await _write_json(writer, 404, {"error": "unknown connector"})
+            return
+        result = await asyncio.to_thread(connectors.verify, name)
+        await _write_json(writer, 200, {"name": name, **result})
 
     async def _enable_connector(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
         try:
@@ -3380,6 +3655,12 @@ class Server:
                 writer, 400, {"error": "expected an object with boolean write_access"}
             )
             return
+        harnesses = req.get("harnesses")
+        if harnesses is not None and not (
+            isinstance(harnesses, list) and all(isinstance(h, str) for h in harnesses)
+        ):
+            await _write_json(writer, 400, {"error": "harnesses must be a list of names"})
+            return
         token = str(req.get("token") or "").strip() or None
         secret = str(req.get("secret") or "").strip() or None
         try:
@@ -3390,6 +3671,7 @@ class Server:
                 secret,
                 source=req.get("source"),
                 write_access=req.get("write_access", False),
+                harnesses=harnesses,
             )
         except ValueError as e:
             await _write_json(writer, 404, {"error": str(e)})
@@ -3457,6 +3739,24 @@ class Server:
             await _write_json(writer, 400, {"error": str(exc)})
         except OSError as exc:
             await _write_json(writer, 500, {"error": str(exc)})
+
+    async def _folder_tasks(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        await _write_json(writer, 200, {"tasks": self.history.folder_tasks.list_tasks()})
+
+    async def _update_status(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
+        from duckterm.update_status import status
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        result = await asyncio.to_thread(status)
+        result["backup_running"] = bool(
+            self._backup_jobs and self._backup_jobs.task and not self._backup_jobs.task.done()
+        )
+        await _write_json(writer, 200, result)
 
     def _can_pin(self, key: str) -> bool:
         row = self.history.session(key) or {}
@@ -3537,7 +3837,13 @@ class Server:
 
     async def _delete_folder(self, writer: asyncio.StreamWriter, name: str) -> None:
         folder = urllib.parse.unquote(name)
-        self.history.folder_chats.change(folder, None, lambda: self.history.delete_folder(folder))
+        self.history.layouts.change(
+            folder,
+            None,
+            lambda: self.history.folder_chats.change(
+                folder, None, lambda: self.history.delete_folder(folder)
+            ),
+        )
         await _write_json(writer, 200, {"deleted": urllib.parse.unquote(name)})
 
     async def _move_folder(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
@@ -3565,8 +3871,12 @@ class Server:
             await _write_json(writer, 200, {"moved": old, "to": new})
             return
         try:
-            moved = self.history.folder_chats.change(
-                old, new, lambda: self.history.move_folder(old, new)
+            moved = self.history.layouts.change(
+                old,
+                new,
+                lambda: self.history.folder_chats.change(
+                    old, new, lambda: self.history.move_folder(old, new)
+                ),
             )
         except ValueError as e:
             await _write_json(writer, 400, {"error": str(e)})
@@ -4267,6 +4577,16 @@ class Server:
             await _write_json(writer, 400, {"error": "bad restore path"})
             return
         snapshot_id, session_key = parts
+        current = self.history.session(session_key)
+        if (current and current.get("state") == "merged") or self.history.fork_merges.closing(
+            session_key
+        ):
+            await _write_json(
+                writer,
+                409,
+                {"error": "Merged sessions remain readable and cannot be restored as running"},
+            )
+            return
         manifest = self.snapshots.get(snapshot_id)
         if manifest is None:
             await _write_json(writer, 404, {"error": f"no snapshot {snapshot_id}"})
@@ -4643,7 +4963,7 @@ class Server:
             if pinned and status == "submitted":
                 # A stuck paste isn't delivery: the status stays "pending
                 # next turn" and the Stop-hook notice still carries it.
-                self.history.session_api.mark_delivered(pinned[1])
+                self._delivered(key, pinned[1])
             ids = sorted(str(m["id"]) for m in picked)
             nudge = oracle.record_nudge(previous, picked, mail, now)
             self._oracle_nudges[key] = nudge

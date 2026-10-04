@@ -65,6 +65,7 @@ export default async function globalSetup() {
       env: {
         ...process.env,
         DUCKTERM_HOME: home,
+        DUCKTERM_RELEASE_CHECK: "off",
         CLAUDE_CONFIG_DIR: testClaudeRoot,
         CODEX_HOME: testCodexRoot,
         DUCKTERM_SUMMARIZER_CMD: fakeLlm,

@@ -1,9 +1,227 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — Isolate every clock that can redraw the terminal
+A one-second clock in Dashboard redrew terminal and connector components with
+30 sessions even when nothing changed. Moving only that clock would leave the
+voice scheduler and unchanged archive poll responses triggering the same work.
+Keep time subscriptions below the dashboard, retain identical poll snapshots,
+and give archive countdowns their own clock. Verify render counts while time
+advances, including the 30-second idle and 90-second voice grace. Pause History
+polling when hidden and discard late responses after changing sessions.
+
+## 2026-10-04 — Hidden filters must not hide active filtering
+Filter controls competed with the session list and their compact layout crowded
+labels against chips. Keep the panel closed by default and remember its visibility
+per viewer, independently of the selected filters. When controls close, retain an
+active-count badge and a summary with Clear filters. Use distinct chip rows so
+label and group spacing stay uniform across densities, and show Local/Remote even
+when the current remote count is zero. Verify collapse, reload and keyboard access
+with filtering active; hiding controls must not reset the session selection.
+
+## 2026-10-04 — Separate connection startup from transaction races
+A pin-limit test rendezvoused while another worker was still constructing its
+HistoryStore. Startup performs repair and retention writes, so a short barrier
+could time out before the operation under test. Prepare connections serially on
+their dedicated owner threads, then race only the pin transactions; preserve the
+one-winner and three-pin assertions. Constructor failures must surface directly.
+
+## 2026-10-04 — Enforce SQLite ownership across indirect worker calls
+Messages and progress helpers dispatched to workers still queried the shared
+HistoryStore connection, even after the connector caller was moved inline.
+Checking only direct `to_thread(history.method)` calls misses these paths.
+Copy runtime, directory and native conversation ID before dispatching file work,
+and let SQLite reject cross-thread access. Test actual async routes as well as
+the guard. A partial connector-use index keeps unrelated events out of its scan;
+it does not make usage aggregation constant-time.
+
+## 2026-10-04 — Stable asset URLs must never be immutable
+The approved yellow duck stayed green in the owner's Mac app because the server
+gave every non-HTML file a one-year immutable cache lifetime, including the
+unhashed `/favicon.svg`. A fresh browser and checking the served file missed the
+persistent WKWebView cache. Cache only the content-hashed dashboard assets as
+immutable; stable URLs must revalidate. Bundle the header and favicon from one
+SVG source so an update changes their URLs and bypasses already-cached icons.
+Verify the actual app window after release, not just a fresh browser profile.
+
+## 2026-10-03 — A convention nothing checks is a trap for the next caller
+**Broke:** `GET /connectors` logged an `IndexError` on a zero-column row.
+Shipped in #149.
+**Cause:** `HistoryStore` opens its sqlite connection with
+`check_same_thread=False` and no lock, so its safety rested entirely on every
+caller staying on the serving thread. Nothing stated or enforced that. I
+wrapped one query in `asyncio.to_thread` to keep the panel responsive — the
+only one of 59 `to_thread` calls in server.py to touch the database — and it
+raced the 17 write paths on that same connection. Two readers plus two
+writers on one connection produce thousands of errors in seconds, including
+corrupted writes, so the panel's `IndexError` was the mildest symptom.
+**Rule:** when a shared resource is safe only by convention, encode the
+convention as a test the next person will trip over, not a comment they will
+not read. The guard here records which thread the query ran on and fails if
+it is not the serving thread; reverting the fix turns it red. Also: diagnose
+before accepting a plausible explanation — this was first attributed to a
+connector with no usage rows, which turned out to be handled correctly
+(zero matching rows returns an empty mapping and nothing is indexed), and
+fixing that would have left the real race in place.
+
+## 2026-10-02 — Filters must agree with the rows they hide
+Status shortcuts use the same effective state as session rows, including Stop
+settling. Keep folder expansion outside the filtered tree, preserve session
+selection, exclude archived rows at the filter boundary, and read preferences
+back after saving. Brand text belongs in one flex child so icon spacing does
+not split the wordmark; regenerate normal and Test icons together.
+
+## 2026-10-01 — A shared .venv gates the wrong worktree
+**Broke:** a gate in a fresh worktree failed three tests whose fix was
+present in that worktree's source. An earlier gate of a specific SHA reported
+PASSED without having run that SHA's code at all.
+**Cause:** the worktree's `.venv` was a symlink to another worktree's venv, so
+the editable install still resolved `duckterm` to the *other* checkout.
+`python -c "import duckterm.server as s; print(s.__file__)"` pointed at a path
+the gate was not testing. Symlinking is tempting because `pip install -e`
+takes a minute per worktree.
+**Rule:** every worktree gets its own `python -m venv .venv` and editable
+install — never a symlink to another checkout's. When reporting a gate result
+for a named SHA, confirm the interpreter resolves the package inside that
+worktree before trusting the verdict; a green gate on the wrong source is
+worse than a red one, because it is reported as evidence.
+
+## 2026-10-02 — Schema numbers do not prove feature presence
+Folder Tasks shipped schema v10 without the unreleased v9 fork-merge tables.
+Integrate both lifecycles, create missing merge tables and columns by existence,
+and advance to v11 so older code refuses to reopen merged children. Test both
+v10 without merge tables and v9 with a delivered, final child; preserve Tasks
+and checkpoints across migration and repeated startup.
+
+## 2026-10-01 — Saving a merge is not delivering it
+A reviewed fork summary must survive retries without duplicating the parent's note.
+Persist the close-child choice before enqueueing through the shared priority broker;
+create the parent checkpoint only from confirmed delivery, with an idempotent ID and
+startup recovery for the delivery/checkpoint crash gap. Keep merged children final
+even when a delayed SessionStart arrives. A failed close remains visibly pending and
+can be finished from History using the same saved request.
+
+## 2026-10-01 — Measure a performance fix on the owner's machine, not just a benchmark
+
+**What happened:** #192 bounded terminal polling, with reads drained at most 64 KiB per tick, tmux liveness probed at most once a second, and screen scans batched. main-dev's synthetic benchmark used harmless `/usr/bin/true` liveness probes instead of real tmux, and predicted roughly an 81% cut (34.88% to 6.69%).
+**Measured on the owner's live server** (ps CPU time of the server process, six 10-second windows, 28 panes, compared at similar uptime): v0.4.99 **72.0%** to v0.4.100 **14.9%**, about 79%. Product independently saw 11-13% afterwards.
+**Rule:** take a live baseline BEFORE installing a performance fix, measure after at comparable uptime and pane count, and record both in the release PR. A synthetic number is a prediction, not a result; this one happened to hold, but the before-and-after on real panes is what makes the claim.
+
+## 2026-10-01 — A "scratch" Codex test changed the owner's real Codex
+**Broke:** checking Codex's question tool, the Oracle main-dev session ran a
+fresh `codex` in its own tmux socket. It used the owner's real install and
+`~/.codex`. Keystrokes meant for the prompt landed on Codex's startup update
+prompt and chose "Update now", so the owner's Codex went from 0.155.1 to
+0.159.3. 0.159.3 starts a shared app-server daemon per `CODEX_HOME`, which
+outlives the session that started it. This one held the probe's environment
+(`DUCKTERM_URL` set to a dead port, the probe's session key), so the hooks
+of any new Codex session would have gone nowhere. The daemon was killed at
+09:50, and no owner agent was attached to it.
+**Cause:** "isolated" covered the DuckTerm side (own home, tmux socket, port)
+but not the agent's own home. An interactive agent start can update itself
+and leave processes behind. Keys were typed without first checking which
+screen was showing.
+**Rule:** real-agent checks run with a scratch agent home (`CODEX_HOME`,
+`COPILOT_HOME`, with update checks off). Never type into a fresh agent before
+reading its screen. Afterwards, list and stop every process the check
+started, daemons included.
+
+## 2026-10-01 — Assignment must be one transaction
+A task without its inbox message is invisible work; a message without its task is
+an invisible assignment. Create the explicit assignment inside the inbox broker's
+transaction, bind the assignment choice into retry identity, and retain the same
+task ID through handoffs. Archive retired Work rows to a private, durable JSON file
+before dropping their tables; a failed archive must leave the old tables intact.
+
+## 2026-09-30 — Artifact protection belongs in the store
+
+Keep must reject removal on the server, survive re-registration, and preserve the owner’s category. Removing an unkept saved copy should retain metadata in a separate table, not leave an empty downloadable file. Folder counts must use exact subtree membership and the same durable mail and transcript accounting as Analytics; test both live and retired mail. Automatic retention remains a separate owner decision.
+
+## 2026-09-30 — Saved widgets must stop reading when removed
+
+A hidden tile still polling is not a removed widget. Give each built-in widget only its declared streams, detach its readers on unmount, and stop the shared insights timer after the last subscriber leaves. Missing data must say Unavailable instead of reporting zero. Persist layouts on the server with revision checks and recoverable folder rename/delete intents so reloads and crashes do not lose the owner’s arrangement.
+
 ## 2026-10-01 — Cached empty lists lost transcript availability
 **Broke:** The Messages snapshot retained only the message list, so unavailable reasons vanished on remount and status-only changes shared the same empty-list signature.
 **Fix:** Retain and compare transcript status and reason atomically with the list, including cache size accounting; cover unavailable, empty, recovered, hidden and remounted states.
 **Lesson:** Cache the full user-visible response contract, not only its main collection.
+
+## 2026-09-30 — The verifier repeated the bug it was built to catch
+**Broke:** main-qa returned PR #149. `verify` reported ok for a connector
+listing `{tools: []}` and for one listing `{tools: [{}]}` — an empty set and
+a nameless object both read as "Verified".
+**Cause:** the validation checked that a reply arrived and was shaped like a
+list of objects, which is the cheap question. The real question is whether an
+agent can call anything, and an agent calls a tool by name. This is the same
+defect the feature exists to fix, one layer up: the panel used to assert "a
+config entry exists" while appearing to assert "this works", and the verifier
+then asserted "a reply parsed" while appearing to assert the same thing.
+Writing the check does not exempt it from the standard it enforces.
+**Rule:** when adding a check, state the claim it licenses in the UI's own
+words and test the weakest input that should fail it — here, an empty list
+and `{}`. Prefer failing a whole listing over skipping bad entries: counting
+2 of 3 overstates what the agent can reach. And a judgement call made alone
+is worth re-examining when a reviewer disagrees — the earlier "an honestly
+empty server is not broken" was defensible in isolation and wrong against the
+sentence the panel actually prints.
+
+## 2026-09-30 — A written config entry is not a working integration
+**Broke:** the connectors panel reported `codex: ✓` on machines that had
+never had Codex installed, and `enable()` wrote both harness configs
+unconditionally with no way to choose.
+**Cause:** the checkmark reflected "we wrote a line into a file", which is
+the easiest thing to know and not the thing anyone wants to know. Nothing
+checked whether the agent CLI existed, and the credential (machine-wide) was
+welded to the registration (per harness) behind one switch.
+**Rule:** report the state the user cares about, not the state that is cheap
+to compute — name the agents a connector reaches and say which are missing,
+rather than printing a tick per config entry. When one action does two things
+at different scopes, let the user address them separately. A registration for
+an absent harness is still legitimate (it applies when that harness arrives),
+so label it rather than blocking it; the defect was the false claim, not the
+write. Deselecting must also withdraw the existing entry — otherwise the
+harness keeps serving a connector the panel no longer lists.
+
+## 2026-10-01 — Codex's questions to the owner never reached Oracle
+**Broke:** the owner was told to approve ui-dev's work in Oracle, and nothing
+was there. Codex asks the owner through `request_user_input_async`, and
+Oracle only made choice notes for Claude's `AskUserQuestion`. Of 69 Codex
+questions, 14 were never answered. For 8 of those, the next prompt submitted
+was Oracle's own inbox reminder, which silently discards a queued Codex
+question. Copilot's `ask_user` arrived without its question, because the
+hook read `toolInput` and Copilot sends `toolArgs`.
+**Cause:** the choice note was keyed to one harness's tool name, and the
+empty-prompt check couldn't see Codex's queued question above an empty box.
+**Rule:** how an agent asks the owner is a declared harness capability
+(`Harness.owner_prompt`), checked against a real event for each harness. A
+harness that leaves it undeclared can't ask the owner through Oracle. Before
+Oracle types into an agent, it must know whether typing destroys something
+the owner hasn't seen.
+
+## Terminal display cadence must not drive tmux process creation
+The pane tail could drain continuously without yielding, scanned hook-capable TUI repaints per line, and launched a tmux liveness subprocess on every empty25–200ms poll. Bound each tick to64KiB before a25ms yield, check liveness at most once/second independently of display latency, and batch hook-capable screen fallback every250ms. Preserve raw bytes and generic per-line protocol events; flush pending PTY evidence even when output goes quiet. A28-session synthetic benchmark reduced process CPU from34.9% to6.7% with identical840,000 delivered bytes; this is not an installed-server CPU claim. Tests cover fairness, probe cadence, rotation, quiet prompts and replay.
+
+## Confirmed parent removal must survive frontend replay
+Removing a parent row left child controls gated by a stale parentKey; null-coalescing then restored the original edge from old fork events. Represent a confirmed absent parent as null, keep database lineage authoritative during seed, and clear direct links immediately on deletion. Check both seed/replay orders, late events, remote host isolation, and the real dashboard delete/reload flow while preserving descendants and historical provenance.
+
+## Deleting a parent must remove active child links, not child sessions
+Parent deletion left children pointing at a removed row. Clear direct child parent_session_key values in the deletion transaction while retaining their recorded fork events. Reject links to tombstoned parents in late supervisor events before live fan-out, and repair old tombstoned-parent edges on reopen without guessing about unknown parents. Tests verify descendants remain attached to their surviving parent and a real child PTY process stays responsive after its parent is deleted. Dashboard local-state cleanup is a separate UI integration requirement.
+
+## 2026-10-01 — A zero-size layout callback discarded terminal resize
+**Broke:** Pane transitions could call the terminal resize observer before usable dimensions existed; returning silently left stale terminal columns.
+**Fix:** Retain the pending fit on the next animation frame until measurable, cancel it when hidden or disposed, and keep attach scrolling separate from ordinary reflow.
+**Lesson:** A temporary layout failure needs a retry, not an assumption that the observer will fire again.
+
+## 2026-10-01 — Browser permission was mistaken for notification preference
+**Broke:** Turning notifications off did not survive reload; denied permission gave no explanation, and initial waiting sessions produced a burst.
+**Fix:** Persist preference independently, respect current permission, show actionable feedback in the existing help slot, and notify only observed non-waiting to waiting transitions after host loading and enablement. State explicitly that the independent native Mac notifier is separate.
+**Lesson:** Permission is a capability, not a saved preference; initial snapshots are not live transitions.
+
+## 2026-10-01 — An update control is not an updater
+Keep Install disabled until the detached installer, snapshot, restart verification
+and rollback contract is implemented. Read release information only when Settings
+opens or the owner explicitly checks again. A failed check clears the latest
+version, and a successful operation must not say Updated until the installed
+version matches the verified target.
 
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
@@ -336,6 +554,23 @@ Fault-inject deletion to prove a failed transfer leaves neither missing nor doub
 counts. Keep completion-day activity separate from sent-day cohorts, and label
 histogram percentiles approximate rather than deriving fake medians from totals.
 
+
+## 2026-09-28 — Trace the thing before designing the fix for it
+**Broke:** B2 was filed as "connectors configured but not usable", and two
+rounds of design went into a setup wizard for connectors that could not be
+set up.
+**Cause:** nobody had run the connectors. Speaking MCP through the exact
+command the harness configs use (`duckterm connector-run NAME`) returned
+GitHub 45 tools, Railway 34, Porkbun 25 — all three working. The defect was
+that the panel could only say `enabled=True, detail=None`, which asserts a
+config entry, not a usable tool. The owner's "I don't know if I can really
+use them" described the UI precisely.
+**Rule:** before designing a fix, exercise the feature end to end through the
+real path a user's software takes, and let the result pick the fix. The
+evidence a trace produces is often the feature itself: here the probe became
+the Check now action. Corollary for probes — hold stdin open until the reply
+lands, because closing it early makes an MCP server exit with "server is
+closing: EOF", and a working connector reads as broken.
 
 ## 2026-09-28 — A shared directory cannot identify a conversation
 

@@ -1,24 +1,25 @@
+import { useDesktopNotifications } from "./useDesktopNotifications";
+import { SidebarFilterToggle } from "./SidebarFilters";
+import { useSidebarFilters } from "./sidebarFilterState";
+import duckMark from "./assets/duckmark.svg?no-inline";
 import { ArchiveUndo, useArchiveRequests } from "./ArchiveUndo";
-import { SessionCard } from "./SessionCard";
 import { sessionFetch, sessionRef } from "./hostTransport";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { FolderView } from "./FolderView";
-import { AgentTree } from "./AgentTree";
 import { api } from "./api";
 import { desktop } from "./desktop";
 import { Connectors } from "./Connectors";
 import { ContextViews } from "./ContextViews";
-import { ContextPanel } from "./ContextPanel";
 import { Analytics } from "./Analytics";
 import { AnalyticsTab } from "./analyticsData";
-import { ControlTower } from "./ControlTower";
 import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
 import { SessionPin } from "./SessionPin";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
-import { HeaderMenus } from "./HeaderMenus";
+import { DashboardMenus } from "./DashboardMenus";
+import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
 import { ArtifactsView } from "./ArtifactsView";
@@ -33,7 +34,6 @@ import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
 import { useTerminalCache } from "./terminalCache";
 import { PanelToggle, useSidePanels } from "./SidePanels";
-import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
 import {
   TermMode,
@@ -52,18 +52,7 @@ import { useTheme } from "./useTheme";
 import { useSidebarDensity } from "./useSidebarDensity";
 import { useFolders } from "./useFolders";
 import "./sidebarDensity.css";
-import { useVoice, VoiceFallbackPill, VoiceMenu, VoicePausedPill, VoiceToast } from "./VoiceControl";
-import { COMPLETION_SETTLE_MS } from "./voice";
 import { useAttended } from "./useAttended";
-
-function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(t);
-  }, [intervalMs]);
-  return now;
-}
 
 function Dashboard() {
   const { sessions: sourceSessions, connected, loadedHosts, removeSessions, patchSession } =
@@ -71,12 +60,12 @@ function Dashboard() {
   const inboxCounts = useInboxCounts();
   const archives = useArchiveRequests();
   const sidePanels = useSidePanels();
+  const sidebarFilters = useSidebarFilters();
   const sessions = useMemo(
     () => sourceSessions.filter(s => !archives.requests.some(r => r.session_key === s.key)).map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 })),
     [sourceSessions, inboxCounts, archives.requests],
   );
   const toast = useToast();
-  const now = useNow(1000);
   const { theme, resolved: mode, setTheme } = useTheme();
   const { density, setDensity } = useSidebarDensity();
 
@@ -86,7 +75,7 @@ function Dashboard() {
   const [towerOpen, setTowerOpen] = useState(false);
   const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
   const relayOpen = useRelayCount();
-  const defaultSelection = sessions.find(s => effectiveState(s, now) !== "archived")?.key ?? null;
+  const defaultSelection = sessions.find(s => s.state !== "archived")?.key ?? null;
   const { selectedKey, selectSession } = useSessionSelection(sessions, defaultSelection, loadedHosts);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const setSelectedKey = useCallback((key: string | null) => {
@@ -198,68 +187,26 @@ function Dashboard() {
     }
   }
 
-  // Every agent runs inside Duckterm now — one flat list, no lifecycle/origin
-  // filters. Terminated sessions stay out of the live list.
+  // Waiting and archived membership never change during idle settling. Read
+  // raw state here; only the time-rendering children need effectiveState.
   const agents = useMemo(
-    () => sessions.filter((s) => effectiveState(s, now) !== "archived"),
-    [sessions, now],
+    () => sessions.filter((s) => s.state !== "archived"),
+    [sessions],
   );
 
   // "Needs you": the whole point of a fleet view is not staring at it. The
   // count rides the tab title; sessions that ENTER waiting fire a browser
   // notification (if the user granted permission via the bell).
   const waiting = useMemo(
-    () => sessions.filter((s) => effectiveState(s, now) === "waiting"),
-    [sessions, now],
+    () => sessions.filter((s) => s.state === "waiting"),
+    [sessions],
   );
-  const waitingKeys = waiting.map((s) => s.key).join(",");
-  const prevWaiting = useRef<Set<string>>(new Set());
-  const [notifyOn, setNotifyOn] = useState(
-    () => "Notification" in window && Notification.permission === "granted",
-  );
+  const notificationSessions = useMemo(() => sessions.map(s => ({ key: s.key, label: s.label,
+    waiting: s.state === "waiting" })), [sessions]);
+  const notifications = useDesktopNotifications(notificationSessions, loadedHosts);
   useEffect(() => {
-    document.title = waiting.length
-      ? `(${waiting.length}) DuckTerm`
-      : "DuckTerm";
-    const current = new Set(waiting.map((s) => s.key));
-    if (notifyOn) {
-      for (const s of waiting) {
-        if (!prevWaiting.current.has(s.key)) {
-          new Notification(`${s.label} needs you`, {
-            body: "The agent is waiting on an answer.",
-          });
-        }
-      }
-    }
-    prevWaiting.current = current;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waitingKeys, notifyOn]);
-
-  const voiceSessions = useMemo(
-    () =>
-      sessions
-        .map((s) => ({
-          key: s.key,
-          label: s.label,
-          group: s.group,
-          state: effectiveState(s, now, COMPLETION_SETTLE_MS),
-          waitingSince: s.waitingSince,
-          waitingCause: s.waitingCause,
-        }))
-        .filter((s) => s.state !== "archived"),
-    [sessions, now],
-  );
-  const voice = useVoice(voiceSessions);
-
-  async function toggleNotify() {
-    if (!("Notification" in window)) return;
-    if (Notification.permission !== "granted") {
-      const perm = await Notification.requestPermission();
-      setNotifyOn(perm === "granted");
-    } else {
-      setNotifyOn((v) => !v);
-    }
-  }
+    document.title = waiting.length ? `(${waiting.length}) DuckTerm` : "DuckTerm";
+  }, [waiting.length]);
 
   const selected = sessions.find((s) => s.key === selectedKey) ?? null;
   useAttended(selected?.key ?? null, !!selected?.attentionSince);
@@ -268,8 +215,8 @@ function Dashboard() {
   // only recently visited terminals mounted so hidden output stays bounded.
   const terminalAgents = useMemo(
     // Pending archives leave their cached terminal mounted during Undo.
-    () => sourceSessions.filter(s => s.ptyOwned && effectiveState(s, now) !== "archived"),
-    [sourceSessions, now],
+    () => sourceSessions.filter(s => s.ptyOwned && s.state !== "archived"),
+    [sourceSessions],
   );
 
   const mountedTerminalKeys = useTerminalCache(
@@ -308,12 +255,12 @@ function Dashboard() {
         <span className="rd-brand">
           <img
             className="rd-brand-mark"
-            src="/favicon.svg"
+            src={duckMark}
             alt=""
             width={22}
             height={22}
           />
-          Duck<span className="rd-brand-term">Term</span>
+          <span className="rd-brand-name">Duck<span className="rd-brand-term">Term</span></span>
         </span>
         <span className="rd-live">
           <span className={`dot ${connected ? "on" : "off"}`} />
@@ -352,9 +299,7 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <VoiceMenu level={voice.level} ready={voice.ready} onLevel={voice.setLevel} />
-        {voice.fallbackReason && <VoiceFallbackPill reason={voice.fallbackReason} />}
-        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} voiceLevel={voice.level} onVoiceLevel={voice.setLevel} voice={{ voices: voice.voices, selected: voice.selectedVoice, ready: voice.ready, onSelect: voice.setVoice, onPreview: voice.preview, local: voice.local.status, fallbackReason: voice.fallbackReason, onInstall: voice.local.install, onRemove: voice.local.remove }} onAction={(action) => {
+        <DashboardMenus sessions={sessions} density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
           if (action === "launch") setLaunchGroup(undefined);
           setModal(action);
         }} />
@@ -366,10 +311,9 @@ function Dashboard() {
           width (B5). inert keeps keystrokes and focus out of the hidden panes. */}
       {towerOpen && !focusOpen && gridFolder === null && (
         <div className="rd-tower-layer">
-          {analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <ControlTower
+          {analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
             onAnalytics={setAnalyticsTab}
-            agents={agents.map((s) => ({ ...s, shownState: effectiveState(s, now) }))}
-            now={now}
+            agents={agents}
             onBack={() => setTowerOpen(false)}
             onOpenTerminal={(key) => {
               setSelectedKey(key);
@@ -404,6 +348,7 @@ function Dashboard() {
           <section className={`rd-agents${sidePanels.collapsed.left ? " rd-side-collapsed" : ""}`}>
             <div className="rd-panel-head">
               <span>Agents</span>
+              {(agents.length > 0 || folders.length > 0) && <SidebarFilterToggle filters={sidebarFilters.filters} expanded={sidebarFilters.expanded} onToggle={sidebarFilters.toggleExpanded} />}
               <PanelToggle side="left" collapsed={sidePanels.collapsed.left} onToggle={() => sidePanels.toggle("left")} />
             </div>
             {agents.length === 0 && folders.length === 0 ? (
@@ -411,9 +356,10 @@ function Dashboard() {
                 No agents yet. Choose New → New session to start one.
               </p>
             ) : (
-              <AgentTree
+              <LiveAgentTree
+                filterControls={sidebarFilters}
                 sessions={agents}
-                now={now}
+                active={!towerOpen && !sidePanels.collapsed.left}
                 folders={folders}
                 selectedKey={selectedFolder === null ? selectedKey : null}
                 selectedFolder={selectedFolder}
@@ -439,7 +385,7 @@ function Dashboard() {
             )}
           </section>
 
-          {selectedFolder !== null && <FolderView key={selectedFolder} folder={selectedFolder} />}
+          {selectedFolder !== null && <FolderView key={selectedFolder} folder={selectedFolder} onOpenSession={setSelectedKey} onGrid={() => setGridFolder(selectedFolder)} onMessage={() => setInboxFolder(selectedFolder)} onNewSession={() => { setLaunchGroup(selectedFolder); setModal("launch"); }} />}
           <section className="rd-terminal-pane" style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-view-toggle">
               <button
@@ -489,13 +435,13 @@ function Dashboard() {
             )}
             {view === "history" && selected && (
               <div className="rd-messages-wrap">
-                <HistoryView session={selected} />
+                <HistoryView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} />
               </div>
             )}
             {view === "inbox" && (
               <div className="rd-messages-wrap rd-inbox-wrap">
                 {selected ? (
-                  <InboxView key={selected.key} session={{ ...selected, state: effectiveState(selected, now) }} />
+                  <LiveInboxView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} />
                 ) : (
                   <p className="rd-panel-empty">Select a session to see its inbox.</p>
                 )}
@@ -543,7 +489,7 @@ function Dashboard() {
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
             <ContextViews session={<>
-              {selected && <SessionCard key={selected.key} session={selected} now={now}
+              {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}
                 onFork={setForkKey} onDelete={deleteSession}
                 onRename={(key, name) => patchSession(key, { label: name })}
                 onUngroup={selected.group && !selected.parentKey ? async () => {
@@ -551,7 +497,7 @@ function Dashboard() {
                   patchSession(selected.key, { group: undefined });
                   refreshFolders();
                 } : undefined} />}
-              {selected && <ContextPanel session={selected} />}
+              {selected && <LiveContextPanel session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
                   terminal theme
@@ -625,10 +571,6 @@ function Dashboard() {
             setModal(null);
           }}
         />
-      )}
-      {voice.paused && !voice.spoken && <VoicePausedPill />}
-      {voice.spoken && (
-        <VoiceToast text={voice.spoken} level={voice.level} onLevel={voice.setLevel} onMute={voice.mute} onDismiss={voice.dismiss} />
       )}
     </div>
   );

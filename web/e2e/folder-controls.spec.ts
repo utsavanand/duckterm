@@ -96,7 +96,7 @@ test("owner reviews folder recipients, sends once, and sees unread Owner notices
     await page.getByLabel("Message", { exact: true }).fill("Review this folder’s roadmap when ready.");
     await page.screenshot({ path: "/tmp/duckterm-message-folder.png" });
     await send.click();
-    await expect(page.getByRole("status")).toContainText("Message queued for 2 sessions.");
+    await expect(page.getByRole("region", { name: "Message folder", exact: true }).getByRole("status")).toContainText("Message queued for 2 sessions.");
     await page.getByRole("button", { name: "Done", exact: true }).click();
     await expect(page.locator(".rd-inbox-message")).toHaveCount(2);
     await expect(page.locator(".rd-inbox-owner")).toHaveText(["Owner", "Owner"]);

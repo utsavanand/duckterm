@@ -108,6 +108,7 @@ export const Terminal = memo(function Terminal({
     let pendingOpenScroll = false;
     let openGeneration = 0;
     let scrollFrame: number | undefined;
+    let fitFrame: number | undefined;
     const cancelAttachScroll = () => {
       pendingOpenScroll = false;
       ++openGeneration;
@@ -131,7 +132,15 @@ export const Terminal = memo(function Terminal({
     // then wait for queued parser work and the browser layout before scrolling.
     // Ordinary output and visible resizes must not interrupt scrollback reading.
     const settleOpening = () => {
-      if (!visible || !host.clientWidth || !host.clientHeight) return;
+      window.cancelAnimationFrame(fitFrame ?? 0);
+      fitFrame = undefined;
+      if (disposed || !visible) return;
+      if (!host.clientWidth || !host.clientHeight) {
+        // A panel transition can report zero before layout settles. There may
+        // be no further observer notification: keep the pending fit alive.
+        fitFrame = window.requestAnimationFrame(settleOpening);
+        return;
+      }
       fit.fit();
       sendResize();
       if (!pendingOpenScroll || !replayReady) return;
@@ -162,8 +171,8 @@ export const Terminal = memo(function Terminal({
       visible = nextVisible;
       cancelAttachScroll();
       pendingOpenScroll = visible;
+      settleOpening();
       if (visible) {
-        settleOpening();
         // Initial session discovery also activates a terminal. Only explicit
         // row/tab navigation may take focus from another dashboard control.
         focusTerm(!!document.activeElement?.closest(".rd-row, .rd-view-toggle"));
@@ -264,6 +273,7 @@ export const Terminal = memo(function Terminal({
       disposed = true;
       activateRef.current = null;
       cancelAttachScroll();
+      window.cancelAnimationFrame(fitFrame ?? 0);
       window.clearTimeout(retry);
       observer.disconnect();
       host.removeEventListener("focusout", refocusOnBlur);

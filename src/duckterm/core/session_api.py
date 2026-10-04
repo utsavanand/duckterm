@@ -433,6 +433,7 @@ class SessionAPI:
         priority: bool = False,
         merged_from: object = None,
         question: bool = False,
+        assignment: Callable[[str], None] | None = None,
     ) -> str:
         """One owner notice to one session, the same record a folder broadcast
         queues, keyed like a broadcast copy when request_key is given. Returns
@@ -459,6 +460,8 @@ class SessionAPI:
         digest = hashlib.sha256(
             json.dumps([key, message, 1] if priority else [key, message]).encode()
         ).hexdigest()
+        if assignment is not None:
+            digest = hashlib.sha256((digest + ":task").encode()).hexdigest()
         if priority and request_key is None:
             raise APIError(400, "a priority message needs a request_key")
         if merged_from is not None and not priority:
@@ -499,6 +502,8 @@ class SessionAPI:
                     int(priority),
                 ),
             )
+            if assignment is not None:
+                assignment(notice_id)
         return notice_id
 
     def mail_stats(self, since_ms: int) -> dict[str, int]:
@@ -590,11 +595,24 @@ class SessionAPI:
             "until you do:\n" + "\n".join(lines)
         ), [r["id"] for r in rows]
 
-    def mark_delivered(self, ids: list[str]) -> None:
-        """A priority message reached the agent (turn-end notice or a nudge)."""
+    def mark_delivered(self, ids: list[str]) -> list[dict[str, Any]]:
+        """A priority message reached the agent (turn-end notice or a nudge).
+        Returns the messages that reached it for the first time. A message
+        cancelled meanwhile (the owner withdrew it while Oracle was pasting)
+        isn't counted: cancelled is final."""
         now = int(time.time() * 1000)
+        rows = [
+            dict(row)
+            for row in self.conn.execute(
+                "SELECT q.*, COALESCE(d.attempts, 0) AS attempts FROM session_questions q "
+                "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
+                f"WHERE q.id IN ({','.join('?' * len(ids))}) AND q.status != 'cancelled'",
+                ids,
+            )
+        ]
+        first = [_public_question(row) for row in rows if not row["attempts"]]
         with self.conn:
-            for question_id in ids:
+            for question_id in (row["id"] for row in rows):
                 self.conn.execute(
                     "INSERT INTO session_inbox_delivery "
                     "(question_id, attempts, last_attempt_at, outcome) "
@@ -603,6 +621,7 @@ class SessionAPI:
                     "last_attempt_at = excluded.last_attempt_at, outcome = 'delivered'",
                     (question_id, now),
                 )
+        return first
 
     def cancel_broadcast(self, request_key: str) -> int:
         """The owner withdraws a broadcast: every recipient's copy closes, which
@@ -963,6 +982,12 @@ class SessionAPI:
         if not isinstance(req, dict):
             raise APIError(400, "expected a JSON object")
         member = self._member(key)
+        if path == "/tasks" or path.startswith("/tasks/"):
+            from duckterm.core.folder_tasks import FolderTasks
+
+            return 200, FolderTasks(self.conn).session_request(
+                self, member, method, path, query, req
+            )
         if path == "/artifacts" and method in {"GET", "POST"}:
             try:
                 if method == "GET":

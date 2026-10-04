@@ -64,9 +64,9 @@ it("stays off with the reason shown until a natural voice is downloaded", async 
   vi.mocked(api.voiceStatus).mockResolvedValue({ state: "absent", size: "about 310 MB" });
   const said: string[] = [];
   const view = render(<Harness speaker={recorder(said)} />);
-  const menu = await screen.findByLabelText("Voice announcements");
-  expect(menu).toBeDisabled();
-  expect(screen.getByRole("option")).toHaveTextContent("Voice: download a voice in Settings");
+  const indicator = await screen.findByRole("img", { name: "Voice off — download a voice in Settings" });
+  expect(indicator).toHaveAttribute("title", "Voice off — download a voice in Settings");
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   view.rerender(<Harness speaker={recorder(said)} sessions={approval} />);
   await new Promise((r) => setTimeout(r, 1800));
   expect(said).toEqual([]); // nothing to speak with, so nothing is said

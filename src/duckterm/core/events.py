@@ -25,6 +25,10 @@ SUBAGENT_STOP = "SubagentStop"
 # Published by the server, never by a hook: the owner attended to a session
 # that asked for them (opened it, or answered its note or approval).
 ATTENDED = "Attended"
+# Published by the server: a fork's merge summary reached the parent agent
+# for the first time. The parent's merge checkpoint is taken here, never on
+# enqueue, cancel or a failed paste (architect, "Design — Fork merge-back").
+MERGE_DELIVERED = "MergeDelivered"
 
 # The full set an agent's hooks are wired for (order preserved for the installer).
 ALL = [

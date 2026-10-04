@@ -15,6 +15,7 @@ import {
 export const IDLE_SETTLE_MS = 30_000;
 
 function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
+  if (prev === "merged" || e.lifecycle === "merged") return "merged";
   // An explicit lifecycle marker (deliberate stop/archive/sweep) always wins.
   if (e.lifecycle === "archived") return "archived";
   if (e.lifecycle === "stopped") return "stopped";
@@ -64,6 +65,7 @@ export function effectiveState(s: SessionView, now: number, settleMs = IDLE_SETT
     s.state === "stopped" ||
     s.state === "interrupted" ||
     s.state === "archived" ||
+    s.state === "merged" ||
     s.state === "waiting"
   )
     return s.state;
@@ -82,6 +84,9 @@ export function applyEvent(
 
   const next = new Map(sessions);
   const prev = next.get(key);
+  // Server bookkeeping for the merge checkpoint; not agent activity, so it
+  // must not clear the settle time a Stop just set.
+  if (e.event_type === "MergeDelivered") return sessions;
   if (e.event_type === "Attended") {
     // The owner attended to it: only the raised hand drops. Not agent activity.
     if (prev) next.set(key, { ...prev, attentionSince: undefined });
@@ -137,7 +142,8 @@ export function applyEvent(
     runtime: prev?.runtime ?? e.runtime,
     repoName: prev?.repoName ?? repoNameFrom(e.repo_path, e.source_app),
     worktreePath: prev?.worktreePath ?? e.worktree_path,
-    parentKey: prev?.parentKey ?? e.parent_session_key,
+    // A confirmed absence from /sessions or deletion must survive old fork events.
+    parentKey: prev?.parentKey !== undefined ? prev.parentKey : e.parent_session_key,
     // Sticky: once a session is known launched, stay launched — a later watched
     // hook event for the same key can't downgrade it.
     launched: prev?.launched || e.launched === true,

@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 SessionState = Literal[
-    "idle", "busy", "waiting", "terminated", "stopped", "interrupted", "archived"
+    "idle", "busy", "waiting", "terminated", "stopped", "interrupted", "archived", "merged"
 ]
 
 # States that are "at rest" — the session is finished or put away, so the sweeps
@@ -27,7 +27,13 @@ SessionState = Literal[
 # involuntary sibling of "stopped": the backing terminal died (reboot, crash,
 # killed tmux) rather than the user pausing it — equally resumable, but the UI
 # should say what actually happened.
-AT_REST_STATES: tuple[SessionState, ...] = ("terminated", "stopped", "interrupted", "archived")
+AT_REST_STATES: tuple[SessionState, ...] = (
+    "terminated",
+    "stopped",
+    "interrupted",
+    "archived",
+    "merged",
+)
 
 
 @dataclass(frozen=True)
@@ -87,6 +93,13 @@ class Harness(ABC):
     # Declared only where that notice path is proven (contracts §1); others
     # show priority messages as "inbox only" rather than pretending.
     priority_delivery = False
+    # The (event type, tool name) this agent's hooks report when it asks the
+    # owner a question, which Oracle turns into a "choice" note. None means
+    # its questions can't reach Oracle (contracts §1: declared, not absent).
+    owner_prompt: tuple[str, str] | None = None
+    # Whether the agent stops until that question is answered. Codex's is
+    # async: the agent carries on and the question stays queued on screen.
+    owner_prompt_blocks = True
     # An agent's observe half; None for driven-only agents (no hook system).
     hook_spec: HookSpec | None = None
 

@@ -19,6 +19,9 @@ _WAITING = re.compile(r"(allow|approve|\(y/n\)|continue\?)", re.IGNORECASE)
 
 class CopilotRuntime(Harness):
     name = "copilot"
+    # Copilot CLI 1.0.62: preToolUse carries toolArgs {message, requestedSchema}
+    # and the agent waits for the answer.
+    owner_prompt = ("PreToolUse", "ask_user")
     hook_spec = HookSpec(
         global_rel=Path(".copilot") / "hooks" / "duckterm.json",
         repo_rel=Path(".github") / "hooks" / "duckterm.json",

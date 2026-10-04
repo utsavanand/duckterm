@@ -42,6 +42,7 @@ class ClaudeCodeRuntime(Harness):
     name = "claude-code"
     turn_end_inbox_notice = True
     priority_delivery = True
+    owner_prompt = ("PermissionRequest", "AskUserQuestion")
     hook_spec = HookSpec(
         global_rel=Path(".claude") / "settings.json",
         repo_rel=Path(".claude") / "settings.json",
