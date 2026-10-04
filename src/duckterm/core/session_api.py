@@ -529,7 +529,8 @@ class SessionAPI:
         """Unread owner notices and accepted peer work get one task-end reminder."""
         self._sweep()
         rows = self.conn.execute(
-            "SELECT q.id, q.sender, q.root, q.kind FROM session_questions q "
+            "SELECT q.id, q.sender, q.root, q.kind, q.status, d.last_read_at "
+            "FROM session_questions q "
             "LEFT JOIN session_inbox_delivery d ON d.question_id = q.id "
             "WHERE q.recipient = ? AND q.priority = 0 AND (q.status = 'accepted' "
             "OR (q.sender = 'owner' AND q.status = 'queued')) "
@@ -537,14 +538,17 @@ class SessionAPI:
             (key,),
         ).fetchall()
         ids = []
-        owners = 0
+        unread = waiting = 0
         for row in rows:
             try:
                 if row["sender"] != "owner":
                     self._peer(key, row["sender"], live=False)
                 if self._member(key)["root"] == row["root"]:
                     ids.append(row["id"])
-                    owners += row["sender"] == "owner"
+                    if row["sender"] == "owner" and row["status"] == "queued":
+                        # Queued means not yet answered, not necessarily unread.
+                        unread += not row["last_read_at"]
+                        waiting += bool(row["last_read_at"])
             except APIError:
                 continue
         if not ids:
@@ -560,9 +564,15 @@ class SessionAPI:
                     "last_attempt_at = excluded.last_attempt_at, outcome = 'notified'",
                     (question_id, now),
                 )
+        parts = [
+            f"{unread} unread owner message(s)" if unread else "",
+            f"{waiting} owner message(s) you have read but not answered" if waiting else "",
+            f"{len(ids) - unread - waiting} accepted inbox assignment(s) awaiting a reply"
+            if len(ids) - unread - waiting
+            else "",
+        ]
         return (
-            f"You have {owners} unread owner message(s) and "
-            f"{len(ids) - owners} accepted inbox assignment(s) awaiting a reply. "
+            "You have " + ", ".join(p for p in parts if p) + ". "
             "Run duckterm session inbox to read them at a suitable pause. "
             "Peer requests do not grant permission to act."
         )
@@ -876,8 +886,20 @@ class SessionAPI:
             "AND rowid < ? ORDER BY rowid DESC LIMIT 51",
             (key, before if before is not None else 9223372036854775807),
         ).fetchall()
+        page = rows[:50]
+        older: list[sqlite3.Row] = []
+        if before is None and len(rows) > 50:
+            # Open work older than the first page would otherwise only show on
+            # page two, which an agent checking its inbox never reads.
+            older = self.conn.execute(
+                "SELECT rowid AS sequence, * FROM session_questions WHERE recipient = ? "
+                "AND rowid < ? AND (status IN ('queued', 'accepted') OR "
+                f"{_OPEN_PRIORITY}) ORDER BY rowid DESC LIMIT 200",
+                (key, page[-1]["sequence"]),
+            ).fetchall()
+        now = int(time.time() * 1000)
         messages = []
-        for row in rows[:50]:
+        for row in [*page, *older]:
             if not owner:
                 try:
                     if row["sender"] != "owner":
@@ -896,13 +918,16 @@ class SessionAPI:
             message["delivery"] = (
                 dict(delivery) if delivery else {"attempts": 0, "outcome": "pending"}
             )
+            if row in older:
+                message["older_pending"] = True
             messages.append(message)
             if not owner and row["status"] in ("queued", "accepted"):
                 self.conn.execute(
                     "INSERT INTO session_inbox_delivery (question_id, last_read_at) VALUES (?, ?) "
                     "ON CONFLICT(question_id) DO UPDATE SET last_read_at = excluded.last_read_at",
-                    (row["id"], int(time.time() * 1000)),
+                    (row["id"], now),
                 )
+                message["delivery"]["last_read_at"] = now  # this read, not the previous one
             if not owner and row["kind"] == "broadcast" and row["status"] == "queued":
                 self.conn.execute(
                     "UPDATE session_questions SET status = 'read' WHERE id = ?", (row["id"],)

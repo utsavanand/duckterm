@@ -197,7 +197,13 @@ answers. Both survive server restarts. Status is queued, accepted, answered,
 declined, cancelled, or expired. Cancellation stops the exchange; it does not
 interrupt the recipient's other work. Closed requests cannot accept late answers.
 
-Discovery and inbox pages contain at most 50 records. Questions allow 16 KiB and
+Discovery and inbox pages contain at most 50 records. The first inbox page
+also carries up to 200 older open records (queued, accepted, or an
+unanswered priority message), each marked `older_pending`, so open work is
+never only on page two. Each record's `delivery.last_read_at` reports the
+read that returned it. The turn-end notice counts an owner message as unread
+only if it has never been read; one read but not answered is reported as
+that. Questions allow 16 KiB and
 answers 256 KiB; oversized content is rejected instead of truncated. Requests
 persist by default; optional deadlines allow up to seven days. A sender can create ten questions
 per minute. Creation is refused when the combined set of pending requests sent

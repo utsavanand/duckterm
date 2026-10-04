@@ -62,7 +62,8 @@ artifact is in the app. Existing files are not automatically scanned or imported
 - `duckterm session ask SESSION_ID "Question"`: send a question and get its ID.
   It does not wait for the recipient. Reuse `--request-key KEY` on retries.
 - `duckterm session get REQUEST_ID`: read the status and complete reply.
-- `duckterm session inbox`: inspect incoming questions and their senders.
+- `duckterm session inbox`: inspect incoming questions and their senders. The
+  first page also lists open work older than it, marked older_pending.
   Follow `next_cursor` with `--before CURSOR` for older messages.
 - `duckterm session accept REQUEST_ID`: acknowledge a question you will answer.
 - `duckterm session reply REQUEST_ID --file /path/to/answer.txt`: send the full
