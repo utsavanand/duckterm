@@ -789,7 +789,9 @@ class Server:
         try:
             params = urllib.parse.parse_qs(query)
             before = int(params["before"][0]) if "before" in params else None
-            result = self.history.session_api.inbox(session_key, owner=True, before=before)
+            result = self.history.session_api.inbox(
+                session_key, owner=True, before=before, view=params.get("view", [None])[0]
+            )
         except ValueError:
             await _write_json(writer, 400, {"error": "invalid cursor"})
             return
@@ -810,7 +812,9 @@ class Server:
             if folder not in self.history.folders():
                 raise APIError(404, "folder not found")
             before = int(params["before"][0]) if "before" in params else None
-            result = self.history.session_api.folder_inbox(folder, before=before)
+            result = self.history.session_api.folder_inbox(
+                folder, before=before, view=params.get("view", [None])[0]
+            )
         except ValueError:
             await _write_json(writer, 400, {"error": "invalid cursor"})
             return
