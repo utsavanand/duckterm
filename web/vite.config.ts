@@ -1,9 +1,21 @@
 /// <reference types="vitest/config" />
 import react from "@vitejs/plugin-react";
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), {
+    name: "legacy-favicon",
+    generateBundle() {
+      // Keep the stable URL for older clients, without a second editable mark.
+      // Current HTML and the header both use Vite's content-hashed SVG URL.
+      this.emitFile({
+        type: "asset",
+        fileName: "favicon.svg",
+        source: readFileSync(new URL("./src/assets/duckmark.svg", import.meta.url)),
+      });
+    },
+  }],
   server: {
     proxy: {
       "/events": "http://localhost:4300",
