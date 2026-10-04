@@ -34,7 +34,9 @@ in `Contents/Resources/tmux/licenses`.
 The backend selects the bundled client first, then a working system client if
 the bundle cannot execute or its protocol cannot talk to the existing server.
 Both use the same instance socket; changing clients never changes session
-identity. Unknown socket errors fail rather than treating live panes as gone.
+identity. Unknown socket errors and probe timeouts fail rather than treating live panes as gone.
+Session commands and control-mode terminal streams use the same selected client;
+async callers perform cold selection in a worker so the event loop keeps draining output.
 SessionStart records the selected binary and source. CLI-only installations
 continue to use system tmux. The native missing-tmux screen remains UI-dev's
 fallback when neither client works; that visual handoff is separate.

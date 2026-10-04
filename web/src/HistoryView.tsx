@@ -1,6 +1,7 @@
-import { routedFetch as fetch } from "./hostTransport";
+import { routedFetch as fetch, splitSessionRef } from "./hostTransport";
 import { useEffect, useState } from "react";
-import { api, CheckpointRecord } from "./api";
+import { api, forkMergeService, CheckpointRecord, forkMergeHistory, ForkMergeHistory } from "./api";
+import { useNow } from "./useNow";
 import { SessionView } from "./types";
 
 // Middle-pane History tab: the session's accumulated digest archive — every
@@ -25,31 +26,53 @@ const BUCKETS: [string, string, string][] = [
   ["next_actions", "Next actions", "→"],
 ];
 
-export function HistoryView({ session }: { session: SessionView }) {
+export function HistoryView({ session, active = true }: { session: SessionView; active?: boolean }) {
+  useNow(60_000, active);
   const p = session.progress;
   const started = new Date(session.startedAt);
   const updated = session.progressAt ? agoLabel(session.progressAt) : null;
+  const [merges, setMerges] = useState<ForkMergeHistory[]>([]);
+  const [mergeError, setMergeError] = useState("");
   const [items, setItems] = useState<DigestItem[] | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([]);
 
   useEffect(() => {
-    setItems(null);
-    setCheckpoints([]);
-    const load = () =>
-      fetch(`/sessions/${session.key}/digest`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d: { items?: DigestItem[] } | null) =>
-          setItems(d?.items ?? null),
-        )
-        .catch(() => setItems(null));
-    load();
-    const t = setInterval(load, 10_000);
-    api
-      .checkpoints(session.key)
-      .then((d) => setCheckpoints(d.checkpoints))
-      .catch(() => undefined);
-    return () => clearInterval(t);
+    setItems(null); setCheckpoints([]); setMerges([]); setMergeError("");
   }, [session.key]);
+
+  useEffect(() => {
+    if (!active) return;
+    let live = true, digestPending = false, mergesPending = false, checkpointsLoaded = false, checkpointsPending = false;
+    const load = () => {
+      if (!live || document.visibilityState === "hidden") return;
+      if (!digestPending) {
+        digestPending = true;
+        void fetch(`/sessions/${session.key}/digest`)
+          .then(r => r.ok ? r.json() : null)
+          .then((d: { items?: DigestItem[] } | null) => { if (live) setItems(d?.items ?? null); })
+          .catch(() => { if (live) setItems(null); })
+          .finally(() => { digestPending = false; });
+      }
+      if (!mergesPending) {
+        mergesPending = true;
+        void forkMergeHistory(session.key)
+          .then(data => { if (live) { setMerges(data.merges); setMergeError(""); } })
+          .catch((e: Error) => { if (live) setMergeError(e.message); })
+          .finally(() => { mergesPending = false; });
+      }
+      if (!checkpointsLoaded && !checkpointsPending) {
+        checkpointsPending = true;
+        void api.checkpoints(session.key)
+          .then(data => { if (live) { setCheckpoints(data.checkpoints); checkpointsLoaded = true; } })
+          .catch(() => undefined)
+          .finally(() => { checkpointsPending = false; });
+      }
+    };
+    load();
+    const timer = setInterval(load, 10_000);
+    document.addEventListener("visibilitychange", load);
+    return () => { live = false; clearInterval(timer); document.removeEventListener("visibilitychange", load); };
+  }, [session.key, active]);
 
   const byBucket = (bucket: string): DigestItem[] =>
     (items ?? []).filter((i) => i.bucket === bucket);
@@ -96,6 +119,19 @@ export function HistoryView({ session }: { session: SessionView }) {
           ))}
         </>
       )}
+      {mergeError && <p className="rd-panel-empty">Merge history unavailable: {mergeError}</p>}
+      {merges.length > 0 && <section className="rd-history-bucket"><h3>Fork merges</h3>
+        {merges.map(row => <details key={row.id} className="rd-history-checkpoint">
+          <summary>{new Date(row.createdAt).toLocaleString()} · {row.delivery}{row.statusAvailable === false ? " (last recorded)" : ""} · {row.parentDeleted ? "Parent deleted" : row.keepOpen ? "Child kept open" : row.childClosed ? "Child closed" : "Child closure pending"}</summary>
+          {!row.keepOpen && !row.childClosed && splitSessionRef(session.key).key === row.child && <button className="rd-btn rd-btn-sm" onClick={async () => {
+            try {
+              await forkMergeService(session.key).send({ summary: row.summary, keepOpen: false, requestKey: row.id.split(":").at(-1)! });
+              setMerges((await forkMergeHistory(session.key)).merges); setMergeError("");
+            } catch (cause) { setMergeError((cause as Error).message); }
+          }}>Finish closing child</button>}
+          <p>Parent checkpoint: {row.checkpoint}</p><pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{row.summary}</pre>
+        </details>)}
+      </section>}
       {checkpoints.length > 0 && (
         <section className="rd-history-bucket">
           <h3>Checkpoints</h3>

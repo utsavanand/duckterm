@@ -214,6 +214,96 @@ to `duckterm-harness.json`; whether a blueprint can require specific
 harnesses per role; how a running team is upgraded when its blueprint
 changes; how blueprints are shared or published.
 
+## Idea: OpenCode harness with any model
+
+Owner, 2026-09-29, wants this prioritized: add **OpenCode** (opencode.ai, the
+open-source terminal agent) as a fourth harness, choose the model when
+launching a session with it, and switch models mid-session.
+
+Why it fits: OpenCode is model-agnostic by design, so one harness opens up
+Anthropic, OpenAI and local models without DuckTerm proxying anything. That
+is the cheapest route to "any model" and a concrete step toward
+[router mode](#idea-router-mode-duckterm-picks-the-model), which needs
+per-session model control to exist first.
+
+**The adapter itself is a known quantity.** `docs/harnesses.md` documents the
+cost: implement the `Harness` contract in `runtimes/<name>.py` and add one
+`REGISTRY` entry; the session then gets the agent picker, install-hooks,
+state badges, checkpoints and conversation forks. Four adapters already exist
+(`claude-code`, `codex`, `copilot`, `generic`).
+
+**Researched 2026-09-29 (product), from OpenCode's own docs — replaces the
+earlier open questions:**
+
+- **Hooks: YES, and better than expected.** OpenCode has a plugin system with
+  25+ lifecycle events ([plugins docs](https://opencode.ai/docs/plugins/)).
+  The ones DuckTerm needs exist: `session.created`, `session.idle`,
+  `session.status`, `tool.execute.before`, `tool.execute.after`,
+  `permission.asked`, `permission.replied`, `message.updated`.
+  `tool.execute.before` can **block** an action, which is what approvals-as-
+  buttons needs.
+- **But plugins are JavaScript/TypeScript modules, not shell commands.**
+  DuckTerm's existing hook system shells out to `duckterm-hook.sh`. For
+  OpenCode it must ship a small JS/TS plugin that POSTs the same events to
+  the DuckTerm server. That is new code of a kind the codebase does not have
+  yet — the real cost of this feature, and it is not large.
+  Plugins install from `.opencode/plugins/` or `~/.config/opencode/plugins/`.
+- **Model selection: already there.** `--model provider/model` at launch, so
+  F15 Change model works unchanged; `/models` switches in-session; 75+
+  providers via Models.dev, credentials added with `/connect`.
+- **Transcripts: the risk.** Storage moved to a SQLite database
+  (`~/.local/share/opencode/opencode.db`) in v1.14+, and the 2.x beta changed
+  the schema again (`session_v2`, `session_message`). Older versions used
+  JSON under `~/.local/share/opencode/`. So `read_transcript`,
+  checkpoints and token analytics must read a moving target — pin a version
+  and default to unsupported outside it.
+- **Still unknown:** whether `permission.asked` carries enough detail to
+  render an approval button and whether a plugin can reply to it (the docs
+  list it as non-blocking; only `tool.execute.before` blocks); whether
+  resume-by-id works; whether token usage is recorded per message.
+
+Open: which models the owner actually wants through it; whether DuckTerm
+lists models per provider or takes free text.
+
+## Idea: router mode (DuckTerm picks the model)
+
+Owner, 2026-09-28: a big feature to build eventually; details to come. Today
+a session runs one model chosen at launch (and, with F15, changed by
+restarting). In **router mode**, DuckTerm picks the model for each task or
+request based on how complex it is: a small fast model for simple edits and
+questions, a stronger one for planning and hard debugging.
+
+This is roadmap F5's step (c), the model router, which F5 says to build only
+after the meta-harness vocabulary and composition work.
+
+**Possible ways to build it**, from least to most control:
+
+1. **Per task, at launch or restart.** DuckTerm classifies the task and
+   starts or restarts the session with the chosen model, using F15's Change
+   model. Works with every harness as-is; switches only between turns.
+2. **Per request, through a local gateway.** Point the harness at a DuckTerm
+   proxy (Claude Code can use a custom base URL; Codex can use a custom
+   model provider) that chooses a model for each API call. This needs API
+   keys, not a subscription login, and has to handle each vendor's tool-call
+   format.
+3. **DuckTerm's own agent loop over the APIs.** Full control over routing,
+   but it means DuckTerm becomes a harness itself.
+
+**Known problems to solve:**
+
+- Switching models mid-conversation throws away the prompt cache, so a
+  cheaper model can cost more overall.
+- Mixing vendors (Claude and GPT) inside one conversation needs tool calls
+  and context translated between formats.
+- Subscription plans (the owner's setup) may not allow requests through a
+  proxy; the gateway options may need API keys.
+- How the router judges complexity: rules, a small classifier model, or
+  learning from which model finished similar tasks.
+
+Open: which of the three to start with; whether the user can see and
+override each choice; what to measure (speed, success, tokens), which the
+Analytics page could show.
+
 ## Open decisions
 
 - [x] `remote-session` merged (per the architect, 2026-09-26); DuckCloud still needs setup flow, cost/idle controls and AWS.

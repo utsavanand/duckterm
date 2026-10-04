@@ -109,7 +109,11 @@ async def write_response(
 
 
 async def write_json(writer: asyncio.StreamWriter, status: int, payload: Any) -> None:
-    body = json.dumps(payload).encode()
+    await write_json_bytes(writer, status, json.dumps(payload).encode())
+
+
+async def write_json_bytes(writer: asyncio.StreamWriter, status: int, body: bytes) -> None:
+    """Write an already serialized JSON snapshot without reconstructing its objects."""
     head = (
         f"HTTP/1.1 {status} {_REASON.get(status, 'OK')}\r\n"
         f"Content-Length: {len(body)}\r\n"
@@ -120,13 +124,17 @@ async def write_json(writer: asyncio.StreamWriter, status: int, payload: Any) ->
     await writer.drain()
 
 
-async def write_file(writer: asyncio.StreamWriter, path: Path) -> None:
+async def write_file(writer: asyncio.StreamWriter, path: Path, *, immutable: bool = False) -> None:
     body = path.read_bytes()
     ctype = _CONTENT_TYPES.get(path.suffix, "application/octet-stream")
-    # index.html must always be revalidated, else browsers serve a stale HTML
-    # that points at an old bundle hash and never picks up new builds. The
-    # content-hashed assets under /assets/ are immutable — cache them hard.
-    cache = "no-cache" if path.suffix == ".html" else "public, max-age=31536000, immutable"
+    # Only the dashboard route can identify its content-hashed /assets/ tree.
+    # Stable URLs (including icons) must revalidate after an update. An ancestor
+    # directory named "assets" outside the dashboard does not make a file hashed.
+    cache = (
+        "public, max-age=31536000, immutable"
+        if immutable and path.suffix != ".html"
+        else "no-cache"
+    )
     head = (
         f"HTTP/1.1 200 OK\r\n"
         f"Content-Length: {len(body)}\r\n"

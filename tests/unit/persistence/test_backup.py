@@ -146,3 +146,20 @@ def test_cli_creates_a_unique_default_backup(source, capsys):
     assert main(["backup"]) == 0
     second = Path(capsys.readouterr().out.strip())
     assert second != first and second.is_file()
+
+
+def test_natural_voice_files_stay_out_of_the_archive(source, tmp_path):
+    """~/.duckterm/voice is reinstallable and about 800 MB; backing it up would
+    quadruple every archive."""
+    _, root, _ = source
+    put(root / "voice/model/Kokoro-82M-bf16/kokoro-v1_0.safetensors", "weights")
+    put(root / "voice/venv/bin/python", "#!")
+    put(root / "voice/cache/abc.wav", "RIFF")
+    put(root / "checkpoints/session/checkpoint.md", "checkpoint")
+    target = Path(backup.create(str(tmp_path / "archive.tar.gz")))
+    with tarfile.open(target) as archive:
+        names = archive.getnames()
+        manifest = json.loads(archive.extractfile("manifest.json").read())
+    assert "duckterm/checkpoints/session/checkpoint.md" in names
+    assert not any("voice" in n or n.endswith((".safetensors", ".wav")) for n in names)
+    assert any(item.startswith("voice") for item in manifest["excluded"])

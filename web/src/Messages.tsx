@@ -1,9 +1,12 @@
 import { routedFetch as fetch } from "./hostTransport";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, authHeaders } from "./api";
-import { html } from "./render";
+import { AnnotatedText, messageMarkup } from "./AnnotatedText";
+import { Annotation, locatedAnnotations } from "./annotationHighlights";
+import "./messageAnnotations.css";
 import { useToast } from "./ui";
 import { Message, MessagePin, PinTarget } from "./MessagePins";
+import { useSessionResource } from "./useSessionResource";
 
 // Structured view of an agent's latest reply (HTML-annotation mode,
 // docs/structured-render-design.md). Renders the response as HTML; select any
@@ -18,8 +21,9 @@ interface Selection {
   y: number;
 }
 
-export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePin, target, onClearTarget }: {
+export function Messages({ sessionKey, active = true, pins = [], pinPending = false, onTogglePin, target, onClearTarget }: {
   sessionKey: string;
+  active?: boolean;
   pins?: MessagePin[];
   pinPending?: boolean;
   onTogglePin?: (message: Message) => void;
@@ -27,14 +31,22 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
   onClearTarget?: () => void;
 }) {
   const toast = useToast();
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [loadError, setLoadError] = useState("");
+  const [annotationVersion, setAnnotationVersion] = useState(0);
+  const messageState = useSessionResource<Message>(sessionKey, "messages", active);
+  const annotationState = useSessionResource<Annotation>(sessionKey, "annotations", active, annotationVersion);
+  const annotations = useMemo(() => (annotationState.items ?? []).filter(note =>
+    typeof note.id === "string" && typeof note.quote === "string" && typeof note.note === "string"), [annotationState.items]);
+  const annotationError = annotationState.error ? "Could not load comments. Retrying…" : "";
+  const messages = useMemo(() => messageState.items ?? [], [messageState.items]);
+  const transcript = messageState.transcript;
+  const loaded = messageState.items !== undefined;
+  const loadError = messageState.error ? "Could not load messages. Retrying…" : "";
   const jumped = useRef<number | null>(null);
   // How many turns BACK from the newest we're viewing (0 = latest).
   const [back, setBack] = useState(0);
   useEffect(() => {
     setBack(0); // a different session starts at its latest turn
+    jumped.current = null;
   }, [sessionKey]);
   const [sel, setSel] = useState<Selection | null>(null);
   const [note, setNote] = useState("");
@@ -127,6 +139,7 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
       const d = await res.json();
       if (!res.ok) throw new Error(d.error ?? "failed");
       toast(d.sent ? "Sent to the agent" : "Saved (agent not live)");
+      setAnnotationVersion(version => version + 1);
     } catch (e) {
       toast(`Annotation failed: ${(e as Error).message}`, "err");
     } finally {
@@ -136,42 +149,34 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
     }
   }
 
-  useEffect(() => {
-    let live = true;
-    // Drop the previous session's turns before the first fetch resolves —
-    // otherwise switching sessions renders the old transcript for up to a
-    // poll interval.
-    setMessages([]);
-    setLoaded(false);
-    setLoadError("");
-    jumped.current = null;
-    const load = () =>
-      fetch(`/sessions/${sessionKey}/messages`)
-        .then(async (r) => {
-          if (r.ok === false) throw new Error("Could not load messages");
-          return r.json();
-        })
-        .then((d: { messages?: Message[] }) => {
-          if (live) {
-            setMessages(d.messages ?? []);
-            setLoaded(true);
-            setLoadError("");
-          }
-        })
-        .catch(() => { if (live) setLoadError("Could not load messages. Retrying…"); });
-    load();
-    // The transcript grows as the agent works; refresh on a light interval.
-    const t = setInterval(load, 3000);
-    return () => {
-      live = false;
-      clearInterval(t);
-    };
-  }, [sessionKey]);
+  // Check the whole transcript: a note on another turn is not an unlocated note.
+  const unlocated = useMemo(() => {
+    if (!annotations.length) return [];
+    const found = new Set<string>();
+    for (const message of messages) for (const block of message.blocks) {
+      if (block.type !== "text") continue;
+      const element = document.createElement("div");
+      element.innerHTML = messageMarkup(block.text, message.role === "user");
+      for (const id of locatedAnnotations(element, annotations)) found.add(id);
+    }
+    return annotations.filter(note => !found.has(note.id));
+  }, [messages, annotations]);
+  const comments = <>
+    {annotationError && <div role="status" className="rd-comment-error">{annotationError}</div>}
+    {!!annotations.length && <details className="rd-message-comments" onMouseUp={event => event.stopPropagation()}>
+      <summary>{annotations.length} {annotations.length === 1 ? "comment" : "comments"}{loaded && !!unlocated.length && ` · ${unlocated.length} not located in transcript`}</summary>
+      <p>All matching occurrences are highlighted. Hover or focus a highlight to read its note.</p>
+      {annotations.map(note => <article key={note.id}>
+        <blockquote>{note.quote || "No quoted text"}</blockquote><p>{note.note}</p>
+        {loaded && unlocated.some(item => item.id === note.id) && <small>Quoted text not located in this transcript. Your comment is saved here.</small>}
+      </article>)}
+    </details>}
+  </>;
 
   // One interaction turn at a time, defaulting to the newest. `back` counts
   // turns from the end, so while you're on the latest (back=0) new turns keep
   // appearing in place; while browsing older ones your position holds steady.
-  const turns = turnsOf(messages);
+  const turns = useMemo(() => turnsOf(messages), [messages]);
   const targetIndex = target ? turns.findIndex((t) =>
     t.messages.some((m) => m.message_key === target.pin.message_key)) : -1;
   const savedCopy = !!target && (loaded || !!loadError) && targetIndex < 0;
@@ -186,8 +191,17 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
       jumped.current = target.request;
     }
   }, [target, messages, loaded, loadError]);
-  if (!latest) return <div className="rd-panel-empty">{loadError || (loaded
-    ? "No agent reply yet (claude-code and codex sessions only)." : "Loading messages…")}</div>;
+  const unavailable = transcript?.status === "identity_missing" || transcript?.status === "not_found";
+  const transcriptNotice = unavailable && <div className="rd-panel-empty" role="status">
+    <p>{transcript.status === "identity_missing"
+      ? "Conversation not identified yet"
+      : "Conversation transcript not found on this machine"}</p>
+    {transcript.reason && <p>{transcript.reason}</p>}
+    {transcript.status === "identity_missing" && <p>Messages will appear once the agent reports its conversation ID.</p>}
+  </div>;
+  if (!latest) return <div className="rd-messages">{comments}{loadError
+    ? <div className="rd-panel-empty" role="status">{loadError}</div>
+    : transcriptNotice || <div className="rd-panel-empty">{loaded ? "No agent reply yet." : "Loading messages…"}</div>}</div>;
   const showingLatest = currentIndex === turns.length - 1;
   function navigate(index: number) {
     onClearTarget?.();
@@ -196,6 +210,8 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
 
   return (
     <div className="rd-messages" ref={wrapRef} onMouseUp={onMouseUp}>
+      {comments}
+      {transcriptNotice}
       {/* Step through interaction turns; ‹ goes to the previous exchange. */}
       {!savedCopy && turns.length > 1 && (
         <div className="rd-turn-nav">
@@ -241,8 +257,8 @@ export function Messages({ sessionKey, pins = [], pinPending = false, onTogglePi
             ? <div key={i} className="rd-message-tool">Tool: {block.name}</div>
             : message.role === "user" && block.type === "text"
               ? <div key={i} className="rd-turn-user"><span className="rd-prompt-mark">❯</span>
-                <span className="rd-turn-prompt">{block.text}</span></div>
-              : <div key={i} className="rd-msg-text" dangerouslySetInnerHTML={{ __html: html(block.text) }} />)}
+                <AnnotatedText className="rd-turn-prompt" source={block.text} plain annotations={annotations} /></div>
+              : <AnnotatedText key={i} className="rd-msg-text" source={block.text} annotations={annotations} />)}
         </article>;
       })}
       {latest.texts.length === 0 && (latest.prompt || latest.tools.length) && <div className="rd-msg-pending">

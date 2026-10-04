@@ -1,5 +1,7 @@
+import { tasksWidget } from "./FolderTasks";
 import { useEffect, useRef, useState } from "react";
-import { api, TowerInsights } from "./api";
+import { AnalyticsTab } from "./analyticsData";
+import { api } from "./api";
 import { Duck, poseFor } from "./Duck";
 import { SessionLocationDuck, sessionLocation } from "./SessionLocationDuck";
 import { OracleChat } from "./OracleChat";
@@ -10,12 +12,15 @@ import {
   compact,
   facts,
   looksStuck,
-  placement,
-  ROW_PX,
   runningSubagents,
   teamOf,
   teams,
 } from "./tower";
+
+import { Widgets } from "./Widgets";
+import { WidgetStreams } from "./widgetStreams";
+import { oracleWidgets } from "./OracleWidgets";
+import "./oracleWidgets.css";
 
 type Mode = "inbox" | "prompt";
 
@@ -37,33 +42,20 @@ export function ControlTower({
   now,
   onBack,
   onOpenTerminal,
+  onAnalytics,
 }: {
   agents: TowerAgent[];
   now: number;
   onBack: () => void;
   onOpenTerminal: (key: string) => void;
+  onAnalytics: (tab: AnalyticsTab) => void;
 }) {
-  const [insights, setInsights] = useState<TowerInsights | null>(null);
-  const [insightsError, setInsightsError] = useState("");
+  const [source] = useState(() => new WidgetStreams());
+  const analyticsRef = useRef(onAnalytics); analyticsRef.current = onAnalytics;
+  const taskOpen = useRef(onOpenTerminal); taskOpen.current = onOpenTerminal;
+  const [registry] = useState(() => [...oracleWidgets(tab => analyticsRef.current(tab)), tasksWidget(key => taskOpen.current(key))]);
   const [hover, setHover] = useState<{ key: string; el: HTMLElement } | null>(null);
   const [pinned, setPinned] = useState<{ key: string; el: HTMLElement } | null>(null);
-
-  useEffect(() => {
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    async function refresh() {
-      try {
-        const next = await api.controlTower();
-        if (!stopped) { setInsights(next); setInsightsError(""); }
-      } catch (e) {
-        if (!stopped) setInsightsError((e as Error).message);
-      } finally {
-        if (!stopped) timer = setTimeout(refresh, 60_000);
-      }
-    }
-    void refresh();
-    return () => { stopped = true; clearTimeout(timer); };
-  }, []);
 
   // Escape closes a pinned card first, then leaves the tower. Not while
   // typing, where Escape belongs to the text field.
@@ -87,14 +79,12 @@ export function ControlTower({
   const needs = relay.notes
     .filter((n) => n.status === "open" && n.urgency !== "offer")
     .sort((a, b) => a.created_at - b.created_at);
-  const count = (s: string) => agents.filter((a) => a.shownState === s).length;
-  const live = count("busy") + count("waiting") + count("idle");
-  const resting = agents.length - live;
   const teamList = teams(agents);
+  useEffect(() => { source.emit("sessions", { status: "ready", value: agents }); }, [source, agents]);
+  useEffect(() => { source.emit("needs-you", relay.loaded ? { status: "ready", value: { notes: relay.notes.filter(n => n.status === "open" && n.urgency !== "offer").sort((a, b) => a.created_at - b.created_at), now } } : { status: "loading" }); }, [source, relay.notes, relay.loaded, now]);
 
   return (
-    <div className="rd-tower">
-      <div className="rd-tower-scroll">
+    <div className="rd-tower rd-tower-widgets">
       <div className="rd-tower-bar">
         <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onBack} title="Back to sessions (Esc)">
           ← Sessions
@@ -102,37 +92,20 @@ export function ControlTower({
         <h1 className="rd-tower-title">
           Control tower <small>Oracle · fleet monitor</small>
         </h1>
+        <button className="rd-btn rd-btn-ghost rd-btn-sm rd-analytics-link" onClick={() => onAnalytics("tokens")}>Analytics ↗</button>
       </div>
 
-      <section className="rd-tower-tiles" aria-label="Fleet insights">
-        <Tile label="Agents" value={String(agents.length)}>
-          <div className="rd-tower-stack" aria-hidden="true">
-            {(["busy", "waiting", "idle"] as const).map((s) => (
-              <span key={s} className={`rd-tower-stack-${s}`} style={{ width: `${(count(s) / Math.max(1, agents.length)) * 100}%` }} />
-            ))}
-          </div>
-          {count("busy")} busy · {count("waiting")} waiting · {count("idle")} idle
-          {resting > 0 && ` · ${resting} resting`}
-          <br />
-          across {teamList.length} team{teamList.length === 1 ? "" : "s"}
-        </Tile>
-        <Tile label="Needs you" value={String(needs.length)} warn={needs.length > 0}>
-          {needs.length
-            ? `Oldest: ${needs[0].name}${needs[0].folder ? ` (${needs[0].folder.split("/")[0]})` : ""}, ${ago(now - needs[0].created_at)} ago`
-            : "Nothing needs you"}
-        </Tile>
-        <TokensTile insights={insights} />
-        <Tile label="Agent mail · 24h" value={insights ? String(insights.mail.sent) : "…"}>
-          {insights
-            ? `${insights.mail.answered} answered · ${insights.mail.nudges} Oracle nudge${insights.mail.nudges === 1 ? "" : "s"}`
-            : "Loading"}
-        </Tile>
-        <BackupTile insights={insights} now={now} />
-        <Tile label="Remote sessions" value={insights?.remote.available ? String(insights.remote.count) : "0"}>
-          {insights?.remote.available ? "Running on the remote workspace" : "Remote workspace isn't set up yet"}
-        </Tile>
+      <div className="rd-tower-columns">
+      <aside className="rd-tower-oracle" aria-label="Ask Oracle">
+        <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
+      </aside>
+      <div className="rd-tower-scroll">
+      <h2 className="rd-teams-title">Your agents <small>{agents.length} across {teamList.length} {teamList.length === 1 ? "team" : "teams"}</small></h2>
+      <section className="rd-tower-teams" aria-label="Teams">
+        {teamList.length === 0 && <p className="rd-panel-empty">No agents yet.</p>}
+        {teamList.map(team => <div key={team.name} className="rd-tower-team"><div className="rd-tower-team-head"><span className="rd-tower-team-name">{team.name}</span><small>{team.agents.length}</small></div><div className="rd-tower-field">{team.agents.map(a => <AgentDuck key={a.key} agent={a} stuck={looksStuck(a, now)} pinned={pinned?.key === a.key} onHover={el => setHover(el ? { key: a.key, el } : null)} onPin={el => setPinned({ key: a.key, el })} />)}</div></div>)}
       </section>
-      {insightsError && <p className="rd-tower-error" role="alert">Couldn't load insights: {insightsError}</p>}
+      <Widgets surface="oracle" slot="oracle" registry={registry} source={source} />
 
       <section className="rd-tower-facts" aria-label="Facts">
         {facts(agents, now).map((f) => (
@@ -165,48 +138,15 @@ export function ControlTower({
                         : n.question}
                   </small>
                 </span>
+                <span className="rd-tower-urgency">{n.urgency === "offer" ? "Offer" : n.urgency === "approval" ? "Approval" : "Blocked"}</span>
                 <span className="rd-tower-need-age">{ago(now - n.created_at)}</span>
               </button>
             ))}
           </div>
         </section>
       )}
-      <section className="rd-tower-teams" aria-label="Teams">
-          {teamList.length === 0 && <p className="rd-panel-empty">No agents yet.</p>}
-          {teamList.map((team) => {
-            const { rows, spots } = placement(team.agents.map((a) => a.key));
-            const parts = (["busy", "waiting", "idle"] as const)
-              .map((s) => [s, team.agents.filter((a) => a.shownState === s).length] as const)
-              .filter(([, n]) => n > 0)
-              .map(([s, n]) => `${n} ${s}`);
-            return (
-              <div key={team.name} className={`rd-tower-team${team.agents.length > 4 ? " wide" : ""}`}>
-                <div className="rd-tower-team-head">
-                  <span className="rd-tower-team-name">{team.name}</span>
-                  <span className="rd-tower-team-meta">{parts.join(" · ")}</span>
-                </div>
-                <div className="rd-tower-field" style={{ height: rows * ROW_PX + 24 }}>
-                  {team.agents.map((a, i) => (
-                    <AgentDuck
-                      key={a.key}
-                      agent={a}
-                      spot={spots[i]}
-                      stuck={looksStuck(a, now)}
-                      pinned={pinned?.key === a.key}
-                      onHover={(el) => setHover(el ? { key: a.key, el } : null)}
-                      onPin={(el) => setPinned({ key: a.key, el })}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </section>
       </div>
-
-      <aside className="rd-tower-oracle" aria-label="Ask Oracle">
-        <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
-      </aside>
+      </div>
 
       {active && activeAgent && (
         <AgentCard
@@ -224,59 +164,6 @@ export function ControlTower({
   );
 }
 
-function Tile({ label, value, warn, children }: { label: string; value: string; warn?: boolean; children: React.ReactNode }) {
-  return (
-    <div className={`rd-tower-tile${warn ? " warn" : ""}`}>
-      <span className="rd-tower-label">{label}</span>
-      <span className="rd-tower-num">{value}</span>
-      <span className="rd-tower-sub">{children}</span>
-    </div>
-  );
-}
-
-function TokensTile({ insights }: { insights: TowerInsights | null }) {
-  if (!insights) return <Tile label="Tokens · 7 days" value="…">Counting transcripts</Tile>;
-  const agents = Object.entries(insights.tokens.by_agent);
-  const sum = (t: { input: number; cache_read: number; cache_write: number; output: number }) =>
-    t.input + t.cache_read + t.cache_write + t.output;
-  const total = agents.reduce((n, [, t]) => n + sum(t), 0);
-  const inputs = agents.reduce((n, [, t]) => n + t.input + t.cache_read + t.cache_write, 0);
-  const cached = agents.reduce((n, [, t]) => n + t.cache_read, 0);
-  const written = agents.reduce((n, [, t]) => n + t.output, 0);
-  const names: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
-  return (
-    <Tile label={`Tokens · ${insights.tokens.days} days`} value={compact(total)}>
-      <span title="All Claude Code and Codex transcripts on this Mac">
-        {inputs ? `${Math.round((cached / inputs) * 100)}% read from cache · ` : ""}
-        {compact(written)} written
-        <br />
-        {agents.map(([k, t]) => `${names[k] ?? k} ${compact(sum(t))}`).join(" · ")}
-      </span>
-    </Tile>
-  );
-}
-
-function BackupTile({ insights, now }: { insights: TowerInsights | null; now: number }) {
-  if (!insights) return <Tile label="Last backup" value="…">Loading</Tile>;
-  const b = insights.backup;
-  const where = b.destination === "gcs" ? "Google Cloud Storage" : b.destination === "local" ? "a local folder" : null;
-  if (b.status === "succeeded" && b.finished_at) {
-    const old = now - b.finished_at > 7 * 86_400_000;
-    return (
-      <Tile label="Last backup" value={`${ago(now - b.finished_at)} ago`} warn={old}>
-        {where ? `To ${where}` : "Completed"}
-      </Tile>
-    );
-  }
-  if (b.status === "running") return <Tile label="Last backup" value="Running">{where ? `To ${where}` : ""}</Tile>;
-  return (
-    <Tile label="Last backup" value="None" warn>
-      {where ? `Destination set (${where}), no completed backup recorded` : "No backup destination set"}
-      {b.status === "failed" || b.status === "interrupted" ? `; the last attempt ${b.status === "failed" ? "failed" : "was interrupted"}` : ""}
-    </Tile>
-  );
-}
-
 function OracleDuck({ agent, pose, size }: { agent?: TowerAgent; pose: Parameters<typeof Duck>[0]["pose"]; size: number }) {
   return agent && sessionLocation(agent).remote
     ? <SessionLocationDuck session={agent} pose={pose} height={size} focusable={false} />
@@ -285,29 +172,25 @@ function OracleDuck({ agent, pose, size }: { agent?: TowerAgent; pose: Parameter
 
 function AgentDuck({
   agent,
-  spot,
   stuck,
   pinned,
   onHover,
   onPin,
 }: {
   agent: TowerAgent;
-  spot: { left: number; top: number; drift: number };
   stuck: boolean;
   pinned: boolean;
   onHover: (el: HTMLElement | null) => void;
   onPin: (el: HTMLElement) => void;
 }) {
   const state = agent.shownState;
-  const pose = stuck ? "idle" : poseFor(state);
+  const pose = stuck ? "idle" : poseFor(state, !!agent.attentionSince);
   const subs = runningSubagents(agent);
-  const drifts = pose === "idle" && !stuck;
   return (
     <button
       type="button"
       data-duck={agent.key}
       className={`rd-tower-duck s-${state}${stuck ? " stuck" : ""}${pinned ? " pinned" : ""}${pose === "sleeping" ? " resting" : ""}`}
-      style={{ left: `${spot.left}%`, top: spot.top }}
       aria-label={`${agent.label}, ${teamOf(agent)}, ${stuck ? "looks stuck" : STATE_WORD[state] ?? state}${sessionLocation(agent).remote ? `, ${sessionLocation(agent).label}` : ""}`}
       onMouseEnter={(e) => onHover(e.currentTarget)}
       onMouseLeave={() => onHover(null)}
@@ -316,14 +199,13 @@ function AgentDuck({
       onClick={(e) => onPin(e.currentTarget)}
     >
       <span
-        className={`rd-tower-duck-body${drifts ? " drift" : ""}`}
-        style={{ "--dx": `${spot.drift}px`, "--dur": `${12 + Math.abs(spot.drift) / 3}s`, "--delay": `-${Math.abs(spot.drift) / 4}s` } as React.CSSProperties}
+        className="rd-tower-duck-body"
       >
-        <OracleDuck agent={agent} pose={pose} size={52} />
+        <OracleDuck agent={agent} pose={pose} size={28} />
         {(agent.inboxPending ?? 0) > 0 && <span className="rd-tower-mail">✉ {agent.inboxPending}</span>}
         {subs > 0 && (
           <span className="rd-tower-ducklings" aria-hidden="true">
-            {Array.from({ length: Math.min(subs, 3) }, (_, i) => <Duck key={i} pose="idle" size={20} />)}
+            {Array.from({ length: Math.min(subs, 3) }, (_, i) => <Duck key={i} pose="idle" size={12} />)}
             {subs > 3 && <em>+{subs - 3}</em>}
           </span>
         )}

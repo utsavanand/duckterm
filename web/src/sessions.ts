@@ -4,13 +4,18 @@ import {
   SessionView,
   repoNameFrom,
   sessionKeyOf,
+  waitingCauseOf,
 } from "./types";
 
 // After a Stop, a session keeps reading "busy" for this long before settling to
-// idle — so a session in active back-and-forth doesn't read idle between turns.
-export const IDLE_SETTLE_MS = 5 * 60_000;
+// idle, so back-and-forth between turns doesn't flicker. Owner decision,
+// 2026-09-30: 30 s, down from 5 minutes, which kept ducks typing and
+// celebrations waiting long after the agent finished. Only a Stop starts it,
+// so a pause inside a turn can't make a hook-driven duck look idle.
+export const IDLE_SETTLE_MS = 30_000;
 
 function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
+  if (prev === "merged" || e.lifecycle === "merged") return "merged";
   // An explicit lifecycle marker (deliberate stop/archive/sweep) always wins.
   if (e.lifecycle === "archived") return "archived";
   if (e.lifecycle === "stopped") return "stopped";
@@ -26,9 +31,16 @@ function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
     return prev;
   if (e.lifecycle === "terminated" || e.event_type === "SessionEnd")
     return "terminated";
+  // Mirrors the server's derive_state (persistence/history.py). The server
+  // tags these events before they reach the stream, so the badge the stream
+  // drives must read them the same way or the two disagree.
   switch (e.event_type) {
     case "PermissionRequest":
+      return e.auto_reviewed ? "busy" : "waiting";
     case "Notification":
+      if (e.notification_type === "idle_prompt" || (e.message ?? "").startsWith("Claude is waiting for your input"))
+        return "idle";
+      if (e.notification_type === "auth_success") return prev ?? "busy";
       return "waiting";
     case "PreToolUse":
     case "PostToolUse":
@@ -47,16 +59,17 @@ function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
 }
 
 /** The state to display/filter on, applying the post-Stop settling grace. */
-export function effectiveState(s: SessionView, now: number): SessionState {
+export function effectiveState(s: SessionView, now: number, settleMs = IDLE_SETTLE_MS): SessionState {
   if (
     s.state === "terminated" ||
     s.state === "stopped" ||
     s.state === "interrupted" ||
     s.state === "archived" ||
+    s.state === "merged" ||
     s.state === "waiting"
   )
     return s.state;
-  if (s.idleSince !== undefined && now - s.idleSince >= IDLE_SETTLE_MS)
+  if (s.idleSince !== undefined && now - s.idleSince >= settleMs)
     return "idle";
   return s.state;
 }
@@ -71,6 +84,16 @@ export function applyEvent(
 
   const next = new Map(sessions);
   const prev = next.get(key);
+  // Server bookkeeping for the merge checkpoint; not agent activity, so it
+  // must not clear the settle time a Stop just set.
+  if (e.event_type === "MergeDelivered") return sessions;
+  if (e.event_type === "Attended") {
+    // The owner attended to it: only the raised hand drops. Not agent activity.
+    if (prev) next.set(key, { ...prev, attentionSince: undefined });
+    return next;
+  }
+  const state = deriveState(e, prev?.state);
+  const stillWaiting = state === "waiting" && prev?.state === "waiting";
   next.set(key, {
     // Preserve fields seeded from /sessions (metrics, intention, repoName, …);
     // only overwrite what this event actually carries.
@@ -88,7 +111,18 @@ export function applyEvent(
       e.session_name ||
       e.source_app ||
       key.slice(0, 8),
-    state: deriveState(e, prev?.state),
+    state,
+    // A wait keeps its start time until the session stops waiting, so voice
+    // mode can tell one long wait from a new one.
+    waitingSince: state !== "waiting" ? undefined : stillWaiting ? prev?.waitingSince ?? e._ts : e._ts,
+    // Raised when it starts waiting; only the owner attending lowers it.
+    attentionSince: prev?.attentionSince ?? (state === "waiting" && prev?.state !== "waiting" ? e._ts : undefined),
+    waitingCause:
+      state !== "waiting"
+        ? undefined
+        : stillWaiting && prev?.waitingCause
+          ? prev.waitingCause
+          : waitingCauseOf(e.event_type, e.notification_type, e.tool_name),
     // Stamp when the agent stopped; clear it on any new activity. effectiveState
     // uses this to settle to idle only after a quiet grace period.
     idleSince:
@@ -108,7 +142,8 @@ export function applyEvent(
     runtime: prev?.runtime ?? e.runtime,
     repoName: prev?.repoName ?? repoNameFrom(e.repo_path, e.source_app),
     worktreePath: prev?.worktreePath ?? e.worktree_path,
-    parentKey: prev?.parentKey ?? e.parent_session_key,
+    // A confirmed absence from /sessions or deletion must survive old fork events.
+    parentKey: prev?.parentKey !== undefined ? prev.parentKey : e.parent_session_key,
     // Sticky: once a session is known launched, stay launched — a later watched
     // hook event for the same key can't downgrade it.
     launched: prev?.launched || e.launched === true,

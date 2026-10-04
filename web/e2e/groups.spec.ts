@@ -115,8 +115,8 @@ test("Ungroup button moves a session out of its folder", async ({ page }) => {
   await expandFolder(page, folder);
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
-  await row.hover();
-  await row.getByRole("button", { name: "Ungroup" }).click();
+  await row.locator(".rd-row-click").click();
+  await page.locator(".rd-session-controls").getByRole("button", { name: "Ungroup" }).click();
 
   // The row now renders in the root drop zone, not inside any folder body.
   await expect(
@@ -167,10 +167,10 @@ test("terminated session rows show only end-state actions", async ({
   await page.goto("/");
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
-  await row.hover();
-  await expect(row.getByRole("button", { name: "Delete" })).toBeVisible();
+  await row.locator(".rd-row-click").click();
+  await expect(page.locator(".rd-session-controls").getByRole("button", { name: "Delete" })).toBeVisible();
   for (const gone of ["Rename", "Notes", "Checkpoint", "Fork", "Stop watching"]) {
-    await expect(row.getByRole("button", { name: gone })).toHaveCount(0);
+    await expect(page.locator(".rd-session-controls").getByRole("button", { name: gone })).toHaveCount(0);
   }
 });
 
@@ -245,8 +245,8 @@ test("folder remains visible after its last session is ungrouped", async ({ page
     await page.goto("/");
     await expandFolder(page, folder);
     const row = page.locator(".rd-row", { has: page.getByText("Last session", { exact: true }) });
-    await row.hover();
-    await row.getByRole("button", { name: "Ungroup", exact: true }).click();
+    await row.locator(".rd-row-click").click();
+    await page.locator(".rd-session-controls").getByRole("button", { name: "Ungroup", exact: true }).click();
     const header = page.getByRole("button", { name: `View interactions in ${folder}`, exact: true }).locator("..");
     await expect(header).toBeVisible();
     await expect(header.locator(".rd-group-count")).toHaveText("0");

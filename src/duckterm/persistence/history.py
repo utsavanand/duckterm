@@ -22,6 +22,9 @@ from duckterm.core import events
 from duckterm.core.session_api import SessionAPI
 from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
+from duckterm.persistence import mail_analytics
+from duckterm.persistence.folder_chats import FolderChats
+from duckterm.persistence.layouts import Layouts
 from duckterm.runtimes.base import AT_REST_STATES, SessionState
 
 Event = dict[str, Any]
@@ -37,9 +40,13 @@ Event = dict[str, Any]
 # v4 persists session pins for the owner's Focus view (PR #78).
 # v5 added collaboration work tables (PR #84). The owner deferred that feature and
 # its code was reverted, but installed DBs are already stamped v5 and keep the
-# (now unused) tables and session_questions columns. Staying at v5 lets those
-# DBs open; dropping back to 4 would raise SchemaTooNewError.
-_SCHEMA_VERSION = 5
+# (now unused) tables and session_questions columns. Keep those rows on migration.
+# v6 retains analytics at deletion. Older sweep code would lose these counts.
+# v7 persists restart requests and model preferences on the session.
+# v8 persists archive grace periods so a quit cannot lose an acknowledged archive.
+# v9 was the unreleased fork-merge candidate. v10 shipped Folder Tasks first.
+# v11 adds fork merges to v10, including installations that never had v9.
+_SCHEMA_VERSION = 11
 
 
 class SchemaTooNewError(RuntimeError):
@@ -47,6 +54,12 @@ class SchemaTooNewError(RuntimeError):
 
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS fork_merges (
+ id TEXT PRIMARY KEY, child TEXT NOT NULL, parent TEXT NOT NULL,
+ summary TEXT NOT NULL, keep_open INTEGER NOT NULL, created_at INTEGER NOT NULL,
+ message_id TEXT, delivery TEXT NOT NULL DEFAULT 'pending next turn'
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     session_key         TEXT PRIMARY KEY,
     runtime             TEXT,
@@ -164,6 +177,8 @@ def _is_idle_notice(event: Event) -> bool:
 
 def derive_state(event: Event, prev: SessionState | None) -> SessionState:
     # An explicit lifecycle marker (a deliberate stop/archive/sweep) always wins.
+    if prev == "merged" or event.get("lifecycle") == "merged":
+        return "merged"
     lifecycle = event.get("lifecycle")
     if lifecycle == "archived":
         return "archived"
@@ -191,6 +206,10 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
             return "idle"
         case "Notification" if event.get("notification_type") == "auth_success":
             return prev or "busy"
+        case "PermissionRequest" if event.get("auto_reviewed"):
+            # Codex's own reviewer settles nearly every request and the command
+            # runs on; the server flips it to waiting once a prompt shows.
+            return "busy"
         case "PermissionRequest" | "Notification":
             return "waiting"
         case "PreToolUse" | "PostToolUse" | "UserPromptSubmit" | "SessionStart":
@@ -207,7 +226,14 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
 # Columns added to `sessions` after the first release. CREATE TABLE IF NOT
 # EXISTS won't add these to a pre-existing DB, so we ALTER them in on open.
 _SESSIONS_COLUMNS = {
+    "merged_into": "TEXT",
+    "restart_json": "TEXT",
+    "archive_json": "TEXT",
     "pinned": "INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))",
+    # When the session last started waiting on the owner; NULL once the owner
+    # attended to it. The raised hand stays up until then, whatever the agent
+    # does next (owner decision, 2026-09-30).
+    "attention_since": "INTEGER",
     "runtime": "TEXT",
     # Model id observed in the session's transcript (e.g. "claude-fable-5").
     # Persisted so AGENTS.md rule scopes like "claude-code/fable-5" can match
@@ -260,13 +286,14 @@ _SESSIONS_COLUMNS = {
 class HistoryStore:
     def __init__(self, db_path: Path | None = None) -> None:
         path = db_path if db_path is not None else paths.db_path()
+        self.folder_chats = FolderChats(path.parent / "folder-chats.json", self.folders)
+        self.layouts = Layouts(path.parent / "layouts.json", self.folders)
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._conn = sqlite3.connect(str(path), check_same_thread=True)
         self._conn.row_factory = sqlite3.Row
-        # WAL: readers don't block the event-sink's writes. busy_timeout:
-        # the connection is shared between the event loop and to_thread
-        # handlers — wait out a held lock instead of raising "database is
-        # locked" at random.
+        # All access belongs to the creating thread; workers receive snapshots.
+        # WAL and busy_timeout handle contention with independent connections,
+        # not concurrent use of this connection by background workers.
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         # Refuse a DB written by a newer DuckTerm — opening it with older code
@@ -281,18 +308,40 @@ class HistoryStore:
             )
         self._conn.executescript(_SCHEMA)
         self._migrate()
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_connector_usage "
+            "ON events(json_extract(payload_json, '$.tool_name'), ts) "
+            "WHERE event_type = 'PreToolUse' AND "
+            "json_extract(payload_json, '$.tool_name') LIKE 'mcp!_!_%' ESCAPE '!'"
+        )
+        from duckterm.core.folder_tasks import FolderTasks, migrate
+
+        self._conn.commit()
+        migrate(self._conn, path.parent)
+        self.folder_tasks = FolderTasks(self._conn)
         self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
+        from duckterm.core.fork_merges import ForkMerges
+
+        self.fork_merges = ForkMerges(self)
+        self.session_api.before_retire = self._retain_mail
+        self.fork_merges.refresh_checkpoints()
         self.artifacts = self.session_api.artifacts
+        mail_analytics.initialize(self._conn)
         self.session_api.backfill()
         # Stamp the current version after migrating so a later older binary is
         # refused. (Can't parameterize a PRAGMA; the value is our own int.)
         self._conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
+        self.session_api._sweep()
         # Retention: hooks write thousands of event rows a day and nothing
         # else ever deletes them — sweep everything older than 30 days at
         # startup so the DB doesn't grow without bound. Session rows stay.
         cutoff = int((time.time() - 30 * 86400) * 1000)
-        self._conn.execute("DELETE FROM events WHERE ts < ?", (cutoff,))
+        mail_analytics.retire_events(self._conn, "ts < ?", (cutoff,))
         self._conn.commit()
+
+    def _retain_mail(self) -> None:
+        self.folder_chats.refresh_dispatches(self._conn)
+        self.fork_merges.refresh_checkpoints()
 
     def _migrate(self) -> None:
         """Add any columns missing from an older sessions table; rebuild the
@@ -303,6 +352,25 @@ class HistoryStore:
         for column, sql_type in _SESSIONS_COLUMNS.items():
             if column not in existing:
                 self._conn.execute(f"ALTER TABLE sessions ADD COLUMN {column} {sql_type}")
+
+        # Older versions displayed launch names from SSE but never persisted
+        # them on the row. Recover only missing names; owner renames (including
+        # an explicitly empty name) and existing source_app remain untouched.
+        self._conn.execute(
+            "UPDATE sessions SET name = ("
+            "SELECT json_extract(e.payload_json, '$.name') FROM events e "
+            "WHERE e.session_key = sessions.session_key AND e.event_type = 'SessionStart' "
+            "AND json_type(e.payload_json, '$.name') = 'text' "
+            "AND json_extract(e.payload_json, '$.name') != '' "
+            "ORDER BY e.ts ASC, e.rowid ASC LIMIT 1) WHERE name IS NULL"
+        )
+
+        # Repair active links to explicitly deleted parents without changing
+        # fork history or guessing about parents whose events have not arrived.
+        self._conn.execute(
+            "UPDATE sessions SET parent_session_key = NULL "
+            "WHERE parent_session_key IN (SELECT session_key FROM tombstones)"
+        )
 
         cp_cols = {
             row["name"] for row in self._conn.execute("PRAGMA table_info(checkpoints)").fetchall()
@@ -323,6 +391,11 @@ class HistoryStore:
         # the only way back, for a session deleted by mistake.
         if key is not None and self._is_tombstoned(key):
             return
+        parent = event.get("parent_session_key")
+        if parent and self._is_tombstoned(str(parent)):
+            # Also sanitize the live event fan-out: a supervisor retains its
+            # original launch metadata after its parent has been removed.
+            event["parent_session_key"] = None
         self._conn.execute(
             "INSERT OR IGNORE INTO events (id, session_key, event_type, ts, payload_json) "
             "VALUES (?, ?, ?, ?, json(?))",
@@ -335,6 +408,11 @@ class HistoryStore:
             ),
         )
         etype = event.get("event_type")
+        if etype == events.MERGE_DELIVERED:
+            # Server bookkeeping for the merge checkpoint, not agent activity:
+            # it must not move the session's state, last event or settle time.
+            self._conn.commit()
+            return
         if etype in (events.SUBAGENT_START, events.SUBAGENT_STOP):
             # A sub-agent event shares the parent's session_id, so it would
             # otherwise fold into the PARENT's row. Record it as a sub-agent
@@ -559,6 +637,56 @@ class HistoryStore:
         )
         self._conn.commit()
 
+    def latest_turn_event(self, key: str) -> dict[str, Any] | None:
+        # Insertion order resolves multiple hooks within the same millisecond.
+        types = (
+            events.SESSION_START,
+            events.USER_PROMPT_SUBMIT,
+            events.PRE_TOOL_USE,
+            events.POST_TOOL_USE,
+            events.PERMISSION_REQUEST,
+            events.SESSION_END,
+            events.STOP,
+        )
+        row = self._conn.execute(
+            "SELECT payload_json FROM events WHERE session_key = ? AND event_type IN "
+            "(?, ?, ?, ?, ?, ?, ?) ORDER BY rowid DESC LIMIT 1",
+            (key, *types),
+        ).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def restart_control(self, key: str) -> dict[str, Any]:
+        row = self.session(key)
+        return json.loads(row.get("restart_json") or "{}") if row else {}
+
+    def set_restart_control(self, key: str, value: dict[str, Any]) -> None:
+        self._conn.execute(
+            "UPDATE sessions SET restart_json = ? WHERE session_key = ?",
+            (json.dumps(value), key),
+        )
+        self._conn.commit()
+
+    def archive_request(self, key: str) -> dict[str, Any]:
+        row = self._conn.execute(
+            "SELECT archive_json FROM sessions WHERE session_key = ?", (key,)
+        ).fetchone()
+        return json.loads(row[0]) if row and row[0] else {}
+
+    def archive_requests(self) -> list[dict[str, Any]]:
+        return [
+            json.loads(row[0])
+            for row in self._conn.execute(
+                "SELECT archive_json FROM sessions WHERE archive_json IS NOT NULL"
+            )
+        ]
+
+    def set_archive_request(self, key: str, value: dict[str, Any] | None) -> None:
+        self._conn.execute(
+            "UPDATE sessions SET archive_json = ? WHERE session_key = ?",
+            (json.dumps(value) if value else None, key),
+        )
+        self._conn.commit()
+
     def set_model(self, key: str, model: str) -> None:
         """Record the model a session runs on, first observed in its transcript."""
         self._conn.execute("UPDATE sessions SET model = ? WHERE session_key = ?", (model, key))
@@ -623,6 +751,28 @@ class HistoryStore:
             (session_key, event_type),
         ).fetchone()
         return int(row[0] or 0)
+
+    def connector_last_used(self) -> dict[str, tuple[int, int]]:
+        """{connector: (last_ts_ms, call_count)} from harness tool calls.
+
+        Harnesses name an MCP tool `mcp__<server>__<tool>`, and the server
+        segment is the connector name because Duckterm writes that entry.
+        Hook-derived: a harness without hooks contributes nothing, so a
+        missing connector means "no recorded use", never "never used"."""
+        rows = self._conn.execute(
+            "SELECT json_extract(payload_json, '$.tool_name') AS tool, ts FROM events "
+            "WHERE event_type = 'PreToolUse' AND tool LIKE 'mcp!_!_%' ESCAPE '!'"
+        ).fetchall()
+        used: dict[str, tuple[int, int]] = {}
+        for row in rows:
+            # Index numerically: sqlite3.Row and a plain tuple both support it,
+            # so this survives the connection's row_factory changing either way.
+            parts = str(row[0]).split("__")
+            if len(parts) < 3 or not parts[1]:
+                continue
+            last, count = used.get(parts[1], (0, 0))
+            used[parts[1]] = (max(last, int(row[1])), count + 1)
+        return used
 
     def last_event(self, session_key: str, event_type: str) -> tuple[dict[str, Any], int] | None:
         """The newest event of a type for a session, with its timestamp."""
@@ -714,6 +864,11 @@ class HistoryStore:
             "WHERE grp = ? OR substr(grp, 1, ?) = ?",
             (new, cut, old, len(old) + 1, old + "/"),
         )
+        self._conn.execute(
+            "UPDATE folder_tasks SET folder = ? || substr(folder, ?) "
+            "WHERE folder = ? OR substr(folder, 1, ?) = ?",
+            (new, cut, old, len(old) + 1, old + "/"),
+        )
         self.session_api.sync_memberships(moved=(old, new))
         self._conn.commit()
         return True
@@ -738,6 +893,9 @@ class HistoryStore:
 
         Stamps ended_at when a session ends; keeps the existing ended_at when
         archiving an already-ended session; clears it when reviving."""
+        row = self.session(key)
+        if row and row["state"] == "merged" and state != "merged":
+            return False
         if state in AT_REST_STATES:
             self.session_api.revoke(key, cancel_pending=state != "stopped")
         if state in ("stopped", "interrupted", "terminated"):
@@ -871,6 +1029,12 @@ class HistoryStore:
         return "; ".join(parts) + "."
 
     def _upsert_session(self, key: str, event: Event) -> None:
+        if event.get("event_type") == events.ATTENDED:
+            # Only clears the raised hand; it isn't agent activity.
+            self._conn.execute(
+                "UPDATE sessions SET attention_since = NULL WHERE session_key = ?", (key,)
+            )
+            return
         row = self._conn.execute(
             "SELECT state, started_at FROM sessions WHERE session_key = ?", (key,)
         ).fetchone()
@@ -885,8 +1049,8 @@ class HistoryStore:
                 "(session_key, runtime, repo_path, worktree_path, branch, "
                 " parent_session_key, compare_group, state, source_app, cwd, "
                 " last_event_type, last_tool, event_count, started_at, updated_at, ended_at, "
-                " last_seen, launched, test, agent_pid, command) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " last_seen, launched, test, agent_pid, command, name) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     key,
                     event.get("runtime"),
@@ -908,11 +1072,13 @@ class HistoryStore:
                     1 if event.get("test") else 0,
                     event.get("agent_pid"),
                     event.get("command"),
+                    event.get("name"),
                 ),
             )
         else:
             self._conn.execute(
                 "UPDATE sessions SET "
+                "name = COALESCE(name, ?), "
                 "runtime = COALESCE(?, runtime), "
                 "repo_path = COALESCE(?, repo_path), "
                 "worktree_path = COALESCE(?, worktree_path), "
@@ -937,6 +1103,7 @@ class HistoryStore:
                 "command = COALESCE(?, command) "
                 "WHERE session_key = ?",
                 (
+                    event.get("name"),
                     event.get("runtime"),
                     event.get("repo_path"),
                     event.get("worktree_path"),
@@ -956,6 +1123,12 @@ class HistoryStore:
                     event.get("command"),
                     key,
                 ),
+            )
+        if state == "waiting" and prev_state != "waiting":
+            self._conn.execute(
+                "UPDATE sessions SET attention_since = COALESCE(attention_since, ?) "
+                "WHERE session_key = ?",
+                (ts, key),
             )
 
     def sessions(self) -> list[dict[str, Any]]:
@@ -988,11 +1161,14 @@ class HistoryStore:
         can't resurrect the row. Returns whether a row was removed."""
         self.session_api.revoke(key)
         self._conn.execute("DELETE FROM session_api_members WHERE session_key = ?", (key,))
+        mail_analytics.retire_mail(self._conn, "sender = ? OR recipient = ?", (key, key))
+        mail_analytics.retire_events(self._conn, "session_key = ?", (key,))
+        # Children remain independent live sessions. Remove only their active
+        # tree edge; their own events retain the original fork provenance.
         self._conn.execute(
-            "DELETE FROM session_questions WHERE sender = ? OR recipient = ?", (key, key)
+            "UPDATE sessions SET parent_session_key = NULL WHERE parent_session_key = ?", (key,)
         )
         cur = self._conn.execute("DELETE FROM sessions WHERE session_key = ?", (key,))
-        self._conn.execute("DELETE FROM events WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))

@@ -64,8 +64,8 @@ test("Move to remote preserves the local session and exposes the destination lin
   try {
     await page.goto("/");
     const row = page.locator(".rd-row", { hasText: "Migration fixture" });
-    await row.hover();
-    await row.getByRole("button", { name: "Move to remote…" }).click();
+    await row.locator(".rd-row-click").click();
+    await page.locator(".rd-session-controls").getByRole("button", { name: "Move to remote…" }).click();
     await page.getByLabel("Remote destination folder").fill("/remote/project");
     await page.getByRole("button", { name: "Review transfer" }).click();
     await page.getByRole("checkbox").check();

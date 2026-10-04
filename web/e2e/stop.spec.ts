@@ -23,11 +23,11 @@ test("watched session is observe-only: no Stop or Archive button", async ({
   await expect(row).toBeVisible();
 
   // Actions are hover-revealed. Stop and Archive must not be among them.
-  await row.hover();
+  await row.locator(".rd-row-click").click();
   await expect(
-    row.getByRole("button", { name: "Stop", exact: true }),
+    page.locator(".rd-session-controls").getByRole("button", { name: "Stop", exact: true }),
   ).toHaveCount(0);
-  await expect(row.getByRole("button", { name: "Archive" })).toHaveCount(0);
+  await expect(page.locator(".rd-session-controls").getByRole("button", { name: "Archive" })).toHaveCount(0);
   // Fork stays — branching a watched session is fine.
-  await expect(row.getByRole("button", { name: "Fork" })).toBeVisible();
+  await expect(page.locator(".rd-session-controls").getByRole("button", { name: "Fork" })).toBeVisible();
 });

@@ -2,11 +2,11 @@
   --bg: #ffffff;
   --bg-soft: #f7f7f8;
   --bg-code: #0d0f14;
-  --border: #e8e8eb;
-  --border-strong: #d4d4d8;
+  --border: #cccccf;
+  --border-strong: #929296;
   --text: #0d0d0d;
   --text-soft: #565869;
-  --muted: #8e8ea0;
+  --muted: #626269;
   --accent: #0d0d0d;
   --accent-fg: #ffffff;
   /* Brand green — a deep forest green (calmer than the old bright parrot
@@ -843,6 +843,32 @@ code,
   color: var(--muted);
   margin: 4px 0 0 15px;
 }
+.rd-connector-proof {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rd-connector-proof button {
+  margin-left: auto;
+}
+.rd-connector-harnesses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.rd-connector-harnesses legend {
+  padding: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rd-connector-harnesses .dim {
+  color: var(--muted);
+}
 .rd-connector-token {
   display: flex;
   gap: 8px;
@@ -1663,9 +1689,8 @@ code,
   display: block;
   border-radius: 6px;
 }
-.rd-brand-term {
-  color: var(--brand-green);
-}
+.rd-brand-name { white-space: nowrap; }
+.rd-brand-term { color: inherit; font-weight: 400; }
 .rd-live {
   font-size: 13px;
   display: inline-flex;
@@ -2944,3 +2969,30 @@ select {
 .rd-message-tool { color:var(--muted); font-size:12px; }
 .rd-pin-saved { border:1px solid var(--border); border-radius:6px; padding:10px 13px; margin-bottom:10px; color:var(--text); }
 .rd-pin-saved button { margin-left:12px; }
+
+/* Keep the original neutral light palette; distinguish state without a blue cast. */
+:root:not([data-theme="dark"]) ::selection { background: #157347; color: #fff; }
+:root:not([data-theme="dark"]) .rd-row.selected { background: #d0e3da; box-shadow: inset 4px 0 0 #0f5132; }
+:root:not([data-theme="dark"]) .rd-row.selected:hover { background: #c4dbcf; }
+:root:not([data-theme="dark"]) .rd-view-toggle button { color: var(--text-soft); }
+:root:not([data-theme="dark"]) .rd-view-toggle button.active,
+:root:not([data-theme="dark"]) .rd-context-tabs > button[aria-selected="true"],
+:root:not([data-theme="dark"]) .rd-tab.active,
+:root:not([data-theme="dark"]) .rd-segment button.active {
+  background: #d0e3da; color: #0f5132; box-shadow: inset 0 -2px 0 #157347;
+}
+:root:not([data-theme="dark"]) .rd-context-pane { background: var(--bg-soft); }
+
+/* Oracle voice mode: header picker and the "just said" toast */
+.rd-voice-menu { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.rd-voice-menu select { font: inherit; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; }
+.rd-voice-toast { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--card); box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18); font-size: 13px; }
+.rd-voice-toast-text { font-weight: 600; overflow-wrap: anywhere; }
+.rd-voice-picker { display: grid; gap: 6px; margin-top: 6px; }
+.rd-voice-picker-label { font-weight: 600; font-size: 12px; }
+.rd-voice-picker-list { display: grid; gap: 2px; max-height: 180px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 4px; }
+.rd-voice-picker-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+.rd-voice-picker-row label { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.rd-voice-picker-hint { margin: 0; font-size: 12px; color: var(--muted); }
+.rd-voice-natural { display: grid; gap: 6px; margin-top: 8px; justify-items: start; }
+.rd-voice-fallback { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; }

@@ -1,0 +1,24 @@
+.rd-session-controls { margin: 0 0 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); container-type: inline-size; }
+.rd-session-controls-identity { padding: 16px; }
+.rd-session-controls-caption { color: var(--text-soft); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+.rd-session-controls-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rd-session-controls-title > strong { font-size: 18px; font-weight: 550; overflow-wrap: anywhere; min-width: 0; }
+.rd-session-controls-title .rd-state { flex: 0 0 auto; }
+.rd-session-controls-title form { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.rd-session-controls-title input { min-width: 0; width: 100%; padding: 6px; color: var(--text); background: var(--bg); border: 1px solid var(--border-strong); border-radius: 5px; }
+.rd-session-controls-folder { margin-top: 6px; display: flex; justify-content: space-between; gap: 12px; color: var(--text-soft); font-size: 12px; }
+.rd-session-controls-folder > span { overflow-wrap: anywhere; min-width: 0; }
+.rd-session-controls-link { color: var(--brand-green); background: transparent; border: 0; font: inherit; cursor: pointer; padding: 0; }
+.rd-session-controls-meta { margin: 0; }
+.rd-session-controls-meta > div { padding: 10px 16px; border-top: 1px solid var(--border); }
+.rd-session-controls-meta dt { font-size: 11px; color: var(--text-soft); }
+.rd-session-controls-meta dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+.rd-session-controls-actions { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; margin: 0; padding: 14px 16px; border: 0; border-top: 1px solid var(--border); min-width: 0; }
+.rd-session-controls-actions > .rd-btn { width: 100%; min-height: 36px; margin: 0; padding: 7px 5px; font-size: 12px; font-weight: 400; text-align: center; border: 1px solid var(--border-strong); border-radius: 6px; cursor: pointer; }
+.rd-session-controls .rd-row-notes-wrap { padding: 0 16px 16px; }
+.rd-session-controls .rd-row-notes { width: 100%; }
+.rd-session-controls button:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
+@container(max-width: 300px) { .rd-session-controls-actions { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+.rd-session-controls-actions > .rd-btn { white-space: normal; overflow-wrap: anywhere; }
+.rd-session-controls-danger { margin: 0; padding: 14px 16px; border: 0; border-top: 1px solid var(--border); min-width: 0; }
+.rd-session-controls-danger > .rd-btn { min-height: 36px; min-width: 90px; font-size: 12px; }

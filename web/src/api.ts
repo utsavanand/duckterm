@@ -1,3 +1,4 @@
+import type { ForkMergePreview, ForkMergeRecord, ForkMergeService } from "./ForkMergeDialog";
 import { routedFetch as fetch, sessionFetch, splitSessionRef, setRemoteGroup, changeRemoteFolders } from "./hostTransport";
 // Thin wrapper over the Duckterm server. Every POST action the backend
 // exposes lives here so components never hand-roll fetches.
@@ -14,11 +15,48 @@ export function authHeaders(extra?: Record<string, string>): HeadersInit {
   return { "X-Duckterm-Token": TOKEN, ...extra };
 }
 
+// Oracle's optional local neural voice (Kokoro), from GET /voice/status.
+export type LocalVoiceStatus =
+  | { state: "unsupported"; reason: string }
+  | { state: "absent"; size: string }
+  | { state: "installing"; step: string; done: number; size: string }
+  | { state: "ready"; voices: { id: string; label: string; accent: string }[] }
+  | { state: "failed"; reason: string; size: string };
+
 // One Ask Oracle exchange, as stored server-side (at = epoch ms).
+export interface ModelChoice { id: string; label: string; }
+
+export interface RestartStatus {
+  status?: "queued" | "restarting" | "completed" | "failed" | "canceled";
+  can_restart?: boolean;
+  draft_clear?: boolean;
+  after_turn?: boolean;
+  model?: string;
+  requested_model?: string;
+  configured_model?: string;
+  cli_version?: string;
+  previous_cli_version?: string;
+  reason?: string;
+  error?: string;
+}
+
 export interface OracleExchange {
   q: string;
   a: string;
   at: number;
+  dispatch?: {
+    assigned?: boolean;
+    request_key: string;
+    target: { kind: "session" | "folder"; id: string };
+    label: string;
+    recipients: { session_id: string; name: string; message_id: string; status: InboxMessage["status"]; answer: string | null; answered_at?: number | null }[];
+  };
+}
+
+export interface FolderRecipients {
+  identity: string;
+  sessions: BroadcastTarget[];
+  folders: { path: string; name: string; recipients: BroadcastTarget[] }[];
 }
 
 // Oracle Relay: a note for something a session needs from the owner.
@@ -35,7 +73,7 @@ export interface RelayNote {
   question?: string; // choice: the agent's question; question: the classifier's one-line ask
   options?: string[];
   questions?: { question: string; options: string[] }[]; // choice: every question in the menu form
-  urgency?: "blocked" | "offer"; // question notes only
+  urgency?: "blocked" | "approval" | "offer";
   excerpt?: string; // question notes: the end of the agent's final message
   detected_without_model?: boolean;
   tool?: string;
@@ -99,9 +137,21 @@ async function post<T>(path: string, body?: unknown, context?: string): Promise<
   return data as T;
 }
 
-async function get<T>(path: string, context?: string): Promise<T> {
-  const res = await (context === undefined ? fetch(path, { cache: "no-store" }) : sessionFetch(context, path, { cache: "no-store" }));
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+// `authed` is for the few reads the server gates on the owner token — reads
+// whose body describes the owner rather than the UI's own state.
+async function get<T>(
+  path: string,
+  context?: string,
+  { authed = false, signal }: { authed?: boolean; signal?: AbortSignal } = {},
+): Promise<T> {
+  const init: RequestInit = { cache: "no-store", signal, ...(authed ? { headers: authHeaders() } : {}) };
+  const res = await (context === undefined ? fetch(path, init) : sessionFetch(context, path, init));
+  if (!res.ok) {
+    const data: unknown = await res.json().catch(() => null);
+    const detail = data !== null && typeof data === "object" && "error" in data && typeof data.error === "string"
+      ? data.error.trim() : "";
+    throw new Error(detail || `${res.status} ${res.statusText}`);
+  }
   return (await res.json()) as T;
 }
 
@@ -134,8 +184,19 @@ export interface Connector {
   revoke_url: string;
   credential: string | null; // "gh-cli" | "stored" | "railway-cli" | null
   installed: Record<string, boolean>; // per harness
+  harnesses: string[]; // the agents this connector is registered for
+  harnesses_present: Record<string, boolean>; // which agent CLIs exist here
   enabled: boolean;
   ready: boolean;
+  detail: string | null;
+  last_used: number | null; // epoch ms of the newest hook-reported tool call
+  use_count: number;
+}
+
+export interface ConnectorCheck {
+  name: string;
+  ok: boolean;
+  tools: number;
   detail: string | null;
 }
 
@@ -218,7 +279,13 @@ export interface BackupState {
   } | null;
 }
 
+export type ArtifactKind = "kdd" | "spec" | "research" | "preview" | "evidence" | "report" | "other";
+export interface FolderStats { folder: string; updated_at: number; timezone: string; sessions: Record<string, number>; waiting: { key: string; name: string }[]; periods: Record<string, { tokens: number; sent: number; answered: number }>; artifacts: { by_kind: Partial<Record<ArtifactKind, number>>; available: number; removed: number }; }
 export interface Artifact {
+  kind?: ArtifactKind;
+  kind_source?: "inferred" | "declared" | "owner";
+  kept?: boolean;
+  removed_at?: number | null;
   id: string;
   session_key: string;
   title: string;
@@ -229,6 +296,7 @@ export interface Artifact {
   created_at: number;
   updated_at: number;
 }
+export interface FolderArtifact extends Artifact { session_name: string; session_state: string; folder: string }
 export interface ArtifactContent extends Artifact { content_base64: string }
 
 async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
@@ -239,6 +307,11 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
 }
 
 export const api = {
+  folderStats: (folder: string) => artifactRequest<FolderStats>(`/folders/${encodeURIComponent(folder)}/stats`),
+  updateArtifact: async (key: string, id: string, patch: { kind?: ArtifactKind; kept?: boolean }): Promise<{ artifact: Artifact }> => {
+    const response = await fetch(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, { method: "PATCH", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(patch) });
+    const value = await response.json(); if (!response.ok) throw new Error(value.error || "Could not update artifact"); return value;
+  },
   setFocusPin: async (key: string, pinned: boolean): Promise<{ pinned: boolean }> => {
     const res = await fetch(`/sessions/${encodeURIComponent(key)}/focus-pin`, {
       method: "PUT", headers: authHeaders({ "Content-Type": "application/json" }),
@@ -307,25 +380,55 @@ export const api = {
   branches: (path: string) =>
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
-  connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context),
-  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string) =>
+  connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context, { authed: true }),
+  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string, harnesses?: string[]) =>
     post<Connector>(`/connectors/${name}/enable`, {
       source, write_access,
       ...(token ? { token } : {}),
       ...(secret ? { secret } : {}),
+      ...(harnesses ? { harnesses } : {}),
     }, context),
   forgetConnector: (name: string, context?: string) => post<Connector>(`/connectors/${name}/forget`, {}, context),
   disableConnector: (name: string, context?: string) =>
     post<Connector>(`/connectors/${name}/disable`, {}, context),
-  fleetAsk: (question: string) =>
+  verifyConnector: (name: string, context?: string) =>
+    post<ConnectorCheck>(`/connectors/${name}/verify`, {}, context),
+  folderArtifacts: (folder: string) => artifactRequest<{ artifacts: FolderArtifact[]; truncated?: boolean }>(`/folders/${encodeURIComponent(folder)}/artifacts`),
+  folderRecipients: (folder: string) => artifactRequest<FolderRecipients>(`/folders/${encodeURIComponent(folder)}/recipients`),
+  folderDispatch: (folder: string, request: { assign?: boolean; identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
+    post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request),
+  folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
+  fleetAsk: (question: string, folder?: string) =>
     post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
       "/fleet/ask",
-      { question },
+      { question, ...(folder !== undefined ? { folder } : {}) },
     ),
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
   controlTower: () => get<TowerInsights>("/control-tower"),
-  relay: () => get<RelayState>("/relay"),
-  relayCount: () => get<{ open: number }>("/relay/count"),
+  relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, { signal }),
+  voiceStatus: () => get<LocalVoiceStatus>("/voice/status"),
+  voiceInstall: async (): Promise<LocalVoiceStatus> => {
+    const res = await fetch("/voice/install", { method: "POST", headers: authHeaders() });
+    return (await res.json()) as LocalVoiceStatus;
+  },
+  // A WAV of the line, or an error the caller answers with a macOS voice.
+  voiceSay: async (text: string, voice: string): Promise<Blob> => {
+    const res = await fetch("/voice/say", {
+      method: "POST",
+      cache: "no-store",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ text, voice }),
+    });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${res.status}`);
+    return res.blob();
+  },
+  voiceWarm: () => fetch("/voice/warm", { method: "POST", headers: authHeaders() }).then(() => undefined),
+  voiceStop: () => fetch("/voice/stop", { method: "POST", headers: authHeaders() }).then(() => undefined),
+  voiceRemove: async (): Promise<LocalVoiceStatus> => {
+    const res = await fetch("/voice", { method: "DELETE", headers: authHeaders() });
+    return (await res.json()) as LocalVoiceStatus;
+  },
+  relayCount: (signal?: AbortSignal) => get<{ open: number }>("/relay/count", undefined, { signal }),
   relayAnswer: (id: string, answer: string | number) =>
     post<{ note: RelayNote }>(`/relay/${encodeURIComponent(id)}/answer`, { answer }),
   proposeRule: (text: string) => post<{ rule: RelayRule }>("/relay/rules/propose", { text }),
@@ -335,6 +438,8 @@ export const api = {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
     if (!res.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
   },
+  // The owner has looked at this session: lower its raised hand.
+  sessionAttended: (key: string) => post<{ attended: boolean }>(`/sessions/${encodeURIComponent(key)}/attended`),
   messageSession: (key: string, text: string, mode: "inbox" | "prompt") =>
     post<{ delivered: "inbox" | "prompt" | null }>(
       `/sessions/${encodeURIComponent(key)}/message`,
@@ -470,6 +575,15 @@ export const api = {
       `/sessions/${key}/fork-conversation`,
       { in_terminal: false },
     ),
+  models: (key: string) => get<{ models: ModelChoice[] }>(`/sessions/${key}/models`),
+  restartStatus: (key: string) => get<RestartStatus>(`/sessions/${key}/restart`),
+  restart: (key: string, model: string) => post<RestartStatus>(`/sessions/${key}/restart`, { model }),
+  cancelRestart: async (key: string): Promise<RestartStatus> => {
+    const response = await fetch(`/sessions/${key}/restart`, { method: "DELETE", headers: authHeaders() });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Could not cancel restart");
+    return data;
+  },
   stop: (key: string) => post<{ stopped: boolean }>(`/sessions/${key}/stop`),
   resume: (key: string) =>
     post<{
@@ -537,3 +651,24 @@ export interface CheckpointRecord {
 }
 
 export type { RawEvent };
+
+export type ForkMergeHistory = ForkMergeRecord & { child: string; parent: string; createdAt: number; parentDeleted: boolean };
+async function mergeRead<T>(key: string, suffix: string): Promise<T> {
+  const local = splitSessionRef(key).key;
+  const response = await sessionFetch(key, `/sessions/${encodeURIComponent(local)}/${suffix}`, { headers: authHeaders(), cache: "no-store" });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error ?? "Could not load merge history");
+  return data;
+}
+export const forkMergeHistory = (key: string) => mergeRead<{ merges: ForkMergeHistory[] }>(key, "merges");
+export function forkMergeService(key: string): ForkMergeService {
+  return {
+    preview: () => mergeRead<ForkMergePreview>(key, "merge"),
+    send: draft => post<ForkMergeRecord>(`/sessions/${encodeURIComponent(splitSessionRef(key).key)}/merge`, draft, key),
+    status: async id => {
+      const record = (await forkMergeHistory(key)).merges.find(row => row.id === id);
+      if (!record) throw new Error("Merge record is unavailable");
+      return record;
+    },
+  };
+}

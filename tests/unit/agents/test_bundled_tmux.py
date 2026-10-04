@@ -78,3 +78,24 @@ def test_missing_not_cached_recheck_can_recover(monkeypatch):
         tmux.subprocess, "run", lambda args, **kwargs: subprocess.CompletedProcess(args, 0, "", "")
     )
     assert tmux.has_tmux()
+
+
+def test_socket_timeout_is_not_missing_tmux(monkeypatch):
+    def run(args, **kwargs):
+        if "-L" in args:
+            raise subprocess.TimeoutExpired(args, 3)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(tmux.subprocess, "run", run)
+    with pytest.raises(RuntimeError, match="cannot probe existing tmux server"):
+        tmux.has_tmux()
+
+
+def test_commands_use_selected_client(monkeypatch):
+    monkeypatch.setattr(tmux, "selected_client", lambda: ("/bundle/tmux", "bundled"))
+    assert tmux.client_command("list-sessions") == [
+        "/bundle/tmux",
+        "-L",
+        "test-bundle-private",
+        "list-sessions",
+    ]

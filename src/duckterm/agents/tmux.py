@@ -48,14 +48,17 @@ def _bundled_selection(bundle: str, system: str | None, socket: str) -> tuple[st
             version = subprocess.run([binary, "-V"], capture_output=True, timeout=3)
             if version.returncode:
                 continue
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        try:
             result = subprocess.run(
                 [binary, "-L", socket, "list-sessions"],
                 capture_output=True,
                 text=True,
                 timeout=3,
             )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f"cannot probe existing tmux server: {exc}") from exc
         error = result.stderr
         if (
             result.returncode == 0
@@ -87,10 +90,15 @@ def has_tmux() -> bool:
         return False
 
 
-def _tmux(*args: str) -> tuple[bool, str]:
+def client_command(*args: str) -> list[str]:
+    """One client/socket selection for commands and ordered terminal streams."""
     binary, _ = selected_client()
+    return [binary, "-L", socket_name(), *args]
+
+
+def _tmux(*args: str) -> tuple[bool, str]:
     result = subprocess.run(
-        [binary, "-L", socket_name(), *args],
+        client_command(*args),
         capture_output=True,
         text=True,
     )

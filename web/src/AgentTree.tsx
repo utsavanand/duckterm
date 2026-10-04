@@ -1,7 +1,7 @@
-import { splitSessionRef } from "./hostTransport";
-import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
+import { SidebarFilters } from "./SidebarFilters";
+import { hasFilters, matchesFilters, sidebarSessions, SidebarFilterControls } from "./sidebarFilterState";
+import { desktop } from "./desktop";
 import { SessionLocationDuck } from "./SessionLocationDuck";
-import { SessionPin } from "./SessionPin";
 import { HelperAgents } from "./HelperAgents";
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
@@ -9,24 +9,25 @@ import { Duck, poseFor } from "./Duck";
 import { TermMode, themesForMode } from "./termThemes";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
+import { useResumeSession } from "./useResumeSession";
 import { useToast } from "./ui";
 
 // The left panel: every session as a row, with forks nested under their parent
-// via parentKey. Clicking a row opens the detail drawer; actions sit inline.
+// via parentKey. Rows select sessions; actions live in the right-panel card.
 export function AgentTree({
+  filterControls,
   sessions,
   now,
-  labels,
   folders: savedFolders,
   selectedKey,
+  selectedFolder,
+  onOpenFolder,
+  onFolderRenamed,
+  onFolderDeleted,
   onOpen,
   onOpenInbox,
-  onPin,
-  onFork,
-  onDelete,
   onFoldersChanged,
   onSessionMoved,
-  onRename,
   onOpenGrid,
   onNewSessionIn,
   onOpenFolderInbox,
@@ -34,19 +35,19 @@ export function AgentTree({
   onSetFolderTheme,
   termMode,
 }: {
+  filterControls: SidebarFilterControls;
   sessions: SessionView[];
   now: number;
-  labels: Record<string, string>;
   folders: string[];
   selectedKey: string | null;
+  selectedFolder?: string | null;
+  onOpenFolder?: (folder: string) => void;
+  onFolderRenamed?: (from: string, to: string) => void;
+  onFolderDeleted?: (folder: string) => void;
   onOpen: (key: string) => void;
   onOpenInbox?: (key: string) => void;
-  onPin?: (session: SessionView) => Promise<void>;
-  onFork: (key: string) => void;
-  onDelete: (key: string) => Promise<boolean>;
   onFoldersChanged: () => void;
   onSessionMoved: (key: string, group: string) => void;
-  onRename: (key: string, name: string) => void;
   onOpenGrid: (folder: string) => void;
   onNewSessionIn: (folder: string) => void;
   onOpenFolderInbox: (folder: string) => void;
@@ -54,6 +55,19 @@ export function AgentTree({
   onSetFolderTheme: (folder: string, theme: string | null) => void;
   termMode: TermMode;
 }) {
+  const { filters, toggle, clear, saveError, expanded } = filterControls;
+  const visibleSessions = sidebarSessions(sessions);
+  const filtering = hasFilters(filters);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const reveal = (event: Event) => {
+      const path = (event as CustomEvent<string>).detail;
+      const parts = path.split("/");
+      setExpandedFolders(current => new Set([...current, ...parts.map((_, i) => parts.slice(0, i + 1).join("/"))]));
+    };
+    window.addEventListener("reveal-sidebar-folder", reveal);
+    return () => window.removeEventListener("reveal-sidebar-folder", reveal);
+  }, []);
   const folders = [...new Set([...savedFolders, ...sessions.flatMap(session => {
     // Local folders come from the catalog; stale session snapshots must not
     // resurrect their old paths while a rename or move refresh is in flight.
@@ -62,7 +76,7 @@ export function AgentTree({
     return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
   })])];
   const toast = useToast();
-  const roots = buildForest(sessions);
+  const roots = buildForest(visibleSessions);
 
   // Drop a session onto a folder header (or the ungrouped zone) to move it there.
   async function moveToGroup(key: string, group: string) {
@@ -91,6 +105,7 @@ export function AgentTree({
         else if (s.group?.startsWith(name + "/"))
           onSessionMoved(s.key, r.to + s.group.slice(name.length));
       }
+      onFolderRenamed?.(name, r.to);
       toast(`Moved to ${r.to}`);
       onFoldersChanged();
     } catch (e) {
@@ -121,6 +136,7 @@ export function AgentTree({
           onSessionMoved(s.key, next + s.group.slice(path.length));
       }
       onFoldersChanged();
+      onFolderRenamed?.(path, next);
       toast(`Renamed to ${next}`);
     } catch (e) {
       toast(`Rename failed: ${(e as Error).message}`, "err");
@@ -152,6 +168,7 @@ export function AgentTree({
     }
     try {
       await api.deleteFolder(name);
+      onFolderDeleted?.(name);
       toast(`Deleted folder ${name}`);
       onFoldersChanged();
     } catch (e) {
@@ -178,19 +195,9 @@ export function AgentTree({
       depth={0}
       indent={indent}
       now={now}
-      labels={labels}
       selectedKey={selectedKey}
       onOpen={onOpen}
       onOpenInbox={onOpenInbox}
-      onPin={onPin}
-      onFork={onFork}
-      onDelete={onDelete}
-      onRename={onRename}
-      onUngroup={
-        node.session.group
-          ? () => moveToGroup(node.session.key, "")
-          : undefined
-      }
     />
   );
 
@@ -220,6 +227,14 @@ export function AgentTree({
     <GroupHeader
       key={path}
       name={path}
+      collapsed={!expandedFolders.has(path)}
+      onToggle={() => setExpandedFolders(current => {
+        const next = new Set(current);
+        if (next.has(path)) next.delete(path); else next.add(path);
+        return next;
+      })}
+      selected={selectedFolder === path}
+      onOpen={() => onOpenFolder?.(path)}
       depth={depth}
       count={subtreeCount(path)}
       onDropSession={moveToGroup}
@@ -241,7 +256,21 @@ export function AgentTree({
   );
 
   return (
+    <div className="rd-sidebar-content" onKeyDown={event => {
+      if (event.key === "Escape" && filtering) {
+        event.preventDefault();
+        event.stopPropagation();
+        clear();
+        if (expanded) event.currentTarget.querySelector<HTMLButtonElement>(".rd-filter-chip")?.focus();
+        else event.currentTarget.closest(".rd-agents")?.querySelector<HTMLButtonElement>(".rd-filter-toggle")?.focus();
+      }
+    }}>
+    <SidebarFilters sessions={visibleSessions} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} expanded={expanded} />
     <div className="rd-tree">
+      {filtering ? <>
+        {visibleSessions.filter(s => matchesFilters(s, filters, now)).map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} onOpen={onOpen} onOpenInbox={onOpenInbox} showFolder />)}
+        {!visibleSessions.some(s => matchesFilters(s, filters, now)) && <div className="rd-filter-empty">No sessions match these filters.<button onClick={clear}>Clear filters</button></div>}
+      </> : <>
       {/* All folders render (even empty ones) so you can create then fill them. */}
       {topLevel.map((name) => renderFolder(name, 0))}
       {/* Ungrouped sessions sit at the root; dropping here clears the folder
@@ -254,6 +283,8 @@ export function AgentTree({
       >
         {ungrouped.map((n) => renderNode(n, 0))}
       </DropZone>
+      </>}
+    </div>
     </div>
   );
 }
@@ -262,12 +293,16 @@ export function AgentTree({
 // source for nesting, with subfolder + grid actions. Folders are paths; the
 // header shows only the leaf name.
 function GroupHeader({
+  collapsed,
+  onToggle,
+  selected,
+  onOpen,
+  onDelete,
   name,
   depth,
   count,
   onDropSession,
   onDropFolder,
-  onDelete,
   onRename,
   onNewSubfolder,
   onNewSession,
@@ -280,9 +315,13 @@ function GroupHeader({
   children,
 }: {
   name: string;
+  collapsed: boolean;
+  onToggle: () => void;
+  selected: boolean;
+  onOpen: () => void;
   depth: number;
-  onDelete: () => void;
   onRename: () => void;
+  onDelete: () => void;
   count: number;
   onDropSession: (key: string, group: string) => void;
   onDropFolder: (name: string, parent: string) => void;
@@ -296,22 +335,12 @@ function GroupHeader({
   termMode: TermMode;
   children: ReactNode;
 }) {
-  // Start every folder closed when the dashboard opens or restarts.
-  const [collapsed, setCollapsed] = useState(true);
-  useEffect(() => {
-    const reveal = (event: Event) => {
-      const folder = (event as CustomEvent<string>).detail;
-      if (folder === name || folder.startsWith(name + "/")) setCollapsed(false);
-    };
-    window.addEventListener("reveal-sidebar-folder", reveal);
-    return () => window.removeEventListener("reveal-sidebar-folder", reveal);
-  }, [name]);
   const [over, setOver] = useState(false);
   const leaf = name.split("/").pop();
   return (
     <div className={`rd-group${over ? " drop-over" : ""}`}>
       <div
-        className="rd-group-head"
+        className={`rd-group-head${selected ? " selected" : ""}`}
         style={{ paddingLeft: 14 + depth * 16 }}
         draggable
         onDragStart={(e) => {
@@ -319,7 +348,6 @@ function GroupHeader({
           e.dataTransfer.setData("text/rd-folder", name);
           e.dataTransfer.effectAllowed = "move";
         }}
-        onClick={() => setCollapsed((c) => !c)}
         onDragOver={(e) => {
           if (
             e.dataTransfer.types.includes("text/rd-session") ||
@@ -341,9 +369,11 @@ function GroupHeader({
           if (folder) onDropFolder(folder, name);
         }}
       >
-        <span className="rd-group-caret">{collapsed ? "▸" : "▾"}</span>
-        <span
+        <button className="rd-group-caret" aria-label={`${collapsed ? "Expand" : "Collapse"} ${name}`} aria-expanded={!collapsed} onClick={onToggle}>{collapsed ? "▸" : "▾"}</button>
+        <button
           className="rd-group-name"
+          aria-pressed={selected}
+          onClick={onOpen}
           title="Double-click to rename"
           onDoubleClick={(e) => {
             e.stopPropagation();
@@ -351,7 +381,7 @@ function GroupHeader({
           }}
         >
           {leaf}
-        </span>
+        </button>
         <span className="rd-group-count">{count}</span>
         <button
           className="rd-group-phone"
@@ -523,205 +553,37 @@ function TreeRow({
   node,
   depth,
   indent = 0,
+  showFolder = false,
   now,
-  labels,
   selectedKey,
   onOpen,
   onOpenInbox,
-  onPin,
-  onFork,
-  onDelete,
-  onRename,
-  onUngroup,
 }: {
   node: Node;
   depth: number;
   indent?: number; // folder depth — visual offset only, unlike fork `depth`
+  showFolder?: boolean;
   now: number;
-  labels: Record<string, string>;
   selectedKey: string | null;
   onOpen: (key: string) => void;
   onOpenInbox?: (key: string) => void;
-  onPin?: (session: SessionView) => Promise<void>;
-  onFork: (key: string) => void;
-  onDelete: (key: string) => Promise<boolean>;
-  onRename: (key: string, name: string) => void;
-  onUngroup?: () => void; // set only for grouped root sessions
 }) {
-  const toast = useToast();
   const s = node.session;
+  const { resuming, resumeSession } = useResumeSession(s.key);
   const effState = effectiveState(s, now);
-  const archived = effState === "archived";
-  // "live" = actively running (Stop applies). stopped/interrupted/terminated
-  // are not live but are resumable for a launched session (we still have its
-  // worktree + id). interrupted = the terminal died under it (reboot/crash)
-  // rather than a deliberate stop.
-  const live =
-    effState !== "terminated" &&
-    effState !== "stopped" &&
-    effState !== "interrupted" &&
-    !archived;
-  const resumable =
-    (effState === "stopped" ||
-      effState === "interrupted" ||
-      effState === "terminated") &&
-    s.launched;
-  // Stop and Archive only make sense for sessions Duckterm owns. A watched
-  // session runs in a terminal we don't control, so Stop can't end it and
-  // Archive would only hide a row whose agent keeps running — and unarchiving it
-  // would offer a Resume that can't fire. Keep watched sessions observe-only.
-  const canStop = live && s.launched;
-  const canArchive = !archived && s.launched;
-  // A terminated session's run is OVER: forking, notes, checkpoints, and
-  // rename are workflow actions for something in progress — only Resume (if
-  // resumable), Archive, and Delete apply.
-  const ended = effState === "terminated";
-  const stateLabel = effState; // "waiting" reads fine on its own
-  const [notesOpen, setNotesOpen] = useState(false);
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const [notes, setNotes] = useState(s.notes ?? "");
-  const [collapsed, setCollapsed] = useState(false);
-  const [capturing, setCapturing] = useState(false);
-  // Once stop/delete is in flight, grey the whole row's actions so a second
-  // click can't fire a phantom request before the row is removed.
-  const [ending, setEnding] = useState(false);
-  const [resuming, setResuming] = useState(false);
-  const [archiving, setArchiving] = useState(false);
-  // Delete is destructive (wipes history) — require a second, deliberate click:
-  // the button arms ("Confirm delete?") then deletes. Auto-disarms after 4s.
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  // Double-click the name to rename in place — with several agents on one
-  // repo, "ENTOURAGE" three times over is unusable.
-  const [renaming, setRenaming] = useState(false);
-  const [draft, setDraft] = useState(s.label);
-  async function saveRename() {
-    setRenaming(false);
-    const name = draft.trim();
-    if (!name || name === s.label) return;
-    onRename(s.key, name); // optimistic — PATCH emits no SSE event
-    try {
-      await api.updateSession(s.key, { name });
-      toast("Renamed");
-    } catch (e) {
-      toast(`Rename failed: ${(e as Error).message}`, "err");
-    }
-  }
+  const live = !["terminated", "stopped", "interrupted", "archived"].includes(effState);
+  const stateLabel = effState;
   const ctxLevel = contextLevel(s.contextTokens, s.model);
   const hasChildren = node.children.length > 0;
-  // Branching is possible for any live session on a git repo (worktree fork or
-  // promote) and for any live claude-code session (conversation fork, even with
-  // no branch). The ForkModal picks the right sub-option.
-  const canBranch = live && (Boolean(s.branch) || s.runtime === "claude-code");
-
-  async function act(label: string, fn: () => Promise<unknown>) {
-    try {
-      await fn();
-      toast(label);
-    } catch (e) {
-      toast(`${label} failed: ${(e as Error).message}`, "err");
-    }
-  }
-
-  async function saveNotes() {
-    if (notes === (s.notes ?? "")) return;
-    await act("Notes saved", () => api.updateSession(s.key, { notes }));
-    setNotesOpen(false);
-  }
-
-  async function stopSession() {
-    if (ending) return;
-    setEnding(true);
-    try {
-      await api.stop(s.key);
-      toast("Stopped");
-      // Leave it greyed — the resulting Stop/terminated event removes the row.
-    } catch (e) {
-      toast(`Stop failed: ${(e as Error).message}`, "err");
-      setEnding(false); // let the user retry
-    }
-  }
-
-  // Disarm the delete confirmation if the user doesn't follow through quickly.
-  useEffect(() => {
-    if (!confirmDelete) return;
-    const t = setTimeout(() => setConfirmDelete(false), 4000);
-    return () => clearTimeout(t);
-  }, [confirmDelete]);
-
-  async function requestDelete() {
-    if (ending) return;
-    if (!confirmDelete) {
-      setConfirmDelete(true); // first click: arm
-      return;
-    }
-    setConfirmDelete(false);
-    setEnding(true);
-    const deleted = await onDelete(s.key);
-    if (!deleted) setEnding(false); // cancelled (e.g. unmerged confirm) or failed
-  }
-
-  async function archiveSession() {
-    if (archiving) return;
-    setArchiving(true);
-    try {
-      await api.archive(s.key);
-      toast("Archived");
-      // The archive event removes it from this view; no need to un-set.
-    } catch (e) {
-      toast(`Archive failed: ${(e as Error).message}`, "err");
-      setArchiving(false);
-    }
-  }
-
-  async function resumeSession() {
-    if (resuming) return;
-    setResuming(true);
-    try {
-      const r = await api.resume(s.key);
-      if (r.resumed) setEnding(false);
-      const label =
-        r.context === "native"
-          ? "Resumed — conversation carried"
-          : r.context === "brief"
-            ? "Resumed fresh — seeded with notes from the old session"
-            : r.context === "none"
-              ? "Resumed fresh — previous conversation couldn't be restored"
-              : "Resumed";
-      toast(
-        r.resumed ? label : "Couldn't open a terminal to resume",
-        r.resumed ? undefined : "err",
-      );
-    } catch (e) {
-      toast(`Resume failed: ${(e as Error).message}`, "err");
-    } finally {
-      setResuming(false);
-    }
-  }
-
-  async function captureCheckpoint() {
-    if (capturing) return;
-    // Capturing runs a summarizer agent (claude -p / codex / copilot), a few
-    // seconds — show a spinner so the click doesn't feel dead.
-    setCapturing(true);
-    try {
-      await act("Checkpoint recorded", () => api.checkpoint(s.key, "manual"));
-    } finally {
-      setCapturing(false);
-    }
-  }
-
+  const [collapsed, setCollapsed] = useState(false);
   return (
     <>
       <div
-        className={`rd-row${live ? "" : " terminated"}${notesOpen ? " expanded" : ""}${actionsOpen ? " actions-open" : ""}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.inboxPending ? " has-inbox" : ""}`}
+        className={`rd-row${live ? "" : " terminated"}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.inboxPending ? " has-inbox" : ""}`}
         title={`${s.label} · ${s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")} · ${s.runtime ?? "agent"} · ${stateLabel} · ${s.eventCount} events`}
-        onKeyDown={(event) => { if (event.key === "Escape") setActionsOpen(false); }}
-        onBlur={(event) => {
-          if (!(event.relatedTarget instanceof HTMLElement) || !event.currentTarget.contains(event.relatedTarget)) setActionsOpen(false);
-        }}
         style={{ paddingLeft: 12 + indent * 16 + depth * 18 }}
         // Only root sessions are draggable into groups; forks follow their parent.
-        draggable={depth === 0}
+        draggable={depth === 0 && !s.parentKey}
         onDragStart={(e) => {
           e.dataTransfer.setData("text/rd-session", s.key);
           e.dataTransfer.effectAllowed = "move";
@@ -742,7 +604,7 @@ function TreeRow({
           ) : (
             depth > 0 && <span className="rd-row-twig">⑂</span>
           )}
-          {desktop() ? <SessionLocationDuck key={s.key} session={s} pose={poseFor(effState)} /> : <Duck key={s.key} pose={poseFor(effState)} size={24} celebrating={s.celebration} />}
+          {desktop() ? <SessionLocationDuck key={s.key} session={s} pose={poseFor(effState, !!s.attentionSince)} /> : <Duck key={s.key} pose={poseFor(effState, !!s.attentionSince)} size={24} celebrating={s.celebration} />}
           <span className="rd-row-click" onClick={() => onOpen(s.key)}>
             {s.branch && (
               <span
@@ -756,32 +618,7 @@ function TreeRow({
                 ⎇
               </span>
             )}
-            {renaming ? (
-              <input
-                className="rd-row-rename"
-                autoFocus
-                value={draft}
-                onClick={(e) => e.stopPropagation()}
-                onChange={(e) => setDraft(e.target.value)}
-                onBlur={saveRename}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") saveRename();
-                  if (e.key === "Escape") setRenaming(false);
-                }}
-              />
-            ) : (
-              <span
-                className="rd-row-name"
-                title="Double-click to rename"
-                onDoubleClick={(e) => {
-                  e.stopPropagation();
-                  setDraft(s.label);
-                  setRenaming(true);
-                }}
-              >
-                {s.label}
-              </span>
-            )}
+            <span className="rd-row-name">{s.label}</span>
             <span className={`rd-state st-${effState}`} title={stateLabel} aria-label={stateLabel}>{stateLabel}</span>
             {!!s.inboxPending && (
               <button
@@ -804,10 +641,12 @@ function TreeRow({
               </span>
             )}
           </span>
-          {onPin && <SessionPin session={s} onToggle={onPin} />}
-          <button className="rd-density-actions" aria-label={`Actions for ${s.label}`} aria-expanded={actionsOpen}
-            onClick={() => setActionsOpen((open) => !open)}>⋯</button>
+          {effState === "stopped" && s.launched && <button className="rd-row-resume"
+            aria-label={`Resume ${s.label}`} disabled={resuming} onClick={resumeSession}>
+            {resuming ? "Resuming…" : "Resume"}
+          </button>}
         </div>
+        {showFolder && <div className="rd-row-folder" title={s.group || "Ungrouped"} onClick={() => onOpen(s.key)}>{s.group || "Ungrouped"}</div>}
         <div className="rd-row-meta" onClick={() => onOpen(s.key)}>
           {s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")}
           {" · "}
@@ -817,171 +656,6 @@ function TreeRow({
           {s.runtime ?? "agent"} · {effState === "waiting" ? "Waiting for input" : s.lastTool && effState === "busy" ? `Running ${s.lastTool}` : stateLabel}
         </div>
         {s.subagents && <HelperAgents agents={s.subagents} sessionKey={s.key} />}
-        <div className="rd-row-actions">
-          {!ended && (
-            <button
-              className="rd-btn rd-btn-sm rd-btn-ghost"
-              title="Rename this session (double-clicking the name works too)"
-              onClick={() => {
-                setDraft(s.label);
-                setRenaming(true);
-              }}
-            >
-              Rename
-            </button>
-          )}
-          {onUngroup && (
-            <button
-              className="rd-btn rd-btn-sm rd-btn-ghost"
-              title="Move this session out of its folder (dragging onto UNGROUPED works too)"
-              onClick={onUngroup}
-            >
-              Ungroup
-            </button>
-          )}
-          {/* One branching action: the modal offers a git worktree fork (or
-              promotes an in-place session onto a branch) and, for claude-code,
-              a conversation-only fork. */}
-          {!archived && !ended && canBranch && (
-            <button
-              className="rd-btn rd-btn-sm rd-btn-ghost"
-              title="Fork this session — into a git worktree, or fork the conversation"
-              onClick={() => onFork(s.key)}
-            >
-              Fork
-            </button>
-          )}
-          {!archived && !ended && (
-            <button
-              className={`rd-btn rd-btn-sm rd-btn-ghost${notesOpen ? " active" : ""}`}
-              title="Personal notes for this session (local only)"
-              onClick={() => setNotesOpen((o) => !o)}
-            >
-              Notes{s.notes ? " •" : ""}
-            </button>
-          )}
-          {!archived && !ended && (
-            <button
-              className="rd-btn rd-btn-sm rd-btn-ghost"
-              title="Record what was done so far"
-              disabled={capturing}
-              onClick={captureCheckpoint}
-            >
-              {capturing ? (
-                <span className="rd-inline-spin">
-                  <span className="rd-spinner" />
-                  Capturing…
-                </span>
-              ) : (
-                "Checkpoint"
-              )}
-            </button>
-          )}
-          {resumable && splitSessionRef(s.key).host === "local" && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "") && <>
-            <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key }))}>Move to remote…</button>
-            <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={async () => {
-              if (!window.confirm("Continue this session locally as a separate continuation? A remote session, if created, will remain running.")) return;
-              await destinationRequest("local", "project-continue", { source_session: s.key });
-              localStorage.removeItem(`moved-session:${s.key}`);
-              await resumeSession();
-            }}>Continue locally</button>
-            {(s.remoteTransfer?.stage === "moved" || localStorage.getItem(`moved-session:${s.key}`)) && <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => {
-              const moved = s.remoteTransfer?.stage === "moved" ? s.remoteTransfer : JSON.parse(localStorage.getItem(`moved-session:${s.key}`)!);
-              selectLaunchTarget(moved.target, {}, moved.session_key ?? moved.key);
-            }}>Open remote session</button>}
-          </>}
-          {resumable && (
-            <button
-              className="rd-btn rd-btn-sm rd-btn-primary"
-              title="Relaunch this session — continues the conversation for Claude Code"
-              disabled={resuming}
-              onClick={resumeSession}
-            >
-              {resuming ? (
-                <span className="rd-inline-spin">
-                  <span className="rd-spinner" />
-                  Resuming…
-                </span>
-              ) : (
-                "Resume"
-              )}
-            </button>
-          )}
-          {canStop && (
-            <button
-              className="rd-btn rd-btn-sm rd-btn-danger"
-              disabled={ending}
-              onClick={stopSession}
-            >
-              {ending ? (
-                <span className="rd-inline-spin">
-                  <span className="rd-spinner" />
-                  Stopping…
-                </span>
-              ) : (
-                "Stop"
-              )}
-            </button>
-          )}
-          {canArchive && (
-            <button
-              className="rd-btn rd-btn-sm rd-btn-ghost"
-              title="Archive for good — history is kept, but the session leaves the list and can't be resumed (Stop is the pause)"
-              disabled={archiving}
-              onClick={archiveSession}
-            >
-              {archiving ? (
-                <span className="rd-inline-spin">
-                  <span className="rd-spinner" />
-                  Archiving…
-                </span>
-              ) : (
-                "Archive"
-              )}
-            </button>
-          )}
-          <button
-            className={`rd-btn rd-btn-sm rd-btn-danger${confirmDelete ? " armed" : ""}`}
-            title={
-              confirmDelete
-                ? "Click again to confirm"
-                : s.launched || !live
-                  ? "Delete this session and its history"
-                  : "Stop watching — remove it from the dashboard (the agent keeps running in its own terminal)"
-            }
-            disabled={ending}
-            onClick={requestDelete}
-          >
-            {confirmDelete
-              ? "Confirm?"
-              : s.launched || !live
-                ? "Delete"
-                : "Stop watching"}
-          </button>
-        </div>
-        {notesOpen && (
-          <div className="rd-row-notes-wrap">
-            <textarea
-              className="rd-row-notes"
-              value={notes}
-              placeholder="Notes for this session (local only)…"
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-            />
-            <div className="rd-row-notes-bar">
-              <span className="hint">
-                {notes !== (s.notes ?? "") ? "Unsaved changes" : "Saved"}
-              </span>
-              <button
-                className="rd-btn rd-btn-sm rd-btn-primary"
-                disabled={notes === (s.notes ?? "")}
-                onClick={saveNotes}
-              >
-                Save
-              </button>
-            </div>
-          </div>
-        )}
       </div>
       {!collapsed &&
         node.children.map((child) => (
@@ -991,14 +665,9 @@ function TreeRow({
             depth={depth + 1}
             indent={indent}
             now={now}
-            labels={labels}
             selectedKey={selectedKey}
             onOpen={onOpen}
-      onOpenInbox={onOpenInbox}
-      onPin={onPin}
-            onFork={onFork}
-            onDelete={onDelete}
-            onRename={onRename}
+            onOpenInbox={onOpenInbox}
           />
         ))}
     </>

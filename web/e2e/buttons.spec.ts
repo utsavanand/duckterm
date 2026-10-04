@@ -39,11 +39,11 @@ test("notes open, save, and persist on the session", async ({ page }) => {
   await page.goto("/");
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
-  await row.hover();
-  await row.getByRole("button", { name: /^Notes/ }).click();
+  await row.locator(".rd-row-click").click();
+  await page.locator(".rd-session-controls").getByRole("button", { name: /^Notes/ }).click();
 
-  await row.locator(".rd-row-notes").fill("check the retry logic");
-  await row.getByRole("button", { name: "Save" }).click();
+  await page.locator(".rd-session-controls .rd-row-notes").fill("check the retry logic");
+  await page.locator(".rd-session-controls").getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Notes saved")).toBeVisible();
 
   const res = await fetch(`${base()}/sessions/${key}`);

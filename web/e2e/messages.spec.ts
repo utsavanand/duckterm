@@ -60,6 +60,10 @@ test("messages view renders structured conversation as HTML", async ({
     test: true,
   });
   expect(r.status).toBe(200);
+  await apiPost("/events", {
+    event_type: "SessionStart", session_key: r.body.session_key,
+    session_id: "seeded-session", runtime: "claude-code", cwd, test: true,
+  });
 
   await page.goto(base());
   await page.locator(".rd-row-name", { hasText: "msg-agent" }).click();
@@ -95,6 +99,10 @@ test("annotating a span stores it and sends it back to the agent", async ({
     test: true,
   });
   const key = launch.body.session_key as string;
+  await apiPost("/events", {
+    event_type: "SessionStart", session_key: key,
+    session_id: "seeded-session", runtime: "claude-code", cwd, test: true,
+  });
 
   await page.goto(base());
   await page.locator(".rd-row-name", { hasText: "annot-agent" }).click();
@@ -117,6 +125,11 @@ test("annotating a span stores it and sends it back to the agent", async ({
       return d.annotations?.length ?? 0;
     })
     .toBeGreaterThan(0);
+
+  // A newly saved note becomes visible immediately without changing tabs.
+  await expect(page.locator(".rd-msg-text mark")).toHaveText("demo");
+  await page.locator(".rd-msg-text mark").hover();
+  await expect(page.getByRole("tooltip")).toHaveText("explain this");
 
   // Sent to the agent: cat echoes the follow-up into the terminal.
   await page.locator(".rd-view-toggle button", { hasText: "Terminal" }).click();

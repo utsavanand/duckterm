@@ -2,14 +2,19 @@
 
 import base64
 import binascii
+import builtins
 import hashlib
+import json
 import os
+import re
 import sqlite3
 import stat
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+KINDS = ("kdd", "spec", "research", "preview", "evidence", "report", "other")
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
@@ -47,6 +52,19 @@ CREATE TABLE IF NOT EXISTS artifacts (
     UNIQUE(session_key, source_path)
 );
 CREATE INDEX IF NOT EXISTS artifacts_session ON artifacts(session_key, updated_at);
+CREATE TABLE IF NOT EXISTS artifact_metadata (
+    id TEXT PRIMARY KEY,
+    session_key TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    kind_source TEXT NOT NULL,
+    kept INTEGER NOT NULL DEFAULT 0,
+    removed_at INTEGER,
+    snapshot_json TEXT
+);
+CREATE INDEX IF NOT EXISTS artifact_metadata_session ON artifact_metadata(session_key);
+CREATE TRIGGER IF NOT EXISTS delete_artifact_metadata AFTER DELETE ON sessions
+BEGIN DELETE FROM artifact_metadata WHERE session_key = OLD.session_key; END;
+
 """
 FIELDS = "id, session_key, title, source_path, media_type, size, sha256, created_at, updated_at"
 
@@ -69,7 +87,7 @@ def _text(value: Any, field: str, limit: int) -> str:
     return value
 
 
-def registration(path: Path, title: str | None = None) -> dict[str, Any]:
+def registration(path: Path, title: str | None = None, kind: str | None = None) -> dict[str, Any]:
     """Read on the agent's host, never let a remote request read server files."""
     source = path.expanduser().absolute()
     fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -84,7 +102,27 @@ def registration(path: Path, title: str | None = None) -> dict[str, Any]:
         "source_path": str(source),
         "title": title if title is not None else source.name,
         "content_base64": base64.b64encode(content).decode("ascii"),
+        **({"kind": kind} if kind is not None else {}),
     }
+
+
+def inferred_kind(row: dict[str, Any]) -> str:
+    words = set(re.findall(r"[a-z]+", str(row["title"]).lower()))
+    for kind, hints in [
+        ("kdd", {"decision", "kdd"}),
+        ("spec", {"spec", "specification", "design"}),
+        ("research", {"research"}),
+        ("report", {"report"}),
+        ("preview", {"preview", "mockup"}),
+        ("evidence", {"screenshot", "evidence"}),
+    ]:
+        if words & hints:
+            return kind
+    if row["media_type"] == "text/html":
+        return "preview"
+    if row["media_type"].startswith("image/"):
+        return "evidence"
+    return "other"
 
 
 class ArtifactStore:
@@ -94,13 +132,117 @@ class ArtifactStore:
 
     def list(self, session_key: str) -> list[dict[str, Any]]:
         return [
-            dict(row)
+            self.describe(dict(row))
             for row in self.conn.execute(
                 f"SELECT {FIELDS} FROM artifacts WHERE session_key = ? "
                 "ORDER BY updated_at DESC, id",
                 (session_key,),
             )
         ]
+
+    def list_folder(
+        self,
+        folder: str,
+        limit: int = 500,
+        *,
+        include_removed: bool = False,
+        shared_root: str | None = None,
+    ) -> builtins.list[dict[str, Any]]:
+        prefix = folder + "/"
+        fields = ", ".join("a." + field.strip() for field in FIELDS.split(","))
+        scope = ""
+        params: tuple[Any, ...] = (folder, len(prefix), prefix)
+        if shared_root is not None:
+            # Filter before LIMIT; a narrower peer grant must not leak metadata
+            # or hide permitted artifacts behind an unauthorized page of rows.
+            scope = (
+                "AND EXISTS (SELECT 1 FROM session_api_members m "
+                "WHERE m.session_key = s.session_key AND m.folder = s.grp "
+                "AND m.root = ? AND m.root != '') "
+            )
+            params += (shared_root,)
+        rows = [
+            self.describe(dict(row))
+            for row in self.conn.execute(
+                f"SELECT {fields}, COALESCE(NULLIF(s.name, ''), s.session_key) AS session_name, "
+                "s.state AS session_state, s.grp AS folder FROM artifacts a "
+                "JOIN sessions s ON s.session_key = a.session_key "
+                "WHERE (s.grp = ? OR substr(s.grp, 1, ?) = ?) "
+                + scope
+                + "ORDER BY a.updated_at DESC, a.id LIMIT ?",
+                (*params, limit),
+            )
+        ]
+        if include_removed:
+            for row in self.conn.execute(
+                "SELECT m.snapshot_json, m.removed_at, COALESCE(NULLIF(s.name, ''), "
+                "s.session_key) AS session_name, "
+                "s.state AS session_state, s.grp AS folder FROM artifact_metadata m "
+                "JOIN sessions s ON s.session_key = m.session_key WHERE m.removed_at IS NOT NULL "
+                "AND (s.grp = ? OR substr(s.grp, 1, ?) = ?) "
+                + scope
+                + "ORDER BY m.removed_at DESC LIMIT ?",
+                (*params, limit),
+            ):
+                snapshot = json.loads(row["snapshot_json"])
+                snapshot.update(
+                    {
+                        key: row[key]
+                        for key in ("removed_at", "session_name", "session_state", "folder")
+                    }
+                )
+                rows.append(snapshot)
+        ordered = sorted(rows, key=lambda row: (-row["updated_at"], row["id"]))
+        return ordered if limit < 0 else ordered[:limit]
+
+    def describe(self, row: dict[str, Any]) -> dict[str, Any]:
+        meta = self.conn.execute(
+            "SELECT kind, kind_source, kept, removed_at FROM artifact_metadata WHERE id=?",
+            (row["id"],),
+        ).fetchone()
+        return {
+            **row,
+            **(
+                {**dict(meta), "kept": bool(meta["kept"])}
+                if meta
+                else {
+                    "kind": inferred_kind(row),
+                    "kind_source": "inferred",
+                    "kept": False,
+                    "removed_at": None,
+                }
+            ),
+        }
+
+    def update_metadata(self, session_key: str, artifact_id: str, req: Any) -> dict[str, Any]:
+        if not isinstance(req, dict) or not req or set(req) - {"kind", "kept"}:
+            raise ArtifactError(400, "Expected kind or kept")
+        if ("kind" in req and req["kind"] not in KINDS) or (
+            "kept" in req and type(req["kept"]) is not bool
+        ):
+            raise ArtifactError(400, "Invalid kind or kept value")
+        with self.conn:
+            row = self.conn.execute(
+                f"SELECT {FIELDS} FROM artifacts WHERE session_key=? AND id=?",
+                (session_key, artifact_id),
+            ).fetchone()
+            if row is None:
+                raise ArtifactError(404, "Artifact not found")
+            meta = self.describe(dict(row))
+            self.conn.execute(
+                "INSERT INTO artifact_metadata (id,session_key,kind,kind_source,kept) "
+                "VALUES (?,?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "kind=excluded.kind,kind_source=excluded.kind_source,kept=excluded.kept",
+                (
+                    artifact_id,
+                    session_key,
+                    req.get("kind", meta["kind"]),
+                    "owner" if "kind" in req else meta["kind_source"],
+                    req.get("kept", meta["kept"]),
+                ),
+            )
+        return self.describe(dict(row))
 
     def get(self, session_key: str, artifact_id: str) -> dict[str, Any]:
         row = self.conn.execute(
@@ -109,19 +251,53 @@ class ArtifactStore:
         ).fetchone()
         if row is None:
             raise ArtifactError(404, "Artifact not found")
-        result = dict(row)
+        result = self.describe(dict(row))
         result["content_base64"] = base64.b64encode(result.pop("content")).decode("ascii")
         return result
 
     def remove(self, session_key: str, artifact_id: str) -> None:
-        self.conn.execute(
-            "DELETE FROM artifacts WHERE session_key = ? AND id = ?", (session_key, artifact_id)
-        )
-        self.conn.commit()
+        with self.conn:
+            row = self.conn.execute(
+                f"SELECT {FIELDS} FROM artifacts WHERE session_key=? AND id=?",
+                (session_key, artifact_id),
+            ).fetchone()
+            if row is None:
+                return
+            meta = self.describe(dict(row))
+            if meta["kept"]:
+                raise ArtifactError(
+                    409, "This artifact is kept. Undo Keep before removing its saved copy."
+                )
+            now = time.time_ns() // 1_000_000
+            meta["removed_at"] = now
+            self.conn.execute(
+                "INSERT INTO artifact_metadata "
+                "(id,session_key,kind,kind_source,kept,removed_at,snapshot_json) "
+                "VALUES (?,?,?,?,0,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET "
+                "removed_at=excluded.removed_at,snapshot_json=excluded.snapshot_json",
+                (
+                    artifact_id,
+                    session_key,
+                    meta["kind"],
+                    meta["kind_source"],
+                    now,
+                    json.dumps(meta),
+                ),
+            )
+            self.conn.execute(
+                "DELETE FROM artifacts WHERE session_key=? AND id=?", (session_key, artifact_id)
+            )
 
     def register(self, session_key: str, req: dict[str, Any]) -> dict[str, Any]:
-        if set(req) != {"title", "source_path", "content_base64"}:
+        if set(req) - {"title", "source_path", "content_base64", "kind"} or not {
+            "title",
+            "source_path",
+            "content_base64",
+        } <= set(req):
             raise ArtifactError(400, "Expected title, source_path and content_base64")
+        if "kind" in req and req["kind"] not in KINDS:
+            raise ArtifactError(400, "Invalid artifact kind")
         title = _text(req["title"], "title", 512)
         source = _text(req["source_path"], "source_path", 4096)
         if not Path(source).is_absolute() or ".." in Path(source).parts:
@@ -157,8 +333,8 @@ class ArtifactStore:
                 f"SELECT {FIELDS} FROM artifacts WHERE session_key = ? AND source_path = ?",
                 (session_key, source),
             ).fetchone()
-            if old and old["sha256"] == digest and old["title"] == title:
-                return dict(old)
+            if old and old["sha256"] == digest and old["title"] == title and "kind" not in req:
+                return self.describe(dict(old))
             count, used = self.conn.execute(
                 "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM artifacts WHERE session_key = ?",
                 (session_key,),
@@ -190,4 +366,13 @@ class ArtifactStore:
                     content,
                 ),
             )
+            if "kind" in req:
+                self.conn.execute(
+                    "INSERT INTO artifact_metadata (id,session_key,kind,kind_source) VALUES "
+                    "(?,?,?,'declared') "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "kind=excluded.kind,kind_source=excluded.kind_source "
+                    "WHERE artifact_metadata.kind_source != 'owner'",
+                    (artifact_id, session_key, req["kind"]),
+                )
         return next(row for row in self.list(session_key) if row["id"] == artifact_id)

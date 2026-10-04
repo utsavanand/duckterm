@@ -19,6 +19,20 @@ function ev(
 const empty = () => new Map<string, SessionView>();
 
 describe("applyEvent", () => {
+  it("never revives a merged fork, even on a late SessionStart", () => {
+    let state = applyAll([ev({ event_type: "SessionStart" }), ev({ event_type: "Notification", lifecycle: "merged" })]);
+    for (const event_type of ["SessionStart", "PostToolUse", "SessionEnd"]) {
+      state = applyEvent(state, ev({ event_type }));
+      expect(effectiveState(state.get("s1")!, Date.now())).toBe("merged");
+    }
+  });
+  it("lets a session settle to idle after a merge summary is delivered at its turn end", () => {
+    const stopped = applyAll([ev({ event_type: "SessionStart" }), ev({ event_type: "Stop", _ts: 2000 })]);
+    const after = applyEvent(stopped, ev({ event_type: "MergeDelivered", _ts: 2001 }));
+    expect(after.get("s1")).toEqual(stopped.get("s1"));
+    expect(effectiveState(after.get("s1")!, 2000 + IDLE_SETTLE_MS + 1)).toBe("idle");
+  });
+
   it("creates a session from its first event, deriving the label from source_app", () => {
     const after = applyEvent(
       empty(),
@@ -96,6 +110,15 @@ describe("applyEvent", () => {
     // Only a SessionStart revives it.
     const revived = applyEvent(stopped, ev({ event_type: "SessionStart" }));
     expect(revived.get("s1")!.state).toBe("busy");
+  });
+
+  it("reads events the way the server does: auto-reviewed requests stay busy, idle notices are idle", () => {
+    const state = (e: Partial<DucktermEvent>) =>
+      applyEvent(empty(), ev({ event_type: "PermissionRequest", ...e })).get("s1")!.state;
+    expect(state({ auto_reviewed: true })).toBe("busy"); // Codex's reviewer settles it
+    expect(state({ event_type: "Notification", notification_type: "permission_prompt" })).toBe("waiting");
+    expect(state({ event_type: "Notification", notification_type: "idle_prompt" })).toBe("idle");
+    expect(state({ event_type: "Notification", message: "Claude is waiting for your input" })).toBe("idle");
   });
 
   it("maps permission requests to waiting and SessionEnd to terminated", () => {

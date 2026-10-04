@@ -20,10 +20,12 @@ every other runtime path stays generic.
 import json
 import re
 import shlex
+from collections.abc import Iterable
 from pathlib import Path
 
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
 from duckterm.runtimes.base import Harness, HookSpec, SessionState, prompt_line_rest
+from duckterm.runtimes.message_cache import MessageCache, unavailable_response
 
 
 def project_slug(cwd: Path) -> str:
@@ -39,6 +41,8 @@ def project_slug(cwd: Path) -> str:
 class ClaudeCodeRuntime(Harness):
     name = "claude-code"
     turn_end_inbox_notice = True
+    priority_delivery = True
+    owner_prompt = ("PermissionRequest", "AskUserQuestion")
     hook_spec = HookSpec(
         global_rel=Path(".claude") / "settings.json",
         repo_rel=Path(".claude") / "settings.json",
@@ -76,10 +80,7 @@ class ClaudeCodeRuntime(Harness):
         return path if path.exists() else None
 
     def latest_transcript(self, *, cwd: Path) -> Path | None:
-        """The most recently modified transcript for a cwd. A session launched
-        in-process (PTY, no hooks) never reports Claude's own session_id, so we
-        can't locate its transcript by id — but the newest .jsonl in the project
-        slug dir IS the active session's. Used by the structured-messages view."""
+        """Newest transcript for directory-level discovery, never session identity."""
         slug = project_slug(cwd)
         proj = Path.home() / ".claude" / "projects" / slug
         if not proj.is_dir():
@@ -92,27 +93,30 @@ class ClaudeCodeRuntime(Harness):
         return parse_transcript(path) if path else []
 
     def messages(self, *, cwd: Path, session_id: str | None) -> list[dict[str, object]]:
-        # Prefer the exact transcript by session_id (hooked sessions report it);
-        # fall back to the newest transcript for the cwd (in-process PTY
-        # launches don't report Claude's session_id).
+        # A shared directory never identifies a conversation.
         path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
-        if path is None:
-            path = self.latest_transcript(cwd=cwd)
-        return parse_messages(path) if path else []
+        return _MESSAGE_CACHE.read(path) if path else []
+
+    def messages_response(self, *, cwd: Path, session_id: str | None) -> bytes:
+        path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
+        return (
+            _MESSAGE_CACHE.response(path, self.name, session_id)
+            if path
+            else unavailable_response(session_id)
+        )
 
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         return [*self._argv, "--resume", session_key]
 
+    def model_arguments(self, model: str) -> list[str]:
+        return ["--model", model]
+
+    def can_resume_unambiguously(self, *, cwd: Path, recorded: str | None) -> bool:
+        return bool(recorded and self.locate_transcript(cwd=cwd, session_id=recorded))
+
     def find_resumable_id(self, *, cwd: Path, recorded: str | None) -> str | None:
-        # The recorded id isn't always valid (a forked/transient id, or its
-        # transcript was deleted) — verify the file exists. Falling back to the
-        # newest transcript in the project dir matches what the Messages view
-        # and snapshot restore already do for in-process launches, which never
-        # report Claude's own session_id.
-        if recorded and self.locate_transcript(cwd=cwd, session_id=recorded):
-            return recorded
-        latest = self.latest_transcript(cwd=cwd)
-        return latest.stem if latest else None
+        # Never substitute a peer's conversation in the same directory.
+        return recorded if self.can_resume_unambiguously(cwd=cwd, recorded=recorded) else None
 
 
 def parse_transcript(path: Path) -> list[dict[str, str]]:
@@ -214,8 +218,12 @@ def parse_messages(path: Path) -> list[dict[str, object]]:
     `id` is the record's line index (stable for a given transcript), used as the
     annotation anchor.
     """
+    return _parse_message_lines(path.read_text(errors="replace").splitlines(), 0)
+
+
+def _parse_message_lines(lines: Iterable[str], start: int) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    for i, line in enumerate(path.read_text().splitlines()):
+    for i, line in enumerate(lines, start):
         if not line.strip():
             continue
         try:
@@ -267,3 +275,6 @@ def _blocks(content: object) -> list[dict[str, object]]:
         elif bt == "tool_result":
             out.append({"type": "tool_result", "text": _extract_text(block.get("content"))})
     return out
+
+
+_MESSAGE_CACHE = MessageCache(_parse_message_lines)

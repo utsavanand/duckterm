@@ -23,8 +23,8 @@ test("stop pauses a PTY session; resume relaunches its recorded command", async 
   const row = page.locator(".rd-row", { hasText: "stopres" });
   await expect(row).toBeVisible({ timeout: 10_000 });
 
-  await row.hover();
-  await row.getByRole("button", { name: "Stop", exact: true }).click();
+  await row.locator(".rd-row-click").click();
+  await page.locator(".rd-session-controls").getByRole("button", { name: "Stop", exact: true }).click();
   // Stopping a tmux-backed session waits for its tail loop to notice the pane
   // died — give it the same headroom as the resume poll (the 5s default flakes
   // when the whole suite runs).
@@ -37,8 +37,8 @@ test("stop pauses a PTY session; resume relaunches its recorded command", async 
 
   // The stopped row offers Resume; the relaunch runs `sh -c ...` again (the
   // recorded command), so the terminal reconnects and shows the banner.
-  await row.hover();
-  await row.getByRole("button", { name: "Resume" }).click();
+  await row.locator(".rd-row-click").click();
+  await page.locator(".rd-session-controls").getByRole("button", { name: "Resume" }).click();
   await expect
     .poll(
       async () => (await findSession((s) => s.session_key === key))?.state,

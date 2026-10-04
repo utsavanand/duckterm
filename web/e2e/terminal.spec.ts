@@ -92,23 +92,25 @@ test("terminal: switching agents shows the other agent's terminal", async ({
 });
 
 test("terminal: Shift+Enter sends a newline, not a submit", async ({ page }) => {
-  await launchCat("cat-NL");
-  await page.goto(base());
-  const row = page.locator(".rd-row-name", { hasText: "cat-NL" });
-  await expect(row).toBeVisible({ timeout: 10_000 });
-  await row.click();
-  await waitTerminalReady(page);
-
-  // cat runs in canonical mode: an LF completes the line, so cat echoes AAA a
-  // second time. Two AAAs = the newline byte reached the agent; had Shift+Enter
-  // sent nothing, AAA would appear exactly once with BBB glued to it.
-  await page.keyboard.type("AAA");
-  await page.keyboard.press("Shift+Enter");
-  await page.keyboard.type("BBB");
-
-  await expect(visibleRows(page)).toContainText("BBB", { timeout: 5_000 });
-  const joined = (await visibleRows(page).allTextContents()).join("\n");
-  expect(joined.split("AAA").length - 1).toBe(2);
+  // Canonical terminal echo and cat's output are independent writers: later
+  // typing can interleave with cat's echo, splitting a visible BBB. Check the
+  // bytes received by a raw-PTY child instead, distinguishing LF from CR too.
+  const code = "import os,tty; tty.setraw(0); os.write(1,b'RAW_READY\\r\\n'); data=b''; exec(\"while len(data)<7:\\n data+=os.read(0,7-len(data))\"); os.write(1,b'RECEIVED_'+data.hex().encode()+b'\\r\\n'); os.read(0,1)";
+  const result = await apiPost("/sessions/launch", {
+    command: "python3 -u -c '" + code.replaceAll("'", "'\\''") + "'",
+    cwd: "/tmp", name: "cat-NL", in_terminal: false, test: true,
+  });
+  expect(result.status).toBe(200);
+  const key = String(result.body.session_key);
+  try {
+    await page.goto(base());
+    await page.locator(".rd-row-name", { hasText: "cat-NL" }).click();
+    await expect(visibleRows(page)).toContainText("RAW_READY");
+    await page.keyboard.type("AAA");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("BBB");
+    await expect(visibleRows(page)).toContainText("RECEIVED_4141410a424242");
+  } finally { await apiDelete(`/sessions/${key}`); }
 });
 
 

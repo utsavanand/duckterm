@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-09-27 against `main` f6575b3, installed v0.4.79)
+## Status at a glance (reconciled 2026-09-30 by release-dev at the v0.4.109 release)
 
 | Item | Status |
 | --- | --- |
@@ -15,15 +15,61 @@ the session API.
 | F12 Work tracking | **Reverted in v0.4.74** (PR #96) per the owner's deferral; schema stays v5. Back on the roadmap for a lighter redesign. |
 | F10 Request status updates | Removed with the F12 revert. Received/done updates and request chains are **not** on main. |
 | B9 Terminal typing latency | **Shipped v0.4.78** (PR #95); native Mac confirmation still open (PR #112) |
+| B10 Oracle reminder reliability | **Shipped v0.4.80** (PR #119): new mail wakes idle agents; read-but-unanswered questions get one 4-hour follow-up |
+| Codex Resume identity | **Stopgap shipped v0.4.81** (PR #125): Resume uses only the session's recorded ID and refuses (409) instead of guessing in a shared folder. Lifetime ID pinning stays with F15. |
+| F16 Self-contained Mac app | Bundled Python and tmux ready (PR #124, draft); waiting on the missing-tmux fallback screen. **Releases are Developer ID signed and notarized from v0.4.82** (owner's team, `sotto-notary` profile for now) |
+| Mail analytics | **Backend shipped v0.4.82** (PR #128): inbox counts survive retention; owner-only API, no UI yet. **Schema v6.** |
+| AGENTS.md rules editor load race | **Fixed v0.4.84** (PR #136): Add waits for the initial load; a late load no longer wipes new rules or saves an empty list |
+| Terminal reattach replay | **Shipped v0.4.85** (PR #138): corrected re-land of #130; total control-escape decoder, independent drain, no event-loop tmux calls |
+| Terminal reader fairness | **Hotfix v0.4.86** (PR #143): a buffered output burst no longer starves a ready viewer into being dropped as stalled |
+| Session card and comment highlights (F6) | **Shipped v0.4.85** (PR #140, re-land of #127) |
+| Session card: all actions visible | **Shipped v0.4.87** (PR #145): no More menu; every applicable action shown; Delete in its own bottom section |
+| F15 Restart + Change model | **Shipped v0.4.88** (PR #133): same-session restart keeps the conversation; model change persists; busy restarts queue and cancel; drafts protected. **Schema v7.** Local sessions only. Known limits: Codex model shows 'Not reported yet' (transcript stats are Claude-only); a sandboxed Codex can't run the `duckterm session` CLI after resume |
+| Session / Connectors views | **Shipped v0.4.89** (PR #147): separate right-panel views; the terminal size is stable at every width |
+| Archive Undo | **Shipped v0.4.89** (PR #152): 8-second durable Undo window, crash-safe. **Schema v8.** |
+| Feedback vs typed keys ordering | **Fixed v0.4.89** (PR #153): artifact/message feedback shares the terminal input FIFO, so it can't overtake a half-typed draft; queued bytes are batched |
+| Model picker + readable light selections | **Shipped v0.4.90** (PR #155): Change model is a dropdown of the runtime's exact models, loaded when opened, with the current model kept on error; light-theme selections are readable. Catalog errors show the backend's reason (e.g. sign-in guidance) from **v0.4.91** (PR #158) |
+| Connectors Check now + last used (B2) | **Shipped v0.4.99** (PR #149, connectors-dev; the owner's complaint since 09-23). 'Check now' runs each connector's real harness path and reports the tool count or the error; a connector whose handshake fails, or whose tool list is empty, malformed or has unusable entries, reports FAILING, never healthy. Each connector chooses which agents it reaches, and the row names them ('Available to Claude Code · not Codex') instead of a tick per config entry — the old tick only meant a line was written to a file, so it claimed Codex on machines without Codex. 'Last used' comes from hook events. **Follow-up (owner decision 2026-10-01):** GET /connectors has never required the owner token and now also carries last_used and use_count; it is loopback-only, so local programs can read the owner's connector usage. Owner chose to ship and require the token in a follow-up; **fixed v0.4.102** (PR #199): GET /connectors now requires the owner token, and only that read is gated. An agent credential is refused even when it also presents the owner token |
+| Analytics page | **Shipped v0.4.85** (PR #131): exact model usage and Agent Mail history |
+| Codex false waiting | **Shipped v0.4.85**: auto-reviewed requests stay busy; confirmed prompts give a note plus waiting. **v0.4.90** (PR #157): the dashboard's live fold follows the same rule, so the badge no longer flickers to waiting. Restart recovery and unreadable-prompt notes follow (oracle-codex-waiting 23890c2) |
+| File a bug from DuckTerm | **Deferred** (owner, 2026-09-29). Local-only reporter exists in the Mac app (BugReport.swift). Missing: a dashboard entry (browser/remote) and a destination; recommended: a GitHub issue via the owner's connector, mail draft as fallback, payload preview first. Open question: 'anybody' = owner on any device, or other people (the latter needs accounts). Spec: product artifact 'Spec — File a bug from DuckTerm' |
+| Oracle voice mode | **Shipped v0.4.91** (PR #156): spoken 'needs your input' (chime before approvals) and 'is complete' after the settle, one re-announce at 15 min, held while you type, quiet about the backlog at page load, voice picker with previews. Browser speechSynthesis, so it speaks only while a dashboard is open. **Optional natural voice shipped v0.4.93** (PR #161): local Kokoro ONNX int8 (about 310 MB, any Mac), Heart (US) default, installed only on request (Settings → Voice or `duckterm voice install`), hash-locked, no GPL, excluded from backups; falls back to the best macOS voice. **Natural voices only from v0.4.95** (PR #172, owner-directed): the macOS voices are removed from the code; with nothing installed, voice can't be turned on and only the download is offered; a runtime failure gives a chime plus 'Voice unavailable: <reason>', never a Mac voice. Real download and audio are verified by the owner after install (owner's choice). Spec: [oracle-voice-spec.md](oracle-voice-spec.md) |
+| OpenCode harness with any model | **Deferred**; feasibility with the architect. OpenCode has hooks (25+ plugin events) and upstream model selection; risk: transcript storage moved to SQLite (v1.14) and changed again in 2.x. Detail: [pie-in-the-sky.md, 'Idea: OpenCode harness with any model'](pie-in-the-sky.md) |
+| User identity / accounts | **None, by design**: one machine, one human, loopback as the boundary. Backup-to-remote runs as the owner's own gcloud login into their own bucket. Accounts are needed only when two people share one DuckTerm; see [accounts-and-handoff-design.md](accounts-and-handoff-design.md) |
+| Router mode (DuckTerm picks the model per task) | **Not started.** Owner-requested 2026-09-28; this is F5 step (c), the model router. Options and open questions: [pie-in-the-sky.md, 'Idea: router mode'](pie-in-the-sky.md#idea-router-mode-duckterm-picks-the-model) |
 | Local and remote sessions in one window | Shipped v0.4.75 (PR #68); location icons v0.4.76-0.4.77; remote clouds on the Oracle page v0.4.79 |
 | B4, B7, B8 | Fixed (B4 verified on installed v0.4.73; B7 v0.4.70; B8 v0.4.69) |
 | Control Tower | Shipped (PR #39); menu wording v0.4.73 |
 | Inbox redesign | Shipped v0.4.68 |
-| B3, B6, B10, F6, duck settle, waiting lifecycle | Open; see [bugs-and-backlog.md](bugs-and-backlog.md) |
+| Waiting lifecycle + duck settle | **Shipped v0.4.94** (PR #168), per the owner's decisions: a raised hand stays up until the owner attends (opening the session in the dashboard, answering its note, deciding its approval, or an owner relay rule answering it) — the agent's own events never lower it; the duck settle is 30 s after a turn ends, and hooks always win over a screen reading for Claude Code and Copilot. New nullable column `attention_since`, added on open; schema stays v8 and older builds still open the DB |
+| @ messaging from folder chat | **Shipped v0.4.95** (PR #170, ui-dev): address a session or a subfolder with @ from folder chat, with saved replies. Owner-only dispatch, scoped to the subtree, idempotent retries. No recipient cap: QA queued 501 recipients without truncation, and the owner chose to ship without one (2026-09-30), since folders are far smaller in practice |
+| Priority owner broadcasts | **Delivery machinery shipped v0.4.96** (PR #173, oracle-main-dev): `priority: true` on the owner broadcast route pins all open priority messages as one block at every turn end until the agent REPLIES, and starts an Oracle pass immediately for an idle agent, skipping the 5-minute settle. A message counts as delivered only once the prompt was actually submitted; a failed or stuck paste stays 'pending next turn'. Codex and Copilot have `priority_delivery` false, so they get 'inbox only', never reported as delivered. `DELETE /broadcasts/:request_key` cancels all copies; `GET` returns per-recipient status. The **sending UI** (chat-box priority mode and chips) is ui-dev's and is not built |
+| B15 Messages showed another session's conversation | **Fixed v0.4.97** (PR #181, main-dev; owner-reported). The Messages tab showed a DIFFERENT conversation on each visit, worst on terminals with a forked or child session, and a child's name reverted to the folder name on reopen. Cause: when a session's id was missing or its transcript wasn't found, `messages()`, `messages_response()` and `find_resumable_id()` all fell back to `latest_transcript(cwd)` — the newest `.jsonl` in the project dir — whose docstring asserted it "IS the active session's". A fork puts a second transcript in the same dir, so the newest-mtime one won. Resume could attach to the wrong conversation. Now transcripts bind to the recorded id only; an unidentifiable session returns `identity_missing`/`not_found` with a reason, and an unsafe resume returns 409. Launch names persist; **null** historical names are repaired from a saved SessionStart name, and owner renames are preserved. The dashboard shows WHY (PR #182, ui-dev): 'Conversation not identified yet' with the reason and what happens next, or 'Conversation transcript not found on this machine' — distinct from a genuinely empty conversation, which is what the owner's bug made indistinguishable. **Known gaps:** the name repair is conditional on a saved name; the owner's existing damage is on a second laptop and unverified |
+| B14 Messages tab polling cost | **Fixed v0.4.97** (PR #178): every 3 s poll re-read and re-parsed the whole transcript (33-52 ms on 8 MB, 300-500 ms on 33-69 MB). Now a bounded per-runtime cache serves the complete immutable response; measured 110 ms cold, **0.038 ms warm** (release-dev) and 108/0.037 ms (main-qa), byte-identical. Distinct from B15: this is speed, not correctness. **Frontend half shipped v0.4.98** (PR #184, ui-dev): returning to Messages keeps the last conversation, refreshes are serialized, and polling pauses while the pane is hidden. Snapshots carry `transcript.status`/`reason`, so v0.4.97's 'not identified' / 'not found on this machine' explanations survive tab switches — the earlier candidate (5ac5747) would have erased them and was excluded |
+| Fork merge-back delivery | **v0.4.99** (PR #180): a MergeDelivered event fires once, on the first CONFIRMED delivery of a merge summary, and changes no session state (including the raised-hand attention_since). A summary cancelled while Oracle is pasting it does not fire. Third delivery bug in this feature family where 'delivered' had to be proven, not assumed |
+| Supported Codex range | **0.155.x verified; 0.159+ unsupported.** On 0.159 Codex runs a shared daemon that files every Codex session's hook events under the first launcher, and request_user_input_async became request_user_input (refused in Default mode). On 2026-10-01 a dev probe accidentally upgraded the owner's Codex to 0.159.3; release-dev rolled it back to 0.155.1 and set check_for_update_on_startup = false in ~/.codex/config.toml. Codex also has a separate background updater, so this may not block every path. 0.159 support needs a per-session identity channel that survives the shared daemon (architect designing; PR #187 is the start) |
+| Codex/Copilot owner questions | **Fixed v0.4.100** (PR #185, oracle-main-dev; owner-reported, nine owner prompts lost in one week). Codex request_user_input_async and Copilot ask_user questions become Oracle choice notes, one per queued question until its own answer; Oracle never types into a session with a queued question. Choice notes are terminal-only by product's spec. Verified on Codex 0.155.1 only |
+| Terminal polling CPU | **Fixed v0.4.100** (PR #192, main-dev): reads drain at most 64 KiB per tick, tmux liveness is probed at most once a second, and hook-capable screen scans are batched. Live baseline on the owner's server before install: **72% CPU, steady, 28 panes** (release-dev, 6x10 s windows). Post-install measurement recorded in the release PR. Trade-offs: ~2.5 MiB/s per-pane ceiling; tmux death detection ~1-1.2 s |
+| B17 Deleted parent kept its children linked | **Fixed v0.4.100** (PR #189): deleting a parent clears each child's active link immediately, so Ungroup works without reload; late events and remote snapshots can't restore it; grandchildren keep their surviving parent. Managed shared-worktree deletion not verified |
+| B12 Terminal size after a panel collapse | **Fixed v0.4.100** (PR #190): a visible terminal at zero size refits on the next frame. Message-table readability is a separate preview awaiting owner review |
+| B6 Browser notification preference | **Fixed v0.4.100** (PR #191): the preference persists, denied permission wins, and enabling or loading never replays a backlog |
+| Update DuckTerm controls | **Read-only, v0.4.100** (PR #195): Settings shows installed and latest versions. Install deliberately disabled until a detached updater with checksum, snapshot/restore, backup mutual exclusion and rollback exists |
+| Dashboard redraws every second (P0-4) | **Fixed v0.4.109** (PR #212, ui-dev): the App-wide 1 Hz clock re-rendered every terminal each second (30 sessions: 90 redundant renders in 90 s); clocks are now local to the views that need them, unchanged archive responses keep identity, and History pauses while hidden. 90 to 0 redundant renders; 30 s idle and 90 s voice grace preserved |
+| Stale logo after an update | **Fixed v0.4.107** (PR #208, ui-dev; owner-reported). The yellow logo shipped in v0.4.105, but `/favicon.svg` was served `public, max-age=31536000, immutable` under an UNHASHED name, so the Mac app's WKWebView kept showing its cached green duck. The logo is now one content-hashed SVG (header, favicon and Mac icons); `immutable` applies only to the dashboard's hashed `/assets/` tree and never to `.html`; everything else is `no-cache` and the token-bearing index is `no-store` |
+| Connector usage race | **Fixed v0.4.106** (PR #206, connectors-dev). `connector_last_used` ran via `asyncio.to_thread` on HistoryStore's single shared, unlocked sqlite connection while the serving thread wrote, so GET /connectors returned HTTP 500s (IndexError) and wrong usage counts (main-qa: 81 errors and 177 wrong counts in 12 s on main; 0 with the fix). Now runs inline. **Costs a ~41 ms event-loop pause** on the owner's real DB (a full `SCAN events`), only when the Connectors tab mounts or the window gains focus; accepted by the owner. **Mitigation, not the structural fix:** other HistoryStore reads still go through workers. Product accepted main-dev's single-owner-thread DB design as the follow-up. **Structural fix shipped v0.4.109** (PR #211, main-dev): HistoryStore's connection is opened `check_same_thread=True`, so ownership is ENFORCED; Messages/pins/relay/progress capture immutable identity on the owner thread before worker dispatch. A partial expression index on MCP tool use takes the connector lookup from 40.4 ms to 0.10 ms on the owner's real DB (41 ms one-time build); no schema bump, and v0.4.107 still opens the indexed DB. main-qa audited 91 thread hand-off sites and found no remaining worker DB access |
+| Sidebar filters + DuckTerm brand | **Shipped v0.4.105** (PR #203, ui-dev; owner-approved composite). Filter sessions by status, harness and local/remote (OR within a group, AND across groups); cross-folder results show folder paths; choices persist. Joined DuckTerm wordmark, the owner's exact yellow SVG (SHA-256 ce9b10ef…), and both Mac icons regenerated from it. Muted speaker replaces unavailable-voice text; empty pin strips hidden; folder controls on hover/focus. **Collapsible filters, v0.4.108** (PR #210, owner-approved polish): the filter panel collapses beside the Agents control; an active filter keeps narrowing the list while collapsed and stays visible through a count badge and Clear |
+| Owner notes frozen in the dashboard | **Fixed v0.4.104** (PR #198, oracle-main-dev; leading candidate for B16's 'native miss', where a note sat open on the server for 3 hours unseen by the owner). The dashboard's relay polling awaited fetch with NO timeout, so one hung request froze Needs you and the Oracle chat until reload. Polls now abort at 10 s, refresh on focus, reuse an in-flight attempt and throttle focus refreshes to 1 per second (main-qa's correction: 20 focus cycles had produced 41 requests). **Cause of the 3-hour miss not proven** — if notes still go missing, look elsewhere |
+| Fork merge-back | **Shipped v0.4.103** (PR #193, ui-dev; owner-approved feature). A fork sends an editable, reviewed summary to its parent through the priority broker; the child closes into a readable, non-resumable `merged` state (or stays open for later merges). Nothing revives a merged child: not Resume, Restart, snapshot restore, a direct state change or a late event. The parent checkpoint is created only on CONFIRMED delivery (MergeDelivered, #180), with startup recovery for the crash gap. **Schema v10 -> v11, approved by the owner 2026-10-02:** adds the `fork_merges` table, created on an already-v10 DB (no version gating), and drops nothing. **Shipped without a native real-Claude fork+merge test, by the owner's choice:** the scratch Claude home wasn't logged in. Simulated QA: 106 checks, including real v9 and v0.4.101-v10 migrations |
+| Folder Tasks | **Shipped v0.4.101** (PR #194, ui-dev; owner-approved feature). `duckterm session task start|update|handoff|list`, session-scoped; a Tasks widget in Folder details and Oracle; the owner's Assign & send creates the task and the inbox message in one transaction. **Schema v8 -> v10, approved by the owner 2026-10-02:** adds `folder_tasks`, and DROPS the retired F12 tables (`session_work`, `session_work_events`, `session_work_updates`) after archiving every row to a private `retired-f12-<content hash>.json` beside the DB; a failed archive aborts the drop. Older builds refuse a v10 DB, so rollback means restoring the pre-install backup. Fork merge-back (#193, v9) ships AFTER this, rebased onto it: shipping #193 first would let #194's code strip merged-state protection (main-qa, test_v9_merge_data_and_nonrevivable_state_survive) |
+| Fork child identity | **Fixed v0.4.97** (PR #179): repeated conversation forks reused `convfork-<native-id-prefix>`, so the second launch took over the first child's supervisor identity. Each fork now gets a fresh key; both fork types inherit `test:true` from parent or request |
+| Owner-approved UI awaiting publication | Bug-report UI plus the Mac bridge fix (ui-dev 59467fd, which unblocks backend PR #166), Oracle widgets (ef5f01e) and folder details (3aae5f8) are **implemented and verified locally, not shipped**. ui-dev's approval review blocks publishing to the public repo without the owner's explicit permission, given so far only for @ messaging |
+| B13 Peers can't read each other's artifacts | **Shipped v0.4.94** (PR #167, remote-session-dev). `duckterm session artifacts` listed only the caller's own, which blocked the contracts review. Fix: `session artifacts --folder PATH` and `session artifact get ID`, session credentials only, root-scoped and read-only |
+| File a bug from DuckTerm (dashboard) | Backend PR #166 passed main-qa (backend only). Blocked on the Mac bridge (routes rejected, ZIPs corrupted by UTF-8 conversion, size caps below the 15 MiB maximum) and on the owner-reviewed frontend. Still **Deferred** on the roadmap until the owner un-defers it |
+| B3, B6, B12, F6 | Open; see [bugs-and-backlog.md](bugs-and-backlog.md) |
 | F11 Answer agents without typing | Stop-hook path now carries inbox reminders (`cd25224`); relaying owner answers not built |
 | B2, F7, F8, Oracle on WhatsApp | Designed; waiting on owner review or scheduling |
 | F14 Cross-host discovery and messaging | Designed ([cross-host-collaboration-design.md](cross-host-collaboration-design.md), PR #110) |
-| Folder view + Feature tracker | Proposed: [folder-view-spec.md](folder-view-spec.md); needs rework now that F12 is reverted |
+| Folder view | **Chat + Artifacts shipped v0.4.92** (PR #162): clicking a folder name opens a folder-scoped chat (running sessions in that subtree; its own history in `~/.duckterm/folder-chats.json`) and the artifacts its sessions produced; the chevron only expands the tree. The feature tracker part still needs rework now that F12 is reverted: [folder-view-spec.md](folder-view-spec.md) |
 | F1, F2, F4, F5, urgent messages, Interrupt, approvals re-home | Not started |
 
 Shipped since this doc was first written (2026-09-20 → 22):
@@ -546,6 +592,55 @@ F13. **Compact session-location indicators — IMPLEMENTED, awaiting
      row text into an icon. Evidence caveat: browser checks used a
      controlled remote bridge, **not live SSH**.
 
+F15. **Session controls: right-panel card, Restart, Change model, Switch
+     harness** (owner-directed 2026-09-27 via `product`; spec:
+     [session-controls-spec.md](session-controls-spec.md), reviewed by the
+     architect, **sent to `main-dev` to build 2026-09-28**).
+     Owner decisions, recorded in the spec: no inline action buttons in the
+     sidebar in **any** density — everything lives in a right-panel Session
+     card, and the row `⋯` goes too; Switch harness stays on the same card
+     (no child session); Change model **is** a restart with the new model,
+     so the Restart dialog offers the model choice; Restart **waits for the
+     current turn to end** and never interrupts.
+     **BLOCKING on Restart — the Codex hazard is live, not theoretical.**
+     Verified 2026-09-28: two live Codex sessions share
+     `/Users/utsava/workspace-2026/duckterm`, and
+     `runtimes/codex.py find_resumable_id()` resolves the resume target by
+     the **newest rollout in that cwd** (in-process launches never report
+     Codex's session id). Both therefore resolve to the same rollout, so
+     restarting either can **silently attach to the other session's
+     conversation**. Tolerable for Resume — deliberate and occasional —
+     but not for Restart, which this spec makes routine on every session
+     *and* the mechanism for Change model. Required first: pin the rollout
+     id **at launch** when it is unambiguous, or disable Restart/Change
+     model for Codex sessions sharing a cwd, with the reason shown.
+     Treat "can resume be targeted unambiguously" as a per-harness
+     capability, default false (RETRO: the empty-Messages-tab rule).
+     Other design calls sent with the review: **Resume on stopped rows** is
+     the one action worth an exception to decision 1, flagged for the owner
+     as requested; Restart should **refuse** on an unsent draft rather than
+     warn-and-proceed (losing typed input to a routine action is what stops
+     people using a feature); define "turn ended" as the Stop hook event,
+     not an idle heuristic; a queued restart must be visible and
+     cancelable; Change model must use the harness's model flag, never
+     typed `/model` (that is the mechanism F11 exists to remove); Switch
+     harness is **seeded, not resumed** — a transcript is harness-specific
+     and the UI must say so.
+     Sequencing: Session card first (pure UI, immediate value in compact),
+     then Restart *after* the Codex fix, then Change model, then Switch
+     harness with a preview.
+     **Preview ready, awaiting owner review** (`ui-dev`, 2026-09-28):
+     http://127.0.0.1:4388/session-controls.html, registered in Artifacts —
+     right-panel actions, same-card editable harness handoff,
+     **queued/cancelable restart**, and **draft/identity blocks**. Design
+     only; no production implementation and no F15 build approval inferred.
+     Worth noting the preview already encodes the review constraints rather
+     than deferring them: the queued restart is cancelable, the draft block
+     is present, and `main-dev` holds the exact Codex conversation-identity
+     requirement, Stop-completion sequencing, draft **recheck at execution**
+     (not only at queue time — a draft can be typed while a restart waits),
+     and persisted-queue requirements.
+
 F14. **Cross-host session discovery and messaging** (owner-requested
      2026-09-28). Design:
      [cross-host-collaboration-design.md](cross-host-collaboration-design.md).
@@ -623,6 +718,125 @@ owner works in the Mac app. RETRO records three cases where browser e2e
 passed while the WKWebView shell was broken. The acceptance test that
 settles it is the simplest one — **the owner typing across ~23 sessions and
 noticing it is no longer slow.**
+
+F16. **Self-contained Mac app — first-launch works with no developer
+     setup** (`main-dev` + `ui-dev`, 2026-09-28; branch
+     `fix/self-contained-mac`, `3c3d975`). The install story a stranger
+     actually meets, which nothing tracked until now.
+     Backend: a **pinned** official CPython 3.13.15 arm64 install-only
+     archive with its **SHA256 verified on every build and cache hit**, the
+     dashboard built in, an agent-CLI wrapper for app-launched hooks, and
+     **no developer-checkout fallback** — the path that made the app work
+     on this machine while failing everywhere else. Startup reuses a running
+     server, else the bundled interpreter; the installed CLI is a developer
+     fallback only. **No silent CLI overwrite**, no runtime bytecode writes,
+     explicit embedded Mach-O signing with deep strict verification. Zip
+     29.2 MB.
+     Evidence is the strong kind: a **relocated** app copy with an isolated
+     identity, an **empty temporary home**, and a **stripped PATH with no
+     installed CLI** started its bundled interpreter and served HTTP 200.
+     Repro: `python3 mac/Tests/bundled-runtime.py mac/build/DuckTerm.app`.
+     Corrupt archives are rejected before extraction. Stated limit, and it
+     is the right one to state: **this is not a clean-account
+     Gatekeeper/notarization claim.**
+     UI half (`ui-dev`, preview pending owner review):
+     http://127.0.0.1:4388/missing-tmux.html — tmux is genuinely required
+     (`agents/tmux.py` gates on `shutil.which("tmux")`) and a fresh user
+     hitting that today gets a failure rather than guidance. The preview
+     offers a copyable install command, a Homebrew link, Recheck/Later, and
+     keeps the dashboard and remote use available meanwhile. No production
+     wiring yet; `main.swift`, `ServerProcess.swift` and `mac/build.sh`
+     untouched.
+     Not claiming release-complete until the tmux guidance is included —
+     correct call: shipping a self-contained app that still dead-ends on a
+     missing dependency would recreate the problem it was built to solve.
+     **Owner-approved extension 2026-09-28: BUNDLE TMUX TOO.** Measured
+     cost ~1.5 MB (tmux 924 KB + libutf8proc/libevent/libncursesw) on a
+     29 MB zip — ~5% to remove the most likely first-launch failure. The
+     real work: tmux links Homebrew dylibs at `/opt/homebrew/opt/...`, so
+     it needs its libraries copied in, load paths rewritten
+     (`install_name_tool`), and re-signing — the same pattern just built
+     for CPython, one step smaller. Resolution order: bundled → system
+     (kept for CLI users and as fallback) → the missing-tmux screen, now
+     the safety net rather than the primary path. **Critical test**: a
+     session started under system tmux and resumed under bundled tmux must
+     attach to the SAME server (same pane PIDs), not silently fork a second
+     empty one — the one place this could eat the owner's live panes.
+     Accepted tradeoff, recorded: bundling means we own tmux security
+     updates; pin the version visibly and put the bump in the release
+     checklist.
+
+B11. **Copy from a remote session's terminal — unresolved, untracked
+     until now** (`ui-dev` flagged it 2026-09-28 as "remote-copy report
+     remains unresolved pending affected session/view"). Recorded here so
+     it stops living only in an inbox message.
+     Why it is plausible rather than speculative: the Mac app's clipboard
+     path is a bridge (`__rtCopy`/`__rtPaste` in `clipboardBridge.ts`),
+     added because **xterm renders selection on canvas so WKWebView's
+     responder-chain copy is inert** (RETRO 2026-09-20). Remote sessions
+     reach the app through a *different* path again — `hostTransport`'s
+     SSH `session-request` proxy. So "copy works locally" does not imply
+     "copy works on a remote session"; they are two different routes to the
+     same-looking UI.
+     What is needed to act on it: the affected session and view. Whoever
+     hit it should say whether it was a remote terminal in the unified
+     window, which density, and whether ⌘C did nothing or copied the wrong
+     thing — those point at different layers.
+
+B10. **Oracle nudge gates let owner-directed work go silent**
+     (owner-reported 2026-09-28, sent to `main-dev`). The owner noticed two
+     messages sitting in an idle session's inbox and asked why neither the
+     session nor Oracle acted.
+     **Investigated; the first theory was wrong.** The inbox had nothing
+     stale — 44 answered, 4 expired, exactly 2 queued, both new. The gate
+     that fired is `PEER_WAIT_MS = 5 min` in `pick_mail()`, whose comment
+     reads *"give an active recipient time to find new peer mail itself."*
+     With `SETTLE_MS` (idle 5 min) and `TYPING_QUIET_MS` (2 min since owner
+     input), the owner noticed and typed before Oracle's threshold — so
+     Oracle was neither broken nor muted; the owner beat the timer.
+     **Root cause is the assumption, not the number:** no session checks its
+     own inbox unprompted — the collaboration instructions forbid polling
+     and an idle session is stopped, not watching. So that grace is dead
+     time before the *only* mechanism that can wake anyone.
+     Three fixes sent: (1) skip `PEER_WAIT_MS` when the session is **idle**,
+     keep it when busy where the grace is genuinely right; (2) new mail
+     should re-nudge even when an older item is still open — suppression
+     should key on "already nudged about *this* mail", which
+     `ids <= previous.ids` already does, not on "anything open"; (3)
+     **highest value** — `pick_mail` skips any peer question with
+     `last_read_at` set, so reading a message *permanently* disqualifies it
+     from ever waking the session again. Combined with no self-check loop,
+     a message read but not finished is unreachable by every mechanism in
+     the system. That is F12's problem reappearing in the nudge layer:
+     acknowledging suppresses the reminder and nothing tracks the work.
+     Minimal fix: re-nudge a read-but-still-queued question once after a
+     longer interval (~4h) rather than never.
+     **Why it matters beyond its size:** Oracle is the only thing that wakes
+     an idle session, so every gate is a place owner-directed work can go
+     silent — invisibly, until the owner happens to look. That is the
+     "I have to keep chiming in" complaint, one layer down.
+
+## B10 SHIPPED — Oracle reminder reliability, v0.4.80 (2026-09-28)
+
+Verified in the installed code, not inferred (`duckterm --version` = 0.4.80):
+
+- **Idle bypass** — `PEER_WAIT_MS` now reads *"grace for non-idle mail
+  selection; idle agents skip this"*. The misleading comment that sent me to
+  a wrong first theory (*"give an active recipient time to find new peer
+  mail itself"*) is gone — no session self-checks, and the constant now says
+  what the grace is actually for.
+- **Read-but-unanswered follow-up** — `READ_REMINDER_MS` exists and
+  `pick_mail` now considers a queued question whose `last_read_at` is older
+  than that window. Previously reading a message *permanently* disqualified
+  it from ever waking the session again, which combined with no self-check
+  loop made it unreachable by every mechanism in the system.
+- **New mail nudges independently** of older open items.
+
+The module docstring now records why any of this matters: *"a Claude session
+had four peer messages up to 47 hours old when this was written."* That is
+the concrete cost of the gap, and it is worth keeping in the file.
+
+Shipped as PR #119 / v0.4.80, QA and integrated CI passed, 25 panes intact.
 
 ## Bugs — open
 

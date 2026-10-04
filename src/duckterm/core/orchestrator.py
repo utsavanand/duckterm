@@ -26,7 +26,7 @@ from collections import deque
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
-from duckterm.agents import tmux
+from duckterm.agents import tmux, tmux_stream
 from duckterm.core import events
 from duckterm.core.eventbus import EventBus
 from duckterm.git.worktrees import WorktreeManager
@@ -37,6 +37,11 @@ from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.base import AgentRuntime, SessionState, plain_screen
 
 # State -> the event_type whose derive_state yields that state. One vocabulary.
+_TAIL_TICK_BYTES = 64 * 1024
+_TAIL_ACTIVE_SLEEP = 0.025
+_TAIL_LIVENESS_INTERVAL = 1.0
+_SCREEN_SCAN_INTERVAL = 0.25
+
 _STATE_EVENT = {
     "busy": events.PRE_TOOL_USE,
     "idle": events.STOP,
@@ -76,6 +81,8 @@ class SessionSupervisor:
         self._env = {**session_credentials.launch_env(session_key), **(env or {})}
         self._proc: asyncio.subprocess.Process | None = None
         self._state: SessionState = "busy"
+        self._screen_pending: deque[str] = deque(maxlen=32)
+        self._next_screen_scan = 0.0
         self._task: asyncio.Task[None] | None = None
         self._primary_fd: int | None = None  # PTY master, for writing input
         self._tmux_target: str | None = None  # set when tmux-backed
@@ -89,7 +96,7 @@ class SessionSupervisor:
         self._byte_tail = deque[bytes](maxlen=2000)  # recent raw chunks, for replay
         self._byte_subs: set[asyncio.Queue[bytes]] = set()
         # Terminal keystrokes: drained by one task so writes stay ordered.
-        self._input_queue: asyncio.Queue[bytes] | None = None
+        self._input_queue: asyncio.Queue[tuple[bytes, asyncio.Future[bool] | None]] | None = None
         self._input_task: asyncio.Task[None] | None = None
         self._last_input = 0.0
         # Wall-clock ms of the owner's last keystroke, for Oracle: no nudge is
@@ -131,8 +138,8 @@ class SessionSupervisor:
         ):
             raise ValueError(f"command not found: {argv[0] if argv else '(empty)'}")
         # Register and enroll synchronously before the child can use its inbox.
-        use_tmux = tmux.has_tmux()
-        binary, source = tmux.selected_client() if use_tmux else ("", "pty")
+        use_tmux = await asyncio.to_thread(tmux.has_tmux)
+        binary, source = await asyncio.to_thread(tmux.selected_client) if use_tmux else ("", "pty")
         self._emit(
             events.SESSION_START,
             command=shlex.join(argv),
@@ -187,7 +194,8 @@ class SessionSupervisor:
         self._pipe_path = str(paths.home() / "panes" / f"{self.session_key}.log")
         Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
         private_write(Path(self._pipe_path), "")
-        self._tmux_target = tmux.spawn_piped(
+        self._tmux_target = await asyncio.to_thread(
+            tmux.spawn_piped,
             self.session_key,
             command,
             self.cwd,
@@ -230,31 +238,26 @@ class SessionSupervisor:
             # terminal felt), backing off to 200ms after 5s of quiet so an
             # idle session costs ~5 file reads a second, not 40.
             last_output = 0.0
+            next_liveness = 0.0
             loop = asyncio.get_running_loop()
             fh = path.open("rb")
             try:
                 while True:
-                    chunk = fh.read(4096)
-                    if chunk:
+                    # A constantly growing pane must yield even if EOF is never
+                    # reached. Keep byte chunks unchanged for terminal replay.
+                    remaining = _TAIL_TICK_BYTES
+                    while remaining:
+                        chunk = fh.read(min(4096, remaining))
+                        if not chunk:
+                            break
+                        remaining -= len(chunk)
                         last_output = loop.time()
-                        # Terminal gets the raw bytes (CR-LF intact).
                         self._record_bytes(chunk)
-                        # The line view (state/tool detection, summaries, and the
-                        # legacy /output SSE) stays line-oriented: split the
-                        # decoded chunk on newlines so each record is one line,
-                        # as the PTY pump produces. \r is stripped — substring
-                        # checks don't care, and the SSE line view shouldn't show
-                        # carriage returns.
                         for raw_line in chunk.decode(errors="replace").splitlines():
-                            line = raw_line + "\n"
-                            self._record_output(line)
-                            tool = self.runtime.tool_in(line)
-                            if tool is not None:
-                                self._emit(events.PRE_TOOL_USE, tool_name=tool)
-                            new_state = self.runtime.detect_state(line)
-                            if new_state is not None and new_state != self._state:
-                                self._state = new_state
-                                self._emit(_STATE_EVENT[new_state])
+                            self._observe_output(raw_line + "\n")
+                    self._scan_pending_output(loop.time())
+                    if not remaining:
+                        await asyncio.sleep(_TAIL_ACTIVE_SLEEP)
                         continue
                     # The bounded writer rotates by rename. Drain the old inode,
                     # then follow the replacement without replaying the old file.
@@ -265,11 +268,17 @@ class SessionSupervisor:
                     if rotated:
                         fh.close()
                         fh = path.open("rb")
+                        await asyncio.sleep(_TAIL_ACTIVE_SLEEP)
                         continue
-                    if not tmux.session_exists(target):
-                        break
+                    # Liveness is independent of display latency: spawning tmux
+                    # on every empty 25ms poll dominated many-session CPU cost.
+                    if loop.time() >= next_liveness:
+                        if not await asyncio.to_thread(tmux.session_exists, target):
+                            self._scan_pending_output(loop.time(), force=True)
+                            break
+                        next_liveness = loop.time() + _TAIL_LIVENESS_INTERVAL
                     active = max(last_output, self._last_input)
-                    await asyncio.sleep(0.025 if loop.time() - active < 5 else 0.2)
+                    await asyncio.sleep(_TAIL_ACTIVE_SLEEP if loop.time() - active < 5 else 0.2)
             finally:
                 fh.close()
         except Exception as e:  # noqa: BLE001 — boundary: a background task
@@ -291,20 +300,20 @@ class SessionSupervisor:
         # detection happens here on top of the chunks.
         pending = ""
 
-        def scan(line: str) -> None:
-            self._record_output(line)
-            tool = self.runtime.tool_in(line)
-            if tool is not None:
-                self._emit(events.PRE_TOOL_USE, tool_name=tool)
-            new_state = self.runtime.detect_state(line)
-            if new_state is not None and new_state != self._state:
-                self._state = new_state
-                self._emit(_STATE_EVENT[new_state])
-
         try:
             while True:
                 try:
-                    raw = await reader.read(4096)
+                    if self._screen_pending:
+                        try:
+                            raw = await asyncio.wait_for(
+                                reader.read(4096),
+                                max(0.001, self._next_screen_scan - loop.time()),
+                            )
+                        except TimeoutError:
+                            self._scan_pending_output(loop.time())
+                            continue
+                    else:
+                        raw = await reader.read(4096)
                 except OSError as e:
                     if e.errno != errno.EIO:
                         raise
@@ -315,14 +324,43 @@ class SessionSupervisor:
                 pending += raw.decode(errors="replace")
                 *lines, pending = pending.split("\n")
                 for line in lines:
-                    scan(line + "\n")
+                    self._observe_output(line + "\n")
+                self._scan_pending_output(loop.time())
             if pending:
-                scan(pending)
+                self._observe_output(pending)
+            self._scan_pending_output(loop.time(), force=True)
         except Exception as e:  # noqa: BLE001 — boundary: a background task
             print(f"[duckterm] output pump for {self.session_key} failed: {e}", file=sys.stderr)
         finally:
             transport.close()
             await self._finish()
+
+    def _observe_output(self, line: str) -> None:
+        self._record_output(line)
+        if self.runtime.hook_spec is not None:
+            # Hooks provide detailed events; screen parsing is a bounded fallback.
+            # Retain recent screen evidence without retaining the whole repaint.
+            self._screen_pending.append(line[-2048:])
+        else:
+            # Generic agents use explicit per-line protocol markers; preserve
+            # every tool/state transition for these hookless runtimes.
+            self._scan_output(line)
+
+    def _scan_pending_output(self, now: float, *, force: bool = False) -> None:
+        if self._screen_pending and (force or now >= self._next_screen_scan):
+            screen = "".join(self._screen_pending)
+            self._screen_pending.clear()
+            self._next_screen_scan = now + _SCREEN_SCAN_INTERVAL
+            self._scan_output(screen)
+
+    def _scan_output(self, output: str) -> None:
+        tool = self.runtime.tool_in(output)
+        if tool is not None:
+            self._emit(events.PRE_TOOL_USE, tool_name=tool)
+        new_state = self.runtime.detect_state(output)
+        if new_state is not None and new_state != self._state:
+            self._state = new_state
+            self._emit(_STATE_EVENT[new_state])
 
     def _record_output(self, line: str) -> None:
         self._output.append(line)
@@ -385,6 +423,16 @@ class SessionSupervisor:
         tmux, clear + capture-pane of the live pane; for a PTY, a small recent
         tail. Replaying 2000 chunks of history made the terminal redraw its entire
         backlog every time you (re)attached or switched tabs."""
+        if self._tmux_target is not None:
+            # Snapshot and output must share tmux's own timeline. A spool-file
+            # offset cannot exclude bytes still buffered upstream of the file.
+            feed = tmux_stream.stream(self._tmux_target)
+            try:
+                async for chunk in feed:
+                    yield chunk
+            finally:
+                await feed.aclose()
+            return
         # Bounded: ~2000 chunks ≈ 8MB of 4KB reads. _record_bytes drops the
         # subscriber (with an EOF) if it ever fills — see backpressure there.
         queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=2000)
@@ -402,15 +450,8 @@ class SessionSupervisor:
             self._byte_subs.discard(queue)
 
     def _attach_snapshot(self) -> bytes:
-        """The bytes to send a freshly-attached terminal so it shows the current
-        state without replaying all history."""
-        if self._tmux_target is not None and tmux.session_exists(self._tmux_target):
-            screen = tmux.capture_screen(self._tmux_target)
-            if screen:
-                # Clear + home, then paint the captured screen.
-                return b"\x1b[2J\x1b[H" + screen
-        # PTY (or tmux capture failed): a bounded recent tail — enough for
-        # context, not the whole backlog.
+        """A bounded replay for a directly owned PTY (tmux uses its control stream)."""
+        # PTY snapshots and live chunks are both recorded on this event loop.
         recent = list(self._byte_tail)[-40:]
         return b"".join(recent)
 
@@ -467,19 +508,65 @@ class SessionSupervisor:
         loop stalled every session's I/O on each keypress. A single drain task
         does the writes off-loop, one at a time, so ordering is exact ('ab'
         can never land as 'ba', which a thread pool wouldn't guarantee)."""
+        self._enqueue_input(data)
+
+    async def write_queued_bytes(self, data: bytes) -> bool:
+        """Deliver owner feedback after earlier keystrokes and report its result."""
+        result: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        self._enqueue_input(data, result)
+        return await result
+
+    def _enqueue_input(self, data: bytes, result: asyncio.Future[bool] | None = None) -> None:
+        if self._input_task is not None and (
+            self._input_task.done() or self._input_task.cancelling()
+        ):
+            if result is not None:
+                result.set_result(False)
+            return
         self._last_input = time.monotonic()
         if not is_terminal_report(data):
             self.last_owner_input_ms = int(time.time() * 1000)
         if self._input_queue is None:
             self._input_queue = asyncio.Queue()
             self._input_task = asyncio.create_task(self._drain_input())
-        self._input_queue.put_nowait(data)
+        self._input_queue.put_nowait((data, result))
 
     async def _drain_input(self) -> None:
         assert self._input_queue is not None
-        while True:
-            data = await self._input_queue.get()
-            await asyncio.to_thread(self.write_bytes, data)
+        batch: list[tuple[bytes, asyncio.Future[bool] | None]] = []
+        try:
+            while True:
+                batch = [await self._input_queue.get()]
+                size = len(batch[0][0])
+                # Drain already accepted bytes without adding a batching delay.
+                # Bound each batch so busy sessions yield to other loop work.
+                while size < 4096 and len(batch) < 256 and not self._input_queue.empty():
+                    item = self._input_queue.get_nowait()
+                    batch.append(item)
+                    size += len(item[0])
+                try:
+                    wrote = await asyncio.to_thread(
+                        self.write_bytes, b"".join(data for data, _ in batch)
+                    )
+                except OSError:
+                    wrote = False
+                for _, result in batch:
+                    if result is not None and not result.done():
+                        result.set_result(wrote)
+                batch = []
+        finally:
+            # Stop/cancellation must not leave feedback requests waiting forever.
+            for _, result in batch:
+                if result is not None and not result.done():
+                    result.set_result(False)
+            self._fail_pending_input()
+
+    def _fail_pending_input(self) -> None:
+        if self._input_queue is not None:
+            while not self._input_queue.empty():
+                _, pending = self._input_queue.get_nowait()
+                if pending is not None and not pending.done():
+                    pending.set_result(False)
 
     def write_input(self, text: str) -> bool:
         """Write to the agent's stdin (terminal-attach / approvals). Routes to
@@ -505,8 +592,10 @@ class SessionSupervisor:
     async def stop(self) -> None:
         if self._input_task is not None:
             self._input_task.cancel()
+            # A task cancelled before its first run never enters its finally.
+            self._fail_pending_input()
         if self._tmux_target is not None:
-            tmux.kill_session(self._tmux_target)
+            await asyncio.to_thread(tmux.kill_session, self._tmux_target)
         elif self._proc is not None and self._proc.returncode is None:
             os.killpg(os.getpgid(self._proc.pid), signal.SIGTERM)
         if self._task is not None:
@@ -547,11 +636,11 @@ class Orchestrator:
 
         adopted: list[str] = []
         # Missing tmux on a GUI app's PATH is not evidence that its panes died.
-        if not tmux.has_tmux():
+        if not await asyncio.to_thread(tmux.has_tmux):
             print("[duckterm] skipping reconciliation: tmux unavailable", file=sys.stderr)
             return adopted
         try:
-            live_keys = tmux.list_duckterm_sessions()
+            live_keys = await asyncio.to_thread(tmux.list_duckterm_sessions)
         except (OSError, RuntimeError) as exc:
             print(f"[duckterm] skipping reconciliation: {exc}", file=sys.stderr)
             return adopted
@@ -731,4 +820,7 @@ class Orchestrator:
         if supervisor is None:
             return False
         text = {"Escape": "\x1b", "Enter": "\r"}.get(key, key + "\r")
-        return supervisor.write_input(text)
+        # Approval callbacks run on the event loop. Queue in the same ordered
+        # drain as terminal input rather than synchronously waiting on tmux.
+        supervisor.queue_bytes(text.encode())
+        return True

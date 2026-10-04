@@ -1,7 +1,8 @@
 .rd-header-menus { display: flex; gap: 14px; align-items: center; margin-left: auto; }
 .rd-header-dropdown { position: relative; }
 .rd-header-dropdown > button { display: flex; align-items: center; justify-content: center; gap: 12px; white-space: nowrap; }
-.rd-header-dropdown > button:not(.rd-btn-primary) { background: var(--card); color: var(--text); border-color: var(--border-strong); }
+/* Switch text and fill together: fading only the fill briefly hides Settings on theme changes. */
+.rd-header-dropdown > button:not(.rd-btn-primary) { background: var(--card); color: var(--text); border-color: var(--border-strong); transition: opacity 0.12s ease; }
 .rd-header-new > button { min-width: 90px; }
 .rd-header-popup { position: absolute; top: calc(100% + 9px); right: 0; width: 180px; padding: 7px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--card); color: var(--text); box-shadow: 0 12px 32px #0002; z-index: 40; max-height: calc(100dvh - 160px); overflow-y: auto; }
 .rd-settings-popup { width: 300px; max-width: calc(100vw - 32px); }
@@ -14,6 +15,9 @@
 .rd-header-notifications { padding: 8px 10px; font-size: 13px; }
 .rd-header-notifications label { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .rd-header-notifications input { accent-color: var(--brand-green); }
+/* A select is too wide to share the row with its label, so it goes below at full width. */
+.rd-header-notifications label:has(> select) { display: grid; gap: 6px; justify-content: stretch; }
+.rd-header-notifications label > select { width: 100%; padding: 4px 24px 4px 8px; }
 .rd-header-notifications p { margin: 5px 20px 0 0; font-size: 11px; color: var(--text-soft); line-height: 1.5; }
 .rd-header-menus :is(button, select, input):focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
 @media (max-width: 650px) {

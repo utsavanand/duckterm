@@ -147,7 +147,7 @@ def question_note(server, monkeypatch, text, verdict=BLOCKED, calls=None):
     server._RELAY_SETTLE_S = 0
     owner = {"role": "user", "blocks": [{"type": "text", "text": "review the onboarding"}]}
     reply = {"role": "assistant", "blocks": [{"type": "text", "text": text}]}
-    monkeypatch.setattr(server, "_session_messages", lambda key: [owner, reply])
+    monkeypatch.setattr(server, "_read_messages", lambda source: [owner, reply])
 
     def classify(prompt, claude_model=None):
         if calls is not None:
@@ -192,13 +192,14 @@ class SlowTerminal(FakeSupervisor):
             if self.enters == self.submits_on:
                 self.screen = CLAUDE_EMPTY
                 now = int(time.time() * 1000)
-                self.history.record(
+                self.loop.call_soon_threadsafe(
+                    self.history.record,
                     {
                         "_id": f"ups-{now}",
                         "_ts": now,
                         "event_type": "UserPromptSubmit",
                         "session_key": "pm",
-                    }
+                    },
                 )
         return True
 
@@ -208,6 +209,14 @@ def test_swallowed_enter_is_pressed_again_until_the_agent_takes_the_prompt(
 ) -> None:
     server, owner, _, history = world
     slow = SlowTerminal(history, submits_on=2)
+    original_submit = server._submit_prompt
+
+    async def submit(key, text):
+        # Real hooks are ingested on the server loop, not the terminal writer.
+        slow.loop = asyncio.get_running_loop()
+        return await original_submit(key, text)
+
+    monkeypatch.setattr(server, "_submit_prompt", submit)
     monkeypatch.setattr(server.orchestrator, "get", lambda key: slow)
     [note] = question_note(server, monkeypatch, "Should I start with B1?")
     status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": "Yes"})
@@ -460,3 +469,91 @@ def test_old_codex_hooks_cannot_register_a_waiting_approval(codex_world) -> None
     )
     assert (status, body) == (200, {"id": None})
     assert server.approvals.pending() == []
+
+
+def state(server, key="cx"):
+    return server.history.session(key)["state"]
+
+
+def test_codex_request_keeps_it_busy_until_its_prompt_shows(codex_world) -> None:
+    server, _, sup = codex_world
+
+    async def scenario():
+        request(server)
+        await asyncio.sleep(0.05)
+        assert state(server) == "busy"  # its reviewer is running the command
+        sup.screen = CODEX_APPROVAL
+        await asyncio.sleep(0.05)
+
+    asyncio.run(scenario())
+    assert state(server) == "waiting"
+    assert [n["kind"] for n in notes(server)] == ["approval"]
+
+
+def test_claude_permission_request_still_means_waiting(world) -> None:
+    server, _, _, _ = world
+    server.bus.publish(
+        {
+            "event_type": "PermissionRequest",
+            "session_key": "pm",
+            "tool_name": "Bash",
+            "tool_input": {"command": "rm -rf build"},
+        }
+    )
+    assert state(server, "pm") == "waiting"
+
+
+LATER = 3 * 60_000  # past the stuck threshold
+
+
+def test_prompt_that_shows_after_the_watch_ends_still_becomes_a_note(codex_world) -> None:
+    server, _, sup = codex_world
+    request(server)  # no event loop, so no watcher: as if its 10 minutes ran out
+    sup.screen = CODEX_APPROVAL
+    now = int(time.time() * 1000)
+    asyncio.run(server._relay_check_stuck(now + LATER))
+    assert [n["kind"] for n in notes(server)] == ["approval"]
+    assert state(server) == "waiting"
+
+
+def test_unknown_prompt_shape_shows_waiting_and_logs_its_screen_once(codex_world, tmp_path) -> None:
+    server, _, sup = codex_world
+    server.history.set_meta("cx", name="feature-remote-session")
+    request(server, "curl https://example.com")
+    now = int(time.time() * 1000)
+    asyncio.run(server._relay_check_stuck(now + 30_000))  # too early to judge
+    assert state(server) == "busy"
+    sup.screen = "Allow network access to example.com?\n  a. Allow once\n  d. Deny\n"
+    asyncio.run(server._relay_check_stuck(now + LATER))
+    asyncio.run(server._relay_check_stuck(now + LATER + 60_000))
+    assert state(server) == "waiting"
+    assert notes(server) == []  # Oracle can't answer a shape it can't read
+    [entry] = json.loads((tmp_path / "relay-missed-prompts.json").read_text())
+    assert (entry["session"], entry["runtime"], entry["detail"]) == (
+        "feature-remote-session",
+        "codex",
+        "curl https://example.com",
+    )
+    assert "Allow network access to example.com?" in entry["screen"]
+
+
+def test_busy_codex_screen_is_not_logged_as_a_missed_prompt(codex_world, tmp_path) -> None:
+    server, _, _ = codex_world
+    request(server)
+    asyncio.run(server._relay_check_stuck(int(time.time() * 1000) + LATER))
+    assert state(server) == "busy"
+    assert not (tmp_path / "relay-missed-prompts.json").exists()
+
+
+def test_dashboard_stream_carries_the_auto_reviewed_tag(codex_world) -> None:
+    """The dashboard folds live events itself; without the tag it would show
+    every Codex request as waiting even though the server keeps it busy."""
+    server, _, _ = codex_world
+
+    async def scenario():
+        with server.bus.subscribe() as feed:
+            request(server)
+            return await asyncio.wait_for(feed.next(), 1)
+
+    streamed = asyncio.run(scenario())
+    assert (streamed["event_type"], streamed.get("auto_reviewed")) == ("PermissionRequest", True)

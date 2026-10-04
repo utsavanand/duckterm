@@ -1,18 +1,25 @@
+import { useDesktopNotifications } from "./useDesktopNotifications";
+import { SidebarFilterToggle } from "./SidebarFilters";
+import { useSidebarFilters } from "./sidebarFilterState";
+import duckMark from "./assets/duckmark.svg?no-inline";
+import { ArchiveUndo, useArchiveRequests } from "./ArchiveUndo";
 import { sessionFetch, sessionRef } from "./hostTransport";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
-import { AgentTree } from "./AgentTree";
+import { FolderView } from "./FolderView";
 import { api } from "./api";
 import { desktop } from "./desktop";
 import { Connectors } from "./Connectors";
-import { ContextPanel } from "./ContextPanel";
-import { ControlTower } from "./ControlTower";
+import { ContextViews } from "./ContextViews";
+import { Analytics } from "./Analytics";
+import { AnalyticsTab } from "./analyticsData";
 import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
 import { SessionPin } from "./SessionPin";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
-import { HeaderMenus } from "./HeaderMenus";
+import { DashboardMenus } from "./DashboardMenus";
+import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
 import { HistoryView } from "./HistoryView";
 import { ArtifactsView } from "./ArtifactsView";
@@ -27,7 +34,6 @@ import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
 import { useTerminalCache } from "./terminalCache";
 import { PanelToggle, useSidePanels } from "./SidePanels";
-import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
 import {
   TermMode,
@@ -46,27 +52,20 @@ import { useTheme } from "./useTheme";
 import { useSidebarDensity } from "./useSidebarDensity";
 import { useFolders } from "./useFolders";
 import "./sidebarDensity.css";
-
-function useNow(intervalMs: number): number {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(t);
-  }, [intervalMs]);
-  return now;
-}
+import { useAttended } from "./useAttended";
 
 function Dashboard() {
   const { sessions: sourceSessions, connected, loadedHosts, removeSessions, patchSession } =
     useEventStream();
   const inboxCounts = useInboxCounts();
+  const archives = useArchiveRequests();
   const sidePanels = useSidePanels();
+  const sidebarFilters = useSidebarFilters();
   const sessions = useMemo(
-    () => sourceSessions.map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 })),
-    [sourceSessions, inboxCounts],
+    () => sourceSessions.filter(s => !archives.requests.some(r => r.session_key === s.key)).map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 })),
+    [sourceSessions, inboxCounts, archives.requests],
   );
   const toast = useToast();
-  const now = useNow(1000);
   const { theme, resolved: mode, setTheme } = useTheme();
   const { density, setDensity } = useSidebarDensity();
 
@@ -74,9 +73,15 @@ function Dashboard() {
     "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
   >(desktop()?.draft ? "launch" : null);
   const [towerOpen, setTowerOpen] = useState(false);
+  const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
   const relayOpen = useRelayCount();
-  const defaultSelection = sessions.find(s => effectiveState(s, now) !== "archived")?.key ?? null;
-  const { selectedKey, selectSession: setSelectedKey } = useSessionSelection(sessions, defaultSelection, loadedHosts);
+  const defaultSelection = sessions.find(s => s.state !== "archived")?.key ?? null;
+  const { selectedKey, selectSession } = useSessionSelection(sessions, defaultSelection, loadedHosts);
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const setSelectedKey = useCallback((key: string | null) => {
+    setSelectedFolder(null);
+    selectSession(key);
+  }, [selectSession]);
   useEffect(() => {
     const select = (event: Event) => {
       const key = (event as CustomEvent<string>).detail;
@@ -182,71 +187,43 @@ function Dashboard() {
     }
   }
 
-  // Every agent runs inside Duckterm now — one flat list, no lifecycle/origin
-  // filters. Terminated sessions stay out of the live list.
+  // Waiting and archived membership never change during idle settling. Read
+  // raw state here; only the time-rendering children need effectiveState.
   const agents = useMemo(
-    () => sessions.filter((s) => effectiveState(s, now) !== "archived"),
-    [sessions, now],
+    () => sessions.filter((s) => s.state !== "archived"),
+    [sessions],
   );
 
   // "Needs you": the whole point of a fleet view is not staring at it. The
   // count rides the tab title; sessions that ENTER waiting fire a browser
   // notification (if the user granted permission via the bell).
   const waiting = useMemo(
-    () => sessions.filter((s) => effectiveState(s, now) === "waiting"),
-    [sessions, now],
+    () => sessions.filter((s) => s.state === "waiting"),
+    [sessions],
   );
-  const waitingKeys = waiting.map((s) => s.key).join(",");
-  const prevWaiting = useRef<Set<string>>(new Set());
-  const [notifyOn, setNotifyOn] = useState(
-    () => "Notification" in window && Notification.permission === "granted",
-  );
+  const notificationSessions = useMemo(() => sessions.map(s => ({ key: s.key, label: s.label,
+    waiting: s.state === "waiting" })), [sessions]);
+  const notifications = useDesktopNotifications(notificationSessions, loadedHosts);
   useEffect(() => {
-    document.title = waiting.length
-      ? `(${waiting.length}) DuckTerm`
-      : "DuckTerm";
-    const current = new Set(waiting.map((s) => s.key));
-    if (notifyOn) {
-      for (const s of waiting) {
-        if (!prevWaiting.current.has(s.key)) {
-          new Notification(`${s.label} needs you`, {
-            body: "The agent is waiting on an answer.",
-          });
-        }
-      }
-    }
-    prevWaiting.current = current;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [waitingKeys, notifyOn]);
-
-  async function toggleNotify() {
-    if (!("Notification" in window)) return;
-    if (Notification.permission !== "granted") {
-      const perm = await Notification.requestPermission();
-      setNotifyOn(perm === "granted");
-    } else {
-      setNotifyOn((v) => !v);
-    }
-  }
+    document.title = waiting.length ? `(${waiting.length}) DuckTerm` : "DuckTerm";
+  }, [waiting.length]);
 
   const selected = sessions.find((s) => s.key === selectedKey) ?? null;
+  useAttended(selected?.key ?? null, !!selected?.attentionSince);
   const forkSession = sessions.find((s) => s.key === forkKey) ?? null;
   // Grid membership includes every owned PTY; the single-session view keeps
   // only recently visited terminals mounted so hidden output stays bounded.
   const terminalAgents = useMemo(
-    () => agents.filter((s) => s.ptyOwned),
-    [agents],
+    // Pending archives leave their cached terminal mounted during Undo.
+    () => sourceSessions.filter(s => s.ptyOwned && s.state !== "archived"),
+    [sourceSessions],
   );
 
   const mountedTerminalKeys = useTerminalCache(
-    terminalAgents.map(s => s.key), view === "terminal" ? selectedKey : null,
+    terminalAgents.map(s => s.key), view === "terminal" && selectedFolder === null ? selectedKey : null,
   );
   const mountedTerminals = terminalAgents.filter(s => mountedTerminalKeys.includes(s.key));
 
-  const labels = useMemo(
-    () => Object.fromEntries(sessions.map((s) => [s.key, s.label])),
-    [sessions],
-  );
   // The selected agent's working directory anchors AGENTS.md (per-folder file).
   const agentsMdDir = selected?.worktreePath ?? selected?.cwd ?? null;
 
@@ -273,16 +250,17 @@ function Dashboard() {
 
   return (
     <div className="rd-app" data-density={density}>
+      <ArchiveUndo {...archives} />
       <header className="rd-topbar">
         <span className="rd-brand">
           <img
             className="rd-brand-mark"
-            src="/favicon.svg"
+            src={duckMark}
             alt=""
             width={22}
             height={22}
           />
-          Duck<span className="rd-brand-term">Term</span>
+          <span className="rd-brand-name">Duck<span className="rd-brand-term">Term</span></span>
         </span>
         <span className="rd-live">
           <span className={`dot ${connected ? "on" : "off"}`} />
@@ -321,7 +299,7 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <HeaderMenus density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifyOn} onNotify={() => void toggleNotify()} onAction={(action) => {
+        <DashboardMenus sessions={sessions} density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
           if (action === "launch") setLaunchGroup(undefined);
           setModal(action);
         }} />
@@ -333,16 +311,16 @@ function Dashboard() {
           width (B5). inert keeps keystrokes and focus out of the hidden panes. */}
       {towerOpen && !focusOpen && gridFolder === null && (
         <div className="rd-tower-layer">
-          <ControlTower
-            agents={agents.map((s) => ({ ...s, shownState: effectiveState(s, now) }))}
-            now={now}
+          {analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
+            onAnalytics={setAnalyticsTab}
+            agents={agents}
             onBack={() => setTowerOpen(false)}
             onOpenTerminal={(key) => {
               setSelectedKey(key);
               setView("terminal");
               setTowerOpen(false);
             }}
-          />
+          />}
         </div>
       )}
       <div className="rd-workspace-panes" {...(towerOpen && !focusOpen && gridFolder === null ? { inert: "" } : {})}>
@@ -366,10 +344,11 @@ function Dashboard() {
           onClose={() => setGridFolder(null)}
         />
       ) : (
-        <div className={`rd-panels-3${sidePanels.collapsed.left ? " rd-agents-collapsed" : ""}${sidePanels.collapsed.right ? " rd-context-collapsed" : ""}`}>
+        <div className={`rd-panels-3${selectedFolder !== null ? " rd-folder-selected" : ""}${sidePanels.collapsed.left ? " rd-agents-collapsed" : ""}${sidePanels.collapsed.right ? " rd-context-collapsed" : ""}`}>
           <section className={`rd-agents${sidePanels.collapsed.left ? " rd-side-collapsed" : ""}`}>
             <div className="rd-panel-head">
               <span>Agents</span>
+              {(agents.length > 0 || folders.length > 0) && <SidebarFilterToggle filters={sidebarFilters.filters} expanded={sidebarFilters.expanded} onToggle={sidebarFilters.toggleExpanded} />}
               <PanelToggle side="left" collapsed={sidePanels.collapsed.left} onToggle={() => sidePanels.toggle("left")} />
             </div>
             {agents.length === 0 && folders.length === 0 ? (
@@ -377,22 +356,22 @@ function Dashboard() {
                 No agents yet. Choose New → New session to start one.
               </p>
             ) : (
-              <AgentTree
+              <LiveAgentTree
+                filterControls={sidebarFilters}
                 sessions={agents}
-                now={now}
-                labels={labels}
+                active={!towerOpen && !sidePanels.collapsed.left}
                 folders={folders}
-                selectedKey={selectedKey}
+                selectedKey={selectedFolder === null ? selectedKey : null}
+                selectedFolder={selectedFolder}
+                onOpenFolder={setSelectedFolder}
+                onFolderRenamed={(from, to) => setSelectedFolder(current => current === from ? to : current?.startsWith(from + "/") ? to + current.slice(from.length) : current)}
+                onFolderDeleted={path => setSelectedFolder(current => current === path || current?.startsWith(path + "/") ? null : current)}
                 onOpen={setSelectedKey}
-                onPin={toggleSessionPin}
                 onOpenInbox={(key) => { setSelectedKey(key); setView("inbox"); }}
-                onFork={setForkKey}
-                onDelete={deleteSession}
                 onFoldersChanged={refreshFolders}
                 onSessionMoved={(key, group) =>
                   patchSession(key, { group: group || undefined })
                 }
-                onRename={(key, name) => patchSession(key, { label: name })}
                 onOpenGrid={setGridFolder}
                 onOpenFolderInbox={setInboxFolder}
                 onNewSessionIn={(folder) => {
@@ -406,7 +385,8 @@ function Dashboard() {
             )}
           </section>
 
-          <section className="rd-terminal-pane">
+          {selectedFolder !== null && <FolderView key={selectedFolder} folder={selectedFolder} onOpenSession={setSelectedKey} onGrid={() => setGridFolder(selectedFolder)} onMessage={() => setInboxFolder(selectedFolder)} onNewSession={() => { setLaunchGroup(selectedFolder); setModal("launch"); }} />}
+          <section className="rd-terminal-pane" style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-view-toggle">
               <button
                 className={view === "terminal" ? "active" : ""}
@@ -446,7 +426,7 @@ function Dashboard() {
               select-to-annotate. */}
             {view === "messages" && selected && (
               <div className="rd-messages-wrap">
-                <Messages key={selected.key} sessionKey={selected.key}
+                <Messages key={selected.key} sessionKey={selected.key} active={!towerOpen && selectedFolder === null}
                   pins={messagePins.pins} pinPending={messagePins.pending || !!messagePins.error}
                   onTogglePin={messagePins.toggle}
                   target={pinTarget?.sessionKey === selected.key ? pinTarget : null}
@@ -455,13 +435,13 @@ function Dashboard() {
             )}
             {view === "history" && selected && (
               <div className="rd-messages-wrap">
-                <HistoryView session={selected} />
+                <HistoryView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} />
               </div>
             )}
             {view === "inbox" && (
               <div className="rd-messages-wrap rd-inbox-wrap">
                 {selected ? (
-                  <InboxView key={selected.key} session={{ ...selected, state: effectiveState(selected, now) }} />
+                  <LiveInboxView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} />
                 ) : (
                   <p className="rd-panel-empty">Select a session to see its inbox.</p>
                 )}
@@ -482,12 +462,12 @@ function Dashboard() {
                 className="rd-terminal-slot"
                 style={{
                   display:
-                    view === "terminal" && s.key === selectedKey
+                    selectedFolder === null && view === "terminal" && s.key === selectedKey
                       ? "flex"
                       : "none",
                 }}
               >
-                <Terminal sessionKey={s.key} active={view === "terminal" && s.key === selectedKey} theme={themeFor(s)} />
+                <Terminal sessionKey={s.key} active={selectedFolder === null && view === "terminal" && s.key === selectedKey} theme={themeFor(s)} />
               </div>
             ))}
             {view === "terminal" && selected && !selected.ptyOwned && !selected.worktreePath && (
@@ -502,14 +482,22 @@ function Dashboard() {
             )}
           </section>
 
-          <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`}>
+          <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`} style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-panel-head">
               <span>{selected ? selected.label : "Context"}</span>
               {selected && <SessionPin session={selected} onToggle={toggleSessionPin} label />}
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
-            <div className="rd-context-body">
-              {selected && <ContextPanel session={selected} />}
+            <ContextViews session={<>
+              {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}
+                onFork={setForkKey} onDelete={deleteSession}
+                onRename={(key, name) => patchSession(key, { label: name })}
+                onUngroup={selected.group && !selected.parentKey ? async () => {
+                  await api.setGroup(selected.key, "");
+                  patchSession(selected.key, { group: undefined });
+                  refreshFolders();
+                } : undefined} />}
+              {selected && <LiveContextPanel session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
                   terminal theme
@@ -528,8 +516,7 @@ function Dashboard() {
                   </select>
                 </label>
               )}
-            </div>
-            <Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} />
+            </>} connectors={<Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} />} />
           </section>
         </div>
       )}
