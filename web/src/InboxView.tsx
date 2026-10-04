@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, InboxMessage, SessionCard } from "./api";
+import { api, InboxFilter, InboxMessage, SessionCard } from "./api";
 import { SessionView } from "./types";
 import "./inbox.css";
 
@@ -14,14 +14,16 @@ const labels: Record<InboxMessage["status"], string> = {
 };
 
 function awaitingReply(message: InboxMessage) {
-  return (message.status === "queued" || message.status === "accepted") &&
-    message.kind !== "broadcast" && message.requires_reply !== false;
+  const required = message.requires_reply ?? message.kind !== "broadcast";
+  return required && (message.status === "queued" || message.status === "accepted" ||
+    (message.kind === "broadcast" && message.status === "read"));
 }
 
 export function InboxView({ session, folder, onMessageFolder }: ({ session: SessionView; folder?: never } | { session?: never; folder: string }) & { onMessageFolder?: () => void }) {
   const [card, setCard] = useState<SessionCard | null>(null);
   const [messages, setMessages] = useState<InboxMessage[]>([]);
   const [loaded, setLoaded] = useState(false);
+  const [totals, setTotals] = useState<Record<InboxFilter, number> | null>(null);
   const [error, setError] = useState("");
   const [cursor, setCursor] = useState<number | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -31,7 +33,7 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
   const [introduced, setIntroduced] = useState(false);
   const [introductionError, setIntroductionError] = useState("");
   const [introductionText, setIntroductionText] = useState("");
-  const [filter, setFilter] = useState<"all" | "pending" | "answered">("all");
+  const [filter, setFilter] = useState<InboxFilter>("all");
   const [search, setSearch] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
   const toolsRef = useRef<HTMLDialogElement>(null);
@@ -61,9 +63,9 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
         let before: number | undefined;
         let next: number | null = null;
         for (let i = 0; i < pageCount; i++) {
-          const page = folder !== undefined ? await api.folderInbox(folder, before) : await api.inbox(sessionKey!, before);
+          const page = folder !== undefined ? await api.folderInbox(folder, before, filter) : await api.inbox(sessionKey!, before, filter);
           if (cancelled) return;
-          if (i === 0) setCard(page.card ?? null);
+          if (i === 0) { setCard(page.card ?? null); setTotals(page.counts ?? null); }
           incoming.push(...page.messages);
           next = page.next_cursor;
           if (next === null) break;
@@ -87,18 +89,30 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [sessionKey, folder, retry, pageCount]);
+  }, [sessionKey, folder, retry, pageCount, filter]);
 
   const query = search.trim().toLocaleLowerCase();
   const visibleMessages = messages.filter((message) =>
     (filter === "all" || (filter === "pending" ? awaitingReply(message) : message.status === "answered")) &&
     [message.sender_kind === "owner" ? "You" : message.sender_name, message.recipient_name, message.question, message.answer]
       .filter(Boolean).join(" ").toLocaleLowerCase().includes(query));
-  const counts = {
+  const counts = totals ?? {
     all: messages.length,
     pending: messages.filter(awaitingReply).length,
     answered: messages.filter((message) => message.status === "answered").length,
   };
+
+  function changeFilter(value: InboxFilter) {
+    if (value !== filter) {
+      setFilter(value);
+      setPageCount(1);
+      setCursor(null);
+      setLoaded(false);
+      setLoadingOlder(false);
+      setError("");
+    }
+    resetScroll();
+  }
 
   function resetScroll() {
     if (listRef.current) listRef.current.scrollTop = 0;
@@ -136,10 +150,10 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
       )}
       <section className="rd-inbox-mail" aria-label="Received messages">
         <div className="rd-inbox-toolbar">
-          <div className="rd-inbox-filters" role="group" aria-label="Filter loaded messages">
+          <div className="rd-inbox-filters" role="group" aria-label="Filter messages">
             {([['all', 'All'], ['pending', 'Awaiting reply'], ['answered', 'Answered']] as const).map(([value, label]) => (
-              <button key={value} aria-pressed={filter === value} onClick={() => { setFilter(value); resetScroll(); }}>
-                {label} <span>{loaded ? `${counts[value]}${value === "all" && cursor !== null ? "+" : ""}` : ""}</span>
+              <button key={value} aria-pressed={filter === value} onClick={() => changeFilter(value)}>
+                {label} <span>{loaded ? `${counts[value]}${!totals && cursor !== null ? "+" : ""}` : ""}</span>
               </button>
             ))}
           </div>
@@ -170,7 +184,7 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
                 </div>
                 <p className="rd-inbox-preview">{message.question}</p>
                 <span className={`rd-inbox-status rd-inbox-status-${message.status}`}>
-                  {message.kind === "broadcast" && message.status === "queued" ? "Unread" : labels[message.status]}
+                  {awaitingReply(message) && message.kind === "broadcast" ? "Awaiting reply" : message.kind === "broadcast" && message.status === "queued" ? "Unread" : labels[message.status]}
                 </span>
                 <time className="rd-inbox-received" dateTime={new Date(message.created_at).toISOString()} title={new Date(message.created_at).toLocaleString()}>
                   {new Date(message.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}

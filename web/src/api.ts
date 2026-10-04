@@ -246,7 +246,10 @@ export interface SessionCard {
   updated_at: number;
 }
 
+export type InboxFilter = "all" | "pending" | "answered";
+
 export interface InboxPage {
+  counts?: Record<InboxFilter, number>;
   card?: SessionCard | null;
   messages: InboxMessage[];
   next_cursor: number | null;
@@ -350,8 +353,10 @@ export const api = {
     post<BroadcastResult>(`/folders/${encodeURIComponent(folder)}/broadcast`, { text, request_key }),
   collaborationInstructions: (key: string) => post<{ prompt: string }>(`/sessions/${encodeURIComponent(key)}/collaboration/instructions`),
   introduceCollaboration: (key: string) => post<{ sent: boolean }>(`/sessions/${encodeURIComponent(key)}/collaboration/introduce`),
-  inbox: async (key: string, before?: number): Promise<InboxPage> => {
-    const suffix = before === undefined ? "" : `?before=${before}`;
+  inbox: async (key: string, before?: number, view: InboxFilter = "all"): Promise<InboxPage> => {
+    const query = new URLSearchParams({ view });
+    if (before !== undefined) query.set("before", String(before));
+    const suffix = `?${query}`;
     const res = await fetch(`/sessions/${encodeURIComponent(key)}/inbox${suffix}`, {
       cache: "no-store",
       headers: authHeaders(),
@@ -360,8 +365,8 @@ export const api = {
     if (!res.ok) throw new Error(data.error ?? "Could not load inbox");
     return data as InboxPage;
   },
-  folderInbox: async (folder: string, before?: number): Promise<InboxPage> => {
-    const query = new URLSearchParams({ folder });
+  folderInbox: async (folder: string, before?: number, view: InboxFilter = "all"): Promise<InboxPage> => {
+    const query = new URLSearchParams({ folder, view });
     if (before !== undefined) query.set("before", String(before));
     const res = await fetch(`/folder-interactions?${query}`, { cache: "no-store", headers: authHeaders() });
     const data = await res.json();
