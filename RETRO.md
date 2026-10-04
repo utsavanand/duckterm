@@ -1,5 +1,25 @@
 # Retro — lessons from real breakage
 
+## 2026-10-03 — A convention nothing checks is a trap for the next caller
+**Broke:** `GET /connectors` logged an `IndexError` on a zero-column row.
+Shipped in #149.
+**Cause:** `HistoryStore` opens its sqlite connection with
+`check_same_thread=False` and no lock, so its safety rested entirely on every
+caller staying on the serving thread. Nothing stated or enforced that. I
+wrapped one query in `asyncio.to_thread` to keep the panel responsive — the
+only one of 59 `to_thread` calls in server.py to touch the database — and it
+raced the 17 write paths on that same connection. Two readers plus two
+writers on one connection produce thousands of errors in seconds, including
+corrupted writes, so the panel's `IndexError` was the mildest symptom.
+**Rule:** when a shared resource is safe only by convention, encode the
+convention as a test the next person will trip over, not a comment they will
+not read. The guard here records which thread the query ran on and fails if
+it is not the serving thread; reverting the fix turns it red. Also: diagnose
+before accepting a plausible explanation — this was first attributed to a
+connector with no usage rows, which turned out to be handled correctly
+(zero matching rows returns an empty mapping and nothing is indexed), and
+fixing that would have left the real race in place.
+
 ## 2026-10-02 — Filters must agree with the rows they hide
 Status shortcuts use the same effective state as session rows, including Stop
 settling. Keep folder expansion outside the filtered tree, preserve session
