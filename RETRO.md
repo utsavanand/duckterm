@@ -8,6 +8,25 @@ that build. Set the target explicitly from the same value Info.plist uses, and
 fail the build when `otool -l` reports a different minos. Check what the binary
 says, not what the plist says.
 
+## 2026-10-04 — Change model left a session stopped; Resume lost its conversation
+**Broke:** the owner changed the model on `kaho`. Restart verified the
+conversation, stopped the agent, then refused to relaunch ("Cannot verify the
+exact conversation to restart"), leaving the session stopped. Resume then
+started a fresh, notes-seeded conversation on the wrong model; the original
+conversation was intact on disk the whole time.
+**Cause:** `Orchestrator.reconcile()` re-adopted every pane that survived a
+server restart with `GenericRuntime("true")`. When the adopted agent exited,
+its SessionEnd carried `runtime: generic`, and the session upsert
+(`runtime = COALESCE(?, runtime)`) overwrote `claude-code`. Restart's post-stop
+resume and the Messages tab both choose their transcript reader from that
+column, so both failed for any session that had outlived a server restart.
+**Fix:** adopt each pane with its own harness (`runtime_for` from the row's
+runtime, or inferred from its command). Regression test asserts an adopted
+pane's SessionEnd keeps the harness and leaves the row unchanged.
+**Lesson:** an adapter chosen for convenience in one code path still writes
+identity into shared state. Anything that emits events on a session's behalf
+must carry that session's real harness, not a placeholder.
+
 ## 2026-10-04 — Isolate every clock that can redraw the terminal
 A one-second clock in Dashboard redrew terminal and connector components with
 30 sessions even when nothing changed. Moving only that clock would leave the

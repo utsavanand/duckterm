@@ -77,6 +77,65 @@ def test_live_tmux_session_is_adopted_not_swept(tmp_path, monkeypatch: pytest.Mo
     assert store.session("dead")["state"] == "interrupted"  # no live pane → reconciled
 
 
+@pytest.mark.parametrize(
+    ("runtime", "command"),
+    [
+        ("claude-code", "claude --model x 'prompt'"),
+        (None, "codex 'prompt'"),
+        # A quoted executable path with spaces must not break adoption.
+        ("claude-code", "'/Applications/My Tools/claude' --resume x"),
+    ],
+)
+def test_adopted_pane_keeps_its_harness_on_exit(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, runtime: str | None, command: str
+) -> None:
+    """Regression (2026-10-04, 'kaho'): panes adopted after a server restart were
+    supervised as generic, so their SessionEnd stamped runtime=generic over the
+    row and Change model / Resume could no longer verify the conversation."""
+    monkeypatch.setattr(orch_mod.tmux, "has_tmux", lambda: True)
+    monkeypatch.setattr(orch_mod.tmux, "list_duckterm_sessions", lambda: ["alive"])
+
+    async def fake_reattach(self) -> None:  # type: ignore[no-untyped-def]
+        return None
+
+    monkeypatch.setattr(orch_mod.SessionSupervisor, "reattach", fake_reattach)
+
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.record(
+        {
+            "event_type": "SessionStart",
+            "session_key": "alive",
+            "runtime": runtime,
+            "command": command,
+            "launched": True,
+            "test": True,
+            "_ts": 1,
+            "_id": "start",
+        }
+    )
+    expected = runtime or "codex"
+
+    bus = EventBus()
+    published: list[dict] = []
+    original = bus.publish
+
+    def capture(event: dict) -> dict:  # type: ignore[type-arg]
+        published.append(event)
+        return original(event)
+
+    monkeypatch.setattr(bus, "publish", capture)
+    orch = Orchestrator(bus, history=store)
+    asyncio.run(orch.reconcile())
+
+    supervisor = orch._supervisors["alive"]
+    supervisor._emit("SessionEnd")
+    end = published[-1]
+    assert end["runtime"] == expected
+
+    store.record({**end, "_ts": 2, "_id": "end"})
+    assert store.session("alive")["runtime"] == expected
+
+
 def test_at_rest_and_watched_sessions_are_untouched(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
