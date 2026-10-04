@@ -39,7 +39,11 @@ def iter_files(suffixes: tuple[str, ...]) -> list[Path]:
         # Relative parts: DuckTerm's own worktrees live under ~/.duckterm, and
         # checking the absolute path skipped every file there, so the check
         # passed without reading anything.
-        if any(part in SKIP_DIRS for part in p.relative_to(ROOT).parts):
+        relative = p.relative_to(ROOT)
+        # The app embeds upstream Python; generated vendor files are not source.
+        if relative.is_relative_to("mac/build"):
+            continue
+        if any(part in SKIP_DIRS for part in relative.parts):
             continue
         if p.suffix in suffixes:
             out.append(p)

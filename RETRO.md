@@ -6,6 +6,8 @@ terminal streams using a different client than session commands. Route both
 through the selected client and run cold selection off the event loop. A socket
 probe timeout is unknown server state, not proof that tmux is missing. Verify a
 relocated signed bundle and same-PID client transition after merging current main.
+Exclude generated app resources from source prose checks: bundled stdlib text
+is upstream content, not a reason to edit the runtime or bypass source checks.
 
 ## 2026-10-04 — Isolate every clock that can redraw the terminal
 A one-second clock in Dashboard redrew terminal and connector components with
