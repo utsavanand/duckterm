@@ -97,24 +97,32 @@ def test_concurrent_connections_cannot_take_the_same_last_slot(scenario, tmp_pat
     server, owner = scenario
     for key in "ab":
         pin(server, owner, key)
-    # Independent connections mimic two writers racing for the final slot.
-    ready = Barrier(2)
+    # Initialize serially on dedicated owner threads BEFORE starting the race.
+    # Constructors run repair/retention writes; racing those against a short
+    # barrier tested startup contention rather than the pin-limit transaction.
+    ready = Barrier(2, timeout=30)
 
-    def race(index):
-        # Each independent connection is created, used and closed by its owner.
-        store = HistoryStore(tmp_path / "db.sqlite")
+    def race(store, index):
+        ready.wait()
         try:
-            ready.wait(timeout=5)
-            try:
-                return store.set_pinned("cd"[index], True)
-            except ValueError as exc:
-                assert str(exc) == "Unpin one first"
-                return False
-        finally:
-            store.close()
+            return store.set_pinned("cd"[index], True)
+        except ValueError as exc:
+            assert str(exc) == "Unpin one first"
+            return False
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        assert sorted(pool.map(race, range(2))) == [False, True]
+    with ThreadPoolExecutor(max_workers=1) as first, ThreadPoolExecutor(max_workers=1) as second:
+        owners = (first, second)
+        stores = []
+        try:
+            for pool in owners:
+                stores.append(pool.submit(HistoryStore, tmp_path / "db.sqlite").result(timeout=30))
+            attempts = [
+                pool.submit(race, store, i) for i, (pool, store) in enumerate(zip(owners, stores))
+            ]
+            assert sorted(attempt.result(timeout=30) for attempt in attempts) == [False, True]
+        finally:
+            for pool, store in zip(owners, stores):
+                pool.submit(store.close).result(timeout=30)
     assert len(pinned_keys(server.history)) == 3
     assert set("ab") <= pinned_keys(server.history)
 
