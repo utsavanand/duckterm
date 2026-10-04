@@ -18,6 +18,13 @@ label and group spacing stay uniform across densities, and show Local/Remote eve
 when the current remote count is zero. Verify collapse, reload and keyboard access
 with filtering active; hiding controls must not reset the session selection.
 
+## 2026-10-04 — Separate connection startup from transaction races
+A pin-limit test rendezvoused while another worker was still constructing its
+HistoryStore. Startup performs repair and retention writes, so a short barrier
+could time out before the operation under test. Prepare connections serially on
+their dedicated owner threads, then race only the pin transactions; preserve the
+one-winner and three-pin assertions. Constructor failures must surface directly.
+
 ## 2026-10-04 — Enforce SQLite ownership across indirect worker calls
 Messages and progress helpers dispatched to workers still queried the shared
 HistoryStore connection, even after the connector caller was moved inline.
