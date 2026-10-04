@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let projectTransfer = ProjectTransfer()
     private let sessionTransport = SessionTransport()
     private let server = ServerProcess()
+    private let localSessionSetup = LocalSessionSetup()
     private var localStart: Task<Bool, Never>?
     private var pollers: [String: SessionPoller] = [:]
     private var window: DashboardWindow?
@@ -97,8 +98,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         window?.setTitle(AppIdentity.name)
         Task {
-            _ = await ensureLocalServer()
+            let ready = await ensureLocalServer()
             startPolling()
+            if ready && server.needsLocalSetup {
+                await localSessionSetup.present(initial: server.tmuxAvailability) { await self.server.recheckTmux() }
+            }
         }
     }
 

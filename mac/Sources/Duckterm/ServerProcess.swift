@@ -6,7 +6,8 @@ import Foundation
 final class ServerProcess {
     let url = URL(string: "http://127.0.0.1:\(AppIdentity.localPort)")!
     private var task: Process?
-    private(set) var missingTmux = false
+    private(set) var tmuxAvailability: TmuxAvailability = .checkFailed
+    var needsLocalSetup: Bool { task != nil && tmuxAvailability != .available }
 
     private var bundledPython: String? {
         guard let path = Bundle.main.resourceURL?
@@ -39,25 +40,6 @@ final class ServerProcess {
            Bundle.main.object(forInfoDictionaryKey: "DucktermTestSystemTools") as? Bool == false {
             env["PATH"] = resources + "/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         }
-        missingTmux = !env["PATH"]!.split(separator: ":").contains {
-            FileManager.default.isExecutableFile(atPath: String($0) + "/tmux")
-        }
-        if let python = bundledPython {
-            let probe = Process()
-            probe.executableURL = URL(fileURLWithPath: python)
-            probe.arguments = ["-s", "-B", "-m", "duckterm.agents.tmux"]
-            probe.environment = env
-            probe.standardOutput = FileHandle.nullDevice
-            probe.standardError = FileHandle.nullDevice
-            do {
-                try probe.run()
-                let deadline = Date().addingTimeInterval(15)
-                while probe.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
-                if probe.isRunning { probe.terminate() }
-                else { missingTmux = probe.terminationStatus == 1 }
-            } catch { AppDiagnostics.shared.record("tmux availability check failed") }
-        }
-        if missingTmux { AppDiagnostics.shared.record("No usable bundled or system tmux") }
         env["DUCKTERM_NO_BROWSER"] = "1"
         return env
     }
@@ -96,11 +78,12 @@ final class ServerProcess {
     /// Returns true once the server is reachable. Starts it if it isn't already
     /// running (an external `duckterm serve` is reused, not duplicated).
     func start() async -> Bool {
-        let env = serverEnvironment()
         if await isUp() {
             AppDiagnostics.shared.record("Connected to existing local server")
             return true
         }
+        let env = serverEnvironment()
+        tmuxAvailability = await TmuxAvailability.probe(python: bundledPython, environment: env)
         guard let bin = findBinary() else {
             AppDiagnostics.shared.record("Server CLI not found")
             return false
@@ -130,6 +113,11 @@ final class ServerProcess {
         }
         AppDiagnostics.shared.record("Server startup timed out")
         return false
+    }
+
+    func recheckTmux() async -> TmuxAvailability {
+        tmuxAvailability = await TmuxAvailability.probe(python: bundledPython, environment: serverEnvironment())
+        return tmuxAvailability
     }
 
     func stop() {

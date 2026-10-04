@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — Terminal streams must share the bundled client resolver
+A bundled tmux check alone cannot make terminal attachment work if the stream
+still invokes a system-only binary. Route commands and streams through the same
+selected client and socket. Native setup must distinguish a missing client from
+socket/probe errors, remain responsive while checking, and offer Copy/Recheck
+without running an installer or interrupting existing sessions.
+
 ## 2026-10-04 — Refresh bundled clients across every terminal path
 Integrating an older packaging branch can restore blocking probes or leave new
 terminal streams using a different client than session commands. Route both

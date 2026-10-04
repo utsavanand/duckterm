@@ -274,6 +274,8 @@ if __name__ == "__main__":
     # Native setup check shares the backend resolver. Distinguish a missing
     # executable from a socket error; installing tmux cannot fix permissions.
     try:
-        sys.exit(0 if has_tmux() else 1)
+        available = has_tmux()
+        print("duckterm-tmux:available" if available else "duckterm-tmux:missing")
+        sys.exit(0 if available else 1)
     except RuntimeError:
         sys.exit(2)

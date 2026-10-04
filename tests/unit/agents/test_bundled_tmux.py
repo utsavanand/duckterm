@@ -99,3 +99,20 @@ def test_commands_use_selected_client(monkeypatch):
         "test-bundle-private",
         "list-sessions",
     ]
+
+
+@pytest.mark.parametrize("source", ["bundled", "system"])
+def test_commands_and_terminal_attach_share_selected_client(monkeypatch, source):
+    binary = "/app with spaces/tmux" if source == "bundled" else "/system/tmux"
+    monkeypatch.setattr(tmux, "selected_client", lambda: (binary, source))
+    attach = tmux.client_command("-C", "attach-session", "-t", "rd_test")
+    assert attach == [binary, "-L", "test-bundle-private", "-C", "attach-session", "-t", "rd_test"]
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, "", "")
+
+    monkeypatch.setattr(tmux.subprocess, "run", run)
+    tmux.capture_pane("rd_test")
+    assert calls[0][:3] == attach[:3]
