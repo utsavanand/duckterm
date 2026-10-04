@@ -3605,7 +3605,12 @@ class Server:
         # Credential/CLI probes can take seconds. Keep other dashboard requests
         # and terminal traffic responsive while they finish.
         statuses = await asyncio.to_thread(connectors.list_status)
-        used = await asyncio.to_thread(self.history.connector_last_used)
+        # Inline, NOT in a thread. HistoryStore shares one sqlite connection
+        # opened with check_same_thread=False and no lock, so every other
+        # caller reaches it from this thread; reading it from a worker raced
+        # the write paths and corrupted cursor state. This is a bounded
+        # indexed read, unlike the CLI probes above that earn their thread.
+        used = self.history.connector_last_used()
         for row in statuses:
             recorded = used.get(str(row["name"]))
             row["last_used"] = recorded[0] if recorded else None
