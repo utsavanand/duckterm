@@ -625,7 +625,7 @@ class Orchestrator:
         set, we mark every launched, non-at-rest row with no live backing as
         'interrupted' (resumable — honest, not deleted). If discovery is
         unavailable, leave stored states alone rather than assume death."""
-        from duckterm.runtimes.generic import GenericRuntime
+        from duckterm.harnesses import infer_runtime, runtime_for
 
         adopted: list[str] = []
         # Missing tmux on a GUI app's PATH is not evidence that its panes died.
@@ -642,8 +642,15 @@ class Orchestrator:
                 continue
             row = self.history.session(key) if self.history else None
             cwd = str(row.get("cwd") or ".") if row else "."
+            # Adopt with the session's own harness. A generic adopter stamps
+            # its lifecycle events runtime=generic, which overwrote the row and
+            # made Restart/Change model/Resume unable to verify the conversation.
+            # The adopter never launches, so only the binary matters here.
+            command = str(row.get("command") or "") if row else ""
+            binary = (command.split() or ["true"])[0]
+            name = (row.get("runtime") if row else None) or infer_runtime(command)
             supervisor = SessionSupervisor(
-                bus=self.bus, runtime=GenericRuntime("true"), session_key=key, cwd=cwd
+                bus=self.bus, runtime=runtime_for(name, binary), session_key=key, cwd=cwd
             )
             await supervisor.reattach()
             self._supervisors[key] = supervisor
