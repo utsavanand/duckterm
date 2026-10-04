@@ -7,8 +7,10 @@ resolves that native id to a session ("Design — Shared-daemon identity",
 2026-10-01): never by default, and never from env-derived history.
 
 A native id resolves through an id DuckTerm itself recorded on the session
-(HistoryStore.recorded_native_id), or binds once, when a UserPromptSubmit
-carries a live Codex session's launch prompt. Every launch prompt names the
+(HistoryStore.recorded_native_id), unless two sessions recorded it. It binds
+once per launch, when a UserPromptSubmit carries exactly one live Codex
+session's launch prompt and that session has no bind since its last launch
+(a server-published SessionStart). Every launch prompt names the
 session's instruction file, which lives under sha256(session key)
 (session_instructions). The bind is recorded as a NativeBound event on that
 session, so it survives restarts without a schema change. Anything else is
@@ -38,6 +40,7 @@ class NativeIdentity:
         self.bound: dict[str, str] = {}
         self.parked: deque[dict[str, Any]] = deque()
         self.parked_total = 0
+        self.conflicted: set[str] = set()
 
     def _codex_sessions(self) -> list[str]:
         return [
@@ -48,25 +51,32 @@ class NativeIdentity:
 
     def _refresh(self) -> None:
         # One indexed lookup per live Codex session, not a scan of every event.
+        # Two sessions claiming the same id is ambiguous: neither gets it.
+        owners: dict[str, list[str]] = {}
         for key in self._codex_sessions():
             native = self.history.recorded_native_id(key)
             if native:
-                self.bound[native] = key
+                owners.setdefault(native, []).append(key)
+        self.bound = {n: ks[0] for n, ks in owners.items() if len(ks) == 1}
+        self.conflicted = {n for n, ks in owners.items() if len(ks) > 1}
 
     def _claim(self, raw: dict[str, Any]) -> str | None:
+        """The one live Codex session whose launch prompt this is, if it may
+        take a new native id: unbound, or relaunched since its last bind."""
         if raw.get("event_type") != "UserPromptSubmit":
             return None
-        match = _INSTRUCTIONS.search(str(raw.get("prompt") or ""))
-        if not match:
-            return None
-        return next(
-            (
-                key
-                for key in self._codex_sessions()
-                if hashlib.sha256(key.encode()).hexdigest() == match[1]
-            ),
-            None,
-        )
+        named = set(_INSTRUCTIONS.findall(str(raw.get("prompt") or "")))
+        keys = [
+            k for k in self._codex_sessions() if hashlib.sha256(k.encode()).hexdigest() in named
+        ]
+        if len(keys) != 1:
+            return None  # no marker, or more than one: ambiguous, so park
+        key = keys[0]
+        if key in self.bound.values():
+            bind = self.history.last_event(key, NATIVE_BOUND)
+            if bind is None or self.history.last_launch_ts(key) <= bind[1]:
+                return None  # already bound in this launch: bind once
+        return key
 
     def resolve(self, raw: dict[str, Any]) -> list[dict[str, Any]]:
         """The events to publish for one daemon-hosted hook event: none if it
@@ -79,8 +89,8 @@ class NativeIdentity:
         out: list[dict[str, Any]] = []
         if native and native not in self.bound:
             self._refresh()  # a bind recorded since, or since a restart
-        key = self.bound.get(native) if native else None
-        if key is None and native:
+        key = self.bound.get(native) if native and native not in self.conflicted else None
+        if key is None and native and native not in self.conflicted:
             key = self._claim(raw)
             if key is not None:
                 self.bound = {n: k for n, k in self.bound.items() if k != key}

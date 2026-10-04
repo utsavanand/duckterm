@@ -127,3 +127,18 @@ def test_an_id_that_only_ever_came_through_a_hook_is_not_trusted(server) -> None
         }  # fmt: skip
     )
     assert post(server, "Stop", NATIVE_B)["session_key"] == "cx-b"
+
+
+def test_a_relaunch_may_take_a_new_native_id(server) -> None:
+    """Bind once per launch (main-qa's edge cases), but a fresh launch of the
+    same session (a server-published SessionStart) starts a new thread."""
+    post(server, "UserPromptSubmit", NATIVE_A, prompt=launch_prompt("cx-a"))
+    server.history.record(
+        {"_id": "relaunch", "_ts": 2**41, "event_type": "SessionStart", "session_key": "cx-a",
+         "runtime": "codex"}  # fmt: skip
+    )
+    assert (
+        post(server, "UserPromptSubmit", NATIVE_B, prompt=launch_prompt("cx-a"))["session_key"]
+        == "cx-a"
+    )
+    assert post(server, "Stop", NATIVE_A) == {"parked": "unattributed daemon event"}

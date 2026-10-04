@@ -572,6 +572,16 @@ class HistoryStore:
         ).fetchone()
         return str(row["sid"]) if row and row["sid"] else None
 
+    def last_launch_ts(self, key: str) -> int:
+        """When DuckTerm last started this session's agent: its newest
+        server-published SessionStart (hook-sent ones don't count)."""
+        row = self._conn.execute(
+            "SELECT MAX(ts) AS ts FROM events WHERE session_key = ? AND event_type = ? "
+            "AND json_extract(payload_json, '$.hook_event') IS NULL",
+            (key, events.SESSION_START),
+        ).fetchone()
+        return int(row["ts"] or 0)
+
     def session_id_for(self, key: str) -> str | None:
         """The agent runtime's own session id (for transcript correlation), read
         from the most recent event that carried one."""
