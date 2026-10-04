@@ -63,7 +63,9 @@ def test_direct_owner_question_retry_reply_and_retirement(app):  # noqa: F811
     assert len(inbox) == 1
     assert inbox[0]["sender_kind"] == "owner" and inbox[0]["requires_reply"] is True
     assert inbox[0]["status"] == "queued"
-    assert "1 unread owner message(s)" in app.history.session_api.turn_end_notice("one")
+    # The agent's inbox read above means it is read, though still unanswered.
+    notice = app.history.session_api.turn_end_notice("one")
+    assert "1 owner message(s) you have read but not answered" in notice
     path = f"/questions/{message['message_id']}"
     assert call(app.history, credentials, "POST", path + "/accept")[1]["status"] == "accepted"
     assert (
