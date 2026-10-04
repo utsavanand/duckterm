@@ -33,16 +33,24 @@ environment of whichever session started it. When the hook's parent is that
 daemon, it sends no `session_key` and no `agent_pid` (the daemon's pid), and
 marks the event `hook_host: "daemon"`. The agent's own `session_id` (its
 thread id, stable across daemon restarts, checked on 0.159.3) identifies the
-session; the server resolves it and parks what it can't. Every other `DUCKTERM_*`
+session; the server resolves it (`core/native_identity.py`) and parks what it can't.
+An id resolves through one DuckTerm recorded itself on the session: a
+`NativeBound` event, or a server-published event that carries it. Ids from
+hook events never count, because before this fix a daemon hook could carry
+another session's. A new id binds once, when a `UserPromptSubmit` carries a
+live Codex session's launch prompt: every launch prompt names the session's
+instruction file, under `sha256(session key)`, so no prompt or schema change
+was needed. Anything else is parked: kept 10 minutes and replayed if its id
+binds, counted at `GET /hooks/parked`, and never filed under a default
+session. The daemon's pid is dropped. Every other `DUCKTERM_*`
 variable the daemon holds belongs to another launch too: `DUCKTERM_URL`
 (on 2026-10-01 a dead port), `DUCKTERM_HOME` and `DUCKTERM_INTERNAL`. So
 under the daemon the hook ignores all of them and reports to the default
 instance: `~/.duckterm/instance-url` (else port 4300) and the token in
 `~/.duckterm`. A per-process agent still uses `DUCKTERM_URL` first.
 Daemon-hosted Codex on a second instance is unsupported.
-DuckTerm learns each launched Codex session's id (probe P2, 0.159.3) from a
-random nonce in the launch prompt. It comes back with the session's id in
-the first `UserPromptSubmit` and is also written to the rollout file. Design: "Design — Shared-daemon identity (Codex 0.159)", 2026-10-01.
+Probe P2 (0.159.3): the launch prompt comes back with the session's id in
+its first `UserPromptSubmit`, and is also written to the rollout file. Design: "Design — Shared-daemon identity (Codex 0.159)", 2026-10-01.
 
 ## 2. Installable harnesses — suites of skills, hooks, and sub-agents
 

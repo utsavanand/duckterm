@@ -408,7 +408,7 @@ class HistoryStore:
             ),
         )
         etype = event.get("event_type")
-        if etype == events.MERGE_DELIVERED:
+        if etype in (events.MERGE_DELIVERED, events.NATIVE_BOUND):
             # Server bookkeeping for the merge checkpoint, not agent activity:
             # it must not move the session's state, last event or settle time.
             self._conn.commit()
@@ -555,6 +555,22 @@ class HistoryStore:
             "SELECT kind, count FROM metrics WHERE session_key = ?", (key,)
         ).fetchall()
         return {r["kind"]: r["count"] for r in rows}
+
+    def recorded_native_id(self, key: str) -> str | None:
+        """The agent's own session id as DuckTerm itself recorded it: a
+        NativeBound bind, or an event the server published (not a hook's,
+        whose ids could come from another session's environment under Codex's
+        shared daemon). One indexed lookup on this session's events."""
+        row = self._conn.execute(
+            "SELECT COALESCE(json_extract(payload_json, '$.native_session_id'), "
+            "json_extract(payload_json, '$.session_id')) AS sid FROM events "
+            "WHERE session_key = ? AND (event_type = ? OR ("
+            "json_extract(payload_json, '$.hook_event') IS NULL "
+            "AND json_extract(payload_json, '$.session_id') IS NOT NULL)) "
+            "ORDER BY ts DESC LIMIT 1",
+            (key, events.NATIVE_BOUND),
+        ).fetchone()
+        return str(row["sid"]) if row and row["sid"] else None
 
     def session_id_for(self, key: str) -> str | None:
         """The agent runtime's own session id (for transcript correlation), read

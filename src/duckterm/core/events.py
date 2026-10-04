@@ -29,6 +29,9 @@ ATTENDED = "Attended"
 # for the first time. The parent's merge checkpoint is taken here, never on
 # enqueue, cancel or a failed paste (architect, "Design — Fork merge-back").
 MERGE_DELIVERED = "MergeDelivered"
+# Published by the server: a Codex daemon-hosted session's native id was bound
+# to this session (core/native_identity.py). Bookkeeping, not agent activity.
+NATIVE_BOUND = "NativeBound"
 
 # The full set an agent's hooks are wired for (order preserved for the installer).
 ALL = [

@@ -58,6 +58,7 @@ from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.folder_messages import FolderMessages
+from duckterm.core.native_identity import NativeIdentity
 from duckterm.core.orchestrator import Orchestrator, SessionSupervisor
 from duckterm.core.relay import (
     ASK_CUES,
@@ -263,6 +264,8 @@ _ROUTES: list[Route] = [
     Route("POST", "/voice/stop", lambda s, r, w, h, b, seg: s._voice_stop(w)),
     Route("DELETE", "/voice", lambda s, r, w, h, b, seg: s._voice_remove(w)),
     Route("GET", "/relay/count", lambda s, r, w, h, b, seg: s._relay_count(w)),
+    Route("GET", "/hooks/parked",
+          lambda s, r, w, h, b, seg: _write_json(w, 200, s.native_identity.status())),
     Route("POST", "/relay/rules/propose", lambda s, r, w, h, b, seg: s._relay_propose(w, b)),
     Route("POST", "/relay/rules", lambda s, r, w, h, b, seg: s._relay_create_rule(w, b)),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._relay_delete_rule(w, seg),
@@ -406,6 +409,7 @@ class Server:
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore()
         self.token = security.load_or_create_token()
+        self.native_identity = NativeIdentity(self.history)
         # transcript path -> (mtime, context_tokens): /sessions is fetched
         # often and an unchanged transcript can't have new usage.
         self._context_cache: dict[str, tuple[float, dict[str, Any]]] = {}
@@ -695,6 +699,17 @@ class Server:
                 raw["agent_pid"] = pid if pid > 0 else None
             except (TypeError, ValueError):
                 raw["agent_pid"] = None
+        # Codex 0.159+ hooks run in a shared daemon and carry only the agent's
+        # own session_id; resolve it to a session, or park it (never default).
+        if raw.get("hook_host") == "daemon" and not raw.get("session_key"):
+            raw.pop("agent_pid", None)  # the daemon's, never the agent's
+            resolved = self.native_identity.resolve(raw)
+            if not resolved:
+                await _write_json(writer, 200, {"parked": "unattributed daemon event"})
+                return
+            *earlier, raw = resolved
+            for extra in earlier:
+                self.bus.publish({**extra, "hook_event": True})
         # A deleted (tombstoned) session whose agent is still running keeps firing
         # hooks. Drop ALL of its events here — including SessionStart — so a
         # session you deleted stays gone: no phantom rows, no events leaking into
