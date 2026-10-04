@@ -567,9 +567,11 @@ class SessionAPI:
         parts = [
             f"{unread} unread owner message(s)" if unread else "",
             f"{waiting} owner message(s) you have read but not answered" if waiting else "",
-            f"{len(ids) - unread - waiting} accepted inbox assignment(s) awaiting a reply"
-            if len(ids) - unread - waiting
-            else "",
+            (
+                f"{len(ids) - unread - waiting} accepted inbox assignment(s) awaiting a reply"
+                if len(ids) - unread - waiting
+                else ""
+            ),
         ]
         return (
             "You have " + ", ".join(p for p in parts if p) + ". "
