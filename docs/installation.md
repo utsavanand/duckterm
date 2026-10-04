@@ -20,6 +20,32 @@ Install and sign in to your chosen agent separately:
 - [Codex](https://github.com/openai/codex#quickstart)
 - [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/install-copilot-cli)
 
+### Codex version
+
+DuckTerm is verified with **Codex 0.155.x**. Codex **0.159 and later are not
+supported yet**: they run one shared daemon for every Codex session, so DuckTerm
+receives each session's events under whichever session launched first. Sessions
+show the wrong state and messages, and questions Codex asks you can be lost.
+
+Check your version with `codex --version`. To stop Codex upgrading itself at
+startup, add this as a top-level line in `~/.codex/config.toml` (above any
+`[section]` header):
+
+```toml
+check_for_update_on_startup = false
+```
+
+Codex also has a background updater that this setting may not cover, so recheck
+`codex --version` after Codex restarts. If Codex has already upgraded, older
+versions stay on disk under `~/.codex/packages/standalone/releases/`, and you can
+switch back by pointing the `current` link at one of them:
+
+```sh
+ln -sfn ~/.codex/packages/standalone/releases/0.155.1-aarch64-apple-darwin \
+  ~/.codex/packages/standalone/current
+codex --version
+```
+
 Run `duckterm doctor` for dependency, server, hook, and trust diagnostics. Install
 hooks for your chosen runtime as shown in the README. Hooks edit the agent's
 configuration; they are separate from provider sign-in and connector setup.

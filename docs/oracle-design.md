@@ -97,6 +97,64 @@ Nudges recorded before 2026-09-26 lack the IDs and count as no previous nudge.
 
 **Known limits.** Delivery is not proof the agent handled the mail.
 
+## Priority owner broadcasts
+
+The owner asked (2026-09-30) that broadcasts to a folder "should be
+prioritized and go into the chat windows of every agent". Architect's
+design, addendum 3 of "Design — Folder chat & artifacts": priority changes
+a message's standing, not how it's delivered, and never interrupts a turn.
+
+- **Owner only.** `POST /folders/:folder/broadcast` takes
+  `"priority": true`; only owner routes reach it, and the peer question API
+  rejects the field. Peers can't manufacture urgency for each other.
+- **Busy agents** get it at the next turn end: the Stop hook's notice pins
+  every open priority message, as ONE block newest first, ahead of the usual
+  reminder. It repeats at every turn end until the agent replies to it.
+  Reading it isn't enough. Broadcasts have no accept step, so a reply is the
+  acknowledgement.
+- **Idle agents** are reminded at once: the broadcast starts an Oracle pass
+  right away, and priority mail skips the 5-minute settle wait, though the
+  typing and empty-prompt checks still apply. The reminder quotes the
+  owner's words, which is safe because they're the owner's.
+- **Not swept while open.** Open priority messages are exempt from the
+  7-day cleanup. `DELETE /broadcasts/:request_key` (owner) cancels every
+  copy and retires the pins.
+- **Status per recipient**, from `GET /broadcasts/:request_key`: delivered,
+  pending next turn, inbox only, acknowledged or cancelled. Delivered means
+  the text reached the agent: the Stop hook returned it, or Oracle's
+  reminder was submitted. A reminder left stuck in the prompt, or one that
+  failed to paste, stays "pending next turn". The chips are ui-dev's.
+- **Retries.** A plain broadcast's `request_key` stores the same content
+  hash as before priority existed, so a retry from an older client still
+  matches. Priority is part of the hash, so reusing a key with a different
+  priority is a 409.
+- **One recipient.** `POST /sessions/:key/message` with `"mode": "inbox"`,
+  `"priority": true` and a `request_key` sends a priority broadcast to that
+  one session. It is the same record, pin, reminder, status and cancel,
+  under `/broadcasts/:request_key`. Fork merge-back delivers the owner's
+  edited summary to the parent this way (architect's "Design — Fork
+  merge-back", 2026-09-30: one delivery path, not two). It also sends
+  `"merged_from": <child key>` with a `request_key` of
+  `merge:<child key>:<unique>`, both checked: the child must be another
+  existing session, and no other message may use the `merge:` prefix.
+  Inbox rows for priority owner messages carry `request_key`, and merge
+  summaries also carry `origin: {kind: "merge", from_session}`, so the
+  dashboard labels them without parsing the text. A retry of the same
+  submission reuses its key; a later re-merge needs a new one. A key is
+  bound to its text and its priority: reusing it with either changed is a
+  409, including a plain message on a priority key.
+- **Merge checkpoint trigger.** The first time a merge summary reaches the
+  parent (the Stop hook returns it, or Oracle's reminder is submitted), the
+  server records a `MergeDelivered` event on the parent:
+  `{from_session, message_id, request_key}`. That event is where the
+  parent's merge checkpoint is taken (architect, 2026-09-30). Enqueueing,
+  cancelling, a stuck or failed paste, and later re-notices never fire it.
+  It is bookkeeping, not agent activity, so it changes no session state.
+- **Capability.** `priority_delivery` is a harness flag. Claude Code
+  declares it, since its turn-end notice is proven; Codex and Copilot don't
+  yet. Their copies show "inbox only" and get no pin or fast path, and are
+  never shown as delivered (contracts R1).
+
 ## Prerequisite fix: idle is not waiting
 
 Claude Code sends a Notification about 60 seconds after a turn ends with
@@ -116,7 +174,7 @@ What needs the owner becomes a note in the Ask Oracle chat. Notes live in
 | Note | Source | Answer route |
 | --- | --- | --- |
 | Approval | The approval registry, synced on every event and on `/approvals`. For agents that auto-review requests (Codex), only once the agent's own approval prompt is on screen | Claude Code and Copilot: `ApprovalRegistry.set_decision`, the dashboard's path. Codex: its prompt's keys (`y`, Esc), only while the prompt is still on screen |
-| Choice | Claude's `AskUserQuestion`, which arrives as a `PermissionRequest`. One note lists every question in the form with its options | Not answered from the chat. The note's "Open terminal" button jumps to the session, where the owner answers the menu. Pressing digits broke on 2026-09-26: a two-question form got its first answer, moved to the second question, and never submitted. Answering without keystrokes is roadmap work |
+| Choice | The tool each agent uses to ask the owner, declared per harness as `Harness.owner_prompt`: Claude's `AskUserQuestion` (a `PermissionRequest`), Codex's `request_user_input_async` and Copilot's `ask_user` (both a `PreToolUse`). One note lists every question with its options | Not answered from the chat. The note's "Open terminal" button jumps to the session, where the owner answers the menu. Pressing digits broke on 2026-09-26: a two-question form got its first answer, moved to the second question, and never submitted. Answering without keystrokes is roadmap work |
 | Question | 30 s after each `Stop` (skipped if the owner replied), a word-cue filter, then one Sonnet call classifying the ending as blocked, offer, or none | Typed into the prompt under the paste checks; otherwise an owner inbox message, which Oracle nudges |
 
 **Is the owner actually needed for an approval?** A permission request isn't
@@ -171,8 +229,36 @@ Known miss: a plan hand-off buried mid-message ("next move is yours: review
 the plan and say go") read as none in every run. Without a model, the
 question-mark check is the fallback and the note says so.
 
+**Polling.** The dashboard reads notes from `/relay` every 4 s, and the
+open count every 5 s. Each poll is abandoned after 10 s, and the dashboard
+polls at once when its window comes back into view. That refocus poll is
+skipped while one is already in flight, and is limited to one a second, so a
+burst of focus changes can't flood the server. Before 2026-10-02 a poll
+had no timeout, so one request that never answered (for example in the Mac
+app's web view after sleep) froze Needs you and the Oracle chat with no
+error. That is one way the owner could miss a note the server had open for
+3 hours in the B16 live check. It is not proven to be that miss's cause.
+
 Notes close by themselves when the agent moves on: choice notes on the next
 tool event or turn end, question notes when the owner types a prompt.
+
+**Codex asks without waiting** (B16, 2026-10-01). Codex's
+`request_user_input_async` returns at once. The agent carries on and ends its
+turn, and the question stays queued above an empty input box ("? 1 question",
+"shift + ← to answer"). The owner's answer arrives as a prompt starting
+`> <question>`. Any other submitted prompt silently discards the question
+(checked on Codex 0.155.1). Before this fix Oracle made no note for it, and
+its own inbox reminders then discarded it: of 69 Codex questions in the
+owner's history, 14 were never answered, and for 8 of those the next prompt
+submitted was an Oracle reminder. So a Codex choice note closes only
+on a submitted prompt or the session ending, never on the agent's own tool
+use. Codex can queue several questions ("? 2 questions"), and each one gets
+its own note. Each answer is submitted on its own as `> <question>`, which
+closes that question's note and leaves the rest queued. Any other prompt
+closes them all, because Codex discards the whole queue. The queued question also makes `prompt_is_empty` false, so Oracle doesn't
+type into that session (no reminder, no relayed reply) until the owner
+answers. A question asked this way also suppresses the end-of-turn question
+classifier, so the owner isn't asked twice.
 
 Rules are made in the chat ("always …", "when an agent asks …"): one model call
 proposes a structured rule, and nothing exists until the owner clicks Create.

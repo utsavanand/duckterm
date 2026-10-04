@@ -225,3 +225,20 @@ attached to from the Mac over SSH. Constraints decided and verified so far:
   Backlog tab + one `proposals` table), or routines are needed for a
   runtime with no self-scheduling and cron is unmanageable (then a
   scheduler).
+
+
+### HistoryStore thread ownership
+
+A HistoryStore and its SQLite connection belong to the thread that constructs
+them, normally the server event loop. SQLite enforces this with
+`check_same_thread=True`; methods and direct connection users must remain on
+that thread. Before sending work to `asyncio.to_thread`, capture immutable
+inputs such as runtime name, cwd and native conversation ID. Transcript parsing
+and terminal I/O remain off-thread, without a reference to HistoryStore.
+Independent backup connections are created and used inside their own worker.
+WAL and the existing five-second busy timeout address contention between
+connections, not shared-connection thread safety.
+
+Connector usage reads a partial expression index containing only MCP PreToolUse
+events. Existing counts and timestamps are unchanged; query cost still grows
+with matching usage. The index is additive and leaves schema version 11 intact.

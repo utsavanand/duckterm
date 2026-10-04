@@ -1,12 +1,28 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
-import { RelayNote } from "./api";
-import { useSpeechVoices, useVoice, VoiceMenu, VoicePausedPill, VoicePicker, VoiceToast } from "./VoiceControl";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { api, LocalVoiceStatus, RelayNote } from "./api";
+import { useVoice, VoiceMenu, VoicePausedPill, VoicePicker, VoiceToast } from "./VoiceControl";
 import { Speaker, VoiceSession } from "./voice";
 
 const relay = vi.hoisted(() => ({ notes: [] as RelayNote[] }));
 vi.mock("./relay", () => ({ useRelay: () => ({ notes: relay.notes, rules: [], open: 0, refresh: () => {}, loaded: true }) }));
-afterEach(() => { cleanup(); localStorage.clear(); relay.notes = []; });
+vi.mock("./api", () => ({
+  api: { voiceStatus: vi.fn(), voiceInstall: vi.fn(), voiceRemove: vi.fn(), voiceSay: vi.fn(), voiceWarm: vi.fn(), voiceStop: vi.fn() },
+}));
+
+const READY: LocalVoiceStatus = {
+  state: "ready",
+  voices: [
+    { id: "af_heart", label: "Heart", accent: "US" },
+    { id: "bf_emma", label: "Emma", accent: "UK" },
+  ],
+};
+beforeEach(() => {
+  vi.mocked(api.voiceStatus).mockResolvedValue(READY);
+  vi.mocked(api.voiceWarm).mockResolvedValue(undefined);
+  vi.mocked(api.voiceStop).mockResolvedValue(undefined);
+});
+afterEach(() => { cleanup(); localStorage.clear(); relay.notes = []; vi.resetAllMocks(); });
 
 const idle: VoiceSession[] = [{ key: "a", label: "architect", group: "Duckterm", state: "idle" }];
 const approval: VoiceSession[] = [{ ...idle[0], state: "waiting", waitingSince: 5, waitingCause: "approval" }];
@@ -15,17 +31,23 @@ function Harness({ speaker, sessions = idle }: { speaker: Speaker; sessions?: Vo
   const voice = useVoice(sessions, speaker);
   return (
     <>
-      <VoiceMenu level={voice.level} onLevel={voice.setLevel} />
+      <VoiceMenu level={voice.level} ready={voice.ready} onLevel={voice.setLevel} />
       {voice.spoken && <VoiceToast text={voice.spoken} level={voice.level} onLevel={voice.setLevel} onMute={voice.mute} onDismiss={voice.dismiss} />}
     </>
   );
 }
 
+const recorder = (said: string[]): Speaker => ({
+  say: async (t) => { said.push(t); },
+  chime: async () => { said.push("<chime>"); },
+  stop: () => {},
+});
+
 it("chimes and speaks a session that starts waiting on an approval, and drops to needs-you in one click that persists", async () => {
   const said: string[] = [];
-  const speaker: Speaker = { say: async (t) => { said.push(t); }, chime: async () => { said.push("<chime>"); }, stop: () => {} };
-  const view = render(<Harness speaker={speaker} />);
-  view.rerender(<Harness speaker={speaker} sessions={approval} />);
+  const view = render(<Harness speaker={recorder(said)} />);
+  await screen.findByRole("option", { name: "Needs you + done" }); // the natural voice is ready
+  view.rerender(<Harness speaker={recorder(said)} sessions={approval} />);
   await waitFor(() => expect(said).toEqual(["<chime>", "architect needs your input"]), { timeout: 4000 });
   expect(screen.getByRole("status")).toHaveTextContent("architect needs your input");
 
@@ -34,104 +56,96 @@ it("chimes and speaks a session that starts waiting on an approval, and drops to
   expect(localStorage.getItem("rd.voice")).toBe("needs");
 
   cleanup(); // a reload reads the stored choice back
-  render(<Harness speaker={speaker} />);
-  expect(screen.getByLabelText("Voice announcements")).toHaveValue("needs");
+  render(<Harness speaker={recorder(said)} />);
+  await waitFor(() => expect(screen.getByLabelText("Voice announcements")).toHaveValue("needs"));
 });
 
-it("turning voice off stops speech at once", async () => {
+it("stays off with the reason shown until a natural voice is downloaded", async () => {
+  vi.mocked(api.voiceStatus).mockResolvedValue({ state: "absent", size: "about 310 MB" });
+  const said: string[] = [];
+  const view = render(<Harness speaker={recorder(said)} />);
+  const indicator = await screen.findByRole("img", { name: "Voice off — download a voice in Settings" });
+  expect(indicator).toHaveAttribute("title", "Voice off — download a voice in Settings");
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  view.rerender(<Harness speaker={recorder(said)} sessions={approval} />);
+  await new Promise((r) => setTimeout(r, 1800));
+  expect(said).toEqual([]); // nothing to speak with, so nothing is said
+  expect(api.voiceWarm).not.toHaveBeenCalled();
+});
+
+it("turning voice off stops speech at once and stops the voice process", async () => {
   const stop = vi.fn();
-  const speaker: Speaker = { say: async () => {}, chime: async () => {}, stop };
-  render(<Harness speaker={speaker} />);
+  render(<Harness speaker={{ say: async () => {}, chime: async () => {}, stop }} />);
+  const menu = await screen.findByRole("option", { name: "Off" });
   await act(async () => {
-    fireEvent.change(screen.getByLabelText("Voice announcements"), { target: { value: "off" } });
+    fireEvent.change(menu.closest("select")!, { target: { value: "off" } });
   });
   expect(stop).toHaveBeenCalled();
+  expect(api.voiceStop).toHaveBeenCalled();
   expect(localStorage.getItem("rd.voice")).toBe("off");
 });
 
 it("speaks a turn that ended on a question, from the relay's note", async () => {
   const said: string[] = [];
-  const speaker: Speaker = { say: async (t) => { said.push(t); }, chime: async () => {}, stop: () => {} };
-  const view = render(<Harness speaker={speaker} />);
+  const view = render(<Harness speaker={recorder(said)} />);
+  await screen.findByRole("option", { name: "Needs you + done" });
   relay.notes = [{ id: "q1", session_key: "a", name: "architect", folder: "Duckterm", runtime: "codex", kind: "question", status: "open", urgency: "blocked", created_at: 1 }];
-  view.rerender(<Harness speaker={speaker} sessions={[...idle]} />);
+  view.rerender(<Harness speaker={recorder(said)} sessions={[...idle]} />);
   await waitFor(() => expect(said).toEqual(["architect needs your input"]), { timeout: 4000 });
 });
 
-it("shows the paused pill after a reload until the page gets a click", () => {
+it("shows the paused pill after a reload until the page gets a click", async () => {
   localStorage.setItem("rd.voice", "done");
   Object.defineProperty(navigator, "userActivation", { value: { hasBeenActive: false }, configurable: true });
   function Paused() {
-    const voice = useVoice(idle, { say: async () => {}, chime: async () => {}, stop: () => {} });
+    const voice = useVoice(idle, recorder([]));
     return voice.paused ? <VoicePausedPill /> : null;
   }
   render(<Paused />);
-  expect(screen.getByRole("status")).toHaveTextContent("Voice paused. Click anywhere to resume.");
+  expect(await screen.findByRole("status")).toHaveTextContent("Voice paused. Click anywhere to resume.");
   fireEvent.pointerDown(document.body);
   expect(screen.queryByRole("status")).toBeNull();
   Object.defineProperty(navigator, "userActivation", { value: undefined, configurable: true });
 });
 
-it("shows the paused pill when the browser refuses to speak", async () => {
+it("shows the paused pill when the browser refuses to play", async () => {
   const speaker: Speaker = { say: async () => false, chime: async () => {}, stop: () => {} };
   function Refused({ sessions }: { sessions: VoiceSession[] }) {
     const voice = useVoice(sessions, speaker);
-    return voice.paused ? <VoicePausedPill /> : null;
+    return <>{voice.ready && <span>ready</span>}{voice.paused && <VoicePausedPill />}</>;
   }
   const view = render(<Refused sessions={idle} />);
+  await screen.findByText("ready");
   view.rerender(<Refused sessions={approval} />);
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Voice paused"), { timeout: 4000 });
 });
 
-it("fills the voice list when the browser delivers it late", async () => {
-  let voices: { name: string; lang: string }[] = [];
-  const listeners: (() => void)[] = [];
-  vi.stubGlobal("speechSynthesis", {
-    getVoices: () => voices,
-    addEventListener: (_: string, fn: () => void) => listeners.push(fn),
-    removeEventListener: () => {},
-    speak: () => {},
-    cancel: () => {},
-  });
-  function Names() {
-    return <p>{useSpeechVoices().map((v) => v.name).join(",") || "empty"}</p>;
-  }
-  render(<Names />);
-  expect(screen.getByText("empty")).toBeVisible();
-  voices = [{ name: "Samantha", lang: "en-US" }];
-  act(() => listeners.forEach((fn) => fn()));
-  expect(screen.getByText("Samantha")).toBeVisible();
-  vi.unstubAllGlobals();
-});
-
-it("previews each voice by name, saves the choice, and says where better voices come from", () => {
+it("lists only natural voices, previews each by name, and selects one", () => {
   const onPreview = vi.fn();
   const onSelect = vi.fn();
-  const voices = [{ name: "Samantha", lang: "en-US" }, { name: "Daniel", lang: "en-GB" }];
-  const view = render(<VoicePicker voices={voices} selected="Samantha" qualityVoices={false} onSelect={onSelect} onPreview={onPreview} />);
-  fireEvent.click(screen.getByRole("button", { name: "Preview Daniel" }));
-  expect(onPreview).toHaveBeenCalledWith("Daniel");
-  fireEvent.click(screen.getByRole("radio", { name: "Daniel" }));
-  expect(onSelect).toHaveBeenCalledWith("Daniel");
-  expect(screen.getByText(/Spoken Content, then the System voice menu, Manage Voices/)).toBeVisible();
-  view.rerender(<VoicePicker voices={voices} selected="Samantha" qualityVoices onSelect={onSelect} onPreview={onPreview} />);
-  expect(screen.queryByText(/Manage Voices/)).toBeNull();
+  const voices = [{ name: "kokoro:af_heart", label: "Heart (US)" }, { name: "kokoro:bf_emma", label: "Emma (UK)" }];
+  render(<VoicePicker voices={voices} selected="kokoro:af_heart" onSelect={onSelect} onPreview={onPreview} />);
+  expect(screen.getAllByRole("radio").map((r) => r.closest("label")!.textContent)).toEqual(["Heart (US)", "Emma (UK)"]);
+  fireEvent.click(screen.getByRole("button", { name: "Preview Emma (UK)" }));
+  expect(onPreview).toHaveBeenCalledWith("kokoro:bf_emma");
+  fireEvent.click(screen.getByRole("radio", { name: "Emma (UK)" }));
+  expect(onSelect).toHaveBeenCalledWith("kokoro:bf_emma");
+  expect(screen.queryByText(/Manage Voices|Spoken Content/)).toBeNull();
+  cleanup();
+  const empty = render(<VoicePicker voices={[]} selected={null} onSelect={onSelect} onPreview={onPreview} />);
+  expect(empty.container).toBeEmptyDOMElement(); // nothing installed: the download panel speaks for itself
 });
 
-it("persists the chosen voice through the hook and previews with the sample line", () => {
+it("defaults to Heart, persists a new choice, and previews with the sample line", async () => {
   const said: [string, string | undefined][] = [];
   const speaker: Speaker = { say: async (t, v) => { said.push([t, v]); }, chime: async () => {}, stop: () => {} };
-  let setVoice!: (name: string) => void;
-  let preview!: (name: string) => void;
-  function Picker() {
-    const voice = useVoice(idle, speaker);
-    setVoice = voice.setVoice;
-    preview = voice.preview;
-    return null;
-  }
+  let voice!: ReturnType<typeof useVoice>;
+  function Picker() { voice = useVoice(idle, speaker); return null; }
   render(<Picker />);
-  act(() => setVoice("Daniel"));
-  expect(localStorage.getItem("rd.voice.name")).toBe("Daniel");
-  act(() => preview("Daniel"));
-  expect(said).toEqual([["architect needs your input", "Daniel"]]);
+  await waitFor(() => expect(voice.selectedVoice).toBe("kokoro:af_heart"));
+  act(() => voice.setVoice("kokoro:bf_emma"));
+  expect(localStorage.getItem("rd.voice.name")).toBe("kokoro:bf_emma");
+  expect(voice.selectedVoice).toBe("kokoro:bf_emma");
+  act(() => voice.preview("kokoro:bf_emma"));
+  expect(said).toEqual([["architect needs your input", "kokoro:bf_emma"]]);
 });

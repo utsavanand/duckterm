@@ -11,6 +11,7 @@ import contextlib
 import json
 import re
 import shlex
+from collections.abc import Iterable
 from pathlib import Path
 
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
@@ -21,6 +22,7 @@ from duckterm.runtimes.base import (
     plain_screen,
     prompt_line_rest,
 )
+from duckterm.runtimes.message_cache import MessageCache, unavailable_response
 
 # Codex prints a spinner/working line while busy and a prompt glyph when idle.
 # "esc to interrupt" appears on every interruptible-active line (including
@@ -41,6 +43,9 @@ _WAITING = re.compile(
     r"(\(y/n\)|continue\?|would you like to|press enter to confirm|do you want to proceed)",
     re.IGNORECASE,
 )
+# The owner's queued question above the input box: "? 1 question" (a timer
+# like "· 7s" comes and goes) over "shift + ← to answer".
+_QUEUED_QUESTION = re.compile(r"^\s*\? \d+ questions?\b|shift \+ ← to answer", re.MULTILINE)
 
 _SESSION_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
@@ -69,6 +74,11 @@ class CodexRuntime(Harness):
     # every gated command and its reviewer approves nearly all of them: 1,597
     # requests in 5 days on the owner's machine, typically done in ~20 s.
     auto_approves_requests = True
+    # Its PreToolUse carries questions[{title, options: [str]}]; the tool
+    # returns at once. An answer arrives as a prompt starting "> <title>";
+    # any other submitted prompt discards the queued question (0.155.1).
+    owner_prompt = ("PreToolUse", "request_user_input_async")
+    owner_prompt_blocks = False
 
     def approval_prompt_visible(self, screen: str) -> bool:
         # Codex 0.155's prompt: "Would you like to run the following command?"
@@ -81,7 +91,12 @@ class CodexRuntime(Harness):
 
     def prompt_is_empty(self, screen: str) -> bool:
         # Codex shows "›" plus a dimmed placeholder ("Ask Codex to do anything")
-        # when empty; typed text renders undimmed.
+        # when empty; typed text renders undimmed. A queued question for the
+        # owner ("? 1 question" over "shift + ← to answer") sits above an
+        # empty box, and anything submitted there discards it, so the box
+        # doesn't count as free.
+        if _QUEUED_QUESTION.search(plain_screen(screen)):
+            return False
         return prompt_line_rest(screen, "›", ignore_dim=True) == ""
 
     def detect_state(self, recent_output: str) -> SessionState | None:
@@ -111,14 +126,18 @@ class CodexRuntime(Harness):
 
     def messages(self, *, cwd: Path, session_id: str | None) -> list[dict[str, object]]:
         path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
-        if path is None:
-            path = self.latest_transcript(cwd=cwd)
-        return parse_codex_messages(path) if path else []
+        return _MESSAGE_CACHE.read(path) if path else []
+
+    def messages_response(self, *, cwd: Path, session_id: str | None) -> bytes:
+        path = self.locate_transcript(cwd=cwd, session_id=session_id) if session_id else None
+        return (
+            _MESSAGE_CACHE.response(path, self.name, session_id)
+            if path
+            else unavailable_response(session_id)
+        )
 
     def latest_transcript(self, *, cwd: Path) -> Path | None:
-        """The newest rollout whose session_meta records this cwd. Sessions
-        launched in-process never report Codex's session_id, so locating by id
-        fails — but the rollout's first line names the cwd it ran in."""
+        """Newest rollout for directory-level discovery, never session identity."""
         root = Path.home() / ".codex" / "sessions"
         if not root.exists():
             return None
@@ -202,8 +221,12 @@ def parse_codex_messages(path: Path) -> list[dict[str, object]]:
     and user turns that are machine context (<environment_context>,
     <user_instructions>) — rendering those as "you" would be wrong and would
     anchor the latest-reply view on a machine-generated turn."""
+    return _parse_message_lines(path.read_text(errors="replace").splitlines(), 0)
+
+
+def _parse_message_lines(lines: Iterable[str], start: int) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    for i, line in enumerate(path.read_text(errors="replace").splitlines()):
+    for i, line in enumerate(lines, start):
         if not line.strip():
             continue
         try:
@@ -255,3 +278,6 @@ def _codex_text(content: object) -> str:
         ]
         return "\n".join(parts)
     return ""
+
+
+_MESSAGE_CACHE = MessageCache(_parse_message_lines)

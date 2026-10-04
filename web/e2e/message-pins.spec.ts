@@ -25,9 +25,14 @@ test("pins persist, open the exact older message, preserve terminal drafts, and 
     });
     expect(launch.status).toBe(200);
     key = String(launch.body.session_key);
+    await apiPost("/events", {
+      event_type: "SessionStart", session_key: key,
+      session_id: "pin-test", runtime: "claude-code", cwd, test: true,
+    });
     await page.goto(base());
     await page.locator(".rd-row-name", { hasText: "pin-test-agent" }).click();
     const terminal = page.locator(".rd-terminal-slot:visible .xterm-helper-textarea");
+    await expect(page.locator(".rd-pin-strip")).toHaveCount(0);
     await terminal.focus();
     await page.keyboard.type("UNSUBMITTED_DRAFT");
     await page.locator(".rd-view-toggle button", { hasText: "Messages" }).click();
@@ -60,6 +65,7 @@ test("pins persist, open the exact older message, preserve terminal drafts, and 
     await expect(page.getByText("A different decision now occupies this line.", { exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Unpin", exact: true }).click();
     await expect(chip).toHaveCount(0);
+    await expect(page.locator(".rd-pin-strip")).toHaveCount(0);
     await page.getByRole("button", { name: "Back to latest", exact: true }).click();
     await expect(page.locator(".rd-msg-text")).toContainText("Now check the backup.");
   } finally {

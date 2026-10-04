@@ -843,6 +843,32 @@ code,
   color: var(--muted);
   margin: 4px 0 0 15px;
 }
+.rd-connector-proof {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rd-connector-proof button {
+  margin-left: auto;
+}
+.rd-connector-harnesses {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.rd-connector-harnesses legend {
+  padding: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rd-connector-harnesses .dim {
+  color: var(--muted);
+}
 .rd-connector-token {
   display: flex;
   gap: 8px;
@@ -1663,9 +1689,8 @@ code,
   display: block;
   border-radius: 6px;
 }
-.rd-brand-term {
-  color: var(--brand-green);
-}
+.rd-brand-name { white-space: nowrap; }
+.rd-brand-term { color: inherit; font-weight: 400; }
 .rd-live {
   font-size: 13px;
   display: inline-flex;
@@ -2970,3 +2995,4 @@ select {
 .rd-voice-picker-row label { display: flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 .rd-voice-picker-hint { margin: 0; font-size: 12px; color: var(--muted); }
 .rd-voice-natural { display: grid; gap: 6px; margin-top: 8px; justify-items: start; }
+.rd-voice-fallback { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; }

@@ -42,7 +42,7 @@ if command -v jq >/dev/null 2>&1; then
       cwd: .cwd,
       source_app: ((.cwd // "") | split("/") | last),
       tool_name: (.tool_name // .toolName),
-      tool_input: (.tool_input // .toolInput),
+      tool_input: (.tool_input // .toolInput // .toolArgs),
       prompt: .prompt,
       stop_hook_active: .stop_hook_active,
       notification_type: .notification_type,

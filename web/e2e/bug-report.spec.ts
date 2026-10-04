@@ -52,3 +52,21 @@ test("bug report downloads the exact reviewed body and captured attachments", as
     rmSync(cwd, { recursive: true, force: true });
   }
 });
+
+test('Settings reuses the native reporter when supported and older apps retain the browser form', async ({ page }) => {
+  await page.addInitScript(() => {
+    const state = { currentTarget: 'local', targets: [], canReportBug: true };
+    Object.assign(window, { __rubbertermDesktop: state, __reportRequests: [], webkit: { messageHandlers: {
+      remoteSession: { postMessage: (message: unknown) => (window as unknown as { __reportRequests: unknown[] }).__reportRequests.push(message) },
+    } } });
+  });
+  await page.goto(base());
+  await page.getByRole('button', { name: 'Settings', exact: false }).click();
+  await page.getByRole('button', { name: 'Report a bug', exact: false }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __reportRequests: unknown[] }).__reportRequests)).toEqual([{ action: 'report-bug' }]);
+  await expect(page.getByRole('dialog', { name: 'Report a bug', exact: true })).toHaveCount(0);
+  await page.evaluate(() => { delete window.__rubbertermDesktop?.canReportBug; });
+  await page.getByRole('button', { name: 'Settings', exact: false }).click();
+  await page.getByRole('button', { name: 'Report a bug', exact: false }).click();
+  await expect(page.getByRole('dialog', { name: 'Report a bug', exact: true })).toBeVisible();
+});
