@@ -58,7 +58,7 @@ from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
 from duckterm.core.folder_messages import FolderMessages
-from duckterm.core.orchestrator import Orchestrator
+from duckterm.core.orchestrator import Orchestrator, SessionSupervisor
 from duckterm.core.relay import (
     ASK_CUES,
     RULE_PROMPT,
@@ -889,45 +889,58 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
-    def _session_messages(self, session_key: str) -> list[dict[str, object]]:
+    def _message_source(self, session_key: str) -> tuple[str, str, str | None] | None:
+        """Copy DB identity on the owner thread before dispatching file work."""
         row = self.history.session(session_key)
         if row is None:
+            return None
+        return (
+            str(row.get("runtime") or "generic"),
+            str(row.get("worktree_path") or row.get("cwd") or ""),
+            self.history.session_id_for(session_key),
+        )
+
+    @staticmethod
+    def _read_messages(source: tuple[str, str, str | None] | None) -> list[dict[str, object]]:
+        if source is None:
             return []
-        session_id = self.history.session_id_for(session_key)
-        cwd = row.get("worktree_path") or row.get("cwd")
-        runtime_name = str(row.get("runtime") or "generic")
+        runtime_name, cwd, session_id = source
         runtime = _build_runtime(runtime_name, "")
-        messages = runtime.messages(cwd=Path(str(cwd)), session_id=session_id) if cwd else []
+        messages = runtime.messages(cwd=Path(cwd), session_id=session_id) if cwd else []
         for message in messages:
-            # Line numbers alone can silently point elsewhere after a rewrite.
-            # Include contents and conversation scope; stale pins use their snapshot.
             identity = json.dumps(
                 [runtime_name, session_id, message], sort_keys=True, ensure_ascii=True
             ).encode()
             message["message_key"] = hashlib.sha256(identity).hexdigest()
         return messages
 
-    def _session_messages_response(self, session_key: str) -> bytes:
-        row = self.history.session(session_key)
-        if row is None:
+    @staticmethod
+    def _read_messages_response(source: tuple[str, str, str | None] | None) -> bytes:
+        if source is None:
             return b'{"messages": []}'
-        cwd = row.get("worktree_path") or row.get("cwd")
+        runtime_name, cwd, session_id = source
         if cwd:
-            runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
+            runtime = _build_runtime(runtime_name, "")
             snapshot = getattr(runtime, "messages_response", None)
             if snapshot is not None:
-                response = snapshot(
-                    cwd=Path(str(cwd)), session_id=self.history.session_id_for(session_key)
-                )
+                response = snapshot(cwd=Path(cwd), session_id=session_id)
                 if isinstance(response, bytes):
                     return response
-        return json.dumps({"messages": self._session_messages(session_key)}).encode()
+        return json.dumps({"messages": Server._read_messages(source)}).encode()
+
+    def _session_messages(self, session_key: str) -> list[dict[str, object]]:
+        return self._read_messages(self._message_source(session_key))
+
+    def _session_messages_response(self, session_key: str) -> bytes:
+        return self._read_messages_response(self._message_source(session_key))
 
     async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         if self.history.session(session_key) is None:
             await _write_json(writer, 404, {"error": "no such session"})
             return
-        response = await asyncio.to_thread(self._session_messages_response, session_key)
+        response = await asyncio.to_thread(
+            self._read_messages_response, self._message_source(session_key)
+        )
         await _write_json_bytes(writer, 200, response)
 
     async def _layout(
@@ -1207,7 +1220,7 @@ class Server:
                 writer, 409, {"error": "unpin a message before adding more (limit 100)"}
             )
             return
-        messages = await asyncio.to_thread(self._session_messages, session_key)
+        messages = await asyncio.to_thread(self._read_messages, self._message_source(session_key))
         message = next((m for m in messages if m["message_key"] == key), None)
         if message is None:
             await _write_json(
@@ -2459,7 +2472,11 @@ class Server:
         row = self.history.session(session_key)
         if row is None:
             return
-        transcript = await asyncio.to_thread(self._progress_transcript, row)
+        transcript = await asyncio.to_thread(
+            self._progress_transcript,
+            self._message_source(session_key),
+            self.orchestrator.get(session_key),
+        )
         if not transcript:
             return
         prior = None
@@ -2561,18 +2578,18 @@ class Server:
         History tab's growing lists (latest summary rides the session row)."""
         await _write_json(writer, 200, {"items": self.digests.items(session_key)})
 
-    def _progress_transcript(self, row: dict[str, Any]) -> list[dict[str, str]]:
-        """Conversation records for the digest: the harness transcript when one
-        exists, else the live terminal screen (generic agents)."""
-        key = str(row.get("session_key") or "")
-        cwd = row.get("worktree_path") or row.get("cwd")
-        session_id = self.history.session_id_for(key)
-        if cwd and session_id:
-            runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
-            records = runtime.read_transcript(cwd=Path(str(cwd)), session_id=session_id)
-            if records:
-                return records
-        sup = self.orchestrator.get(key)
+    @staticmethod
+    def _progress_transcript(
+        source: tuple[str, str, str | None] | None, sup: SessionSupervisor | None
+    ) -> list[dict[str, str]]:
+        """Read files or terminal output using inputs captured on the owner thread."""
+        if source is not None:
+            runtime_name, cwd, session_id = source
+            if cwd and session_id:
+                runtime = _build_runtime(runtime_name, "")
+                records = runtime.read_transcript(cwd=Path(cwd), session_id=session_id)
+                if records:
+                    return records
         if sup is not None:
             screen = sup.screen_text(120)
             if screen:
@@ -3017,7 +3034,7 @@ class Server:
         await asyncio.sleep(self._RELAY_SETTLE_S)
         if self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) > at:
             return
-        messages = await asyncio.to_thread(self._session_messages, key)
+        messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
         last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
         final = self._message_text(last)
         if not final or not ASK_CUES.search(final[-900:]):

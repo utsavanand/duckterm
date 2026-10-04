@@ -98,25 +98,25 @@ def test_concurrent_connections_cannot_take_the_same_last_slot(scenario, tmp_pat
     for key in "ab":
         pin(server, owner, key)
     # Independent connections mimic two writers racing for the final slot.
-    stores = [HistoryStore(tmp_path / "db.sqlite") for _ in range(2)]
     ready = Barrier(2)
 
     def race(index):
-        ready.wait(timeout=5)
+        # Each independent connection is created, used and closed by its owner.
+        store = HistoryStore(tmp_path / "db.sqlite")
         try:
-            return stores[index].set_pinned("cd"[index], True)
-        except ValueError as exc:
-            assert str(exc) == "Unpin one first"
-            return False
-
-    try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            assert sorted(pool.map(race, range(2))) == [False, True]
-        assert len(pinned_keys(server.history)) == 3
-        assert set("ab") <= pinned_keys(server.history)
-    finally:
-        for store in stores:
+            ready.wait(timeout=5)
+            try:
+                return store.set_pinned("cd"[index], True)
+            except ValueError as exc:
+                assert str(exc) == "Unpin one first"
+                return False
+        finally:
             store.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        assert sorted(pool.map(race, range(2))) == [False, True]
+    assert len(pinned_keys(server.history)) == 3
+    assert set("ab") <= pinned_keys(server.history)
 
 
 def test_older_database_migrates_with_no_pins(tmp_path):
