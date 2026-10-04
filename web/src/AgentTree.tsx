@@ -1,5 +1,5 @@
 import { SidebarFilters } from "./SidebarFilters";
-import { hasFilters, matchesFilters, sidebarSessions, useSidebarFilters } from "./sidebarFilterState";
+import { hasFilters, matchesFilters, sidebarSessions, SidebarFilterControls } from "./sidebarFilterState";
 import { desktop } from "./desktop";
 import { SessionLocationDuck } from "./SessionLocationDuck";
 import { HelperAgents } from "./HelperAgents";
@@ -15,6 +15,7 @@ import { useToast } from "./ui";
 // The left panel: every session as a row, with forks nested under their parent
 // via parentKey. Rows select sessions; actions live in the right-panel card.
 export function AgentTree({
+  filterControls,
   sessions,
   now,
   folders: savedFolders,
@@ -34,6 +35,7 @@ export function AgentTree({
   onSetFolderTheme,
   termMode,
 }: {
+  filterControls: SidebarFilterControls;
   sessions: SessionView[];
   now: number;
   folders: string[];
@@ -53,7 +55,7 @@ export function AgentTree({
   onSetFolderTheme: (folder: string, theme: string | null) => void;
   termMode: TermMode;
 }) {
-  const { filters, toggle, clear, saveError } = useSidebarFilters();
+  const { filters, toggle, clear, saveError, expanded } = filterControls;
   const visibleSessions = sidebarSessions(sessions);
   const filtering = hasFilters(filters);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
@@ -259,10 +261,11 @@ export function AgentTree({
         event.preventDefault();
         event.stopPropagation();
         clear();
-        event.currentTarget.querySelector<HTMLButtonElement>(".rd-filter-chip")?.focus();
+        if (expanded) event.currentTarget.querySelector<HTMLButtonElement>(".rd-filter-chip")?.focus();
+        else event.currentTarget.closest(".rd-agents")?.querySelector<HTMLButtonElement>(".rd-filter-toggle")?.focus();
       }
     }}>
-    <SidebarFilters sessions={visibleSessions} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} />
+    <SidebarFilters sessions={visibleSessions} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} expanded={expanded} />
     <div className="rd-tree">
       {filtering ? <>
         {visibleSessions.filter(s => matchesFilters(s, filters, now)).map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} onOpen={onOpen} onOpenInbox={onOpenInbox} showFolder />)}

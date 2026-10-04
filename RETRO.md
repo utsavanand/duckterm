@@ -9,6 +9,15 @@ and give archive countdowns their own clock. Verify render counts while time
 advances, including the 30-second idle and 90-second voice grace. Pause History
 polling when hidden and discard late responses after changing sessions.
 
+## 2026-10-04 — Hidden filters must not hide active filtering
+Filter controls competed with the session list and their compact layout crowded
+labels against chips. Keep the panel closed by default and remember its visibility
+per viewer, independently of the selected filters. When controls close, retain an
+active-count badge and a summary with Clear filters. Use distinct chip rows so
+label and group spacing stay uniform across densities, and show Local/Remote even
+when the current remote count is zero. Verify collapse, reload and keyboard access
+with filtering active; hiding controls must not reset the session selection.
+
 ## 2026-10-04 — Stable asset URLs must never be immutable
 The approved yellow duck stayed green in the owner's Mac app because the server
 gave every non-HTML file a one-year immutable cache lifetime, including the
