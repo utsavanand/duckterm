@@ -1,6 +1,7 @@
 import { useDesktopNotifications } from "./useDesktopNotifications";
 import { SidebarFilterToggle } from "./SidebarFilters";
 import { useSidebarFilters } from "./sidebarFilterState";
+import duckMark from "./assets/duckmark.svg?no-inline";
 import { ArchiveUndo, useArchiveRequests } from "./ArchiveUndo";
 import { SessionCard } from "./SessionCard";
 import { sessionFetch, sessionRef } from "./hostTransport";
@@ -287,7 +288,7 @@ function Dashboard() {
         <span className="rd-brand">
           <img
             className="rd-brand-mark"
-            src="/favicon.svg"
+            src={duckMark}
             alt=""
             width={22}
             height={22}
