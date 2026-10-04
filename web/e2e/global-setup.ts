@@ -1,6 +1,6 @@
+import { writeOwnedState } from "./run-state";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -86,10 +86,7 @@ export default async function globalSetup() {
   // Setup failures do not run global teardown. Reap only our child and home.
   try {
     await waitForOwnedServer(proc, home, `http://127.0.0.1:${PORT}`);
-    writeFileSync(
-      process.env.RD_TEST_STATE_FILE || join(tmpdir(), "rd-e2e-state.json"),
-      JSON.stringify({ home, pid: proc.pid, port: PORT, tmuxSocket }),
-    );
+    writeOwnedState({ home, pid: proc.pid!, port: PORT, tmuxSocket });
   } catch (error) {
     if (proc.pid && proc.exitCode === null && proc.signalCode === null) {
       await new Promise<void>((resolve) => {

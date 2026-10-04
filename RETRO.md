@@ -13,6 +13,13 @@ files in CI so new workflows cannot silently fall outside a filename whitelist.
 Native UI scripts must compile the application's dependency graph: the report
 runner omitted SessionTransport and navigation-policy dependencies and broke.
 
+## 2026-10-04 — Browser teardown must own its run state
+Parallel browser runs used one default state file, so helpers read another
+server and teardown could target its processes. Allocate a unique state path
+per invocation, inherit it in workers, create it exclusively, and verify the
+run identity before reads or cleanup. A custom port alone does not isolate
+a run. Keep explicit overrides, but reject existing or foreign state.
+
 ## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
 A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
 build.sh called swiftc without -target, so the binary inherited the build
