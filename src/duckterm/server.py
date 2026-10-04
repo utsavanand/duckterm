@@ -3606,8 +3606,15 @@ class Server:
         # Inline, NOT in a thread. HistoryStore shares one sqlite connection
         # opened with check_same_thread=False and no lock, so every other
         # caller reaches it from this thread; reading it from a worker raced
-        # the write paths and corrupted cursor state. This is a bounded
-        # indexed read, unlike the CLI probes above that earn their thread.
+        # the write paths and corrupted cursor state.
+        #
+        # It is not cheap: a full scan of events that json_extracts every
+        # PreToolUse row — ~40ms over 27k such rows, and it grows with the
+        # table. An index on event_type does not help, because the cost is the
+        # JSON parsing rather than the scan. So this blocks the loop briefly on
+        # each panel load, which is the lesser evil only until the connection
+        # is safe to use off-thread; main-dev's single-owner-thread work is
+        # what lets this move back off the loop.
         used = self.history.connector_last_used()
         for row in statuses:
             recorded = used.get(str(row["name"]))

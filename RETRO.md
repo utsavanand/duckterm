@@ -1,5 +1,22 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — Don't justify a change with a performance claim you didn't measure
+**Broke:** the fix that moved `connector_last_used` back onto the serving
+thread shipped with a comment calling it "a bounded indexed read". Review
+caught it: the query is a full `SCAN events`, ~40 ms on a 67k-row database.
+**Cause:** the claim was reasoning, not measurement. The method filters on
+`event_type`, which sounds selective, and I never ran `EXPLAIN QUERY PLAN`.
+The only index on `events` is `(session_key, ts)`, which that filter cannot
+use. Measuring afterwards also showed an index on `event_type` changes the
+plan but *not* the time — the cost is `json_extract` over 27k PreToolUse
+rows, so the obvious follow-up fix would have bought nothing either.
+**Rule:** a performance adjective in a comment is a claim, and a claim in
+shipped code outlives the conversation that produced it. Run
+`EXPLAIN QUERY PLAN` and time it, or describe what the code does and leave
+cost out. The correctness argument for this change stood on its own; the
+unmeasured aside was the only part that was wrong, and it would have told
+the next reader not to bother looking.
+
 ## 2026-10-03 — A convention nothing checks is a trap for the next caller
 **Broke:** `GET /connectors` logged an `IndexError` on a zero-column row.
 Shipped in #149.
