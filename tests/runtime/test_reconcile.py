@@ -79,7 +79,12 @@ def test_live_tmux_session_is_adopted_not_swept(tmp_path, monkeypatch: pytest.Mo
 
 @pytest.mark.parametrize(
     ("runtime", "command"),
-    [("claude-code", "claude --model x 'prompt'"), (None, "codex 'prompt'")],
+    [
+        ("claude-code", "claude --model x 'prompt'"),
+        (None, "codex 'prompt'"),
+        # A quoted executable path with spaces must not break adoption.
+        ("claude-code", "'/Applications/My Tools/claude' --resume x"),
+    ],
 )
 def test_adopted_pane_keeps_its_harness_on_exit(
     tmp_path, monkeypatch: pytest.MonkeyPatch, runtime: str | None, command: str

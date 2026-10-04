@@ -645,12 +645,12 @@ class Orchestrator:
             # Adopt with the session's own harness. A generic adopter stamps
             # its lifecycle events runtime=generic, which overwrote the row and
             # made Restart/Change model/Resume unable to verify the conversation.
-            # The adopter never launches, so only the binary matters here.
+            # The adopter never launches, so it is built with a no-op command;
+            # parsing the stored command could fail on quoted paths.
             command = str(row.get("command") or "") if row else ""
-            binary = (command.split() or ["true"])[0]
             name = (row.get("runtime") if row else None) or infer_runtime(command)
             supervisor = SessionSupervisor(
-                bus=self.bus, runtime=runtime_for(name, binary), session_key=key, cwd=cwd
+                bus=self.bus, runtime=runtime_for(name, "true"), session_key=key, cwd=cwd
             )
             await supervisor.reattach()
             self._supervisors[key] = supervisor
