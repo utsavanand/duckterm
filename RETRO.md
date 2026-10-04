@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
+A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
+build.sh called swiftc without -target, so the binary inherited the build
+machine's OS (15) as its minimum; Package.swift's .macOS(.v13) is never used by
+that build. Set the target explicitly from the same value Info.plist uses, and
+fail the build when `otool -l` reports a different minos. Check what the binary
+says, not what the plist says.
+
 ## 2026-10-04 — Isolate every clock that can redraw the terminal
 A one-second clock in Dashboard redrew terminal and connector components with
 30 sessions even when nothing changed. Moving only that clock would leave the
