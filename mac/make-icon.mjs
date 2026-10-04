@@ -1,4 +1,4 @@
-// Render the dashboard duck (web/public/favicon.svg) into AppIcon.icns so the
+// Render the dashboard duck (web/src/assets/duckmark.svg) into AppIcon.icns so the
 // Mac app icon stays in sync with the brand mark. The icns has no other source —
 // without this it drifts (it was frozen as an older, tailed duck).
 //
@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const testBuild = process.argv.includes("--test");
-let svg = readFileSync(join(here, "../web/public/favicon.svg"), "utf8");
+let svg = readFileSync(join(here, "../web/src/assets/duckmark.svg"), "utf8");
 
 if (testBuild) {
   // A purple duck plus a high-contrast badge distinguishes Test in the Dock.
@@ -70,4 +70,4 @@ execFileSync("iconutil", [
   join(here, "Resources", outputName),
 ]);
 rmSync(work, { recursive: true, force: true });
-console.log(`wrote mac/Resources/${outputName} from web/public/favicon.svg`);
+console.log(`wrote mac/Resources/${outputName} from web/src/assets/duckmark.svg`);
