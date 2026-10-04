@@ -1,3 +1,17 @@
+- Transcript test fixtures must resolve cwd before deriving the Claude project slug, just like the runtime. A scratch HOME under macOS /tmp otherwise seeds a different slug from /private/tmp and gives false Messages failures.
+
+## 2026-10-04 — An empty tmux query cannot authorize a later kill
+
+Independent review reproduced a session attaching between the lease sweeper's empty query and kill-server. A released lifetime lock proves only that the cooperating owner is gone, not that another client cannot attach. Automatic sweeps now remove confirmed dead sockets only and preserve every live server, including empty ones. Exact owned teardown remains separate. Keep the real-server attach race as a regression; never claim an emptiness check makes termination atomic.
+
+- Test teardown cannot run after SIGKILL. Publish a locked, unique pytest namespace before launch; gate-start cleanup must acquire its abandoned lease and require zero sessions and clients. Leave legacy unregistered servers alone: age and a PID-shaped name do not prove ownership. Keep the lock through unlink so concurrent cooperating launches cannot revive the name.
+
+## 2026-09-28 — Test servers can leave Unix socket files behind
+
+- Test-socket cleanup review: test owned teardown separately from dead sweeps, including failed kills and neighboring namespaces. Probe plus inode checks cannot make POSIX unlink atomic; require exclusive owned namespaces and quiescent launches for dead sweeps.
+
+Killing a test tmux server is not filesystem cleanup. Centralize teardown for run-owned sockets and suffix variants; unlink only owned socket files with a confirmed no-server response and refused connection. Dead-only maintenance must preserve live and unknown sockets, especially production. SIGKILL cannot run teardown, so retain an explicit conservative sweep.
+
 # Retro — lessons from real breakage
 
 ## 2026-10-04 — Hidden filters must not hide active filtering

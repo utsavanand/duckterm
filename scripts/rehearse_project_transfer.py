@@ -164,7 +164,16 @@ def main() -> None:
                     process.wait()
             for name in sockets:
                 if shutil.which("tmux"):
-                    subprocess.run(["tmux", "-L", name, "kill-server"], capture_output=True)
+                    subprocess.run(
+                        [
+                            sys.executable,
+                            str(Path(__file__).with_name("cleanup_test_sockets.py")),
+                            "--owned",
+                            name,
+                        ],
+                        check=True,
+                        capture_output=True,
+                    )
             # The temporary databases and all synthetic test records are removed here.
 
 

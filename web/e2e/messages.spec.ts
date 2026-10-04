@@ -5,14 +5,14 @@ import { apiPost, base } from "./helpers";
 // session's conversation as HTML from /sessions/:key/messages. This test seeds a
 // fake transcript on disk and verifies the toggle renders its text + tool chips.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 function seedTranscript(cwd: string): void {
   // Mirror Claude's JSONL: a project slug dir under ~/.claude/projects with the
   // cwd's non-alphanumerics turned to dashes.
-  const slug = cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  const slug = realpathSync(cwd).replace(/[^a-zA-Z0-9]/g, "-");
   const dir = join(homedir(), ".claude", "projects", slug);
   mkdirSync(dir, { recursive: true });
   const lines = [
