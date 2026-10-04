@@ -1,6 +1,6 @@
 """Cooperative lifetime locks for pytest sockets, including killed test runs.
 
-Only registered namespaces are swept automatically. Legacy sockets have no
+Only registered dead sockets are swept automatically; live servers are preserved. Legacy sockets have no
 provable ownership and are deliberately left for manual investigation. Names
 are never reused; a published lease stays locked until owner teardown finishes.
 """
@@ -89,8 +89,9 @@ def sweep() -> dict[str, list[str]]:
                 result["preserved"].append(path.name)
                 continue
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # A crashed owner cannot launch again. Unique names plus the held
-            # lifetime lock exclude cooperating launchers throughout check/kill/unlink.
+            # The lock excludes cooperating launchers, but not new tmux clients.
+            # Never terminate a live server here: even an empty server can gain
+            # a session after a query. A released lease does not change that.
             candidates = [
                 p
                 for p in sockets.glob(path.name + "*")
@@ -98,26 +99,9 @@ def sweep() -> dict[str, list[str]]:
             ]
             preserved = []
             for candidate in candidates:
-                before = candidate.lstat()
-                if not stat.S_ISSOCK(before.st_mode) or before.st_uid != os.getuid():
-                    preserved.append(candidate.name)
-                    continue
-                # Dead-only cleanup does not kill. If still live, require both
-                # zero sessions and zero clients before attempting owned cleanup.
                 dead = cleanup(candidate.name, stop=False, exact=True)
                 result["removed"].extend(dead["removed"])
-                if not candidate.exists():
-                    continue
-                if not empty(candidate):
-                    preserved.append(candidate.name)
-                    continue
-                after = candidate.lstat()
-                if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
-                    preserved.append(candidate.name)
-                    continue
-                done = cleanup(candidate.name, exact=True)
-                result["removed"].extend(done["removed"])
-                preserved.extend(done["preserved"])
+                preserved.extend(dead["preserved"])
             result["preserved"].extend(preserved)
             if not preserved:
                 path.unlink()

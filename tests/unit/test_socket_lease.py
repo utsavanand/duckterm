@@ -50,7 +50,7 @@ def test_unregistered_and_production_preserved(isolated):
 
 @pytest.mark.skipif(not shutil.which("tmux"), reason="tmux required")
 @pytest.mark.parametrize("occupied", [False, True, "client"])
-def test_killed_owner_empty_only_recovery(isolated, occupied):
+def test_killed_owner_live_servers_preserved(isolated, occupied):
     # The lease-owning process dies without a finally block (SIGKILL).
     script = f"""
 import runpy,subprocess,time
@@ -84,22 +84,42 @@ with m['lease']() as name:
                     break
                 assert time.monotonic() < deadline
                 time.sleep(0.02)
-        result = runpy.run_path(str(MODULE))["sweep"]()
+        code = runpy.run_path(str(MODULE))
+        original_empty = code["empty"]
+
+        def attach_after_empty(path):
+            result = original_empty(path)
+            if result:
+                subprocess.run(
+                    ["tmux", "-L", name, "new-session", "-d", "-s", "race", "sleep 120"],
+                    check=True,
+                )
+            return result
+
+        code["sweep"].__globals__["empty"] = attach_after_empty
+        result = code["sweep"]()
         path = isolated / f"tmux-{os.getuid()}" / name
-        if occupied:
-            assert name in result["preserved"]
-            assert path.exists()
+        assert name in result["preserved"]
+        assert path.exists()
+        assert (runpy.run_path(str(MODULE))["registry"]() / name).exists()
+        if occupied is True:
             p = subprocess.run(["tmux", "-L", name, "list-sessions"], capture_output=True)
-            assert p.returncode == 0 if occupied is True else client.poll() is None
+            assert p.returncode == 0
+        elif occupied == "client":
+            assert client.poll() is None
         else:
-            assert not path.exists(), (
-                result,
-                [
-                    subprocess.run(["tmux", "-L", name, c], capture_output=True, text=True)
-                    for c in ("list-sessions", "list-clients")
-                ],
+            # Regression for the reviewer's check/kill race. A previously
+            # empty abandoned server must remain available to a new session.
+            subprocess.run(
+                ["tmux", "-L", name, "new-session", "-d", "-s", "new", "sleep 120"],
+                check=True,
             )
-            assert not (runpy.run_path(str(MODULE))["registry"]() / name).exists()
+            assert (
+                subprocess.run(
+                    ["tmux", "-L", name, "has-session", "-t", "new"], capture_output=True
+                ).returncode
+                == 0
+            )
     finally:
         if client is not None:
             client.terminate()
@@ -134,3 +154,31 @@ def test_clients_and_unknown_errors_preserved(monkeypatch):
 
         monkeypatch.setattr(subprocess, "run", command)
         assert not code["empty"](Path("/unused"))
+
+
+def test_killed_owner_dead_socket_removed(isolated):
+    script = f"""
+import os, pathlib, runpy, socket, time
+m=runpy.run_path({str(MODULE)!r})
+with m['lease']() as name:
+ root=pathlib.Path(os.environ['TMUX_TMPDIR']) / f'tmux-{{os.getuid()}}'
+ root.mkdir()
+ with socket.socket(socket.AF_UNIX) as sock:
+  sock.bind(str(root/name))
+ print(name,flush=True)
+ time.sleep(120)
+"""
+    proc = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, text=True)
+    try:
+        name = proc.stdout.readline().strip()
+        assert name.startswith("duckterm-pytest-")
+        proc.kill()
+        proc.wait(timeout=5)
+        code = runpy.run_path(str(MODULE))
+        assert name in code["sweep"]()["removed"]
+        assert not (isolated / f"tmux-{os.getuid()}" / name).exists()
+        assert not (code["registry"]() / name).exists()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=5)
