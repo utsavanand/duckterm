@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — Stable asset URLs must never be immutable
+The approved yellow duck stayed green in the owner's Mac app because the server
+gave every non-HTML file a one-year immutable cache lifetime, including the
+unhashed `/favicon.svg`. A fresh browser and checking the served file missed the
+persistent WKWebView cache. Cache only the content-hashed dashboard assets as
+immutable; stable URLs must revalidate. Bundle the header and favicon from one
+SVG source so an update changes their URLs and bypasses already-cached icons.
+Verify the actual app window after release, not just a fresh browser profile.
+
 ## 2026-10-02 — Filters must agree with the rows they hide
 Status shortcuts use the same effective state as session rows, including Stop
 settling. Keep folder expansion outside the filtered tree, preserve session

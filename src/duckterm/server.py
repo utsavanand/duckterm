@@ -674,7 +674,9 @@ class Server:
                 },
             )
             return
-        await _write_file(writer, target)
+        await _write_file(
+            writer, target, immutable=target.is_relative_to((dist / "assets").resolve())
+        )
 
     async def _ingest(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         try:
