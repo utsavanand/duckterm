@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentTree } from "./AgentTree";
-import { SidebarFilters } from "./SidebarFilters";
-import { EMPTY_FILTERS, FILTER_KEY, filterValue, matchesFilters, readFilters, sidebarSessions, useSidebarFilters } from "./sidebarFilterState";
+import { ComponentProps } from "react";
+import { SidebarFilters, SidebarFilterToggle } from "./SidebarFilters";
+import { EMPTY_FILTERS, FILTER_KEY, FILTER_PANEL_KEY, filterValue, matchesFilters, readFilters, sidebarSessions, useSidebarFilters } from "./sidebarFilterState";
 import { IDLE_SETTLE_MS } from "./sessions";
 import { SessionView } from "./types";
 
@@ -60,13 +61,13 @@ it("restores choices on remount and clears their saved value", () => {
 
 it("counts facets using the other groups and exposes observed harnesses", () => {
   const sessions = [session("local"), session("remote", { host: "build", state: "waiting" }), session("custom", { runtime: "custom" })];
-  const view = render(<SidebarFilters sessions={sessions} now={0} filters={{ ...EMPTY_FILTERS, runtime: ["codex"] }} onToggle={vi.fn()} onClear={vi.fn()} saveError={false} />);
+  const view = render(<SidebarFilters sessions={sessions} now={0} filters={{ ...EMPTY_FILTERS, runtime: ["codex"] }} onToggle={vi.fn()} onClear={vi.fn()} saveError={false} expanded />);
   expect(screen.getByRole("button", { name: "Working 1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Waiting 1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "custom 1" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Remote 1" })).toBeInTheDocument();
-  view.rerender(<SidebarFilters sessions={[sessions[0]]} now={0} filters={EMPTY_FILTERS} onToggle={vi.fn()} onClear={vi.fn()} saveError={false} />);
-  expect(screen.queryByRole("group", { name: "Location" })).not.toBeInTheDocument();
+  view.rerender(<SidebarFilters sessions={[sessions[0]]} now={0} filters={EMPTY_FILTERS} onToggle={vi.fn()} onClear={vi.fn()} saveError={false} expanded />);
+  expect(screen.getByRole("button", { name: "Remote 0" })).toBeInTheDocument();
 });
 
 it("keeps folder expansion and selection when filters flatten and clear the tree", () => {
@@ -75,7 +76,8 @@ it("keeps folder expansion and selection when filters flatten and clear the tree
     folders: ["Project", "Other", "Empty"], selectedKey: "active", onOpen,
     onFoldersChanged: vi.fn(), onSessionMoved: vi.fn(), onOpenGrid: vi.fn(), onNewSessionIn: vi.fn(),
     onOpenFolderInbox: vi.fn(), folderThemes: {}, onSetFolderTheme: vi.fn(), termMode: "dark" as const };
-  const view = render(<AgentTree {...props} />);
+  const view = render(<ControlledTree {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   fireEvent.click(screen.getByRole("button", { name: "Expand Project" }));
   fireEvent.click(screen.getByRole("button", { name: "Idle 1" }));
   expect(screen.getByText("resting", { exact: true })).toBeInTheDocument();
@@ -88,4 +90,40 @@ it("keeps folder expansion and selection when filters flatten and clear the tree
   expect(screen.getByRole("button", { name: "Expand Empty" })).toBeInTheDocument();
   expect(view.container.querySelector(".rd-row.selected")).toHaveTextContent("active");
   expect(screen.getByRole("button", { name: "Working 1" })).toHaveFocus();
+});
+
+
+function ControlledTree(props: Omit<ComponentProps<typeof AgentTree>, "filterControls">) {
+  const controls = useSidebarFilters();
+  return <section className="rd-agents"><SidebarFilterToggle filters={controls.filters} expanded={controls.expanded} onToggle={controls.toggleExpanded} /><AgentTree {...props} filterControls={controls} /></section>;
+}
+
+it("starts collapsed even with saved filters and persists visibility independently", () => {
+  localStorage.setItem(FILTER_KEY, JSON.stringify({ ...EMPTY_FILTERS, status: ["busy"] }));
+  const first = renderHook(useSidebarFilters);
+  expect(first.result.current.expanded).toBe(false);
+  expect(first.result.current.filters.status).toEqual(["busy"]);
+  act(() => first.result.current.toggleExpanded());
+  expect(localStorage.getItem(FILTER_PANEL_KEY)).toBe("true");
+  first.unmount();
+  const second = renderHook(useSidebarFilters);
+  expect(second.result.current.expanded).toBe(true);
+  act(() => second.result.current.toggleExpanded());
+  expect(second.result.current.filters.status).toEqual(["busy"]);
+  second.unmount();
+  const third = renderHook(useSidebarFilters);
+  expect(third.result.current.expanded).toBe(false);
+});
+
+it("keeps active counts and clear available while the chip panel is closed", () => {
+  const onClear = vi.fn();
+  const filters = { status: ["busy"], runtime: ["codex"], location: [] };
+  const view = render(<><SidebarFilterToggle filters={filters} expanded={false} onToggle={vi.fn()} /><SidebarFilters sessions={[session("one")]} now={0} filters={filters} onToggle={vi.fn()} onClear={onClear} saveError={false} expanded={false} /></>);
+  expect(screen.getByRole("button", { name: "Filters, 2 active" })).toHaveAttribute("aria-expanded", "false");
+  expect(screen.queryByRole("group", { name: "Status" })).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("1 of 1");
+  fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(onClear).toHaveBeenCalledOnce();
+  view.rerender(<SidebarFilters sessions={[session("one")]} now={0} filters={EMPTY_FILTERS} onToggle={vi.fn()} onClear={onClear} saveError={false} expanded={false} />);
+  expect(screen.queryByRole("region", { name: "Session filters" })).not.toBeInTheDocument();
 });
