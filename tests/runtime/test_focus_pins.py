@@ -117,11 +117,12 @@ def test_concurrent_connections_cannot_take_the_same_last_slot(scenario, tmp_pat
             for pool in owners:
                 stores.append(pool.submit(HistoryStore, tmp_path / "db.sqlite").result(timeout=30))
             attempts = [
-                pool.submit(race, store, i) for i, (pool, store) in enumerate(zip(owners, stores))
+                pool.submit(race, store, i)
+                for i, (pool, store) in enumerate(zip(owners, stores, strict=True))
             ]
             assert sorted(attempt.result(timeout=30) for attempt in attempts) == [False, True]
         finally:
-            for pool, store in zip(owners, stores):
+            for pool, store in zip(owners, stores, strict=False):
                 pool.submit(store.close).result(timeout=30)
     assert len(pinned_keys(server.history)) == 3
     assert set("ab") <= pinned_keys(server.history)
