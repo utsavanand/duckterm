@@ -1,6 +1,7 @@
 import { routedFetch as fetch, splitSessionRef } from "./hostTransport";
 import { useEffect, useState } from "react";
 import { api, forkMergeService, CheckpointRecord, forkMergeHistory, ForkMergeHistory } from "./api";
+import { useNow } from "./useNow";
 import { SessionView } from "./types";
 
 // Middle-pane History tab: the session's accumulated digest archive — every
@@ -25,7 +26,8 @@ const BUCKETS: [string, string, string][] = [
   ["next_actions", "Next actions", "→"],
 ];
 
-export function HistoryView({ session }: { session: SessionView }) {
+export function HistoryView({ session, active = true }: { session: SessionView; active?: boolean }) {
+  useNow(60_000, active);
   const p = session.progress;
   const started = new Date(session.startedAt);
   const updated = session.progressAt ? agoLabel(session.progressAt) : null;
@@ -35,36 +37,42 @@ export function HistoryView({ session }: { session: SessionView }) {
   const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([]);
 
   useEffect(() => {
-    setItems(null);
-    setCheckpoints([]);
-    const load = () =>
-      fetch(`/sessions/${session.key}/digest`)
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d: { items?: DigestItem[] } | null) =>
-          setItems(d?.items ?? null),
-        )
-        .catch(() => setItems(null));
-    load();
-    const t = setInterval(load, 10_000);
-    api
-      .checkpoints(session.key)
-      .then((d) => setCheckpoints(d.checkpoints))
-      .catch(() => undefined);
-    return () => clearInterval(t);
+    setItems(null); setCheckpoints([]); setMerges([]); setMergeError("");
   }, [session.key]);
 
   useEffect(() => {
-    let live = true;
-    setMerges([]); setMergeError("");
+    if (!active) return;
+    let live = true, digestPending = false, mergesPending = false, checkpointsLoaded = false, checkpointsPending = false;
     const load = () => {
-      if (document.visibilityState === "hidden") return;
-      void forkMergeHistory(session.key).then(data => { if (live) { setMerges(data.merges); setMergeError(""); } })
-        .catch((e: Error) => { if (live) setMergeError(e.message); });
+      if (!live || document.visibilityState === "hidden") return;
+      if (!digestPending) {
+        digestPending = true;
+        void fetch(`/sessions/${session.key}/digest`)
+          .then(r => r.ok ? r.json() : null)
+          .then((d: { items?: DigestItem[] } | null) => { if (live) setItems(d?.items ?? null); })
+          .catch(() => { if (live) setItems(null); })
+          .finally(() => { digestPending = false; });
+      }
+      if (!mergesPending) {
+        mergesPending = true;
+        void forkMergeHistory(session.key)
+          .then(data => { if (live) { setMerges(data.merges); setMergeError(""); } })
+          .catch((e: Error) => { if (live) setMergeError(e.message); })
+          .finally(() => { mergesPending = false; });
+      }
+      if (!checkpointsLoaded && !checkpointsPending) {
+        checkpointsPending = true;
+        void api.checkpoints(session.key)
+          .then(data => { if (live) { setCheckpoints(data.checkpoints); checkpointsLoaded = true; } })
+          .catch(() => undefined)
+          .finally(() => { checkpointsPending = false; });
+      }
     };
     load();
-    const timer = setInterval(load, 10000);
-    return () => { live = false; clearInterval(timer); };
-  }, [session.key]);
+    const timer = setInterval(load, 10_000);
+    document.addEventListener("visibilitychange", load);
+    return () => { live = false; clearInterval(timer); document.removeEventListener("visibilitychange", load); };
+  }, [session.key, active]);
 
   const byBucket = (bucket: string): DigestItem[] =>
     (items ?? []).filter((i) => i.bucket === bucket);

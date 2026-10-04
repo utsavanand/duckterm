@@ -1,3 +1,4 @@
+import { useNow } from "./useNow";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { authHeaders } from "./api";
 import { desktop } from "./desktop";
@@ -33,10 +34,13 @@ export function useArchiveRequests() {
       } catch { return { host: host.id, requests: null }; }
     }));
     if (stamp !== revision.current) return;
-    setRequests(previous => results.flatMap(result => result.requests ?? previous.filter(r => {
-      const prefix = sessionRef(result.host, "");
-      return result.host === "local" ? !r.session_key.startsWith("~remote~") : r.session_key.startsWith(prefix);
-    }).map(r => ({ ...r, offline: true }))));
+    setRequests(previous => {
+      const next = results.flatMap(result => result.requests ?? previous.filter(r => {
+        const prefix = sessionRef(result.host, "");
+        return result.host === "local" ? !r.session_key.startsWith("~remote~") : r.session_key.startsWith(prefix);
+      }).map(r => ({ ...r, offline: true })));
+      return JSON.stringify(previous) === JSON.stringify(next) ? previous : next;
+    });
   }, []);
   useEffect(() => {
     const update = (event: Event) => {
@@ -65,7 +69,8 @@ function ArchiveNotice({ request, refresh }: { request: Request; refresh: () => 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const undo = useRef<HTMLButtonElement>(null);
-  const remaining = Math.max(0, Math.ceil((request.deadline - Date.now()) / 1000));
+  const now = useNow();
+  const remaining = Math.max(0, Math.ceil((request.deadline - now) / 1000));
   const canUndo = request.status === "pending" && remaining > 0 && !request.offline;
   useEffect(() => { undo.current?.focus(); }, []);
   async function cancel() {
