@@ -1,16 +1,12 @@
-"""HistoryStore's connection must only ever be used from the serving thread.
-
-It is opened with check_same_thread=False and no lock, so safety rests on a
-convention: every caller touches it from the event loop. #149 moved
-connector_last_used into asyncio.to_thread, which raced the write paths and
-corrupted cursor state (observed as an IndexError on a zero-column row).
-These tests make the convention checkable instead of tribal.
-"""
+"""HistoryStore enforces owner-thread access; worker I/O uses copied inputs."""
 
 import asyncio
 import json
+import sqlite3
 import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -73,69 +69,102 @@ def test_listing_connectors_never_touches_the_database_off_thread(
     )
 
 
-def test_concurrent_reads_and_writes_on_one_connection_corrupt_it(
-    tmp_path: Path,
-) -> None:
-    """Why the convention exists. Without it the connection misbehaves, so a
-    future to_thread caller is not merely untidy — it breaks writes too."""
-    store = HistoryStore(tmp_path / "race.sqlite")
+def test_wrong_thread_reads_and_writes_fail_without_damaging_store(tmp_path: Path) -> None:
+    store = HistoryStore(tmp_path / "guard.sqlite")
+
+    async def exercise() -> None:
+        with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
+            await asyncio.to_thread(store.connector_last_used)
+        with pytest.raises(sqlite3.ProgrammingError, match="same thread"):
+            await asyncio.to_thread(store._conn.execute, "DELETE FROM events")
+        assert store.connector_last_used() == {}
+        assert store._conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
     try:
-        for index in range(2000):
-            store._conn.execute(
-                "INSERT INTO events (session_key, event_type, ts, payload_json) "
-                "VALUES (?, ?, ?, json(?))",
-                (
-                    f"s{index % 5}",
-                    "PreToolUse",
-                    1000 + index,
-                    json.dumps({"tool_name": f"mcp__github__tool_{index}"}),
-                ),
-            )
-        store._conn.commit()
+        asyncio.run(exercise())
+    finally:
+        store.close()
 
-        failures: list[str] = []
-        stop = threading.Event()
 
-        def read() -> None:
-            while not stop.is_set():
-                try:
-                    store.connector_last_used()
-                except Exception as exc:  # noqa: BLE001 - recording the class is the point
-                    failures.append(f"read {type(exc).__name__}")
+def test_messages_and_progress_use_worker_io_with_owner_thread_database(
+    server: Server, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = threading.get_ident()
+    seen = []
+    server.history.record(
+        {
+            "_id": "start",
+            "_ts": 1,
+            "event_type": "SessionStart",
+            "session_key": "probe",
+            "session_id": "native",
+            "runtime": "generic",
+            "cwd": "/tmp",
+            "test": True,
+        }
+    )
 
-        def write() -> None:
-            index = 0
-            while not stop.is_set():
-                try:
-                    store._conn.execute(
-                        "INSERT INTO events (session_key, event_type, ts, payload_json) "
-                        "VALUES (?, ?, ?, json(?))",
-                        (
-                            f"w{index}",
-                            "PreToolUse",
-                            90000 + index,
-                            json.dumps({"tool_name": "mcp__railway__deploy"}),
-                        ),
-                    )
-                    store._conn.commit()
-                except Exception as exc:  # noqa: BLE001
-                    failures.append(f"write {type(exc).__name__}")
-                index += 1
+    def messages_response(**kwargs):
+        assert threading.get_ident() != owner
+        assert kwargs["session_id"] == "native"
+        seen.append("messages")
+        return b'{"messages": []}'
 
-        threads = [threading.Thread(target=read, daemon=True) for _ in range(2)]
-        threads += [threading.Thread(target=write, daemon=True) for _ in range(2)]
-        for thread in threads:
-            thread.start()
-        stop.wait(3)
-        stop.set()
-        for thread in threads:
-            thread.join(timeout=5)
+    def read_transcript(**kwargs):
+        assert threading.get_ident() != owner
+        assert kwargs["session_id"] == "native"
+        seen.append("progress")
+        return [{"role": "assistant", "text": "done"}]
 
-        assert failures, (
-            "expected sharing one unlocked connection across threads to fail; if "
-            "this passes, HistoryStore gained a lock and the single-thread "
-            "convention can be retired"
+    monkeypatch.setattr(
+        "duckterm.server._build_runtime",
+        lambda *args: SimpleNamespace(
+            messages_response=messages_response, read_transcript=read_transcript
+        ),
+    )
+    monkeypatch.setattr(
+        "duckterm.server.summarize", lambda *args, **kwargs: SimpleNamespace(text="invalid")
+    )
+
+    async def exercise():
+        writer = Writer()
+        await server._messages(writer, "probe")
+        assert b'"messages": []' in writer.data
+        await server._refresh_progress("probe")
+
+    asyncio.run(exercise())
+    assert seen == ["messages", "progress"]
+    server.history.purge_test_sessions()
+
+
+def test_connector_index_survives_reopen_and_preserves_counts(tmp_path: Path) -> None:
+    path = tmp_path / "index.sqlite"
+    store = HistoryStore(path)
+    now = int(time.time() * 1000)
+    for index, tool in enumerate(
+        [
+            "Bash",
+            "mcp__github__one",
+            "mcp__github__two",
+            "mcp__railway__deploy",
+            "mcp____empty",
+            "mcpXXgithub__wrong",
+        ]
+    ):
+        store._conn.execute(
+            "INSERT INTO events(event_type,ts,payload_json) VALUES(?,?,?)",
+            ("PreToolUse", now + index, json.dumps({"tool_name": tool})),
         )
+    store._conn.commit()
+    store.close()
+    store = HistoryStore(path)
+    try:
+        assert store.connector_last_used() == {"github": (now + 2, 2), "railway": (now + 3, 1)}
+        plan = store._conn.execute(
+            "EXPLAIN QUERY PLAN SELECT json_extract(payload_json, '$.tool_name') AS tool, ts "
+            "FROM events WHERE event_type = 'PreToolUse' AND tool LIKE 'mcp!_!_%' ESCAPE '!'"
+        ).fetchall()
+        assert any("idx_connector_usage" in str(row[3]) for row in plan)
     finally:
         store.close()
 

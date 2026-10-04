@@ -18,6 +18,15 @@ label and group spacing stay uniform across densities, and show Local/Remote eve
 when the current remote count is zero. Verify collapse, reload and keyboard access
 with filtering active; hiding controls must not reset the session selection.
 
+## 2026-10-04 — Enforce SQLite ownership across indirect worker calls
+Messages and progress helpers dispatched to workers still queried the shared
+HistoryStore connection, even after the connector caller was moved inline.
+Checking only direct `to_thread(history.method)` calls misses these paths.
+Copy runtime, directory and native conversation ID before dispatching file work,
+and let SQLite reject cross-thread access. Test actual async routes as well as
+the guard. A partial connector-use index keeps unrelated events out of its scan;
+it does not make usage aggregation constant-time.
+
 ## 2026-10-04 — Stable asset URLs must never be immutable
 The approved yellow duck stayed green in the owner's Mac app because the server
 gave every non-HTML file a one-year immutable cache lifetime, including the

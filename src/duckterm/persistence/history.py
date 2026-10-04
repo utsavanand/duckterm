@@ -289,12 +289,11 @@ class HistoryStore:
         self.folder_chats = FolderChats(path.parent / "folder-chats.json", self.folders)
         self.layouts = Layouts(path.parent / "layouts.json", self.folders)
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(path), check_same_thread=False)
+        self._conn = sqlite3.connect(str(path), check_same_thread=True)
         self._conn.row_factory = sqlite3.Row
-        # WAL: readers don't block the event-sink's writes. busy_timeout:
-        # the connection is shared between the event loop and to_thread
-        # handlers — wait out a held lock instead of raising "database is
-        # locked" at random.
+        # All access belongs to the creating thread; workers receive snapshots.
+        # WAL and busy_timeout handle contention with independent connections,
+        # not concurrent use of this connection by background workers.
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         # Refuse a DB written by a newer DuckTerm — opening it with older code
@@ -309,6 +308,12 @@ class HistoryStore:
             )
         self._conn.executescript(_SCHEMA)
         self._migrate()
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_connector_usage "
+            "ON events(json_extract(payload_json, '$.tool_name'), ts) "
+            "WHERE event_type = 'PreToolUse' AND "
+            "json_extract(payload_json, '$.tool_name') LIKE 'mcp!_!_%' ESCAPE '!'"
+        )
         from duckterm.core.folder_tasks import FolderTasks, migrate
 
         self._conn.commit()

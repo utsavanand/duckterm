@@ -147,7 +147,7 @@ def question_note(server, monkeypatch, text, verdict=BLOCKED, calls=None):
     server._RELAY_SETTLE_S = 0
     owner = {"role": "user", "blocks": [{"type": "text", "text": "review the onboarding"}]}
     reply = {"role": "assistant", "blocks": [{"type": "text", "text": text}]}
-    monkeypatch.setattr(server, "_session_messages", lambda key: [owner, reply])
+    monkeypatch.setattr(server, "_read_messages", lambda source: [owner, reply])
 
     def classify(prompt, claude_model=None):
         if calls is not None:
@@ -192,13 +192,14 @@ class SlowTerminal(FakeSupervisor):
             if self.enters == self.submits_on:
                 self.screen = CLAUDE_EMPTY
                 now = int(time.time() * 1000)
-                self.history.record(
+                self.loop.call_soon_threadsafe(
+                    self.history.record,
                     {
                         "_id": f"ups-{now}",
                         "_ts": now,
                         "event_type": "UserPromptSubmit",
                         "session_key": "pm",
-                    }
+                    },
                 )
         return True
 
@@ -208,6 +209,14 @@ def test_swallowed_enter_is_pressed_again_until_the_agent_takes_the_prompt(
 ) -> None:
     server, owner, _, history = world
     slow = SlowTerminal(history, submits_on=2)
+    original_submit = server._submit_prompt
+
+    async def submit(key, text):
+        # Real hooks are ingested on the server loop, not the terminal writer.
+        slow.loop = asyncio.get_running_loop()
+        return await original_submit(key, text)
+
+    monkeypatch.setattr(server, "_submit_prompt", submit)
     monkeypatch.setattr(server.orchestrator, "get", lambda key: slow)
     [note] = question_note(server, monkeypatch, "Should I start with B1?")
     status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": "Yes"})

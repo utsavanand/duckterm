@@ -1,5 +1,6 @@
 """Folder views use exact derived scope, private history, and recoverable moves."""
 
+import asyncio
 import base64
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +11,7 @@ from tests.runtime.test_session_api import dispatch
 
 from duckterm.core import oracle
 from duckterm.helpers import paths
+from duckterm.persistence.folder_chats import FolderChats
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
 
@@ -114,13 +116,25 @@ def test_subtree_rename_delete_and_late_answer(app, monkeypatch):
     assert len(req(app, "GET", "/folders/new/artifacts")[1]["artifacts"]) == 2
     assert req(app, "PATCH", "/folders/new", {"name": "ab"})[0] == 400
 
-    def summarize(_):
-        # A rename while inference is in a worker thread invalidates its result.
+    original_ask = app._fleet_ask
+    loop = None
+
+    async def ask(writer, body):
+        nonlocal loop
+        loop = asyncio.get_running_loop()
+        await original_ask(writer, body)
+
+    async def rename():
         app.history.folder_chats.change(
             "new", "later", lambda: app.history.move_folder("new", "later")
         )
+
+    def summarize(_):
+        # Concurrent requests mutate DB on its owner loop, not in inference.
+        asyncio.run_coroutine_threadsafe(rename(), loop).result(timeout=5)
         return SimpleNamespace(text="Stale answer", backend="test")
 
+    monkeypatch.setattr(app, "_fleet_ask", ask)
     monkeypatch.setattr("duckterm.server.summarize", summarize)
     assert req(app, "POST", "/fleet/ask", {"folder": "new", "question": "x"})[0] == 409
     assert "Stale answer" not in json.dumps(req(app, "GET", "/folders/later/chat")[1])
@@ -145,7 +159,9 @@ def test_journal_recovers_after_db_commit_and_preserves_before_commit(app):
 
 
 def test_parallel_appends_are_not_lost_and_history_is_capped(app):
-    chats = app.history.folder_chats
+    # Exercise the JSON file lock independently of the owner-thread DB callback.
+    folders = app.history.folders()
+    chats = FolderChats(app.history.folder_chats.path, lambda: folders)
     identity, _ = chats.snapshot("a")
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(lambda i: chats.append("a", identity, str(i), "answer", i), range(210)))
