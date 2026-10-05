@@ -86,8 +86,9 @@ async def owner(service: Service, method: str, route: str, body: bytes) -> dict[
         if folder is None:
             raise APIError(404, "Folder has not synchronized with the workspace")
         parent_path, _, name = new.rpartition("/")
-        parent = canonical_folder(service, parent_path)
-        store.change_folder(folder, parent, name)
+        with store.conn:
+            parent = canonical_folder(service, parent_path)
+            store.change_folder(folder, parent, name)
         return {"moved": old, "to": new, "folder_id": folder}
     if route == "/collaboration/invite" and method == "POST":
         return store.invite(req.get("name", ""), req.get("bindings", []))

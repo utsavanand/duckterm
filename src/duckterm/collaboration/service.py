@@ -11,9 +11,11 @@ import sqlite3
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from duckterm.collaboration.folders import plan_moves, snapshot
 from duckterm.collaboration.store import PROTOCOL, Store, now, reference, split_reference
 from duckterm.collaboration.transport import Transport
 from duckterm.core.session_api import APIError, _text
+from duckterm.runtimes.base import AT_REST_STATES
 
 if TYPE_CHECKING:
     from duckterm.persistence.history import HistoryStore
@@ -177,6 +179,13 @@ class Service:
             return False
         assert self.store
         async with self.lock:
+            # Resume a committed local plan before sending cards. Otherwise an
+            # interrupted prefix move could be advertised as a new folder grant.
+            try:
+                self.apply_folder_plan()
+            except (APIError, OSError, ValueError, sqlite3.Error) as exc:
+                self.error = str(exc)
+                return False
             identity = self.store.setting("identity")
             pending = self.store.conn.execute(
                 "SELECT operation FROM local_outbox WHERE result IS NULL "
@@ -231,34 +240,29 @@ class Service:
                     }
                 else:
                     raise APIError(503, "Collaboration snapshot is incomplete")
+
                 # Folder edits can happen while the network request is in flight.
                 # Never publish a response authorized against the old local grants.
-                if payload["cards"] != self.cards(shared_only=True):
+                def grants(cards: list[dict[str, Any]]) -> dict[str, list[Any]]:
+                    return {
+                        c["session_key"]: [c["folder"], c["root"], c["state"] in AT_REST_STATES]
+                        for c in cards
+                    }
+
+                if grants(payload["cards"]) != grants(self.cards(shared_only=True)):
                     raise APIError(409, "Local folder access changed during synchronization; retry")
-                if response.get("folder_updates"):
-                    for update in response["folder_updates"]:
-                        old, new = update["local_path"], update["path"]
-                        if old in self.history.folders():
-                            self.move_folder(old, new)
-                        opid = hashlib.sha256(
-                            json.dumps(update, sort_keys=True).encode()
-                        ).hexdigest()
-                        operation = {
-                            "id": opid,
-                            "action": "binding_ack",
-                            "old_path": old,
-                            "new_path": new,
-                            "folder_id": update["folder_id"],
-                        }
+                if response.get("folder_plan"):
+                    plan = response["folder_plan"]
+                    saved = self.cached("folder_plan")
+                    if not saved or saved["id"] != plan["id"]:
+                        steps = plan_moves(snapshot(self.history), plan["updates"])
                         with self.store.conn:
-                            self.store.conn.execute(
-                                "INSERT OR IGNORE INTO local_outbox(id,actor,operation) "
-                                "VALUES (?, '', ?)",
-                                (opid, json.dumps(operation)),
-                            )
+                            self.cache("folder_plan", {"id": plan["id"], "steps": steps, "next": 0})
+                    self.apply_folder_plan()
                     self.error = "Folder changes are synchronizing"
                     return False
                 with self.store.conn:
+                    self.cache("folder_plan", None)
                     self.cache("cards", response["cards"])
                     self.cache("questions", list(questions.values()))
                     self.cache(
@@ -296,6 +300,39 @@ class Service:
                     else "Coordinator unavailable; messages remain saved on this computer"
                 )
                 return False
+
+    def apply_folder_plan(self) -> None:
+        """Journal each rename around the existing history/layout/chat recovery."""
+        assert self.store
+        plan = self.cached("folder_plan")
+        if not plan:
+            return
+        while plan["next"] < len(plan["steps"]):
+            step = plan["steps"][plan["next"]]
+            state = snapshot(self.history)
+            if state == step["before"]:
+                self.move_folder(step["old"], step["new"])
+            elif state != step["after"]:
+                raise APIError(
+                    409, "Local folders changed during synchronization; owner recovery required"
+                )
+            # A process exit after the history commit but before this journal
+            # commit is recognized by the exact membership snapshot on restart.
+            if snapshot(self.history) != step["after"]:
+                raise APIError(
+                    409, "Folder move did not preserve membership; owner recovery required"
+                )
+            self.history.layouts.recover()
+            self.history.folder_chats.recover()
+            plan["next"] += 1
+            with self.store.conn:
+                self.cache("folder_plan", plan)
+        operation = {"id": "folders-" + plan["id"], "action": "folders_ack", "plan_id": plan["id"]}
+        with self.store.conn:
+            self.store.conn.execute(
+                "INSERT OR IGNORE INTO local_outbox(id,actor,operation) VALUES (?, '', ?)",
+                (operation["id"], json.dumps(operation)),
+            )
 
     def move_folder(self, old: str, new: str) -> None:
         self.history.layouts.change(

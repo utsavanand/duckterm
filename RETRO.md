@@ -1,5 +1,16 @@
 # Retro — lessons from real breakage
 
+## 2026-10-05 — Folder synchronization must survive interrupted prefix moves
+
+Independent acknowledgments for a renamed parent and child can skip the child,
+recreate its old identity, or get stuck when another rename arrives before the
+acknowledgment. Freeze each delivered plan until it is acknowledged as a unit.
+Preflight all local destinations before changing any folders, and journal exact
+membership before and after each move so restart can distinguish a committed
+move from an unrelated folder. Keep narrower sharing grants intact immediately
+at the coordinator, including the interval before the next computer sync. Test
+nested edits, lost responses, interruption after commit, and local collisions.
+
 ## 2026-10-04 — A unified sidebar is not a shared session directory
 
 Remote cards were grouped only in browser storage while agent discovery queried

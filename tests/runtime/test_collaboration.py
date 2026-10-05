@@ -14,10 +14,12 @@ class Computer:
         self.identity = hub.computer(name)
         self.id = self.identity["computer_id"]
         self.writer = uuid.uuid4().hex
-        self.cards = [{"session_key": name, "name": name, "folder": "Project", "state": "busy"}]
+        self.cards = [
+            {"session_key": name, "name": name, "folder": hub.path(folder), "state": "busy"}
+        ]
         self.ref = reference(self.id, name)
         self.name = name
-        hub.bind(self.id, "Project", folder)
+        hub.bind(self.id, hub.path(folder), folder)
         self.sync()
 
     def sync(self, *operations):
@@ -123,7 +125,7 @@ def test_names_never_grant_access_and_ungrouping_revokes_before_delivery(hub):
     one, two = Computer(hub, "one", root), Computer(hub, "two", same_label)
     refused = one.ask(two)
     assert one.sync(refused)["results"][refused["id"]]["status"] == 404
-    hub.bind(two.id, "Project", root)
+    hub.bind(two.id, two.cards[0]["folder"], root)
     two.sync()
     op = one.ask(two)
     one.sync(op)
@@ -292,7 +294,7 @@ def test_local_move_overrides_old_coordinator_placement_and_narrow_grants(hub):
     hub.place(two.ref, root)
     two.cards[0]["folder"] = ""
     assert not two.sync()["cards"]
-    two.cards[0].update(folder="Project/Restricted", root="Project/Restricted")
+    two.cards[0].update(folder="Duckterm/Restricted", root="Duckterm/Restricted")
     two.sync()
     op = one.ask(two)
     assert one.sync(op)["results"][op["id"]]["status"] == 404
@@ -476,3 +478,206 @@ def test_http_authentication_and_offline_reply_use_existing_session_routes(tmp_p
                 server.history.close()
 
     asyncio.run(run())
+
+
+@pytest.fixture
+def paired_folder_service(tmp_path, hub):
+    from duckterm.collaboration.service import Service
+    from duckterm.persistence.history import HistoryStore
+
+    history = HistoryStore(tmp_path / "peer" / "history.sqlite")
+    root = hub.add_folder("Project")
+    child = hub.add_folder("Child", root)
+    for key, folder in [("parent", "Project"), ("child", "Project/Child")]:
+        history.record(
+            {"_id": key, "_ts": 1, "event_type": "SessionStart", "session_key": key, "test": True}
+        )
+        history.set_meta(key, name=key, group=folder)
+    history.session_api.enroll("child", {"root": "Project/Child"})
+    service = Service(history)
+    identity = hub.computer("Peer")
+    hub.bind(identity["computer_id"], "Project", root)
+    service.join(identity, {"ssh_target": "fixture-only"})
+
+    async def exchange(payload):
+        return hub.exchange(identity["token"], payload)
+
+    service.exchange = exchange
+    yield service, hub, root, child
+    if service.store:
+        service.store.close()
+    history.close()
+
+
+def test_nested_folder_edits_keep_ids_and_narrow_grants(paired_folder_service):
+    import asyncio
+
+    service, hub, root, child = paired_folder_service
+
+    async def run():
+        assert await service.sync()
+        hub.change_folder(root, None, "Renamed")
+        hub.change_folder(child, root, "Updated child")
+        assert not await service.sync()
+        assert service.history.session("parent")["grp"] == "Renamed"
+        assert service.history.session("child")["grp"] == "Renamed/Updated child"
+        assert service.history.session_api.card("child")["root"] == "Renamed/Updated child"
+        assert await service.sync()
+        assert hub.peer(service.own_ref("parent"))["folder"] == root
+        assert hub.peer(service.own_ref("child"))["folder"] == child
+        assert hub.peer(service.own_ref("child"))["root"] == child
+        assert hub.path(child) == "Renamed/Updated child"
+
+    asyncio.run(run())
+
+
+def test_delivered_plan_survives_new_edit_and_lost_ack_response(paired_folder_service):
+    import asyncio
+
+    service, hub, root, child = paired_folder_service
+    exchange = service.exchange
+
+    async def run():
+        assert await service.sync()
+        hub.change_folder(root, None, "First rename")
+        assert not await service.sync()
+        first_plan = service.cached("folder_plan")["id"]
+        hub.change_folder(root, None, "Second rename")
+        hub.change_folder(child, root, "New child")
+        dropped = False
+
+        async def lose_response(payload):
+            nonlocal dropped
+            response = await exchange(payload)
+            if not dropped:
+                dropped = True
+                raise OSError("fixture lost response after coordinator commit")
+            return response
+
+        service.exchange = lose_response
+        assert not await service.sync()
+        assert service.cached("folder_plan")["id"] == first_plan
+        assert not await service.sync()
+        assert service.history.session("child")["grp"] == "Second rename/New child"
+        assert await service.sync()
+        assert hub.peer(service.own_ref("child"))["folder"] == child
+        computer = service.store.setting("identity")["computer_id"]
+        assert {
+            r[0]
+            for r in hub.conn.execute(
+                "SELECT local_path FROM bindings WHERE computer=?", (computer,)
+            )
+        } == {"Second rename", "Second rename/New child"}
+
+    asyncio.run(run())
+
+
+def test_folder_plan_recovers_after_history_commit_before_journal(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration.service import Service
+
+    service, hub, root, child = paired_folder_service
+    move = service.move_folder
+
+    def interrupted(old, new):
+        move(old, new)
+        raise OSError("fixture exit after history commit")
+
+    async def run():
+        assert await service.sync()
+        hub.change_folder(root, None, "Renamed")
+        hub.change_folder(child, root, "New child")
+        service.move_folder = interrupted
+        assert not await service.sync()
+        assert service.cached("folder_plan")["next"] == 0
+        assert service.history.session("child")["grp"] == "Renamed/Child"
+        # Reopen both the local state and its durable journal as a restarted service.
+        service.store.close()
+        service.store = None
+        restarted = Service(service.history)
+        restarted.exchange = service.exchange
+        hub.conn.execute("UPDATE computers SET lease_until=0")
+        hub.conn.commit()
+        try:
+            assert await restarted.sync(), restarted.error
+            assert restarted.history.session("child")["grp"] == "Renamed/New child"
+            assert hub.peer(restarted.own_ref("child"))["folder"] == child
+        finally:
+            await restarted.close()
+
+    asyncio.run(run())
+
+
+def test_folder_conflict_is_rejected_before_any_local_move(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration.folders import snapshot
+
+    service, hub, root, child = paired_folder_service
+
+    async def run():
+        assert await service.sync()
+        hub.change_folder(root, None, "Renamed")
+        hub.change_folder(child, root, "Existing")
+        service.history.create_folder("Project/Existing")
+        original = snapshot(service.history)
+        assert not await service.sync()
+        assert "conflicts with a local folder" in service.error
+        assert snapshot(service.history) == original
+        assert service.cached("folder_plan") is None
+        assert not service.store.conn.execute(
+            "SELECT 1 FROM local_outbox WHERE actor=''"
+        ).fetchone()
+
+    asyncio.run(run())
+
+
+def test_activity_updates_in_flight_do_not_prevent_sync(paired_folder_service):
+    import asyncio
+
+    service, _, _, _ = paired_folder_service
+    exchange = service.exchange
+
+    async def changing_activity(payload):
+        response = await exchange(payload)
+        service.history.session_api.conn.execute(
+            "UPDATE session_api_members SET activity='Running another check' "
+            "WHERE session_key='parent'"
+        )
+        service.history.session_api.conn.commit()
+        return response
+
+    service.exchange = changing_activity
+    asyncio.run(service.sync())
+    assert service.error is None
+
+
+def test_coordinator_placement_never_temporarily_widens_narrow_scope(hub):
+    root = hub.add_folder("Project")
+    child = hub.add_folder("Restricted", root)
+    one, two = Computer(hub, "one", root), Computer(hub, "two", root)
+    two.cards[0].update(folder="Project/Restricted", root="Project/Restricted")
+    two.sync()
+    hub.place(two.ref, child)
+    assert hub.peer(two.ref)["root"] == child
+    op = one.ask(two)
+    assert one.sync(op)["results"][op["id"]]["status"] == 404
+    hub.place(two.ref, root)
+    op = one.ask(two)
+    assert one.sync(op)["results"][op["id"]]["status"] == 404
+
+
+def test_foreign_folder_ack_cannot_change_bindings_or_advertise(hub):
+    folder = hub.add_folder("Project")
+    one, two = Computer(hub, "one", folder), Computer(hub, "two", folder)
+    hub.change_folder(folder, None, "Renamed")
+    plan = one.sync()["folder_plan"]
+    other_plan = two.sync()["folder_plan"]
+    assert other_plan["id"] != plan["id"]
+    old = dict(hub.peer(two.ref))
+    two.cards[0]["folder"] = "Other"
+    with pytest.raises(APIError, match="acknowledgment was refused"):
+        two.sync({"id": uuid.uuid4().hex, "action": "folders_ack", "plan_id": plan["id"]})
+    assert dict(hub.peer(two.ref)) == old
+    assert hub.setting("folder-plan:" + two.id)["id"] == other_plan["id"]

@@ -310,6 +310,8 @@ class Store:
         ).fetchone():
             raise APIError(404, "Computer not found")
         self.ancestry(folder)
+        if self.setting("folder-plan:" + computer):
+            raise APIError(409, "Finish synchronizing this computer's folder changes first")
         with self.conn:
             self.conn.execute(
                 "INSERT INTO bindings VALUES (?,?,?) ON CONFLICT(computer,local_path) "
@@ -322,10 +324,14 @@ class Store:
         if folder:
             self.ancestry(folder)
         with self.conn:
-            peer = self.conn.execute("SELECT card FROM peers WHERE ref=?", (ref,)).fetchone()
+            peer = self.conn.execute("SELECT * FROM peers WHERE ref=?", (ref,)).fetchone()
             if peer is None:
                 raise APIError(404, "Discover the session before moving it")
-            local_path = json.loads(peer[0]).get("local_folder", "")
+            card = json.loads(peer["card"])
+            local_path = card.get("local_folder", "")
+            root = self.ancestry(folder)[-1] if folder else None
+            if card.get("local_root") != local_path.split("/")[0]:
+                root = peer["root"] if folder and peer["root"] in self.ancestry(folder) else None
             self.conn.execute(
                 "INSERT INTO placements VALUES (?,?,?) ON CONFLICT(ref) "
                 "DO UPDATE SET folder=excluded.folder,local_path=excluded.local_path",
@@ -333,7 +339,7 @@ class Store:
             )
             self.conn.execute(
                 "UPDATE peers SET folder=?,root=? WHERE ref=?",
-                (folder, self.ancestry(folder)[-1] if folder else None, ref),
+                (folder, root, ref),
             )
             self.sweep()
 
@@ -377,9 +383,65 @@ class Store:
                 ancestry = self.ancestry(row["folder"])
                 card = json.loads(row["card"])
                 narrow = card["local_root"] != card["local_folder"].split("/")[0]
-                root = row["root"] if narrow and row["root"] in ancestry else ancestry[-1]
+                root = (
+                    (row["root"] if row["root"] in ancestry else None) if narrow else ancestry[-1]
+                )
                 self.conn.execute("UPDATE peers SET root=? WHERE ref=?", (root, row["ref"]))
             self.sweep()
+
+    def folder_plan(self, computer: str) -> dict[str, Any] | None:
+        """Freeze a delivered mapping until acknowledged, even across later edits."""
+        key = "folder-plan:" + computer
+        saved = self.setting(key)
+        if saved:
+            return cast(dict[str, Any], saved)
+        updates = [
+            {
+                "local_path": r["local_path"],
+                "path": self.path(r["folder"]),
+                "folder_id": r["folder"],
+            }
+            for r in self.conn.execute("SELECT * FROM bindings WHERE computer=?", (computer,))
+            if r["local_path"] != self.path(r["folder"])
+        ]
+        if not updates:
+            return None
+        plan = {"id": uuid.uuid4().hex, "updates": updates}
+        if len(json.dumps(plan).encode()) > MAX_BYTES:
+            raise APIError(413, "Folder synchronization exceeds its limit")
+        self.conn.execute(
+            "INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, json.dumps(plan)),
+        )
+        return plan
+
+    def acknowledge_folders(self, computer: str, plan_id: str) -> dict[str, Any]:
+        from duckterm.collaboration.folders import renamed, within
+
+        key = "folder-plan:" + computer
+        plan = self.setting(key)
+        if not plan or plan["id"] != plan_id:
+            raise APIError(409, "Folder synchronization changed; refresh the workspace")
+        # Apply all prefixes simultaneously, including bindings added by a later
+        # coordinator edit while this immutable plan was in flight.
+        updates = sorted(plan["updates"], key=lambda u: len(u["local_path"]), reverse=True)
+        bindings: dict[str, str] = {}
+        for row in self.conn.execute("SELECT * FROM bindings WHERE computer=?", (computer,)):
+            path = row["local_path"]
+            for update in updates:
+                if within(path, update["local_path"]):
+                    path = renamed(path, update["local_path"], update["path"])
+                    break
+            if path in bindings and bindings[path] != row["folder"]:
+                raise APIError(409, "Folder bindings conflict; owner recovery required")
+            bindings[path] = row["folder"]
+        self.conn.execute("DELETE FROM bindings WHERE computer=?", (computer,))
+        self.conn.executemany(
+            "INSERT INTO bindings VALUES (?,?,?)",
+            [(computer, path, folder) for path, folder in bindings.items()],
+        )
+        self.conn.execute("DELETE FROM settings WHERE key=?", (key,))
+        return {"updated": True}
 
     def mapped_folder(self, computer: str, card: dict[str, Any]) -> str | None:
         ref = reference(computer, card["session_key"])
@@ -566,23 +628,8 @@ class Store:
         return result
 
     def _operate(self, computer: str, op: dict[str, Any]) -> dict[str, Any]:
-        if op.get("action") == "binding_ack":
-            old = folder_path(op.get("old_path"))
-            new = folder_path(op.get("new_path"))
-            binding = self.conn.execute(
-                "SELECT folder FROM bindings WHERE computer=? AND local_path=?", (computer, old)
-            ).fetchone()
-            if not binding or binding[0] != op.get("folder_id") or self.path(binding[0]) != new:
-                raise APIError(409, "Folder synchronization changed; refresh the workspace")
-            self.conn.execute(
-                "DELETE FROM bindings WHERE computer=? AND local_path=?", (computer, old)
-            )
-            self.conn.execute(
-                "INSERT INTO bindings VALUES (?,?,?) ON CONFLICT(computer,local_path) "
-                "DO UPDATE SET folder=excluded.folder",
-                (computer, new, binding[0]),
-            )
-            return {"updated": True}
+        if op.get("action") == "folders_ack":
+            return self.acknowledge_folders(computer, identifier(op.get("plan_id"), "folder plan"))
         actor = reference(computer, op.get("actor"))
         action = op.get("action")
         if action == "ask":
@@ -691,9 +738,11 @@ class Store:
                 "UPDATE computers SET writer=?,lease_until=?,seen_at=? WHERE id=?",
                 (writer, now() + LEASE_MS, now(), computer["id"]),
             )
-            policy_ops = [op for op in ops if op.get("action") == "binding_ack"]
-            message_ops = [op for op in ops if op.get("action") != "binding_ack"]
+            policy_ops = [op for op in ops if op.get("action") == "folders_ack"]
+            message_ops = [op for op in ops if op.get("action") != "folders_ack"]
             results = {op["id"]: self.operation(computer["id"], op) for op in policy_ops}
+            if any(not result["ok"] for result in results.values()):
+                raise APIError(409, "Folder acknowledgment was refused; owner recovery required")
             self.advertise(computer["id"], request.get("cards", []))
             self.sweep()
             policy = hashlib.sha256(
@@ -752,23 +801,14 @@ class Store:
                 questions.append(q)
                 used += size
                 scanned = row["sequence"]
+            folder_plan = self.folder_plan(computer["id"])
             return {
                 "protocol": PROTOCOL,
                 "workspace_id": self.setting("workspace"),
                 "policy": policy,
                 "results": results,
                 "cards": cards,
-                "folder_updates": [
-                    {
-                        "local_path": r["local_path"],
-                        "path": self.path(r["folder"]),
-                        "folder_id": r["folder"],
-                    }
-                    for r in self.conn.execute(
-                        "SELECT * FROM bindings WHERE computer=?", (computer["id"],)
-                    )
-                    if r["local_path"] != self.path(r["folder"])
-                ],
+                "folder_plan": folder_plan,
                 "questions": questions,
                 "next_cursor": cursor_out,
                 "synced_at": now(),

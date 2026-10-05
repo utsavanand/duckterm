@@ -191,7 +191,7 @@ Verified boundaries: coordinator persistence and idempotency; remote-to-remote e
 
 Remaining implementation/acceptance work before release:
 
-- Wire every ordinary folder create/rename/reparent/delete entry point to canonical policy, including nested and concurrent changes. The coordinator rename protocol exists, but the sidebar entry points are not yet fully routed through it. Resolve conflicting saved sidebar arrangements explicitly.
+- Wire every ordinary folder create/rename/reparent/delete entry point to canonical policy, including nested and concurrent changes. The coordinator rename protocol now freezes each delivered plan, preflights nested prefix moves, and journals exact membership for recovery after a process exit. Lost acknowledgments and later coordinator renames preserve folder IDs; local collisions fail before any move. Normal sidebar entry points are not yet fully routed through this protocol. Resolve conflicting saved sidebar arrangements explicitly.
 - Complete computer status/disconnect/recovery UX and retry after interruption at every setup phase. Establish that pairing and restart preserve real running processes and drafts.
 - Verify owner folder-interaction history, reminder delivery and pagination with mixed local/remote traffic and large histories.
 - Prove actual server-owned SSH pairing and Mac sleep/wake behavior with isolated Linux services; current transport acceptance uses real local HTTP with synthetic computers.
