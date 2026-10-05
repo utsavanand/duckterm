@@ -13,8 +13,10 @@ import shlex
 import shutil
 import subprocess
 import sys
+import uuid
+from pathlib import Path
 
-from duckterm.helpers import instance
+from duckterm.helpers import instance, pane_log
 
 _PREFIX = "rd_"
 
@@ -109,15 +111,31 @@ def spawn_piped(
 ) -> str:
     """Spawn a detached session and stream its pane output to `pipe_path` from
     the start, so live output isn't missed. Returns the tmux target."""
-    target = spawn(session_id, command, cwd, env)
-    # -o starts piping immediately; appends raw pane output to the file.
-    _tmux(
-        "pipe-pane",
-        "-t",
-        target,
-        "-o",
-        shlex.join([sys.executable, "-m", "duckterm.helpers.pane_log", pipe_path]),
-    )
+    completion = pane_log.prepare_completion(Path(pipe_path))
+    channel = "duckterm-start-" + uuid.uuid4().hex
+    client = client_command("wait-for", channel)
+    client[0] = shutil.which(client[0]) or client[0]
+    wait = shlex.join(client)
+    guarded = wait + " && exec " + shlex.join(["/bin/sh", "-c", command])
+    target = spawn(session_id, guarded, cwd, env)
+    try:
+        ok, error = _tmux(
+            "pipe-pane",
+            "-t",
+            target,
+            "-o",
+            shlex.join(
+                [sys.executable, "-m", "duckterm.helpers.pane_log", pipe_path, str(completion)]
+            ),
+        )
+        if not ok:
+            raise ValueError(f"Cannot attach terminal output: {error.strip()}")
+        ok, error = _tmux("wait-for", "-S", channel)
+        if not ok:
+            raise ValueError(f"Cannot release agent startup: {error.strip()}")
+    except BaseException:
+        kill_session(target)
+        raise
     return target
 
 
