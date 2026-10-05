@@ -27,6 +27,14 @@ pane's SessionEnd keeps the harness and leaves the row unchanged.
 identity into shared state. Anything that emits events on a session's behalf
 must carry that session's real harness, not a placeholder.
 
+## 2026-10-04 — Filter inbox work before paginating history
+
+A filter over the newest loaded messages can report no outstanding work while
+older requests remain unanswered. Apply reply-state predicates before the page
+limit, return counts across the scope, and reset the cursor when views change.
+Read priority messages still require a reply; read state is not completion or
+terminal delivery. Verify with more than one page of both history and open work.
+
 ## 2026-10-04 — Isolate every clock that can redraw the terminal
 A one-second clock in Dashboard redrew terminal and connector components with
 30 sessions even when nothing changed. Moving only that clock would leave the

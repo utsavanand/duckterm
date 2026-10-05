@@ -22,7 +22,13 @@ beforeEach(() => {
   vi.mocked(api.voiceWarm).mockResolvedValue(undefined);
   vi.mocked(api.voiceStop).mockResolvedValue(undefined);
 });
-afterEach(() => { cleanup(); localStorage.clear(); relay.notes = []; vi.resetAllMocks(); });
+afterEach(() => { cleanup(); localStorage.clear(); relay.notes = []; vi.resetAllMocks(); vi.useRealTimers(); });
+
+// The announcer gathers a pile-up for 1.5 s before speaking. Tests that wait
+// for speech drive the clock themselves instead of waiting on a real one,
+// which timed out under load (release-dev, 2026-10-03: 3 failures in 8 runs).
+const PAST_GATHER_MS = 2000;
+const advance = (ms = 0) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
 
 const idle: VoiceSession[] = [{ key: "a", label: "architect", group: "Duckterm", state: "idle" }];
 const approval: VoiceSession[] = [{ ...idle[0], state: "waiting", waitingSince: 5, waitingCause: "approval" }];
@@ -44,11 +50,14 @@ const recorder = (said: string[]): Speaker => ({
 });
 
 it("chimes and speaks a session that starts waiting on an approval, and drops to needs-you in one click that persists", async () => {
+  vi.useFakeTimers();
   const said: string[] = [];
   const view = render(<Harness speaker={recorder(said)} />);
-  await screen.findByRole("option", { name: "Needs you + done" }); // the natural voice is ready
+  await advance();
+  screen.getByRole("option", { name: "Needs you + done" }); // the natural voice is ready
   view.rerender(<Harness speaker={recorder(said)} sessions={approval} />);
-  await waitFor(() => expect(said).toEqual(["<chime>", "architect needs your input"]), { timeout: 4000 });
+  await advance(PAST_GATHER_MS);
+  expect(said).toEqual(["<chime>", "architect needs your input"]);
   expect(screen.getByRole("status")).toHaveTextContent("architect needs your input");
 
   fireEvent.click(screen.getByRole("button", { name: "Only needs-you" }));
@@ -57,18 +66,21 @@ it("chimes and speaks a session that starts waiting on an approval, and drops to
 
   cleanup(); // a reload reads the stored choice back
   render(<Harness speaker={recorder(said)} />);
-  await waitFor(() => expect(screen.getByLabelText("Voice announcements")).toHaveValue("needs"));
+  await advance();
+  expect(screen.getByLabelText("Voice announcements")).toHaveValue("needs");
 });
 
 it("stays off with the reason shown until a natural voice is downloaded", async () => {
+  vi.useFakeTimers();
   vi.mocked(api.voiceStatus).mockResolvedValue({ state: "absent", size: "about 310 MB" });
   const said: string[] = [];
   const view = render(<Harness speaker={recorder(said)} />);
-  const indicator = await screen.findByRole("img", { name: "Voice off — download a voice in Settings" });
+  await advance();
+  const indicator = screen.getByRole("img", { name: "Voice off — download a voice in Settings" });
   expect(indicator).toHaveAttribute("title", "Voice off — download a voice in Settings");
   expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   view.rerender(<Harness speaker={recorder(said)} sessions={approval} />);
-  await new Promise((r) => setTimeout(r, 1800));
+  await advance(PAST_GATHER_MS);
   expect(said).toEqual([]); // nothing to speak with, so nothing is said
   expect(api.voiceWarm).not.toHaveBeenCalled();
 });
@@ -86,12 +98,14 @@ it("turning voice off stops speech at once and stops the voice process", async (
 });
 
 it("speaks a turn that ended on a question, from the relay's note", async () => {
+  vi.useFakeTimers();
   const said: string[] = [];
   const view = render(<Harness speaker={recorder(said)} />);
-  await screen.findByRole("option", { name: "Needs you + done" });
+  await advance();
   relay.notes = [{ id: "q1", session_key: "a", name: "architect", folder: "Duckterm", runtime: "codex", kind: "question", status: "open", urgency: "blocked", created_at: 1 }];
   view.rerender(<Harness speaker={recorder(said)} sessions={[...idle]} />);
-  await waitFor(() => expect(said).toEqual(["architect needs your input"]), { timeout: 4000 });
+  await advance(PAST_GATHER_MS);
+  expect(said).toEqual(["architect needs your input"]);
 });
 
 it("shows the paused pill after a reload until the page gets a click", async () => {
@@ -114,10 +128,13 @@ it("shows the paused pill when the browser refuses to play", async () => {
     const voice = useVoice(sessions, speaker);
     return <>{voice.ready && <span>ready</span>}{voice.paused && <VoicePausedPill />}</>;
   }
+  vi.useFakeTimers();
   const view = render(<Refused sessions={idle} />);
-  await screen.findByText("ready");
+  await advance();
+  screen.getByText("ready");
   view.rerender(<Refused sessions={approval} />);
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Voice paused"), { timeout: 4000 });
+  await advance(PAST_GATHER_MS);
+  expect(screen.getByRole("status")).toHaveTextContent("Voice paused");
 });
 
 it("lists only natural voices, previews each by name, and selects one", () => {
