@@ -26,6 +26,8 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     var launchTarget: String?
     var onPageReset: (() -> Void)?
     var onReportBug: (() -> Void)?
+    var onSettingsState: (([String: Any]) -> Void)?
+    var onCopyDiagnostics: ((String) -> Void)?
     var launchDraft: [String: String]?
     var selectedSession: String?
     var onChooseLaunchTarget: ((String, [String: String], String?) -> Void)?
@@ -37,6 +39,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             "currentTarget": desktopTarget,
             "testBuild": AppIdentity.isTest,
             "canReportBug": true,
+            "canSettingsMenu": true,
             "targets": [["id": "local", "name": "This Mac"]] + desktopHosts.map {
                 ["id": $0.target, "name": "Remote — \($0.name)"]
             }
@@ -62,6 +65,21 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
               origin.protocol == url.scheme, origin.host == url.host,
               origin.port == url.port,
               let body = message.body as? [String: Any] else { return }
+        if body["action"] as? String == "copy-diagnostics" {
+            guard Set(body.keys) == ["action", "text"], let text = body["text"] as? String, text.utf8.count <= 4096 else { return }
+            onCopyDiagnostics?(text)
+            return
+        }
+        if body["action"] as? String == "settings-state" {
+            guard Set(body.keys) == ["action", "theme", "density", "terminal", "terminalColors", "left", "right", "focus"],
+                  let theme = body["theme"] as? String, ["system", "light", "dark"].contains(theme),
+                  let density = body["density"] as? String, ["compact", "standard", "relaxed"].contains(density),
+                  let colors = body["terminalColors"] as? [String], colors.count <= 50, colors.allSatisfy({ !$0.isEmpty && $0.utf8.count <= 80 }),
+                  let terminal = body["terminal"] as? String, terminal == "auto" || colors.contains(terminal),
+                  body["left"] is Bool, body["right"] is Bool, body["focus"] is Bool else { return }
+            onSettingsState?(body)
+            return
+        }
         if body["action"] as? String == "report-bug" {
             guard Set(body.keys) == ["action"] else { return }
             onReportBug?()

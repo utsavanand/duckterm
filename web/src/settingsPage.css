@@ -1,0 +1,39 @@
+#settings-page-root { position: absolute; inset: 0; pointer-events: none; z-index: 12; }
+.rd-settings-page { pointer-events: auto; display: grid; grid-template-columns: 248px minmax(0,1fr); height: 100%; background: var(--bg); color: var(--text); overflow: auto; }
+.rd-settings-nav { padding: 28px 18px; display: flex; flex-direction: column; gap: 5px; border-right: 1px solid var(--border); }
+.rd-settings-nav > .rd-btn { text-align: left; margin-bottom: 22px; }
+.rd-settings-caption { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; padding: 0 13px 12px; }
+.rd-settings-tab { border: 0; border-radius: 7px; text-align: left; background: transparent; color: var(--text); padding: 11px 13px; font: inherit; cursor: pointer; }
+.rd-settings-tab:hover { background: var(--card); }
+.rd-settings-tab[aria-current=page] { background: color-mix(in srgb, var(--brand-green) 14%, transparent); color: var(--brand-green); }
+.rd-settings-docs { margin-top: auto; padding: 32px 13px 8px; color: var(--text-soft); font-size: 13px; }
+.rd-settings-content { padding: 36px 52px 60px; max-width: 1050px; min-width: 0; }
+.rd-settings-content h1 { font-size: 28px; margin: 0 0 5px; letter-spacing: -.5px; }
+.rd-settings-content h1:focus { outline: none; }
+.rd-settings-intro { color: var(--text-soft); margin: 0 0 28px; }
+.rd-settings-group { margin: 18px 0; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--card); overflow: hidden; }
+.rd-settings-group > h2 { margin: 0; font-size: 16px; padding: 18px 22px; border-bottom: 1px solid var(--border); }
+.rd-settings-row { padding: 18px 22px; display: flex; justify-content: space-between; align-items: center; gap: 24px; border-bottom: 1px solid var(--border); }
+.rd-settings-row:last-child { border-bottom: 0; }
+.rd-settings-row h3 { font-size: 14px; margin: 0; }
+.rd-settings-row p { font-size: 13px; color: var(--text-soft); margin: 6px 0 0; max-width: 450px; line-height: 1.5; }
+.rd-settings-controls { display: flex; flex-shrink: 0; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rd-settings-controls select { min-width: 170px; max-width: 260px; padding: 8px 12px; }
+.rd-settings-theme { display: flex; gap: 8px; }
+.rd-settings-theme .rd-btn[aria-pressed=true] { color: var(--brand-green); background: color-mix(in srgb, var(--brand-green) 14%, transparent); border-color: var(--brand-green); }
+.rd-settings-voice { padding: 22px; }
+.rd-settings-voice select { max-width: 100%; }
+.rd-settings-help { font-size: 12px; color: var(--text-soft); }
+.rd-settings-update { padding: 18px 22px; }
+.rd-settings-trigger { position: relative; }
+.rd-update-dot { position: absolute; right: 5px; top: 5px; background: var(--yellow, #fbbf24); width: 7px; height: 7px; border-radius: 50%; }
+@media(max-width:800px) { .rd-settings-page { display: block; } .rd-settings-nav { flex-direction: row; flex-wrap: wrap; padding: 14px; border-right: 0; border-bottom: 1px solid var(--border); } .rd-settings-caption { display: none; } .rd-settings-nav > .rd-btn { margin: 0; } .rd-settings-docs { margin: 0; padding: 8px; } .rd-settings-tab { font-size: 12px; padding: 8px; } .rd-settings-content { padding: 25px 18px; } .rd-settings-row { align-items: flex-start; flex-direction: column; gap: 14px; } .rd-settings-controls { flex-shrink: 1; } }
+.rd-settings-page .rd-btn, .rd-settings-trigger { border: 1px solid var(--border-strong); background: var(--card); color: var(--text); border-radius: 7px; padding: 8px 13px; font: inherit; cursor: pointer; }
+.rd-settings-page .rd-btn:hover, .rd-settings-trigger:hover { background: var(--bg-soft); }
+.rd-settings-page .rd-btn-primary { background: var(--brand-green-strong); color: #fff; border-color: var(--brand-green-strong); }
+:root[data-theme=dark] .rd-settings-page .rd-btn-primary { color: #081e15; }
+.rd-settings-page .rd-btn:disabled { opacity: .5; cursor: default; }
+.rd-settings-page .rd-settings-theme .rd-btn[aria-pressed=true] { background: color-mix(in srgb, var(--brand-green) 16%, var(--card)); color: var(--brand-green-strong); border-color: var(--brand-green); }
+.rd-settings-controls select { background: var(--card); color: var(--text); border: 1px solid var(--border-strong); border-radius: 7px; font: inherit; }
+.rd-settings-page :is(button,select,input,a):focus-visible { outline: 2px solid var(--brand-green-strong); outline-offset: 2px; }
+:root:not([data-theme=dark]) .rd-settings-page { background: #f5f5f2; }

@@ -16,7 +16,8 @@ test("bug report downloads the exact reviewed body and captured attachments", as
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.goto(base());
     await page.getByRole('button', { name: 'Settings', exact: false }).click();
-    await page.getByRole('button', { name: 'Report a bug', exact: false }).click();
+    await page.getByRole('button', { name: 'Report a bug', exact: true }).click();
+    await page.getByRole('button', { name: 'Prepare report', exact: true }).click();
     const report = page.getByRole('dialog', { name: 'Report a bug', exact: true });
     await report.getByRole('textbox', { name: 'Summary' }).fill('Clipboard test');
     await report.getByRole('textbox', { name: 'What happened?' }).fill('Selected terminal text did not copy.\nExpected the selected text in the clipboard.');
@@ -62,11 +63,14 @@ test('Settings reuses the native reporter when supported and older apps retain t
   });
   await page.goto(base());
   await page.getByRole('button', { name: 'Settings', exact: false }).click();
-  await page.getByRole('button', { name: 'Report a bug', exact: false }).click();
+  await page.getByRole('button', { name: 'Report a bug', exact: true }).click();
+    await page.getByRole('button', { name: 'Prepare report', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { __reportRequests: unknown[] }).__reportRequests)).toEqual([{ action: 'report-bug' }]);
   await expect(page.getByRole('dialog', { name: 'Report a bug', exact: true })).toHaveCount(0);
   await page.evaluate(() => { delete window.__rubbertermDesktop?.canReportBug; });
+  await page.getByRole('button', { name: '← Sessions', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: false }).click();
-  await page.getByRole('button', { name: 'Report a bug', exact: false }).click();
+  await page.getByRole('button', { name: 'Report a bug', exact: true }).click();
+    await page.getByRole('button', { name: 'Prepare report', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Report a bug', exact: true })).toBeVisible();
 });

@@ -66,7 +66,10 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
   useEffect(() => {
     if (!celebrating) return;
     setNow(Date.now());
-    const timer = setTimeout(() => setNow(Date.now()), Math.max(0, celebrating.startedAt + 4000 - Date.now()));
+    const deadline = celebrating.startedAt + 4000;
+    // Timer wakeups and Date.now() can differ by a millisecond. A one-shot
+    // expiry must cross its deadline even when the wall clock reads just short.
+    const timer = setTimeout(() => setNow(Math.max(Date.now(), deadline)), Math.max(0, deadline - Date.now()));
     return () => clearTimeout(timer);
   }, [celebrating]);
   const active = celebrating && celebrating.startedAt + 4000 > now ? celebrating : undefined;

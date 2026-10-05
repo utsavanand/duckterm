@@ -26,6 +26,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDiagnostics.shared.record("Application launched")
         window = DashboardWindow(url: server.url)
         window?.onReportBug = { [weak self] in self?.reportBug(nil) }
+        window?.onCopyDiagnostics = { text in
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+        }
+        window?.onSettingsState = { state in
+            func update(_ menu: NSMenu) {
+                for item in menu.items {
+                    if item.identifier?.rawValue == "terminal-colors", let sub = item.submenu, let colors = state["terminalColors"] as? [String] {
+                        sub.removeAllItems(); sub.autoenablesItems = false
+                        for color in ["auto"] + colors {
+                            let entry = sub.addItem(withTitle: color == "auto" ? "Automatic" : color, action: #selector(AppDelegate.dashboardMenu(_:)), keyEquivalent: "")
+                            entry.representedObject = ["action": "terminal-theme", "value": color]
+                            entry.state = color == state["terminal"] as? String ? .on : .off
+                        }
+                    }
+                    if let sub = item.submenu { update(sub) }
+                    guard let command = item.representedObject as? [String: String] else { continue }
+                    if command["action"] == "theme" { item.state = command["value"] == state["theme"] as? String ? .on : .off }
+                    if command["action"] == "density" { item.state = command["value"] == state["density"] as? String ? .on : .off }
+                    if command["action"] == "panel", let side = command["value"] { item.title = ((state[side] as? Bool == true) ? "Show " : "Hide ") + (side == "left" ? "sidebar" : "right panel") }
+                    if command["action"] == "focus" { item.isEnabled = state["focus"] as? Bool == true }
+                }
+            }
+            if let menu = NSApp.mainMenu { update(menu) }
+        }
         window?.desktopHosts = hosts
         sessionTransport.onTerminal = { [weak self] event in self?.window?.dispatch(name: "remote-terminal", detail: event) }
         sessionTransport.onTerminalData = { [weak self] event in await self?.window?.dispatchAndWait(name: "remote-terminal", detail: event) }
@@ -140,12 +165,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showSettings(_ sender: Any?) {
-        let alert = NSAlert()
-        alert.messageText = "Settings"
-        alert.informativeText = "Manage the computers available when you create a session."
-        alert.addButton(withTitle: "Remote computers…")
-        alert.addButton(withTitle: "Close")
-        if alert.runModal() == .alertFirstButtonReturn { chooseHost(sender) }
+        window?.dispatch(name: "duckterm-menu", detail: ["action": "settings", "value": "Appearance"])
+    }
+
+    @objc func dashboardMenu(_ sender: NSMenuItem) {
+        guard let command = sender.representedObject as? [String: String] else { return }
+        if command["action"] == "docs" {
+            NSWorkspace.shared.open(URL(string: "https://github.com/utsavanand/duckterm#readme")!)
+            return
+        }
+        window?.dispatch(name: "duckterm-menu", detail: command)
     }
 
     @objc func chooseHost(_ sender: Any?) {
@@ -337,12 +366,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // was dead. The standard selectors route through the responder chain to the
 // web view, which forwards them to the page (xterm handles the events).
 @MainActor
-private func buildMainMenu() -> NSMenu {
+func buildMainMenu() -> NSMenu {
     let main = NSMenu()
+    func command(_ menu: NSMenu, _ title: String, _ action: String, _ value: String = "", key: String = "") {
+        menu.autoenablesItems = false
+        let item = menu.addItem(withTitle: title, action: #selector(AppDelegate.dashboardMenu(_:)), keyEquivalent: key)
+        item.representedObject = ["action": action, "value": value]
+        if action == "focus" { item.isEnabled = false }
+    }
+    func menu(_ title: String) -> NSMenu {
+        let item = NSMenuItem(); let child = NSMenu(title: title)
+        item.submenu = child; main.addItem(item); return child
+    }
 
     let appItem = NSMenuItem()
     main.addItem(appItem)
     let appMenu = NSMenu()
+    command(appMenu, "Check for Updates…", "settings", "Updates")
     appMenu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
     appMenu.addItem(.separator())
     appMenu.addItem(
@@ -352,6 +392,10 @@ private func buildMainMenu() -> NSMenu {
         withTitle: "Quit \(AppIdentity.name)", action: #selector(NSApplication.terminate(_:)),
         keyEquivalent: "q")
     appItem.submenu = appMenu
+
+    let fileMenu = menu("File")
+    command(fileMenu, "New session", "launch", key: "n")
+    command(fileMenu, "New folder", "folder", key: "N")
 
     let editItem = NSMenuItem()
     main.addItem(editItem)
@@ -372,6 +416,21 @@ private func buildMainMenu() -> NSMenu {
         withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
     editItem.submenu = edit
 
+    let viewMenu = menu("View")
+    let themeItem = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
+    let themeMenu = NSMenu(title: "Theme"); themeItem.submenu = themeMenu; viewMenu.addItem(themeItem)
+    for theme in ["System", "Light", "Dark"] { command(themeMenu, theme, "theme", theme.lowercased()) }
+    let colorsItem = NSMenuItem(title: "Terminal colors", action: nil, keyEquivalent: "")
+    colorsItem.identifier = NSUserInterfaceItemIdentifier("terminal-colors")
+    colorsItem.submenu = NSMenu(title: "Terminal colors"); viewMenu.addItem(colorsItem)
+    let densityItem = NSMenuItem(title: "Sidebar density", action: nil, keyEquivalent: "")
+    let densityMenu = NSMenu(title: "Sidebar density"); densityItem.submenu = densityMenu; viewMenu.addItem(densityItem)
+    for density in ["Compact", "Standard", "Relaxed"] { command(densityMenu, density, "density", density.lowercased()) }
+    viewMenu.addItem(.separator())
+    command(viewMenu, "Hide sidebar", "panel", "left")
+    command(viewMenu, "Hide right panel", "panel", "right")
+    command(viewMenu, "Focus", "focus")
+
     let windowItem = NSMenuItem()
     main.addItem(windowItem)
     let windowMenu = NSMenu(title: "Window")
@@ -385,6 +444,8 @@ private func buildMainMenu() -> NSMenu {
     main.addItem(helpItem)
     let helpMenu = NSMenu(title: "Help")
     helpMenu.addItem(withTitle: "Report a bug…", action: #selector(AppDelegate.reportBug(_:)), keyEquivalent: "")
+    command(helpMenu, "DuckTerm docs", "docs")
+    command(helpMenu, "Copy diagnostics", "diagnostics")
     helpItem.submenu = helpMenu
     return main
 }

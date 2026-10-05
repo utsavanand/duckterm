@@ -1,5 +1,18 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — Settings and native menus must share live actions
+Moving settings out of a dropdown must not remount or resize running terminals.
+Keep workspace panes mounted and inert under the page; route Mac commands to
+the same dashboard setters, and return current theme/density/panel state for
+menu checkmarks. Keep remote-computer setup reachable through New, preserve
+Edit clipboard selectors, and gate native callbacks by origin and main frame.
+
+## 2026-10-04 — One-shot expiry must cross its deadline
+After dashboard clocks were isolated, a celebration could stay forever when its
+one-shot timeout read the wall clock one millisecond before its expiry. Clamp
+the expiry callback to the deadline; do not rely on an unrelated parent render
+to remove it. Cover the early wall-clock boundary as well as ordinary expiry.
+
 ## 2026-10-04 — Passing isolated layers hid an adopted-session restart failure
 Runtime mocks, browser responses and generic-pane adoption each passed while
 the real sequence (server replacement, Claude adoption, model restart, Messages)
@@ -27,6 +40,7 @@ Keep HistoryStore reads on its owning event-loop thread when integrating the
 thread guard; leave ZIP/file work on workers. Detect the native report action
 explicitly so older Mac builds keep the browser form instead of swallowing it.
 The Settings and Help entry points should reuse the same native editor.
+
 
 ## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
 A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but

@@ -8,6 +8,7 @@ test("manual backup remembers destination, reports a real local archive, and rec
   try {
     await page.goto("/");
     await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Backup", exact: true }).click();
     await page.getByRole("button", { name: "Back up to remote", exact: true }).click();
     const destination = page.getByLabel("Backup destination", { exact: true });
     await expect(destination).toBeEnabled();
@@ -23,6 +24,7 @@ test("manual backup remembers destination, reports a real local archive, and rec
     await page.screenshot({ path: "/tmp/backup-ui-complete.png" });
     await page.reload();
     await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Backup", exact: true }).click();
     await page.getByRole("button", { name: "Back up to remote", exact: true }).click();
     await expect(destination).toHaveValue(directory);
     await expect(page.getByRole("region", { name: "Backup result", exact: true }).getByRole("status")).toHaveText("Backup complete");

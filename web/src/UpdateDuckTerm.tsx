@@ -21,7 +21,7 @@ export interface UpdateStatus {
   operation: UpdateOperation | null;
   backup_running?: boolean;
 }
-export function UpdateDuckTerm() {
+export function UpdateDuckTerm({ onAvailable }: { onAvailable?: (available: boolean) => void } = {}) {
   const [status, setStatus] = useState<UpdateStatus | null>(null), [error, setError] = useState("");
   const [checking, setChecking] = useState(true), [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -34,6 +34,7 @@ export function UpdateDuckTerm() {
     }).then(value => { if (active) setStatus(value); }).catch((cause: Error) => { if (active) setError(cause.message); }).finally(() => { if (active) setChecking(false); });
     return () => { active = false; abort.abort(); };
   }, [attempt]);
+  useEffect(() => { if (status?.update_available !== null && status?.update_available !== undefined) onAvailable?.(status.update_available); }, [status, onAvailable]);
   const operation = status?.operation;
   const verified = operation?.outcome === "succeeded" && operation.verified && status?.installed_version === operation.target_version;
   const link = status?.release_url.startsWith("https://github.com/utsavanand/duckterm/releases/") ? status.release_url : "https://github.com/utsavanand/duckterm/releases";
@@ -42,7 +43,7 @@ export function UpdateDuckTerm() {
     {checking ? <p role="status">Checking GitHub…</p> : status && <p className="rd-update-version">Installed {status.installed_version}{status.check_status === "checked" && <span>{status.update_available === true ? `${status.latest_version} available` : status.update_available === false ? "Up to date" : `Latest ${status.latest_version}`}</span>}</p>}
     {!checking && (error || status?.check_status === "failed") && <p role="alert">Couldn’t check for updates. {error || status?.check_error}</p>}
     <p>Updates the CLI/server. The Mac app may need a separate download.</p>
-    <p>Checks GitHub when you open Settings or choose Check again.</p>
+    <p>Checks GitHub when you open Updates or choose Check again.</p>
     <div className="rd-update-actions"><button className="rd-btn rd-btn-sm rd-btn-primary" disabled title="Live installation is disabled until the updater is ready">Install update</button><button className="rd-btn rd-btn-sm" disabled={checking} onClick={() => setAttempt(n => n + 1)}>Check again</button></div>
     <p>{status?.backup_running ? "A backup is running. Updates must wait until it finishes." : status?.reason || "In-app installation is not available yet."}</p>
     <a href={link} target="_blank" rel="noreferrer">Release notes and downloads ↗</a>
