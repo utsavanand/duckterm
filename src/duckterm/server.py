@@ -326,6 +326,8 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/stop")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._models(w, seg),
           **_mid("/sessions/", "/models")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "OPTIONS"),
+          **_mid("/sessions/", "/restart-options")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "GET"),
           **_mid("/sessions/", "/restart")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "POST", b),
@@ -587,6 +589,10 @@ class Server:
             await self._message_pins(writer, headers, pin_match[1], pin_match[2], method, body)
             return
         inbox_path = urllib.parse.urlsplit(path)
+        timeline_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/timeline", inbox_path.path)
+        if method == "GET" and timeline_match:
+            await self._session_timeline(writer, headers, timeline_match[1], inbox_path.query)
+            return
         if method == "GET" and inbox_path.path == "/analytics/tokens":
             await self._token_analytics(writer, headers, inbox_path.query)
             return
@@ -700,6 +706,13 @@ class Server:
                 raw["agent_pid"] = pid if pid > 0 else None
             except (TypeError, ValueError):
                 raw["agent_pid"] = None
+        from duckterm.harness_switch import accept_hook
+
+        if not accept_hook(self, raw):
+            await _write_json(
+                writer, 200, {"dropped": "hook does not match the current harness conversation"}
+            )
+            return
         # A deleted (tombstoned) session whose agent is still running keeps firing
         # hooks. Drop ALL of its events here — including SessionStart — so a
         # session you deleted stays gone: no phantom rows, no events leaking into
@@ -2134,7 +2147,9 @@ class Server:
         self, writer: asyncio.StreamWriter, key: str, method: str, body: bytes = b""
     ) -> None:
         try:
-            if method == "GET":
+            if method == "OPTIONS":
+                result = await self.restarts.options(key)
+            elif method == "GET":
                 result = await self.restarts.describe(key)
             elif method == "DELETE":
                 if self.history.session(key) is None:
@@ -2144,7 +2159,9 @@ class Server:
                 request = json.loads(body or b"{}")
                 if not isinstance(request, dict):
                     raise APIError(400, "Expected a JSON object")
-                result = await self.restarts.request(key, request.get("model", ""))
+                result = await self.restarts.request(
+                    key, request.get("model", ""), request.get("harness")
+                )
             await _write_json(writer, 202 if method == "POST" else 200, result)
         except (ValueError, APIError) as exc:
             await _write_json(
@@ -2255,11 +2272,17 @@ class Server:
         # PTY-owned again. The supervisor's SessionStart both persists the
         # revive and reaches dashboards over SSE, lifting the stopped/archived
         # rest-state back to busy.
+        binding = self.history.restart_control(session_key).get("native_binding")
+        generation = ""
+        if binding:
+            generation = uuid.uuid4().hex
+            self.restarts.save(session_key, native_binding={**binding, "generation": generation})
         await self.orchestrator.launch(
             runtime=_build_runtime(runtime, shlex.join(argv)),
             cwd=cwd,
             session_key=session_key,
             prompt=prompt,
+            env={"DUCKTERM_HARNESS_GENERATION": generation},
             record_intention=False,
             test=bool(row.get("test")),
         )
@@ -2638,6 +2661,38 @@ class Server:
         merged = agents_rules.merge_candidates(existing, proposals)
         if [asdict(r) for r in merged] != before:
             agents_rules.save_rules(base, merged)
+
+    async def _session_timeline(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], key: str, query: str
+    ) -> None:
+        from duckterm.persistence.timeline import page
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        row = self.history.session(key)
+        if row is None:
+            await _write_json(writer, 404, {"error": "Session not found"})
+            return
+        try:
+            params = urllib.parse.parse_qs(query, keep_blank_values=True)
+            if set(params) - {"before", "limit", "kinds"} or any(
+                len(v) != 1 for v in params.values()
+            ):
+                raise ValueError("Invalid timeline parameters")
+            result = page(
+                self.history._conn,
+                self.digests._conn,
+                row,
+                self.relay.notes,
+                before=params.get("before", [""])[0],
+                limit=int(params.get("limit", ["50"])[0]),
+                kinds=params.get("kinds", [""])[0],
+            )
+        except ValueError as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
 
     async def _session_digest(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """The accumulated, validated digest archive for a session — the
@@ -4365,6 +4420,12 @@ class Server:
             await _write_json(writer, 404, {"error": msg})
             return
         label = json.loads(body or b"{}").get("label", "checkpoint")
+        result = await self._create_checkpoint(session_key, row, label)
+        await _write_json(writer, 200, result)
+
+    async def _create_checkpoint(
+        self, session_key: str, row: dict[str, Any], label: str
+    ) -> dict[str, str]:
         cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
         # Summarize the delta since the most recent checkpoint (0 if first).
         prior = self.history.checkpoints(session_key)
@@ -4402,7 +4463,7 @@ class Server:
         rel = await asyncio.to_thread(write_markdown, cp.session_key, cp.created_at, cp.markdown)
         if rel is not None:
             self.history.set_checkpoint_markdown(cp.id, rel)
-        await _write_json(writer, 200, {"id": cp.id, "label": cp.label, "summary": cp.summary})
+        return {"id": cp.id, "label": cp.label, "summary": cp.summary}
 
     def _read_transcript(self, session_key: str, row: dict[str, Any]) -> list[dict[str, str]]:
         """The agent's own conversation for a session (role/text incl. its

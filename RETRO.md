@@ -1,5 +1,42 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — A remote Codex couldn't save October's conversations
+On duckterm-dev, Codex (running as the service user) got Permission denied
+creating ~/.codex/sessions/2026/10, because the year directory, and September's
+before it, was owned by root with mode 0755. The repair changed only those two
+directory owners (no chmod, no recursion, no restart) and verified a
+create/write/fsync as the real user. Create runtime state as the service user,
+and check that a new date directory can be written, instead of assuming
+whoever created the first month got the ownership right. Don't conclude the
+installer caused it without evidence.
+
+## 2026-10-04 — A SQLite rowid watermark can be reused after deletion
+Timeline cursors bounded inserts by MAX(rowid), but deleting the highest row
+allowed a later backdated insert to reuse that rowid and enter older pages.
+Retain the boundary record ID and reject continuation if that anchor changes.
+The schema-free tradeoff is an explicit refresh after boundary deletion, even
+when that table-wide boundary belonged to another session. Regression coverage
+must combine deletion with insertion, not only append records between pages.
+
+## Session timelines need stable ties and honest source boundaries
+
+A timestamp-only cursor loses records when events share a millisecond. The read-only timeline uses timestamp plus stable entry ID and insertion high-water marks; regressions insert tied and backdated records between pages. Counts and source reads remain on their SQLite owner thread. Existing mutable stores are not immutable snapshots: document changes/deletions and missing producer events rather than inventing historical entries or promising constant-time scans without indexes.
+
+## 2026-10-04 — One-shot expiry must cross its deadline
+After dashboard clocks were isolated, a celebration could stay forever when its
+one-shot timeout read the wall clock one millisecond before its expiry. Clamp
+the expiry callback to the deadline; do not rely on an unrelated parent render
+to remove it. Cover the early wall-clock boundary as well as ordinary expiry.
+
+## 2026-10-04 — Teardown must wait for the last state writer
+The v0.4.114 gate passed all browser checks but failed removing the test home.
+SIGTERM and tmux kill-server initiated shutdown; they did not prove the server
+or its pipe writers had stopped creating files. Wait for process exit, bound
+escalation, confirm the private tmux server is gone, and await writer EOF markers
+before removing state. Retried removal is a backstop, not the synchronization.
+A real child that writes for 500 ms after SIGTERM fails the original teardown
+and passes the corrected ordering. Count gate exit status, not passing specs.
+
 ## 2026-10-04 — Passing isolated layers hid an adopted-session restart failure
 Runtime mocks, browser responses and generic-pane adoption each passed while
 the real sequence (server replacement, Claude adoption, model restart, Messages)
@@ -27,6 +64,40 @@ Keep HistoryStore reads on its owning event-loop thread when integrating the
 thread guard; leave ZIP/file work on workers. Detect the native report action
 explicitly so older Mac builds keep the browser form instead of swallowing it.
 The Settings and Help entry points should reuse the same native editor.
+
+
+## 2026-10-04 — Resume proof must not hide a safe harness-switch path
+
+Restart applied exact-conversation checks before offering any action. A missing
+transcript therefore hid the option to start a different harness with a summary.
+Report options per path: exact resume retains its identity guard; a seeded switch
+requires live-terminal, folder, transfer, draft and real parent-turn checks, then
+checkpoints before stopping. Persist a new identity boundary before launch, retain
+the previous conversation for recovery, and reject late hooks from the old harness.
+A daemon target remains unavailable with a reason until its independent native-ID
+resolver ships. Regression coverage must prove missing resume identity still offers
+a switch, model catalogs are harness-specific, failed launches preserve old resume,
+and input during checkpoint work prevents stop. A dead replacement process is not
+necessarily a drained supervisor: settle output/EOF before restoring the old
+runtime, including partial startup failure and cancellation. Drain the captured
+supervisor instance, not whichever process later occupies its key. Rotate hook generations on later
+exact resumes too, so delayed same-conversation hooks cannot control a new launch.
+No schema change was needed.
+
+## Output failure paths must retain evidence and release resources
+
+QA found that an invalid writer marker ended capture without an error field and that non-ENOENT spawn errors leaked PTY descriptors. Tail failures now carry output_error on SessionEnd, and every spawn exception closes unowned descriptors, including cancellation. Deterministic negative cases verify error reporting and closed descriptors rather than relying on a happy-path output test.
+
+
+## 2026-10-04 — Agent exit does not prove output capture finished
+On macOS, keep the parent PTY slave open until final reads complete; closing
+the last slave can discard bytes before a delayed reader ever sees them.
+A short-lived agent can exit before tmux piping attaches, or its output writer
+can flush after the tailer reads EOF. Attach capture before releasing startup;
+wait for the writer to acknowledge EOF and perform a final drain before sending
+SessionEnd. Preserve a bounded, reported failure if the writer never confirms
+completion. Test the final-probe race deterministically and delayed PTY reads;
+do not hide lost output with sleeps or retries in the regression.
 
 ## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
 A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
