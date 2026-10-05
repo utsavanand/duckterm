@@ -2,10 +2,29 @@
 
 import os
 import sys
+import uuid
 from pathlib import Path
 from typing import BinaryIO
 
+from duckterm.helpers.private_files import private_write
+
 LIMIT = 8 * 1024 * 1024
+
+
+def prepare_completion(path: Path) -> Path:
+    token = uuid.uuid4().hex
+    private_write(Path(str(path) + ".writer"), token)
+    return Path(str(path) + "." + token + ".done")
+
+
+def completion_for(path: Path) -> Path | None:
+    try:
+        token = Path(str(path) + ".writer").read_text()
+    except FileNotFoundError:
+        return None  # legacy panes have no completion protocol
+    if len(token) != 32 or any(c not in "0123456789abcdef" for c in token):
+        raise ValueError("Invalid pane writer generation")
+    return Path(str(path) + "." + token + ".done")
 
 
 def record(source: BinaryIO, path: Path, limit: int = LIMIT) -> None:
@@ -29,4 +48,10 @@ def record(source: BinaryIO, path: Path, limit: int = LIMIT) -> None:
 
 
 if __name__ == "__main__":
-    record(sys.stdin.buffer, Path(sys.argv[1]))
+    status = "failed"
+    try:
+        record(sys.stdin.buffer, Path(sys.argv[1]))
+        status = "complete"
+    finally:
+        if len(sys.argv) > 2:
+            private_write(Path(sys.argv[2]), status)

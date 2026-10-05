@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — Agent exit does not prove output capture finished
+On macOS, keep the parent PTY slave open until final reads complete; closing
+the last slave can discard bytes before a delayed reader ever sees them.
+A short-lived agent can exit before tmux piping attaches, or its output writer
+can flush after the tailer reads EOF. Attach capture before releasing startup;
+wait for the writer to acknowledge EOF and perform a final drain before sending
+SessionEnd. Preserve a bounded, reported failure if the writer never confirms
+completion. Test the final-probe race deterministically and delayed PTY reads;
+do not hide lost output with sleeps or retries in the regression.
+
 ## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
 A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
 build.sh called swiftc without -target, so the binary inherited the build
