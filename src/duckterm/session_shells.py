@@ -100,18 +100,14 @@ def _spawn(key: str, cwd: str) -> None:
         raise APIError(503, "The owner's configured shell is unavailable")
     # The helper runs inside tmux, after tmux's global environment inheritance.
     command = shlex.join([sys.executable, "-m", "duckterm.helpers.owner_shell", shell])
-    target = tmux.spawn(key + "-sh", command, cwd)
-    try:
-        for option, value in (
-            ("@duckterm_owner_shell", key),
-            ("@duckterm_owner_shell_binary", shell),
-        ):
-            ok, error = tmux._tmux("set-option", "-t", target, option, value)
-            if not ok:
-                raise APIError(503, "Cannot initialize shell: " + error.strip())
-    except BaseException:
-        tmux.kill_session("=" + target)
-        raise
+    # Publish ownership in the creation command queue, before discovery can
+    # mistake this sibling for an agent. A suffix alone is not ownership.
+    tmux.spawn(
+        key + "-sh",
+        command,
+        cwd,
+        session_options={"@duckterm_owner_shell": key, "@duckterm_owner_shell_binary": shell},
+    )
 
 
 class ShellTerminal:
@@ -193,6 +189,12 @@ class SessionShells:
 
     async def destroy(self, key: str) -> None:
         """Caller holds the lifecycle lock; only archive/delete bypass confirmation."""
+        try:
+            target_for(key)
+        except APIError:
+            # Keys predating this API may not qualify for a sibling shell.
+            # They still need ordinary agent archive/delete cleanup.
+            return
         if not await asyncio.to_thread(tmux.has_tmux):
             return
         status = await asyncio.to_thread(inspect_shell, key)

@@ -1,5 +1,7 @@
 # Retro — lessons from real breakage
 
+- A new sibling-shell suffix is not ownership: older agent keys can already use it. Filter discovery by the explicit owner-shell tag, publish that tag with creation, and keep shell eligibility checks out of ordinary agent archive/delete. Regress legacy-key discovery and both cleanup paths with private real tmux sessions.
+
 ## 2026-10-05 — A surviving sibling can impersonate a departed tmux target
 
 The session-shell integration test hung stopping an agent: tmux resolved its

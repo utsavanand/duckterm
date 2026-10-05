@@ -42,7 +42,7 @@ tmux, after global environment inheritance, then sets `DUCKTERM_INTERNAL=1` so
 installed hooks remain inert. This is identity separation, not an OS sandbox:
 commands run as the owner, who can intentionally access their own files. DuckTerm
 does not record shell output in v1; tmux scrollback and the owner's ordinary shell
-history still exist. Shells are excluded from agent reconciliation. Agent tmux
+history still exist. Shells are excluded from agent reconciliation by their explicit ownership tag, not by a name suffix. Older agent keys ending in `-sh` remain discoverable and can still be archived or deleted, although they cannot open a sibling shell. Agent tmux
 reads, writes, kills and liveness checks use exact targets to prevent prefix
 matching a surviving sibling shell after the agent exits.
 
