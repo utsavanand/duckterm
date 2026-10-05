@@ -25,6 +25,28 @@ struct BugReportUITests {
 
     @MainActor static func run() async throws {
         fputs("UI: starting\n", stderr)
+        var bridgeWindow: DashboardWindow?
+        if let address = ProcessInfo.processInfo.environment["RT_REPORT_BRIDGE_TEST_URL"], let url = URL(string: address) {
+            let view = DashboardWindow(url: url)
+            bridgeWindow = view
+            var opened = 0
+            view.onReportBug = { opened += 1 }
+            view.show()
+            try await wait {
+                await withCheckedContinuation { continuation in
+                    view.evaluate("document.readyState === 'complete' && window.__rubbertermDesktop?.canReportBug === true") { result in
+                        continuation.resume(returning: result as? Bool == true)
+                    }
+                }
+            }
+            view.evaluate("window.webkit.messageHandlers.remoteSession.postMessage({action:'report-bug'})")
+            try await wait { opened == 1 }
+            view.evaluate("window.webkit.messageHandlers.remoteSession.postMessage({action:'report-bug',extra:true});let frame=document.createElement('iframe');frame.srcdoc=\"<script>window.webkit.messageHandlers.remoteSession.postMessage({action:'report-bug'})<\\/script>\";document.body.append(frame)")
+            try await Task.sleep(nanoseconds: 400_000_000)
+            verify(opened == 1, "Invalid envelopes and child frames must not open native reporting")
+            print("PASS: trusted dashboard report bridge; malformed and child-frame requests rejected")
+        }
+        defer { withExtendedLifetime(bridgeWindow) {} }
         var dashboard: DashboardWindow?
         var screenshot: NSImage?
         if let address = ProcessInfo.processInfo.environment["RT_REPORT_PREVIEW_URL"], let url = URL(string: address) {

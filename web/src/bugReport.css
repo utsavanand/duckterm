@@ -1,0 +1,42 @@
+.rd-bug-report { position: fixed; inset: 52px 0 0; z-index: 150; background: var(--bg); color: var(--text); overflow: auto; font-size: 13px; }
+.rd-bug-inner { max-width: 1180px; margin: auto; padding: 32px 24px 50px; }
+.rd-bug-inner > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 26px; }
+.rd-bug-inner h1 { font-size: 25px; margin: 12px 0 8px; font-weight: 550; }
+.rd-bug-inner h2 { font-size: 14px; font-weight: 550; margin: 0 0 8px; }
+.rd-bug-inner h3 { font-size: 14px; margin: 0 0 10px; }
+.rd-bug-inner p { color: var(--text-soft); line-height: 1.65; }
+.rd-bug-inner small { color: var(--text-soft); font-size: 11px; }
+.rd-bug-grid { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 34px; align-items: start; }
+.rd-bug-fields > label { display: block; margin-bottom: 20px; }
+.rd-bug-fields input:not([type=checkbox]), .rd-bug-fields textarea { box-sizing: border-box; display: block; width: 100%; margin-top: 8px; border: 1px solid var(--border-strong); background: var(--card); color: var(--text); border-radius: 7px; padding: 11px; font: inherit; resize: vertical; }
+.rd-bug-inner :is(input, textarea, button, a):focus-visible { outline: 2px solid var(--brand-green); outline-offset: 3px; }
+.rd-bug-context-heading { display: flex; justify-content: space-between; align-items: center; margin: 24px 0 12px; }
+.rd-bug-context { border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+.rd-bug-context > label { padding: 12px 16px; display: flex; align-items: flex-start; gap: 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.rd-bug-context > label:last-child { border-bottom: 0; }
+.rd-bug-context input { accent-color: var(--brand-green-strong); }
+.rd-bug-context small { display: block; white-space: pre-wrap; margin-top: 5px; overflow-wrap: anywhere; }
+.rd-bug-context .excluded small { text-decoration: line-through; }
+.rd-bug-help { font-size: 11px; }
+.rd-bug-preview { border: 1px solid var(--border); background: var(--card); border-radius: 11px; overflow: hidden; position: sticky; top: 24px; }
+.rd-bug-preview > h2 { margin: 20px 18px 5px; }
+.rd-bug-preview > p { margin: 0 18px 18px; font-size: 11px; }
+.rd-bug-recipient { padding: 12px 18px; border-block: 1px solid var(--border); font-size: 11px; overflow-wrap: anywhere; }
+.rd-bug-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 18px; margin: 0; max-height: 48dvh; overflow: auto; font-size: 12px; line-height: 1.7; }
+.rd-bug-preview footer { border-top: 1px solid var(--border); padding: 16px 18px; }
+.rd-bug-preview footer button { width: 100%; }
+.rd-bug-preview footer p { font-size: 10px; margin-bottom: 0; }
+.rd-bug-files { list-style: none; margin: 0; padding: 0; }
+.rd-bug-files li { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.rd-bug-files span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.rd-bug-files small { display: block; margin-top: 4px; }
+.rd-bug-files img { width: 70px; height: 55px; object-fit: contain; background: var(--bg-soft); }
+.rd-bug-error { border: 1px solid var(--border-strong); padding: 12px; border-radius: 8px; margin-bottom: 18px; }
+.rd-bug-error button { margin-left: 12px; }
+.rd-bug-result { max-width: 665px; margin: 34px auto; border: 1px solid var(--border); background: var(--card); border-radius: 12px; padding: 28px; }
+.rd-bug-result > h2 { font-size: 23px; margin-top: 20px; }
+.rd-bug-check { color: var(--brand-green-strong); font-size: 32px; }
+.rd-bug-result section, .rd-bug-result footer { padding-top: 22px; margin-top: 24px; border-top: 1px solid var(--border); }
+.rd-bug-result footer { display: flex; gap: 12px; flex-wrap: wrap; }
+.rd-bug-result .rd-btn { display: inline-block; text-decoration: none; }
+@media(max-width:800px) { .rd-bug-grid { grid-template-columns: minmax(0,1fr); gap: 20px; } .rd-bug-preview { position: static; } .rd-bug-inner { padding: 24px 16px; } .rd-bug-result { padding: 20px; } }

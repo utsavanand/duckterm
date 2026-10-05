@@ -20,6 +20,15 @@ per invocation, inherit it in workers, create it exclusively, and verify the
 run identity before reads or cleanup. A custom port alone does not isolate
 a run. Keep explicit overrides, but reject existing or foreign state.
 
+## 2026-10-04 — Refresh report flows against current runtime boundaries
+
+A reviewed report branch can become incompatible while waiting for release.
+Keep HistoryStore reads on its owning event-loop thread when integrating the
+thread guard; leave ZIP/file work on workers. Detect the native report action
+explicitly so older Mac builds keep the browser form instead of swallowing it.
+The Settings and Help entry points should reuse the same native editor.
+
+
 ## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
 A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
 build.sh called swiftc without -target, so the binary inherited the build
@@ -187,6 +196,19 @@ transaction, bind the assignment choice into retry identity, and retain the same
 task ID through handoffs. Archive retired Work rows to a private, durable JSON file
 before dropping their tables; a failed archive must leave the old tables intact.
 
+## 2026-09-30 — A remote report bundle is bytes, not UTF-8 text
+**Broke:** The generic Mac request bridge rejected report routes, limited JSON
+bodies to 1 MiB, and decoded every response as UTF-8. That would reject valid
+attachments and corrupt ZIP downloads from a remote server.
+**Fix:** Report-specific method/path checks and bounded body/envelope limits;
+base64 binary replies for report bundles, decoded into bytes on the client.
+**Check:** Native tests exercise the full attachment budget, unchanged unrelated
+limits, invalid operations, and binary response equality. Browser tests keep the
+reviewed report and selected files unchanged through draft preparation/download.
+
+## 2026-09-30 — A mail draft is not a delivered bug report
+
+Keep the preview's UTF-8 bytes unchanged through report Markdown, mailto and MIME export. Preparing a draft is not sending mail; attachments cannot travel in mailto, and long URL bodies need a complete file fallback rather than truncation. Remote users need an authenticated bundle download, not only a server path. Collect canonical event metadata without reading hook payloads or terminal content, and test attachment limits and private-file reads.
 ## 2026-09-30 — Artifact protection belongs in the store
 
 Keep must reject removal on the server, survive re-registration, and preserve the owner’s category. Removing an unkept saved copy should retain metadata in a separate table, not leave an empty downloadable file. Folder counts must use exact subtree membership and the same durable mail and transcript accounting as Analytics; test both live and retired mail. Automatic retention remains a separate owner decision.
