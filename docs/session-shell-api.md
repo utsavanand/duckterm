@@ -34,7 +34,8 @@ Collapse or disconnect closes only the viewer. Agent Stop/Restart leaves the she
 alive. Committed archive and delete destroy it, including after server restart.
 Archive Undo leaves it alone. Reopening after a server restart finds it by derived
 name and verifies its owner-shell tag; an unrelated terminal at that name is not
-adopted or killed. An in-flight spawn settles before archive/delete can proceed.
+adopted as a shell or killed by shell cleanup. It also does not block archive or
+delete of the parent agent. An in-flight spawn settles before archive/delete can proceed.
 
 The shell has no agent supervisor, capture pipe, lifecycle events or session
 credentials. A helper clears inherited DuckTerm/agent identity variables *inside*

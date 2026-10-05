@@ -23,6 +23,7 @@ from duckterm.session_shells import SessionShells, target_for
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("SHELL", "/bin/sh")
     monkeypatch.setenv(
         "DUCKTERM_TMUX_SOCKET", f"duckterm-pytest-shell-{os.getpid()}-{uuid.uuid4().hex}"

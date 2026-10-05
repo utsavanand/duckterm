@@ -110,3 +110,31 @@ def test_unrecognized_sibling_is_neither_adopted_nor_killed(rig, tmp_path):
         assert tmux.session_exists(target)
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("operation", ["archive", "delete"])
+def test_parent_cleanup_preserves_colliding_legacy_agent(rig, tmp_path, operation):
+    if not tmux.has_tmux():
+        pytest.skip("tmux unavailable")
+
+    async def scenario():
+        parent, legacy = "shell-test", "shell-test-sh"
+        for key in (parent, legacy):
+            await rig.orchestrator.launch(
+                runtime=GenericRuntime("cat"), cwd=str(tmp_path), session_key=key, test=True
+            )
+        try:
+            if operation == "archive":
+                await rig._commit_archive(parent)
+                assert rig.history.session(parent)["state"] == "archived"
+            else:
+                assert await rig._teardown_session(parent, rig.history.session(parent))
+            assert not tmux.session_exists(tmux.target_for(parent))
+            assert tmux.session_exists(tmux.target_for(legacy))
+            assert legacy in tmux.list_duckterm_sessions()
+        finally:
+            for key in (parent, legacy):
+                await rig.orchestrator.stop(key)
+                rig.history.delete_session(key)
+
+    asyncio.run(scenario())

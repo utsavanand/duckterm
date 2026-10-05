@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-10-05 — Derived names cannot grant cleanup ownership
+
+A legacy agent may already occupy a proposed sibling-shell name. Explicit shell
+open/close must refuse that collision, but parent archive/delete must skip the
+unowned target and finish ordinary cleanup. Test two real agents with colliding
+names: deleting one must leave the other alive and discoverable.
+
 - A new sibling-shell suffix is not ownership: older agent keys can already use it. Filter discovery by the explicit owner-shell tag, publish that tag with creation, and keep shell eligibility checks out of ordinary agent archive/delete. Regress legacy-key discovery and both cleanup paths with private real tmux sessions.
 
 ## 2026-10-05 — A surviving sibling can impersonate a departed tmux target

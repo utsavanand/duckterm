@@ -197,7 +197,14 @@ class SessionShells:
             return
         if not await asyncio.to_thread(tmux.has_tmux):
             return
-        status = await asyncio.to_thread(inspect_shell, key)
+        try:
+            status = await asyncio.to_thread(inspect_shell, key)
+        except APIError as exc:
+            if exc.status == 409:
+                # A legacy agent can occupy the derived name. Shell cleanup
+                # must neither kill it nor prevent the parent agent's deletion.
+                return
+            raise
         if status["open"] and not await asyncio.to_thread(tmux.kill_session, "=" + target_for(key)):
             raise APIError(503, "Could not close the session shell")
 
