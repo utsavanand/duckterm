@@ -222,6 +222,7 @@ reviewed report and selected files unchanged through draft preparation/download.
 ## 2026-09-30 — A mail draft is not a delivered bug report
 
 Keep the preview's UTF-8 bytes unchanged through report Markdown, mailto and MIME export. Preparing a draft is not sending mail; attachments cannot travel in mailto, and long URL bodies need a complete file fallback rather than truncation. Remote users need an authenticated bundle download, not only a server path. Collect canonical event metadata without reading hook payloads or terminal content, and test attachment limits and private-file reads.
+
 ## 2026-09-30 — Artifact protection belongs in the store
 
 Keep must reject removal on the server, survive re-registration, and preserve the owner’s category. Removing an unkept saved copy should retain metadata in a separate table, not leave an empty downloadable file. Folder counts must use exact subtree membership and the same durable mail and transcript accounting as Analytics; test both live and retired mail. Automatic retention remains a separate owner decision.
