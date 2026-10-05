@@ -160,18 +160,24 @@ def page(
     }
     sources = _sources()
     marks: dict[str, int] = {}
+    anchors: dict[str, str | None] = {}
     for _, table, _, _, _, _ in sources:
         db = "digests" if table == "digest_items" else "history"
         if table in tables[db] and table not in marks:
-            marks[table] = (
-                connections[db].execute(f"SELECT COALESCE(MAX(rowid),0) FROM {table}").fetchone()[0]
+            anchor = (
+                connections[db]
+                .execute(f"SELECT rowid, id FROM {table} ORDER BY rowid DESC LIMIT 1")
+                .fetchone()
             )
+            marks[table] = anchor[0] if anchor else 0
+            anchors[table] = str(anchor[1]) if anchor else None
     snapshot = {
-        "v": 1,
+        "v": 2,
         "key": key,
         "kinds": selected,
         "at": stamp,
         "marks": marks,
+        "anchors": anchors,
         "notes": [str(n["id"]) for n in notes if n.get("session_key") == key and n.get("id")],
     }
     position = None
@@ -180,7 +186,7 @@ def page(
         try:
             pos = cursor["position"]
             valid = (
-                cursor["v"] == 1
+                cursor["v"] == 2
                 and cursor["key"] == key
                 and cursor["kinds"] == selected
                 and type(cursor["at"]) is int
@@ -188,6 +194,9 @@ def page(
                 and isinstance(cursor["marks"], dict)
                 and set(cursor["marks"]) <= set(marks)
                 and all(type(v) is int and 0 <= v <= 2**63 - 1 for v in cursor["marks"].values())
+                and isinstance(cursor["anchors"], dict)
+                and set(cursor["anchors"]) == set(cursor["marks"])
+                and all(v is None or isinstance(v, str) for v in cursor["anchors"].values())
                 and isinstance(cursor["notes"], list)
                 and len(cursor["notes"]) <= 500
                 and all(isinstance(v, str) for v in cursor["notes"])
@@ -201,6 +210,15 @@ def page(
                 raise ValueError
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("Invalid timeline cursor or changed filters") from exc
+        # SQLite may reuse a retired maximum rowid. A retained anchor proves
+        # that later inserts still sort above this cursor's rowid boundary.
+        for table, mark in cursor["marks"].items():
+            if not mark:
+                continue
+            conn = digests if table == "digest_items" else history
+            anchor = conn.execute(f"SELECT id FROM {table} WHERE rowid=?", (mark,)).fetchone()
+            if anchor is None or str(anchor[0]) != cursor["anchors"][table]:
+                raise ValueError("Invalid timeline cursor: source boundary changed; refresh")
         snapshot = cursor
         position = (pos[0], pos[1])
     entries = []

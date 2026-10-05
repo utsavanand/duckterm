@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — A SQLite rowid watermark can be reused after deletion
+Timeline cursors bounded inserts by MAX(rowid), but deleting the highest row
+allowed a later backdated insert to reuse that rowid and enter older pages.
+Retain the boundary record ID and reject continuation if that anchor changes.
+The schema-free tradeoff is an explicit refresh after boundary deletion, even
+when that table-wide boundary belonged to another session. Regression coverage
+must combine deletion with insertion, not only append records between pages.
+
 ## Session timelines need stable ties and honest source boundaries
 
 A timestamp-only cursor loses records when events share a millisecond. The read-only timeline uses timestamp plus stable entry ID and insertion high-water marks; regressions insert tied and backdated records between pages. Counts and source reads remain on their SQLite owner thread. Existing mutable stores are not immutable snapshots: document changes/deletions and missing producer events rather than inventing historical entries or promising constant-time scans without indexes.
