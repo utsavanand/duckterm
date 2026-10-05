@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         AppDiagnostics.shared.record("Application launched")
         window = DashboardWindow(url: server.url)
+        window?.onReportBug = { [weak self] in self?.reportBug(nil) }
         window?.desktopHosts = hosts
         sessionTransport.onTerminal = { [weak self] event in self?.window?.dispatch(name: "remote-terminal", detail: event) }
         sessionTransport.onTerminalData = { [weak self] event in await self?.window?.dispatchAndWait(name: "remote-terminal", detail: event) }

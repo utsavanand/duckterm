@@ -25,6 +25,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     var desktopTarget = "local"
     var launchTarget: String?
     var onPageReset: (() -> Void)?
+    var onReportBug: (() -> Void)?
     var launchDraft: [String: String]?
     var selectedSession: String?
     var onChooseLaunchTarget: ((String, [String: String], String?) -> Void)?
@@ -35,6 +36,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         var state: [String: Any] = [
             "currentTarget": desktopTarget,
             "testBuild": AppIdentity.isTest,
+            "canReportBug": true,
             "targets": [["id": "local", "name": "This Mac"]] + desktopHosts.map {
                 ["id": $0.target, "name": "Remote — \($0.name)"]
             }
@@ -54,13 +56,18 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        // Only the current dashboard's main frame may request a host change.
+        // Only the current dashboard's main frame may request a native action.
         let origin = message.frameInfo.securityOrigin
         guard message.webView === web, message.frameInfo.isMainFrame,
               origin.protocol == url.scheme, origin.host == url.host,
               origin.port == url.port,
-              let body = message.body as? [String: Any],
-              body["action"] as? String == "launch",
+              let body = message.body as? [String: Any] else { return }
+        if body["action"] as? String == "report-bug" {
+            guard Set(body.keys) == ["action"] else { return }
+            onReportBug?()
+            return
+        }
+        guard body["action"] as? String == "launch",
               let target = body["target"] as? String,
               target == "local" || target == "add" || desktopHosts.contains(where: { $0.target == target }),
               let draft = body["draft"] as? [String: String],
@@ -83,7 +90,8 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
               let operation = body["operation"] as? String,
               ["session-request", "terminal-open", "terminal-send", "terminal-close", "browse", "branches", "themes", "launch", "project-mkdir", "project-repositories", "project-preview", "project-transfer", "project-clone", "project-launch", "project-status", "project-pause", "project-preflight", "project-continue"].contains(operation),
               let params = body["params"] as? [String: Any],
-              let encoded = try? JSONSerialization.data(withJSONObject: params), encoded.count <= (operation == "session-request" ? 14 * 1024 * 1024 : 131072),
+              let encoded = try? JSONSerialization.data(withJSONObject: params, options: [.withoutEscapingSlashes]),
+              encoded.count <= SessionTransport.envelopeLimit(operation: operation, params: params),
               let handler = onLaunchRequest else {
             replyHandler(nil, "Invalid launch request"); return
         }
@@ -250,6 +258,16 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             return
         }
         guard let destination = navigationAction.request.url else { decisionHandler(.cancel); return }
+        if destination.scheme == "mailto" {
+            let origin = navigationAction.sourceFrame.securityOrigin
+            if webView === web, navigationAction.sourceFrame.isMainFrame,
+               origin.protocol == url.scheme, origin.host == url.host, origin.port == url.port,
+               navigationAction.navigationType == .linkActivated {
+                NSWorkspace.shared.open(destination)
+            }
+            decisionHandler(.cancel)
+            return
+        }
         if dashboardAllowsNavigation(to: destination, dashboard: url,
                                      inMainFrame: navigationAction.targetFrame?.isMainFrame ?? true) {
             decisionHandler(.allow)
