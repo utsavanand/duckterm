@@ -48,6 +48,7 @@ def main() -> int:
             DUCKTERM_NO_BROWSER="1",
             DUCKTERM_SUMMARIZER="off",
             RD_TEST_RUN_ROOT=str(root),
+            RD_TEST_RUN_ID=uuid.uuid4().hex,
             RD_TEST_PORT=str(port),
             RD_TEST_STATE_FILE=str(root / "state.json"),
             RD_TEST_TMUX_SOCKET=namespace,
