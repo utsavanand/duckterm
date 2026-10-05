@@ -37,7 +37,10 @@ session; the server resolves it (`core/native_identity.py`) and parks what it ca
 An id resolves through one DuckTerm recorded itself on the session: a
 `NativeBound` event, or a server-published event that carries it. Ids from
 hook events never count, because before this fix a daemon hook could carry
-another session's. An id two sessions both recorded is ambiguous and parks.
+another session's. Only ids recorded since the session's last launch count, so a relaunch
+(including a switch to another harness) clears the previous agent's id until
+the new one binds; early events park and replay on the bind. An id two
+sessions both recorded is ambiguous and parks.
 A new id binds once per launch, when a `UserPromptSubmit` carries exactly one
 live Codex session's launch prompt and that session has no bind since its
 last launch (a server-published `SessionStart`). A prompt naming two

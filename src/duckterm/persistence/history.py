@@ -560,15 +560,17 @@ class HistoryStore:
         """The agent's own session id as DuckTerm itself recorded it: a
         NativeBound bind, or an event the server published (not a hook's,
         whose ids could come from another session's environment under Codex's
-        shared daemon). One indexed lookup on this session's events."""
+        shared daemon). One indexed lookup on this session's events.
+        Only since the agent's last launch: a relaunch (including a switch to
+        another harness) clears the previous agent's id until it binds anew."""
         row = self._conn.execute(
             "SELECT COALESCE(json_extract(payload_json, '$.native_session_id'), "
             "json_extract(payload_json, '$.session_id')) AS sid FROM events "
-            "WHERE session_key = ? AND (event_type = ? OR ("
+            "WHERE session_key = ? AND ts >= ? AND (event_type = ? OR ("
             "json_extract(payload_json, '$.hook_event') IS NULL "
             "AND json_extract(payload_json, '$.session_id') IS NOT NULL)) "
             "ORDER BY ts DESC LIMIT 1",
-            (key, events.NATIVE_BOUND),
+            (key, self.last_launch_ts(key), events.NATIVE_BOUND),
         ).fetchone()
         return str(row["sid"]) if row and row["sid"] else None
 

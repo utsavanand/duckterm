@@ -5,6 +5,7 @@ not a Duckterm-launched session" before the resolver."""
 
 import hashlib
 import json
+import time
 
 import pytest
 from tests.runtime.test_session_api import dispatch
@@ -133,17 +134,23 @@ def test_a_relaunch_may_take_a_new_native_id(server) -> None:
     """Bind once per launch (main-qa's edge cases), but a fresh launch of the
     same session (a server-published SessionStart) starts a new thread."""
     post(server, "UserPromptSubmit", NATIVE_A, prompt=launch_prompt("cx-a"))
+    time.sleep(0.002)  # the relaunch comes after A's bind, and before B's
     server.history.record(
         {
             "_id": "relaunch",
-            "_ts": 2**41,
+            "_ts": int(time.time() * 1000),
             "event_type": "SessionStart",
             "session_key": "cx-a",
             "runtime": "codex",
         }
     )
+    time.sleep(0.002)
     assert (
         post(server, "UserPromptSubmit", NATIVE_B, prompt=launch_prompt("cx-a"))["session_key"]
         == "cx-a"
     )
     assert post(server, "Stop", NATIVE_A) == {"parked": "unattributed daemon event"}
+    # The relaunch cleared A, and B's bind survives a server restart.
+    restarted = Server(history=server.history)
+    assert post(restarted, "Stop", NATIVE_B)["session_key"] == "cx-a"
+    assert post(restarted, "Stop", NATIVE_A) == {"parked": "unattributed daemon event"}
