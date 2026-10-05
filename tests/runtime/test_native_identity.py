@@ -71,7 +71,7 @@ def test_two_sessions_under_one_daemon_each_get_their_own_events(server) -> None
     expected = ["NativeBound", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"]
     assert filed(server, "cx-a") == expected
     assert filed(server, "cx-b") == expected
-    assert server.native_identity.status() == {"parked": 0, "parked_total": 0}
+    assert server.native_identity.status()["parked_total"] == 0
 
 
 def test_an_unknown_native_id_is_parked_never_filed(server) -> None:
@@ -82,7 +82,8 @@ def test_an_unknown_native_id_is_parked_never_filed(server) -> None:
     }
     post(server, "UserPromptSubmit", "01a0f8d2-unknown", prompt="a prompt with no launch marker")
     assert filed(server, "cx-a") == filed(server, "cx-b") == []
-    assert dispatch(server, "GET", "/hooks/parked", {})[1] == {"parked": 2, "parked_total": 2}
+    status = dispatch(server, "GET", "/hooks/parked", {})[1]
+    assert (status["parked"], status["parked_total"], status["contested"]) == (2, 2, 0)
 
 
 def test_a_late_bind_claims_what_was_parked_and_restart_keeps_the_bind(server, tmp_path) -> None:
@@ -154,3 +155,25 @@ def test_a_relaunch_may_take_a_new_native_id(server) -> None:
     restarted = Server(history=server.history)
     assert post(restarted, "Stop", NATIVE_B)["session_key"] == "cx-a"
     assert post(restarted, "Stop", NATIVE_A) == {"parked": "unattributed daemon event"}
+
+
+def test_a_prompt_naming_two_sessions_is_flagged_contested(server) -> None:
+    post(server, "UserPromptSubmit", NATIVE_A, prompt=launch_prompt("cx-a") + launch_prompt("cx-b"))
+    assert server.native_identity.status()["contested"] == 1
+
+
+def test_a_previous_generations_thread_cannot_rebind_after_a_relaunch(server) -> None:
+    """Architect's condition 2: a stale pre-boundary event is rejected, not
+    re-bound. Resuming a thread on purpose records its id on the relaunch."""
+    post(server, "UserPromptSubmit", NATIVE_A, prompt=launch_prompt("cx-a"))
+    time.sleep(0.002)
+    relaunch = {"event_type": "SessionStart", "session_key": "cx-a", "runtime": "codex"}
+    server.history.record({**relaunch, "_id": "r1", "_ts": int(time.time() * 1000)})
+    time.sleep(0.002)
+    stale = post(server, "UserPromptSubmit", NATIVE_A, prompt=launch_prompt("cx-a"))
+    assert stale == {"parked": "unattributed daemon event"}
+
+    time.sleep(0.002)
+    resume = {**relaunch, "_id": "r2", "_ts": int(time.time() * 1000), "session_id": NATIVE_A}
+    server.history.record(resume)
+    assert post(server, "Stop", NATIVE_A)["session_key"] == "cx-a"

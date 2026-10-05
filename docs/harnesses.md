@@ -40,7 +40,12 @@ hook events never count, because before this fix a daemon hook could carry
 another session's. Only ids recorded since the session's last launch count, so a relaunch
 (including a switch to another harness) clears the previous agent's id until
 the new one binds; early events park and replay on the bind. An id two
-sessions both recorded is ambiguous and parks.
+sessions both recorded is ambiguous and parks. An id bound before the last launch can't
+re-bind; resuming a thread on purpose records its id on the relaunch's
+server `SessionStart`. A prompt naming several live sessions parks and is
+counted as `contested` at `GET /hooks/parked`. The instruction path is
+correlation evidence, never authentication (architect's ruling, 2026-10-04):
+it only attributes events already accepted from a local hook.
 A new id binds once per launch, when a `UserPromptSubmit` carries exactly one
 live Codex session's launch prompt and that session has no bind since its
 last launch (a server-published `SessionStart`). A prompt naming two

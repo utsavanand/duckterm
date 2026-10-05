@@ -574,6 +574,17 @@ class HistoryStore:
         ).fetchone()
         return str(row["sid"]) if row and row["sid"] else None
 
+    def retired_native_ids(self, key: str) -> set[str]:
+        """Native ids bound to this session before its last launch. A stale
+        event from one must not re-bind into the new generation; resuming a
+        thread on purpose records its id on the relaunch's SessionStart."""
+        rows = self._conn.execute(
+            "SELECT json_extract(payload_json, '$.native_session_id') AS sid FROM events "
+            "WHERE session_key = ? AND event_type = ? AND ts < ?",
+            (key, events.NATIVE_BOUND, self.last_launch_ts(key)),
+        ).fetchall()
+        return {str(r["sid"]) for r in rows if r["sid"]}
+
     def last_launch_ts(self, key: str) -> int:
         """When DuckTerm last started this session's agent: its newest
         server-published SessionStart (hook-sent ones don't count)."""

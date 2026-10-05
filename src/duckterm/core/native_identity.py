@@ -10,7 +10,10 @@ A native id resolves through an id DuckTerm itself recorded on the session
 (HistoryStore.recorded_native_id), unless two sessions recorded it. It binds
 once per launch, when a UserPromptSubmit carries exactly one live Codex
 session's launch prompt and that session has no bind since its last launch
-(a server-published SessionStart). Every launch prompt names the
+(a server-published SessionStart). An id bound before that launch can't
+re-bind. The path is correlation evidence, never authentication: it only
+attributes events already accepted from a local hook (architect's ruling,
+2026-10-04). Every launch prompt names the
 session's instruction file, which lives under sha256(session key)
 (session_instructions). The bind is recorded as a NativeBound event on that
 session, so it survives restarts without a schema change. Anything else is
@@ -38,9 +41,13 @@ class NativeIdentity:
     def __init__(self, history: "HistoryStore") -> None:
         self.history = history
         self.bound: dict[str, str] = {}
+        # Each session's launch boundary when its binding was cached; a newer
+        # launch (published elsewhere) invalidates the cache.
+        self.launched: dict[str, int] = {}
         self.parked: deque[dict[str, Any]] = deque()
         self.parked_total = 0
         self.conflicted: set[str] = set()
+        self.contested = 0
 
     def _codex_sessions(self) -> list[str]:
         return [
@@ -58,6 +65,7 @@ class NativeIdentity:
             if native:
                 owners.setdefault(native, []).append(key)
         self.bound = {n: ks[0] for n, ks in owners.items() if len(ks) == 1}
+        self.launched = {k: self.history.last_launch_ts(k) for k in self.bound.values()}
         self.conflicted = {n for n, ks in owners.items() if len(ks) > 1}
 
     def _claim(self, raw: dict[str, Any]) -> str | None:
@@ -69,9 +77,13 @@ class NativeIdentity:
         keys = [
             k for k in self._codex_sessions() if hashlib.sha256(k.encode()).hexdigest() in named
         ]
+        if len(keys) > 1:
+            self.contested += 1  # names several live sessions: park, and flag it
         if len(keys) != 1:
-            return None  # no marker, or more than one: ambiguous, so park
+            return None
         key = keys[0]
+        if str(raw.get("session_id")) in self.history.retired_native_ids(key):
+            return None  # a previous generation's thread can't re-bind
         if key in self.bound.values():
             bind = self.history.last_event(key, NATIVE_BOUND)
             if bind is None or self.history.last_launch_ts(key) <= bind[1]:
@@ -87,7 +99,10 @@ class NativeIdentity:
             self.parked.popleft()
         native = str(raw.get("session_id") or "")
         out: list[dict[str, Any]] = []
-        if native and native not in self.bound:
+        cached = self.bound.get(native)
+        if cached is not None and self.history.last_launch_ts(cached) != self.launched.get(cached):
+            cached = None  # relaunched since: its old binding no longer counts
+        if native and cached is None:
             self._refresh()  # a bind recorded since, or since a restart
         key = self.bound.get(native) if native and native not in self.conflicted else None
         if key is None and native and native not in self.conflicted:
@@ -95,6 +110,7 @@ class NativeIdentity:
             if key is not None:
                 self.bound = {n: k for n, k in self.bound.items() if k != key}
                 self.bound[native] = key
+                self.launched[key] = self.history.last_launch_ts(key)
                 out.append(
                     {"event_type": NATIVE_BOUND, "session_key": key, "native_session_id": native}
                 )
@@ -113,4 +129,9 @@ class NativeIdentity:
         return [*out, {**raw, "session_key": key}]
 
     def status(self) -> dict[str, int]:
-        return {"parked": len(self.parked), "parked_total": self.parked_total}
+        return {
+            "parked": len(self.parked),
+            "parked_total": self.parked_total,
+            "contested": self.contested,
+            "conflicted_ids": len(self.conflicted),
+        }
