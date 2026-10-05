@@ -180,7 +180,7 @@ def test_tail_waits_for_writer_eof_before_session_end(tmp_path, monkeypatch):
     monkeypatch.setattr(asyncio, "sleep", release_writer)
     asyncio.run(sup._tail_pipe())
     assert observed_at_end == [b"last error"]
-    assert not done.exists()
+    assert done.read_text() == "complete"  # another adopter may still need this EOF proof
 
 
 def test_failed_capture_attach_never_releases_agent(tmp_path, monkeypatch):

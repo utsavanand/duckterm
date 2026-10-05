@@ -12,6 +12,9 @@ LIMIT = 8 * 1024 * 1024
 
 
 def prepare_completion(path: Path) -> Path:
+    previous = completion_for(path)
+    if previous is not None:
+        previous.unlink(missing_ok=True)
     token = uuid.uuid4().hex
     private_write(Path(str(path) + ".writer"), token)
     return Path(str(path) + "." + token + ".done")

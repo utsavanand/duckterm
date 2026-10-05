@@ -305,9 +305,6 @@ class SessionSupervisor:
         except Exception as e:  # noqa: BLE001 — boundary: a background task
             print(f"[duckterm] tail-pipe for {self.session_key} failed: {e}", file=sys.stderr)
         finally:
-            if completion is not None:
-                with contextlib.suppress(OSError):
-                    completion.unlink(missing_ok=True)
             if output_error:
                 print(f"[duckterm] {self.session_key}: {output_error}", file=sys.stderr)
             self._close_byte_subs()
