@@ -42,7 +42,8 @@ test("register, install with a picker choice, then uninstall", async ({
 
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Harnesses" }).click();
+  await page.getByRole("button", { name: "Capabilities", exact: true }).click();
+  await page.getByRole("button", { name: "Manage meta-harnesses", exact: true }).click();
 
   await page.getByPlaceholder("~/ws-my-projects/uv-suite").fill(suite);
   await page.getByRole("button", { name: "Register", exact: true }).click();

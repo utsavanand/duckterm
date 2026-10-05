@@ -18,12 +18,14 @@ test("browser notification preference persists without replaying waiting session
     await expect(page.locator(".rd-row-name", { hasText: "Notification check" })).toBeVisible();
     await expect(page.locator(".rd-row").filter({ has: page.locator(".rd-row-name", { hasText: "Notification check" }) })).toContainText("waiting");
     await page.getByRole("button", { name: /^Settings/ }).click();
+    await page.getByRole("button", { name: "Notifications & voice", exact: true }).click();
     const toggle = page.getByLabel("Desktop notifications", { exact: true });
     await expect(toggle).toBeChecked();
     const notices = () => page.evaluate(() => (window as unknown as { notificationTestNotices: string[] }).notificationTestNotices);
     expect(await notices()).toEqual([]);
     await toggle.uncheck(); await page.reload();
     await page.getByRole("button", { name: /^Settings/ }).click();
+    await page.getByRole("button", { name: "Notifications & voice", exact: true }).click();
     await expect(toggle).not.toBeChecked();
     await toggle.check(); expect(await notices()).toEqual([]);
     await page.getByRole("button", { name: /^Settings/ }).click();
@@ -42,6 +44,7 @@ test("blocked notification permission has actionable feedback", async ({ page })
   });
   await page.goto(base());
   await page.getByRole("button", { name: /^Settings/ }).click();
+    await page.getByRole("button", { name: "Notifications & voice", exact: true }).click();
   await expect(page.getByLabel("Desktop notifications", { exact: true })).not.toBeChecked();
-  await expect(page.locator("#header-notification-help")).toContainText("blocked in your browser");
+  await expect(page.locator(".rd-settings-content")).toContainText("blocked in your browser");
 });

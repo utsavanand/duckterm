@@ -42,12 +42,13 @@ test("terminal replay does not steal focus from an open header menu", async ({ p
     await page.locator(".rd-row-name", { hasText: "menu-focus-probe" }).click();
     await expect.poll(() => !!terminal).toBe(true);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    const theme = page.getByRole("combobox", { name: "Theme", exact: true });
+    const theme = page.getByRole("heading", { name: "Appearance", exact: true });
     await expect(theme).toBeFocused();
     terminal!.send(Buffer.from("DELAYED_REPLAY\r\n"));
     await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("DELAYED_REPLAY");
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))));
     await expect(theme).toBeFocused();
+    await page.getByRole("button", { name: "Backup", exact: true }).click();
     await page.getByRole("button", { name: "Back up to remote", exact: true }).click();
     await expect(page.getByLabel("Backup destination", { exact: true })).toBeEnabled();
   } finally {
@@ -74,15 +75,17 @@ test("header menus support keyboard navigation, dismissal, and separate rules", 
   await settings.click();
   await expect(create).toHaveAttribute("aria-expanded", "false");
   const panel = page.getByRole("region", { name: "Settings", exact: true });
-  await expect(panel.getByRole("combobox", { name: "Theme", exact: true })).toBeFocused();
+  await expect(panel.getByRole("heading", { name: "Appearance", exact: true })).toBeFocused();
+  await panel.getByRole("button", { name: "Notifications & voice", exact: true }).click();
   await expect(panel.getByRole("checkbox", { name: "Desktop notifications" })).toBeVisible();
+  await panel.getByRole("button", { name: "Appearance", exact: true }).click();
   await expect(panel.getByRole("button", { name: "AGENTS.md" })).toHaveCount(0);
-  await panel.getByRole("combobox", { name: "Theme", exact: true }).selectOption("dark");
+  await panel.getByRole("group", { name: "Theme", exact: true }).getByRole("button", { name: "Dark", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.keyboard.press("Escape");
   await expect(settings).toBeFocused();
   await settings.click();
-  await header.locator(".rd-brand").click();
+  await panel.getByRole("button", { name: "← Sessions", exact: true }).click();
   await expect(panel).toHaveCount(0);
   await page.setViewportSize({ width: 390, height: 844 });
   await settings.click();

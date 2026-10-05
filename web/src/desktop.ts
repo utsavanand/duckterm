@@ -6,6 +6,7 @@ type Desktop = {
   launchTarget?: string;
   testBuild?: boolean;
   canReportBug?: boolean;
+  canSettingsMenu?: boolean;
   targets: { id: string; name: string }[];
   draft?: LaunchDraft;
   selectedSession?: string;

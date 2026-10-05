@@ -85,13 +85,13 @@ test("AGENTS.md modal saves the folder's shared instructions", async ({
 test("Settings theme selection persists after reload", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  const theme = page.getByRole("combobox", { name: "Theme", exact: true });
-  await theme.selectOption("dark");
+  const theme = page.getByRole("group", { name: "Theme", exact: true });
+  await theme.getByRole("button", { name: "Dark", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.reload();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await expect(theme).toHaveValue("dark");
-  await theme.selectOption("light");
+  await expect(theme.getByRole("button", { name: "Dark", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await theme.getByRole("button", { name: "Light", exact: true }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
 

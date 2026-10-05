@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — Settings and native menus must share live actions
+Moving settings out of a dropdown must not remount or resize running terminals.
+Keep workspace panes mounted and inert under the page; route Mac commands to
+the same dashboard setters, and return current theme/density/panel state for
+menu checkmarks. Keep remote-computer setup reachable through New, preserve
+Edit clipboard selectors, and gate native callbacks by origin and main frame.
+
 ## 2026-10-04 — One-shot expiry must cross its deadline
 After dashboard clocks were isolated, a celebration could stay forever when its
 one-shot timeout read the wall clock one millisecond before its expiry. Clamp

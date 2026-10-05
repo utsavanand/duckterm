@@ -1,3 +1,4 @@
+import { SettingsSection, SETTINGS_SECTIONS, copyDiagnostics, DOCS_URL } from "./SettingsPage";
 import { useDesktopNotifications } from "./useDesktopNotifications";
 import { SidebarFilterToggle } from "./SidebarFilters";
 import { useSidebarFilters } from "./sidebarFilterState";
@@ -73,6 +74,7 @@ function Dashboard() {
   const [modal, setModal] = useState<
     "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | null
   >(desktop()?.draft ? "launch" : null);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerOpen, setTowerOpen] = useState(false);
   const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
@@ -138,8 +140,8 @@ function Dashboard() {
     saveTermThemes(termThemes);
   }, [termThemes]);
   const termTheme = termThemes[mode];
-  const setTermTheme = (pick: string) =>
-    setTermThemes((p) => ({ ...p, [mode]: pick }));
+  const setTermTheme = useCallback((pick: string) =>
+    setTermThemes((p) => ({ ...p, [mode]: pick })), [mode]);
   // Per-session / per-folder theme overrides (session > nearest folder > global).
   const [themeOverrides, setThemeOverrides] =
     useState<ThemeOverrides>(loadThemeOverrides);
@@ -250,6 +252,31 @@ function Dashboard() {
     };
   }, [agentsMdDir, modal, selected?.key]);
 
+  useEffect(() => {
+    if (!desktop()?.canSettingsMenu) return;
+    window.webkit?.messageHandlers?.remoteSession?.postMessage({ action: "settings-state", theme, density, terminal: termTheme, terminalColors: themesForMode(mode), left: sidePanels.collapsed.left, right: sidePanels.collapsed.right, focus: pinnedSessions.length > 0 });
+  }, [theme, density, termTheme, mode, sidePanels.collapsed.left, sidePanels.collapsed.right, pinnedSessions.length]);
+
+  useEffect(() => {
+    const receive = (e: Event) => {
+      const detail = (e as CustomEvent<{action?: string; value?: string}>).detail;
+      if (!detail || typeof detail.action !== "string") return;
+      const { action, value } = detail;
+      if (action === "settings") setSettingsSection(SETTINGS_SECTIONS.includes(value as SettingsSection) ? value as SettingsSection : "Appearance");
+      else if (action === "theme" && ["system", "light", "dark"].includes(value ?? "")) setTheme(value as "system" | "light" | "dark");
+      else if (action === "density" && ["compact", "standard", "relaxed"].includes(value ?? "")) setDensity(value as "compact" | "standard" | "relaxed");
+      else if (action === "terminal-theme" && (value === "auto" || themesForMode(mode).includes(value ?? ""))) setTermTheme(value!);
+      else if (action === "panel" && (value === "left" || value === "right")) sidePanels.toggle(value);
+      else if (action === "focus" && pinnedSessions.length) { setSettingsSection(null); setFocusOpen(o => !o); setTowerOpen(false); }
+      else if (action === "launch" || action === "folder") { if (action === "launch") setLaunchGroup(undefined); setModal(action); }
+      else if (action === "docs") window.open(DOCS_URL, "_blank", "noopener,noreferrer");
+      else if (action === "diagnostics") void copyDiagnostics().then(() => toast("Diagnostics copied")).catch(() => toast("Could not copy diagnostics. Check clipboard access.", "err"));
+    };
+    const shortcut = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === ",") { e.preventDefault(); setSettingsSection("Appearance"); } };
+    window.addEventListener("duckterm-menu", receive); window.addEventListener("keydown", shortcut);
+    return () => { window.removeEventListener("duckterm-menu", receive); window.removeEventListener("keydown", shortcut); };
+  }, [setTheme, setDensity, sidePanels, pinnedSessions.length, toast, mode, setTermTheme]);
+
   return (
     <div className="rd-app" data-density={density}>
       <ArchiveUndo {...archives} />
@@ -272,13 +299,13 @@ function Dashboard() {
         <button className={`rd-btn rd-btn-ghost rd-btn-sm${focusOpen ? " rd-btn-active" : ""}`}
           disabled={!pinnedSessions.length} aria-pressed={focusOpen}
           title={pinnedSessions.length ? "Open pinned terminals" : "Pin a session to open Focus"}
-          onClick={() => { setFocusOpen((open) => !open); setTowerOpen(false); }}>
+          onClick={() => { setSettingsSection(null); setFocusOpen((open) => !open); setTowerOpen(false); }}>
           Focus · {pinnedSessions.length}
         </button>
         <button
           className={`rd-btn rd-btn-ghost rd-btn-sm${towerOpen ? " rd-btn-active" : ""}`}
           aria-pressed={towerOpen}
-          onClick={() => { setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); }}
+          onClick={() => { setSettingsSection(null); setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); }}
           title="Control tower: fleet insights, every agent at a glance, and Oracle chat"
         >
           Oracle
@@ -301,7 +328,7 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <DashboardMenus sessions={sessions} density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
+        <DashboardMenus section={settingsSection} onSection={setSettingsSection} panels={sidePanels.collapsed} onPanel={sidePanels.toggle} hasFocus={!!pinnedSessions.length} onFocus={() => { setSettingsSection(null); setFocusOpen(true); setTowerOpen(false); }} sessions={sessions} density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
           if (action === "bugreport") {
             try { if (openNativeBugReport()) return; }
             catch (e) { toast(`Could not open the bug reporter: ${(e as Error).message}`, "err"); return; }
@@ -314,10 +341,11 @@ function Dashboard() {
       </header>
 
       <div className="rd-workspace">
+      <div id="settings-page-root" />
       {/* The tower is a layer over the panes, not a replacement: terminals stay
           mounted at their size, since a remount replays output at a different
           width (B5). inert keeps keystrokes and focus out of the hidden panes. */}
-      {towerOpen && !focusOpen && gridFolder === null && (
+      {!settingsSection && towerOpen && !focusOpen && gridFolder === null && (
         <div className="rd-tower-layer">
           {analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
             onAnalytics={setAnalyticsTab}
@@ -331,7 +359,7 @@ function Dashboard() {
           />}
         </div>
       )}
-      <div className="rd-workspace-panes" {...(towerOpen && !focusOpen && gridFolder === null ? { inert: "" } : {})}>
+      <div className="rd-workspace-panes" {...(settingsSection || (towerOpen && !focusOpen && gridFolder === null) ? { inert: "" } : {})}>
       {focusOpen ? (
         <GridView key="focus" title="Focus" focus storageKey="rd.grid.focus"
           agents={pinnedSessions} folders={[]} themeFor={themeFor}
