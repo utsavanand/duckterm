@@ -33,7 +33,7 @@ def add_parser(sub: Any) -> None:
     )
     discover.add_argument("--cursor")
     inbox = actions.add_parser("inbox", help="read pending questions when you choose to respond")
-    inbox.add_argument("--before", type=int)
+    inbox.add_argument("--before")
     ask = actions.add_parser("ask", help="send a question; returns an ID to check later")
     ask.add_argument("target")
     ask.add_argument("question")

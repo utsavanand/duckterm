@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let launchAPI = LaunchDestination()
     private let projectTransfer = ProjectTransfer()
     private let sessionTransport = SessionTransport()
+    private let collaborationSetup = CollaborationSetup()
     private let server = ServerProcess()
     private var localStart: Task<Bool, Never>?
     private var pollers: [String: SessionPoller] = [:]
@@ -45,6 +46,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window?.onLaunchRequest = { [weak self] target, operation, params in
             guard let self else { throw LaunchDestination.Failure.message("App closed") }
+            if operation == "collaboration-preview" || operation == "collaboration-connect" {
+                guard let coordinator = self.hosts.first(where: { $0.target == target }) else {
+                    throw LaunchDestination.Failure.message("Choose a saved remote coordinator")
+                }
+                let source = params["source"] as? String ?? "local"
+                guard source == "local" || self.hosts.contains(where: { $0.target == source }) else {
+                    throw LaunchDestination.Failure.message("Choose a saved computer to connect")
+                }
+                _ = await self.ensureLocalServer()
+                var bases = ["local": self.server.url]
+                for host in self.hosts where host.target == target || host.target == source {
+                    if self.launchConnections[host.target] == nil {
+                        let connection = try RemoteConnection(host: host)
+                        self.launchConnections[host.target] = connection
+                        connection.start()
+                    }
+                    bases[host.target] = self.launchConnections[host.target]!.url
+                }
+                if operation == "collaboration-preview" {
+                    return try await self.collaborationSetup.preview(
+                        coordinator: coordinator, source: source,
+                        sourceName: source == "local" ? "This Mac" : self.hosts.first(where: { $0.target == source })!.name,
+                        connection: source == "local" ? target : (params["coordinator_ssh"] as? String ?? ""),
+                        bases: bases, groups: params["groups"] as? [String: [String: String]] ?? [:], api: self.launchAPI)
+                }
+                let result = try await self.collaborationSetup.confirm(id: params["plan_id"] as? String ?? "", bases: bases, api: self.launchAPI) { host, key, folder in
+                    guard let base = bases[host] else { throw LaunchDestination.Failure.message("Computer disconnected") }
+                    let body = String(decoding: try JSONSerialization.data(withJSONObject: ["group": folder]), as: UTF8.self)
+                    let response = try await self.sessionTransport.perform(base: base, api: self.launchAPI,
+                        params: ["method": "PATCH", "path": "/sessions/\(key)", "body": body])
+                    guard let result = response as? [String: Any], result["status"] as? Int == 200 else {
+                        throw LaunchDestination.Failure.message("Could not preserve the sidebar folder arrangement")
+                    }
+                }
+                UserDefaults.standard.set(target, forKey: "collaborationCoordinatorTarget")
+                let connected = UserDefaults.standard.stringArray(forKey: "collaborationConnectedTargets") ?? []
+                UserDefaults.standard.set(Array(Set(connected + [source, target])), forKey: "collaborationConnectedTargets")
+                return result
+            }
             if operation == "project-pause", let id = params["id"] as? String {
                 self.projectTransfer.pause(id)
                 return ["paused": true]
@@ -68,6 +108,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.startPolling(host: target, base: connection.url)
                 }
                 base = self.launchConnections[target]!.url
+            }
+            if operation == "collaboration-status" {
+                return try await self.collaborationSetup.call(base: base, api: self.launchAPI, route: "/collaboration/status", method: "GET")
+            }
+            if operation == "collaboration-move" {
+                guard (UserDefaults.standard.stringArray(forKey: "collaborationConnectedTargets") ?? []).contains(target) else { return ["handled": false] }
+                let status = try await self.collaborationSetup.call(base: base, api: self.launchAPI, route: "/collaboration/status", method: "GET")
+                guard status["enabled"] as? Bool == true else { return ["handled": false] }
+                guard let key = params["key"] as? String, key.range(of: #"^[A-Za-z0-9._-]{1,128}$"#, options: .regularExpression) != nil,
+                      let folder = params["folder"] as? String,
+                      let computer = status["computer_id"] as? String,
+                      let hubTarget = UserDefaults.standard.string(forKey: "collaborationCoordinatorTarget"),
+                      let hubHost = self.hosts.first(where: { $0.target == hubTarget }) else {
+                    throw LaunchDestination.Failure.message("Open Collaboration settings to reconnect this workspace")
+                }
+                if self.launchConnections[hubTarget] == nil {
+                    let connection = try RemoteConnection(host: hubHost)
+                    self.launchConnections[hubTarget] = connection
+                    connection.start()
+                }
+                let hubBase = self.launchConnections[hubTarget]!.url
+                if let root = folder.split(separator: "/").first {
+                    _ = try await self.collaborationSetup.call(base: hubBase, api: self.launchAPI, route: "/collaboration/bind", body: ["computer_id": computer, "local_path": String(root), "canonical_path": String(root)])
+                }
+                let body = String(decoding: try JSONSerialization.data(withJSONObject: ["group": folder]), as: UTF8.self)
+                let response = try await self.sessionTransport.perform(base: base, api: self.launchAPI,
+                    params: ["method": "PATCH", "path": "/sessions/\(key)", "body": body])
+                guard let result = response as? [String: Any], result["status"] as? Int == 200 else {
+                    throw LaunchDestination.Failure.message("Folder move could not be saved on this computer")
+                }
+                return ["handled": true, "updated": true]
             }
             if operation == "session-request" {
                 return try await self.sessionTransport.perform(base: base, api: self.launchAPI, params: params)

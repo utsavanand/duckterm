@@ -408,6 +408,9 @@ class Server:
         self.token = security.load_or_create_token()
         # transcript path -> (mtime, context_tokens): /sessions is fetched
         # often and an unchanged transcript can't have new usage.
+        from duckterm.collaboration.service import Service as CollaborationService
+
+        self.collaboration = CollaborationService(self.history)
         self._context_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         from duckterm.restarts import Restarts
 
@@ -497,6 +500,8 @@ class Server:
                     limit = MAX_ARTIFACT_REQUEST_BYTES
                 if urllib.parse.urlsplit(path).path == "/bugreport/submit":
                     limit = bug_reports.MAX_REQUEST_BYTES
+                if path.startswith("/api/v1/collaboration/"):
+                    limit = 1024 * 1024
                 if size < 0 or size > limit:
                     await _write_json(writer, 413, {"error": "request body too large"})
                     return
@@ -526,9 +531,36 @@ class Server:
         if not security.origin_allowed(headers):
             await _write_response(writer, 403, "cross-origin request refused")
             return
-        if path.startswith("/api/v1/session/"):
+        if path in ("/api/v1/collaboration/exchange", "/api/v1/collaboration/claim"):
+            from duckterm.collaboration.api import body_json
+
             try:
-                status, result = self.history.session_api.handle(method, path, headers, body)
+                if method != "POST" or not self.collaboration.store:
+                    raise APIError(404, "Collaboration coordinator unavailable")
+                authorization = headers.get("authorization", "")
+                claim = path.endswith("/claim")
+                prefix = "Pair " if claim else "Computer "
+                if not authorization.startswith(prefix):
+                    raise APIError(401, "Collaboration capability required")
+                operation = (
+                    self.collaboration.store.claim if claim else self.collaboration.store.exchange
+                )
+                result = operation(authorization.removeprefix(prefix), body_json(body))
+                status = 200
+            except APIError as exc:
+                status, result = exc.status, {"error": str(exc)}
+            await _write_json(writer, status, result)
+            return
+        if path.startswith("/api/v1/session/"):
+            from duckterm.collaboration.api import session as collaboration_session
+
+            try:
+                federated = await collaboration_session(
+                    self.collaboration, method, path, headers, body
+                )
+                status, result = federated or self.history.session_api.handle(
+                    method, path, headers, body
+                )
             except APIError as exc:
                 status, result = exc.status, {"error": str(exc)}
             await _write_json(writer, status, result)
@@ -550,6 +582,19 @@ class Server:
             headers, self.token
         ):
             await _write_json(writer, 401, {"error": "missing or invalid token"})
+            return
+
+        if urllib.parse.urlsplit(path).path.startswith("/collaboration/"):
+            from duckterm.collaboration.api import owner as collaboration_owner
+
+            try:
+                if not security.token_valid(headers, self.token):
+                    raise APIError(401, "Owner authentication required")
+                result = await collaboration_owner(self.collaboration, method, path, body)
+                status = 200
+            except APIError as exc:
+                status, result = exc.status, {"error": str(exc)}
+            await _write_json(writer, status, result)
             return
 
         if urllib.parse.urlsplit(path).path.startswith("/bugreport/"):
@@ -750,6 +795,7 @@ class Server:
         parts = [
             pinned and pinned[0],
             runtime.turn_end_inbox_notice and api.turn_end_notice(key),
+            runtime.turn_end_inbox_notice and self.collaboration.turn_end_notice(key),
         ]
         notice = "\n\n".join(p for p in parts if p)
         if not notice:
@@ -783,7 +829,10 @@ class Server:
         if not security.token_valid(headers, self.token):
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
-        await _write_json(writer, 200, {"counts": self.history.session_api.pending_counts()})
+        counts = self.history.session_api.pending_counts()
+        for key, count in self.collaboration.pending_counts().items():
+            counts[key] = counts.get(key, 0) + count
+        await _write_json(writer, 200, {"counts": counts})
 
     async def _session_inbox(
         self, writer: asyncio.StreamWriter, session_key: str, headers: dict[str, str], query: str
@@ -793,6 +842,15 @@ class Server:
             return
         try:
             params = urllib.parse.parse_qs(query)
+            if self.collaboration.connected:
+                result = await self.collaboration.combined_inbox(
+                    session_key,
+                    params.get("before", [None])[0],
+                    owner=True,
+                    view=params.get("view", [None])[0],
+                )
+                await _write_json(writer, 200, result)
+                return
             before = int(params["before"][0]) if "before" in params else None
             result = self.history.session_api.inbox(
                 session_key, owner=True, before=before, view=params.get("view", [None])[0]
@@ -1463,7 +1521,11 @@ class Server:
             s["model"] = live_model or s.get("model")
             s["suites"] = self._suites_for(s.get("worktree_path") or s.get("cwd"))
             await self._reconcile_waiting(s)
-        await _write_json(writer, 200, {"sessions": sessions})
+        await _write_json(
+            writer,
+            200,
+            {"sessions": sessions, "collaboration_enabled": self.collaboration.connected},
+        )
 
     def _attend(self, key: str) -> None:
         """The owner attended to this session: drop its raised hand. Only the
@@ -4839,11 +4901,16 @@ class Server:
                 on_listening(host, port)
             self.archives.recover()
             sweeper = asyncio.create_task(self._sweep_dead_loop())
+            collaboration_worker = asyncio.create_task(self.collaboration.run())
             async with server:
                 try:
                     await server.serve_forever()
                 finally:
                     sweeper.cancel()
+                    collaboration_worker.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await collaboration_worker
+                    await self.collaboration.close()
                     self.voice.stop()
                     await self.archives.close()
                     await self.restarts.close()

@@ -36,7 +36,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         var state: [String: Any] = [
             "currentTarget": desktopTarget,
             "testBuild": AppIdentity.isTest,
-            "canReportBug": true,
+            "canCollaborate": true, "canReportBug": true,
             "targets": [["id": "local", "name": "This Mac"]] + desktopHosts.map {
                 ["id": $0.target, "name": "Remote — \($0.name)"]
             }
@@ -88,7 +88,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
               let target = body["target"] as? String,
               target == "local" || desktopHosts.contains(where: { $0.target == target }),
               let operation = body["operation"] as? String,
-              ["session-request", "terminal-open", "terminal-send", "terminal-close", "browse", "branches", "themes", "launch", "project-mkdir", "project-repositories", "project-preview", "project-transfer", "project-clone", "project-launch", "project-status", "project-pause", "project-preflight", "project-continue"].contains(operation),
+              ["collaboration-status", "collaboration-move", "collaboration-preview", "collaboration-connect", "session-request", "terminal-open", "terminal-send", "terminal-close", "browse", "branches", "themes", "launch", "project-mkdir", "project-repositories", "project-preview", "project-transfer", "project-clone", "project-launch", "project-status", "project-pause", "project-preflight", "project-continue"].contains(operation),
               let params = body["params"] as? [String: Any],
               let encoded = try? JSONSerialization.data(withJSONObject: params, options: [.withoutEscapingSlashes]),
               encoded.count <= SessionTransport.envelopeLimit(operation: operation, params: params),

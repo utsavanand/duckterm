@@ -1,3 +1,4 @@
+import { desktop, destinationRequest } from "./desktop";
 import type { ForkMergePreview, ForkMergeRecord, ForkMergeService } from "./ForkMergeDialog";
 import { routedFetch as fetch, sessionFetch, splitSessionRef, setRemoteGroup, changeRemoteFolders } from "./hostTransport";
 // Thin wrapper over the Duckterm server. Every POST action the backend
@@ -224,7 +225,7 @@ export interface InboxMessage {
   sender_kind?: "session" | "owner";
   requires_reply?: boolean;
   delivery?: { outcome?: string; last_read_at?: number };
-  status: "read" | "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled";
+  status: "read" | "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled" | "blocked";
   answer: string | null;
   created_at: number;
   expires_at: number;
@@ -249,10 +250,12 @@ export interface SessionCard {
 export type InboxFilter = "all" | "pending" | "answered";
 
 export interface InboxPage {
+  cross_computer_status?: "connected" | "unavailable";
+  cross_computer_reason?: string;
   counts?: Record<InboxFilter, number>;
   card?: SessionCard | null;
   messages: InboxMessage[];
-  next_cursor: number | null;
+  next_cursor: number | string | null;
 }
 
 export interface BroadcastTarget {
@@ -353,7 +356,7 @@ export const api = {
     post<BroadcastResult>(`/folders/${encodeURIComponent(folder)}/broadcast`, { text, request_key }),
   collaborationInstructions: (key: string) => post<{ prompt: string }>(`/sessions/${encodeURIComponent(key)}/collaboration/instructions`),
   introduceCollaboration: (key: string) => post<{ sent: boolean }>(`/sessions/${encodeURIComponent(key)}/collaboration/introduce`),
-  inbox: async (key: string, before?: number, view: InboxFilter = "all"): Promise<InboxPage> => {
+  inbox: async (key: string, before?: number | string, view: InboxFilter = "all"): Promise<InboxPage> => {
     const query = new URLSearchParams({ view });
     if (before !== undefined) query.set("before", String(before));
     const suffix = `?${query}`;
@@ -365,7 +368,7 @@ export const api = {
     if (!res.ok) throw new Error(data.error ?? "Could not load inbox");
     return data as InboxPage;
   },
-  folderInbox: async (folder: string, before?: number, view: InboxFilter = "all"): Promise<InboxPage> => {
+  folderInbox: async (folder: string, before?: number | string, view: InboxFilter = "all"): Promise<InboxPage> => {
     const query = new URLSearchParams({ folder, view });
     if (before !== undefined) query.set("before", String(before));
     const res = await fetch(`/folder-interactions?${query}`, { cache: "no-store", headers: authHeaders() });
@@ -473,7 +476,12 @@ export const api = {
   sendInput: (key: string, text: string) =>
     post<{ written: boolean }>(`/sessions/${key}/input`, { text }),
   // Move a session into a folder group; "" ungroups it.
-  setGroup: (key: string, group: string) => {
+  setGroup: async (key: string, group: string) => {
+    if (desktop()?.canCollaborate) {
+      const ref = splitSessionRef(key);
+      const result = await destinationRequest<{ handled: boolean; updated?: boolean }>(ref.host, "collaboration-move", { key: ref.key, folder: group });
+      if (result.handled) { window.dispatchEvent(new Event("remote-sessions-refresh")); return { updated: true }; }
+    }
     if (splitSessionRef(key).host !== "local") {
       setRemoteGroup(key, group);
       return Promise.resolve({ updated: true });

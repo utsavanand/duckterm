@@ -184,9 +184,9 @@ export function useEventStream(): {
         busy.add(host.id);
         void hostFetch(host.id, "/sessions").then(async response => {
           if (!response.ok) throw new Error("Remote unavailable");
-          const data = await response.json() as { sessions: PersistedSession[] };
+          const data = await response.json() as { sessions: PersistedSession[]; collaboration_enabled?: boolean };
           if (!stopped) {
-            dispatch({ kind: "remote-snapshot", host: host.id, label: host.name.replace(/^Remote — /, ""), sessions: data.sessions, groups: remoteGroups() });
+            dispatch({ kind: "remote-snapshot", host: host.id, label: host.name.replace(/^Remote — /, ""), sessions: data.sessions, groups: data.collaboration_enabled ? {} : remoteGroups() });
             setLoadedHosts(previous => previous.includes(host.id) ? previous : [...previous, host.id]);
           }
         }).catch(() => { if (!stopped) dispatch({ kind: "remote-offline", host: host.id }); })
