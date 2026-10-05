@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — One-shot expiry must cross its deadline
+After dashboard clocks were isolated, a celebration could stay forever when its
+one-shot timeout read the wall clock one millisecond before its expiry. Clamp
+the expiry callback to the deadline; do not rely on an unrelated parent render
+to remove it. Cover the early wall-clock boundary as well as ordinary expiry.
+
 ## 2026-10-04 — Passing isolated layers hid an adopted-session restart failure
 Runtime mocks, browser responses and generic-pane adoption each passed while
 the real sequence (server replacement, Claude adoption, model restart, Messages)
