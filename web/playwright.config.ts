@@ -1,4 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
+import { initializeRunState } from "./e2e/run-state";
+
+// Workers inherit one run identity; independent invocations never share teardown state.
+initializeRunState();
 
 // E2E tests drive the REAL dashboard against a REAL `duckterm serve` (started
 // in global-setup with an isolated DUCKTERM_HOME and a fake agent, so no

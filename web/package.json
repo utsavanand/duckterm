@@ -10,7 +10,7 @@
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
-    "e2e": "playwright test"
+    "e2e": "python3 ../scripts/run_browser_tests.py"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10.0",

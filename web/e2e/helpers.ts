@@ -1,13 +1,13 @@
 import { expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readOwnedState } from "./run-state";
 import { join } from "node:path";
 
 // Backend cross-check helpers: talk to the same `duckterm serve` the UI does,
 // so a test can verify a click actually changed server state (not just the DOM).
 
 function state(): { home: string; port: string } {
-  return JSON.parse(readFileSync(process.env.RD_TEST_STATE_FILE || join(tmpdir(), "rd-e2e-state.json"), "utf8"));
+  return readOwnedState();
 }
 
 export function base(): string {
