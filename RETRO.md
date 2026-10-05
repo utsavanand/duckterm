@@ -14,7 +14,8 @@ resolver ships. Regression coverage must prove missing resume identity still off
 a switch, model catalogs are harness-specific, failed launches preserve old resume,
 and input during checkpoint work prevents stop. A dead replacement process is not
 necessarily a drained supervisor: settle output/EOF before restoring the old
-runtime, including partial startup failure. Rotate hook generations on later
+runtime, including partial startup failure and cancellation. Drain the captured
+supervisor instance, not whichever process later occupies its key. Rotate hook generations on later
 exact resumes too, so delayed same-conversation hooks cannot control a new launch.
 No schema change was needed.
 

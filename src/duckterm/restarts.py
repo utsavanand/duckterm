@@ -497,8 +497,10 @@ class Restarts:
 
                     # A dead process may still have output and SessionEnd pending.
                     # Drain its supervisor before restoring the old harness identity.
-                    await self.server.orchestrator.stop(key)
-                    restore(self.server, key)
+                    if resumed is not None:
+                        await resumed.stop()
+                    if self.server.orchestrator.get(key) is resumed:
+                        restore(self.server, key)
                 raise APIError(
                     409, "The agent exited during restart. Check its terminal before resuming."
                 )

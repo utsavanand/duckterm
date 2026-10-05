@@ -103,7 +103,7 @@ async def launch(
             record_intention=False,
             test=prepared["test"],
         )
-    except Exception:
+    except BaseException:
         restore(server, key)
         raise
     server.history.clear_heartbeat(key)

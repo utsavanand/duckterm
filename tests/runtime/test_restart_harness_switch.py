@@ -514,3 +514,55 @@ def test_exact_resume_rotates_switched_card_generation(rig, monkeypatch):
     event = {"event_type": "Stop", "session_key": "a", "session_id": A, "runtime": "codex"}
     assert not accept_hook(server, {**event, "launch_generation": "old-generation"})
     assert accept_hook(server, {**event, "launch_generation": generation})
+
+
+def test_cancelled_partial_launch_drains_owned_supervisor(rig, monkeypatch):
+    from duckterm.core.orchestrator import Orchestrator, SessionSupervisor
+    from duckterm.runtimes.claude_code import ClaudeCodeRuntime
+
+    server, _, _, _ = rig
+    orchestrator = server.orchestrator
+    real_stop = SessionSupervisor.stop
+
+    async def run():
+        started = asyncio.Event()
+        draining = asyncio.Event()
+        release_eof = asyncio.Event()
+        completed = []
+
+        async def start(supervisor):
+            async def output():
+                await release_eof.wait()
+                completed.append("final output")
+                supervisor._emit("SessionEnd")
+
+            supervisor._task = asyncio.create_task(output())
+            started.set()
+            await asyncio.Event().wait()
+
+        async def stop(supervisor):
+            draining.set()
+            await real_stop(supervisor)
+
+        monkeypatch.setattr(SessionSupervisor, "start", start)
+        monkeypatch.setattr(SessionSupervisor, "stop", stop)
+        task = asyncio.create_task(
+            Orchestrator.launch(
+                orchestrator,
+                runtime=ClaudeCodeRuntime("claude"),
+                cwd=server.history.session("a")["cwd"],
+                session_key="a",
+                test=True,
+            )
+        )
+        await asyncio.wait_for(started.wait(), 5)
+        task.cancel()
+        await asyncio.wait_for(draining.wait(), 5)
+        assert not completed and not task.done()
+        release_eof.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert completed == ["final output"]
+        assert "a" not in orchestrator._supervisors
+
+    asyncio.run(run())
