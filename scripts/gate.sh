@@ -7,7 +7,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY="${PYTHON:-.venv/bin/python}"
-LOG="${GATE_LOG:-$(mktemp /tmp/duckterm-gate.XXXXXX.log)}"
+LOG="${GATE_LOG:-$(mktemp "${TMPDIR:-/tmp}/duckterm-gate.XXXXXX")}"
 echo "Gate log: $LOG"
 : > "$LOG"
 
