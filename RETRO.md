@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-05 — Wait for card readiness before testing a pointer action
+The archive Undo browser flake was a missed second Archive click, not a missing
+Undo response. Undo remounts the session card; its asynchronous restart reason
+adds a grid row and can move Archive between mouse-down and mouse-up. Holding
+and releasing the real response reproduced the missed click with no second POST.
+Wait for the fixture's restart reason before clicking, preserving the existing
+Undo/reload/expiry assertions instead of extending their timeouts.
+
 ## 2026-10-04 — A remote Codex couldn't save October's conversations
 On duckterm-dev, Codex (running as the service user) got Permission denied
 creating ~/.codex/sessions/2026/10, because the year directory, and September's
