@@ -1,5 +1,32 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
+A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
+build.sh called swiftc without -target, so the binary inherited the build
+machine's OS (15) as its minimum; Package.swift's .macOS(.v13) is never used by
+that build. Set the target explicitly from the same value Info.plist uses, and
+fail the build when `otool -l` reports a different minos. Check what the binary
+says, not what the plist says.
+
+## 2026-10-04 — Change model left a session stopped; Resume lost its conversation
+**Broke:** the owner changed the model on `kaho`. Restart verified the
+conversation, stopped the agent, then refused to relaunch ("Cannot verify the
+exact conversation to restart"), leaving the session stopped. Resume then
+started a fresh, notes-seeded conversation on the wrong model; the original
+conversation was intact on disk the whole time.
+**Cause:** `Orchestrator.reconcile()` re-adopted every pane that survived a
+server restart with `GenericRuntime("true")`. When the adopted agent exited,
+its SessionEnd carried `runtime: generic`, and the session upsert
+(`runtime = COALESCE(?, runtime)`) overwrote `claude-code`. Restart's post-stop
+resume and the Messages tab both choose their transcript reader from that
+column, so both failed for any session that had outlived a server restart.
+**Fix:** adopt each pane with its own harness (`runtime_for` from the row's
+runtime, or inferred from its command). Regression test asserts an adopted
+pane's SessionEnd keeps the harness and leaves the row unchanged.
+**Lesson:** an adapter chosen for convenience in one code path still writes
+identity into shared state. Anything that emits events on a session's behalf
+must carry that session's real harness, not a placeholder.
+
 ## 2026-10-04 — Filter inbox work before paginating history
 
 A filter over the newest loaded messages can report no outstanding work while
@@ -7,7 +34,6 @@ older requests remain unanswered. Apply reply-state predicates before the page
 limit, return counts across the scope, and reset the cursor when views change.
 Read priority messages still require a reply; read state is not completion or
 terminal delivery. Verify with more than one page of both history and open work.
-
 
 ## 2026-10-04 — Isolate every clock that can redraw the terminal
 A one-second clock in Dashboard redrew terminal and connector components with
