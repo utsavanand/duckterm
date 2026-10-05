@@ -1,5 +1,10 @@
 # Retro — lessons from real breakage
 
+## Session timelines need stable ties and honest source boundaries
+
+A timestamp-only cursor loses records when events share a millisecond. The read-only timeline uses timestamp plus stable entry ID and insertion high-water marks; regressions insert tied and backdated records between pages. Counts and source reads remain on their SQLite owner thread. Existing mutable stores are not immutable snapshots: document changes/deletions and missing producer events rather than inventing historical entries or promising constant-time scans without indexes.
+
+
 ## 2026-10-04 — Passing isolated layers hid an adopted-session restart failure
 Runtime mocks, browser responses and generic-pane adoption each passed while
 the real sequence (server replacement, Claude adoption, model restart, Messages)
