@@ -191,3 +191,14 @@ def test_absent_tables_and_open_wait_duration(stores):
         assert result["summary"]["counts"]["artifact"] == 0
     finally:
         conn.close()
+
+
+def test_cursor_supports_full_relay_retention(stores):
+    h, d = stores
+    notes = [{"id": f"n-{i:012x}", "session_key": "a", "created_at": 5} for i in range(500)]
+    first = page(h._conn, d._conn, h.session("a"), notes, limit=1, now=1000)
+    second = page(
+        h._conn, d._conn, h.session("a"), notes, limit=1, now=1000, before=first["next_cursor"]
+    )
+    assert first["entries"][0]["id"] != second["entries"][0]["id"]
+    assert second["summary"]["total"] == 500

@@ -116,7 +116,7 @@ def _sources() -> list[tuple[str, str, str, str, str, str]]:
 
 def _decode(value: str) -> dict[str, Any]:
     try:
-        if len(value) > 12000:
+        if len(value) > 32768:
             raise ValueError
         result = json.loads(base64.urlsafe_b64decode(value.encode()))
         if not isinstance(result, dict):
