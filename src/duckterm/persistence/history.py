@@ -559,6 +559,9 @@ class HistoryStore:
     def session_id_for(self, key: str) -> str | None:
         """The agent runtime's own session id (for transcript correlation), read
         from the most recent event that carried one."""
+        binding = self.restart_control(key).get("native_binding")
+        if binding is not None:
+            return str(binding["native_id"]) if binding.get("native_id") else None
         row = self._conn.execute(
             "SELECT json_extract(payload_json, '$.session_id') AS sid "
             "FROM events WHERE session_key = ? AND sid IS NOT NULL "
@@ -663,6 +666,29 @@ class HistoryStore:
         self._conn.execute(
             "UPDATE sessions SET restart_json = ? WHERE session_key = ?",
             (json.dumps(value), key),
+        )
+        self._conn.commit()
+
+    def set_harness_identity(
+        self,
+        key: str,
+        runtime: str,
+        command: str | None,
+        model: str | None,
+        *,
+        control: dict[str, Any] | None = None,
+    ) -> None:
+        """Change only launch identity; preserve folder, worktree, tasks and notes."""
+        self._conn.execute(
+            "UPDATE sessions SET runtime = ?, command = ?, model = ?, agent_pid = NULL, "
+            "restart_json = ? WHERE session_key = ?",
+            (
+                runtime,
+                command,
+                model,
+                json.dumps(self.restart_control(key) if control is None else control),
+                key,
+            ),
         )
         self._conn.commit()
 

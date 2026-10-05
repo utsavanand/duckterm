@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import shutil
 import time
 import uuid
@@ -13,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from duckterm.core import events
 from duckterm.core.session_api import APIError
 from duckterm.harnesses import runtime_for
+from duckterm.runtimes.base import Harness
 
 if TYPE_CHECKING:
     from duckterm.server import Server
@@ -27,6 +29,7 @@ ACTIVITY = {
     events.SESSION_END,
 }
 BINARIES = {"claude-code": "claude", "codex": "codex"}
+LAUNCH_BINARIES = {**BINARIES, "copilot": "copilot"}
 
 
 async def cli_version(binary: str) -> str:
@@ -62,6 +65,8 @@ class Restarts:
             key = row["session_key"]
             data = self.read(key)
             if data.get("status") == "restarting":
+                if data.get("source_harness") == row.get("runtime"):
+                    self.save(key, configured_model=data.get("previous_configured_model"))
                 self.save(
                     key,
                     status="failed",
@@ -85,7 +90,7 @@ class Restarts:
     def running(self, key: str) -> bool:
         return self.read(key).get("status") == "restarting"
 
-    def plan(self, key: str) -> tuple[dict[str, Any], Any, Any, str]:
+    def common_plan(self, key: str) -> tuple[dict[str, Any], Any, Any]:
         if self.server.archives.pending(key):
             raise APIError(409, "Archive pending; undo it first")
         from duckterm import transfers
@@ -106,15 +111,28 @@ class Restarts:
             raise APIError(
                 409, "This session has a remote transfer. Complete or cancel that transfer first."
             )
-        name = str(row.get("runtime") or "")
-        binary = BINARIES.get(name)
-        if not binary:
-            raise APIError(409, "This harness cannot resume an exact conversation for Restart.")
-        rt = runtime_for(name, binary)
+        name = str(row.get("runtime") or "generic")
+        rt = runtime_for(name, LAUNCH_BINARIES.get(name, "true"))
         cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
-        sid = self.server.history.session_id_for(key)
         if not cwd.is_dir():
             raise APIError(409, "The session's project folder no longer exists.")
+        return row, sup, rt
+
+    def plan(self, key: str, harness: str | None = None) -> tuple[dict[str, Any], Any, Any, str]:
+        row, sup, rt = self.common_plan(key)
+        current = str(row.get("runtime") or "generic")
+        if harness is not None and harness != current:
+            binary = LAUNCH_BINARIES.get(harness)
+            if not binary:
+                raise APIError(400, "Unknown target harness.")
+            if not shutil.which(binary):
+                raise APIError(409, f"{binary} is not installed on this computer.")
+            return row, sup, rt, binary
+        binary = BINARIES.get(current)
+        if not binary:
+            raise APIError(409, "This harness cannot resume an exact conversation for Restart.")
+        cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
+        sid = self.server.history.session_id_for(key)
         if not rt.can_resume_unambiguously(cwd=cwd, recorded=sid):
             raise APIError(
                 409,
@@ -127,15 +145,108 @@ class Restarts:
             raise APIError(409, f"{binary} is not installed on this computer.")
         return row, sup, rt, binary
 
-    async def live_plan(self, key: str) -> tuple[dict[str, Any], Any, Any, str]:
-        plan = self.plan(key)
+    async def live_plan(
+        self, key: str, harness: str | None = None
+    ) -> tuple[dict[str, Any], Any, Any, str]:
+        plan = self.plan(key, harness)
         # tmux may wait for the control stream that this event loop drains.
         # Never wait for its subprocess here, including through a property.
         if not await asyncio.to_thread(getattr, plan[1], "running"):
             raise APIError(409, "This terminal is no longer running. Use Resume instead.")
-        if self.plan(key)[1] is not plan[1]:
+        if self.plan(key, harness)[1] is not plan[1]:
             raise APIError(409, "The terminal changed. Reopen Restart and try again.")
         return plan
+
+    async def switch_version(self, harness: str, binary: str) -> str:
+        try:
+            version = await cli_version(binary)
+        except (OSError, ValueError, TimeoutError) as exc:
+            raise APIError(409, f"Could not verify {binary} before switching: {exc}") from exc
+        if harness == "codex":
+            match = re.search(r"\b(\d+)\.(\d+)\.(\d+)\b", version)
+            if not match or tuple(map(int, match.groups())) >= (0, 159, 0):
+                raise APIError(
+                    409,
+                    "Switching to this Codex version requires shared-daemon conversation "
+                    "binding, which is not available yet.",
+                )
+        return version
+
+    async def options(self, key: str) -> dict[str, Any]:
+        """Resume proof gates only that path, never discovery of other harnesses."""
+        from duckterm.model_catalog import CatalogError
+
+        row = self.server.history.session(key)
+        if row is None:
+            raise APIError(404, "Session not found")
+        current = str(row.get("runtime") or "generic")
+        result: dict[str, Any] = {
+            "current": {
+                "harness": current,
+                "model": self.read(key).get("configured_model") or row.get("model") or "",
+            },
+            "resume_restart": {"available": False},
+            "harnesses": [],
+        }
+        common_error = None
+        try:
+            _, sup, rt = self.common_plan(key)
+            if not await asyncio.to_thread(getattr, sup, "running"):
+                raise APIError(409, "This terminal is no longer running. Use Resume instead.")
+            if self.common_plan(key)[1] is not sup:
+                raise APIError(409, "The terminal changed. Reopen Restart and try again.")
+            result["draft_clear"] = await self.draft_free(sup, rt)
+            result["after_turn"] = not self.turn_finished(key)
+        except APIError as exc:
+            common_error = str(exc)
+            result["reason"] = common_error
+        try:
+            if common_error:
+                raise APIError(409, common_error)
+            self.plan(key)
+            result["resume_restart"] = {"available": True}
+        except APIError as exc:
+            result["resume_restart"]["reason"] = str(exc)
+
+        async def choice(name: str, binary: str) -> dict[str, Any]:
+            adapter = runtime_for(name, binary)
+            model_supported = type(adapter).model_arguments is not Harness.model_arguments
+            entry: dict[str, Any] = {
+                "name": name,
+                "available": True,
+                "models": [],
+                "model_source": "unknown",
+                "model_selection": {"available": model_supported},
+                "watchable": adapter.hook_spec is not None,
+                "context": "native" if name == current else "seeded_new_conversation",
+            }
+            if not model_supported:
+                entry["model_selection"]["reason"] = "Model selection not supported."
+            reason = common_error
+            if not reason and name == current:
+                reason = result["resume_restart"].get("reason")
+            installed = shutil.which(binary) is not None
+            if not reason and not installed:
+                reason = f"{binary} is not installed on this computer."
+            if not reason and name != current:
+                try:
+                    entry["cli_version"] = await self.switch_version(name, binary)
+                except (APIError, OSError, ValueError, TimeoutError) as exc:
+                    reason = str(exc)
+            if reason:
+                entry.update(available=False, reason=reason)
+            if installed and model_supported and not common_error:
+                try:
+                    entry["models"] = await self.server.model_catalog.choices(name)
+                    entry["model_source"] = "harness-reported"
+                except CatalogError as exc:
+                    entry["model_reason"] = str(exc)
+            return entry
+
+        result["harnesses"] = await asyncio.gather(
+            *(choice(name, binary) for name, binary in LAUNCH_BINARIES.items())
+        )
+        return result
 
     async def draft_free(self, sup: Any, rt: Any) -> bool:
         stamp = sup.last_owner_input_ms
@@ -156,7 +267,19 @@ class Restarts:
             return False
         sid = self.server.history.session_id_for(key)
         requested = self.read(key)
-        if requested.get("status") == "queued" and requested.get("conversation_id") != sid:
+        # A seeded switch can learn its initial ID from a process-owned parent
+        # Stop. It still needs positive turn evidence, never a daemon guess.
+        learned_switch_id = (
+            requested.get("context") == "seeded_new_conversation"
+            and requested.get("conversation_id") is None
+            and last.get("runtime") == requested.get("source_harness")
+            and last.get("hook_host") != "daemon"
+        )
+        if (
+            requested.get("status") == "queued"
+            and requested.get("conversation_id") != sid
+            and not learned_switch_id
+        ):
             return False
         return bool(sid and last.get("session_id") == sid)
 
@@ -184,7 +307,7 @@ class Restarts:
             result["reason"] = str(exc)
         return result
 
-    async def request(self, key: str, model: Any) -> dict[str, Any]:
+    async def request(self, key: str, model: Any, harness: Any = None) -> dict[str, Any]:
         if (
             not isinstance(model, str)
             or len(model) > 200
@@ -194,11 +317,22 @@ class Restarts:
                 400, "Model must be a name of at most 200 characters, without control characters."
             )
         model = model.strip()
-        _, sup, rt, _ = await self.live_plan(key)
+        if harness is not None and (not isinstance(harness, str) or harness not in LAUNCH_BINARIES):
+            raise APIError(400, "Unknown target harness.")
+        row, sup, rt, binary = await self.live_plan(key, harness)
+        target = harness or str(row.get("runtime") or "generic")
+        switching = target != row.get("runtime")
+        if switching:
+            await self.switch_version(target, binary)
+        if model:
+            runtime_for(target, binary).model_arguments(model)
         native_id = self.server.history.session_id_for(key)
         previous = self.read(key)
         if previous.get("status") in ACTIVE:
-            if previous.get("requested_model") == model:
+            if (
+                previous.get("requested_model") == model
+                and previous.get("requested_harness", row.get("runtime")) == target
+            ):
                 return await self.describe(key)
             raise APIError(
                 409, "A restart is already pending. Cancel it before changing the model."
@@ -211,7 +345,8 @@ class Restarts:
                     "yourself, then retry."
                 ),
             )
-        if self.plan(key)[1] is not sup:
+        current_plan = self.plan(key, harness)
+        if current_plan[1] is not sup or current_plan[0].get("runtime") != row.get("runtime"):
             raise APIError(409, "The terminal changed. Reopen Restart and try again.")
         if self.server.history.session_id_for(key) != native_id:
             raise APIError(409, "The conversation changed. Reopen Restart and try again.")
@@ -223,6 +358,9 @@ class Restarts:
             id=uuid.uuid4().hex,
             status="queued",
             requested_model=model,
+            requested_harness=target,
+            source_harness=row.get("runtime"),
+            context="seeded_new_conversation" if switching else "native",
             conversation_id=native_id,
             requested_at=int(time.time() * 1000),
             error=None,
@@ -271,13 +409,27 @@ class Restarts:
         epoch = self.epochs.get(key, 0)
         request_id = self.read(key).get("id")
         previous_model = self.read(key).get("configured_model")
+        harness = self.read(key).get("requested_harness")
+        switched = False
         try:
-            _, sup, rt, binary = await self.live_plan(key)
+            row, sup, rt, binary = await self.live_plan(key, harness)
+            if self.read(key).get("source_harness", row.get("runtime")) != row.get("runtime"):
+                raise APIError(409, "The harness changed while restart was pending.")
+            switching = harness is not None and harness != row.get("runtime")
             native_id = self.server.history.session_id_for(key)
             old_version = self.read(key).get("cli_version")
-            await cli_version(binary)  # verify the installed CLI responds before stopping
-            if (await self.live_plan(key))[1] is not sup:
+            if switching:
+                assert isinstance(harness, str)
+                await self.switch_version(harness, binary)
+            else:
+                await cli_version(binary)  # verify before stopping
+            if (await self.live_plan(key, harness))[1] is not sup:
                 raise APIError(409, "The terminal changed while restart was pending.")
+            prepared = None
+            if switching:
+                from duckterm.harness_switch import prepare
+
+                prepared = await prepare(self.server, key, row)
             # The Stop hook can return just before the CLI paints its prompt.
             # Wait for that prompt only AFTER positive turn-end evidence.
             for _ in range(20):
@@ -301,7 +453,7 @@ class Restarts:
             # metadata on-loop, then begin stop (whose tmux kill runs off-loop).
             if self.epochs.get(key, 0) != epoch or not self.turn_finished(key):
                 return
-            if self.plan(key)[1] is not sup:
+            if self.plan(key, harness)[1] is not sup:
                 raise APIError(409, "The terminal changed while restart was pending.")
             if self.server.history.session_id_for(key) != native_id:
                 raise APIError(
@@ -315,17 +467,35 @@ class Restarts:
                 key,
                 status="restarting",
                 previous_cli_version=old_version,
-                configured_model=data.get("requested_model") or data.get("configured_model"),
+                previous_configured_model=previous_model,
+                configured_model=(
+                    data.get("requested_model")
+                    if switching
+                    else data.get("requested_model") or data.get("configured_model")
+                ),
             )
             self.server._set_lifecycle(key, "stopped")
             await self.server.orchestrator.stop(key)
             self.server.approvals.drop_session(key)
-            status, result = await self.server._resume_session(key, exact=True)
-            if status != 200:
-                raise APIError(status, result["error"])
+            if switching:
+                from duckterm.harness_switch import launch
+
+                assert prepared is not None and isinstance(harness, str)
+                switched = True
+                await launch(
+                    self.server, key, harness, binary, data.get("requested_model") or "", prepared
+                )
+            else:
+                status, result = await self.server._resume_session(key, exact=True)
+                if status != 200:
+                    raise APIError(status, result["error"])
             await asyncio.sleep(0.3)
             resumed = self.server.orchestrator.get(key)
             if resumed is None or not await asyncio.to_thread(getattr, resumed, "running"):
+                if switched:
+                    from duckterm.harness_switch import restore
+
+                    restore(self.server, key)
                 raise APIError(
                     409, "The agent exited during restart. Check its terminal before resuming."
                 )
@@ -340,7 +510,14 @@ class Restarts:
             # An invalid model can make the CLI exit at launch. Keep Resume
             # usable with the prior preference instead of trapping the stopped
             # session in a loop of relaunching the rejected model.
-            self.save(key, status="failed", error=str(exc), configured_model=previous_model)
+            self.save(
+                key,
+                status="failed",
+                error=str(exc),
+                configured_model=(
+                    self.read(key).get("configured_model") if switched else previous_model
+                ),
+            )
         finally:
             if self.tasks.get(key) is asyncio.current_task():
                 self.tasks.pop(key, None)

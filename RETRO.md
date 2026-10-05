@@ -1,5 +1,19 @@
 # Retro — lessons from real breakage
 
+
+## 2026-10-04 — Resume proof must not hide a safe harness-switch path
+
+Restart applied exact-conversation checks before offering any action. A missing
+transcript therefore hid the option to start a different harness with a summary.
+Report options per path: exact resume retains its identity guard; a seeded switch
+requires live-terminal, folder, transfer, draft and real parent-turn checks, then
+checkpoints before stopping. Persist a new identity boundary before launch, retain
+the previous conversation for recovery, and reject late hooks from the old harness.
+A daemon target remains unavailable with a reason until its independent native-ID
+resolver ships. Regression coverage must prove missing resume identity still offers
+a switch, model catalogs are harness-specific, failed launches preserve old resume,
+and input during checkpoint work prevents stop. No schema change was needed.
+
 ## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
 A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
 build.sh called swiftc without -target, so the binary inherited the build

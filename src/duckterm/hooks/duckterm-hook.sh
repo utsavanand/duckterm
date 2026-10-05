@@ -34,6 +34,7 @@ if command -v jq >/dev/null 2>&1; then
   # tool_name); Copilot uses camelCase (sessionId, toolName). Accept either.
   PAYLOAD=$(printf '%s' "$INPUT" | jq -c \
     --arg etype "$EVENT_TYPE" --arg skey "$SESSION_KEY" --arg rt "$RUNTIME" \
+    --arg generation "${DUCKTERM_HARNESS_GENERATION:-}" \
     --argjson apid "$PPID" '
     {
       event_type: $etype,
@@ -48,6 +49,7 @@ if command -v jq >/dev/null 2>&1; then
       notification_type: .notification_type,
       message: (if .message | type == "string" then .message[0:200] else null end),
       runtime: $rt,
+      launch_generation: (if $generation == "" then null else $generation end),
       agent_pid: $apid,
       agent_id: .agent_id,
       agent_type: .agent_type,
@@ -67,8 +69,12 @@ if [ -z "$PAYLOAD" ] || [ "$PAYLOAD" = "null" ]; then
   PROMPT_FIELD=""
   [ -n "$PROMPT" ] && PROMPT_FIELD=$(printf '"prompt":"%s",' "$PROMPT")
   [ -z "$SID" ] && SID=$(printf '%s' "$INPUT" | grep -o '"sessionId"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
-  PAYLOAD=$(printf '{"event_type":"%s",%s%s"session_id":"%s","cwd":"%s","source_app":"%s","tool_name":"%s","runtime":"%s","agent_pid":%s}' \
-    "$EVENT_TYPE" "$SKEY_FIELD" "$PROMPT_FIELD" "$SID" "$CWD" "$APP" "$TOOL" "$RUNTIME" "$PPID")
+  GENERATION_FIELD=""
+  if [[ "${DUCKTERM_HARNESS_GENERATION:-}" =~ ^[0-9a-f]{32}$ ]]; then
+    GENERATION_FIELD=$(printf '"launch_generation":"%s",' "$DUCKTERM_HARNESS_GENERATION")
+  fi
+  PAYLOAD=$(printf '{"event_type":"%s",%s%s%s"session_id":"%s","cwd":"%s","source_app":"%s","tool_name":"%s","runtime":"%s","agent_pid":%s}' \
+    "$EVENT_TYPE" "$SKEY_FIELD" "$PROMPT_FIELD" "$GENERATION_FIELD" "$SID" "$CWD" "$APP" "$TOOL" "$RUNTIME" "$PPID")
 fi
 
 # The server writes a per-install secret to this file (0600). We read it and

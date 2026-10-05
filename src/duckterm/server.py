@@ -326,6 +326,8 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/stop")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._models(w, seg),
           **_mid("/sessions/", "/models")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "OPTIONS"),
+          **_mid("/sessions/", "/restart-options")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "GET"),
           **_mid("/sessions/", "/restart")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "POST", b),
@@ -695,6 +697,13 @@ class Server:
                 raw["agent_pid"] = pid if pid > 0 else None
             except (TypeError, ValueError):
                 raw["agent_pid"] = None
+        from duckterm.harness_switch import accept_hook
+
+        if not accept_hook(self, raw):
+            await _write_json(
+                writer, 200, {"dropped": "hook does not match the current harness conversation"}
+            )
+            return
         # A deleted (tombstoned) session whose agent is still running keeps firing
         # hooks. Drop ALL of its events here — including SessionStart — so a
         # session you deleted stays gone: no phantom rows, no events leaking into
@@ -2072,7 +2081,9 @@ class Server:
         self, writer: asyncio.StreamWriter, key: str, method: str, body: bytes = b""
     ) -> None:
         try:
-            if method == "GET":
+            if method == "OPTIONS":
+                result = await self.restarts.options(key)
+            elif method == "GET":
                 result = await self.restarts.describe(key)
             elif method == "DELETE":
                 if self.history.session(key) is None:
@@ -2082,7 +2093,9 @@ class Server:
                 request = json.loads(body or b"{}")
                 if not isinstance(request, dict):
                     raise APIError(400, "Expected a JSON object")
-                result = await self.restarts.request(key, request.get("model", ""))
+                result = await self.restarts.request(
+                    key, request.get("model", ""), request.get("harness")
+                )
             await _write_json(writer, 202 if method == "POST" else 200, result)
         except (ValueError, APIError) as exc:
             await _write_json(
@@ -2198,6 +2211,14 @@ class Server:
             cwd=cwd,
             session_key=session_key,
             prompt=prompt,
+            env={
+                "DUCKTERM_HARNESS_GENERATION": str(
+                    self.history.restart_control(session_key)
+                    .get("native_binding", {})
+                    .get("generation")
+                    or ""
+                )
+            },
             record_intention=False,
             test=bool(row.get("test")),
         )
@@ -4303,6 +4324,12 @@ class Server:
             await _write_json(writer, 404, {"error": msg})
             return
         label = json.loads(body or b"{}").get("label", "checkpoint")
+        result = await self._create_checkpoint(session_key, row, label)
+        await _write_json(writer, 200, result)
+
+    async def _create_checkpoint(
+        self, session_key: str, row: dict[str, Any], label: str
+    ) -> dict[str, str]:
         cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
         # Summarize the delta since the most recent checkpoint (0 if first).
         prior = self.history.checkpoints(session_key)
@@ -4340,7 +4367,7 @@ class Server:
         rel = await asyncio.to_thread(write_markdown, cp.session_key, cp.created_at, cp.markdown)
         if rel is not None:
             self.history.set_checkpoint_markdown(cp.id, rel)
-        await _write_json(writer, 200, {"id": cp.id, "label": cp.label, "summary": cp.summary})
+        return {"id": cp.id, "label": cp.label, "summary": cp.summary}
 
     def _read_transcript(self, session_key: str, row: dict[str, Any]) -> list[dict[str, str]]:
         """The agent's own conversation for a session (role/text incl. its
