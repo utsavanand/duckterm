@@ -50,7 +50,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from duckterm import connectors, suites, zsh_themes
+from duckterm import bug_reports, connectors, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events, oracle, progress
@@ -495,10 +495,12 @@ class Server:
                 limit = MAX_BODY_BYTES if path.startswith("/api/v1/session/") else MAX_REQUEST_BYTES
                 if urllib.parse.urlsplit(path).path == "/api/v1/session/artifacts":
                     limit = MAX_ARTIFACT_REQUEST_BYTES
+                if urllib.parse.urlsplit(path).path == "/bugreport/submit":
+                    limit = bug_reports.MAX_REQUEST_BYTES
                 if size < 0 or size > limit:
                     await _write_json(writer, 413, {"error": "request body too large"})
                     return
-                body = await _read_body(reader, headers)
+                body = await _read_body(reader, headers, max_bytes=limit)
             await self._dispatch(method, path, reader, writer, headers, body)
         except (ValueError, TimeoutError) as exc:
             with contextlib.suppress(OSError):
@@ -550,6 +552,9 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        if urllib.parse.urlsplit(path).path.startswith("/bugreport/"):
+            await self._bugreport(writer, headers, method, path, body)
+            return
         if path == "/backup" and method in {"GET", "PUT", "POST"}:
             await self._backup(writer, headers, method, body)
             return
@@ -1088,6 +1093,63 @@ class Server:
                     "removed": sum(bool(row["removed_at"]) for row in artifacts),
                 },
             },
+        )
+
+    async def _bugreport(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        method: str,
+        path: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        parsed = urllib.parse.urlsplit(path)
+        try:
+            if parsed.path == "/bugreport/context" and method == "GET":
+                params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+                keys = params.get("session_key", [])
+                if set(params) - {"session_key"} or len(keys) > 1 or (keys and not keys[0]):
+                    raise ValueError("Expected one nonempty session_key")
+                # HistoryStore belongs to this event-loop thread. File export and
+                # bundle reads below remain worker operations.
+                result = bug_reports.context(self.history, keys[0] if keys else None)
+            elif parsed.path == "/bugreport/submit" and method == "POST":
+                if len(body) > bug_reports.MAX_REQUEST_BYTES:
+                    await _write_json(writer, 413, {"error": "report request too large"})
+                    return
+                result = await asyncio.to_thread(bug_reports.prepare, json.loads(body))
+            elif parsed.path.startswith("/bugreport/bundles/") and method == "GET":
+                report_id = parsed.path.removeprefix("/bugreport/bundles/")
+                data = await asyncio.to_thread(bug_reports.bundle, report_id)
+                writer.write(
+                    (
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\n"
+                        "Content-Disposition: attachment; filename=duckterm-report.zip\r\n"
+                        "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
+                        f"Content-Length: {len(data)}\r\nConnection: close\r\n\r\n"
+                    ).encode()
+                    + data
+                )
+                await writer.drain()
+                return
+            else:
+                await _write_json(writer, 404, {"error": "Report route not found"})
+                return
+        except (LookupError, FileNotFoundError):
+            await _write_json(writer, 404, {"error": "Session or report not found"})
+            return
+        except (ValueError, OSError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        await _write_response(
+            writer,
+            200,
+            json.dumps(result),
+            extra_headers={"Cache-Control": "no-store"},
+            content_type="application/json",
         )
 
     async def _folder_view(

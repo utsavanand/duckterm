@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { FolderView } from "./FolderView";
 import { api } from "./api";
-import { desktop } from "./desktop";
+import { desktop, openNativeBugReport } from "./desktop";
 import { Connectors } from "./Connectors";
 import { ContextViews } from "./ContextViews";
 import { Analytics } from "./Analytics";
@@ -18,6 +18,7 @@ import { ForkModal } from "./ForkModal";
 import { SessionPin } from "./SessionPin";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
+import { BugReport } from "./BugReport";
 import { DashboardMenus } from "./DashboardMenus";
 import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
@@ -70,8 +71,9 @@ function Dashboard() {
   const { density, setDensity } = useSidebarDensity();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | null
   >(desktop()?.draft ? "launch" : null);
+  const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerOpen, setTowerOpen] = useState(false);
   const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
   const relayOpen = useRelayCount();
@@ -300,6 +302,12 @@ function Dashboard() {
           )}
         </button>
         <DashboardMenus sessions={sessions} density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
+          if (action === "bugreport") {
+            try { if (openNativeBugReport()) return; }
+            catch (e) { toast(`Could not open the bug reporter: ${(e as Error).message}`, "err"); return; }
+            setBugSession(selectedKey);
+          }
+
           if (action === "launch") setLaunchGroup(undefined);
           setModal(action);
         }} />
@@ -550,6 +558,7 @@ function Dashboard() {
       {modal === "agentsmd" && agentsMdDir && (
         <AgentsMdModal sessionKey={selected?.key} dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
+      {modal === "bugreport" && <BugReport session={bugSession} onClose={() => setModal(null)} />}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal
