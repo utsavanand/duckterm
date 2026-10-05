@@ -34,12 +34,14 @@ The new launch uses fresh argv and no resume pointer. `previous_conversation`
 retains the old native ID, harness, command, model, cwd and checkpoint reference
 for recovery. It remains in native history; an unavailable old transcript cannot
 be reconstructed by this operation. A failed spawn restores the stopped card's
-old launch metadata rather than automatically starting another process.
+old launch metadata after draining the failed supervisor's final output and exit
+events, rather than automatically starting another process.
 
 The new runtime and its initially unknown native identity are saved atomically
 in the existing session row/restart JSON, without a schema change. A per-process
 launch-generation marker travels through the hook environment; only that
-generation's matching native SessionStart can bind the ID. Missing hooks leave
+generation's matching native SessionStart can bind the ID. Later exact resumes
+rotate this marker while preserving the recorded native ID. Missing hooks leave
 `native_id_pending: true`, not a recycled ID. Delayed old hooks cannot change the
 card's harness or identity. Successful launch (`status: completed`) does not by
 itself claim that native identity or a transcript is available.

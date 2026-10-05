@@ -422,3 +422,95 @@ def test_seeded_queue_can_learn_initial_id_from_real_parent_turn_end(rig):
         assert server.restarts.read("a")["status"] == "completed"
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("startup_failure", [False, True])
+def test_failed_switch_drains_delayed_eof_before_restoring(rig, monkeypatch, startup_failure):
+    from duckterm.core.orchestrator import Orchestrator, SessionSupervisor
+
+    server, original, _, calls = rig
+    old = server.history.session("a")
+    captured = []
+    old_stop = server.orchestrator.stop
+    real_stop = SessionSupervisor.stop
+    orchestrator = server.orchestrator
+
+    async def run():
+        release_eof = asyncio.Event()
+        draining = asyncio.Event()
+
+        async def start(supervisor):
+            supervisor._emit("SessionStart", command="claude --model invalid")
+
+            async def output():
+                await release_eof.wait()
+                captured.append("final output")
+                supervisor._emit("SessionEnd")
+
+            supervisor._task = asyncio.create_task(output())
+            if startup_failure:
+                raise ValueError("failure after output task creation")
+
+        async def settle(supervisor):
+            draining.set()
+            await real_stop(supervisor)
+
+        async def stop(key):
+            if key in orchestrator._supervisors:
+                return await Orchestrator.stop(orchestrator, key)
+            return await old_stop(key)
+
+        monkeypatch.setattr(SessionSupervisor, "start", start)
+        monkeypatch.setattr(SessionSupervisor, "stop", settle)
+        monkeypatch.setattr(orchestrator, "launch", Orchestrator.launch.__get__(orchestrator))
+        monkeypatch.setattr(
+            orchestrator, "get", lambda key: orchestrator._supervisors.get(key, original)
+        )
+        monkeypatch.setattr(orchestrator, "stop", stop)
+        monkeypatch.setattr(orchestrator, "_write_summary", lambda key: None)
+        await server.restarts.request("a", "invalid", "claude-code")
+        await hook(server)
+        await asyncio.wait_for(draining.wait(), 5)
+        # Neither a dead process nor startup failure is safe to roll back until EOF.
+        assert server.history.session("a")["runtime"] == "claude-code"
+        assert server.history.session_id_for("a") is None
+        assert not captured
+        release_eof.set()
+        await drain(server)
+        assert captured == ["final output"]
+        assert server.restarts.read("a")["status"] == "failed"
+        row = server.history.session("a")
+        assert row["runtime"] == old["runtime"]
+        assert row["command"] == old["command"]
+        assert row["model"] == old["model"]
+        assert row["state"] == "stopped"
+        assert server.history.session_id_for("a") == A
+        assert server._resume_argv("a", "codex", row)[0][-2:] == ["resume", A]
+        assert calls == [("stop", "a")]
+        if startup_failure:
+            assert "a" not in orchestrator._supervisors
+
+    asyncio.run(run())
+
+
+def test_exact_resume_rotates_switched_card_generation(rig, monkeypatch):
+    from duckterm.harness_switch import accept_hook
+
+    server, _, _, _ = rig
+    server.restarts.save(
+        "a", native_binding={"runtime": "codex", "native_id": A, "generation": "old-generation"}
+    )
+    launches = []
+
+    async def launch(**kwargs):
+        launches.append(kwargs)
+
+    monkeypatch.setattr(server.orchestrator, "launch", launch)
+    status, _ = asyncio.run(server._resume_session("a", exact=True))
+    assert status == 200
+    generation = launches[0]["env"]["DUCKTERM_HARNESS_GENERATION"]
+    assert generation and generation != "old-generation"
+    assert server.history.session_id_for("a") == A
+    event = {"event_type": "Stop", "session_key": "a", "session_id": A, "runtime": "codex"}
+    assert not accept_hook(server, {**event, "launch_generation": "old-generation"})
+    assert accept_hook(server, {**event, "launch_generation": generation})

@@ -2206,19 +2206,17 @@ class Server:
         # PTY-owned again. The supervisor's SessionStart both persists the
         # revive and reaches dashboards over SSE, lifting the stopped/archived
         # rest-state back to busy.
+        binding = self.history.restart_control(session_key).get("native_binding")
+        generation = ""
+        if binding:
+            generation = uuid.uuid4().hex
+            self.restarts.save(session_key, native_binding={**binding, "generation": generation})
         await self.orchestrator.launch(
             runtime=_build_runtime(runtime, shlex.join(argv)),
             cwd=cwd,
             session_key=session_key,
             prompt=prompt,
-            env={
-                "DUCKTERM_HARNESS_GENERATION": str(
-                    self.history.restart_control(session_key)
-                    .get("native_binding", {})
-                    .get("generation")
-                    or ""
-                )
-            },
+            env={"DUCKTERM_HARNESS_GENERATION": generation},
             record_intention=False,
             test=bool(row.get("test")),
         )

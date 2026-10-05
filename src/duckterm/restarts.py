@@ -495,6 +495,9 @@ class Restarts:
                 if switched:
                     from duckterm.harness_switch import restore
 
+                    # A dead process may still have output and SessionEnd pending.
+                    # Drain its supervisor before restoring the old harness identity.
+                    await self.server.orchestrator.stop(key)
                     restore(self.server, key)
                 raise APIError(
                     409, "The agent exited during restart. Check its terminal before resuming."

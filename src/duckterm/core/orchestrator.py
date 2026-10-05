@@ -740,7 +740,13 @@ class Orchestrator:
             # a git worktree + branch and a dead supervisor entry behind; those
             # accreted on every failed launch. Roll both back, then re-raise so
             # the caller still turns it into a 400.
-            self._supervisors.pop(key, None)
+            # Startup may fail after creating an output task. Settle it before
+            # callers restore a prior harness on this same card; a late EOF
+            # would otherwise overwrite the restored runtime.
+            try:
+                await supervisor.stop()
+            finally:
+                self._supervisors.pop(key, None)
             if worktree is not None:
                 with contextlib.suppress(Exception):
                     self.worktrees.remove_by_worktree(worktree.path, delete_branch=True)

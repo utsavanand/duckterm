@@ -12,7 +12,11 @@ the previous conversation for recovery, and reject late hooks from the old harne
 A daemon target remains unavailable with a reason until its independent native-ID
 resolver ships. Regression coverage must prove missing resume identity still offers
 a switch, model catalogs are harness-specific, failed launches preserve old resume,
-and input during checkpoint work prevents stop. No schema change was needed.
+and input during checkpoint work prevents stop. A dead replacement process is not
+necessarily a drained supervisor: settle output/EOF before restoring the old
+runtime, including partial startup failure. Rotate hook generations on later
+exact resumes too, so delayed same-conversation hooks cannot control a new launch.
+No schema change was needed.
 
 ## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
 A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
