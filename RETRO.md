@@ -28,6 +28,25 @@ thread guard; leave ZIP/file work on workers. Detect the native report action
 explicitly so older Mac builds keep the browser form instead of swallowing it.
 The Settings and Help entry points should reuse the same native editor.
 
+
+## 2026-10-04 — Resume proof must not hide a safe harness-switch path
+
+Restart applied exact-conversation checks before offering any action. A missing
+transcript therefore hid the option to start a different harness with a summary.
+Report options per path: exact resume retains its identity guard; a seeded switch
+requires live-terminal, folder, transfer, draft and real parent-turn checks, then
+checkpoints before stopping. Persist a new identity boundary before launch, retain
+the previous conversation for recovery, and reject late hooks from the old harness.
+A daemon target remains unavailable with a reason until its independent native-ID
+resolver ships. Regression coverage must prove missing resume identity still offers
+a switch, model catalogs are harness-specific, failed launches preserve old resume,
+and input during checkpoint work prevents stop. A dead replacement process is not
+necessarily a drained supervisor: settle output/EOF before restoring the old
+runtime, including partial startup failure and cancellation. Drain the captured
+supervisor instance, not whichever process later occupies its key. Rotate hook generations on later
+exact resumes too, so delayed same-conversation hooks cannot control a new launch.
+No schema change was needed.
+
 ## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
 A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
 build.sh called swiftc without -target, so the binary inherited the build

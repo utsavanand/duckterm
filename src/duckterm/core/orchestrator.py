@@ -735,15 +735,22 @@ class Orchestrator:
         self._supervisors[key] = supervisor
         try:
             await supervisor.start()
-        except Exception:
+        except BaseException:
             # A failed spawn (e.g. a typo'd command -> ValueError) must not leave
             # a git worktree + branch and a dead supervisor entry behind; those
             # accreted on every failed launch. Roll both back, then re-raise so
             # the caller still turns it into a 400.
-            self._supervisors.pop(key, None)
-            if worktree is not None:
-                with contextlib.suppress(Exception):
-                    self.worktrees.remove_by_worktree(worktree.path, delete_branch=True)
+            # Startup may fail after creating an output task. Settle it before
+            # callers restore a prior harness on this same card; a late EOF
+            # would otherwise overwrite the restored runtime.
+            try:
+                await supervisor.stop()
+            finally:
+                if self._supervisors.get(key) is supervisor:
+                    self._supervisors.pop(key, None)
+                if worktree is not None:
+                    with contextlib.suppress(Exception):
+                        self.worktrees.remove_by_worktree(worktree.path, delete_branch=True)
             raise
         # A resume's synthetic prompt (nudge / reconstructed notes) must not
         # overwrite the session's original intention on its card.
