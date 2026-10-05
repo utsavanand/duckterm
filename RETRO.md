@@ -1,5 +1,10 @@
 # Retro — lessons from real breakage
 
+## Output failure paths must retain evidence and release resources
+
+QA found that an invalid writer marker ended capture without an error field and that non-ENOENT spawn errors leaked PTY descriptors. Tail failures now carry output_error on SessionEnd, and every spawn exception closes unowned descriptors, including cancellation. Deterministic negative cases verify error reporting and closed descriptors rather than relying on a happy-path output test.
+
+
 ## 2026-10-04 — Agent exit does not prove output capture finished
 On macOS, keep the parent PTY slave open until final reads complete; closing
 the last slave can discard bytes before a delayed reader ever sees them.

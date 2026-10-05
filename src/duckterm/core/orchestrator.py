@@ -172,13 +172,13 @@ class SessionSupervisor:
                 # them — no approvals, no session_id, no context tokens.
                 env={**os.environ, "DUCKTERM_SESSION_KEY": self.session_key, **self._env},
             )
-        except FileNotFoundError as e:
-            # A typo'd custom command. ValueError is what every launch/fork/
-            # resume handler already turns into a 400 — before this, the raw
-            # FileNotFoundError escaped as a bare 500 with no explanation.
+        except BaseException as exc:
+            # No supervisor owns these descriptors until spawn succeeds.
             os.close(secondary)
             os.close(primary)
-            raise ValueError(f"command not found: {argv[0]}") from e
+            if isinstance(exc, FileNotFoundError):
+                raise ValueError(f"command not found: {argv[0]}") from exc
+            raise
         self._secondary_fd = secondary
         self._primary_fd = primary
         self._task = asyncio.create_task(self._pump(primary))
@@ -303,7 +303,7 @@ class SessionSupervisor:
             finally:
                 fh.close()
         except Exception as e:  # noqa: BLE001 — boundary: a background task
-            print(f"[duckterm] tail-pipe for {self.session_key} failed: {e}", file=sys.stderr)
+            output_error = f"Terminal output capture failed: {e}"
         finally:
             if output_error:
                 print(f"[duckterm] {self.session_key}: {output_error}", file=sys.stderr)
