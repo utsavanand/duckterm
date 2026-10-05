@@ -18,6 +18,15 @@ one-shot timeout read the wall clock one millisecond before its expiry. Clamp
 the expiry callback to the deadline; do not rely on an unrelated parent render
 to remove it. Cover the early wall-clock boundary as well as ordinary expiry.
 
+## 2026-10-04 — Teardown must wait for the last state writer
+The v0.4.114 gate passed all browser checks but failed removing the test home.
+SIGTERM and tmux kill-server initiated shutdown; they did not prove the server
+or its pipe writers had stopped creating files. Wait for process exit, bound
+escalation, confirm the private tmux server is gone, and await writer EOF markers
+before removing state. Retried removal is a backstop, not the synchronization.
+A real child that writes for 500 ms after SIGTERM fails the original teardown
+and passes the corrected ordering. Count gate exit status, not passing specs.
+
 ## 2026-10-04 — Passing isolated layers hid an adopted-session restart failure
 Runtime mocks, browser responses and generic-pane adoption each passed while
 the real sequence (server replacement, Claude adoption, model restart, Messages)

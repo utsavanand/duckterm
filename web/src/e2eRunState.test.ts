@@ -49,3 +49,45 @@ it("foreign state cannot be used by helpers or trigger teardown", async () => {
   expect(kill).not.toHaveBeenCalled();
   expect(JSON.parse(readFileSync(statePath(env), "utf8")).runId).toBe("other-run");
 });
+
+it("teardown waits for a real child to finish writing after SIGTERM", async () => {
+  const { fork } = await import("node:child_process");
+  const { mkdirSync, existsSync } = await import("node:fs");
+  const env = context();
+  const root = join(statePath(env), "..");
+  const home = join(root, "home");
+  mkdirSync(home);
+  const script = join(root, "writer.cjs");
+  const finished = join(root, "finished");
+  writeFileSync(script, `
+    const fs = require('node:fs');
+    const home = process.argv[2];
+    const writer = setInterval(() => fs.writeFileSync(home + '/late', 'output'), 5);
+    process.on('SIGTERM', () => setTimeout(() => {
+      clearInterval(writer);
+      fs.writeFileSync(process.argv[3], 'finished');
+      process.exit(0);
+    }, 500));
+    process.send('ready');
+  `);
+  const child = fork(script, [home, finished], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
+  const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+  const ready = new Promise<void>((resolve, reject) => {
+    child.once("message", () => resolve());
+    child.once("error", reject);
+    child.once("exit", () => reject(new Error("writer exited before readiness")));
+  });
+  try {
+    await ready;
+    writeOwnedState({ home, pid: child.pid!, port: "0", tmuxSocket: "" }, env);
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value!);
+    await teardown();
+    expect(existsSync(finished)).toBe(true);
+    expect(child.exitCode).toBe(0);
+    expect(existsSync(home)).toBe(false);
+    expect(existsSync(statePath(env))).toBe(false);
+  } finally {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    await exited;
+  }
+}, 20_000);
