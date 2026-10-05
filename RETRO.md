@@ -1,5 +1,17 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — A unified sidebar is not a shared session directory
+
+Remote cards were grouped only in browser storage while agent discovery queried
+a different computer's database. Reusing those labels as permissions would hide
+the missing transport and could revive stale grants. Cross-computer work needs
+server-owned folder identities, authenticated computer pairing and durable
+messages. Keep Ungrouped cards out of exported snapshots, validate scope again
+at delivery/read time, and test actual HTTP boundaries plus disconnected peers.
+A passing preview with a synthetic native bridge is not installed acceptance;
+keep the implementation in draft until every sidebar mutation and recovery
+path uses the same canonical policy.
+
 ## 2026-10-04 — Passing isolated layers hid an adopted-session restart failure
 Runtime mocks, browser responses and generic-pane adoption each passed while
 the real sequence (server replacement, Claude adoption, model restart, Messages)

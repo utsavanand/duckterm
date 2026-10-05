@@ -33,7 +33,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
     onInstall: () => void;
     onRemove: () => void;
   };
-  onAction: (action: "launch" | "folder" | "harnesses" | "backup" | "bugreport") => void;
+  onAction: (action: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration") => void;
 }) {
   const [open, setOpen] = useState<Menu | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -63,7 +63,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
     };
   }, [open]);
 
-  const action = (value: "launch" | "folder" | "harnesses" | "backup" | "bugreport") => {
+  const action = (value: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration") => {
     setOpen(null);
     onAction(value);
   };
@@ -104,6 +104,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
           <NaturalVoicePanel status={voice.local} fallbackReason={voice.fallbackReason} onInstall={voice.onInstall} onRemove={voice.onRemove} />
         </div>
         <div className="rd-header-menu-divider" />
+        <button className="rd-header-menu-item" onClick={() => action("collaboration")}>Collaboration <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("bugreport")}>Report a bug <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" title="Manage meta-harnesses for your projects" onClick={() => action("harnesses")}>Harnesses <span aria-hidden="true">›</span></button>

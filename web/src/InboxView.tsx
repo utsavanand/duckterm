@@ -11,6 +11,7 @@ const labels: Record<InboxMessage["status"], string> = {
   declined: "Declined",
   expired: "Expired",
   cancelled: "Cancelled",
+  blocked: "Access changed",
 };
 
 function awaitingReply(message: InboxMessage) {
@@ -25,7 +26,8 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
   const [loaded, setLoaded] = useState(false);
   const [totals, setTotals] = useState<Record<InboxFilter, number> | null>(null);
   const [error, setError] = useState("");
-  const [cursor, setCursor] = useState<number | null>(null);
+  const [remoteStatus, setRemoteStatus] = useState("");
+  const [cursor, setCursor] = useState<number | string | null>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [retry, setRetry] = useState(0);
   const [pageCount, setPageCount] = useState(1);
@@ -60,12 +62,12 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
     async function refresh() {
       try {
         const incoming: InboxMessage[] = [];
-        let before: number | undefined;
-        let next: number | null = null;
+        let before: number | string | undefined;
+        let next: number | string | null = null;
         for (let i = 0; i < pageCount; i++) {
           const page = folder !== undefined ? await api.folderInbox(folder, before, filter) : await api.inbox(sessionKey!, before, filter);
           if (cancelled) return;
-          if (i === 0) { setCard(page.card ?? null); setTotals(page.counts ?? null); }
+          if (i === 0) { setCard(page.card ?? null); setTotals(page.counts ?? null); setRemoteStatus(page.cross_computer_status === "unavailable" ? (page.cross_computer_reason ?? "Cross-computer inbox unavailable") : ""); }
           incoming.push(...page.messages);
           next = page.next_cursor;
           if (next === null) break;
@@ -159,7 +161,8 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
           </div>
           <input type="search" aria-label="Search loaded messages" placeholder="Search loaded messages" value={search} onChange={(event) => { setSearch(event.target.value); resetScroll(); }} />
         </div>
-        {error && (
+        {remoteStatus && <p role="status">{remoteStatus}. Local messages remain available.</p>}
+      {error && (
           <div className="rd-inbox-error" role="alert">
             <span>Could not refresh {folder !== undefined ? "interactions" : "inbox"}: {error}</span>
             <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setRetry((n) => n + 1)}>Retry</button>
@@ -204,7 +207,7 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
                 )}
                 <div className="rd-inbox-delivery">
                   <time dateTime={new Date(message.created_at).toISOString()}>Received {new Date(message.created_at).toLocaleString()}</time>
-                  {message.delivery && <span>{message.delivery.last_read_at ? "Read by session" : message.delivery.outcome === "notified" ? "Notice shown · Not yet read" : "Not yet read"}</span>}
+                  {message.delivery && <span>{message.delivery.last_read_at ? "Read by session" : message.delivery.outcome === "waiting_for_computer" ? "Waiting for computer" : message.delivery.outcome === "delivered" ? "Delivered to inbox · Not yet read" : message.delivery.outcome === "notified" ? "Notice shown · Not yet read" : "Not yet read"}</span>}
                   {message.requires_reply === false && <span>No reply required</span>}
                 </div>
               </div>
