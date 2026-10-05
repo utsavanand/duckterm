@@ -636,7 +636,7 @@ def test_folder_conflict_is_rejected_before_any_local_move(paired_folder_service
 def test_activity_updates_in_flight_do_not_prevent_sync(paired_folder_service):
     import asyncio
 
-    service, _, _, _ = paired_folder_service
+    service, _, root, child = paired_folder_service
     exchange = service.exchange
 
     async def changing_activity(payload):
@@ -649,8 +649,11 @@ def test_activity_updates_in_flight_do_not_prevent_sync(paired_folder_service):
         return response
 
     service.exchange = changing_activity
-    asyncio.run(service.sync())
-    assert service.error is None
+    assert asyncio.run(service.sync()) is True
+    assert {c["session_ref"]: c["root_id"] for c in service.cached("cards")} == {
+        service.own_ref("parent"): root,
+        service.own_ref("child"): child,
+    }
 
 
 def test_coordinator_placement_never_temporarily_widens_narrow_scope(hub):
