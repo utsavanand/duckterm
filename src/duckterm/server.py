@@ -589,6 +589,10 @@ class Server:
             await self._message_pins(writer, headers, pin_match[1], pin_match[2], method, body)
             return
         inbox_path = urllib.parse.urlsplit(path)
+        timeline_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/timeline", inbox_path.path)
+        if method == "GET" and timeline_match:
+            await self._session_timeline(writer, headers, timeline_match[1], inbox_path.query)
+            return
         if method == "GET" and inbox_path.path == "/analytics/tokens":
             await self._token_analytics(writer, headers, inbox_path.query)
             return
@@ -2657,6 +2661,38 @@ class Server:
         merged = agents_rules.merge_candidates(existing, proposals)
         if [asdict(r) for r in merged] != before:
             agents_rules.save_rules(base, merged)
+
+    async def _session_timeline(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], key: str, query: str
+    ) -> None:
+        from duckterm.persistence.timeline import page
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        row = self.history.session(key)
+        if row is None:
+            await _write_json(writer, 404, {"error": "Session not found"})
+            return
+        try:
+            params = urllib.parse.parse_qs(query, keep_blank_values=True)
+            if set(params) - {"before", "limit", "kinds"} or any(
+                len(v) != 1 for v in params.values()
+            ):
+                raise ValueError("Invalid timeline parameters")
+            result = page(
+                self.history._conn,
+                self.digests._conn,
+                row,
+                self.relay.notes,
+                before=params.get("before", [""])[0],
+                limit=int(params.get("limit", ["50"])[0]),
+                kinds=params.get("kinds", [""])[0],
+            )
+        except ValueError as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
 
     async def _session_digest(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """The accumulated, validated digest archive for a session — the
