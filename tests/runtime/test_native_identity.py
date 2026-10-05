@@ -134,8 +134,13 @@ def test_a_relaunch_may_take_a_new_native_id(server) -> None:
     same session (a server-published SessionStart) starts a new thread."""
     post(server, "UserPromptSubmit", NATIVE_A, prompt=launch_prompt("cx-a"))
     server.history.record(
-        {"_id": "relaunch", "_ts": 2**41, "event_type": "SessionStart", "session_key": "cx-a",
-         "runtime": "codex"}  # fmt: skip
+        {
+            "_id": "relaunch",
+            "_ts": 2**41,
+            "event_type": "SessionStart",
+            "session_key": "cx-a",
+            "runtime": "codex",
+        }
     )
     assert (
         post(server, "UserPromptSubmit", NATIVE_B, prompt=launch_prompt("cx-a"))["session_key"]
