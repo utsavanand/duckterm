@@ -102,7 +102,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         }
     }
 
-    static func envelopeLimit(operation: String, params: [String: Any]) -> Int {
+    nonisolated static func envelopeLimit(operation: String, params: [String: Any]) -> Int {
         if operation != "session-request" { return 131072 }
         return params["path"] as? String == "/bugreport/submit" && params["method"] as? String == "POST"
             ? 22 * 1024 * 1024 : 14 * 1024 * 1024
