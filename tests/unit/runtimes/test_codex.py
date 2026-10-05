@@ -210,4 +210,8 @@ def test_conversation_prose_on_a_repaint_is_not_state() -> None:
             "  gpt-6-astra high · ~/worktrees/duckterm/4491fa9b",
         ]
     )
-    assert CodexRuntime().detect_state(idle_repaint) is None
+    with_status = idle_repaint.replace(
+        "  Worked for 2m 28s", "• Working (3s • esc to interrupt)\n  Worked for 2m 28s"
+    )
+    rt = CodexRuntime()
+    assert [rt.detect_state(idle_repaint), rt.detect_state(with_status)] == [None, "busy"]
