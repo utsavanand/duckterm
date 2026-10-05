@@ -1,5 +1,18 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — Passing isolated layers hid an adopted-session restart failure
+Runtime mocks, browser responses and generic-pane adoption each passed while
+the real sequence (server replacement, Claude adoption, model restart, Messages)
+lost runtime identity. Keep one process-boundary regression using a real tmux
+pane and transcript, with a synthetic CLI recording the resume/model arguments.
+Counts are not coverage: record which boundary is real and which is simulated.
+Browser fixtures also used the developer HOME and a shared state filename;
+create a private HOME, port, state file and tmux namespace before any worker
+starts, and verify cleanup on failure and termination. Discover all browser
+files in CI so new workflows cannot silently fall outside a filename whitelist.
+Native UI scripts must compile the application's dependency graph: the report
+runner omitted SessionTransport and navigation-policy dependencies and broke.
+
 ## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
 A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
 build.sh called swiftc without -target, so the binary inherited the build

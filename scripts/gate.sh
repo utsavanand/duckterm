@@ -7,11 +7,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY="${PYTHON:-.venv/bin/python}"
-LOG="${GATE_LOG:-/tmp/duckterm-gate.log}"
+LOG="${GATE_LOG:-$(mktemp /tmp/duckterm-gate.XXXXXX.log)}"
+echo "Gate log: $LOG"
 : > "$LOG"
 
 step() { echo "==> $1"; }
 
+step "dependency preflight"
+"$PY" -c 'import pytest, ruff, black, mypy, duckterm.server' >> "$LOG" 2>&1
+for tool in tsc eslint vitest playwright; do
+  test -x "web/node_modules/.bin/$tool" || { echo "Missing $tool; run npm ci in web"; exit 1; }
+done
 step "pytest"
 "$PY" -m pytest tests -q >> "$LOG" 2>&1
 step "ruff check"
@@ -33,6 +39,6 @@ step "vitest"
 npx vitest run >> "$LOG" 2>&1
 if [ "${1:-}" != "--fast" ]; then
   step "playwright e2e"
-  PATH="$(cd .. && pwd)/.venv/bin:$PATH" npx playwright test >> "$LOG" 2>&1
+  PATH="$(cd .. && pwd)/.venv/bin:$PATH" npm run e2e >> "$LOG" 2>&1
 fi
 echo "==> GATE PASSED (log: $LOG)"
