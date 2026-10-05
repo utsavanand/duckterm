@@ -383,6 +383,9 @@ class Server:
         self.history.layouts.recover()
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
+        from duckterm.session_shells import SessionShells
+
+        self.shells = SessionShells(self)
         self.snapshots = SnapshotManager(self.history)
         self._backup_jobs: BackupJobs | None = None
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
@@ -587,6 +590,12 @@ class Server:
         pin_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/pins(?:/([a-f0-9]{64}))?", path)
         if pin_match and method in {"GET", "POST", "DELETE"}:
             await self._message_pins(writer, headers, pin_match[1], pin_match[2], method, body)
+            return
+        shell_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]{1,128})/shell(/terminal)?", path)
+        if shell_match:
+            await self._session_shell(
+                reader, writer, headers, shell_match[1], bool(shell_match[2]), method, body
+            )
             return
         inbox_path = urllib.parse.urlsplit(path)
         timeline_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/timeline", inbox_path.path)
@@ -2368,11 +2377,13 @@ class Server:
         await _write_json(writer, 200, result)
 
     async def _commit_archive(self, key: str) -> None:
-        if self.history.session(key) is None:
-            return
-        await self.orchestrator.stop(key)
-        self._set_lifecycle(key, "archived")
-        self.approvals.drop_session(key)
+        async with self.shells.lock(key):
+            await self.shells.destroy(key)
+            if self.history.session(key) is None:
+                return
+            await self.orchestrator.stop(key)
+            self._set_lifecycle(key, "archived")
+            self.approvals.drop_session(key)
 
     async def _archive(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """Put a session away for good: history is kept, the row leaves the
@@ -2440,16 +2451,18 @@ class Server:
     async def _teardown_session(self, session_key: str, row: dict[str, Any] | None) -> bool:
         """Everything a session leaves behind: supervisor/tmux pane, worktree,
         DB rows (cascade), pending approvals. Callers do the unmerged check."""
-        if not await self.orchestrator.stop(session_key):
-            # No supervisor (launched before a server restart and never
-            # re-adopted) — kill any leftover tmux session by its canonical
-            # name so DB deletes never orphan panes.
-            await asyncio.to_thread(tmux.kill_session, tmux.target_for(session_key))
-        self._remove_worktree(row)
-        deleted = self.history.delete_session(session_key, now=int(time.time() * 1000))
-        self.approvals.drop_session(session_key)
-        self.digests.delete_session(session_key)
-        return deleted
+        async with self.shells.lock(session_key):
+            await self.shells.destroy(session_key)
+            if not await self.orchestrator.stop(session_key):
+                # No supervisor (launched before a server restart and never
+                # re-adopted) — kill any leftover tmux session by its canonical
+                # name so DB deletes never orphan panes.
+                await asyncio.to_thread(tmux.kill_session, tmux.target_for(session_key))
+            self._remove_worktree(row)
+            deleted = self.history.delete_session(session_key, now=int(time.time() * 1000))
+            self.approvals.drop_session(session_key)
+            self.digests.delete_session(session_key)
+            return deleted
 
     def _worktree_path_of(self, row: dict[str, Any] | None) -> Path | None:
         """The Duckterm-managed worktree for a session, or None. Guards that we
@@ -4560,6 +4573,75 @@ class Server:
             disconnect.cancel()
             await feed.aclose()
 
+    async def _session_shell(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        key: str,
+        terminal: bool,
+        method: str,
+        body: bytes,
+    ) -> None:
+        # Browsers cannot set custom WebSocket headers; use a subprotocol token
+        # only on this route, never URL query credentials or ambient session auth.
+        auth = dict(headers)
+        if terminal and "x-duckterm-token" not in auth:
+            for protocol in headers.get("sec-websocket-protocol", "").split(","):
+                if protocol.strip().startswith("duckterm-owner."):
+                    auth["x-duckterm-token"] = protocol.strip()[len("duckterm-owner.") :]
+        if not security.token_valid(auth, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            if terminal and method == "GET":
+                shell = await self.shells.terminal(key)
+                await self._stream_terminal(
+                    reader,
+                    writer,
+                    headers,
+                    shell,
+                    protocol=next(
+                        (
+                            p.strip()
+                            for p in headers.get("sec-websocket-protocol", "").split(",")
+                            if p.strip() == "duckterm-shell"
+                        ),
+                        None,
+                    ),
+                )
+                return
+            if terminal:
+                raise APIError(405, "Method not allowed")
+            if method == "GET":
+                result = await self.shells.status(key)
+            elif method == "POST":
+                if json.loads(body or b"{}") != {}:
+                    raise APIError(
+                        400, "Shell open accepts no command, host or environment overrides"
+                    )
+                result = await self.shells.open(key)
+            elif method == "DELETE":
+                data = json.loads(body or b"{}")
+                if (
+                    not isinstance(data, dict)
+                    or set(data) - {"force", "confirmation_token"}
+                    or type(data.get("force", False)) is not bool
+                ):
+                    raise APIError(400, "Invalid shell close request")
+                result = await self.shells.close(
+                    key, force=data.get("force", False), expected=data.get("confirmation_token")
+                )
+            else:
+                raise APIError(405, "Method not allowed")
+            await _write_json(writer, 409 if result.get("closed") is False else 200, result)
+        except (APIError, ValueError, OSError) as exc:
+            await _write_json(
+                writer,
+                exc.status if isinstance(exc, APIError) else 400,
+                {"error": str(exc), "available": False},
+            )
+
     async def _terminal(
         self,
         reader: asyncio.StreamReader,
@@ -4582,11 +4664,24 @@ class Server:
         if supervisor is None or not await asyncio.to_thread(getattr, supervisor, "running"):
             await _write_json(writer, 404, {"error": "no live session to attach"})
             return
+        await self._stream_terminal(reader, writer, headers, supervisor)
+
+    async def _stream_terminal(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        supervisor: Any,
+        protocol: str | None = None,
+    ) -> None:
         key = headers.get("sec-websocket-key")
         if not key:
             await _write_response(writer, 400, "expected a WebSocket upgrade")
             return
-        writer.write(handshake_response(key))
+        response = handshake_response(key)
+        if protocol:
+            response = response[:-2] + f"Sec-WebSocket-Protocol: {protocol}\r\n\r\n".encode()
+        writer.write(response)
         await writer.drain()
 
         feed = supervisor.subscribe_bytes()
@@ -4640,7 +4735,12 @@ class Server:
             # queue_bytes, not write_bytes: tmux send-keys is a ~10ms
             # subprocess, and running it inline here stalled the event loop
             # (and every other session's stream) on each keypress.
-            supervisor.queue_bytes(payload)
+            from duckterm.session_shells import ShellTerminal
+
+            if isinstance(supervisor, ShellTerminal):
+                await supervisor.write(payload)
+            else:
+                supervisor.queue_bytes(payload)
         elif opcode == 0x1:  # text: a JSON control message
             try:
                 msg = json.loads(payload)

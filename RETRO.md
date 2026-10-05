@@ -8,6 +8,25 @@ GATE_LOG then failed immediately with "File exists". Readers of the old shared
 log were also seeing another session's results. Keep the X's at the end of a
 mktemp template, and test temp-file names on macOS, not only in CI's Linux.
 Found by oracle-main-dev.
+## 2026-10-05 — Derived names cannot grant cleanup ownership
+
+A legacy agent may already occupy a proposed sibling-shell name. Explicit shell
+open/close must refuse that collision, but parent archive/delete must skip the
+unowned target and finish ordinary cleanup. Test two real agents with colliding
+names: deleting one must leave the other alive and discoverable.
+
+- A new sibling-shell suffix is not ownership: older agent keys can already use it. Filter discovery by the explicit owner-shell tag, publish that tag with creation, and keep shell eligibility checks out of ordinary agent archive/delete. Regress legacy-key discovery and both cleanup paths with private real tmux sessions.
+
+## 2026-10-05 — A surviving sibling can impersonate a departed tmux target
+
+The session-shell integration test hung stopping an agent: tmux resolved its
+missing name by prefix to the still-running `-sh` sibling. Use exact session and
+pane targets for agent liveness, input, output, resize and kill operations. tmux
+has different syntax for an exact session (`=name`), a pane in that session
+(`=name:`), and session option lookup (literal name). Test with real tmux, including
+agent exit while the sibling survives. On macOS, tcgetpgrp on another controlling
+tty fails with ENOTTY; query process groups through ps and require confirmation
+when inspection fails.
 
 ## 2026-10-04 — A remote Codex couldn't save October's conversations
 On duckterm-dev, Codex (running as the service user) got Permission denied
