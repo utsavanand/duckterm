@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — A remote Codex couldn't save October's conversations
+On duckterm-dev, Codex (running as the service user) got Permission denied
+creating ~/.codex/sessions/2026/10, because the year directory, and September's
+before it, was owned by root with mode 0755. The repair changed only those two
+directory owners (no chmod, no recursion, no restart) and verified a
+create/write/fsync as the real user. Create runtime state as the service user,
+and check that a new date directory can be written, instead of assuming
+whoever created the first month got the ownership right. Don't conclude the
+installer caused it without evidence.
+
 ## 2026-10-04 — A SQLite rowid watermark can be reused after deletion
 Timeline cursors bounded inserts by MAX(rowid), but deleting the highest row
 allowed a later backdated insert to reuse that rowid and enter older pages.
