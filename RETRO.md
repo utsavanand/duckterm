@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-10-05 — The gate's temp log name broke on macOS
+`mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's
+that aren't at the end. macOS's BSD mktemp replaces trailing X's only, so it
+created the literal file `duckterm-gate.XXXXXX.log`; every later gate without
+GATE_LOG then failed immediately with "File exists". Readers of the old shared
+log were also seeing another session's results. Keep the X's at the end of a
+mktemp template, and test temp-file names on macOS, not only in CI's Linux.
+Found by oracle-main-dev.
+
 ## 2026-10-04 — A remote Codex couldn't save October's conversations
 On duckterm-dev, Codex (running as the service user) got Permission denied
 creating ~/.codex/sessions/2026/10, because the year directory, and September's
