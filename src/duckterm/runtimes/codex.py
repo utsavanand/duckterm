@@ -24,23 +24,26 @@ from duckterm.runtimes.base import (
 )
 from duckterm.runtimes.message_cache import MessageCache, unavailable_response
 
-# Codex prints a spinner/working line while busy and a prompt glyph when idle.
-# "esc to interrupt" appears on every interruptible-active line (including
-# "Reviewing approval request (5m …)" — codex's approval machinery running is
-# WORK, not waiting-on-you).
+# Codex prints a status line with an elapsed timer while busy: "Working (2s)",
+# "Working (17m 36s • esc to interrupt)", "Reviewing approval request (5m 38s
+# • esc to interrupt)" (its approval machinery running is WORK, not waiting
+# on you). Only that line shape counts: a full repaint also carries the
+# conversation, and prose like "I'm running the tests" kept an idle session
+# busy for two hours on 2026-10-04 (product's B-report on ui-dev).
 _WORKING = re.compile(
-    r"(working|thinking|running|reviewing|applying patch|esc to interrupt)", re.IGNORECASE
+    r"^\W*(working|thinking|running|reviewing[^()\n]*|applying patch)\s*\(\d+[hms]"
+    r"|esc to interrupt",
+    re.IGNORECASE,
 )
-# Codex's real approval prompt says "Would you like to run the following
-# command?" and ends with "Press enter to confirm" — neither matched the old
-# pattern, so the output detector never saw codex enter waiting, its cached
-# state diverged from the hook-driven DB state, and a terminal-approved long
-# command stayed "waiting" for its whole run.
-# UI prompt markers only. Bare "allow"/"approve" are gone: they matched code
-# ON SCREEN (a diff containing `allowfullscreen` voted a busy session into
-# "waiting").
+# Codex's real approval prompt: "Would you like to run the following command?"
+# (or "...make the following edits?") ending with "Press enter to confirm".
+# UI prompt markers only, anchored to their line: bare "allow"/"approve"
+# matched code on screen, and a free-floating "would you like to" matched the
+# agent's own questions in the conversation.
 _WAITING = re.compile(
-    r"(\(y/n\)|continue\?|would you like to|press enter to confirm|do you want to proceed)",
+    r"would you like to (run|make) the following"
+    r"|^\W*(press enter to confirm|do you want to proceed\?|continue\?)"
+    r"|\(y/n\)\s*$",
     re.IGNORECASE,
 )
 # The owner's queued question above the input box: "? 1 question" (a timer

@@ -1,5 +1,18 @@
 # Retro — lessons from real breakage
 
+## 2026-10-04 — A Codex session's own words kept it "busy" for two hours
+**Broke:** ui-dev sat at an empty Codex prompt from 20:15 while DuckTerm showed
+it busy, so Oracle's idle reminder never fired and its inbox waited about two
+hours (reported by product).
+**Cause:** the hook's Stop set it idle, but at 20:39 a screen repaint
+re-entered the screen watcher. That watcher matched "running" and "would you
+like to" anywhere on screen, including the conversation, and published
+waiting and then busy (events with launched: true).
+**Rule:** screen evidence must match the agent's live UI line shapes (status
+line with its timer, the real approval prompt), never free words that prose
+can contain. Every new pattern gets a test with realistic conversation text
+on screen.
+
 ## 2026-10-04 — A remote Codex couldn't save October's conversations
 On duckterm-dev, Codex (running as the service user) got Permission denied
 creating ~/.codex/sessions/2026/10, because the year directory, and September's
