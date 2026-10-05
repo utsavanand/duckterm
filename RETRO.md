@@ -1,5 +1,16 @@
 # Retro — lessons from real breakage
 
+## 2026-10-05 — A surviving sibling can impersonate a departed tmux target
+
+The session-shell integration test hung stopping an agent: tmux resolved its
+missing name by prefix to the still-running `-sh` sibling. Use exact session and
+pane targets for agent liveness, input, output, resize and kill operations. tmux
+has different syntax for an exact session (`=name`), a pane in that session
+(`=name:`), and session option lookup (literal name). Test with real tmux, including
+agent exit while the sibling survives. On macOS, tcgetpgrp on another controlling
+tty fails with ENOTTY; query process groups through ps and require confirmation
+when inspection fails.
+
 ## 2026-10-04 — A remote Codex couldn't save October's conversations
 On duckterm-dev, Codex (running as the service user) got Permission denied
 creating ~/.codex/sessions/2026/10, because the year directory, and September's
