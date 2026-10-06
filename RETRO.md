@@ -1,5 +1,7 @@
 # Retro — lessons from real breakage
 
+<<<<<<< HEAD
+
 ## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
 
 Shell browser checks passed but the runner failed probing the departed process
@@ -7,6 +9,17 @@ group with EPERM. Do not blanket-ignore permission errors: independently list
 process groups and accept absence only after a successful, nonempty listing.
 Keep denial for a live group or failed inspection visible, and avoid sending a
 final signal after confirming absence. Preserve the browser runner exit status.
+=======
+
+## 2026-10-06 — New npm advisories blocked every PR's web job
+CI's `npm audit --audit-level=high` began failing on unrelated PRs when
+source-map-js (high, build-time denial of service) and DOMPurify (low, XSS in
+IN_PLACE mode, which DuckTerm doesn't use) got advisories. `npm audit fix` would
+also have moved mermaid 12.0 to 12.1, pulling chevrotain 11 to 13; update only
+the flagged packages (`npm update <pkg>`) and diff the lockfile's resolved
+versions before committing. KaTeX's low advisory needs a breaking mermaid
+change and stays open until mermaid ships a fix.
+>>>>>>> origin/main
 
 ## 2026-10-05 — The gate's temp log name broke on macOS
 `mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's
