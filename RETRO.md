@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
+
+Shell browser checks passed but the runner failed probing the departed process
+group with EPERM. Do not blanket-ignore permission errors: independently list
+process groups and accept absence only after a successful, nonempty listing.
+Keep denial for a live group or failed inspection visible, and avoid sending a
+final signal after confirming absence. Preserve the browser runner exit status.
+
 ## 2026-10-05 — The gate's temp log name broke on macOS
 `mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's
 that aren't at the end. macOS's BSD mktemp replaces trailing X's only, so it
