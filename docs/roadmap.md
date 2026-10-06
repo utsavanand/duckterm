@@ -6,7 +6,7 @@ and [bugs-and-backlog.md](bugs-and-backlog.md) is the ordered working list.
 Sources: TODO.md, RETRO.md, design docs, open PRs, and the peer sessions via
 the session API.
 
-## Status at a glance (reconciled 2026-10-04 by release-dev at the v0.4.114 release)
+## Status at a glance (reconciled 2026-10-04 by release-dev at the v0.4.115 release)
 
 | Item | Status |
 | --- | --- |

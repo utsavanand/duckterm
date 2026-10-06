@@ -75,3 +75,71 @@ def test_browser_runner_isolates_home_and_cleans_after_exit(tmp_path: Path, outc
         if process.poll() is None:
             process.kill()
             process.wait()
+
+
+def load_runner():
+    import runpy
+
+    return runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/run_browser_tests.py"))
+
+
+@pytest.mark.parametrize("signum", [0, signal.SIGTERM, signal.SIGKILL])
+def test_eperm_accepts_only_independently_proven_absence(monkeypatch, signum):
+    runner = load_runner()
+
+    def denied(*args):
+        raise PermissionError("probe denied")
+
+    monkeypatch.setattr(os, "killpg", denied)
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, "12\n34\n")
+    )
+    assert runner["signal_group"](56, signum) is False
+
+
+@pytest.mark.parametrize("listing", ["56\n", "", "not-a-process-group\n"])
+def test_eperm_never_hides_live_or_unknown_groups(monkeypatch, listing):
+    runner = load_runner()
+
+    def denied(*args):
+        raise PermissionError("probe denied")
+
+    monkeypatch.setattr(os, "killpg", denied)
+    monkeypatch.setattr(
+        subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, listing)
+    )
+    with pytest.raises(PermissionError):
+        runner["signal_group"](56, 0)
+
+
+def test_eperm_failed_inspection_stays_an_error(monkeypatch):
+    runner = load_runner()
+
+    def denied(*args):
+        raise PermissionError("probe denied")
+
+    def unavailable(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, "ps")
+
+    monkeypatch.setattr(os, "killpg", denied)
+    monkeypatch.setattr(subprocess, "run", unavailable)
+    with pytest.raises(PermissionError):
+        runner["signal_group"](56, 0)
+
+
+def test_real_live_group_is_not_treated_as_absent(monkeypatch):
+    runner = load_runner()
+    process = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"], start_new_session=True
+    )
+    try:
+
+        def denied(*args):
+            raise PermissionError("simulated signal denial")
+
+        monkeypatch.setattr(os, "killpg", denied)
+        with pytest.raises(PermissionError):
+            runner["signal_group"](process.pid, 0)
+    finally:
+        process.terminate()
+        process.wait(timeout=5)
