@@ -32,7 +32,7 @@ from duckterm.runtimes.message_cache import MessageCache, unavailable_response
 # busy for two hours on 2026-10-04 (product's B-report on ui-dev).
 _WORKING = re.compile(
     r"^\W*(working|thinking|running|reviewing[^()\n]*|applying patch)\s*\(\d+[hms]"
-    r"|esc to interrupt",
+    r"|^\W*[^()\n]+\(\d+[hms][^()\n]*esc to interrupt\)\s*$",
     re.IGNORECASE,
 )
 # Codex's real approval prompt: "Would you like to run the following command?"
@@ -41,7 +41,7 @@ _WORKING = re.compile(
 # matched code on screen, and a free-floating "would you like to" matched the
 # agent's own questions in the conversation.
 _WAITING = re.compile(
-    r"would you like to (run|make) the following"
+    r"^\W*would you like to (run|make) the following"
     r"|^\W*(press enter to confirm|do you want to proceed\?|continue\?)"
     r"|\(y/n\)\s*$",
     re.IGNORECASE,

@@ -215,3 +215,15 @@ def test_conversation_prose_on_a_repaint_is_not_state() -> None:
     )
     rt = CodexRuntime()
     assert [rt.detect_state(idle_repaint), rt.detect_state(with_status)] == [None, "busy"]
+
+
+def test_state_marker_explanations_are_not_live_screen_controls() -> None:
+    runtime = CodexRuntime()
+    prose = [
+        "• The status line says esc to interrupt while a command runs.",
+        "• The approval dialog asks Would you like to run the following command?",
+    ]
+    screens = [line + "\n› Ask Codex to do anything" for line in prose]
+    assert [runtime.detect_state(screen) for screen in screens] == [None, None]
+    assert runtime.detect_state("• Searching the web (12s • esc to interrupt)") == "busy"
+    assert runtime.detect_state("Would you like to make the following edits?") == "waiting"
