@@ -51,7 +51,7 @@ def test_needs_owner_lists_the_session_and_raises_its_hand(world) -> None:
     assert (code, card["needs_owner"]) == (200, "Approve pushing the timeline preview")
     assert flagged(server) == [("open", "Approve pushing the timeline preview", "blocked")]
     assert dispatch(server, "GET", "/relay/count", {})[1] == {"open": 1}
-    assert history.session("ui")["attention_since"] is not None
+    assert history.session("ui")["attention_since"] > 0
 
     publish(server, creds, needs_owner="Actually: choose between two layouts")
     assert [f[:2] for f in flagged(server)] == [
@@ -76,9 +76,10 @@ def test_an_owner_reply_closes_it(world) -> None:
 def test_clearing_keeps_the_hand_of_a_session_that_is_waiting_anyway(world) -> None:
     server, creds, history = world
     publish(server, creds, needs_owner="Approve the command")
+    raised = history.session("ui")["attention_since"]
     history.set_state("ui", "waiting")
     publish(server, creds, needs_owner=None)
-    assert history.session("ui")["attention_since"] is not None
+    assert history.session("ui")["attention_since"] == raised > 0
 
 
 def test_the_flag_is_one_line_of_bounded_text(world) -> None:

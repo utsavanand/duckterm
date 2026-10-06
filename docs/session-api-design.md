@@ -144,7 +144,7 @@ All agent routes use `Authorization: Bearer <session token>` and are under
 | Method / route | Behavior |
 | --- | --- |
 | `GET /self` | Current session card |
-| `PATCH /self` | Publish `{purpose?, activity?}` |
+| `PATCH /self` | Publish `{purpose?, activity?, needs_owner?}` (needs_owner: 1-500 chars, or null to clear) |
 | `GET /peers?scope=shared_root&cursor=...` | Paginated authorized ongoing peers |
 | `GET /inbox?before=...` | Incoming questions and their response states |
 | `POST /questions` | Create `{target_session_id, question, timeout_seconds?}` |
