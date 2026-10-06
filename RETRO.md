@@ -1,5 +1,18 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — A Markdown fence is not a rendered artifact diagram
+
+The shared Markdown renderer emitted Mermaid placeholders, but only Messages
+hydrated them, so artifact frames displayed code. Render diagrams in the parent,
+sanitize the resulting SVG, and preserve the opaque iframe and CSP. Mermaid 12
+needs root-level `htmlLabels: false` for labels to survive SVG-only sanitization;
+counting SVG nodes alone misses empty diagrams. Verify visible labels, intrinsic
+size, theme changes, invalid-source fallback and stale asynchronous selection.
+Serialize Mermaid configuration with rendering because the library is shared
+across Messages and Artifacts. Parse artifact markup in an inert document so
+image URLs cannot fetch before iframe CSP is applied. Long documents also need a readable measure and
+local scrolling for wide tables and whitespace-sensitive ASCII diagrams.
+
 ## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
 
 Shell browser checks passed but the runner failed probing the departed process

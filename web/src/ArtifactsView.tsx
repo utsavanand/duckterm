@@ -1,38 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useArtifactExpansion } from "./useArtifactExpansion";
-import DOMPurify from "dompurify";
+import { diagramPreviewDocument, previewDocument } from "./artifactDocument";
+export { previewDocument } from "./artifactDocument";
 import { api, Artifact, ArtifactContent, ArtifactKind, FolderArtifact } from "./api";
-import { html } from "./render";
 import "./artifacts.css";
 import { ARTIFACT_KINDS } from "./artifactKinds";
 import "./folderDetails.css";
 import { ArtifactFeedback, ArtifactSelection, FeedbackTarget } from "./ArtifactFeedback";
-
-const POLICY = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'">`;
-const PAPER = `<style>html{color-scheme:light}body{margin:0;padding:32px 38px;background:#fafbf8;color:#27352c;font:15px/1.65 -apple-system,BlinkMacSystemFont,sans-serif;overflow-wrap:anywhere}h1{font-size:27px;line-height:1.25}h2{font-size:19px;margin-top:28px}pre{white-space:pre-wrap;background:#edf0e9;padding:14px;border-radius:6px}code{font-size:13px}img{max-width:100%}table{border-collapse:collapse;width:100%}td,th{border:1px solid #d8dfd5;padding:8px}blockquote{border-left:3px solid #a8b9aa;margin-left:0;padding-left:16px;color:#536758}</style>`;
-
-export function previewDocument(source: string, markdown: boolean, bridge?: { nonce: string; origin: string }): string {
-  const clean = DOMPurify.sanitize(markdown ? html(source) : source, {
-    WHOLE_DOCUMENT: true,
-    FORBID_TAGS: ["script", "iframe", "object", "embed", "meta", "base", "link", "form"],
-    FORBID_ATTR: ["href", "action", "formaction", "srcdoc", "target", "nonce"],
-  });
-  // Only our nonce-authorized selection reporter can execute. Artifact scripts
-  // are removed; the frame retains an opaque origin (no allow-same-origin).
-  const policy = bridge ? POLICY.replace("default-src 'none';", `default-src 'none'; script-src 'nonce-${bridge.nonce}';`) : POLICY;
-  const reporter = bridge ? `<script nonce="${bridge.nonce}">(() => {
-    const report = () => {
-      const selection = window.getSelection(), quote = selection?.toString().trim();
-      if (!quote || quote.length > 8000 || !selection.rangeCount) return;
-      const rect = selection.getRangeAt(0).getBoundingClientRect();
-      parent.postMessage({type: 'artifact-selection', channel: ${JSON.stringify(bridge.nonce)}, quote, left: rect.left, bottom: rect.bottom}, ${JSON.stringify(bridge.origin)});
-    };
-    document.addEventListener('keydown', event => { if (event.key === 'Escape') parent.postMessage({type: 'artifact-escape', channel: ${JSON.stringify(bridge.nonce)}}, ${JSON.stringify(bridge.origin)}); });
-    document.addEventListener('mouseup', report);
-    document.addEventListener('keyup', event => { if (event.key === 'Shift' || event.key.startsWith('Arrow')) report(); });
-  })();</script>` : "";
-  return `<!doctype html>${policy}${markdown ? PAPER : ""}${clean}${reporter}`;
-}
 
 function label(artifact: Artifact): string {
   if (artifact.media_type === "text/markdown") return "Markdown";
@@ -46,8 +20,16 @@ function size(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function subscribeTheme(notify: () => void) {
+  const observer = new MutationObserver(notify);
+  observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  return () => observer.disconnect();
+}
+function currentTheme(): "dark" | "light" { return document.documentElement.dataset.theme === "light" ? "light" : "dark"; }
+
 function ArtifactPreview({ artifact, onSelect, onEscape }: { artifact: ArtifactContent; onSelect: (selection: ArtifactSelection) => void; onEscape: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
+  const theme = useSyncExternalStore(subscribeTheme, currentTheme);
   const [nonce] = useState(() => Array.from(crypto.getRandomValues(new Uint8Array(24)), b => b.toString(16).padStart(2, "0")).join(""));
   useEffect(() => {
     const receive = (event: MessageEvent) => {
@@ -71,19 +53,29 @@ function ArtifactPreview({ artifact, onSelect, onEscape }: { artifact: ArtifactC
     onSelect({ quote: selection.toString().trim(), left: box.left, bottom: box.bottom });
   }
   const [imageFailed, setImageFailed] = useState(false);
-  const document = useMemo(() => {
+  const text = useMemo(() => {
     if (!artifact.media_type.startsWith("text/")) return null;
-    const bytes = Uint8Array.from(atob(artifact.content_base64), (character) => character.charCodeAt(0));
-    const text = new TextDecoder().decode(bytes);
-    if (artifact.media_type === "text/plain") return text;
-    return previewDocument(text, artifact.media_type === "text/markdown", { nonce, origin: window.location.origin });
-  }, [artifact, nonce]);
+    const bytes = Uint8Array.from(atob(artifact.content_base64), character => character.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }, [artifact.media_type, artifact.content_base64]);
+  const document = useMemo(() => text === null || artifact.media_type === "text/plain" ? text
+    : previewDocument(text, artifact.media_type === "text/markdown", { nonce, origin: window.location.origin }, theme), [text, artifact.media_type, nonce, theme]);
+  const [enhanced, setEnhanced] = useState<{ base: string; result: string } | null>(null);
+  useEffect(() => {
+    if (text === null || document === null || artifact.media_type !== "text/markdown" || !document.includes('class="rd-mermaid"')) return;
+    let cancelled = false;
+    void diagramPreviewDocument(text, { nonce, origin: window.location.origin }, theme, () => cancelled).then(result => {
+      if (!cancelled) setEnhanced({ base: document, result });
+    });
+    return () => { cancelled = true; };
+  }, [text, document, artifact.media_type, nonce, theme]);
+  const frameDocument = enhanced?.base === document ? enhanced.result : document;
   if (imageFailed) return <div className="rd-artifact-empty"><h3>Image preview unavailable</h3><p>Download the saved file to open it in another app.</p></div>;
   if (artifact.media_type.startsWith("image/")) {
     return <div className="rd-artifact-image"><img src={`data:${artifact.media_type};base64,${artifact.content_base64}`} alt={artifact.title} onError={() => setImageFailed(true)} /></div>;
   }
   if (artifact.media_type === "text/plain") return <pre className="rd-artifact-text" tabIndex={0} onMouseUp={selectText} onKeyUp={selectText}>{document}</pre>;
-  if (document !== null) return <iframe ref={frame} className="rd-artifact-frame" title={`Preview of ${artifact.title}`} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={document} />;
+  if (document !== null) return <iframe ref={frame} className="rd-artifact-frame" title={`Preview of ${artifact.title}`} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={frameDocument ?? ""} />;
   return <div className="rd-artifact-empty"><h3>Download to view this file</h3><p>A preview is not available for this format.</p></div>;
 }
 

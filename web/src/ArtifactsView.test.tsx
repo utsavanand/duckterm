@@ -1,5 +1,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { renderDiagram } from "./renderDiagram";
+vi.mock("./renderDiagram", () => ({ renderDiagram: vi.fn() }));
 import { api, Artifact, ArtifactContent } from "./api";
 import { ArtifactsView, previewDocument } from "./ArtifactsView";
 vi.mock("./api", () => ({ api: { artifacts: vi.fn(), folderArtifacts: vi.fn(), artifact: vi.fn(), removeArtifact: vi.fn() } }));
@@ -83,4 +85,19 @@ it("opens a folder artifact in the existing viewer using its producing session",
   expect(screen.getByRole("button", { name: "← Back to folder" })).toBeVisible();
   expect(api.artifact).toHaveBeenCalledWith("archived-producer", "b");
   expect(screen.getByText("archived")).toBeInTheDocument();
+});
+
+it("ignores a late diagram render after selecting another artifact", async () => {
+  let finish!: (svg: string) => void;
+  vi.mocked(renderDiagram).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  vi.mocked(api.artifacts).mockResolvedValue({ artifacts: [first, second] });
+  vi.mocked(api.artifact).mockImplementation(async (_, id) => ({ artifact: id === "a" ? { ...first, content_base64: btoa("```mermaid\nflowchart LR\nA --> B\n```") } : content(second) }));
+  render(<ArtifactsView sessionKey="session" sessionName="Agent" />);
+  await screen.findByTitle("Preview of First report");
+  expect(renderDiagram).toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: /Second report/ }));
+  const next = await screen.findByTitle("Preview of Second report");
+  await act(async () => finish('<svg viewBox="0 0 100 50"><text>Stale diagram</text></svg>'));
+  expect(next.getAttribute("srcdoc")).toContain("Second report");
+  expect(next.getAttribute("srcdoc")).not.toContain("Stale diagram");
 });

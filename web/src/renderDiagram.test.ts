@@ -1,0 +1,20 @@
+import { expect, it, vi } from "vitest";
+const mermaid = vi.hoisted(() => ({ initialize: vi.fn(), render: vi.fn() }));
+vi.mock("mermaid", () => ({ default: mermaid }));
+it("keeps one surface's theme and label settings until its rendering finishes", async () => {
+  vi.resetModules();
+  const { renderDiagram } = await import("./renderDiagram");
+  let finish!: (value: { svg: string }) => void;
+  mermaid.render.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValueOnce({ svg: "message" });
+  const artifact = renderDiagram("artifact", true, true);
+  const message = renderDiagram("message", false);
+  await vi.waitFor(() => expect(mermaid.initialize).toHaveBeenCalledTimes(1));
+  expect(mermaid.initialize).toHaveBeenLastCalledWith(expect.objectContaining({ theme: "dark", htmlLabels: false, securityLevel: "strict" }));
+  finish({ svg: "artifact" });
+  expect(await artifact).toBe("artifact");
+  expect(await message).toBe("message");
+  expect(mermaid.initialize).toHaveBeenLastCalledWith(expect.objectContaining({ theme: "default", htmlLabels: true, securityLevel: "strict" }));
+  mermaid.render.mockRejectedValueOnce(new Error("invalid")).mockResolvedValueOnce({ svg: "next" });
+  await expect(renderDiagram("invalid", true)).rejects.toThrow("invalid");
+  await expect(renderDiagram("next", true)).resolves.toBe("next");
+});

@@ -7,13 +7,13 @@ import "./messageAnnotations.css";
 import { useToast } from "./ui";
 import { Message, MessagePin, PinTarget } from "./MessagePins";
 import { useSessionResource } from "./useSessionResource";
+import { renderDiagram } from "./renderDiagram";
 
 // Structured view of an agent's latest reply (HTML-annotation mode,
 // docs/structured-render-design.md). Renders the response as HTML; select any
 // span to attach a note, which is stored AND sent back to the agent as a
 // follow-up prompt.
 
-let mermaidSeq = 0; // unique ids for mermaid.render across re-renders
 
 interface Selection {
   quote: string;
@@ -80,32 +80,23 @@ export function Messages({ sessionKey, active = true, pins = [], pinPending = fa
     );
     if (!blocks || blocks.length === 0) return;
     let live = true;
-    import("mermaid").then(async ({ default: mermaid }) => {
-      if (!live) return;
-      const dark =
-        document.documentElement.getAttribute("data-theme") !== "light";
-      mermaid.initialize({
-        startOnLoad: false,
-        securityLevel: "strict",
-        theme: dark ? "dark" : "default",
-      });
+    void (async () => {
+      const dark = document.documentElement.getAttribute("data-theme") !== "light";
       for (const el of [...blocks]) {
+        if (!live) break;
         el.setAttribute("data-rendered", "1");
-        const src = el.textContent ?? "";
         try {
-          const { svg } = await mermaid.render(
-            `rdm-${++mermaidSeq}`,
-            src,
-          );
+          const svg = await renderDiagram(el.textContent ?? "", dark);
+          if (!el.isConnected) break;
           const host = document.createElement("div");
           host.className = "rd-mermaid-svg";
           host.innerHTML = svg;
           el.replaceWith(host);
         } catch {
-          // invalid diagram — keep the readable code block
+          // Invalid diagrams remain readable as code.
         }
       }
-    });
+    })();
     return () => {
       live = false;
     };
