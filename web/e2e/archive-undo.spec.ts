@@ -9,6 +9,8 @@ test("Archive Undo preserves the session and pending archive survives a viewer r
     await page.goto(base());
     const row = page.locator(".rd-row", { has: page.getByText("Undo reviewer", { exact: true }) });
     await row.locator(".rd-row-name").click();
+    const restartReason = page.locator(".rd-session-controls .rd-restart-message");
+    await expect(restartReason).toContainText("Restart requires a live DuckTerm terminal");
     const archive = page.locator(".rd-session-controls").getByRole("button", { name: "Archive", exact: true });
     await archive.click();
     await expect(row).toHaveCount(0);
@@ -19,6 +21,9 @@ test("Archive Undo preserves the session and pending archive survives a viewer r
     await page.keyboard.press("Enter");
     await expect(row).toBeVisible();
     await expect(page.locator(".rd-session-controls")).toContainText("Undo reviewer");
+    // Undo remounts the card. Its async restart reason inserts a full grid row;
+    // wait for that real response before clicking a button whose position moves.
+    await expect(restartReason).toContainText("Restart requires a live DuckTerm terminal");
     await archive.click();
     await expect(undo).toBeVisible();
     await page.reload();

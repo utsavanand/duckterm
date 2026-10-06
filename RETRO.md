@@ -1,5 +1,76 @@
 # Retro — lessons from real breakage
 
+## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
+
+Shell browser checks passed but the runner failed probing the departed process
+group with EPERM. Do not blanket-ignore permission errors: independently list
+process groups and accept absence only after a successful, nonempty listing.
+Keep denial for a live group or failed inspection visible, and avoid sending a
+final signal after confirming absence. Preserve the browser runner exit status.
+
+## 2026-10-05 — Wait for card readiness before testing a pointer action
+The archive Undo browser flake was a missed second Archive click, not a missing
+Undo response. Undo remounts the session card; its asynchronous restart reason
+adds a grid row and can move Archive between mouse-down and mouse-up. Holding
+and releasing the real response reproduced the missed click with no second POST.
+Wait for the fixture's restart reason before clicking, preserving the existing
+Undo/reload/expiry assertions instead of extending their timeouts.
+
+## 2026-10-06 — New npm advisories blocked every PR's web job
+CI's `npm audit --audit-level=high` began failing on unrelated PRs when
+source-map-js (high, build-time denial of service) and DOMPurify (low, XSS in
+IN_PLACE mode, which DuckTerm doesn't use) got advisories. `npm audit fix` would
+also have moved mermaid 12.0 to 12.1, pulling chevrotain 11 to 13; update only
+the flagged packages (`npm update <pkg>`) and diff the lockfile's resolved
+versions before committing. KaTeX's low advisory needs a breaking mermaid
+change and stays open until mermaid ships a fix.
+
+## 2026-10-05 — The gate's temp log name broke on macOS
+`mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's
+that aren't at the end. macOS's BSD mktemp replaces trailing X's only, so it
+created the literal file `duckterm-gate.XXXXXX.log`; every later gate without
+GATE_LOG then failed immediately with "File exists". Readers of the old shared
+log were also seeing another session's results. Keep the X's at the end of a
+mktemp template, and test temp-file names on macOS, not only in CI's Linux.
+Found by oracle-main-dev.
+
+## 2026-10-04 — A remote Codex couldn't save October's conversations
+On duckterm-dev, Codex (running as the service user) got Permission denied
+creating ~/.codex/sessions/2026/10, because the year directory, and September's
+before it, was owned by root with mode 0755. The repair changed only those two
+directory owners (no chmod, no recursion, no restart) and verified a
+create/write/fsync as the real user. Create runtime state as the service user,
+and check that a new date directory can be written, instead of assuming
+whoever created the first month got the ownership right. Don't conclude the
+installer caused it without evidence.
+
+## 2026-10-04 — A SQLite rowid watermark can be reused after deletion
+Timeline cursors bounded inserts by MAX(rowid), but deleting the highest row
+allowed a later backdated insert to reuse that rowid and enter older pages.
+Retain the boundary record ID and reject continuation if that anchor changes.
+The schema-free tradeoff is an explicit refresh after boundary deletion, even
+when that table-wide boundary belonged to another session. Regression coverage
+must combine deletion with insertion, not only append records between pages.
+
+## Session timelines need stable ties and honest source boundaries
+
+A timestamp-only cursor loses records when events share a millisecond. The read-only timeline uses timestamp plus stable entry ID and insertion high-water marks; regressions insert tied and backdated records between pages. Counts and source reads remain on their SQLite owner thread. Existing mutable stores are not immutable snapshots: document changes/deletions and missing producer events rather than inventing historical entries or promising constant-time scans without indexes.
+
+## 2026-10-04 — One-shot expiry must cross its deadline
+After dashboard clocks were isolated, a celebration could stay forever when its
+one-shot timeout read the wall clock one millisecond before its expiry. Clamp
+the expiry callback to the deadline; do not rely on an unrelated parent render
+to remove it. Cover the early wall-clock boundary as well as ordinary expiry.
+
+## 2026-10-04 — Teardown must wait for the last state writer
+The v0.4.114 gate passed all browser checks but failed removing the test home.
+SIGTERM and tmux kill-server initiated shutdown; they did not prove the server
+or its pipe writers had stopped creating files. Wait for process exit, bound
+escalation, confirm the private tmux server is gone, and await writer EOF markers
+before removing state. Retried removal is a backstop, not the synchronization.
+A real child that writes for 500 ms after SIGTERM fails the original teardown
+and passes the corrected ordering. Count gate exit status, not passing specs.
+
 ## 2026-10-05 — Folder synchronization must survive interrupted prefix moves
 
 Independent acknowledgments for a renamed parent and child can skip the child,
@@ -52,6 +123,38 @@ Keep HistoryStore reads on its owning event-loop thread when integrating the
 thread guard; leave ZIP/file work on workers. Detect the native report action
 explicitly so older Mac builds keep the browser form instead of swallowing it.
 The Settings and Help entry points should reuse the same native editor.
+
+## 2026-10-04 — Resume proof must not hide a safe harness-switch path
+
+Restart applied exact-conversation checks before offering any action. A missing
+transcript therefore hid the option to start a different harness with a summary.
+Report options per path: exact resume retains its identity guard; a seeded switch
+requires live-terminal, folder, transfer, draft and real parent-turn checks, then
+checkpoints before stopping. Persist a new identity boundary before launch, retain
+the previous conversation for recovery, and reject late hooks from the old harness.
+A daemon target remains unavailable with a reason until its independent native-ID
+resolver ships. Regression coverage must prove missing resume identity still offers
+a switch, model catalogs are harness-specific, failed launches preserve old resume,
+and input during checkpoint work prevents stop. A dead replacement process is not
+necessarily a drained supervisor: settle output/EOF before restoring the old
+runtime, including partial startup failure and cancellation. Drain the captured
+supervisor instance, not whichever process later occupies its key. Rotate hook generations on later
+exact resumes too, so delayed same-conversation hooks cannot control a new launch.
+No schema change was needed.
+
+## Output failure paths must retain evidence and release resources
+
+QA found that an invalid writer marker ended capture without an error field and that non-ENOENT spawn errors leaked PTY descriptors. Tail failures now carry output_error on SessionEnd, and every spawn exception closes unowned descriptors, including cancellation. Deterministic negative cases verify error reporting and closed descriptors rather than relying on a happy-path output test.
+
+## 2026-10-04 — Agent exit does not prove output capture finished
+On macOS, keep the parent PTY slave open until final reads complete; closing
+the last slave can discard bytes before a delayed reader ever sees them.
+A short-lived agent can exit before tmux piping attaches, or its output writer
+can flush after the tailer reads EOF. Attach capture before releasing startup;
+wait for the writer to acknowledge EOF and perform a final drain before sending
+SessionEnd. Preserve a bounded, reported failure if the writer never confirms
+completion. Test the final-probe race deterministically and delayed PTY reads;
+do not hide lost output with sleeps or retries in the regression.
 
 ## 2026-10-04 — The Mac app said macOS 13 but only launched on 15
 A friend on macOS 14 couldn't open DuckTerm. Info.plist declared 13.0, but
@@ -339,7 +442,6 @@ for the old shape.
 ## Fork children need independent identity and inherited test scope
 Conversation forks derived their child key from the parent's native ID, so a second fork reused the first child's supervisor key. Generate a fresh DuckTerm key for every fork while retaining the native ID only in the resume command. Both conversation/worktree paths must inherit a test parent or explicit test request, including terminal SessionStart rows; test repeated forks and both launch modes without live inference.
 
-
 ## 2026-09-30 — A raised hand is the owner's to lower
 **Broke:** a session that asked for the owner dropped its raised hand on its
 next event, whether or not the owner had seen it, and the session list let a
@@ -402,10 +504,8 @@ A newest-transcript fallback showed a peer conversation when the recorded native
 ## Measure Messages refreshes with many small records, not only large text blocks
 Deep-copying cache results fixed mutation leakage but made a 20,000-record warm read expensive. Keep detached object reads for callers that need them; cache immutable, fully serialized Messages HTTP bytes and session-specific keys for polling. Invalidate on transcript changes or native-ID scope changes. A 20,000-record timing regression and no-read/no-copy/no-serialization assertions cover the actual HTTP response path alongside the unchanged nested-mutation regressions.
 
-
 ## Cached messages must detach nested response data
 Copying only each message dict protected added message keys but shared nested blocks and tool-input dictionaries. QA showed a caller mutation leaked into later reads. Deep-copy returned records on both cold and warm paths; regressions mutate nested tool inputs and block lists for Claude/Codex, with and without a final newline, then verify append behavior.
-
 
 ## Messages refresh must reuse transcript parsing across runtime adapters
 Every Messages request constructs a fresh runtime adapter, so an adapter-local cache would still reread the entire transcript. Claude and Codex now share bounded per-runtime JSONL caches using TokenLedger's complete-line offset pattern. Unchanged files are stat-only; changed files verify the committed prefix before parsing appended records. Size growth does not prove an append: the first gate caught a growing rewrite keeping a stale pin target. Partial trailing records are retried, and replacement/truncation/rewrites invalidate cached state. Keep parser IDs and per-session message keys stable; test fresh adapters and large files, not only calls on one adapter. Full-response serialization and frontend polling are separate follow-ups.
@@ -453,7 +553,6 @@ The Settings header inherited a background fade while its text switched themes i
 
 The first folder preview repeated the full session list already visible in the tree. Keep the approved surface to Chat and Artifacts, with name selection independent from chevron expansion. Preserve mounted terminals while browsing folders, use each artifact's producing session for the existing viewer, and keep folder chat history isolated. Rename every descendant conversation, recover JSON changes across DB commits, and reject answers that finish after the folder or its membership changes. Replay a pending operation at server startup before a deleted folder name can be recreated; lazy recovery can otherwise attach old history to the new folder. Verify these behaviors through the actual authenticated routes and browser flow.
 
-
 ## 2026-09-29 — Preserve actionable server errors on reads
 
 Model discovery returned useful missing-CLI/sign-in guidance, but the shared GET helper replaced it with “503 Service Unavailable.” Parse string error messages for failed reads just as for writes; retain status fallback for malformed or non-JSON responses. Exercise the actual API wrapper and a failed catalog request followed by Retry, not only a mocked Error thrown into a component.
@@ -465,7 +564,6 @@ Removing ellipses did not make Change model a dropdown. Open model choices direc
 ## 2026-09-29 — Light terminals need explicit selection colors
 
 The default translucent white xterm selection disappeared on the Paper background. Set both foreground and active/inactive selection backgrounds for each light palette, and verify actual selected text after focus moves away. Improve neutral borders and secondary labels without tinting the original white/gray palette blue. Keep dark palettes unchanged.
-
 
 ## 2026-09-29 — The dashboard derives state too; fix both folds
 **Broke:** v0.4.85 stopped the server from marking Codex "waiting" on every
@@ -638,8 +736,6 @@ explicit unknown bucket. Tests cover model switches, duplicate blocks, increment
 rescans, UTC dates and unmapped identities. Never average daily medians: combine
 histograms and keep the result labelled approximate.
 
-
-
 ## 2026-09-28 — A local gate must include the checks that can reject CI
 
 Mail analytics passed the local gate but failed CI strict typing because the
@@ -655,7 +751,6 @@ session removal and Oracle event retention; query remaining live rows separately
 Fault-inject deletion to prove a failed transfer leaves neither missing nor double
 counts. Keep completion-day activity separate from sent-day cohorts, and label
 histogram percentiles approximate rather than deriving fake medians from totals.
-
 
 ## 2026-09-28 — Trace the thing before designing the fix for it
 **Broke:** B2 was filed as "connectors configured but not usable", and two
@@ -699,7 +794,6 @@ strings, and preserve overlapping/inline-formatted quotes. Count unlocated notes
 against the whole transcript; notes on older turns are not missing. Keep saved
 notes readable when their original text disappears and expose notes on focus.
 
-
 ## 2026-09-28 — An idle agent cannot notice inbox mail by itself
 
 New peer mail waited behind both an idle grace and an old open item, while
@@ -707,7 +801,6 @@ reading an unfinished question excluded it forever. Skip the peer-age delay
 for idle recipients, track reminded IDs independently of newer arrivals, and
 allow one delayed reminder for read queued questions. Persist the per-item
 history across server restarts; retain draft, active-turn and owner-typing guards.
-
 
 ## 2026-09-27 — Put keyboard tooltip behavior on the actual focus owner
 
@@ -921,7 +1014,6 @@ messages and continuing work; do not add workflow restrictions to an automated
 nudge. The delivery regression checks the actual pasted continuation wording
 and still verifies that peer message text is not injected into the reminder.
 
-
 ## 2026-09-26 — Don't answer an agent's menu by pressing keys
 **Broke:** release-dev asked two questions in one form. Oracle's chat showed
 only the first. The owner approved it, Oracle pressed "1", the form moved to
@@ -1006,7 +1098,6 @@ tmux and PTY; testing a marker alone misses this failure. Ten regression cases
 failed on old main and passed with the fix. Positive regex false matches and
 hook precedence remain separate investigation items.
 
-
 ## 2026-09-26 — Artifact feedback needs provenance and an isolated selection bridge
 
 Text selected inside an opaque preview cannot be read directly by the app. Keep that origin isolation; authorize only a small app-owned reporter with a fresh CSP nonce, strip artifact scripts, and validate the sending frame/channel. Bind feedback to the saved artifact revision, escape terminal controls, and retain failed comments instead of reporting a false send. Verify real terminal receipt and malicious-preview rejection together.
@@ -1037,8 +1128,6 @@ the same tmux command queue. Preserve HTTP error bodies in fork tests: a
 passing retry is not diagnosis. Test that the server PID survives an empty
 interval and the next launch, and stress the real Linux fork chain.
 
-
-
 ## 2026-09-26 — Re-adopting a terminal must repair stale interruption state
 
 All 21 live terminals survived while their database rows said interrupted, exposing Resume and disabling session messaging. Startup reattached panes but never cleared an existing interruption; normal hooks deliberately preserve at-rest states. Recover only confirmed-live interrupted sessions from their latest agent activity, clear ended_at, and restore enrollment without relaunching or inventing a new run. Keep deliberate Stop/Archive states intact. Failed tmux discovery is unknown liveness, not an empty fleet: never interrupt everything on a PATH/socket error. Verify stored state and process continuity after release, not only pane counts.
@@ -1046,7 +1135,6 @@ All 21 live terminals survived while their database rows said interrupted, expos
 ## 2026-09-25 — Density is information structure, not just font size
 
 The first Compact/Standard/Relaxed preview only varied padding and type size, so the modes looked alike. The approved design changes one-line versus two-line rows, hover details, and persistent selected-session controls. Keep session names regular-weight in every mode, remember the choice, and test both geometry and access to hidden actions. Preserve the existing row-selection focus behavior: adding a focusable wrapper stole focus from the newly opened terminal, caught by the full browser suite.
-
 
 ## 2026-09-25 — Opening Oracle must not resize a live terminal
 

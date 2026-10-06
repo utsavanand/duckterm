@@ -31,6 +31,7 @@ from duckterm.core import events
 from duckterm.core.eventbus import EventBus
 from duckterm.git.worktrees import WorktreeManager
 from duckterm.helpers import paths, session_credentials, session_instructions
+from duckterm.helpers.pane_log import completion_for
 from duckterm.helpers.private_files import private_write
 from duckterm.llm.summarizer import build_prompt, mechanical_summary, summarize
 from duckterm.persistence.history import HistoryStore
@@ -40,6 +41,7 @@ from duckterm.runtimes.base import AgentRuntime, SessionState, plain_screen
 _TAIL_TICK_BYTES = 64 * 1024
 _TAIL_ACTIVE_SLEEP = 0.025
 _TAIL_LIVENESS_INTERVAL = 1.0
+_TAIL_DRAIN_TIMEOUT = 5.0
 _SCREEN_SCAN_INTERVAL = 0.25
 
 _STATE_EVENT = {
@@ -85,6 +87,7 @@ class SessionSupervisor:
         self._next_screen_scan = 0.0
         self._task: asyncio.Task[None] | None = None
         self._primary_fd: int | None = None  # PTY master, for writing input
+        self._secondary_fd: int | None = None  # retain until final child output is drained
         self._tmux_target: str | None = None  # set when tmux-backed
         self._pipe_path: str = ""  # tmux pane output file
         self._output = deque[str](maxlen=2000)  # recent output lines, for the UI
@@ -169,14 +172,14 @@ class SessionSupervisor:
                 # them — no approvals, no session_id, no context tokens.
                 env={**os.environ, "DUCKTERM_SESSION_KEY": self.session_key, **self._env},
             )
-        except FileNotFoundError as e:
-            # A typo'd custom command. ValueError is what every launch/fork/
-            # resume handler already turns into a 400 — before this, the raw
-            # FileNotFoundError escaped as a bare 500 with no explanation.
+        except BaseException as exc:
+            # No supervisor owns these descriptors until spawn succeeds.
             os.close(secondary)
             os.close(primary)
-            raise ValueError(f"command not found: {argv[0]}") from e
-        os.close(secondary)
+            if isinstance(exc, FileNotFoundError):
+                raise ValueError(f"command not found: {argv[0]}") from exc
+            raise
+        self._secondary_fd = secondary
         self._primary_fd = primary
         self._task = asyncio.create_task(self._pump(primary))
 
@@ -215,7 +218,13 @@ class SessionSupervisor:
         assert self._tmux_target is not None
         target = self._tmux_target
         path = Path(self._pipe_path)
+        completion = None
+        ending = False
+        writer_finished = False
+        drain_deadline = 0.0
+        output_error = None
         try:
+            completion = completion_for(path)
             # Read the pipe in BINARY so the terminal gets the pane's raw bytes
             # verbatim — text mode would translate the CR-LF tmux writes into bare
             # LF (universal newlines), and xterm.js needs the \r to return to
@@ -263,54 +272,87 @@ class SessionSupervisor:
                         fh = path.open("rb")
                         await asyncio.sleep(_TAIL_ACTIVE_SLEEP)
                         continue
+                    if ending:
+                        if writer_finished:
+                            self._scan_pending_output(loop.time(), force=True)
+                            break  # final read AFTER writer completion / liveness probe
+                        if completion is not None and completion.exists():
+                            if completion.read_text() != "complete":
+                                output_error = "Terminal output writer failed while draining"
+                            writer_finished = True
+                            continue
+                        if loop.time() >= drain_deadline:
+                            output_error = (
+                                "Terminal output writer did not confirm EOF within 5 seconds"
+                            )
+                            writer_finished = True
+                            continue
+                        await asyncio.sleep(_TAIL_ACTIVE_SLEEP)
+                        continue
                     # Liveness is independent of display latency: spawning tmux
                     # on every empty 25ms poll dominated many-session CPU cost.
                     if loop.time() >= next_liveness:
                         if not await asyncio.to_thread(tmux.session_exists, target):
-                            self._scan_pending_output(loop.time(), force=True)
-                            break
+                            ending = True
+                            writer_finished = completion is None
+                            drain_deadline = loop.time() + _TAIL_DRAIN_TIMEOUT
+                            continue
                         next_liveness = loop.time() + _TAIL_LIVENESS_INTERVAL
                     active = max(last_output, self._last_input)
                     await asyncio.sleep(_TAIL_ACTIVE_SLEEP if loop.time() - active < 5 else 0.2)
             finally:
                 fh.close()
         except Exception as e:  # noqa: BLE001 — boundary: a background task
-            print(f"[duckterm] tail-pipe for {self.session_key} failed: {e}", file=sys.stderr)
+            output_error = f"Terminal output capture failed: {e}"
         finally:
+            if output_error:
+                print(f"[duckterm] {self.session_key}: {output_error}", file=sys.stderr)
             self._close_byte_subs()
-            self._emit(events.SESSION_END)
+            self._emit(
+                events.SESSION_END, **({"output_error": output_error} if output_error else {})
+            )
 
     async def _pump(self, primary: int) -> None:
         loop = asyncio.get_running_loop()
-        reader = asyncio.StreamReader()
-        transport, _ = await loop.connect_read_pipe(
-            lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(primary, "rb", 0)
-        )
-        # Read CHUNKS, not lines: the terminal byte view must stream output the
-        # moment it arrives (a TUI prompt has no trailing newline), and on Linux
-        # a child exit surfaces as EIO on the master — line iteration would drop
-        # the buffered partial line on that path. Line assembly for state/tool
-        # detection happens here on top of the chunks.
+        ready = asyncio.Event()
+        os.set_blocking(primary, False)
+        loop.add_reader(primary, ready.set)
+        exited = asyncio.create_task(self._proc.wait()) if self._proc else None
+        if exited is not None:
+            exited.add_done_callback(lambda _: ready.set())
         pending = ""
-
+        remaining = _TAIL_TICK_BYTES
         try:
             while True:
                 try:
+                    raw = os.read(primary, 4096)
+                except BlockingIOError:
+                    # macOS can discard unread PTY bytes when its last slave
+                    # closes. Retain our slave until the child's final bytes
+                    # have been read, then let EOF/EIO terminate the reader.
+                    if (
+                        self._proc is not None
+                        and self._proc.returncode is not None
+                        and self._secondary_fd is not None
+                    ):
+                        os.close(self._secondary_fd)
+                        self._secondary_fd = None
+                        continue
+                    ready.clear()
                     if self._screen_pending:
                         try:
-                            raw = await asyncio.wait_for(
-                                reader.read(4096),
-                                max(0.001, self._next_screen_scan - loop.time()),
+                            await asyncio.wait_for(
+                                ready.wait(), max(0.001, self._next_screen_scan - loop.time())
                             )
                         except TimeoutError:
                             self._scan_pending_output(loop.time())
-                            continue
                     else:
-                        raw = await reader.read(4096)
-                except OSError as e:
-                    if e.errno != errno.EIO:
+                        await ready.wait()
+                    continue
+                except OSError as error:
+                    if error.errno != errno.EIO:
                         raise
-                    break  # Linux PTY: the child exited — this is EOF, not a failure
+                    break  # Linux PTY EOF; all preceding reads were recorded.
                 if not raw:
                     break
                 self._record_bytes(raw)
@@ -319,13 +361,26 @@ class SessionSupervisor:
                 for line in lines:
                     self._observe_output(line + "\n")
                 self._scan_pending_output(loop.time())
+                remaining -= len(raw)
+                if remaining <= 0:
+                    await asyncio.sleep(0)
+                    remaining = _TAIL_TICK_BYTES
             if pending:
                 self._observe_output(pending)
             self._scan_pending_output(loop.time(), force=True)
-        except Exception as e:  # noqa: BLE001 — boundary: a background task
-            print(f"[duckterm] output pump for {self.session_key} failed: {e}", file=sys.stderr)
+        except Exception as error:  # noqa: BLE001 — boundary: a background task
+            print(f"[duckterm] output pump for {self.session_key} failed: {error}", file=sys.stderr)
         finally:
-            transport.close()
+            loop.remove_reader(primary)
+            os.close(primary)
+            self._primary_fd = None
+            if self._secondary_fd is not None:
+                os.close(self._secondary_fd)
+                self._secondary_fd = None
+            if exited is not None:
+                exited.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await exited
             await self._finish()
 
     def _observe_output(self, line: str) -> None:
@@ -735,15 +790,22 @@ class Orchestrator:
         self._supervisors[key] = supervisor
         try:
             await supervisor.start()
-        except Exception:
+        except BaseException:
             # A failed spawn (e.g. a typo'd command -> ValueError) must not leave
             # a git worktree + branch and a dead supervisor entry behind; those
             # accreted on every failed launch. Roll both back, then re-raise so
             # the caller still turns it into a 400.
-            self._supervisors.pop(key, None)
-            if worktree is not None:
-                with contextlib.suppress(Exception):
-                    self.worktrees.remove_by_worktree(worktree.path, delete_branch=True)
+            # Startup may fail after creating an output task. Settle it before
+            # callers restore a prior harness on this same card; a late EOF
+            # would otherwise overwrite the restored runtime.
+            try:
+                await supervisor.stop()
+            finally:
+                if self._supervisors.get(key) is supervisor:
+                    self._supervisors.pop(key, None)
+                if worktree is not None:
+                    with contextlib.suppress(Exception):
+                        self.worktrees.remove_by_worktree(worktree.path, delete_branch=True)
             raise
         # A resume's synthetic prompt (nudge / reconstructed notes) must not
         # overwrite the session's original intention on its card.
