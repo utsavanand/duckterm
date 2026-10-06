@@ -684,3 +684,23 @@ def test_foreign_folder_ack_cannot_change_bindings_or_advertise(hub):
         two.sync({"id": uuid.uuid4().hex, "action": "folders_ack", "plan_id": plan["id"]})
     assert dict(hub.peer(two.ref)) == old
     assert hub.setting("folder-plan:" + two.id)["id"] == other_plan["id"]
+
+
+def test_offline_reparent_can_invert_former_parent_and_child(paired_folder_service):
+    import asyncio
+
+    service, hub, root, child = paired_folder_service
+
+    async def run():
+        assert await service.sync()
+        # Both are valid owner moves; the disconnected computer receives one plan.
+        hub.change_folder(child, None, "Promoted")
+        hub.change_folder(root, child, "Former parent")
+        assert not await service.sync()
+        assert await service.sync(), service.error
+        assert service.history.session("child")["grp"] == "Promoted"
+        assert service.history.session("parent")["grp"] == "Promoted/Former parent"
+        assert hub.peer(service.own_ref("child"))["folder"] == child
+        assert hub.peer(service.own_ref("parent"))["folder"] == root
+
+    asyncio.run(run())

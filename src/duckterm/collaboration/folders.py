@@ -60,11 +60,11 @@ def after_move(state: dict[str, Any], old: str, new: str) -> dict[str, Any]:
 def plan_moves(state: dict[str, Any], updates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Preflight the entire plan; no prefix rename may absorb an existing folder.
 
-    After moving an ancestor, rewrite the remaining source paths. Thus A→B and
+    Move final ancestors first, then rewrite the remaining source paths. Thus A→B and
     A/child→B/renamed becomes A→B, B/child→B/renamed, not a skipped child move.
     Destinations occupied by unrelated local folders require owner recovery.
     """
-    pending = sorted([[u["local_path"], u["path"]] for u in updates], key=lambda p: p[0].count("/"))
+    pending = sorted([[u["local_path"], u["path"]] for u in updates], key=lambda p: p[1].count("/"))
     steps = []
     journal_bytes = 0
     while pending:
