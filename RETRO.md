@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Folder identity cannot depend on a live session card
+
+An empty nested folder appeared in snapshots but had no computer-to-folder
+binding. Renaming it created the new name locally while leaving the old folder
+behind. Bind every canonical folder, including empty ones, using the nearest
+ancestor's existing local path while renames are pending. A regression creates,
+renames and deletes an empty child and checks that each old path disappears.
+
 ## 2026-10-06 — A lost receipt is not a rejected workspace change
 
 The native owner broker originally caught a local receipt failure in the same

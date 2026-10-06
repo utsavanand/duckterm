@@ -430,16 +430,26 @@ class Store:
         ]
 
     def workspace_bindings(self, computer: str) -> None:
-        """Owner-created workspace roots inherit to every paired computer."""
-        for row in self.conn.execute("SELECT id FROM folders WHERE parent IS NULL"):
-            path = self.path(row[0])
+        """Track empty folders too, using the computer's pre-rename ancestor paths."""
+        for folder in sorted(self.folder_snapshot(), key=lambda f: f["path"].count("/")):
+            path = folder["path"]
             bound = self.conn.execute(
-                "SELECT 1 FROM bindings WHERE computer=? AND folder=?", (computer, row[0])
+                "SELECT 1 FROM bindings WHERE computer=? AND folder=?", (computer, folder["id"])
             ).fetchone()
-            if path and not bound:
-                self.conn.execute(
-                    "INSERT OR IGNORE INTO bindings VALUES (?,?,?)", (computer, path, row[0])
-                )
+            if bound:
+                continue
+            for ancestor in self.ancestry(folder["id"])[1:]:
+                binding = self.conn.execute(
+                    "SELECT local_path FROM bindings WHERE computer=? AND folder=? "
+                    "ORDER BY local_path LIMIT 1",
+                    (computer, ancestor),
+                ).fetchone()
+                if binding:
+                    path = binding["local_path"] + path[len(self.path(ancestor)) :]
+                    break
+            self.conn.execute(
+                "INSERT OR IGNORE INTO bindings VALUES (?,?,?)", (computer, path, folder["id"])
+            )
 
     def folder_plan(self, computer: str) -> dict[str, Any] | None:
         """Freeze a delivered mapping until acknowledged, even across later edits."""

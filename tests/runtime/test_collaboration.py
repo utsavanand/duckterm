@@ -963,3 +963,34 @@ def test_owner_change_holds_queued_messages_until_cancelled(paired_folder_servic
         assert [q["id"] for q in remote.sync()["questions"]] == [operation["question_id"]]
 
     asyncio.run(run())
+
+
+def test_empty_nested_folder_keeps_identity_through_rename_and_delete(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration import owner
+
+    service, hub, root, _ = paired_folder_service
+    empty = hub.add_folder("Empty", root)
+
+    async def run():
+        assert await service.sync()
+        assert "Project/Empty" in service.history.folders()
+        queued = owner.queue(
+            service, {"action": "move", "old": "Project/Empty", "new": "Project/New empty"}
+        )
+        owner.apply(hub, queued["operation"])
+        owner.acknowledge(service, {"id": queued["id"], "committed": True})
+        await service.sync()
+        assert await service.sync(), service.error
+        assert "Project/Empty" not in service.history.folders()
+        assert "Project/New empty" in service.history.folders()
+        assert hub.path(empty) == "Project/New empty"
+        queued = owner.queue(service, {"action": "delete", "old": "Project/New empty"})
+        owner.apply(hub, queued["operation"])
+        owner.acknowledge(service, {"id": queued["id"], "committed": True})
+        await service.sync()
+        assert await service.sync()
+        assert "Project/New empty" not in service.history.folders()
+
+    asyncio.run(run())
