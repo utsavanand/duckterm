@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Session age is not summary freshness
+The timeline labeled time since session start as summary age. Use the existing
+progress_at timestamp saved with the summary, and return null for legacy or
+missing timestamps. Never substitute a related record timestamp for the event
+the UI claims to measure. Regression checks cover old sessions with recent
+summaries, missing timestamps, and clocks ahead of the reader.
+
 ## 2026-10-05 — The gate's temp log name broke on macOS
 `mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's
 that aren't at the end. macOS's BSD mktemp replaces trailing X's only, so it
