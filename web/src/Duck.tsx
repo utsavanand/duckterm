@@ -6,8 +6,8 @@ import { DuckCelebration, SessionView } from "./types";
 //   busy     — faces the viewer (¾ view, big spectacles, pupils on the
 //              screen), leaning into the camera over a perspective laptop,
 //              wings hammering both sides, screen lines pulsing
-//   waiting  — level head, eye cast down at a big wristwatch held up on the
-//              wing (sweeping red second hand), glancing every ~3s
+//   waiting  — short feathered wing waves from the shoulder while needs-you
+//              is set; reduced motion keeps the wing raised
 //   idle     — lazy drift
 //   sleeping — eyes closed, head tucked, z's flowing (stopped/terminated/archived)
 // Pure inline SVG + CSS keyframes (theme.css); honors prefers-reduced-motion.
@@ -34,7 +34,7 @@ export function duckPhrase(s: SessionView, state: string): string {
         ? `Right now: working — running ${s.lastTool}.`
         : `Right now: working on ${s.hostLabel || s.host || "this computer"}.`;
     case "waiting":
-      return `Right now: checking its watch, waiting on you — asked ${ago}.`;
+      return `Right now: waiting for your answer — asked ${ago}.`;
     case "idle":
       return `Right now: just floating — finished its last turn ${ago}.`;
     case "stopped":
@@ -184,16 +184,16 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
       )}
       {pose === "waiting" && (
         <>
-          {SHADOW(30)}
-          <g className="duck-p-watch">
+          {SHADOW(31)}
+          <g className="duck-p-wave">
             <path
-              d="M10 42 Q6 34 12 31 Q13 37 17 39 Z"
+              d="M12 42 Q8 34 14 31 Q15 37 19 39 Z"
               fill="#FFD32B"
               stroke="#E0AD00"
               strokeWidth="1"
             />
             <ellipse
-              cx="28"
+              cx="29"
               cy="45"
               rx="17"
               ry="11.5"
@@ -201,66 +201,26 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
               stroke="#E0AD00"
               strokeWidth="1.2"
             />
-            <g transform="rotate(6 40 24)">
-              <circle
-                cx="40"
-                cy="23"
-                r="11.5"
-                fill="#FFD32B"
-                stroke="#E0AD00"
-                strokeWidth="1.2"
-              />
-              <path
-                d="M49.5 23.5 Q58 23 57.5 25.8 Q57 28.5 49.5 27.3 Q48 25.4 49.5 23.5 Z"
-                fill="#FF8A00"
-                stroke="#D96F00"
-                strokeWidth=".8"
-              />
-              <circle cx="42.5" cy="22.5" r="2.6" fill="#fff" stroke="#E0AD00" strokeWidth=".5" />
-              <circle cx="41.8" cy="23.6" r="1.7" fill="#1a1a1a" />
-              <path
-                d="M39.5 17.8 Q42.5 16.6 45.3 17.9"
-                fill="none"
-                stroke="#B8860B"
-                strokeWidth="1.3"
-                strokeLinecap="round"
-              />
+            <g className="duck-wave-wing">
+              <path d="M27 44 C20 45 14 40 12 33 C10 28 10 22 13 20 C15 19 17 23 18 25 C18 21 19 19 21 21 C23 24 22 28 24 31 C29 35 31 40 27 44Z" fill="#FFD32B" stroke="#C99300" strokeWidth="1.5" />
+              <path d="M16 29 Q18 35 24 39" fill="none" stroke="#E6B309" strokeWidth="1.5" strokeLinecap="round" />
             </g>
+            <circle
+              cx="41"
+              cy="25"
+              r="11.5"
+              fill="#FFD32B"
+              stroke="#E0AD00"
+              strokeWidth="1.2"
+            />
             <path
-              d="M20 47 Q26 40 32 37"
-              fill="none"
-              stroke="#F2BE0A"
-              strokeWidth="6"
-              strokeLinecap="round"
-            />
-            <circle cx="30" cy="34.5" r="7.4" fill="#f5f5f6" stroke="#454f63" strokeWidth="2" />
-            <line
-              x1="30"
-              y1="34.5"
-              x2="30"
-              y2="30.2"
-              stroke="#1a1a1a"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-            />
-            <line
-              x1="30"
-              y1="34.5"
-              x2="33.2"
-              y2="35.6"
-              stroke="#1a1a1a"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-            />
-            <line
-              className="duck-sec"
-              x1="30"
-              y1="34.5"
-              x2="30"
-              y2="29.3"
-              stroke="#d92d20"
+              d="M50.5 24.5 Q59 24 58.5 26.8 Q58 29.5 50.5 28.3 Q49 26.4 50.5 24.5 Z"
+              fill="#FF8A00"
+              stroke="#D96F00"
               strokeWidth=".8"
             />
+            <circle cx="44.5" cy="22" r="2" fill="#1a1a1a" />
+            <circle cx="45.2" cy="21.2" r="0.65" fill="#fff" />
           </g>
         </>
       )}

@@ -10,6 +10,8 @@ import {
   resizeSplit,
 } from "./gridLayout";
 import { addPane, loadGrid, reconcileGrid, saveGrid } from "./gridStorage";
+import { poseFor } from "./Duck";
+import { SessionLocationDuck } from "./SessionLocationDuck";
 import { SessionPin } from "./SessionPin";
 import { Terminal } from "./Terminal";
 import { SessionView } from "./types";
@@ -167,9 +169,9 @@ export function GridView({
               setDrop(null);
             }}
           >
-            <span className={`rd-state st-${s.state}`}>
+            {focus ? <SessionLocationDuck session={s} pose={poseFor(s.state, !!s.attentionSince)} height={32} focusable={false} /> : <span className={`rd-state st-${s.state}`}>
               <span className="dot" />
-            </span>
+            </span>}
             <span className="rd-grid-tile-name">{s.label}</span>
             {s.branch && (
               <span className="rd-grid-tile-branch">⎇ {s.branch}</span>

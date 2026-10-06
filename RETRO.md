@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — A waiting mascot must make its request legible
+
+The watch-checking pose was subtle and read as idle. Use the same short waving
+wing wherever the shared Duck component shows needs-you, including a busy
+session with latched attention. A long narrow arm looked unnatural in review;
+keep the approved feathered shape and shoulder pivot at 24px. Reduced motion
+must retain the raised silhouette, and clearing attention must restore the
+underlying activity pose. Reuse the established attention contract; animation
+must not introduce its own polling or change session state.
+
 ## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
 
 Shell browser checks passed but the runner failed probing the departed process
