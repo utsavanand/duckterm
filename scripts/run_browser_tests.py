@@ -15,6 +15,32 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def signal_group(pgid: int, signum: int) -> bool:
+    """Signal our group; independently verify absence after an EPERM probe."""
+    try:
+        os.killpg(pgid, signum)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError as denied:
+        # A departed group may report EPERM on macOS. Never suppress denial
+        # for a live group or an unsuccessful process listing.
+        try:
+            listing = subprocess.run(
+                ["ps", "-axo", "pgid="],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=2,
+            )
+            groups = {int(value) for value in listing.stdout.split()}
+        except (OSError, ValueError, subprocess.SubprocessError):
+            raise denied from None
+        if not groups or pgid in groups:
+            raise
+        return False
+
+
 def main() -> int:
     def interrupted(signum: int, _frame: object) -> None:
         raise SystemExit(128 + signum)
@@ -74,25 +100,21 @@ def main() -> int:
             signal.signal(signal.SIGINT, signal.SIG_IGN)
             # The process group belongs to this invocation, including its HTTP
             # server if Playwright failed before normal teardown could run.
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGTERM)
+            signal_group(proc.pid, signal.SIGTERM)
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(proc.pid, signal.SIGKILL)
+                signal_group(proc.pid, signal.SIGKILL)
                 proc.wait()
             # Playwright can exit before its server. Reap surviving members of
             # this invocation's group, including children ignoring SIGTERM.
             deadline = time.monotonic() + 1
             while time.monotonic() < deadline:
-                try:
-                    os.killpg(proc.pid, 0)
-                except ProcessLookupError:
+                if not signal_group(proc.pid, 0):
                     break
                 time.sleep(0.02)
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(proc.pid, signal.SIGKILL)
+            else:
+                signal_group(proc.pid, signal.SIGKILL)
             with contextlib.suppress(FileNotFoundError):
                 subprocess.run(["tmux", "-L", namespace, "kill-server"], capture_output=True)
 

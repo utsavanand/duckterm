@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
+
+Shell browser checks passed but the runner failed probing the departed process
+group with EPERM. Do not blanket-ignore permission errors: independently list
+process groups and accept absence only after a successful, nonempty listing.
+Keep denial for a live group or failed inspection visible, and avoid sending a
+final signal after confirming absence. Preserve the browser runner exit status.
+
 ## 2026-10-05 — Wait for card readiness before testing a pointer action
 The archive Undo browser flake was a missed second Archive click, not a missing
 Undo response. Undo remounts the session card; its asynchronous restart reason
