@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — New npm advisories blocked every PR's web job
+CI's `npm audit --audit-level=high` began failing on unrelated PRs when
+source-map-js (high, build-time denial of service) and DOMPurify (low, XSS in
+IN_PLACE mode, which DuckTerm doesn't use) got advisories. `npm audit fix` would
+also have moved mermaid 12.0 to 12.1, pulling chevrotain 11 to 13; update only
+the flagged packages (`npm update <pkg>`) and diff the lockfile's resolved
+versions before committing. KaTeX's low advisory needs a breaking mermaid
+change and stays open until mermaid ships a fix.
+
 ## 2026-10-05 — The gate's temp log name broke on macOS
 `mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's
 that aren't at the end. macOS's BSD mktemp replaces trailing X's only, so it
