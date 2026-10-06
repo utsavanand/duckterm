@@ -1061,6 +1061,22 @@ class HistoryStore:
                 "UPDATE sessions SET attention_since = NULL WHERE session_key = ?", (key,)
             )
             return
+        if event.get("event_type") == events.NEEDS_OWNER:
+            # The session asked for the owner: raise its hand (not agent
+            # activity). Clearing lowers it unless it is waiting anyway.
+            if event.get("cleared"):
+                self._conn.execute(
+                    "UPDATE sessions SET attention_since = NULL "
+                    "WHERE session_key = ? AND state != 'waiting'",
+                    (key,),
+                )
+            else:
+                self._conn.execute(
+                    "UPDATE sessions SET attention_since = COALESCE(attention_since, ?) "
+                    "WHERE session_key = ?",
+                    (int(event["_ts"]), key),
+                )
+            return
         row = self._conn.execute(
             "SELECT state, started_at FROM sessions WHERE session_key = ?", (key,)
         ).fetchone()

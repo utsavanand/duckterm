@@ -78,6 +78,13 @@ def add_parser(sub: Any) -> None:
     publish = actions.add_parser("publish", help="update your purpose and current activity")
     publish.add_argument("--purpose")
     publish.add_argument("--activity")
+    flag = publish.add_mutually_exclusive_group()
+    flag.add_argument(
+        "--needs-owner",
+        metavar="WHAT",
+        help="say you need the owner: Oracle's Needs you lists it and your duck waves",
+    )
+    flag.add_argument("--clear", action="store_true", help="you no longer need the owner")
 
 
 def _save_artifact(result: dict[str, Any], destination: Path | None) -> dict[str, Any]:
@@ -177,9 +184,11 @@ def main(args: argparse.Namespace) -> int:
             method, path = "PATCH", "/self"
             body = {
                 field: getattr(args, field)
-                for field in ("purpose", "activity")
+                for field in ("purpose", "activity", "needs_owner")
                 if getattr(args, field) is not None
             }
+            if args.clear:
+                body["needs_owner"] = None
         else:
             path = "/questions/" + urllib.parse.quote(args.request_id, safe="")
             if action != "get":

@@ -92,6 +92,17 @@ export function applyEvent(
     if (prev) next.set(key, { ...prev, attentionSince: undefined });
     return next;
   }
+  if (e.event_type === "NeedsOwner") {
+    // The session said it needs the owner (publish --needs-owner): raise its
+    // hand; cleared lowers it unless it is waiting anyway. Not agent activity.
+    if (prev) {
+      const attentionSince = e.cleared
+        ? prev.state === "waiting" ? prev.attentionSince : undefined
+        : prev.attentionSince ?? e._ts;
+      next.set(key, { ...prev, attentionSince });
+    }
+    return next;
+  }
   const state = deriveState(e, prev?.state);
   const stillWaiting = state === "waiting" && prev?.state === "waiting";
   next.set(key, {

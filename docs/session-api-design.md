@@ -197,6 +197,11 @@ answers. Both survive server restarts. Status is queued, accepted, answered,
 declined, cancelled, or expired. Cancellation stops the exchange; it does not
 interrupt the recipient's other work. Closed requests cannot accept late answers.
 
+`PATCH /self` also takes `needs_owner`, a string of 1 to 500 characters, or
+null to clear it. It isn't stored on the card: the server raises the
+session's hand and opens a Needs-you note with that text, the same as an open
+question (`duckterm session publish --needs-owner` / `--clear`).
+
 Discovery and inbox pages contain at most 50 records. Questions allow 16 KiB and
 answers 256 KiB; oversized content is rejected instead of truncated. Requests
 persist by default; optional deadlines allow up to seven days. A sender can create ten questions
