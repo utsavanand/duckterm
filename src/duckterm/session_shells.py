@@ -99,7 +99,9 @@ def _spawn(key: str, cwd: str) -> None:
     if not os.path.isabs(shell) or not os.access(shell, os.X_OK):
         raise APIError(503, "The owner's configured shell is unavailable")
     # The helper runs inside tmux, after tmux's global environment inheritance.
-    command = shlex.join([sys.executable, "-m", "duckterm.helpers.owner_shell", shell])
+    # Linux /bin/sh may retain a launcher parent without explicit exec.
+    # Keep pane_pid attached to the interactive shell for foreground checks.
+    command = "exec " + shlex.join([sys.executable, "-m", "duckterm.helpers.owner_shell", shell])
     # Publish ownership in the creation command queue, before discovery can
     # mistake this sibling for an agent. A suffix alone is not ownership.
     tmux.spawn(

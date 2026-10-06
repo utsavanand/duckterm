@@ -339,3 +339,27 @@ def test_watched_heartbeat_and_pending_archive_refuse_open(rig):
         await rig.archives.close()
 
     asyncio.run(scenario())
+
+
+def test_real_shell_pane_pid_is_interactive_shell(rig, tmp_path):
+    """Linux dash keeps a launcher parent unless the tmux command uses exec."""
+    if not tmux.has_tmux():
+        pytest.skip("tmux unavailable")
+
+    async def scenario():
+        status = await rig.shells.open("shell-test")
+        pid_file = tmp_path / "interactive-shell-pid"
+        terminal = await rig.shells.terminal("shell-test")
+        await terminal.write(f"printf '%s' \"$$\" > {shlex.quote(str(pid_file))}\n".encode())
+
+        async def pid_written():
+            return pid_file.exists() and bool(pid_file.read_text())
+
+        await wait_for(pid_written)
+        ok, pane_pid = tmux._tmux("display-message", "-p", "-t", status["pane_id"], "#{pane_pid}")
+        assert ok
+        assert int(pane_pid.strip()) == int(pid_file.read_text())
+        await wait_for(lambda: idle(rig.shells))
+        assert (await rig.shells.close("shell-test"))["closed"]
+
+    asyncio.run(scenario())

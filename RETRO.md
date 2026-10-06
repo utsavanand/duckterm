@@ -44,6 +44,14 @@ log were also seeing another session's results. Keep the X's at the end of a
 mktemp template, and test temp-file names on macOS, not only in CI's Linux.
 Found by oracle-main-dev.
 
+## 2026-10-06 — Linux shell launchers can outlive their command
+A tmux shell command without explicit exec left a /bin/sh launcher on Linux.
+The pane PID belonged to that parent while the interactive owner shell held a
+different foreground process group, so idle shells always required confirmation.
+Exec the helper into the pane process; the helper already execs the owner shell.
+Verify pane PID equals interactive $$ with real tmux on Linux and macOS, and
+retain busy-job checks rather than increasing idle-wait timeouts.
+
 ## 2026-10-05 — Derived names cannot grant cleanup ownership
 
 A legacy agent may already occupy a proposed sibling-shell name. Explicit shell
