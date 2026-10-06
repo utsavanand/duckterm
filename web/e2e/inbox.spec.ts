@@ -31,7 +31,7 @@ test("Inbox beside History shows real session questions and replies", async ({ p
   await page.goto(base());
   await expandFolder(page, "inbox-test/frontend");
   await page.locator(".rd-row-name", { hasText: "Client implementation" }).click();
-  const tabs = page.locator(".rd-view-toggle button");
+  const tabs = page.locator(".rd-view-toggle > button");
   await expect(page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" })).toBeVisible();
   await expect(tabs).toHaveText(["Terminal", "Messages", "History", "Inbox (1)", "Artifacts"]);
   await page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" }).click();

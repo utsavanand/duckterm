@@ -122,6 +122,8 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
     pause-after bounds tmux's backlog for a stalled viewer; %pause terminates
     this feed rather than silently leaving the browser attached to paused output.
     """
+    pane_target = tmux.exact_target(target, pane=True)
+    target = tmux.exact_target(target)
     proc = await asyncio.create_subprocess_exec(
         *tmux.client_command(
             "-C",
@@ -134,7 +136,7 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             "display-message",
             "-p",
             "-t",
-            target,
+            pane_target,
             "#{pane_id} #{cursor_x} #{cursor_y} #{pane_height} #{history_size}",
             ";",
             "capture-pane",
@@ -142,7 +144,7 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             "-e",
             "-C",
             "-t",
-            target,
+            pane_target,
             "-S",
             "-2000",
             ";",
@@ -151,7 +153,7 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             "-P",
             "-C",
             "-t",
-            target,
+            pane_target,
         ),
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,

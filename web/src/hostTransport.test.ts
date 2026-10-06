@@ -72,3 +72,21 @@ it("preserves remote ZIP bytes instead of decoding binary as text", async () => 
   expect(response.headers.get("Content-Type")).toBe("application/zip");
   expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
 });
+
+it("routes shell lifecycle and its terminal to the remote owner without local credentials", async () => {
+  const { terminalSocket } = await import("./hostTransport");
+  const local = vi.fn(); vi.stubGlobal("fetch", local);
+  const request = vi.fn().mockResolvedValue({ status: 200, body: '{"open":true}', opened: true });
+  window.webkit = { messageHandlers: { launchRequest: { postMessage: request } } };
+  const key = sessionRef("remote-shell", "same");
+  await routedFetch(`/sessions/${encodeURIComponent(key)}/shell`, { method: "POST", headers: { "X-Duckterm-Token": "local-secret" }, body: "{}" });
+  expect(request).toHaveBeenCalledWith({ target: "remote-shell", operation: "session-request", params: { path: "/sessions/same/shell", method: "POST", body: "{}" } });
+  const socket = terminalSocket(key, "shell");
+  expect(request).toHaveBeenCalledWith(expect.objectContaining({ target: "remote-shell", operation: "terminal-open", params: expect.objectContaining({ key: "same", kind: "shell" }) }));
+  expect(local).not.toHaveBeenCalled();
+  expect(JSON.stringify(request.mock.calls)).not.toContain("local-secret");
+  socket.close();
+  delete window.webkit;
+  await expect(routedFetch(`/sessions/${encodeURIComponent(key)}/shell`)).rejects.toThrow();
+  expect(local).not.toHaveBeenCalled();
+});

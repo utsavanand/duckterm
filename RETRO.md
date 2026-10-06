@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-10-05 — Two terminals in one session need separate paste targets
+
+A companion shell shares an agent's session identity but not its input stream.
+Keying an asynchronous image paste only by session allowed a focus change to
+send the completed path to the sibling terminal. Give each shell viewer a
+separate paste target, retain the owning session for uploads, and reject a late
+result after focus changes. Verify collapse/reopen against a real shell: close
+the viewer without ending its process, and bind destructive confirmation to the
+backend's observed process token rather than a cached busy label.
+
 ## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
 
 Shell browser checks passed but the runner failed probing the departed process
@@ -33,6 +43,34 @@ GATE_LOG then failed immediately with "File exists". Readers of the old shared
 log were also seeing another session's results. Keep the X's at the end of a
 mktemp template, and test temp-file names on macOS, not only in CI's Linux.
 Found by oracle-main-dev.
+
+## 2026-10-06 — Linux shell launchers can outlive their command
+A tmux shell command without explicit exec left a /bin/sh launcher on Linux.
+The pane PID belonged to that parent while the interactive owner shell held a
+different foreground process group, so idle shells always required confirmation.
+Exec the helper into the pane process; the helper already execs the owner shell.
+Verify pane PID equals interactive $$ with real tmux on Linux and macOS, and
+retain busy-job checks rather than increasing idle-wait timeouts.
+
+## 2026-10-05 — Derived names cannot grant cleanup ownership
+
+A legacy agent may already occupy a proposed sibling-shell name. Explicit shell
+open/close must refuse that collision, but parent archive/delete must skip the
+unowned target and finish ordinary cleanup. Test two real agents with colliding
+names: deleting one must leave the other alive and discoverable.
+
+- A new sibling-shell suffix is not ownership: older agent keys can already use it. Filter discovery by the explicit owner-shell tag, publish that tag with creation, and keep shell eligibility checks out of ordinary agent archive/delete. Regress legacy-key discovery and both cleanup paths with private real tmux sessions.
+
+## 2026-10-05 — A surviving sibling can impersonate a departed tmux target
+
+The session-shell integration test hung stopping an agent: tmux resolved its
+missing name by prefix to the still-running `-sh` sibling. Use exact session and
+pane targets for agent liveness, input, output, resize and kill operations. tmux
+has different syntax for an exact session (`=name`), a pane in that session
+(`=name:`), and session option lookup (literal name). Test with real tmux, including
+agent exit while the sibling survives. On macOS, tcgetpgrp on another controlling
+tty fails with ENOTTY; query process groups through ps and require confirmation
+when inspection fails.
 
 ## 2026-10-04 — A remote Codex couldn't save October's conversations
 On duckterm-dev, Codex (running as the service user) got Permission denied
