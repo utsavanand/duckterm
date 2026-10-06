@@ -6,6 +6,7 @@ import json
 import urllib.parse
 from typing import Any
 
+from duckterm.collaboration import owner as owner_commands
 from duckterm.collaboration.service import Service
 from duckterm.collaboration.store import PROTOCOL, folder_path, reference, split_reference
 from duckterm.core.session_api import APIError
@@ -48,16 +49,27 @@ async def owner(service: Service, method: str, route: str, body: bytes) -> dict[
             "background_available": False,
             "capabilities": ["discovery", "direct_messages"],
             "schema": {"file": "collaboration.sqlite", "version": 1},
+            "pending_changes": owner_commands.pending(service),
+            "folders": service.cached("folders", []),
         }
         if store and store.setting("coordinator"):
             result["computers"] = [
                 dict(r) for r in store.conn.execute("SELECT id,name,seen_at,revoked FROM computers")
             ]
-            result["folders"] = [
-                {"id": row[0], "path": store.path(row[0])}
-                for row in store.conn.execute("SELECT id FROM folders")
-            ]
+            result["folders"] = store.folder_snapshot()
         return result
+    if route == "/collaboration/owner-queue" and method == "GET":
+        return {"commands": owner_commands.pending(service)}
+    if route == "/collaboration/owner-queue" and method == "POST":
+        return owner_commands.queue(service, req)
+    if route == "/collaboration/owner-result" and method == "POST":
+        return owner_commands.acknowledge(service, req)
+    if route == "/collaboration/owner-attempt" and method == "POST":
+        return owner_commands.attempt(service, req)
+    if route == "/collaboration/owner-cancel" and method == "POST":
+        return owner_commands.cancel(service, req)
+    if route == "/collaboration/sync" and method == "POST":
+        return {"synced": await service.sync(), "error": service.error}
     if route == "/collaboration/preview" and method == "GET":
         return {"protocol": PROTOCOL, "sessions": service.cards(), "enabled": service.connected}
     if route == "/collaboration/initialize" and method == "POST":
@@ -70,8 +82,10 @@ async def owner(service: Service, method: str, route: str, body: bytes) -> dict[
         return await service.pair(req["invitation"], req["connection"])
     if not store or not store.setting("coordinator"):
         raise APIError(409, "Choose a coordinator first")
+    if route == "/collaboration/owner-apply" and method == "POST":
+        return owner_commands.apply(store, req)
     if route == "/collaboration/folder" and method == "POST":
-        with store.conn:
+        with store.transaction():
             folder = canonical_folder(service, req.get("path", ""))
         return {"folder_id": folder}
     if route == "/collaboration/folder-change" and method == "POST":
@@ -86,21 +100,21 @@ async def owner(service: Service, method: str, route: str, body: bytes) -> dict[
         if folder is None:
             raise APIError(404, "Folder has not synchronized with the workspace")
         parent_path, _, name = new.rpartition("/")
-        with store.conn:
+        with store.transaction():
             parent = canonical_folder(service, parent_path)
             store.change_folder(folder, parent, name)
         return {"moved": old, "to": new, "folder_id": folder}
     if route == "/collaboration/invite" and method == "POST":
         return store.invite(req.get("name", ""), req.get("bindings", []))
     if route == "/collaboration/bind" and method == "POST":
-        with store.conn:
+        with store.transaction():
             folder = canonical_folder(service, req.get("canonical_path", ""))
             if folder is None:
                 raise APIError(400, "Choose a sidebar folder")
             store.bind(str(req.get("computer_id", "")), req.get("local_path", ""), folder)
         return {"folder_id": folder}
     if route == "/collaboration/place" and method == "POST":
-        with store.conn:
+        with store.transaction():
             folder = canonical_folder(service, req.get("folder", ""))
             store.place(reference(req.get("computer_id"), req.get("session_key")), folder)
         return {"folder_id": folder}
@@ -127,6 +141,9 @@ async def session(
     key = api.authenticate(headers)
     parsed = urllib.parse.urlsplit(path)
     route = parsed.path.removeprefix("/api/v1/session")
+    member = api._member(key)
+    if owner_commands.excluded(service, member["folder"]) and route != "/self":
+        raise APIError(503, "This folder has a pending owner change; retry after synchronization")
     query = urllib.parse.parse_qs(parsed.query)
     req = body_json(body)
     if route == "/peers" and method == "GET":

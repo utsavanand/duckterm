@@ -112,6 +112,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if operation == "collaboration-status" {
                 return try await self.collaborationSetup.call(base: base, api: self.launchAPI, route: "/collaboration/status", method: "GET")
             }
+            if operation == "collaboration-folder" {
+                guard UserDefaults.standard.string(forKey: "collaborationCoordinatorTarget") != nil else { return ["handled": false] }
+                _ = await self.ensureLocalServer()
+                let result = try await self.collaborationSetup.call(base: self.server.url, api: self.launchAPI,
+                    route: "/collaboration/owner-queue", body: params)
+                await self.flushCollaboration()
+                let status = try await self.collaborationSetup.call(base: self.server.url, api: self.launchAPI,
+                    route: "/collaboration/status", method: "GET")
+                return ["handled": true, "id": result["id"] ?? "", "pending": !(status["pending_changes"] as? [[String: Any]] ?? []).isEmpty]
+            }
+            if operation == "collaboration-retry" {
+                await self.flushCollaboration()
+                return try await self.collaborationSetup.call(base: base, api: self.launchAPI, route: "/collaboration/sync")
+            }
+            if operation == "collaboration-cancel" {
+                return try await self.collaborationSetup.call(base: base, api: self.launchAPI, route: "/collaboration/owner-cancel", body: params)
+            }
             if operation == "collaboration-move" {
                 guard (UserDefaults.standard.stringArray(forKey: "collaborationConnectedTargets") ?? []).contains(target) else { return ["handled": false] }
                 let status = try await self.collaborationSetup.call(base: base, api: self.launchAPI, route: "/collaboration/status", method: "GET")
@@ -131,6 +148,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let hubBase = self.launchConnections[hubTarget]!.url
                 if let root = folder.split(separator: "/").first {
                     _ = try await self.collaborationSetup.call(base: hubBase, api: self.launchAPI, route: "/collaboration/bind", body: ["computer_id": computer, "local_path": String(root), "canonical_path": String(root)])
+                    _ = try await self.collaborationSetup.call(base: base, api: self.launchAPI, route: "/collaboration/sync")
                 }
                 let body = String(decoding: try JSONSerialization.data(withJSONObject: ["group": folder]), as: UTF8.self)
                 let response = try await self.sessionTransport.perform(base: base, api: self.launchAPI,
@@ -205,9 +223,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let p = SessionPoller(base: base ?? server.url)
         p.onUpdate = { [weak self] _, waiting in
             self?.notifyWaiting(waiting, host: host)
+            if host == "local" { Task { @MainActor [weak self] in await self?.flushCollaboration() } }
         }
         p.start()
         pollers[host] = p
+    }
+
+    private func flushCollaboration() async {
+        guard let target = UserDefaults.standard.string(forKey: "collaborationCoordinatorTarget"),
+              let host = hosts.first(where: { $0.target == target }) else { return }
+        if launchConnections[target] == nil {
+            guard let connection = try? RemoteConnection(host: host) else { return }
+            launchConnections[target] = connection
+            connection.start()
+        }
+        guard let base = launchConnections[target]?.url else { return }
+        // A failed request leaves the durable local action available for retry.
+        try? await collaborationSetup.flush(local: server.url, coordinator: base, api: launchAPI)
     }
 
     @objc func showSettings(_ sender: Any?) {

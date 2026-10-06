@@ -1,5 +1,18 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — A lost receipt is not a rejected workspace change
+
+The native owner broker originally caught a local receipt failure in the same
+block as coordinator rejection. That would label an already-committed change
+safe to cancel. Separate the remote commit from the local receipt, retry the
+same operation ID, and only permit cancellation before transmission or after
+confirmed rejection. Recheck the durable queue before sending so a cancellation
+between queue-read and send cannot still mutate the workspace. Commit folder
+mutations and their idempotency receipt in one SQLite transaction; bind queued
+destination parents by stable identity so an offline action cannot recreate a
+parent that moved elsewhere. Native failure-injection and coordinator rollback
+tests cover these boundaries.
+
 ## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
 
 Shell browser checks passed but the runner failed probing the departed process

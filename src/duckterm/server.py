@@ -4006,6 +4006,50 @@ class Server:
     async def _list_folders(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"folders": self.history.folders()})
 
+    async def _shared_folder_change(
+        self, writer: asyncio.StreamWriter, action: str, old: str, new: str
+    ) -> bool:
+        if not self.collaboration.connected:
+            return False
+        from duckterm.collaboration import owner as owner_commands
+
+        store = self.collaboration.store
+        assert store
+        if not store.setting("coordinator"):
+            await _write_json(
+                writer, 409, {"error": "Use the connected Mac app to change shared folders"}
+            )
+            return True
+        try:
+            queued = owner_commands.queue(
+                self.collaboration, {"action": action, "old": old, "new": new}
+            )
+            try:
+                owner_commands.apply(store, queued["operation"])
+            except APIError as exc:
+                owner_commands.acknowledge(
+                    self.collaboration, {"id": queued["id"], "error": str(exc)}
+                )
+                raise
+            owner_commands.acknowledge(self.collaboration, {"id": queued["id"], "committed": True})
+            for _ in range(2):
+                await self.collaboration.sync()
+            pending = bool(owner_commands.pending(self.collaboration))
+            await _write_json(
+                writer,
+                202 if pending else 200,
+                {
+                    "pending": pending,
+                    "created": new,
+                    "moved": old,
+                    "to": new,
+                    "deleted": old,
+                },
+            )
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+        return True
+
     async def _create_folder(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         try:
             name = str(json.loads(body or b"{}").get("name", "")).strip()
@@ -4015,11 +4059,15 @@ class Server:
         if not name:
             await _write_json(writer, 400, {"error": "name required"})
             return
+        if await self._shared_folder_change(writer, "create", "", name):
+            return
         self.history.create_folder(name, now=int(time.time() * 1000))
         await _write_json(writer, 200, {"created": name})
 
     async def _delete_folder(self, writer: asyncio.StreamWriter, name: str) -> None:
         folder = urllib.parse.unquote(name)
+        if await self._shared_folder_change(writer, "delete", folder, ""):
+            return
         self.history.layouts.change(
             folder,
             None,
@@ -4052,6 +4100,8 @@ class Server:
         new = f"{parent}/{leaf}" if parent else leaf
         if new == old:
             await _write_json(writer, 200, {"moved": old, "to": new})
+            return
+        if await self._shared_folder_change(writer, "move", old, new):
             return
         try:
             moved = self.history.layouts.change(
@@ -5112,6 +5162,7 @@ class Server:
                 continue
             try:
                 mail = self.history.session_api.open_mail(key)
+                mail.extend(self.collaboration.open_mail(key))
             except APIError:
                 continue
             if not mail:

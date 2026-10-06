@@ -13,6 +13,8 @@ import secrets
 import sqlite3
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, cast
 
@@ -111,6 +113,7 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(path)
         self.conn.row_factory = sqlite3.Row
+        self._transaction_depth = 0
         self.conn.execute("PRAGMA busy_timeout=5000")
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
         if version not in (0, PROTOCOL):
@@ -121,6 +124,19 @@ class Store:
         path.chmod(0o600)
         self.conn.execute("PRAGMA journal_mode=WAL")
 
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Nested helpers commit only with the outer owner/exchange operation."""
+        if self._transaction_depth:
+            yield
+            return
+        self._transaction_depth += 1
+        try:
+            with self.conn:
+                yield
+        finally:
+            self._transaction_depth -= 1
+
     def close(self) -> None:
         self.conn.close()
 
@@ -129,7 +145,7 @@ class Store:
         return json.loads(row[0]) if row else default
 
     def configure(self, **values: Any) -> None:
-        with self.conn:
+        with self.transaction():
             for key, value in values.items():
                 self.conn.execute(
                     "INSERT INTO settings VALUES (?,?) ON CONFLICT(key) "
@@ -150,7 +166,7 @@ class Store:
         computer_id = identifier(computer_id) if computer_id else uuid.uuid4().hex
         token, incarnation = secrets.token_urlsafe(32), uuid.uuid4().hex
         try:
-            with self.conn:
+            with self.transaction():
                 self.conn.execute(
                     "INSERT INTO computers(id,name,token_hash,incarnation) VALUES (?,?,?,?)",
                     (
@@ -192,7 +208,7 @@ class Store:
             self.ancestry(binding["folder_id"])
         token = secrets.token_urlsafe(32)
         expires = now() + 300_000
-        with self.conn:
+        with self.transaction():
             self.conn.execute(
                 "INSERT INTO invitations VALUES (?,?,?,NULL,NULL,?)",
                 (hashlib.sha256(token.encode()).hexdigest(), name, expires, json.dumps(bindings)),
@@ -219,7 +235,7 @@ class Store:
             raise APIError(409, "Incompatible workspace or protocol")
         digest = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         ticket_hash = hashlib.sha256(ticket.encode()).hexdigest()
-        with self.conn:
+        with self.transaction():
             row = self.conn.execute(
                 "SELECT * FROM invitations WHERE token_hash=?", (ticket_hash,)
             ).fetchone()
@@ -294,7 +310,7 @@ class Store:
         return result
 
     def path(self, folder: str | None) -> str:
-        if not folder:
+        if not folder or self.setting("deleted-folder:" + folder):
             return ""
         return "/".join(
             str(self.conn.execute("SELECT name FROM folders WHERE id=?", (key,)).fetchone()[0])
@@ -312,7 +328,7 @@ class Store:
         self.ancestry(folder)
         if self.setting("folder-plan:" + computer):
             raise APIError(409, "Finish synchronizing this computer's folder changes first")
-        with self.conn:
+        with self.transaction():
             self.conn.execute(
                 "INSERT INTO bindings VALUES (?,?,?) ON CONFLICT(computer,local_path) "
                 "DO UPDATE SET folder=excluded.folder",
@@ -323,7 +339,7 @@ class Store:
         split_reference(ref)
         if folder:
             self.ancestry(folder)
-        with self.conn:
+        with self.transaction():
             peer = self.conn.execute("SELECT * FROM peers WHERE ref=?", (ref,)).fetchone()
             if peer is None:
                 raise APIError(404, "Discover the session before moving it")
@@ -344,7 +360,7 @@ class Store:
             self.sweep()
 
     def revoke(self, computer: str) -> None:
-        with self.conn:
+        with self.transaction():
             self.conn.execute(
                 "UPDATE computers SET revoked=1,lease_until=0 WHERE id=?", (computer,)
             )
@@ -358,6 +374,8 @@ class Store:
         if "/" in name or name in (".", "..") or "\x00" in name:
             raise APIError(400, "Invalid folder name")
         self.ancestry(folder)
+        if not self.path(folder) or (parent and not self.path(parent)):
+            raise APIError(409, "Folder was deleted; refresh the workspace")
         if parent and folder in self.ancestry(parent):
             raise APIError(400, "Cannot move a folder into itself")
         if self.conn.execute(
@@ -365,7 +383,7 @@ class Store:
             (parent, name, folder),
         ).fetchone():
             raise APIError(409, "Destination folder already exists")
-        with self.conn:
+        with self.transaction():
             for peer in self.conn.execute(
                 "SELECT * FROM peers WHERE folder IS NOT NULL"
             ).fetchall():
@@ -388,6 +406,40 @@ class Store:
                 )
                 self.conn.execute("UPDATE peers SET root=? WHERE ref=?", (root, row["ref"]))
             self.sweep()
+
+    def delete_folder(self, folder: str) -> None:
+        affected = [
+            row[0]
+            for row in self.conn.execute("SELECT id FROM folders")
+            if folder in self.ancestry(row[0])
+        ]
+        for key in affected:
+            self.conn.execute("UPDATE folders SET name=? WHERE id=?", ("deleted-" + key, key))
+            self.conn.execute(
+                "INSERT OR REPLACE INTO settings VALUES (?, 'true')", ("deleted-folder:" + key,)
+            )
+            self.conn.execute("UPDATE peers SET folder=NULL,root=NULL WHERE folder=?", (key,))
+            self.conn.execute("UPDATE placements SET folder=NULL WHERE folder=?", (key,))
+        self.sweep()
+
+    def folder_snapshot(self) -> list[dict[str, str]]:
+        return [
+            {"id": row[0], "path": path}
+            for row in self.conn.execute("SELECT id FROM folders")
+            if (path := self.path(row[0]))
+        ]
+
+    def workspace_bindings(self, computer: str) -> None:
+        """Owner-created workspace roots inherit to every paired computer."""
+        for row in self.conn.execute("SELECT id FROM folders WHERE parent IS NULL"):
+            path = self.path(row[0])
+            bound = self.conn.execute(
+                "SELECT 1 FROM bindings WHERE computer=? AND folder=?", (computer, row[0])
+            ).fetchone()
+            if path and not bound:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO bindings VALUES (?,?,?)", (computer, path, row[0])
+                )
 
     def folder_plan(self, computer: str) -> dict[str, Any] | None:
         """Freeze a delivered mapping until acknowledged, even across later edits."""
@@ -430,8 +482,14 @@ class Store:
             path = row["local_path"]
             for update in updates:
                 if within(path, update["local_path"]):
-                    path = renamed(path, update["local_path"], update["path"])
+                    path = (
+                        renamed(path, update["local_path"], update["path"])
+                        if update["path"]
+                        else ""
+                    )
                     break
+            if not path:
+                continue
             if path in bindings and bindings[path] != row["folder"]:
                 raise APIError(409, "Folder bindings conflict; owner recovery required")
             bindings[path] = row["folder"]
@@ -464,6 +522,8 @@ class Store:
             if path != prefix and not path.startswith(prefix + "/"):
                 continue
             folder = binding["folder"]
+            if not self.path(folder):
+                return None
             for child in path[len(prefix) :].strip("/").split("/"):
                 if child:
                     folder = self.add_folder(child, folder)
@@ -492,6 +552,13 @@ class Store:
             clean["local_folder"] = folder_path(card.get("folder", ""))
             clean["local_root"] = folder_path(card.get("root", clean["local_folder"]))
             folder = self.mapped_folder(computer, card)
+            if folder and clean["local_folder"]:
+                # Keep stable paths after the last session leaves a folder.
+                self.conn.execute(
+                    "INSERT INTO bindings VALUES (?,?,?) ON CONFLICT(computer,local_path) "
+                    "DO UPDATE SET folder=excluded.folder",
+                    (computer, clean["local_folder"], folder),
+                )
             root = self.ancestry(folder)[-1] if folder else None
             # Preserve explicit narrower local grants. A coordinator placement
             # cannot silently broaden one of these grants.
@@ -733,7 +800,7 @@ class Store:
         cursor = request.get("cursor", 0)
         if type(cursor) is not int or cursor < 0:
             raise APIError(400, "Invalid collaboration cursor")
-        with self.conn:
+        with self.transaction():
             self.conn.execute(
                 "UPDATE computers SET writer=?,lease_until=?,seen_at=? WHERE id=?",
                 (writer, now() + LEASE_MS, now(), computer["id"]),
@@ -743,6 +810,7 @@ class Store:
             results = {op["id"]: self.operation(computer["id"], op) for op in policy_ops}
             if any(not result["ok"] for result in results.values()):
                 raise APIError(409, "Folder acknowledgment was refused; owner recovery required")
+            self.workspace_bindings(computer["id"])
             self.advertise(computer["id"], request.get("cards", []))
             self.sweep()
             policy = hashlib.sha256(
@@ -809,6 +877,7 @@ class Store:
                 "results": results,
                 "cards": cards,
                 "folder_plan": folder_plan,
+                "folders": self.folder_snapshot(),
                 "questions": questions,
                 "next_cursor": cursor_out,
                 "synced_at": now(),

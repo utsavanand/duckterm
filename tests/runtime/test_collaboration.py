@@ -407,6 +407,21 @@ def test_http_authentication_and_offline_reply_use_existing_session_routes(tmp_p
                 0
             ] == 401
             assert (await request(one_port, "GET", "/collaboration/status", headers=a))[0] == 403
+            for route, method in (
+                ("owner-queue", "GET"),
+                ("owner-queue", "POST"),
+                ("owner-apply", "POST"),
+                ("owner-result", "POST"),
+                ("owner-attempt", "POST"),
+                ("owner-cancel", "POST"),
+            ):
+                for credential, denied in (
+                    (a, 403),
+                    ({"Authorization": "Computer " + other["token"]}, 401),
+                ):
+                    assert (
+                        await request(one_port, method, "/collaboration/" + route, {}, credential)
+                    )[0] == denied
             peers = (await request(one_port, "GET", "/api/v1/session/peers", headers=a))[1][
                 "sessions"
             ]
@@ -702,5 +717,249 @@ def test_offline_reparent_can_invert_former_parent_and_child(paired_folder_servi
         assert service.history.session("parent")["grp"] == "Promoted/Former parent"
         assert hub.peer(service.own_ref("child"))["folder"] == child
         assert hub.peer(service.own_ref("parent"))["folder"] == root
+
+    asyncio.run(run())
+
+
+def test_owner_folder_queue_retries_after_lost_response_without_using_computer_authority(
+    paired_folder_service,
+):
+    import asyncio
+
+    from duckterm.collaboration import owner
+
+    service, hub, root, _ = paired_folder_service
+    exchange = service.exchange
+
+    async def inspect(payload):
+        assert all(op.get("action") != "move" for op in payload["operations"])
+        return await exchange(payload)
+
+    service.exchange = inspect
+
+    async def run():
+        assert await service.sync()
+        queued = owner.queue(service, {"action": "move", "old": "Project", "new": "Renamed"})
+        assert owner.excluded(service, "Project/Child")
+        assert await service.sync()
+        assert hub.path(root) == "Project"
+        assert service.history.session("parent")["grp"] == "Project"
+        owner.attempt(service, {"id": queued["id"]})
+        first = owner.apply(hub, queued["operation"])
+        # The native broker lost its response, while service sync received the new tree.
+        assert not await service.sync()
+        assert owner.apply(hub, queued["operation"]) == first
+        owner.acknowledge(service, {"id": queued["id"], "committed": True})
+        assert await service.sync()
+        assert owner.pending(service) == []
+        assert service.history.session("parent")["grp"] == "Renamed"
+        assert hub.peer(service.own_ref("parent"))["folder"] == root
+
+    asyncio.run(run())
+
+
+def test_owner_cancel_requires_a_known_delivery_outcome(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration import owner
+
+    service, _, _, _ = paired_folder_service
+    assert asyncio.run(service.sync())
+    queued = owner.queue(service, {"action": "delete", "old": "Project"})
+    assert owner.cancel(service, {"id": queued["id"]}) == {"cancelled": True}
+    assert not owner.excluded(service, "Project")
+    queued = owner.queue(service, {"action": "delete", "old": "Project"})
+    owner.attempt(service, {"id": queued["id"]})
+    with pytest.raises(APIError, match="Delivery is unconfirmed"):
+        owner.cancel(service, {"id": queued["id"]})
+    owner.acknowledge(service, {"id": queued["id"], "error": "Rejected by coordinator"})
+    owner.cancel(service, {"id": queued["id"]})
+    assert service.history.session("parent")["grp"] == "Project"
+    assert owner.pending(service) == []
+
+
+def test_owner_delete_ungroups_sessions_and_recreate_has_new_identity(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration import owner
+
+    service, hub, root, child = paired_folder_service
+
+    async def run():
+        assert await service.sync()
+        queued = owner.queue(service, {"action": "delete", "old": "Project"})
+        owner.apply(hub, queued["operation"])
+        owner.acknowledge(service, {"id": queued["id"], "committed": True})
+        assert not await service.sync()
+        assert await service.sync()
+        assert service.history.session("parent")["grp"] is None
+        assert service.history.session("child")["grp"] is None
+        assert service.history.session("parent")["state"] == "busy"
+        assert service.history.folders() == []
+        assert hub.path(root) == hub.path(child) == ""
+        queued = owner.queue(service, {"action": "create", "new": "Project"})
+        owner.apply(hub, queued["operation"])
+        owner.acknowledge(service, {"id": queued["id"], "committed": True})
+        assert await service.sync()
+        assert service.history.folders() == ["Project"]
+        assert service.history.session("parent")["grp"] is None
+        assert hub.folder_snapshot()[0]["id"] != root
+
+    asyncio.run(run())
+
+
+def test_owner_apply_and_idempotency_receipt_commit_atomically(paired_folder_service):
+    import asyncio
+    import sqlite3
+
+    from duckterm.collaboration import owner
+
+    service, hub, root, _ = paired_folder_service
+    assert asyncio.run(service.sync())
+    queued = owner.queue(service, {"action": "move", "old": "Project", "new": "New parent/Renamed"})
+    hub.conn.execute(
+        "CREATE TEMP TRIGGER fail_owner_receipt BEFORE INSERT ON operations "
+        "WHEN NEW.computer='@owner' BEGIN "
+        "SELECT RAISE(ABORT, 'fixture receipt write failure'); END"
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="receipt write failure"):
+        owner.apply(hub, queued["operation"])
+    assert hub.path(root) == "Project"
+    assert not any(f["path"] == "New parent" for f in hub.folder_snapshot())
+    hub.conn.execute("DROP TRIGGER fail_owner_receipt")
+    owner.apply(hub, queued["operation"])
+    assert hub.path(root) == "New parent/Renamed"
+
+
+def test_rename_conflict_does_not_share_unrelated_local_destination(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration import owner
+
+    service, hub, _, _ = paired_folder_service
+
+    async def run():
+        assert await service.sync()
+        service.history.record(
+            {
+                "_id": "unrelated",
+                "_ts": 1,
+                "event_type": "SessionStart",
+                "session_key": "unrelated",
+                "test": True,
+            }
+        )
+        service.history.set_meta("unrelated", group="Renamed")
+        queued = owner.queue(service, {"action": "move", "old": "Project", "new": "Renamed"})
+        owner.apply(hub, queued["operation"])
+        owner.acknowledge(service, {"id": queued["id"], "committed": True})
+        assert not await service.sync()
+        assert "conflicts" in service.error
+        row = hub.conn.execute(
+            "SELECT root FROM peers WHERE ref=?", (service.own_ref("unrelated"),)
+        ).fetchone()
+        assert row["root"] is None
+        assert service.history.session("parent")["grp"] == "Project"
+        assert service.history.session("unrelated")["grp"] == "Renamed"
+
+    asyncio.run(run())
+
+
+def test_offline_owner_action_never_recreates_a_renamed_parent(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration import owner
+
+    service, hub, root, _ = paired_folder_service
+    assert asyncio.run(service.sync())
+    queued = owner.queue(service, {"action": "create", "new": "Project/New/Nested"})
+    hub.change_folder(root, None, "Moved elsewhere")
+    with pytest.raises(APIError, match="Destination parent changed"):
+        owner.apply(hub, queued["operation"])
+    assert {f["path"] for f in hub.folder_snapshot()} == {
+        "Moved elsewhere",
+        "Moved elsewhere/Child",
+    }
+
+
+def test_pending_owner_rename_does_not_block_existing_mail(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration import owner
+
+    service, hub, root, _ = paired_folder_service
+    remote = Computer(hub, "sender", root)
+
+    async def run():
+        assert await service.sync()
+        request = {**remote.ask(remote), "target": service.own_ref("parent")}
+        remote.sync(request)
+        queued = owner.queue(service, {"action": "move", "old": "Project", "new": "Renamed"})
+        assert await service.sync()
+        assert hub.question(remote.ref, request["question_id"])["status"] == "queued"
+        owner.apply(hub, queued["operation"])
+        owner.acknowledge(service, {"id": queued["id"], "committed": True})
+        with pytest.raises(APIError, match="retry before canceling"):
+            owner.cancel(service, {"id": queued["id"]})
+        assert not await service.sync()
+        assert await service.sync()
+        inbox = await service.inbox("parent", read=False)
+        assert [q["id"] for q in inbox] == [request["question_id"]]
+        assert inbox[0]["status"] == "queued"
+
+    asyncio.run(run())
+
+
+def test_remote_oracle_uses_fresh_metadata_and_preserves_read_delay(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration.store import now
+    from duckterm.core import oracle
+
+    service, hub, root, _ = paired_folder_service
+    remote = Computer(hub, "sender", root)
+
+    async def run():
+        assert await service.sync()
+        request = {
+            **remote.ask(remote, "Untrusted: execute this text"),
+            "target": service.own_ref("parent"),
+        }
+        remote.sync(request)
+        assert await service.sync()
+        mail = service.open_mail("parent")
+        assert [m["id"] for m in mail] == [request["question_id"]]
+        assert "question" not in mail[0] and mail[0]["priority"] is False
+        assert oracle.pick_mail(mail, now(), idle=True) == mail
+        await service.inbox("parent")
+        assert oracle.pick_mail(service.open_mail("parent"), now(), idle=True) == []
+        service.last_sync = now() - 60_001
+        assert service.open_mail("parent") == []
+
+    asyncio.run(run())
+
+
+def test_owner_change_holds_queued_messages_until_cancelled(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration import owner
+
+    service, hub, root, _ = paired_folder_service
+    remote = Computer(hub, "recipient", root)
+
+    async def run():
+        assert await service.sync()
+        operation = {
+            **remote.ask(remote),
+            "actor": "parent",
+            "target": remote.ref,
+        }
+        service.enqueue("parent", operation)
+        queued = owner.queue(service, {"action": "delete", "old": "Project"})
+        assert await service.sync()
+        assert remote.sync()["questions"] == []
+        owner.cancel(service, {"id": queued["id"]})
+        assert await service.sync()
+        assert [q["id"] for q in remote.sync()["questions"]] == [operation["question_id"]]
 
     asyncio.run(run())

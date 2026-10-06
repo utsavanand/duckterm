@@ -16,6 +16,13 @@ final class CollaborationSetup {
     }
     private var plan: Plan?
     private let http = BoundedSessionHTTP()
+    private var flushing = false
+
+    struct HTTPFailure: LocalizedError {
+        let status: Int
+        let message: String
+        var errorDescription: String? { message }
+    }
 
     func call(base: URL, api: LaunchDestination, route: String, method: String = "POST", body: [String: Any] = [:]) async throws -> [String: Any] {
         guard base.scheme == "http", base.host == "127.0.0.1",
@@ -34,9 +41,46 @@ final class CollaborationSetup {
             throw LaunchDestination.Failure.message("Invalid collaboration response")
         }
         guard (200..<300).contains(response.statusCode) else {
-            throw LaunchDestination.Failure.message(result["error"] as? String ?? "Update DuckTerm on both computers before connecting")
+            throw HTTPFailure(status: response.statusCode, message: result["error"] as? String ?? "Update DuckTerm on both computers before connecting")
         }
         return result
+    }
+
+    /// The service stores actions, but only this owner-authenticated broker
+    /// can forward workspace mutations. Computer exchange never carries them.
+    func flush(local: URL, coordinator: URL, api: LaunchDestination) async throws {
+        try await flush { onCoordinator, route, method, body in
+            try await self.call(base: onCoordinator ? coordinator : local, api: api,
+                                route: route, method: method, body: body)
+        }
+    }
+
+    func flush(send: (Bool, String, String, [String: Any]) async throws -> [String: Any]) async throws {
+        guard !flushing else { return }
+        flushing = true
+        defer { flushing = false }
+        let queued = try await send(false, "/collaboration/owner-queue", "GET", [:])
+        let commands = queued["commands"] as? [[String: Any]] ?? []
+        guard !commands.isEmpty else { return }
+        for entry in commands {
+            guard let operation = entry["operation"] as? [String: Any], let id = operation["id"] as? String else { continue }
+            if let result = entry["result"] as? [String: Any], result["state"] != nil { continue }
+            let attempt = try await send(false, "/collaboration/owner-attempt", "POST", ["id": id])
+            guard attempt["attempted"] as? Bool == true else { continue }
+            do {
+                _ = try await send(true, "/collaboration/owner-apply", "POST", operation)
+            } catch let error as HTTPFailure where (400..<500).contains(error.status) {
+                _ = try await send(false, "/collaboration/owner-result", "POST", ["id": id, "error": error.message])
+                continue
+            }
+            // A failed local receipt is not a coordinator rejection. Retrying
+            // the same operation recovers its committed result without reapplying.
+            _ = try await send(false, "/collaboration/owner-result", "POST", ["id": id, "committed": true])
+        }
+        // One exchange receives a plan; the next acknowledges its durable apply.
+        for _ in 0..<2 {
+            _ = try await send(false, "/collaboration/sync", "POST", [:])
+        }
     }
 
     func preview(coordinator: RemoteHost, source: String, sourceName: String, connection: String,

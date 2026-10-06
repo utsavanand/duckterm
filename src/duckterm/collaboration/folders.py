@@ -43,15 +43,20 @@ def paths(state: dict[str, Any]) -> set[str]:
 
 
 def after_move(state: dict[str, Any], old: str, new: str) -> dict[str, Any]:
-    sessions = {k: renamed(v, old, new) for k, v in state["sessions"].items()}
+    sessions = {
+        k: (renamed(v, old, new) if new else ("" if within(v, old) else v))
+        for k, v in state["sessions"].items()
+    }
     grants = {}
     for key, (root, mode) in state["grants"].items():
-        root = renamed(root, old, new)
+        root = renamed(root, old, new) if new else root
         if mode == "automatic" or not root or not within(sessions[key], root):
             root, mode = sessions[key].split("/")[0], "automatic"
         grants[key] = [root, mode]
     return {
-        "folders": sorted(renamed(p, old, new) for p in state["folders"]),
+        "folders": sorted(
+            renamed(p, old, new) for p in state["folders"] if new or not within(p, old)
+        ),
         "sessions": sessions,
         "grants": grants,
     }
@@ -64,13 +69,19 @@ def plan_moves(state: dict[str, Any], updates: list[dict[str, Any]]) -> list[dic
     A/child→B/renamed becomes A→B, B/child→B/renamed, not a skipped child move.
     Destinations occupied by unrelated local folders require owner recovery.
     """
-    pending = sorted([[u["local_path"], u["path"]] for u in updates], key=lambda p: p[1].count("/"))
+    pending = sorted(
+        [[u["local_path"], u["path"]] for u in updates],
+        key=lambda p: (not bool(p[1]), p[1].count("/")),
+    )
     steps = []
     journal_bytes = 0
     while pending:
         existing = paths(state)
         for index, (old, new) in enumerate(pending):
             if old == new:
+                pending.pop(index)
+                break
+            if not old:
                 pending.pop(index)
                 break
             if new in existing or within(new, old):
@@ -85,7 +96,8 @@ def plan_moves(state: dict[str, Any], updates: list[dict[str, Any]]) -> list[dic
                 steps.append(step)
                 state = updated
             for remaining in pending:
-                remaining[0] = renamed(remaining[0], old, new)
+                if within(remaining[0], old):
+                    remaining[0] = renamed(remaining[0], old, new) if new else ""
             break
         else:
             raise APIError(

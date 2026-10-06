@@ -189,6 +189,17 @@ The Mac setup broker keeps pairing credentials out of JavaScript. Settings → C
 
 Verified boundaries: coordinator persistence and idempotency; remote-to-remote exchange while the simulated Mac is offline; queued Mac delivery without duplicate questions; reply/cancel conflict; duplicate active writer refusal; revoked grants and narrower local roots; one-use pairing tickets; real loopback HTTP between two independent HistoryStore/server instances; offline reply synchronization through the existing session API; stable root identity after a coordinator rename; native compilation; and browser sharing-preview flow. Fixtures use synthetic sessions and no provider inference.
 
+The current backend checkpoint adds a durable owner folder-action queue. Only
+the native owner-authenticated broker forwards these changes; paired-computer
+messaging credentials cannot mutate workspace policy. Unknown delivery outcomes
+remain retryable, confirmed rejections can be canceled, and rename/delete plans
+preserve stable identities. Deleted folders ungroup sessions without stopping
+their processes. Queued parent references are checked against their original
+identity and path. Empty canonical folders synchronize to connected computers.
+These APIs are not yet wired to every sidebar control. The recovery UI preview
+is awaiting owner review before implementation. Remote inbox metadata now feeds
+the existing Oracle idle/draft checks, without sending peer text as owner input.
+
 Remaining implementation/acceptance work before release:
 
 - Wire every ordinary folder create/rename/reparent/delete entry point to canonical policy, including nested and concurrent changes. The coordinator rename protocol now freezes each delivered plan, preflights nested prefix moves, and journals exact membership for recovery after a process exit. Lost acknowledgments and later coordinator renames preserve folder IDs; local collisions fail before any move. Normal sidebar entry points are not yet fully routed through this protocol. Resolve conflicting saved sidebar arrangements explicitly.

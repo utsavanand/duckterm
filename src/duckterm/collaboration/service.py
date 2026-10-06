@@ -11,6 +11,7 @@ import sqlite3
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from duckterm.collaboration import owner as owner_commands
 from duckterm.collaboration.folders import plan_moves, snapshot
 from duckterm.collaboration.store import PROTOCOL, Store, now, reference, split_reference
 from duckterm.collaboration.transport import Transport
@@ -188,13 +189,21 @@ class Service:
                 return False
             identity = self.store.setting("identity")
             pending = self.store.conn.execute(
-                "SELECT operation FROM local_outbox WHERE result IS NULL "
-                "ORDER BY CASE WHEN actor='' THEN 0 ELSE 1 END,sequence LIMIT 100"
-            ).fetchall()
+                "SELECT actor,operation FROM local_outbox WHERE result IS NULL AND actor!='@owner' "
+                "ORDER BY CASE WHEN actor='' THEN 0 ELSE 1 END,sequence"
+            )
+            paused = {
+                c["session_key"] for c in self.cards() if owner_commands.excluded(self, c["folder"])
+            }
             operations: list[dict[str, Any]] = []
             for row in pending:
-                candidate = json.loads(row[0])
-                if len(json.dumps([*operations, candidate]).encode()) > 750_000:
+                if row["actor"] in paused:
+                    continue
+                candidate = json.loads(row["operation"])
+                if (
+                    len(operations) == 100
+                    or len(json.dumps([*operations, candidate]).encode()) > 750_000
+                ):
                     break
                 operations.append(candidate)
             payload = {
@@ -263,6 +272,12 @@ class Service:
                     return False
                 with self.store.conn:
                     self.cache("folder_plan", None)
+                    self.cache("folders", response.get("folders", []))
+                    existing_folders = set(self.history.folders())
+                    for folder in response.get("folders", []):
+                        if folder["path"] not in existing_folders:
+                            self.history.create_folder(folder["path"])
+                    owner_commands.settle(self)
                     self.cache("cards", response["cards"])
                     self.cache("questions", list(questions.values()))
                     self.cache(
@@ -337,9 +352,13 @@ class Service:
     def move_folder(self, old: str, new: str) -> None:
         self.history.layouts.change(
             old,
-            new,
+            new or None,
             lambda: self.history.folder_chats.change(
-                old, new, lambda: self.history.move_folder(old, new)
+                old,
+                new or None,
+                lambda: (
+                    self.history.move_folder(old, new) if new else self.history.delete_folder(old)
+                ),
             ),
         )
 
@@ -372,6 +391,8 @@ class Service:
 
     def scoped_cards(self, key: str, scope: str = "self_folder") -> list[dict[str, Any]]:
         member = self.history.session_api._member(key)
+        if owner_commands.excluded(self, member["folder"]):
+            return []
         if not member["root"] or self.cached("local_grants", {}).get(key) != [
             member["folder"],
             member["root"],
@@ -549,6 +570,7 @@ class Service:
             )
             with self.store.conn:
                 self.cache("read:" + q["id"], key)
+                self.cache("read-at:" + q["id"], now())
 
     async def combined_inbox(
         self,
@@ -708,18 +730,30 @@ class Service:
         }
         return await self.submit(key, op)
 
-    def pending_counts(self) -> dict[str, int]:
+    def open_mail(self, key: str) -> list[dict[str, Any]]:
+        """Metadata for the existing guarded Oracle; never inject peer text."""
         if not self.connected or self.error or now() - self.last_sync > 60_000:
-            return {}
+            return []
+        ref = self.own_ref(key)
+        return [
+            {
+                "id": q["id"],
+                "status": q["status"],
+                "kind": "question",
+                "priority": False,
+                "created_at": q["created_at"],
+                "last_read_at": max(q["read_at"], self.cached("read-at:" + q["id"], 0)),
+            }
+            for q in self.visible_questions(key)
+            if q["recipient"] == ref and q["status"] in ("queued", "accepted")
+        ]
+
+    def pending_counts(self) -> dict[str, int]:
         result = {}
         for card in self.cards():
             key = card["session_key"]
-            ref = self.own_ref(key)
             try:
-                count = sum(
-                    q["recipient"] == ref and q["status"] in ("queued", "accepted")
-                    for q in self.visible_questions(key)
-                )
+                count = len(self.open_mail(key))
             except APIError:
                 continue
             if count:
