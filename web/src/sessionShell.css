@@ -1,0 +1,32 @@
+.rd-view-toggle { flex-wrap: wrap; }
+#rd-shell-toggle { margin-left: auto; display: flex; white-space: nowrap; }
+.rd-shell-root { flex: 0 0 auto; flex-direction: column; min-height: 0; }
+.rd-shell-divider { height: 9px; border-block: 1px solid var(--border); background: var(--bg); cursor: row-resize; display: flex; align-items: center; justify-content: center; touch-action: none; }
+.rd-shell-divider::after { content: ''; width: 36px; height: 3px; border-radius: 4px; background: var(--muted); }
+.rd-shell-divider:hover { background: color-mix(in srgb, var(--brand-green) 16%, var(--bg)); }
+.rd-shell-divider:focus-visible { outline: 2px solid var(--brand-green); outline-offset: -2px; }
+.rd-session-shell { display: flex; flex-direction: column; min-height: 130px; }
+.rd-session-shell > header, .rd-shell-collapsed { display: flex; align-items: center; gap: 10px; padding: 7px 13px; background: var(--card); border-bottom: 1px solid var(--border); font-size: 12px; flex: 0 0 auto; }
+.rd-session-shell strong, .rd-shell-collapsed strong { font-size: 12px; font-weight: 550; white-space: nowrap; }
+.rd-shell-path { color: var(--text-soft); font-size: 11px; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-shell-state, .rd-shell-collapsed > span { color: var(--brand-green-strong); font-size: 11px; }
+.rd-shell-actions { display: flex; gap: 3px; margin-left: auto; flex-shrink: 0; }
+.rd-shell-root button, .rd-shell-confirm button { border: 1px solid var(--border-strong); color: var(--text); background: var(--card); border-radius: 6px; padding: 5px 9px; font: inherit; font-size: 12px; cursor: pointer; }
+.rd-shell-root button:hover, .rd-shell-confirm button:hover { background: var(--bg-soft); }
+.rd-shell-root button:disabled, .rd-shell-confirm button:disabled { opacity: .5; cursor: default; }
+.rd-shell-root button:focus-visible, .rd-shell-confirm button:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
+.rd-shell-collapsed { border-top: 1px solid var(--border); border-bottom: 0; }
+.rd-shell-collapsed small { color: var(--text-soft); font-size: 11px; }
+.rd-shell-collapsed > button:first-of-type { margin-left: auto; }
+.rd-shell-unavailable, .rd-shell-loading { padding: 18px 22px; color: var(--text-soft); font-size: 12px; overflow: auto; }
+.rd-shell-unavailable p { max-width: 65ch; }
+.rd-shell-root .unavailable { color: var(--wait); }
+.rd-shell-confirm { width: 440px; max-width: calc(100vw - 32px); max-height: 85vh; overflow: auto; padding: 26px; border: 1px solid var(--border); border-radius: 13px; color: var(--text); background: var(--card); }
+.rd-shell-confirm::backdrop { background: #0008; }
+.rd-shell-confirm h2 { font-size: 20px; margin: 0 0 12px; }
+.rd-shell-confirm p { font-size: 13px; line-height: 1.6; color: var(--text-soft); }
+.rd-shell-process { background: var(--bg); border: 1px solid var(--border); border-radius: 7px; padding: 12px 14px; margin-block: 17px; overflow-wrap: anywhere; }
+.rd-shell-process small { display: block; font-size: 11px; color: var(--text-soft); margin-top: 5px; }
+.rd-shell-confirm footer { display: flex; gap: 9px; justify-content: flex-end; margin-top: 23px; }
+.rd-shell-confirm .rd-shell-danger { color: var(--danger); border-color: var(--danger); }
+@media(max-width:700px) { .rd-shell-state, .rd-shell-collapsed small { display: none; } .rd-shell-path { max-width: 32%; } .rd-shell-actions { gap: 2px; } }

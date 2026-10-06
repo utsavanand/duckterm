@@ -8,18 +8,21 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 // (xterm's native copy event and DOM paste work there).
 let active: XTerm | null = null;
 let activeSession: string | null = null;
+let activeTarget: string | null = null;
 
-export function bindClipboardBridge(term: XTerm, sessionKey: string): void {
+export function bindClipboardBridge(term: XTerm, sessionKey: string, kind: "agent" | "shell" = "agent"): void {
+  const target = kind === "shell" ? `${sessionKey}#shell:${crypto.randomUUID()}` : sessionKey;
   const claim = () => {
     active = term;
     activeSession = sessionKey;
+    activeTarget = target;
   };
   term.textarea?.addEventListener("focus", claim);
   if (document.activeElement === term.textarea) claim();
 }
 
 export function releaseClipboardBridge(term: XTerm): void {
-  if (active === term) { active = null; activeSession = null; }
+  if (active === term) { active = null; activeSession = null; activeTarget = null; }
 }
 
 function editableField(): HTMLElement | null {
@@ -65,7 +68,7 @@ window.__rtPaste = (text: string) => {
 // Native image resolution is only appropriate for a visible, focused terminal.
 window.__rtPasteTarget = () => {
   if (editableField()) return "field";
-  return active?.textarea === document.activeElement && active?.textarea?.getClientRects().length ? activeSession : null;
+  return active?.textarea === document.activeElement && active?.textarea?.getClientRects().length ? activeTarget : null;
 };
 window.__rtPasteImage = (path, sessionKey) => {
   if (window.__rtPasteTarget?.() !== sessionKey) return false;
@@ -81,7 +84,7 @@ export function imagePathText(path: string): string {
 window.__rtPasteImageData = (base64, sessionKey) => {
   if (window.__rtPasteTarget?.() !== sessionKey) return false;
   const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
-  void sessionFetch(sessionKey, "/paste-image", { method: "POST", body: new Blob([bytes], { type: "image/png" }) })
+  void sessionFetch(activeSession!, "/paste-image", { method: "POST", body: new Blob([bytes], { type: "image/png" }) })
     .then(async response => {
       const result = await response.json();
       if (!response.ok || !result.path) throw new Error(result.error ?? "Could not upload image");

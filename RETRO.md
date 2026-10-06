@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-10-05 — Two terminals in one session need separate paste targets
+
+A companion shell shares an agent's session identity but not its input stream.
+Keying an asynchronous image paste only by session allowed a focus change to
+send the completed path to the sibling terminal. Give each shell viewer a
+separate paste target, retain the owning session for uploads, and reject a late
+result after focus changes. Verify collapse/reopen against a real shell: close
+the viewer without ending its process, and bind destructive confirmation to the
+backend's observed process token rather than a cached busy label.
+
 ## 2026-10-05 — The gate's temp log name broke on macOS
 `mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's
 that aren't at the end. macOS's BSD mktemp replaces trailing X's only, so it

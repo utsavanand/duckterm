@@ -146,7 +146,10 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         let bugReport = (method == "GET" && route == "/bugreport/context")
             || (method == "POST" && path == "/bugreport/submit")
             || (method == "GET" && path.range(of: #"^/bugreport/bundles/[a-f0-9]{32}$"#, options: .regularExpression) != nil)
-        guard bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
+        let shellRoute = ["GET", "POST", "DELETE"].contains(method)
+            && components.query == nil
+            && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/shell$"#, options: .regularExpression) != nil
+        guard shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
             throw LaunchDestination.Failure.message("Unsupported session operation")
         }
         var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!
@@ -183,6 +186,14 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         return Self.responsePayload(data: data, response: http, path: request.url!.path)
     }
 
+    static func terminalPath(key: String, kind: Any?) throws -> String {
+        guard key != ".", key != "..", key.range(of: #"^[A-Za-z0-9._-]{1,128}$"#, options: .regularExpression) != nil,
+              kind == nil || (kind as? String).map({ ["agent", "shell"].contains($0) }) == true else {
+            throw LaunchDestination.Failure.message("Invalid terminal target")
+        }
+        return "/sessions/\(key)/" + ((kind as? String) == "shell" ? "shell/terminal" : "terminal")
+    }
+
     func terminal(host: String, base: URL, api: LaunchDestination, operation: String, params: [String: Any]) async throws -> Any {
         guard let id = params["id"] as? String, UUID(uuidString: id) != nil else {
             throw LaunchDestination.Failure.message("Invalid terminal identifier")
@@ -194,6 +205,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
                   key.range(of: #"^[A-Za-z0-9._-]{1,128}$"#, options: .regularExpression) != nil else {
                 throw LaunchDestination.Failure.message("Invalid terminal session")
             }
+            let path = try Self.terminalPath(key: key, kind: params["kind"])
             let openingGeneration = generation
             let token = try await api.token(base: base, attempts: 2)
             guard openingGeneration == generation, sockets[id] == nil, sockets.count < 128 else {
@@ -201,7 +213,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             }
             var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!
             url.scheme = "ws"
-            url.path = "/sessions/\(key)/terminal"
+            url.path = path
             var request = URLRequest(url: url.url!)
             request.setValue(token, forHTTPHeaderField: "X-Duckterm-Token")
             request.setValue(base.absoluteString, forHTTPHeaderField: "Origin")

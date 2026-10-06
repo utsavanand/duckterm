@@ -63,3 +63,20 @@ extension SessionTransportTests {
         XCTAssertEqual(failed["body"] as? String, "{\"error\":\"missing\"}")
     }
 }
+
+extension SessionTransportTests {
+    @MainActor func testShellRoutesStayOnSelectedHostAndRejectOtherOperations() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        for method in ["GET", "POST", "DELETE"] {
+            let request = try SessionTransport.request(base: base, params: ["path": "/sessions/my.session/shell", "method": method])
+            XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:14300/sessions/my.session/shell")
+        }
+        for (path, method) in [("/sessions/x/shell", "PATCH"), ("/sessions/x/shell?force=true", "DELETE"), ("/sessions/x/shell/terminal", "GET"), ("/sessions/../shell", "POST")] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+        }
+        XCTAssertEqual(try SessionTransport.terminalPath(key: "same", kind: "shell"), "/sessions/same/shell/terminal")
+        XCTAssertEqual(try SessionTransport.terminalPath(key: "same", kind: nil), "/sessions/same/terminal")
+        for kind: Any in ["other", "", 42] { XCTAssertThrowsError(try SessionTransport.terminalPath(key: "same", kind: kind)) }
+        for key in ["..", ".", "a/b", "a?token=x"] { XCTAssertThrowsError(try SessionTransport.terminalPath(key: key, kind: "shell")) }
+    }
+}

@@ -33,6 +33,7 @@ import { Messages } from "./Messages";
 import { MessagePinStrip, PinTarget, useMessagePins } from "./MessagePins";
 import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
+import { SessionShell } from "./SessionShell";
 import { useTerminalCache } from "./terminalCache";
 import { PanelToggle, useSidePanels } from "./SidePanels";
 import { SessionView } from "./types";
@@ -423,6 +424,7 @@ function Dashboard() {
               <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")}>
                 Artifacts
               </button>
+              <span id="rd-shell-toggle" />
             </div>
             {selected && (view === "terminal" || view === "messages") && (
               <MessagePinStrip pins={messagePins.pins} error={messagePins.error} onOpen={(pin) => {
@@ -483,6 +485,7 @@ function Dashboard() {
                 This agent isn’t running in a terminal Duckterm owns.
               </div>
             )}
+            {selected && <SessionShell key={selected.key} session={selected} active={selectedFolder === null && view === "terminal" && !towerOpen} theme={themeFor(selected)} />}
             {view === "terminal" && !selected && (
               <div className="rd-panel-empty">
                 Select an agent to see its terminal.
