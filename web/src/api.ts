@@ -46,8 +46,9 @@ export interface RestartStatus {
 }
 
 export interface RestartOptions {
+  memory_switch?: { version: number; available: boolean; reason?: string };
   supports_interrupt_switch?: boolean;
-  current: { harness: string; model: string };
+  current: { harness: string; model: string; conversation_generation?: string };
   resume_restart: { available: boolean; reason?: string };
   harnesses: { name: string; available: boolean; reason?: string; models: ModelChoice[]; model_selection: { available: boolean; reason?: string }; model_reason?: string; context: "native" | "seeded_new_conversation" }[];
   draft_clear?: boolean; after_turn?: boolean; reason?: string;

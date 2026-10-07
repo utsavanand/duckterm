@@ -15,7 +15,7 @@ export interface SwitchProof {
   selection: SwitchSelection;
 }
 export type PreparationResult =
-  | { phase: "preparing" }
+  | { phase: "preparing" | "canceled" }
   | { phase: "ready"; proof: SwitchProof }
   | { phase: "incomplete_source" | "stale_source" | "failed"; reason: string };
 export type OperationResult = {
@@ -25,6 +25,9 @@ export type OperationResult = {
   sequence: number;
   processState: "source_running" | "source_stopped" | "target_running" | "unknown";
   reason?: string;
+  code?: string;
+  targetGeneration?: string;
+  configuredModel?: string | null;
 };
 export interface SwitchSubmission {
   scope: PreparationScope;
@@ -113,7 +116,7 @@ export function memorySwitchReducer(state: MemorySwitchState, action: MemorySwit
       const { result } = action;
       if (result.phase === "ready" && !sameSelection(result.proof.selection, state.scope.selection)) return state;
       // A failed/stale attempt cannot become ready without an explicit refresh.
-      if (["failed", "stale_source", "incomplete_source"].includes(state.phase)) return state;
+      if (["failed", "stale_source", "incomplete_source", "canceled"].includes(state.phase)) return state;
       return { ...state, phase: result.phase, preparationSequence: action.sequence,
         proof: result.phase === "ready" ? { ...result.proof, selection: copySelection(result.proof.selection) } : undefined,
         reason: "reason" in result ? result.reason : undefined,
