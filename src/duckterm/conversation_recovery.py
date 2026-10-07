@@ -50,10 +50,10 @@ def hook_status(runtime: str, cwd: str) -> dict[str, Any]:
 
 def transcript_present(runtime: str, cwd: str, native_id: str) -> bool:
     if runtime == "copilot":
-        path = Path.home() / ".copilot/session-store.db"
-        if not path.is_file():
+        copilot_path = Path.home() / ".copilot/session-store.db"
+        if not copilot_path.is_file():
             return False
-        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+        with sqlite3.connect(copilot_path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
             return (
                 conn.execute(
                     "SELECT 1 FROM turns WHERE session_id=? LIMIT 1", (native_id,)

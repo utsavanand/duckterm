@@ -109,7 +109,11 @@ def test_attach_is_explicit_durable_and_does_not_resume(recovery):
 
     async def run():
         listing = await service.list_candidates("orphan")
-        assert service.server.history.session_id_for("orphan") is None
+        assert service.server.history.native_identity("orphan") == {
+            "native_id": None,
+            "source": "none",
+            "status": "missing",
+        }
         candidate = listing["candidates"][0]
         assert candidate["firstPrompt"] == "First request"
         assert candidate["lastPrompt"] == "Last request"
@@ -170,7 +174,11 @@ def test_stale_or_ambiguous_attach_never_changes_identity(recovery, change):
             body["path"] = str(path)
         with pytest.raises(APIError):
             await service.attach(key, body)
-        assert service.server.history.session_id_for("orphan") is None
+        assert service.server.history.native_identity("orphan") == {
+            "native_id": None,
+            "source": "none",
+            "status": "missing",
+        }
 
     asyncio.run(run())
 
@@ -184,7 +192,11 @@ def test_hook_install_does_not_claim_recovered_identity(recovery):
         after = await service.install("orphan", {})
         assert after["hooks"]["status"] == "configured"
         assert after["status"] == "missing" and not after["canResume"]
-        assert service.server.history.session_id_for("orphan") is None
+        assert service.server.history.native_identity("orphan") == {
+            "native_id": None,
+            "source": "none",
+            "status": "missing",
+        }
 
     asyncio.run(run())
 
@@ -278,7 +290,11 @@ def test_expired_handle_and_changed_state_during_scan_are_rejected(recovery, mon
         monkeypatch.setattr(asyncio, "to_thread", interleave)
         with pytest.raises(APIError):
             await service.list_candidates("orphan")
-        assert service.server.history.session_id_for("orphan") is None
+        assert service.server.history.native_identity("orphan") == {
+            "native_id": None,
+            "source": "none",
+            "status": "missing",
+        }
 
     asyncio.run(run())
 
@@ -341,7 +357,11 @@ def test_detach_only_reverses_adoption_and_keeps_transcript_and_hook_barrier(rec
         before = path.read_bytes()
         detached = await service.detach("orphan", {"revision": attached["revision"]})
         assert detached["status"] == "missing" and detached["canAdopt"]
-        assert service.server.history.session_id_for("orphan") is None
+        assert service.server.history.native_identity("orphan") == {
+            "native_id": None,
+            "source": "none",
+            "status": "missing",
+        }
         assert path.read_bytes() == before
         control = service.server.history.restart_control("orphan")
         assert control["native_detach"]["at"] > 0
@@ -357,7 +377,11 @@ def test_detach_only_reverses_adoption_and_keeps_transcript_and_hook_barrier(rec
                 "test": True,
             }
         )
-        assert service.server.history.session_id_for("orphan") is None
+        assert service.server.history.native_identity("orphan") == {
+            "native_id": None,
+            "source": "none",
+            "status": "missing",
+        }
         control["native_binding"].update(native_id="assigned", source="assigned")
         service.server.history.set_restart_control("orphan", control)
         identity = await service.identity("orphan")
