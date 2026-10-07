@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Viewing an idle session is not changed work
+
+Attended and content-free idle notifications invalidated a prepared handoff even when no work changed. A native acceptance retry hid the same symptom before the owner reproduced it. Treat that failure as a product regression: keep status observations in the audit history but exclude them consistently from progress freshness and memory inputs. Version the event-boundary interpretation so existing checkpoints remain readable. Unknown or content-bearing notifications, real turns, transcript changes, tasks and inbox changes must still invalidate. Test observations during generation, after readiness and at the final stop boundary without retrying.
+
 ## 2026-10-07 — Reconcile new tests after concurrent menu changes
 
 The memory feature and the plain-label menu passed their separate gates, but their merge left the new memory browser workflow looking for the previous menu labels. Align the integration test with the merged accessible labels and exercise the full preparation/switch/cancel/Timeline scenario. Do not assume two independently green branches imply a green merge.

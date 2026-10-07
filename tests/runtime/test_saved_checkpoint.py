@@ -261,3 +261,57 @@ def test_explicit_session_deletion_removes_revision_rows(rig):
     server.history.delete_session("test-save")
     assert server.history._conn.execute("SELECT count(*) FROM digest_items").fetchone()[0] == 0
     assert not server.history.checkpoints("test-save")
+
+
+@pytest.mark.parametrize("work_only", [False, True])
+def test_event_boundary_version_preserves_old_markers_and_detects_real_edits(rig, work_only):
+    from duckterm.persistence.saved_state import event_source, resolve_checkpoint
+
+    server, _, _ = rig
+    for identity, event_type in [("observed", "Attended"), ("real", "UserPromptSubmit")]:
+        payload = {
+            "_id": identity,
+            "_ts": 100,
+            "event_type": event_type,
+            "session_key": "test-save",
+            "test": True,
+        }
+        if identity == "real":
+            payload["prompt"] = "Retain this constraint"
+        server.history.record(payload)
+    cp = asyncio.run(checkpoint(server))
+    raw = dict(cp)
+    raw["record"] = json.loads(
+        server.history._conn.execute(
+            "SELECT record_json FROM checkpoints WHERE id=?", (cp["id"],)
+        ).fetchone()[0]
+    )
+    raw["record"]["events"] = event_source(server.history._conn, "test-save", work_only=work_only)
+    # Exercise the original unfiltered interpretation as well as new work-only markers.
+    raw["record"]["summary_ref"] = None
+    resolved = resolve_checkpoint(server.history._conn, "test-save", raw)
+    assert resolved["coverage"]["state"] == "retained"
+    assert resolved["record"]["event_count"] == (2 if work_only else 3)
+    with server.history._conn:
+        server.history._conn.execute("DELETE FROM events WHERE id='observed'")
+    resolved = resolve_checkpoint(server.history._conn, "test-save", raw)
+    assert resolved["coverage"]["state"] == ("retained" if work_only else "missing")
+    with server.history._conn:
+        server.history._conn.execute(
+            "UPDATE events SET payload_json=json_set(payload_json,'$.prompt',"
+            "'Changed owner constraint') WHERE id='real'"
+        )
+    assert (
+        resolve_checkpoint(server.history._conn, "test-save", raw)["coverage"]["state"] == "missing"
+    )
+
+
+def test_unknown_event_filter_cannot_claim_retained_coverage(rig):
+    from duckterm.persistence.saved_state import resolve_checkpoint
+
+    server, _, _ = rig
+    cp = asyncio.run(checkpoint(server))
+    cp["record"]["events"]["filter"] = "unrecognized-future-version"
+    resolved = resolve_checkpoint(server.history._conn, "test-save", cp)
+    assert resolved["coverage"]["state"] == "missing"
+    assert not resolved["handoff_eligible"]

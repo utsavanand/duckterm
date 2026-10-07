@@ -260,3 +260,100 @@ def test_status_never_returns_brief_or_keeps_proof_after_source_invalidation(pre
     assert stale["state"] == "stale_source"
     assert "proof" not in stale
     assert "Retain glacier originals" not in json.dumps(stale)
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"event_type": "Attended", "reconciled": True},
+        {"event_type": "Notification", "reconciled": True, "notification_type": "idle_prompt"},
+        {
+            "event_type": "Notification",
+            "launched": True,
+            "runtime": "claude-code",
+            "branch": "main",
+        },
+    ],
+)
+def test_observing_idle_session_during_and_after_preparation_keeps_proof(
+    preparation, monkeypatch, event
+):
+    server, calls, _ = preparation
+    from duckterm import memory_provider
+
+    original = memory_provider.generate
+
+    def observe(identity):
+        server.history.record(
+            {
+                "_id": identity,
+                "_ts": 100 + len(calls),
+                "session_key": "agent",
+                "test": True,
+                **event,
+            }
+        )
+
+    async def observed(*args):
+        result = await original(*args)
+        observe("observation-" + str(len(calls)))
+        return result
+
+    monkeypatch.setattr(memory_provider, "generate", observed)
+    view = asyncio.run(prepare(server))
+    assert view["state"] == "ready", view
+    proof = {
+        "version": 1,
+        "preparation_id": view["preparation_id"],
+        "snapshot_id": view["proof"]["snapshot_id"],
+        "source_generation": view["binding"]["source_generation"],
+    }
+    observe("after-ready")
+    assert server.memory_preparation.status("agent", view["preparation_id"])["state"] == "ready"
+    prepared = asyncio.run(
+        server.memory_preparation.prepared("agent", proof, "codex", "selected-model")
+    )
+    assert prepared["seed"]
+    cp = server.history.checkpoints("agent")[0]
+    assert cp["coverage"]["state"] == "retained"
+    assert (
+        server.history._conn.execute(
+            "SELECT count(*) FROM events WHERE id='after-ready'"
+        ).fetchone()[0]
+        == 1
+    )
+    server.history.record(
+        {
+            "_id": "real-owner-message",
+            "_ts": 200,
+            "session_key": "agent",
+            "event_type": "UserPromptSubmit",
+            "prompt": "New owner constraint",
+            "test": True,
+        }
+    )
+    assert (
+        server.memory_preparation.status("agent", view["preparation_id"])["state"] == "stale_source"
+    )
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        {"event_type": "Notification", "message": "New information"},
+        {"event_type": "Notification", "notification_type": "permission_prompt"},
+        {"event_type": "Notification", "new_payload": "Unknown must remain material"},
+        {"event_type": "Attended", "prompt": "Do not lose this constraint"},
+        {"event_type": "Stop"},
+    ],
+)
+def test_content_notifications_and_unknown_payloads_still_invalidate(preparation, event):
+    server, _, _ = preparation
+    view = asyncio.run(prepare(server))
+    assert view["state"] == "ready"
+    server.history.record(
+        {"_id": "new-content", "_ts": 200, "session_key": "agent", "test": True, **event}
+    )
+    stale = server.memory_preparation.status("agent", view["preparation_id"])
+    assert stale["state"] == "stale_source"
+    assert "proof" not in stale
