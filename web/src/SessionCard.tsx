@@ -13,6 +13,7 @@ import { SessionView } from "./types";
 import { useResumeSession } from "./useResumeSession";
 import { useToast } from "./ui";
 import "./sessionCard.css";
+import { checkpointNotice } from "./checkpointState";
 import { RestartControls } from "./RestartControls";
 
 // Session actions share one home in every sidebar density.
@@ -126,7 +127,11 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
     // seconds — show a spinner so the click doesn't feel dead.
     setCapturing(true);
     try {
-      await act("Checkpoint recorded", () => api.checkpoint(s.key, "manual"));
+      const cp = await api.checkpoint(s.key, "manual");
+      window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: s.key }));
+      toast(checkpointNotice(cp));
+    } catch (cause) {
+      toast(`Checkpoint failed: ${(cause as Error).message}`, "err");
     } finally {
       setCapturing(false);
     }

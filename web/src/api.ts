@@ -630,10 +630,12 @@ export const api = {
   clearTerminated: () =>
     post<{ cleared: number }>("/sessions/clear-terminated"),
   checkpoint: (key: string, label: string) =>
-    post<{ id: string; label: string; summary: string }>(
+    post<CheckpointRecord>(
       `/sessions/${key}/checkpoint`,
       { label },
     ),
+  timeline: (key: string, kinds = "", before = "") =>
+    get<TimelinePage>(`/sessions/${key}/timeline?${new URLSearchParams({ kinds, before, limit: "50" })}`, undefined, { authed: true }),
   checkpoints: (key: string) =>
     get<{ checkpoints: CheckpointRecord[] }>(`/sessions/${key}/checkpoints`),
   spotlight: (key: string) =>
@@ -652,7 +654,25 @@ interface RawEvent {
   tool_name?: string;
 }
 
+export interface TimelineEntry {
+  id: string; ts: number; kind: string; one_line: string;
+  detail: { text?: string; summary?: string; summary_state?: string; bucket?: string;
+    answer?: string; removed?: boolean; from_harness?: string; to_harness?: string; model?: string };
+  refs: { source: string; id: string }[];
+}
+export interface TimelinePage {
+  summary: { text: string; updated_at: number | null; total: number; counts: Record<string, number> };
+  entries: TimelineEntry[]; next_cursor: string | null;
+}
 export interface CheckpointRecord {
+  format?: string;
+  saved?: boolean;
+  summary_state?: string;
+  summary_source_at?: number | null;
+  handoff_eligible?: boolean;
+  coverage?: { state?: string; events?: number; expected_events?: number };
+  reason_codes?: string[];
+  export_reason?: string;
   id: string;
   label: string;
   summary: string;
@@ -662,6 +682,7 @@ export interface CheckpointRecord {
     prompts: string[];
     files: { path: string; edits: number }[];
     tools: { tool: string; count: number }[];
+    commands?: string[];
     event_count: number;
     git?: boolean;
     repo?: string;

@@ -12,6 +12,11 @@ Quota exhaustion cannot be solved by asking the exhausted provider for one last 
 
 A current peer grant does not restore access to messages sent in a previous collaboration root. Apply the message's recorded root check as well as current membership when assembling a handoff. Readiness also needs the launch seed's byte budget: multibyte notes can fit a character bound and still exceed the allowed payload. Preserve the complete source, block readiness on either bound, and test moved-peer mail and multibyte owner notes.
 
+## 2026-10-07 — A saved timestamp must not certify a handoff
+
+The context panel treated any checkpoint less than thirty minutes old as resumable and substituted the click time for the saved record. Render the backend’s saved, summary-source and historical handoff fields independently; missing or legacy fields must remain unverified. Keep original history readable and guard asynchronous results across session/filter changes. Timeline pagination must stay within one source snapshot, and polling must pause for hidden views. Preserve every existing right-panel action when implementing an abbreviated mock.
+
+
 ## 2026-10-07 — Every awaited check can invalidate the previous check
 
 A handoff was validated before the final awaited terminal prompt probe. QA changed the transcript or summarizer configuration during that probe and reproduced an unsafe stop. Revalidate source bytes after the first probe, check the draft again, then compare current database facts, provider policy and the captured file's device/inode/size/mtime/ctime without another await before beginning stop. Keep expensive transcript reads off the event loop. Test both sides: source changes during either prompt probe and new owner input during the added source read must preserve the original process.

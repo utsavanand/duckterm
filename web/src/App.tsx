@@ -21,7 +21,7 @@ import { BugReport } from "./BugReport";
 import { DashboardMenus } from "./DashboardMenus";
 import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
-import { HistoryView } from "./HistoryView";
+import { TimelineView } from "./TimelineView";
 import { ArtifactsView } from "./ArtifactsView";
 import { InboxView } from "./InboxView";
 import { MessageFolderModal } from "./MessageFolderModal";
@@ -110,6 +110,7 @@ function Dashboard() {
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
+  const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
   const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts">(
     "terminal",
   );
@@ -411,9 +412,9 @@ function Dashboard() {
               </button>
               <button
                 className={view === "history" ? "active" : ""}
-                onClick={() => setView("history")}
+                onClick={() => { setCheckpointTarget(null); setView("history"); }}
               >
-                History
+                Timeline
               </button>
               <button
                 className={view === "inbox" ? "active" : ""}
@@ -445,7 +446,7 @@ function Dashboard() {
             )}
             {view === "history" && selected && (
               <div className="rd-messages-wrap">
-                <HistoryView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} />
+                <TimelineView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} checkpointTarget={checkpointTarget?.key === selected.key ? checkpointTarget.request : undefined} onArtifacts={() => setView("artifacts")} />
               </div>
             )}
             {view === "inbox" && (
@@ -507,7 +508,7 @@ function Dashboard() {
                   patchSession(selected.key, { group: undefined });
                   refreshFolders();
                 } : undefined} />}
-              {selected && <LiveContextPanel session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
+              {selected && <LiveContextPanel session={selected} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
                   terminal theme
