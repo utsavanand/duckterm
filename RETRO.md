@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Native bug reports need reviewed server readiness
+
+A post-reboot Resume report contained only app startup events, leaving no
+evidence about resumable IDs or transcript availability. The native reporter
+must retrieve the server's redacted resume-readiness item, wait for that snapshot
+before export, and show the same text it writes. Keep unrelated context out;
+never append raw network errors. The existing diagnostics opt-out must exclude
+the entire snapshot. Label local scope explicitly and retain graceful fallback
+for older or unavailable servers.
+
 ## 2026-10-06 — Resume diagnostics must follow durable identity precedence
 
 Saving an observed ID outside retained events is only useful if diagnostics also
@@ -27,6 +37,7 @@ readiness checks to removable diagnostics, exporting only ID presence and file
 existence. Keep SQLite on its owner thread and filesystem work off the loop.
 Do not export conversation IDs, transcript contents, credentials or arbitrary
 paths, and do not mistake hook configuration for successful event delivery.
+
 
 ## 2026-10-05 — Two terminals in one session need separate paste targets
 
