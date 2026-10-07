@@ -12,6 +12,6 @@ it("appends merged notes to an open draft and guards the save against later repl
   fireEvent.change(screen.getByLabelText("Session notes"), { target: { value: "My edited draft" } });
   view.rerender(<SessionCard session={{ ...session, notes: "Original\n\nMerged notes" }} now={2} notesOpen />);
   expect(screen.getByLabelText("Session notes")).toHaveValue("My edited draft\n\nMerged notes");
-  fireEvent.click(screen.getByRole("button", { name: "Save", exact: true }));
+  fireEvent.click(screen.getByRole("button", { name: "Save" }));
   await waitFor(() => expect(api.saveNotes).toHaveBeenCalledWith("one", "My edited draft\n\nMerged notes", "Original\n\nMerged notes"));
 });
