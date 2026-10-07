@@ -1,5 +1,10 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Switch coverage must cross the changed lifecycle boundary
+
+The interruption checks mocked launch, while the real terminal switch still supplied a Stop hook. Added an explicit no-Stop case to the isolated tmux test, retained default quota/no-Stop guards, and checked both-direction task/inbox/artifact and membership preservation after reopening SQLite. Separate checkpoint failure, archive and transfer races assert that the source is never stopped. Compare durable work fields, not intentionally rotating per-process credentials. Focused checks passed; synthetic terminals and test records are cleaned up. These checks do not establish installed-provider, native WebKit or SSH behavior.
+
+
 ## 2026-10-06 — Immediate switching needs explicit intent and honest progress
 
 A working or quota-exhausted harness may never reach a Stop hook. Expose the reviewed stop-and-switch choice when the backend supports it, keep draft and source-identity checks, and send interrupt intent only after confirmation for a different harness. Clear the choice when its target changes or a request fails. Pending text must say it is preparing to switch, not waiting for a turn that may never end.
