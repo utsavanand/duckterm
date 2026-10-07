@@ -35,6 +35,7 @@ export interface RestartStatus {
   model?: string;
   requested_model?: string;
   requested_harness?: string;
+  interrupt?: boolean;
   source_harness?: string;
   context?: "native" | "seeded_new_conversation";
   configured_model?: string;
@@ -45,6 +46,7 @@ export interface RestartStatus {
 }
 
 export interface RestartOptions {
+  supports_interrupt_switch?: boolean;
   current: { harness: string; model: string };
   resume_restart: { available: boolean; reason?: string };
   harnesses: { name: string; available: boolean; reason?: string; models: ModelChoice[]; model_selection: { available: boolean; reason?: string }; model_reason?: string; context: "native" | "seeded_new_conversation" }[];
@@ -594,7 +596,7 @@ export const api = {
   models: (key: string) => get<{ models: ModelChoice[] }>(`/sessions/${key}/models`),
   restartStatus: (key: string) => get<RestartStatus>(`/sessions/${key}/restart`),
   restartOptions: (key: string) => get<RestartOptions>(`/sessions/${key}/restart-options`),
-  restart: (key: string, model: string, harness?: string) => post<RestartStatus>(`/sessions/${key}/restart`, { model, ...(harness ? { harness } : {}) }),
+  restart: (key: string, model: string, harness?: string, interrupt = false) => post<RestartStatus>(`/sessions/${key}/restart`, { model, ...(harness ? { harness } : {}), ...(interrupt ? { interrupt: true } : {}) }),
   cancelRestart: async (key: string): Promise<RestartStatus> => {
     const response = await fetch(`/sessions/${key}/restart`, { method: "DELETE", headers: authHeaders() });
     const data = await response.json();

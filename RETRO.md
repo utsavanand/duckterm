@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Immediate switching needs explicit intent and honest progress
+
+A working or quota-exhausted harness may never reach a Stop hook. Expose the reviewed stop-and-switch choice when the backend supports it, keep draft and source-identity checks, and send interrupt intent only after confirmation for a different harness. Clear the choice when its target changes or a request fails. Pending text must say it is preparing to switch, not waiting for a turn that may never end.
+
 ## 2026-10-06 — Keep regression checks isolated from rebuilds
 
 A harness-picker rewrite removed the existing availability explanation used by other session workflows. Retain that explanation while separating it from switch eligibility. Also never run a browser rebuild beside another browser run in the same worktree: Vite briefly removes dist, so the active server can serve its unbuilt-dashboard fallback. Verify the corrected committed tree in its own checkout.

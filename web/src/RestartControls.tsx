@@ -18,6 +18,7 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
   const [open, setOpen] = useState(false);
   const [harness, setHarness] = useState(session.runtime || "generic");
   const [model, setModel] = useState("");
+  const [interrupt, setInterrupt] = useState(false);
   const [options, setOptions] = useState<RestartOptions | null>(null);
   const [optionsError, setOptionsError] = useState("");
   const [loadingOptions, setLoadingOptions] = useState(false);
@@ -80,12 +81,14 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
   function show(button: HTMLButtonElement, picked?: string) {
     opener.current = button;
     setHarness(session.runtime || "generic"); setModel(picked ?? currentModel);
-    setMenuAnchor(null); setError(""); setOptions(null); setOpen(true);
+    setMenuAnchor(null); setError(""); setInterrupt(false); setOptions(null); setOpen(true);
     void loadOptions({ model: picked }); void refresh();
   }
   // A missing native conversation must not block discovering other harnesses.
   const draftClear = options?.draft_clear && (status?.can_restart ? status.draft_clear : true);
   const afterTurn = status?.can_restart ? status.after_turn : options?.after_turn;
+  const canInterrupt = switching && !!afterTurn && !!options?.supports_interrupt_switch;
+  const stopNow = canInterrupt && interrupt;
   const pathReason = options?.reason || selected?.reason || (!switching && options?.resume_restart.reason);
   const allowed = !!selected?.available && (switching || !!options?.resume_restart.available)
     && !!draftClear && !pending && !statusError && !optionsError && !loadingOptions && !acting;
@@ -93,10 +96,10 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
     if (!allowed || actingRef.current) return;
     actingRef.current = true; setActing(true); ++statusRequest.current;
     try {
-      const next = await api.restart(session.key, model, harness);
+      const next = stopNow ? await api.restart(session.key, model, harness, true) : await api.restart(session.key, model, harness);
       if (alive.current) { setStatus(next); setError(""); setOpen(false); opener.current?.focus(); }
     } catch (e) {
-      if (alive.current) { setError((e as Error).message); void loadOptions(); void refresh(); }
+      if (alive.current) { setError((e as Error).message); setInterrupt(false); void loadOptions(); void refresh(); }
     } finally { actingRef.current = false; if (alive.current) setActing(false); }
   }
   async function cancel() {
@@ -120,7 +123,7 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
     {reason && showActions && !pending && <p className="rd-restart-message">{reason}</p>}
     {error && !open && <p className="rd-restart-message" role="alert">{error}</p>}
     {pending && <div className="rd-restart-message rd-restart-notice" role="status">
-      {status?.status === "queued" ? "Restart pending — after this turn." : "Restarting…"}
+      {status?.status === "queued" ? status.interrupt ? "Preparing to stop and switch now." : "Restart pending — after this turn." : status?.interrupt ? "Stopping and switching…" : "Restarting…"}
       {status?.requested_harness && <span> Harness: {harnessName(status.requested_harness)}.</span>}
       {status?.requested_model && <span> Model: {status.requested_model}</span>}
       {status?.context === "seeded_new_conversation" && <p>A new conversation will start with handoff context.</p>}
@@ -134,7 +137,7 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
       <div ref={dialog} tabIndex={-1} className="rd-restart-dialog" role="dialog" aria-modal="true" aria-labelledby="restart-title" onClick={e => e.stopPropagation()} onKeyDown={e => {
         if (e.key === "Escape") { e.stopPropagation(); close(); }
         if (e.key !== "Tab") return;
-        const elements = [...e.currentTarget.querySelectorAll<HTMLElement>("select:not(:disabled),button:not(:disabled)")];
+        const elements = [...e.currentTarget.querySelectorAll<HTMLElement>("select:not(:disabled),input:not(:disabled),button:not(:disabled)")];
         const first = elements[0], last = elements[elements.length - 1];
         if (e.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { e.preventDefault(); last?.focus(); }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
@@ -143,7 +146,7 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
         <p className="rd-restart-subtitle">{session.label} · This Mac</p>
         <div className="rd-restart-pickers">
           <label>Harness<select value={harness} disabled={acting || loadingOptions || !options} onChange={e => {
-            const next = e.target.value; setHarness(next); setModel(next === currentHarness ? options?.current.model || "" : ""); setError("");
+            const next = e.target.value; setHarness(next); setInterrupt(false); setModel(next === currentHarness ? options?.current.model || "" : ""); setError("");
           }}>
             {!options?.harnesses.some(choice => choice.name === harness) && <option value={harness}>{harnessName(harness)}</option>}
             {options?.harnesses.map(choice => <option key={choice.name} value={choice.name}>{harnessName(choice.name)}{choice.available ? "" : " — unavailable"}</option>)}
@@ -162,9 +165,13 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
           {switching && <p>Handoff includes the latest checkpoint, your open tasks (including parked tasks), and saved session notes.</p>}
           <p>Keep the same session name, project folder and history.</p>
         </div>
-        <p className="rd-restart-notice" role={error || pathReason || statusError ? "alert" : "status"}>{error || optionsError || statusError || pathReason || (!draftClear && !loadingOptions ? "Send or clear unsent terminal text before restarting." : afterTurn ? "This will wait until the agent finishes its turn. You can cancel it from the Session card." : "The change will start as soon as you confirm.")}</p>
+        {canInterrupt && <div className="rd-restart-interrupt">
+          <label><input type="checkbox" checked={interrupt} disabled={acting || loadingOptions} onChange={e => setInterrupt(e.target.checked)} /> Stop the current turn and switch now</label>
+          <p className="rd-restart-help">Use this when you want to switch while the agent is working, including when its budget runs out. Saves a checkpoint and open tasks before stopping. Unfinished work and background jobs may stop.</p>
+        </div>}
+        <p className="rd-restart-notice" role={error || pathReason || statusError ? "alert" : "status"}>{error || optionsError || statusError || pathReason || (!draftClear && !loadingOptions ? "Send or clear unsent terminal text before restarting." : stopNow ? "The current turn will stop after its checkpoint is saved. A new conversation will start on this card." : afterTurn ? "This will wait until the agent finishes its turn. You can cancel it from the Session card." : "The change will start as soon as you confirm.")}</p>
         <p className="rd-restart-help">Restart reloads the installed CLI, connectors and session instructions. Background processes started in this terminal may stop.</p>
-        <div className="rd-restart-footer"><button className="rd-btn rd-btn-ghost" disabled={acting} onClick={close}>Cancel</button><button className="rd-btn rd-btn-primary" disabled={!allowed} onClick={() => void restart()}>{acting ? "Scheduling…" : afterTurn ? switching ? "Switch after this turn" : "Restart after this turn" : action}</button></div>
+        <div className="rd-restart-footer"><button className="rd-btn rd-btn-ghost" disabled={acting} onClick={close}>Cancel</button><button className="rd-btn rd-btn-primary" disabled={!allowed} onClick={() => void restart()}>{acting ? "Scheduling…" : stopNow ? "Stop and switch now" : afterTurn ? switching ? "Switch after this turn" : "Restart after this turn" : action}</button></div>
       </div>
     </div>, document.body)}
   </>;

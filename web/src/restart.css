@@ -37,3 +37,7 @@
 .rd-restart-footer { border-top: 1px solid var(--border); padding-top: 16px; }
 .rd-restart-dialog .rd-btn { color: var(--text); background: var(--card); border: 1px solid var(--border-strong); }
 .rd-restart-dialog .rd-btn-primary { color: #fff; background: var(--brand-green); border-color: var(--brand-green); }
+
+.rd-restart-interrupt label { display: flex; align-items: start; gap: 8px; font-weight: 500; }
+.rd-restart-interrupt input { flex-shrink: 0; margin-top: 4px; accent-color: var(--brand-green); }
+.rd-restart-interrupt .rd-restart-help { margin: 4px 0 18px 24px; }

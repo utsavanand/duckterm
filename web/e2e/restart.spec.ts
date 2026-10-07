@@ -121,3 +121,51 @@ test("unverified native conversation can switch harness on the same card with an
     await expect(page.getByText(/Restarted — conversation continued/)).toHaveCount(0);
   } finally { await apiDelete(`/sessions/${key}`); }
 });
+
+test("working session offers an explicit immediate switch with truthful pending status", async ({ page }) => {
+  const key = `e2e-immediate-${Date.now()}`;
+  await seedSession(key, { name: "Working harness review", runtime: "claude-code", launched: true });
+  const submitted: Record<string, unknown>[] = [];
+  let requested = false;
+  await page.route(`**/sessions/${key}/restart`, async route => {
+    if (route.request().method() === "POST") { submitted.push(route.request().postDataJSON()); requested = true; }
+    await route.fulfill({ json: requested
+      ? { status: "queued", interrupt: true, context: "seeded_new_conversation", source_harness: "claude-code", requested_harness: "codex", requested_model: "gpt-6-astra" }
+      : { can_restart: false, reason: "Cannot verify this conversation." } });
+  });
+  await page.route(`**/sessions/${key}/restart-options`, route => route.fulfill({ json: {
+    current: { harness: "claude-code", model: "claude-opus-5" }, resume_restart: { available: false }, draft_clear: true, after_turn: true, supports_interrupt_switch: true,
+    harnesses: [
+      { name: "claude-code", available: false, reason: "Cannot verify this conversation.", context: "native", model_selection: { available: true }, models: [] },
+      { name: "codex", available: true, context: "seeded_new_conversation", model_selection: { available: true }, models: [{ id: "gpt-6-astra", label: "GPT-6 Astra" }] },
+    ],
+  } }));
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto("/");
+    await page.getByText("Working harness review", { exact: true }).first().click();
+    await page.getByRole("button", { name: "Restart", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Restart session" });
+    await expect(dialog.getByRole("combobox", { name: "Harness", exact: true })).toBeEnabled();
+    await dialog.getByRole("combobox", { name: "Harness", exact: true }).selectOption("codex");
+    const checkbox = dialog.getByRole("checkbox", { name: "Stop the current turn and switch now" });
+    await expect(checkbox).not.toBeChecked();
+    await checkbox.check();
+    expect(submitted).toHaveLength(0);
+    await expect(dialog.getByText(/The current turn will stop after its checkpoint/)).toBeVisible();
+    await dialog.getByRole("combobox", { name: "Model", exact: true }).selectOption("gpt-6-astra");
+    await page.screenshot({ path: "/tmp/restart-immediate-implemented-dark.png", animations: "disabled" });
+    await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
+    await page.screenshot({ path: "/tmp/restart-immediate-implemented-light.png", animations: "disabled" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const bounds = await dialog.boundingBox();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+    await page.screenshot({ path: "/tmp/restart-immediate-implemented-mobile.png", animations: "disabled" });
+    await dialog.getByRole("button", { name: "Stop and switch now" }).click();
+    expect(submitted).toEqual([{ model: "gpt-6-astra", harness: "codex", interrupt: true }]);
+    await expect(page.getByText(/Preparing to stop and switch now/)).toBeVisible();
+    await expect(page.getByText(/Restart pending — after this turn/)).toHaveCount(0);
+  } finally { await apiDelete(`/sessions/${key}`); }
+});
