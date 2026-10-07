@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Handoff readers must keep the inbox's original grant and byte limits
+
+A current peer grant does not restore access to messages sent in a previous collaboration root. Apply the message's recorded root check as well as current membership when assembling a handoff. Readiness also needs the launch seed's byte budget: multibyte notes can fit a character bound and still exceed the allowed payload. Preserve the complete source, block readiness on either bound, and test moved-peer mail and multibyte owner notes.
+
 ## 2026-10-07 — Every awaited check can invalidate the previous check
 
 A handoff was validated before the final awaited terminal prompt probe. QA changed the transcript or summarizer configuration during that probe and reproduced an unsafe stop. Revalidate source bytes after the first probe, check the draft again, then compare current database facts, provider policy and the captured file's device/inode/size/mtime/ctime without another await before beginning stop. Keep expensive transcript reads off the event loop. Test both sides: source changes during either prompt probe and new owner input during the added source read must preserve the original process.

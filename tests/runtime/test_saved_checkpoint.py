@@ -172,6 +172,51 @@ def test_long_legacy_tail_and_required_context_overflow_block_handoff(rig):
     assert not cp["handoff_eligible"]
 
 
+def test_multibyte_notes_cannot_claim_ready_beyond_seed_byte_limit(rig):
+    server, _, _ = rig
+    # Fits the character bound, but cannot fit unabridged in the launch seed.
+    server.history.set_meta("test-save", notes="🔒" * 6500)
+    cp = asyncio.run(checkpoint(server))
+    assert cp["saved"]
+    assert "required_context_too_large" in cp["reason_codes"]
+    assert not cp["handoff_eligible"]
+    assert server.history.session("test-save")["notes"] == "🔒" * 6500
+
+
+def test_handoff_mail_obeys_original_root_as_well_as_current_peer_grant(rig):
+    from duckterm.core.saved_progress import required_context
+
+    server, _, _ = rig
+    conn = server.history._conn
+    # A peer and owner sent these in a previous root; moving both sessions into
+    # the current root must not re-grant their old mail to a new conversation.
+    server.bus.publish({"event_type": "SessionStart", "session_key": "test-peer", "test": True})
+    try:
+        server.history.set_meta("test-peer", group="Tests")
+        server.history.session_api.enroll("test-save", {"root": "Tests"})
+        server.history.session_api.enroll("test-peer", {"root": "Tests"})
+        with conn:
+            for identity, sender, root in (
+                ("old-owner", "owner", "OldTeam"),
+                ("old-peer", "test-peer", "OldTeam"),
+                ("new-owner", "owner", "Tests"),
+                ("new-peer", "test-peer", "Tests"),
+            ):
+                conn.execute(
+                    "INSERT INTO session_questions "
+                    "(id,sender,recipient,sender_name,root,question,created_at,expires_at,"
+                    "idempotency_key,content_hash) VALUES (?,?,?,?,?,?,1,0,?,?)",
+                    (identity, sender, "test-save", sender, root, identity, identity, identity),
+                )
+        context = required_context(server, "test-save", server.history.session("test-save"))
+        assert {m["id"] for m in context["mail"]} == {"new-owner", "new-peer"}
+        server.history.set_meta("test-peer", group="OtherTeam")
+        context = required_context(server, "test-save", server.history.session("test-save"))
+        assert {m["id"] for m in context["mail"]} == {"new-owner"}
+    finally:
+        server.history.delete_session("test-peer")
+
+
 def test_marker_detects_interior_source_loss_and_legacy_remains_readable(rig):
     server, _, _ = rig
     for identity in ("middle", "last"):

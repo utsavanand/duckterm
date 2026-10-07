@@ -27,6 +27,8 @@ if TYPE_CHECKING:
 
 POLICY = "progress-v2/summary-validator-v1"
 MAX_REQUIRED_CHARS = 12000
+# Reserve room for the summary and instructions inside the 24 KiB seed limit.
+MAX_REQUIRED_BYTES = 20000
 
 
 def policy_key() -> str:
@@ -87,12 +89,12 @@ def required_context(server: Server, key: str, row: dict[str, Any]) -> dict[str,
             dict(r)
             for r in conn.execute(
                 "SELECT q.id,q.sender,q.question,q.answer,q.status FROM session_questions q "
-                "WHERE q.recipient=? AND ((q.status IN ('queued','accepted')) "
+                "WHERE q.recipient=? AND q.root=? AND ((q.status IN ('queued','accepted')) "
                 "OR (q.sender='owner' AND q.status='answered')) AND (q.sender='owner' OR "
                 "EXISTS (SELECT 1 FROM session_api_members m JOIN sessions s "
                 "ON s.session_key=m.session_key WHERE m.session_key=q.sender "
                 "AND m.root=? AND m.folder=coalesce(s.grp,''))) ORDER BY q.rowid",
-                (key, scope["root"]),
+                (key, scope["root"], scope["root"]),
             )
         ]
     return {
@@ -223,10 +225,13 @@ class ProgressCoordinator:
             prior_cache = json.loads(row.get("progress") or "{}")
         existing = self.server.digests.items(key)[-200:]
         required = captured["required"]
-        too_large = len(required) > MAX_REQUIRED_CHARS
-        prompt = progress.build_prompt(
-            captured["transcript"], prior_cache, required[:MAX_REQUIRED_CHARS]
+        too_large = (
+            len(required) > MAX_REQUIRED_CHARS or len(required.encode()) > MAX_REQUIRED_BYTES
         )
+        bounded_required = (
+            required[:MAX_REQUIRED_CHARS].encode()[:MAX_REQUIRED_BYTES].decode(errors="ignore")
+        )
+        prompt = progress.build_prompt(captured["transcript"], prior_cache, bounded_required)
         reply = await asyncio.to_thread(summarize, prompt)
         digest = progress.parse(reply.text)
         if digest is None or not digest["summary"]:
@@ -240,7 +245,7 @@ class ProgressCoordinator:
                 digest,
                 existing,
                 source=prompt,
-                required=required[:MAX_REQUIRED_CHARS],
+                required=bounded_required,
             ),
         )
         verdicts = progress.parse_verdicts(verdict_reply.text)
