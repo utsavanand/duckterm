@@ -108,6 +108,16 @@ Do not export conversation IDs, transcript contents, credentials or arbitrary
 paths, and do not mistake hook configuration for successful event delivery.
 
 
+## 2026-10-06 — Identical timestamps can hide changed transcript bytes
+
+Linux assigned the same size, mtime_ns and ctime_ns to rapid transcript rewrites,
+so a stat-only cache kept returning old Messages and message keys indefinitely.
+Recheck recent file bytes until a content read occurs beyond a two-second
+timestamp window, then retain stat-only polling for settled files. Reuse parsed
+records and serialized responses when the bytes match; hash the partial final
+record as well as complete lines. Cover equal-stamp rewrites during the window
+and the first poll after it, for Claude and Codex, and verify real Linux behavior.
+
 ## 2026-10-05 — Two terminals in one session need separate paste targets
 
 A companion shell shares an agent's session identity but not its input stream.
@@ -142,6 +152,13 @@ also have moved mermaid 12.0 to 12.1, pulling chevrotain 11 to 13; update only
 the flagged packages (`npm update <pkg>`) and diff the lockfile's resolved
 versions before committing. KaTeX's low advisory needs a breaking mermaid
 change and stays open until mermaid ships a fix.
+
+## 2026-10-06 — Session age is not summary freshness
+The timeline labeled time since session start as summary age. Use the existing
+progress_at timestamp saved with the summary, and return null for legacy or
+missing timestamps. Never substitute a related record timestamp for the event
+the UI claims to measure. Regression checks cover old sessions with recent
+summaries, missing timestamps, and clocks ahead of the reader.
 
 ## 2026-10-05 — The gate's temp log name broke on macOS
 `mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's
