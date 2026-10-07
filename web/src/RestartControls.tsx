@@ -177,7 +177,7 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
             setStatus({ id: result.id, memory: { version: 1 }, status: result.phase === "switching" ? "restarting" : result.phase,
               process_state: result.processState, requested_harness: harness, requested_model: model, configured_model: result.configuredModel || undefined,
               context: "seeded_new_conversation", interrupt: submission.interrupt, error: result.reason });
-            setOpen(false); opener.current?.focus(); void refresh();
+            setOpen(false); opener.current?.focus(); onActionComplete?.(); void refresh();
           }} /> : <>
         <div className="rd-restart-summary"><strong>{switching ? `Continue with ${harnessName(harness)}` : "Continue this conversation"}</strong>
           <p>{switching ? "Memory-backed switching needs a supporting backend and an available target harness." : "Restart the harness and resume its existing conversation."}</p>

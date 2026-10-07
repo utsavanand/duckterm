@@ -24,7 +24,7 @@ export function MemorySwitchPanel(props: {
   const [detailsError, setDetailsError] = useState("");
   const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now);
-  const lease = useRef({ key: crypto.randomUUID(), id: "" });
+  const lease = useRef({ key: crypto.randomUUID(), id: "", used: false });
   const reconciling = useRef(false);
   const detailsEpoch = useRef(0);
   useEffect(() => {
@@ -34,7 +34,13 @@ export function MemorySwitchPanel(props: {
   useEffect(() => {
     let live = true, reading = false;
     let timer: ReturnType<typeof setTimeout>;
+    // Each effect lifetime owns its lease. StrictMode can dispose and replay
+    // setup while the first request is still pending; its cleanup must not
+    // release the replay's lease. An explicit lost-response retry below keeps
+    // its original request key so backend idempotency still applies.
+    if (lease.current.used) lease.current = { key: crypto.randomUUID(), id: "", used: false };
     const ownLease = lease.current;
+    ownLease.used = true;
     send({ type: "prepare" }); setPrepared(null); setDetails(null); setError(""); setDetailsError("");
     detailsEpoch.current++;
     const scope = stateRef.current.scope;
@@ -72,7 +78,7 @@ export function MemorySwitchPanel(props: {
   }, [service, attempt, send]);
   function prepareAgain() {
     // If POST was lost, recover that lease instead of duplicating provider work.
-    if (lease.current.id) lease.current = { key: crypto.randomUUID(), id: "" };
+    lease.current = { key: lease.current.id ? crypto.randomUUID() : lease.current.key, id: "", used: false };
     retry(value => value + 1);
   }
   const eligibility = { now, draftClear: props.allowed, targetAvailable: props.allowed,

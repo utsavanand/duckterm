@@ -56,10 +56,12 @@ Deterministic tests cover three conversation generations, retained versions, pro
 
 Independent QA passed 48 focused backend checks at `0f6baec`. A separate check at `06911e1` captured real private-server HTTP envelopes and fed them through the frontend transport: two backend scenarios and 34 frontend checks passed. This verifies the response contract; it does not by itself verify a TCP connection or the native bridge.
 
-The owner approved both Switch and Timeline previews on 2026-10-07. UI-dev is wiring those views while preserving the session action menu merged in PR #243.
+A later status-projection regression was also corrected: invalidated or canceled preparations no longer return their former proof or full brief. Independent QA passed 23 focused checks, including actual HTTP status/detail transitions; its two additional regressions are integrated.
+
+The owner approved both Switch and Timeline previews on 2026-10-07. The views are now integrated with the session action menu merged in PR #243. The preparation dialog, exact-operation cancellation and milestone-only Timeline passed the integrated browser check. A development-mode effect replay cancellation defect reported by QA is fixed; its regression, late-close cleanup and lost-response tests pass together (23 focused UI checks).
 
 An isolated acceptance run used a synthetic Claude transcript and idle source process, then launched the installed Codex CLI through the real stop/launch path. Codex preparation processed the available history and saved a retained checkpoint. The target agent then used `duckterm memory search` and `duckterm memory read` to retrieve an exact archival value absent from its launch brief. The named card survived the switch, and the flagged test session, owned terminal and native test transcripts were removed afterwards. This proves live Codex retrieval after the switch, not a live Claude generation or migration of an existing production agent.
 
 The run also exposed realistic failure boundaries: one model response failed summary validation and kept the source process; a subsequent explicit preparation succeeded. The target initially found the older installed CLI, so the test supplied the candidate CLI's absolute path. Local installation must update the CLI as well as the dashboard. Codex's sandbox required the usual local-network approval for retrieval; no sandbox setting was changed.
 
-Still required before release: fresh committed full gate, completed approved UI integration, and real-size native verification. Product and release-dev have not been migrated. Public Mac signing/distribution remains deferred by the owner.
+Still required before release: fresh committed full gate and real-size native verification. Product and release-dev have not been migrated. Public Mac signing/distribution remains deferred by the owner.

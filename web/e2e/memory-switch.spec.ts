@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiDelete, apiPost, base, postEvent, seedSession } from "./helpers";
+import { apiDelete, apiPost, base, postEvent, seedSession, sessionMenu } from "./helpers";
 
 test("approved preparation dialog and milestone Timeline preserve existing controls", async ({ page }) => {
   const key = await seedSession("memory-ui-test", { name: "Workspace developer", runtime: "claude-code", launched: true, test: true });
@@ -52,9 +52,9 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.addInitScript(() => localStorage.setItem("rd-theme", "dark"));
     await page.goto(base()); await page.locator(".rd-row-name", { hasText: "Workspace developer" }).click();
-    const controls = page.getByRole("region", { name: "Session controls" });
-    for (const name of ["Restart", "Change model", "Checkpoint", "Notes", "Stop", "Archive", "Delete"]) await expect(controls.getByRole("button", { name, exact: true })).toBeVisible();
-    await controls.getByRole("button", { name: "Restart", exact: true }).click();
+    const menu = await sessionMenu(page);
+    for (const name of ["Restart…", "Change model…", "Checkpoint", "Notes", "Stop", "Archive"]) await expect(menu.getByRole("menuitem", { name, exact: true })).toBeVisible();
+    await menu.getByRole("menuitem", { name: "Restart…", exact: true }).click();
     await page.getByRole("dialog").getByRole("combobox", { name: "Harness", exact: true }).selectOption("codex");
     await page.getByRole("dialog").getByRole("combobox", { name: "Model", exact: true }).selectOption("gpt-6-astra");
     await expect(page.getByText("Ready to switch", { exact: true })).toBeVisible(); expect(switchCount).toBe(0);

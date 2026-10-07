@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Effect cleanup must own its cancellation lease
+
+React development replay reused one preparation key across two effect lifetimes. The disposed effect then released the mounted effect’s lease, canceling active work. Allocate a separate lease for each effect lifetime; preserve the original key only for an explicit retry of a genuinely lost request. Test replay, late close, and lost-response retry together. When integrating a dialog into an existing context menu, also close that menu after an accepted action and preserve its accessibility roles.
+
 ## 2026-10-07 — Invalidating readiness must also remove its old payload
 
 A ready preparation stripped its full brief from status responses, but changing its state to stale left the old proof and brief attached. Define the response by the current state: only ready responses carry a proof, and full text belongs only in the separately validated detail read. Test the ready-to-stale transition and serialized response, not just the new state label.
