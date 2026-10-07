@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,10 +41,10 @@ test("notes open, save, and persist on the session", async ({ page }) => {
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").getByRole("button", { name: /^Notes/ }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: /^Notes/ }).click();
 
   await page.locator(".rd-session-controls .rd-row-notes").fill("check the retry logic");
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Save" }).click();
+  await page.locator(".rd-session-controls").getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Notes saved")).toBeVisible();
 
   const res = await fetch(`${base()}/sessions/${key}`);

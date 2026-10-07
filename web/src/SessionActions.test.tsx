@@ -1,0 +1,26 @@
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { api } from "./api";
+import { SessionActions } from "./SessionActions";
+import type { SessionView } from "./types";
+const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
+vi.mock("./api", () => ({ api: { checkpoint: vi.fn() } }));
+vi.mock("./ui", () => ({ useToast: () => toast }));
+vi.mock("./useResumeSession", () => ({ useResumeSession: () => ({ resuming: false, recoveryBlocked: false, resumeSession: vi.fn() }) }));
+vi.mock("./RestartControls", () => ({ RestartControls: () => null }));
+vi.mock("./ForkMergeDialog", () => ({ ForkMergeDialog: () => null }));
+afterEach(() => { cleanup(); vi.resetAllMocks(); });
+it("checkpoint reports failure without closing the menu, then reports incomplete export honestly", async () => {
+  const close = vi.fn();
+  const s = { key: "remote:build:one", label: "QA", state: "busy", startedAt: 1, runtime: "generic" } as SessionView;
+  render(<SessionActions session={s} anchor={{ key: s.key, x: 10, y: 10, trigger: document.body }} onClose={close} onFork={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} onNotes={vi.fn()} />);
+  vi.mocked(api.checkpoint).mockRejectedValueOnce(new Error("offline"));
+  await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Checkpoint" })); });
+  expect(api.checkpoint).toHaveBeenCalledWith(s.key, "manual");
+  expect(toast).toHaveBeenLastCalledWith("Checkpoint failed: offline", "err");
+  expect(close).not.toHaveBeenCalled();
+  vi.mocked(api.checkpoint).mockResolvedValueOnce({ id: "cp", label: "manual", created_at: 1, summary: "", saved: true, summary_state: "unavailable", export_reason: "markdown_unavailable", record: { prompts: [], files: [], tools: [], event_count: 0 } });
+  await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Checkpoint" })); });
+  expect(toast).toHaveBeenLastCalledWith("Checkpoint saved · unavailable · Markdown export unavailable");
+  expect(close).toHaveBeenCalledOnce();
+});

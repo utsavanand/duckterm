@@ -1,3 +1,5 @@
+import { SessionActions } from "./SessionActions";
+import type { SessionActionAnchor } from "./SessionActionMenu";
 import { useDesktopNotifications } from "./useDesktopNotifications";
 import { SidebarFilterToggle } from "./SidebarFilters";
 import { useSidebarFilters } from "./sidebarFilterState";
@@ -107,6 +109,16 @@ function Dashboard() {
     return () => window.removeEventListener("move-to-remote", move);
   }, []);
   const moveSession = sessions.find(s => s.key === moveKey);
+  const [actionAnchor, setActionAnchor] = useState<SessionActionAnchor | null>(null);
+  const [notesKey, setNotesKey] = useState<string | null>(null);
+  useEffect(() => {
+    const show = (event: Event) => setActionAnchor((event as CustomEvent<SessionActionAnchor>).detail);
+    window.addEventListener("session-actions", show);
+    return () => window.removeEventListener("session-actions", show);
+  }, []);
+  const actionSession = sessions.find(s => s.key === actionAnchor?.key);
+  const actionAnchorRef = useRef(actionAnchor); actionAnchorRef.current = actionAnchor;
+  const closeActions = () => { if (actionAnchorRef.current !== actionAnchor) return; actionAnchor?.trigger.focus(); setActionAnchor(null); };
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
@@ -360,14 +372,14 @@ function Dashboard() {
               {(agents.length > 0 || folders.length > 0) && <SidebarFilterToggle filters={sidebarFilters.filters} expanded={sidebarFilters.expanded} onToggle={sidebarFilters.toggleExpanded} />}
               <PanelToggle side="left" collapsed={sidePanels.collapsed.left} onToggle={() => sidePanels.toggle("left")} />
             </div>
-            {agents.length === 0 && folders.length === 0 ? (
+            {sessions.length === 0 && folders.length === 0 ? (
               <p className="rd-panel-empty">
                 No agents yet. Choose New → New session to start one.
               </p>
             ) : (
               <LiveAgentTree
                 filterControls={sidebarFilters}
-                sessions={agents}
+                sessions={sessions}
                 active={!towerOpen && !sidePanels.collapsed.left}
                 folders={folders}
                 selectedKey={selectedFolder === null ? selectedKey : null}
@@ -501,13 +513,7 @@ function Dashboard() {
             </div>
             <ContextViews session={<>
               {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}
-                onFork={setForkKey} onDelete={deleteSession}
-                onRename={(key, name) => patchSession(key, { label: name })}
-                onUngroup={selected.group && !selected.parentKey ? async () => {
-                  await api.setGroup(selected.key, "");
-                  patchSession(selected.key, { group: undefined });
-                  refreshFolders();
-                } : undefined} />}
+                notesOpen={notesKey === selected.key} onCloseNotes={() => setNotesKey(null)} />}
               {selected && <LiveContextPanel session={selected} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
@@ -570,6 +576,11 @@ function Dashboard() {
           onClose={() => setModal(null)}
         />
       )}
+      {actionAnchor && actionSession && <SessionActions key={actionSession.key + ":" + actionAnchor.x + ":" + actionAnchor.y} anchor={actionAnchor} session={actionSession}
+        onClose={closeActions} onFork={setForkKey} onDelete={deleteSession}
+        onRename={(key, name) => patchSession(key, { label: name })}
+        onNotes={key => { setSelectedKey(key); setSelectedFolder(null); setNotesKey(key); if (sidePanels.collapsed.right) sidePanels.toggle("right"); window.dispatchEvent(new Event("show-session-notes")); }}
+        onUngroup={actionSession.group && !actionSession.parentKey ? async () => { await api.setGroup(actionSession.key, ""); patchSession(actionSession.key, { group: undefined }); refreshFolders(); } : undefined} />}
       {moveSession && <MoveRemoteModal session={moveSession} onClose={() => setMoveKey(null)} />}
       {forkSession && (
         <ForkModal session={forkSession} onClose={() => setForkKey(null)} />

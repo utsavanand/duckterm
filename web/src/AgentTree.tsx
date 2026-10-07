@@ -1,4 +1,4 @@
-import { identityBlocksResume } from "./conversationRecoveryState";
+import { openSessionActions } from "./SessionActionMenu";
 import { SidebarFilters } from "./SidebarFilters";
 import { hasFilters, matchesFilters, sidebarSessions, SidebarFilterControls } from "./sidebarFilterState";
 import { desktop } from "./desktop";
@@ -11,11 +11,10 @@ import { Duck, poseFor } from "./Duck";
 import { TermMode, themesForMode } from "./termThemes";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
-import { useResumeSession } from "./useResumeSession";
 import { useToast } from "./ui";
 
 // The left panel: every session as a row, with forks nested under their parent
-// via parentKey. Keep Focus pins beside sessions; lifecycle actions live in the card.
+// via parentKey. Keep Focus pins beside sessions; session actions live in the right-click menu.
 export function AgentTree({
   filterControls,
   sessions,
@@ -61,6 +60,8 @@ export function AgentTree({
 }) {
   const { filters, toggle, clear, saveError, expanded } = filterControls;
   const visibleSessions = sidebarSessions(sessions);
+  const archivedSessions = sessions.filter(s => ["archived", "merged"].includes(s.state));
+  const [archivesOpen, setArchivesOpen] = useState(false);
   const filtering = hasFilters(filters);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   useEffect(() => {
@@ -288,6 +289,10 @@ export function AgentTree({
       >
         {ungrouped.map((n) => renderNode(n, 0))}
       </DropZone>
+      {archivedSessions.length > 0 && <div className="rd-archive-list">
+        <button aria-expanded={archivesOpen} onClick={() => setArchivesOpen(v => !v)}>{archivesOpen ? "▾" : "▸"} Archived sessions ({archivedSessions.length})</button>
+        {archivesOpen && archivedSessions.map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} onOpen={onOpen} showFolder />)}
+      </div>}
       </>}
     </div>
     </div>
@@ -576,7 +581,6 @@ function TreeRow({
   onPin?: (session: SessionView) => Promise<void>;
 }) {
   const s = node.session;
-  const { resuming, recoveryBlocked, resumeSession } = useResumeSession(s.key);
   const effState = effectiveState(s, now);
   const live = !["terminated", "stopped", "interrupted", "archived"].includes(effState);
   const stateLabel = effState;
@@ -589,8 +593,19 @@ function TreeRow({
         className={`rd-row${live ? "" : " terminated"}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.inboxPending ? " has-inbox" : ""}`}
         title={`${s.label} · ${s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")} · ${s.runtime ?? "agent"} · ${stateLabel} · ${s.eventCount} events`}
         style={{ paddingLeft: 12 + indent * 16 + depth * 18 }}
+        tabIndex={0}
+        aria-label={`${s.label} session`}
+        aria-haspopup="menu"
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); openSessionActions({ key: s.key, x: e.clientX, y: e.clientY, trigger: e.currentTarget }); }}
+        onKeyDown={e => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+            e.preventDefault(); e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect();
+            openSessionActions({ key: s.key, x: rect.left + 24, y: rect.bottom, trigger: e.currentTarget });
+          } else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(s.key); }
+        }}
         // Only root sessions are draggable into groups; forks follow their parent.
-        draggable={depth === 0 && !s.parentKey}
+        draggable={depth === 0 && !s.parentKey && !["archived", "merged"].includes(effState)}
         onDragStart={(e) => {
           e.dataTransfer.setData("text/rd-session", s.key);
           e.dataTransfer.effectAllowed = "move";
@@ -649,10 +664,7 @@ function TreeRow({
             )}
           </span>
           {onPin && <SessionPin session={s} onToggle={onPin} />}
-          {effState === "stopped" && s.launched && <button className="rd-row-resume"
-            aria-label={`Resume ${s.label}`} disabled={resuming || recoveryBlocked || identityBlocksResume(s)} onClick={resumeSession}>
-            {resuming ? "Resuming…" : "Resume"}
-          </button>}
+
         </div>
         {showFolder && <div className="rd-row-folder" title={s.group || "Ungrouped"} onClick={() => onOpen(s.key)}>{s.group || "Ungrouped"}</div>}
         <div className="rd-row-meta" onClick={() => onOpen(s.key)}>

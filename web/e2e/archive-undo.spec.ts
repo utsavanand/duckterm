@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiDelete, apiPost, archiveRequests, base, findSession, seedSession } from "./helpers";
 
@@ -22,9 +23,8 @@ test("Archive Undo preserves the session and pending archive survives a viewer r
   await page.goto(base());
   const row = page.locator(".rd-row", { has: page.getByText("Undo reviewer", { exact: true }) });
   await row.locator(".rd-row-name").click();
-  const restartReason = page.locator(".rd-session-controls .rd-restart-message");
-  await expect(restartReason).toContainText("Restart requires a live DuckTerm terminal");
-  const archive = page.locator(".rd-session-controls").getByRole("button", { name: "Archive", exact: true });
+  const archive = (await sessionMenu(page)).getByRole("menuitem", { name: "Archive", exact: true });
+  await sessionMenu(page);
   await archive.click();
   await expect(row).toHaveCount(0);
   const undo = page.getByRole("button", { name: "Undo", exact: true });
@@ -34,9 +34,8 @@ test("Archive Undo preserves the session and pending archive survives a viewer r
   await page.keyboard.press("Enter");
   await expect(row).toBeVisible();
   await expect(page.locator(".rd-session-controls")).toContainText("Undo reviewer");
-  // Undo remounts the card. Its async restart reason inserts a full grid row;
-  // wait for that real response before clicking a button whose position moves.
-  await expect(restartReason).toContainText("Restart requires a live DuckTerm terminal");
+  // Reopen the menu after Undo restores the row.
+  await sessionMenu(page);
   await archive.click();
   await expect(undo).toBeVisible();
   await page.reload();
@@ -62,7 +61,7 @@ test("Undo keeps the live terminal mounted and preserves an unsent draft", async
   await page.keyboard.insertText("UNSENT_ARCHIVE_DRAFT");
   await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("UNSENT_ARCHIVE_DRAFT");
   const original = await input.elementHandle();
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Archive", exact: true }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: "Archive", exact: true }).click();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   // The terminal intentionally stays mounted while Undo is in flight; its
   // visibility alone cannot prove that the server accepted cancellation.

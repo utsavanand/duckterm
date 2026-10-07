@@ -1,48 +1,93 @@
 import { expect, test } from "@playwright/test";
-import { apiDelete, base, postEvent, seedSession } from "./helpers";
+import { apiDelete, base, postEvent, seedSession, sessionMenu } from "./helpers";
 
-test("card actions stay accessible in every density; only stopped rows offer Resume with visible refusal", async ({ page }) => {
+test("right-click actions work in every density without filling session rows or the information panel", async ({ page }) => {
   const keys: string[] = [];
   try {
     for (const state of ["stopped", "interrupted", "terminated", "busy"]) {
-      const key = await seedSession(`card-${state}`, {name:`Review ${state}`, runtime:"codex", launched:true, test:true});
+      const key = await seedSession(`card-${state}`, { name: `Review ${state}`, runtime: "codex", launched: true, test: true });
       keys.push(key);
-      if (state !== "busy") await postEvent({event_type:"Notification",session_key:key,lifecycle:state});
+      if (state !== "busy") await postEvent({ event_type: "Notification", session_key: key, lifecycle: state });
     }
-    await page.addInitScript(() => localStorage.setItem("rd-theme", "dark"));
-    await page.setViewportSize({width:1440,height:1000});
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(base());
-    const stopped = page.locator(".rd-row",{has:page.getByText("Review stopped",{exact:true})});
-    await expect(stopped.getByRole("button",{name:"Resume Review stopped",exact:true})).toBeVisible();
-    for (const state of ["interrupted","terminated","busy"]) {
-      await expect(page.locator(".rd-row",{has:page.getByText(`Review ${state}`,{exact:true})}).locator(".rd-row-resume")).toHaveCount(0);
-    }
-    await expect(stopped.getByRole("button",{name:"Resume Review stopped",exact:true})).toBeDisabled();
+    const stopped = page.locator(".rd-row", { has: page.getByText("Review stopped", { exact: true }) });
     await stopped.locator(".rd-row-name").click();
-    const card=page.getByRole("region",{name:"Session controls"});
-    for (const density of ["compact","standard","relaxed"]) {
-      await page.getByRole("button",{name:"Settings",exact:true}).click();
-      await page.getByRole("combobox",{name:"Sidebar density"}).selectOption(density);
+    const card = page.getByRole("region", { name: "Session controls" });
+    for (const density of ["compact", "standard", "relaxed"]) {
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      await page.getByRole("combobox", { name: "Sidebar density" }).selectOption(density);
       await page.keyboard.press("Escape");
-      await expect(card.getByRole("button",{name:"Resume",exact:true})).toBeVisible();
-      await expect(card.getByRole("button",{name:"Notes",exact:true})).toBeVisible();
-      await expect(card.getByRole("button",{name:"Archive",exact:true})).toBeVisible();
-      await expect(card.locator(".rd-session-controls-actions summary")).toHaveCount(0);
-      await expect(card.getByRole("button",{name:"Resume",exact:true})).toBeDisabled();
-      const deletion=card.locator(".rd-session-controls-danger").getByRole("button",{name:"Delete",exact:true});
-      await expect(deletion).toBeVisible();
-      const actionsBox=await card.locator(".rd-session-controls-actions").boundingBox();
-      const deleteBox=await deletion.boundingBox();
-      expect(deleteBox!.y).toBeGreaterThanOrEqual(actionsBox!.y+actionsBox!.height);
-      await expect(page.locator(".rd-row-actions,.rd-density-actions")).toHaveCount(0);
-      await expect(card.getByRole("button",{name:/Restart|Change model|Switch harness/})).toHaveCount(0);
+      const menu = await sessionMenu(page);
+      await expect(menu.getByRole("menuitem", { name: "Resume", exact: true })).toBeDisabled();
+      await expect(menu.getByRole("menuitem", { name: "Notes", exact: true })).toBeVisible();
+      await expect(menu.getByRole("menuitem", { name: "Archive", exact: true })).toBeVisible();
+      await expect(menu.getByRole("menuitem", { name: "Delete permanently…", exact: true })).toHaveCount(0);
+      await expect(card.getByRole("button", { name: /^(Resume|Restart|Notes|Checkpoint|Archive|Delete)/ })).toHaveCount(0);
+      await expect(stopped.locator(".rd-row-resume,.rd-row-actions")).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(stopped).toBeFocused();
     }
-    await page.locator(".rd-row-name",{hasText:"Review busy"}).click();
-    for (const name of ["Checkpoint","Notes","Stop","Archive","Delete"]) {
-      await expect(card.getByRole("button",{name,exact:true})).toBeVisible();
+    await page.locator(".rd-row-name", { hasText: "Review busy" }).click();
+    const menu = await sessionMenu(page);
+    for (const name of ["Restart…", "Change model…", "Checkpoint", "Notes", "Stop", "Archive"]) {
+      await expect(menu.getByRole("menuitem", { name, exact: true })).toBeVisible();
     }
-    await expect(card.getByRole("button",{name:"Resume",exact:true})).toHaveCount(0);
-    await expect(card.getByRole("button",{name:"Fork",exact:true})).toHaveCount(0);
-    await page.screenshot({path:"/tmp/duckterm-session-card.png"});
-  } finally {for (const key of keys) await apiDelete(`/sessions/${key}`);}
+    await expect(menu.getByRole("menuitem", { name: "Delete permanently…", exact: true })).toHaveCount(0);
+    await expect(menu.getByRole("menuitem", { name: "Resume", exact: true })).toHaveCount(0);
+    await page.screenshot({ path: "/tmp/duckterm-session-actions-implemented.png" });
+  } finally { for (const key of keys) await apiDelete(`/sessions/${key}`); }
+});
+
+test("keyboard context menu targets an unselected row, fits narrow screens, and restores focus", async ({ page }) => {
+  const first = await seedSession(`menu-a-${Date.now()}`, { name: "Menu first", runtime: "generic", test: true });
+  const second = await seedSession(`menu-b-${Date.now()}`, { name: "Menu second", runtime: "generic", test: true });
+  try {
+    await page.goto(base());
+    await page.locator(".rd-row-name", { hasText: "Menu first" }).click();
+    const row = page.locator(".rd-row", { has: page.getByText("Menu second", { exact: true }) });
+    await row.focus(); await page.keyboard.press("Shift+F10");
+    const menu = page.getByRole("menu", { name: "Actions for Menu second" });
+    await expect(menu).toBeVisible();
+    await expect(page.locator(".rd-row.selected")).toContainText("Menu first");
+    await page.keyboard.press("Home");
+    await expect(menu.getByRole("menuitem").first()).toBeFocused();
+    await page.keyboard.press("End");
+    await expect(menu.getByRole("menuitem").last()).toBeFocused();
+    await page.keyboard.press("Escape"); await expect(row).toBeFocused();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await row.click({ button: "right" });
+    await expect(menu).toBeInViewport({ ratio: 1 });
+    await page.evaluate(() => document.documentElement.dataset.theme = "light");
+    await page.screenshot({ path: "/tmp/duckterm-session-actions-narrow.png" });
+    await menu.getByRole("menuitem", { name: "Rename…" }).click();
+    await page.getByRole("textbox", { name: "Session name", exact: true }).fill("Renamed second");
+    await page.getByRole("dialog", { name: "Rename session" }).getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.locator(".rd-row.selected")).toContainText("Menu first");
+    await expect(page.locator(".rd-row-name", { hasText: "Renamed second" })).toBeVisible();
+  } finally { await apiDelete(`/sessions/${first}`); await apiDelete(`/sessions/${second}`); }
+});
+
+test("archived history stays accessible and permanent deletion requires confirmation", async ({ page }) => {
+  const key = await seedSession(`archived-menu-${Date.now()}`, { name: "Archived menu review", runtime: "generic", launched: true, test: true });
+  try {
+    await postEvent({ event_type: "Notification", session_key: key, lifecycle: "archived" });
+    await page.goto(base());
+    const row = page.locator(".rd-row", { has: page.getByText("Archived menu review", { exact: true }) });
+    await expect(row).toHaveCount(0);
+    await page.getByRole("button", { name: /Archived sessions/ }).click();
+    await row.locator(".rd-row-name").click();
+    const menu = await sessionMenu(page);
+    await expect(menu.getByRole("menuitem", { name: /Restart|Resume|Stop|Archive/ })).toHaveCount(0);
+    await menu.getByRole("menuitem", { name: "Delete permanently…", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Confirm session removal" });
+    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(row).toBeVisible();
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Delete permanently…", exact: true }).click();
+    await dialog.getByRole("button", { name: "Delete permanently", exact: true }).click();
+    await expect(row).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByRole("button", { name: /Archived sessions/ })).toHaveCount(0);
+  } finally { await apiDelete(`/sessions/${key}`); }
 });
