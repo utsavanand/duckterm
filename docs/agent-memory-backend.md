@@ -64,4 +64,4 @@ An isolated acceptance run used a synthetic Claude transcript and idle source pr
 
 The run also exposed realistic failure boundaries: one model response failed summary validation and kept the source process; a subsequent explicit preparation succeeded. The target initially found the older installed CLI, so the test supplied the candidate CLI's absolute path. Local installation must update the CLI as well as the dashboard. Codex's sandbox required the usual local-network approval for retrieval; no sandbox setting was changed.
 
-Still required before release: fresh committed full gate and real-size native verification. Product and release-dev have not been migrated. Public Mac signing/distribution remains deferred by the owner.
+The fresh committed full gate passed at `e5c588a`: Python and static checks, 397 frontend checks and 115 browser workflows. The subsequent merge from main changes only the release version and README links. Real-size native verification and local v0.4.120 installation remain in progress. Product and release-dev have not been migrated. Public Mac signing/distribution remains deferred by the owner.
