@@ -3,13 +3,16 @@ import { afterEach, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { SessionActions } from "./SessionActions";
 import type { SessionView } from "./types";
+import { beginRecoveryUndo, finishRecoveryUndo, setRecoveryResumeAllowed, useRecoveryResumeBlocked } from "./resumeReadiness";
+import { destinationRequest } from "./desktop";
 const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
 vi.mock("./api", () => ({ api: { checkpoint: vi.fn() } }));
 vi.mock("./ui", () => ({ useToast: () => toast }));
-vi.mock("./useResumeSession", () => ({ useResumeSession: () => ({ resuming: false, recoveryBlocked: false, resumeSession: vi.fn() }) }));
+vi.mock("./useResumeSession", () => ({ useResumeSession: (key: string) => ({ resuming: false, recoveryBlocked: useRecoveryResumeBlocked(key), resumeSession: vi.fn() }) }));
+vi.mock("./desktop", () => ({ desktop: () => ({ currentTarget: "local" }), destinationRequest: vi.fn() }));
 vi.mock("./RestartControls", () => ({ RestartControls: () => null }));
 vi.mock("./ForkMergeDialog", () => ({ ForkMergeDialog: () => null }));
-afterEach(() => { cleanup(); vi.resetAllMocks(); });
+afterEach(() => { cleanup(); vi.resetAllMocks(); vi.restoreAllMocks(); });
 it("checkpoint reports failure without closing the menu, then reports incomplete export honestly", async () => {
   const close = vi.fn();
   const s = { key: "remote:build:one", label: "QA", state: "busy", startedAt: 1, runtime: "generic" } as SessionView;
@@ -23,4 +26,25 @@ it("checkpoint reports failure without closing the menu, then reports incomplete
   await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Checkpoint" })); });
   expect(toast).toHaveBeenLastCalledWith("Checkpoint saved · unavailable · Markdown export unavailable");
   expect(close).toHaveBeenCalledOnce();
+});
+
+it("blocks local continuation while conversation Undo is unresolved, including after reopening the menu", async () => {
+  const s = { key: "continue-undo", label: "Recovery", state: "stopped", startedAt: 1, runtime: "codex", launched: true } as SessionView;
+  const open = () => render(<SessionActions session={s} anchor={{ key: s.key, x: 10, y: 10, trigger: document.body }} onClose={vi.fn()} onFork={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} onNotes={vi.fn()} />);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+  const first = open();
+  try {
+    expect(screen.getByRole("menuitem", { name: "Continue locally" })).toBeEnabled();
+    act(() => { beginRecoveryUndo(s.key); });
+    expect(screen.getByRole("menuitem", { name: "Continue locally" })).toBeDisabled();
+    first.unmount(); open();
+    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Continue locally" })); });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(destinationRequest).not.toHaveBeenCalled();
+    act(() => { finishRecoveryUndo(s.key); });
+    expect(screen.getByRole("menuitem", { name: "Continue locally" })).toBeDisabled();
+    act(() => { setRecoveryResumeAllowed(s.key, true); });
+    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Continue locally" })); });
+    expect(destinationRequest).toHaveBeenCalledExactlyOnceWith("local", "project-continue", { source_session: s.key });
+  } finally { cleanup(); finishRecoveryUndo(s.key); setRecoveryResumeAllowed(s.key, true); }
 });

@@ -8,6 +8,7 @@ import { splitSessionRef } from "./hostTransport";
 import { effectiveState } from "./sessions";
 import { identityBlocksResume } from "./conversationRecoveryState";
 import { checkpointNotice } from "./checkpointState";
+import { recoveryBlocksResume } from "./resumeReadiness";
 import { SessionView } from "./types";
 import { useResumeSession } from "./useResumeSession";
 import { useNow } from "./useNow";
@@ -40,7 +41,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
     catch (error) { toast(`${label} failed: ${(error as Error).message}`, "err"); }
     finally { setBusy(""); }
   }
-  const item = (label: string, action: () => void, danger = false) => <button role="menuitem" className={danger ? "rd-btn-danger" : ""} disabled={disabled} onClick={action}>{label}</button>;
+  const item = (label: string, action: () => void, danger = false, blocked = false) => <button role="menuitem" className={danger ? "rd-btn-danger" : ""} disabled={disabled || blocked} onClick={action}>{label}</button>;
   const canMove = resumable && splitSessionRef(s.key).host === "local" && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "");
   return <>
     <SessionActionMenu anchor={anchor} label={s.label} expanded={!!dialog || restartExpanded} onClose={onClose}>
@@ -63,9 +64,10 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
         <hr role="separator" />
         {item("Move to remote…", () => { window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key })); onClose(); })}
         {item("Continue locally", () => {
+          if (recoveryBlocksResume(s.key)) return;
           if (!window.confirm("Continue this session locally as a separate continuation? A remote session, if created, will remain running.")) return;
           void act("Continuing locally", async () => { await destinationRequest("local", "project-continue", { source_session: s.key }); localStorage.removeItem(`moved-session:${s.key}`); await resumeSession(); });
-        })}
+        }, false, recoveryBlocked)}
         {(s.remoteTransfer?.stage === "moved" || localStorage.getItem(`moved-session:${s.key}`)) && item("Open remote session", () => {
           const moved = s.remoteTransfer?.stage === "moved" ? s.remoteTransfer : JSON.parse(localStorage.getItem(`moved-session:${s.key}`)!);
           selectLaunchTarget(moved.target, {}, moved.session_key ?? moved.key); onClose();

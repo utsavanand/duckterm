@@ -19,6 +19,9 @@ Archive Undo must continue to preserve the same terminal node and unsent draft.
 Making rows keyboard-focusable also means reselecting the active row takes focus
 from its terminal without changing the selected key. Send an explicit focus
 request for row activation; opening or dismissing its menu must not send one.
+When relocating actions, compare every eligibility and click-time guard with
+the original handler. Local continuation must remain blocked across menu reopen
+while conversation Undo is unresolved, before it can change the transfer state.
 
 ## 2026-10-07 — Slow background reads can consume the browser's action slots
 
