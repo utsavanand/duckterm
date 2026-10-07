@@ -4,6 +4,16 @@
 
 A session without a verified conversation could not open Restart, even though another harness can start a seeded conversation on the same card. Discover per-harness availability separately, scope model choices to the selected harness, preserve draft and turn checks, and label switches as new conversations both before and after completion. Test missing native identity, blocked drafts, exact model submission, stale card responses and cancelable queues.
 
+## 2026-10-06 — Harness handoffs need current assigned work
+
+A checkpoint summary omitted unfinished task records when switching harnesses.
+Read the same session's in-progress and parked tasks after checkpoint creation,
+within its current shared grant, and include their durable IDs and statuses in
+a bounded handoff brief. Do not copy done or handed-off tasks, turn parked work
+into an instruction, or store a second task snapshot. Exercise completion,
+handoff and folder moves during the checkpoint await, plus the actual switch
+launch, while asserting that task records remain unchanged.
+
 ## 2026-10-06 — A remounted card cannot settle an in-flight Undo
 
 Sharing a Resume block across controls was insufficient: a remounted recovery card could read the old adopted binding and clear the block while detach was still pending. Track the in-flight phase by canonical session key, release it only when that request settles, and then reread identity. A ready read during the write must never clear the guard. Cover remount, duplicate Undo and captured callbacks; guard Continue locally before it changes continuation bookkeeping too.

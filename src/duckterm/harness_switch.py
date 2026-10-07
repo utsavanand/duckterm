@@ -26,6 +26,9 @@ async def prepare(server: Server, key: str, row: dict[str, Any]) -> dict[str, An
     )
     if row.get("notes"):
         brief += "\nOwner's saved notes (verify before relying on them):\n" + str(row["notes"])
+    tasks = server.history.folder_tasks.handoff_context(key)
+    if tasks:
+        brief += "\n\n" + tasks
     return {
         "runtime": row.get("runtime"),
         "native_id": native_id,
