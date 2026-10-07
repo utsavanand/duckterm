@@ -96,3 +96,34 @@ def test_approved_boundary_protects_expired_events_after_two_reopens(rig, tmp_pa
             assert cp["record"]["summary_ref"] == saved["revision_id"]
         finally:
             reopened.close()
+
+
+def test_review_evidence_is_bounded_and_survives_source_change_and_reopen(rig, tmp_path):
+    from duckterm.persistence.saved_state import fingerprint
+
+    server, transcript, _ = rig
+    transcript[:] = [{"role": "user", "text": f"record {i}: " + "🔒" * 600} for i in range(8)]
+    packet, result = asyncio.run(approved(server))
+    excerpt = packet["source_manifest"]["conversation"]["excerpts"]
+    assert [row["record_index"] for row in excerpt] == [0, 5, 6, 7]
+    for row in excerpt:
+        assert len(row["text"].encode()) <= 1500
+        assert row["truncated"] is True
+        assert row["content_hash"] == fingerprint(transcript[row["record_index"]])
+    expected = {k: v for k, v in packet.items() if k not in ("review_id", "packet_hash")}
+    transcript[0]["text"] = "Changed after the owner reviewed the original"
+    server.history.set_meta("test-save", notes="Changed current notes")
+    reopened = HistoryStore(tmp_path / "db.sqlite")
+    try:
+        saved = reopened.checkpoints("test-save")[0]["summary_review"]
+        assert saved["packet"] == expected
+        assert fingerprint(saved["packet"]) == packet["packet_hash"]
+        assert saved["checkpoint_id"] == result["checkpoint"]["id"]
+    finally:
+        reopened.close()
+
+    async def refuse():
+        with pytest.raises(APIError, match="not ready"):
+            await harness_switch.prepare(server, "test-save", server.history.session("test-save"))
+
+    asyncio.run(refuse())
