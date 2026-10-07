@@ -249,6 +249,14 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/annotations")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._add_annotation(w, seg, b),
           **_mid("/sessions/", "/annotations")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._agent_merge(w, h, seg, "targets", b),
+          **_mid("/sessions/", "/agent-merge")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._agent_merge(w, h, seg, "send", b),
+          **_mid("/sessions/", "/agent-merge")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._agent_merge(w, h, seg, "preview", b),
+          **_mid("/sessions/", "/agent-merge/preview")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._agent_merge(w, h, seg, "history", b),
+          **_mid("/sessions/", "/agent-merges")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "GET", b),
           **_mid("/sessions/", "/merge")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "POST", b),
@@ -2208,6 +2216,18 @@ class Server:
 
         await handle(self, writer, operation, body)
 
+    async def _agent_merge(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        key: str,
+        operation: str,
+        body: bytes,
+    ) -> None:
+        from duckterm.agent_merges import handle
+
+        await handle(self, writer, headers, key, operation, body)
+
     async def _fork_merge(
         self,
         writer: asyncio.StreamWriter,
@@ -2638,6 +2658,29 @@ class Server:
             req: Any = json.loads(body or b"{}")
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if isinstance(req, dict) and "expected_notes" in req:
+            if set(req) != {"notes", "expected_notes"} or not all(
+                isinstance(req.get(field), str) for field in ("notes", "expected_notes")
+            ):
+                await _write_json(writer, 400, {"error": "Expected notes and expected_notes"})
+                return
+            with self.history._conn:
+                cursor = self.history._conn.execute(
+                    "UPDATE sessions SET notes=? WHERE session_key=? " "AND COALESCE(notes,'')=?",
+                    (req["notes"], session_key, req["expected_notes"]),
+                )
+            if not cursor.rowcount:
+                await _write_json(
+                    writer,
+                    409,
+                    {
+                        "error": "Notes changed elsewhere. Your draft is preserved; "
+                        "review the latest notes before saving.",
+                    },
+                )
+                return
+            await _write_json(writer, 200, {"updated": True})
             return
         ok = self.history.set_meta(
             session_key,

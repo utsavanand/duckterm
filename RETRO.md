@@ -1,5 +1,16 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Configuring a merge must distinguish delivery from integration
+
+Independent agents can combine reviewed context without rewriting conversation
+identity or stopping either process. Save the delivery intent, appended notes,
+and receipt in the broker's transaction; an uncertain-response retry must not
+append notes again. Recheck membership and worktree evidence after asynchronous
+Git reads. Send code as a request to integrate exact reviewed commits, with a
+recipient reply; neither delivery nor acknowledgement proves a successful Git
+merge. Keep native route permissions narrow and include their transport tests.
+
+
 ## 2026-10-07 — File metadata is a recheck signal, not changed conversation content
 
 A real preparation tripped the transcript stat fence. Its earlier byte hash was unavailable, so the exact live change could not be reconstructed. Targeted regressions then demonstrated a separate concrete false positive: touching the timestamp or atomically replacing a file with identical bytes invalidated the whole preparation. Re-read changed files off-loop and compare their exact content hashes before refreshing the stat fence. Keep scope/policy checks across that await and the synchronous final-stop fence afterward. Changed, missing, or corrupted bytes still invalidate; do not weaken this to file size, timestamp, or an assumed equivalent summary.

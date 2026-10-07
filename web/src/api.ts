@@ -1,3 +1,4 @@
+import type { AgentMergeService, AgentMergePreview, AgentMergeRecord, MergeTarget } from "./AgentMergeDialog";
 import type { ConversationRecoveryService, ConversationIdentity, ConversationCandidates } from "./conversationRecoveryState";
 import type { ForkMergePreview, ForkMergeRecord, ForkMergeService } from "./ForkMergeDialog";
 import { routedFetch as fetch, sessionFetch, splitSessionRef, setRemoteGroup, changeRemoteFolders } from "./hostTransport";
@@ -485,6 +486,15 @@ export const api = {
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(meta),
     }).then((r) => r.json()),
+  saveNotes: async (key: string, notes: string, expectedNotes: string) => {
+    const response = await fetch(`/sessions/${key}`, {
+      method: "PATCH", headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ notes, expected_notes: expectedNotes }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Could not save notes");
+    return data;
+  },
   // Type a follow-up straight to a live agent's stdin (the terminal path,
   // but from the Messages view — no tab switch to answer or steer).
   sendInput: (key: string, text: string) =>
@@ -706,6 +716,16 @@ async function mergeRead<T>(key: string, suffix: string): Promise<T> {
   return data;
 }
 export const forkMergeHistory = (key: string) => mergeRead<{ merges: ForkMergeHistory[] }>(key, "merges");
+export function agentMergeService(key: string): AgentMergeService {
+  const path = `/sessions/${encodeURIComponent(splitSessionRef(key).key)}/agent-merge`;
+  return {
+    targets: () => mergeRead<{ destinations: MergeTarget[] }>(key, "agent-merge"),
+    preview: target => post<AgentMergePreview>(path + "/preview", { target }, key),
+    send: draft => post<AgentMergeRecord>(path, draft, key),
+    history: () => mergeRead<{ merges: AgentMergeRecord[] }>(key, "agent-merges"),
+  };
+}
+
 export function forkMergeService(key: string): ForkMergeService {
   return {
     preview: () => mergeRead<ForkMergePreview>(key, "merge"),
