@@ -1,5 +1,42 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Slow background reads can consume the browser's action slots
+
+A retained CI trace showed Undo succeeded only after a seven-second delay before its request was sent. Repeated hidden connector refreshes occupied four browser connections beside the event stream and a slow recovery read. Focus fanout and stale-host overwrites were independently reproduced. Share pending status reads by resolved host, abort obsolete local reads, reject late results after host changes, and coalesce backend CLI probes so abandoned viewers cannot fill the executor. Keep the original action timeout and verify real HTTP congestion, not just mocked responses.
+
+## 2026-10-07 — New dashboard reads must work through older Mac wrappers
+
+Replacing History with Timeline added a remote read absent from the native transport allowlist. Test the complete route through the native adapter, including filters and cursors, and allow only GET. Preserve the prior History view when an older remote wrapper rejects that new route; do not hide authorization or unrelated local errors as compatibility fallback.
+
+## 2026-10-07 — A source fingerprint is not review evidence
+
+An approval packet needs inspectable source links and the exact bounded excerpts the owner saw, not just hashes and counts. Preserve that immutable packet inside the existing reviewed revision, label omitted tools and attachments, and verify a read after the draft cache is gone reproduces the same packet hash. The frozen evidence is part of the explicit review record; it is not a new continuously maintained memory store.
+
+## 2026-10-07 — An owner-reviewed handoff must survive retries without approving new work
+
+Quota exhaustion cannot be solved by asking the exhausted provider for one last summary. Prepare an explicit owner review of a bounded brief and its current sources, then save approval through the existing revision writer. Commit the revision, checkpoint retention marker and current projection together. Bind approval to the displayed packet, source boundary and prior revision; make a lost-response retry return the same checkpoint. The first path certifies only the exact reviewed state: a subsequent digest must neither extend that approval nor truncate the reviewed brief into a short card summary.
+
+## 2026-10-07 — Handoff readers must keep the inbox's original grant and byte limits
+
+A current peer grant does not restore access to messages sent in a previous collaboration root. Apply the message's recorded root check as well as current membership when assembling a handoff. Readiness also needs the launch seed's byte budget: multibyte notes can fit a character bound and still exceed the allowed payload. Preserve the complete source, block readiness on either bound, and test moved-peer mail and multibyte owner notes.
+
+## 2026-10-07 — A saved timestamp must not certify a handoff
+
+The context panel treated any checkpoint less than thirty minutes old as resumable and substituted the click time for the saved record. Render the backend’s saved, summary-source and historical handoff fields independently; missing or legacy fields must remain unverified. Keep original history readable and guard asynchronous results across session/filter changes. Timeline pagination must stay within one source snapshot, and polling must pause for hidden views. Preserve every existing right-panel action when implementing an abbreviated mock.
+
+
+## 2026-10-07 — Every awaited check can invalidate the previous check
+
+A handoff was validated before the final awaited terminal prompt probe. QA changed the transcript or summarizer configuration during that probe and reproduced an unsafe stop. Revalidate source bytes after the first probe, check the draft again, then compare current database facts, provider policy and the captured file's device/inode/size/mtime/ctime without another await before beginning stop. Keep expensive transcript reads off the event loop. Test both sides: source changes during either prompt probe and new owner input during the added source read must preserve the original process.
+
+## 2026-10-07 — A saved checkpoint is not proof of a usable handoff
+
+Exhausted providers left durable checkpoints with mechanical counts while the UI implied they were resumable. Progress, exit and checkpoint summaries also had independent writers. Use one versioned progress pipeline and retain checkpoint references to its original sources; expose summary readiness separately from persistence. Validate the paragraph as well as list items, preserve a last good summary on failure, and recheck the current sources before stopping an agent. Coalesce concurrent refreshes without letting a canceled waiter cancel everyone; compare policy and source identity before promoting late results. A recovery attempt must be able to retry unverified input. Protect both mail expiry paths and their analytics predicates, and refuse older expiry writers before pruning a reference-based database.
+
+## 2026-10-06 — Cleanup must not erase the failure it is cleaning up
+
+Two archive browser failures reported only DELETE409 because a finally block replaced the earlier error while an archive request was pending. A controlled primary assertion reproduced the masking; moving cleanup to Playwright afterEach preserved that assertion and allowed the owned archive to settle before deletion. Verify Undo via server state, include response bodies in cleanup errors, and upload retained traces/screenshots from failed CI jobs. A green local rerun or cleanup-only stack does not prove the original product behavior was correct; absent original traces, keep that diagnosis unresolved.
+
 ## 2026-10-06 — Pinning must remain available where sessions are listed
 
 Moving the Focus pin into the context header made a sidebar operation depend on opening another panel. Restore the approved icon beside every session, including filtered rows and forks, and reuse the shared pin handler and three-session limit. Exercise pinning an unselected session with Context collapsed, without changing the active terminal.

@@ -4,6 +4,7 @@ call whose parsed digest lands on the session row (and therefore in
 
 import asyncio
 import json
+import sys
 import tempfile
 from pathlib import Path
 
@@ -22,8 +23,17 @@ _DIGEST = {
 
 @pytest.fixture()
 def fake_summarizer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    script = tmp_path / "fake-llm.sh"
-    script.write_text(f"#!/bin/sh\ncat >/dev/null\nprintf '%s' '{json.dumps(_DIGEST)}'\n")
+    script = tmp_path / "fake-llm.py"
+    script.write_text(
+        f"#!{sys.executable}\nimport json,sys\n"
+        f"digest={_DIGEST!r}\n"
+        "prompt=sys.stdin.read()\n"
+        "result=({'accept':[{'bucket':k,'text':v} for k,values in digest.items() "
+        "if k!='summary' for v in values], 'done_next_action_ids':[], "
+        "'summary_validation':{'ready':True,'reason_codes':[]}} "
+        "if 'validating a candidate' in prompt else digest)\n"
+        "print(json.dumps(result))\n"
+    )
     script.chmod(0o755)
     monkeypatch.setenv("DUCKTERM_SUMMARIZER_CMD", str(script))
     # The digest ARCHIVE (DigestStore) resolves its db via DUCKTERM_HOME —
@@ -33,32 +43,39 @@ def fake_summarizer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _server() -> Server:
-    return Server(history=HistoryStore(Path(tempfile.mkdtemp()) / "db.sqlite"))
+    server = Server(history=HistoryStore(Path(tempfile.mkdtemp()) / "db.sqlite"))
+    server.orchestrator.on_completed = None
+    return server
 
 
 def test_refresh_progress_stores_digest_on_session(fake_summarizer: Path) -> None:
     async def scenario() -> dict:
         server = _server()
-        server.bus.publish({"event_type": "SessionStart", "session_key": "S", "cwd": "/tmp"})
+        server.bus.publish(
+            {"event_type": "SessionStart", "session_key": "S", "cwd": "/tmp", "test": True}
+        )
         from duckterm.runtimes.generic import GenericRuntime
 
         await server.orchestrator.launch(
             runtime=GenericRuntime("sh -c 'echo WORKING_ON_APP; exec cat'"),
             cwd="/tmp",
             session_key="S",
+            test=True,
         )
         await asyncio.sleep(0.3)  # let the pty produce a screen
         await server._refresh_progress("S")
         await server.orchestrator.stop("S")
         row = server.history.session("S")
         assert row is not None
-        return json.loads(row["progress"]), server.digests.items("S")
+        result = json.loads(row["progress"]), server.digests.items("S")
+        server.history.purge_test_sessions()
+        server.history.close()
+        return result
 
     digest, archived = asyncio.run(scenario())
+    assert digest.pop("revision_id")
     assert digest == {**_DIGEST, "user_learnings": []}  # parse fills the new bucket
-    # The archive filled through validate->merge. The stub's validator reply is
-    # the digest JSON itself — an INVALID verdict shape — so this also proves
-    # the fallback path: nothing lost, all items stored, deduped by text.
+    # Generation and validation are distinct replies; only validated list items archive.
     assert {(i["bucket"], i["text"]) for i in archived} == {
         ("deliverables", "scaffolded the app"),
         ("learnings", "sqlite is enough"),
@@ -72,17 +89,23 @@ def test_refresh_twice_does_not_duplicate_archive(fake_summarizer: Path) -> None
         server = _server()
         from duckterm.runtimes.generic import GenericRuntime
 
-        server.bus.publish({"event_type": "SessionStart", "session_key": "S", "cwd": "/tmp"})
+        server.bus.publish(
+            {"event_type": "SessionStart", "session_key": "S", "cwd": "/tmp", "test": True}
+        )
         await server.orchestrator.launch(
             runtime=GenericRuntime("sh -c 'echo WORKING_ON_APP; exec cat'"),
             cwd="/tmp",
             session_key="S",
+            test=True,
         )
         await asyncio.sleep(0.3)
         await server._refresh_progress("S")
         await server._refresh_progress("S")  # same digest again
         await server.orchestrator.stop("S")
-        return server.digests.items("S")
+        result = server.digests.items("S")
+        server.history.purge_test_sessions()
+        server.history.close()
+        return result
 
     archived = asyncio.run(scenario())
     assert len(archived) == 3  # not 6 — the normalized-text guard held
@@ -92,7 +115,7 @@ def test_stop_event_triggers_debounced_refresh(fake_summarizer: Path) -> None:
     server = _server()
     for i in range(5):
         server.bus.publish(
-            {"event_type": "PreToolUse", "session_key": "S", "cwd": "/tmp", "_ts": i}
+            {"event_type": "PreToolUse", "session_key": "S", "cwd": "/tmp", "_ts": i, "test": True}
         )
     # No running loop here, so the trigger can't schedule — but it must have
     # recorded its debounce mark only when the gate passed.

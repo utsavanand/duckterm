@@ -25,6 +25,7 @@ from duckterm.helpers.metrics import classify
 from duckterm.persistence import mail_analytics, native_identity
 from duckterm.persistence.folder_chats import FolderChats
 from duckterm.persistence.layouts import Layouts
+from duckterm.persistence.saved_state import resolve_checkpoint, retention_predicate
 from duckterm.runtimes.base import AT_REST_STATES, SessionState
 
 Event = dict[str, Any]
@@ -46,7 +47,8 @@ Event = dict[str, Any]
 # v8 persists archive grace periods so a quit cannot lose an acknowledged archive.
 # v9 was the unreleased fork-merge candidate. v10 shipped Folder Tasks first.
 # v11 adds fork merges to v10, including installations that never had v9.
-_SCHEMA_VERSION = 11
+# v12 protects checkpoint references; older expiry writers must refuse this DB.
+_SCHEMA_VERSION = 12
 
 
 class SchemaTooNewError(RuntimeError):
@@ -306,6 +308,18 @@ class HistoryStore:
                 f"supports up to v{_SCHEMA_VERSION} — upgrade DuckTerm, or point "
                 f"DUCKTERM_HOME/DUCKTERM_INSTANCE at a matching data dir."
             )
+        if 0 < db_version < 12:
+            # SQLite backup includes committed WAL content. Keep the pre-upgrade
+            # database for an explicit rollback; never try to downgrade in place.
+            backup_path = path.with_name(path.name + ".before-saved-state-v12")
+            if not backup_path.exists():
+                backup_path.touch(mode=0o600, exist_ok=False)
+                try:
+                    with sqlite3.connect(str(backup_path)) as backup:
+                        self._conn.backup(backup)
+                except BaseException:
+                    backup_path.unlink(missing_ok=True)
+                    raise
         self._conn.executescript(_SCHEMA)
         self._migrate()
         self._conn.execute(
@@ -336,7 +350,9 @@ class HistoryStore:
         # else ever deletes them — sweep everything older than 30 days at
         # startup so the DB doesn't grow without bound. Session rows stay.
         cutoff = int((time.time() - 30 * 86400) * 1000)
-        mail_analytics.retire_events(self._conn, "ts < ?", (cutoff,))
+        mail_analytics.retire_events(
+            self._conn, "ts < ? AND " + retention_predicate("events"), (cutoff,)
+        )
         self._conn.commit()
 
     def _retain_mail(self) -> None:
@@ -625,8 +641,11 @@ class HistoryStore:
         out = []
         for r in rows:
             d = dict(r)
-            d["record"] = json.loads(d.pop("record_json"))
-            out.append(d)
+            try:
+                d["record"] = json.loads(d.pop("record_json"))
+            except (ValueError, TypeError):
+                d["record"] = {"format": "unreadable"}
+            out.append(resolve_checkpoint(self._conn, key, d))
         return out
 
     def events_for(self, key: str, limit: int = 200) -> list[dict[str, Any]]:
@@ -1188,6 +1207,12 @@ class HistoryStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def _delete_digest_rows(self, key: str) -> None:
+        if self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='digest_items'"
+        ).fetchone():
+            self._conn.execute("DELETE FROM digest_items WHERE session_key=?", (key,))
+
     def delete_session(self, key: str, *, now: int = 0) -> bool:
         """Remove a session and everything attached to it (events, metrics,
         checkpoints). Tombstones the key so a still-running terminal's events
@@ -1204,6 +1229,7 @@ class HistoryStore:
         cur = self._conn.execute("DELETE FROM sessions WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
+        self._delete_digest_rows(key)
         self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM artifacts WHERE session_key = ?", (key,))
         self._conn.execute(
@@ -1232,6 +1258,7 @@ class HistoryStore:
             self._conn.execute("DELETE FROM events WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
+            self._delete_digest_rows(key)
             self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM artifacts WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM tombstones WHERE session_key = ?", (key,))

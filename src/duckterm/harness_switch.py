@@ -8,7 +8,11 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from duckterm.core import events
+from duckterm.core.saved_progress import file_version, policy_key
+from duckterm.core.session_api import APIError
+from duckterm.handoff_review import handoff_brief
 from duckterm.harnesses import runtime_for
+from duckterm.persistence.saved_state import fingerprint
 
 if TYPE_CHECKING:
     from duckterm.server import Server
@@ -19,16 +23,34 @@ async def prepare(server: Server, key: str, row: dict[str, Any]) -> dict[str, An
     native_id = server.history.session_id_for(key)
     previous = server.history.restart_control(key)
     checkpoint = await server._create_checkpoint(key, row, "Before harness switch")
-    brief = server._resume_brief(key, {**row, "outcome_summary": checkpoint["summary"]})
-    brief = brief.replace(
-        "whose conversation could not be restored.",
-        "using a different harness. This is a NEW conversation, not a resumed conversation.",
+    if checkpoint.get("saved") is not True or checkpoint.get("handoff_eligible") is not True:
+        raise APIError(
+            409,
+            "Checkpoint saved, but its handoff summary is not ready. "
+            "The current agent was kept. Review checkpoint status before switching.",
+        )
+    captured = await server.progress_coordinator.capture(key)
+    marker = checkpoint.get("record") or {}
+    if captured is None or not _matches(marker, captured):
+        raise APIError(409, "Session context changed after the checkpoint. Retry the switch.")
+    current = server.history.session(key)
+    if current is None:
+        raise APIError(404, "Session no longer exists")
+    # No independent memory record. Required facts are reassembled under the
+    # current scope and never truncated to make a switch appear safe.
+    brief = handoff_brief(
+        str(checkpoint["summary"]),
+        captured["required"],
+        reviewed=checkpoint.get("summary_origin") == "owner-reviewed",
     )
-    if row.get("notes"):
-        brief += "\nOwner's saved notes (verify before relying on them):\n" + str(row["notes"])
-    tasks = server.history.folder_tasks.handoff_context(key)
-    if tasks:
-        brief += "\n\n" + tasks
+    if len(brief.encode()) > 24000:
+        raise APIError(409, "Required handoff context is too large. The current agent was kept.")
+    recent = "\n".join(f"{r['role']}: {r['text']}" for r in captured["transcript"])
+    available = 32000 - len(brief.encode()) - 200
+    tail = recent.encode()[-min(available, 6000) :].decode(errors="ignore")
+    if tail:
+        brief += "\n\nRecent conversation (bounded excerpt; earlier text may be omitted):\n" + tail
+    row = current
     return {
         "runtime": row.get("runtime"),
         "native_id": native_id,
@@ -40,7 +62,44 @@ async def prepare(server: Server, key: str, row: dict[str, Any]) -> dict[str, An
         "test": bool(row.get("test")),
         "checkpoint_id": checkpoint["id"],
         "seed": brief,
+        "_captured": captured,
     }
+
+
+def _matches(marker: dict[str, Any], captured: dict[str, Any]) -> bool:
+    source = captured["source"]
+    return (
+        marker.get("policy") == captured["policy"]
+        and marker.get("conversation") == captured["conversation"]
+        and marker.get("events") == source["events"]
+        and marker.get("required_hash") == source["required_hash"]
+        and marker.get("transcript")
+        == {k: v for k, v in source.items() if k.startswith("transcript_")}
+    )
+
+
+async def validate(server: Server, key: str, prepared: dict[str, Any]) -> None:
+    current = await server.progress_coordinator.capture(key)
+    saved = prepared["_captured"]
+    if current is None or any(current[k] != saved[k] for k in ("source", "conversation", "policy")):
+        raise APIError(
+            409, "Handoff sources changed while preparing the switch. The agent was kept."
+        )
+
+    prepared["_validated_fence"] = current["fence"]
+
+
+def validate_facts(server: Server, key: str, prepared: dict[str, Any]) -> None:
+    if fingerprint(server.progress_coordinator.facts(key)) != fingerprint(
+        prepared["_captured"]["facts"]
+    ):
+        raise APIError(409, "Required handoff context changed. The current agent was kept.")
+
+    if prepared["_captured"]["policy"] != policy_key():
+        raise APIError(409, "Handoff settings changed. The current agent was kept.")
+    fence = prepared.get("_validated_fence")
+    if fence is not None and file_version(fence["path"]) != fence["version"]:
+        raise APIError(409, "Handoff transcript changed. The current agent was kept.")
 
 
 def restore(server: Server, key: str) -> None:
@@ -75,7 +134,7 @@ def restore(server: Server, key: str) -> None:
 async def launch(
     server: Server, key: str, target: str, binary: str, model: str, prepared: dict[str, Any]
 ) -> None:
-    previous = {k: v for k, v in prepared.items() if k != "seed"}
+    previous = {k: v for k, v in prepared.items() if k != "seed" and not k.startswith("_")}
     old_binding = prepared.get("native_binding") or {}
     retired = list(old_binding.get("retired_ids") or [])
     if prepared.get("native_id") and prepared["native_id"] not in retired:

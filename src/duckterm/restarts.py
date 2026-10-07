@@ -476,9 +476,10 @@ class Restarts:
                 raise APIError(409, "The terminal changed while restart was pending.")
             prepared = None
             if switching:
-                from duckterm.harness_switch import prepare
+                from duckterm.harness_switch import prepare, validate
 
                 prepared = await prepare(self.server, key, row)
+                await validate(self.server, key, prepared)
             # The Stop hook can return just before the CLI paints its prompt.
             # Normal restarts require positive turn-end evidence. An explicitly
             # interrupted switch instead requires the unchanged request snapshot.
@@ -496,6 +497,17 @@ class Restarts:
                         "Your input was preserved. Clear the draft and retry."
                     ),
                 )
+            if prepared is not None:
+                # A slow prompt probe can outlive source validation. Read source
+                # bytes again, then recheck the draft. The final non-awaiting
+                # facts/policy/file-version fence closes the opposite race.
+                await validate(self.server, key, prepared)
+                if not self.ready_to_stop(key, epoch, sup, interrupt):
+                    return
+                if not await self.draft_free(sup, rt):
+                    raise APIError(
+                        409, "The prompt changed during handoff preparation. Input kept."
+                    )
             data = self.read(key)
             if data.get("status") != "queued" or data.get("id") != request_id:
                 return
@@ -513,6 +525,10 @@ class Restarts:
                         "reviewing the session."
                     ),
                 )
+            if prepared is not None:
+                from duckterm.harness_switch import validate_facts
+
+                validate_facts(self.server, key, prepared)
             self.save(
                 key,
                 status="restarting",

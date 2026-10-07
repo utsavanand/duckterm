@@ -93,3 +93,19 @@ extension SessionTransportTests {
         XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": "/sessions/../conversation-adopt", "method": "POST"]))
     }
 }
+
+extension SessionTransportTests {
+    @MainActor func testTimelineQueriesStayOnTheSelectedHostAndAreReadOnly() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        let path = "/sessions/same.id/timeline?kinds=checkpoint%2Cartifact&before=opaque%2Bcursor"
+        let request = try SessionTransport.request(base: base, params: ["path": path, "method": "GET"])
+        XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:14300" + path)
+        XCTAssertNil(request.value(forHTTPHeaderField: "X-Duckterm-Token"))
+        for method in ["POST", "PATCH", "DELETE"] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+        }
+        for badPath in ["/sessions/../timeline", "/sessions/x/timeline/extra", "/sessions/x/timeline#fragment"] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": badPath, "method": "GET"]))
+        }
+    }
+}

@@ -53,7 +53,7 @@ from typing import Any
 from duckterm import bug_reports, connectors, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
-from duckterm.core import events, oracle, progress
+from duckterm.core import events, oracle
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -70,6 +70,7 @@ from duckterm.core.relay import (
     question_from,
     validate_rule,
 )
+from duckterm.core.saved_progress import ProgressCoordinator
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
 from duckterm.core.tokens import TokenLedger
 from duckterm.git import gitdetect
@@ -86,14 +87,22 @@ from duckterm.helpers import (
 )
 from duckterm.helpers.private_files import private_read, private_write
 from duckterm.llm.suggest import Correction, suggest_rules
-from duckterm.llm.summarizer import summarize
+from duckterm.llm.summarizer import summarize as summarize
 from duckterm.persistence import backup_sync, mail_analytics
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
 from duckterm.persistence.artifacts import ArtifactError
-from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
+from duckterm.persistence.checkpoints import _git_state, _render_markdown, write_markdown
 from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.folder_chats import valid_folder, within
 from duckterm.persistence.history import HistoryStore
+from duckterm.persistence.saved_state import (
+    checkpoint_marker,
+    conversation,
+    current_revision,
+    event_source,
+    resolve_checkpoint,
+    transaction,
+)
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
 from duckterm.transport.httpio import (
@@ -409,7 +418,12 @@ class Server:
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
-        self.digests = DigestStore()
+        self.digests = DigestStore(conn=self.history._conn)
+        self.progress_coordinator = ProgressCoordinator(self)
+        from duckterm.handoff_review import HandoffReview
+
+        self.handoff_review = HandoffReview(self)
+        self.orchestrator.on_completed = self._progress_on_exit
         self.token = security.load_or_create_token()
         # transcript path -> (mtime, context_tokens): /sessions is fetched
         # often and an unchanged transcript can't have new usage.
@@ -426,6 +440,7 @@ class Server:
         from duckterm.archives import Archives
 
         self.archives = Archives(self)
+        self._connector_status_task: asyncio.Task[list[dict[str, object]]] | None = None
 
     # Activity that means a session moved past an *earlier* permission prompt:
     # any of these arriving AFTER a request means it was answered and the agent
@@ -560,6 +575,16 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        handoff_route = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/handoff-(review|approve)", path
+        )
+        if handoff_route:
+            from duckterm.handoff_review import handle as handoff_handle
+
+            await handoff_handle(
+                self, writer, headers, handoff_route[1], handoff_route[2], method, body
+            )
+            return
         recovery_route = re.fullmatch(
             r"/sessions/([A-Za-z0-9._-]{1,128})/conversation-(recovery|candidates|adopt|hooks|detach)",
             path,
@@ -2609,39 +2634,27 @@ class Server:
             return  # no loop (sync test context) — the next Stop will retry
         loop.create_task(self._refresh_progress(session_key))
 
-    async def _refresh_progress(self, session_key: str) -> None:
+    def _progress_on_exit(self, session_key: str) -> None:
         row = self.history.session(session_key)
         if row is None:
             return
-        transcript = await asyncio.to_thread(
-            self._progress_transcript,
-            self._message_source(session_key),
-            self.orchestrator.get(session_key),
-        )
-        if not transcript:
-            return
-        prior = None
-        with contextlib.suppress(json.JSONDecodeError, TypeError):
-            prior = json.loads(row.get("progress") or "")
-        prompt = progress.build_prompt(transcript, prior, str(row.get("intention") or ""))
-        summary = await asyncio.to_thread(summarize, prompt)
-        digest = progress.parse(summary.text)
-        if digest is None:
-            return
-        now = int(time.time() * 1000)
-        self.history.set_progress(session_key, json.dumps(digest), now)
-        # Validate before archiving: L1 (each item makes sense on its own) +
-        # L2 (compared against what's already stored) in one summarizer call.
-        # A failed/garbled validation falls back to a code-only merge — the
-        # store's normalized-text dedup still applies, and losing a digest to
-        # a flaky validator would be worse than an occasional near-duplicate.
-        existing = self.digests.items(session_key)
-        verdict_reply = await asyncio.to_thread(
-            summarize, progress.validate_prompt(digest, existing)
-        )
-        verdicts = progress.parse_verdicts(verdict_reply.text) or progress.fallback_verdicts(digest)
-        self.digests.merge(session_key, verdicts["accept"], verdicts["done_next_action_ids"], now)
-        self._file_digest_candidates(row)
+        identity = conversation(self.history, session_key, row)
+
+        async def refresh() -> None:
+            current = self.history.session(session_key)
+            if current and conversation(self.history, session_key, current) == identity:
+                await self._refresh_progress(session_key)
+
+        asyncio.create_task(refresh())
+
+    async def _refresh_progress(self, session_key: str) -> None:
+        try:
+            revision = await self.progress_coordinator.refresh(session_key)
+            row = self.history.session(session_key)
+            if revision and row:
+                self._file_digest_candidates(row)
+        except Exception as exc:  # provider/background boundary; retain last good progress
+            print(f"[duckterm] progress refresh failed: {type(exc).__name__}", file=sys.stderr)
 
     # A collaboration pattern seen in this many distinct sessions of one folder
     # graduates from digest observation to a proposed AGENTS.md rule.
@@ -3793,8 +3806,13 @@ class Server:
 
     async def _list_connectors(self, writer: asyncio.StreamWriter) -> None:
         # Credential/CLI probes can take seconds. Keep other dashboard requests
-        # and terminal traffic responsive while they finish.
-        statuses = await asyncio.to_thread(connectors.list_status)
+        # responsive without filling the executor when multiple viewers refresh.
+        task = self._connector_status_task
+        if task is None:
+            task = asyncio.create_task(asyncio.to_thread(connectors.list_status))
+            self._connector_status_task = task
+            task.add_done_callback(self._connector_status_finished)
+        statuses = [dict(row) for row in await asyncio.shield(task)]
         # Inline, NOT in a thread. HistoryStore shares one sqlite connection
         # opened with check_same_thread=False and no lock, so every other
         # caller reaches it from this thread; reading it from a worker raced
@@ -3806,6 +3824,12 @@ class Server:
             row["last_used"] = recorded[0] if recorded else None
             row["use_count"] = recorded[1] if recorded else 0
         await _write_json(writer, 200, {"connectors": statuses})
+
+    def _connector_status_finished(self, task: asyncio.Task[list[dict[str, object]]]) -> None:
+        if self._connector_status_task is task:
+            self._connector_status_task = None
+        if not task.cancelled():
+            task.exception()  # Retrieve failure even if every viewer disconnected.
 
     async def _verify_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
         """Prove the harness path works, rather than that a config entry exists."""
@@ -3852,6 +3876,9 @@ class Server:
         except RuntimeError as e:
             await _write_json(writer, 400, {"error": str(e)})
             return
+        finally:
+            # A later read must not join a probe from before this config change.
+            self._connector_status_task = None
         await _write_json(writer, 200, result)
 
     async def _disable_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
@@ -3863,6 +3890,9 @@ class Server:
         except RuntimeError as e:
             await _write_json(writer, 400, {"error": str(e)})
             return
+        finally:
+            # A later read must not join a probe from before this config change.
+            self._connector_status_task = None
         await _write_json(writer, 200, result)
 
     async def _forget_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
@@ -3874,6 +3904,9 @@ class Server:
         except RuntimeError as e:
             await _write_json(writer, 400, {"error": str(e)})
             return
+        finally:
+            # A later read must not join a probe from before this config change.
+            self._connector_status_task = None
         await _write_json(writer, 200, result)
 
     async def _backup(
@@ -4477,45 +4510,76 @@ class Server:
 
     async def _create_checkpoint(
         self, session_key: str, row: dict[str, Any], label: str
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
+        captured = await self.progress_coordinator.capture(session_key)
+        if captured is None:
+            raise APIError(409, "Session changed while capturing checkpoint; try again")
+        prior = current_revision(self.history.session(session_key) or {})
+        revision = None
+        try:
+            revision = await self.progress_coordinator.refresh(session_key, captured)
+        except Exception as exc:  # facts can save even with an unavailable provider
+            print(
+                f"[duckterm] checkpoint summary unavailable: {type(exc).__name__}", file=sys.stderr
+            )
         cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
-        # Summarize the delta since the most recent checkpoint (0 if first).
-        prior = self.history.checkpoints(session_key)
-        since_ms = int(prior[0]["created_at"]) if prior else 0
-        # Read the agent's own conversation (including its responses) from its
-        # native transcript, so the checkpoint captures what the agent said and
-        # did — not just the human prompts and tool calls in our event store.
-        transcript = self._read_transcript(session_key, row)
-        cp = await asyncio.to_thread(
-            build_checkpoint,
-            session_key=session_key,
-            label=label,
-            cwd=cwd,
-            # The whole session, not just the last 200 events — a checkpoint is
-            # a complete record and must capture every prompt.
-            events=self.history.events_for(session_key, limit=100_000),
-            transcript=transcript,
-            intention=str(row.get("intention") or ""),
-            now_ms=int(time.time() * 1000),
-            since_ms=since_ms,
+        git = await asyncio.to_thread(_git_state, cwd)
+        now = int(time.time() * 1000)
+        identity = uuid.uuid4().hex
+        source = captured["source"]
+        record = checkpoint_marker(captured, revision["id"] if revision else prior, git, now)
+        conn = self.history._conn
+        with transaction(conn):
+            current = self.history.session(session_key)
+            if (
+                current is None
+                or conversation(self.history, session_key, current) != captured["conversation"]
+            ):
+                raise APIError(409, "Session conversation changed before checkpoint was saved")
+            if event_source(conn, session_key, source["events"]["last"]) != source["events"]:
+                raise APIError(409, "Checkpoint source changed before it could be retained")
+            for mail_id in record["mail_ids"]:
+                if not conn.execute(
+                    "SELECT 1 FROM session_questions WHERE id=?", (mail_id,)
+                ).fetchone():
+                    raise APIError(
+                        409, "Checkpoint message source expired before it could be retained"
+                    )
+            conn.execute(
+                "INSERT INTO checkpoints "
+                "(id,session_key,label,summary,record_json,markdown_path,created_at) "
+                "VALUES (?,?,?,'',?,NULL,?)",
+                (identity, session_key, label, json.dumps(record), now),
+            )
+        result = resolve_checkpoint(
+            conn,
+            session_key,
+            {
+                "id": identity,
+                "label": label,
+                "summary": "",
+                "record": record,
+                "markdown_path": None,
+                "created_at": now,
+            },
         )
-        # Row FIRST (the source of truth), markdown SECOND (a derived artifact).
-        # A crash between them leaves markdown_path NULL — never an orphan file
-        # with no row. The markdown lives under DUCKTERM_HOME, not the worktree,
-        # so deleting the session's worktree can't destroy its checkpoint log.
-        self.history.add_checkpoint(
-            checkpoint_id=cp.id,
-            session_key=cp.session_key,
-            label=cp.label,
-            summary=cp.summary,
-            record=cp.record,
-            markdown_path=None,
-            created_at=cp.created_at,
+        return await self._export_checkpoint(session_key, result)
+
+    async def _export_checkpoint(self, session_key: str, result: dict[str, Any]) -> dict[str, Any]:
+        label, now, identity = result["label"], result["created_at"], result["id"]
+        markdown = _render_markdown(label, result["record"], result["summary"])
+        markdown += (
+            f"\n## Checkpoint status\n\nSummary: {result['summary_state']}\n"
+            f"Handoff at save: {result['handoff_eligible']}\n"
+            "This is a marker over retained history, not a backup of the provider transcript.\n"
         )
-        rel = await asyncio.to_thread(write_markdown, cp.session_key, cp.created_at, cp.markdown)
-        if rel is not None:
-            self.history.set_checkpoint_markdown(cp.id, rel)
-        return {"id": cp.id, "label": cp.label, "summary": cp.summary}
+        relative = await asyncio.to_thread(write_markdown, session_key, now, markdown, identity)
+        if relative is not None:
+            self.history.set_checkpoint_markdown(identity, relative)
+            result["markdown_path"] = relative
+        else:
+            result["export_reason"] = "markdown_unavailable"
+        return result
 
     def _read_transcript(self, session_key: str, row: dict[str, Any]) -> list[dict[str, str]]:
         """The agent's own conversation for a session (role/text incl. its

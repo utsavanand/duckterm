@@ -17,8 +17,8 @@ rig = fixtures.rig
 
 @pytest.fixture(autouse=True)
 def checkpoint(monkeypatch):
-    async def create(*args):
-        return {"id": "checkpoint", "summary": "Latest completed work"}
+    async def create(server, key, *args):
+        return await fixtures.ready_checkpoint(server, key, summary="Latest completed work")
 
     monkeypatch.setattr("duckterm.server.Server._create_checkpoint", create)
 
@@ -88,7 +88,7 @@ def test_change_during_checkpoint_preserves_source_without_delayed_retry(rig, mo
                     },
                 },
             )
-        return {"id": "checkpoint", "summary": "Summary"}
+        return await fixtures.ready_checkpoint(server, summary="Summary")
 
     monkeypatch.setattr(server, "_create_checkpoint", create)
 

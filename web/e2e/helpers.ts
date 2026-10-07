@@ -119,7 +119,7 @@ export async function checkpoints(key: string): Promise<Checkpoint[]> {
 
 export async function apiDelete(path: string): Promise<void> {
   const res = await api(path, { method: "DELETE" });
-  if (!res.ok && res.status !== 404) throw new Error(`Cleanup failed: ${res.status}`);
+  if (!res.ok && res.status !== 404) throw new Error(`Cleanup failed for ${path}: ${res.status} ${await res.text()}`);
 }
 
 export async function expandFolder(page: Page, path: string) {
@@ -132,4 +132,10 @@ export async function expandFolder(page: Page, path: string) {
     if (await caret.textContent() === "▸") await caret.click();
     await expect(caret).toHaveText("▾");
   }
+}
+
+export async function archiveRequests(): Promise<{ session_key: string; status: string; error?: string }[]> {
+  const res = await api("/archive-requests");
+  if (!res.ok) throw new Error(`Archive state failed: ${res.status} ${await res.text()}`);
+  return (await res.json()).requests;
 }
