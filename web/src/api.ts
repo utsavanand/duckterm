@@ -398,7 +398,7 @@ export const api = {
   branches: (path: string) =>
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
-  connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context, { authed: true }),
+  connectors: (context?: string, signal?: AbortSignal) => get<{ connectors: Connector[] }>("/connectors", context, { authed: true, signal }),
   enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string, harnesses?: string[]) =>
     post<Connector>(`/connectors/${name}/enable`, {
       source, write_access,

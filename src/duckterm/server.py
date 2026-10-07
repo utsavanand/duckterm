@@ -440,6 +440,7 @@ class Server:
         from duckterm.archives import Archives
 
         self.archives = Archives(self)
+        self._connector_status_task: asyncio.Task[list[dict[str, object]]] | None = None
 
     # Activity that means a session moved past an *earlier* permission prompt:
     # any of these arriving AFTER a request means it was answered and the agent
@@ -3805,8 +3806,13 @@ class Server:
 
     async def _list_connectors(self, writer: asyncio.StreamWriter) -> None:
         # Credential/CLI probes can take seconds. Keep other dashboard requests
-        # and terminal traffic responsive while they finish.
-        statuses = await asyncio.to_thread(connectors.list_status)
+        # responsive without filling the executor when multiple viewers refresh.
+        task = self._connector_status_task
+        if task is None:
+            task = asyncio.create_task(asyncio.to_thread(connectors.list_status))
+            self._connector_status_task = task
+            task.add_done_callback(self._connector_status_finished)
+        statuses = [dict(row) for row in await asyncio.shield(task)]
         # Inline, NOT in a thread. HistoryStore shares one sqlite connection
         # opened with check_same_thread=False and no lock, so every other
         # caller reaches it from this thread; reading it from a worker raced
@@ -3818,6 +3824,12 @@ class Server:
             row["last_used"] = recorded[0] if recorded else None
             row["use_count"] = recorded[1] if recorded else 0
         await _write_json(writer, 200, {"connectors": statuses})
+
+    def _connector_status_finished(self, task: asyncio.Task[list[dict[str, object]]]) -> None:
+        if self._connector_status_task is task:
+            self._connector_status_task = None
+        if not task.cancelled():
+            task.exception()  # Retrieve failure even if every viewer disconnected.
 
     async def _verify_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
         """Prove the harness path works, rather than that a config entry exists."""
@@ -3864,6 +3876,9 @@ class Server:
         except RuntimeError as e:
             await _write_json(writer, 400, {"error": str(e)})
             return
+        finally:
+            # A later read must not join a probe from before this config change.
+            self._connector_status_task = None
         await _write_json(writer, 200, result)
 
     async def _disable_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
@@ -3875,6 +3890,9 @@ class Server:
         except RuntimeError as e:
             await _write_json(writer, 400, {"error": str(e)})
             return
+        finally:
+            # A later read must not join a probe from before this config change.
+            self._connector_status_task = None
         await _write_json(writer, 200, result)
 
     async def _forget_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
@@ -3886,6 +3904,9 @@ class Server:
         except RuntimeError as e:
             await _write_json(writer, 400, {"error": str(e)})
             return
+        finally:
+            # A later read must not join a probe from before this config change.
+            self._connector_status_task = None
         await _write_json(writer, 200, result)
 
     async def _backup(

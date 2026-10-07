@@ -92,3 +92,13 @@ it("preserves the complete owner-reviewed brief and identifies its origin", asyn
   expect(screen.getByText("Owner-reviewed brief")).toBeVisible();
   expect(screen.getByText(text).textContent).toBe(text);
 });
+
+it("retains remote history when an older native wrapper lacks Timeline transport", async () => {
+  const { sessionRef } = await import("./hostTransport");
+  vi.mocked(api.timeline).mockRejectedValue(new Error("Unsupported session operation"));
+  const view = render(<TimelineView session={{ ...session, key: sessionRef("other-mac", "same") }} />);
+  await screen.findByText("Earlier digest history");
+  view.rerender(<TimelineView session={session} />);
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Unsupported session operation"));
+  expect(screen.queryByText("Earlier digest history")).toBeNull();
+});

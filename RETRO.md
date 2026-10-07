@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Slow background reads can consume the browser's action slots
+
+A retained CI trace showed Undo succeeded only after a seven-second delay before its request was sent. Repeated hidden connector refreshes occupied four browser connections beside the event stream and a slow recovery read. Focus fanout and stale-host overwrites were independently reproduced. Share pending status reads by resolved host, abort obsolete local reads, reject late results after host changes, and coalesce backend CLI probes so abandoned viewers cannot fill the executor. Keep the original action timeout and verify real HTTP congestion, not just mocked responses.
+
+## 2026-10-07 — New dashboard reads must work through older Mac wrappers
+
+Replacing History with Timeline added a remote read absent from the native transport allowlist. Test the complete route through the native adapter, including filters and cursors, and allow only GET. Preserve the prior History view when an older remote wrapper rejects that new route; do not hide authorization or unrelated local errors as compatibility fallback.
+
 ## 2026-10-07 — A source fingerprint is not review evidence
 
 An approval packet needs inspectable source links and the exact bounded excerpts the owner saw, not just hashes and counts. Preserve that immutable packet inside the existing reviewed revision, label omitted tools and attachments, and verify a read after the draft cache is gone reproduces the same packet hash. The frozen evidence is part of the explicit review record; it is not a new continuously maintained memory store.

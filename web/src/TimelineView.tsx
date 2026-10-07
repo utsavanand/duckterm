@@ -69,7 +69,8 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
         if (!live) return;
         // Older remote servers retain the previous digest and checkpoint view.
         const message = (cause as Error).message;
-        if (/404|not found|unknown endpoint/i.test(message)) { unavailable = true; setUnsupported(true); }
+        const olderNative = splitSessionRef(session.key).host !== "local" && message === "Unsupported session operation";
+        if (olderNative || /404|not found|unknown endpoint/i.test(message)) { unavailable = true; setUnsupported(true); }
         else setError(message || "Timeline could not be loaded.");
       } finally { pending = false; if (live) setBusy(false); }
     }
