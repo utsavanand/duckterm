@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Pinning must remain available where sessions are listed
+
+Moving the Focus pin into the context header made a sidebar operation depend on opening another panel. Restore the approved icon beside every session, including filtered rows and forks, and reuse the shared pin handler and three-session limit. Exercise pinning an unselected session with Context collapsed, without changing the active terminal.
+
 ## 2026-10-06 — Switch coverage must cross the changed lifecycle boundary
 
 The interruption checks mocked launch, while the real terminal switch still supplied a Stop hook. Added an explicit no-Stop case to the isolated tmux test, retained default quota/no-Stop guards, and checked both-direction task/inbox/artifact and membership preservation after reopening SQLite. Separate checkpoint failure, archive and transfer races assert that the source is never stopped. Compare durable work fields, not intentionally rotating per-process credentials. Focused checks passed; synthetic terminals and test records are cleaned up. These checks do not establish installed-provider, native WebKit or SSH behavior.
