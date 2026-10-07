@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Identical timestamps can hide changed transcript bytes
+
+Linux assigned the same size, mtime_ns and ctime_ns to rapid transcript rewrites,
+so a stat-only cache kept returning old Messages and message keys indefinitely.
+Recheck recent file bytes until a content read occurs beyond a two-second
+timestamp window, then retain stat-only polling for settled files. Reuse parsed
+records and serialized responses when the bytes match; hash the partial final
+record as well as complete lines. Cover equal-stamp rewrites during the window
+and the first poll after it, for Claude and Codex, and verify real Linux behavior.
+
 ## 2026-10-05 — Two terminals in one session need separate paste targets
 
 A companion shell shares an agent's session identity but not its input stream.
