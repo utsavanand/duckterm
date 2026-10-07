@@ -166,3 +166,15 @@ def test_endpoint_keeps_database_on_owner_thread_and_files_off_loop(history, tmp
         assert "native conversation ID: missing" in item["text"]
     finally:
         server.digests.close()
+
+
+@pytest.mark.parametrize(
+    "hooks", [{}, {"Stop": []}, {"Stop": [{"hooks": [{"command": "echo unrelated"}]}]}]
+)
+def test_empty_or_unrelated_hooks_are_not_reported_as_installed(history, tmp_path, hooks):
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text(
+        json.dumps({"hooks": hooks, "unrelated": str(resume_diagnostics.hook_script_path())})
+    )
+    assert resume_diagnostics.hook_status("claude-code", None) == "not configured"

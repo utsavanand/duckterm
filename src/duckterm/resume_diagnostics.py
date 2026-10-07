@@ -1,6 +1,5 @@
 """Bounded, read-only resume checks for owner-reviewed bug reports."""
 
-import copy
 import hashlib
 import json
 import re
@@ -80,13 +79,23 @@ def hook_status(runtime: str, cwd: Path | None) -> str:
             config = json.loads(read_regular(path, 1024 * 1024))
             if not isinstance(config, dict):
                 raise ValueError("Invalid settings")
-            if spec.strip(copy.deepcopy(config)) != config:
-                # Configured does not imply trusted or successfully delivering.
-                found.append(
-                    "configured"
-                    if str(hook_script_path()) in json.dumps(config)
-                    else "stale reference"
-                )
+            hooks = config.get("hooks", {})
+            if not isinstance(hooks, dict):
+                raise ValueError("Invalid hooks")
+            for entries in hooks.values():
+                if not isinstance(entries, list):
+                    raise ValueError("Invalid hook entries")
+                for entry in entries:
+                    for hook in entry.get("hooks", [entry]):
+                        for field in ("command", "bash"):
+                            command = hook.get(field, "")
+                            if isinstance(command, str) and "duckterm" in command:
+                                # Configured does not establish trust or delivery.
+                                found.append(
+                                    "configured"
+                                    if str(hook_script_path()) in command
+                                    else "stale reference"
+                                )
         except FileNotFoundError:
             continue
         except (OSError, ValueError, TypeError, AttributeError):
