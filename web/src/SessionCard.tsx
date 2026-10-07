@@ -1,3 +1,4 @@
+import { recoveryBlocksResume } from "./resumeReadiness";
 import { SessionConversationRecovery } from "./ConversationRecovery";
 import { identityBlocksResume } from "./conversationRecoveryState";
 import type { ConversationIdentity } from "./conversationRecoveryState";
@@ -220,7 +221,8 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
           )}
           {resumable && splitSessionRef(s.key).host === "local" && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "") && <>
             <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key }))}>Move to remote…</button>
-            <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={async () => {
+            <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={recoveryBlocked} onClick={async () => {
+              if (recoveryBlocksResume(s.key)) return;
               if (!window.confirm("Continue this session locally as a separate continuation? A remote session, if created, will remain running.")) return;
               try {
                 await destinationRequest("local", "project-continue", { source_session: s.key });

@@ -117,5 +117,28 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
     await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeEnabled();
     await expect(card.getByText("Attachment removed. The transcript is unchanged and the session stays stopped.")).toHaveCount(0);
 
+    // Reopening the card must not treat the still-recorded old binding as
+    // permission to Resume while a second Undo is waiting on the network.
+    const other = await seedSession(`undo-other-${randomUUID()}`, { name: "Recovery other reviewer", test: true });
+    let finishDelayed!: () => void;
+    const delayed = new Promise<void>(resolve => { finishDelayed = resolve; });
+    await page.unroute("**/conversation-detach");
+    await page.route("**/conversation-detach", async route => { await delayed; await route.continue(); });
+    try {
+      await card.getByRole("button", { name: "Undo attachment", exact: true }).click();
+      await page.locator(".rd-row-name", { hasText: "Recovery other reviewer" }).click();
+      await expect(card.getByText("Recovery other reviewer", { exact: true })).toBeVisible();
+      await page.locator(".rd-row-name", { hasText: "Recovery picker reviewer" }).click();
+      await expect(card.getByText("Recovery picker reviewer", { exact: true })).toBeVisible();
+      await expect(sidebarResume).toBeDisabled();
+      await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
+      const undo = card.getByRole("button", { name: "Undo attachment", exact: true });
+      if (await undo.count()) await expect(undo).toBeDisabled();
+      finishDelayed();
+      await expect(card.getByRole("button", { name: "Choose a conversation" })).toBeVisible();
+      await expect(sidebarResume).toBeDisabled();
+      expect(readFileSync(join(root, "alpha.jsonl"), "utf8")).toBe(unchanged);
+    } finally { finishDelayed(); await apiDelete(`/sessions/${other}`); }
+
   } finally { await apiDelete(`/sessions/${key}`); rmSync(root, { recursive: true, force: true }); rmSync(cwd, { recursive: true, force: true }); }
 });

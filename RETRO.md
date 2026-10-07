@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — A remounted card cannot settle an in-flight Undo
+
+Sharing a Resume block across controls was insufficient: a remounted recovery card could read the old adopted binding and clear the block while detach was still pending. Track the in-flight phase by canonical session key, release it only when that request settles, and then reread identity. A ready read during the write must never clear the guard. Cover remount, duplicate Undo and captured callbacks; guard Continue locally before it changes continuation bookkeeping too.
+
 ## 2026-10-06: Guard every Resume entry point during recovery
 
 Undo disabled only the session-card Resume button; the sidebar could still resume while the mutation was pending or uncertain. A delayed-request browser regression exposed the bypass. Recovery readiness now guards the card, sidebar and resume handler by canonical session key, including across card unmounts. Test all entry points for shared operations.

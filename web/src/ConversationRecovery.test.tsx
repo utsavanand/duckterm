@@ -126,3 +126,31 @@ it("reconciles an uncertain Undo before allowing another mutation and never retr
     expect(recoveryBlocksResume(session.key)).toBe(true);
   } finally { cleanup(); spy.mockRestore(); }
 });
+
+it("keeps Undo pending across a recovery-card remount even when the old binding still reads ready", async () => {
+  const apiModule = await import("./api");
+  const api = service();
+  const adopted = { ...recorded, canDetach: true, canResume: true, transcript: "present" as const, revision: "revision-one" };
+  vi.mocked(api.identity).mockResolvedValue(adopted);
+  let finish!: (identity: ConversationIdentity) => void;
+  vi.mocked(api.detach).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const spy = vi.spyOn(apiModule, "conversationRecoveryService").mockReturnValue(api);
+  const updated = vi.fn();
+  const session = { key: "pending-remount", label: "Orphan", runtime: "claude-code", conversationIdentity: { status: "recorded", source: "adopted", assignable: false } } as import("./types").SessionView;
+  try {
+    const first = render(<SessionConversationRecovery session={session} stopped onIdentity={updated} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Undo attachment" }));
+    expect(recoveryBlocksResume(session.key)).toBe(true);
+    first.unmount();
+    render(<SessionConversationRecovery session={session} stopped onIdentity={updated} />);
+    await act(async () => {});
+    expect(recoveryBlocksResume(session.key)).toBe(true);
+    const undo = screen.queryByRole("button", { name: "Undo attachment" });
+    if (undo) expect(undo).toBeDisabled();
+    vi.mocked(api.identity).mockResolvedValue(missing);
+    await act(async () => { finish(missing); });
+    await screen.findByRole("button", { name: "Choose a conversation" });
+    expect(recoveryBlocksResume(session.key)).toBe(true);
+    expect(api.detach).toHaveBeenCalledOnce();
+  } finally { cleanup(); spy.mockRestore(); }
+});

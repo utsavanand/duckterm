@@ -1,4 +1,4 @@
-import { setRecoveryResumeAllowed } from "./resumeReadiness";
+import { beginRecoveryUndo, finishRecoveryUndo, setRecoveryResumeAllowed, useRecoveryUndoPending } from "./resumeReadiness";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ConversationCandidate, ConversationCandidates, ConversationIdentity, ConversationRecoveryService } from "./conversationRecoveryState";
@@ -101,6 +101,7 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
   session: SessionView; stopped: boolean; onIdentity: (value: ConversationIdentity) => void;
 }) {
   const service = useMemo(() => conversationRecoveryService(session.key), [session.key]);
+  const undoPending = useRecoveryUndoPending(session.key);
   const [identity, setIdentity] = useState<ConversationIdentity | null>(session.conversationIdentity ? launchIdentity(session.conversationIdentity) : null);
   const [choosing, setChoosing] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -115,7 +116,7 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
   useEffect(() => {
     let current = true;
     const refresh = async () => {
-      if (document.hidden || mutating.current || choosing) return;
+      if (document.hidden || mutating.current || undoPending || choosing) return;
       const request = ++generation.current;
       try {
         const value = await service.identity();
@@ -127,7 +128,7 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
     void refresh();
     const timer = window.setInterval(() => void refresh(), 10000);
     return () => { current = false; clearInterval(timer); };
-  }, [service, session.conversationIdentity?.status, stopped, retry, update, choosing]);
+  }, [service, session.conversationIdentity?.status, stopped, retry, update, choosing, undoPending]);
   async function install() {
     if (mutating.current) return;
     mutating.current = true; generation.current += 1; setBusy(true); setError("");
@@ -137,9 +138,9 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
   }
   async function detach() {
     if (mutating.current || uncertain || !stopped || identity?.source !== "adopted" || !identity.canDetach || !identity.revision) return;
+    if (!beginRecoveryUndo(session.key)) return;
     mutating.current = true; generation.current += 1; setBusy(true); setError(""); setNotice("");
     // Disable every Resume entry point until recovery confirms it is safe again.
-    setRecoveryResumeAllowed(session.key, false);
     update({ ...identity, canResume: false });
     try {
       const value = await service.detach(identity.revision);
@@ -147,13 +148,14 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
     } catch (cause) {
       if (mounted.current) { setUncertain(true); setError(`Undo could not be confirmed: ${(cause as Error).message}. Check the current status before trying again.`); }
     } finally {
+      finishRecoveryUndo(session.key);
       mutating.current = false;
       if (mounted.current) { setBusy(false); setRetry(n => n + 1); }
     }
   }
   const computer = session.hostLabel || hostName(session.key);
   return <>
-    {identity && <ConversationIdentityNotice identity={identity} computer={computer} stopped={stopped} busy={busy || uncertain} onDetach={() => void detach()} onChoose={() => { generation.current += 1; setChoosing(true); }} onInstall={() => void install()} />}
+    {identity && <ConversationIdentityNotice identity={identity} computer={computer} stopped={stopped} busy={busy || uncertain || undoPending} onDetach={() => void detach()} onChoose={() => { generation.current += 1; setChoosing(true); }} onInstall={() => void install()} />}
     {notice && <p className="hint" role="status">{notice}</p>}
     {error && session.conversationIdentity && <p className="rd-conversation-error" role="status">{error}<button className="rd-btn rd-btn-ghost" onClick={() => setRetry(n => n + 1)}>Check again</button></p>}
     {choosing && <ConversationRecoveryDialog service={service} sessionName={session.label} computer={computer} project={session.worktreePath || session.cwd} onClose={() => setChoosing(false)} onAdopted={update} />}
