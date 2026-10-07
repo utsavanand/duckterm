@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Reconcile new tests after concurrent menu changes
+
+The memory feature and the plain-label menu passed their separate gates, but their merge left the new memory browser workflow looking for the previous menu labels. Align the integration test with the merged accessible labels and exercise the full preparation/switch/cancel/Timeline scenario. Do not assume two independently green branches imply a green merge.
+
 ## 2026-10-07 — Effect cleanup must own its cancellation lease
 
 React development replay reused one preparation key across two effect lifetimes. The disposed effect then released the mounted effect’s lease, canceling active work. Allocate a separate lease for each effect lifetime; preserve the original key only for an explicit retry of a genuinely lost request. Test replay, late close, and lost-response retry together. When integrating a dialog into an existing context menu, also close that menu after an accepted action and preserve its accessibility roles.
