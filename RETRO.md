@@ -1,6 +1,15 @@
 # Retro — lessons from real breakage
 
 
+## 2026-10-07 — Graph citations must resolve exact, still-authorized records
+
+Problem: an artifact hash identified a replaced version but did not itself make its content readable, and generated claims could outlive permission to their evidence. A single-version search index could also silently drop cited old text.
+
+Fix: retain only canonically referenced versions, index source/version pairs, and derive checkpoint/revision relationships on read. Validate typed assertion endpoints and original evidence before retention and again before commit. Withdraw dependent claims and edges when their evidence becomes unavailable; never substitute current text for an old citation.
+
+Validation: isolated tests cover source replacement, deletion, orphan references, corrupt snapshots, credential/scope changes during writes, claim supersession, pagination invalidation, retry idempotency and CLI JSON transport. No existing session was switched.
+
+
 ## 2026-10-07 — Backfill arrival order is not conversation chronology
 
 Problem: a bounded summary update may process a recent correction first and older history later. Without input provenance, the later update can mistake the older direction for new owner guidance. An onboarding packet also needs the named session, project and chosen harness, not just an opaque session key.

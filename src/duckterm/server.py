@@ -564,7 +564,7 @@ class Server:
         if path.startswith("/api/v1/session/"):
             try:
                 if urllib.parse.urlsplit(path).path.startswith("/api/v1/session/memory/"):
-                    result = await self.memory.session_request(method, path, headers)
+                    result = await self.memory.session_request(method, path, headers, body)
                     status = 200
                 else:
                     status, result = self.history.session_api.handle(method, path, headers, body)

@@ -7,14 +7,15 @@ import hashlib
 import json
 import re
 import sqlite3
+import time
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from duckterm import memory_index, memory_sources
+from duckterm import memory_graph, memory_index, memory_records, memory_sources, memory_versions
 from duckterm.core.saved_progress import file_version, required_context
 from duckterm.core.session_api import APIError
-from duckterm.persistence.saved_state import fingerprint, is_status_observation
+from duckterm.persistence.saved_state import fingerprint, is_status_observation, transaction
 
 if TYPE_CHECKING:
     from duckterm.server import Server
@@ -28,7 +29,7 @@ class Memory:
         self.tasks: set[asyncio.Task[dict[str, Any]]] = set()
         self.db_path = Path(server.history._conn.execute("PRAGMA database_list").fetchone()[2])
 
-    def catalog(self, key: str) -> dict[str, Any]:
+    def catalog(self, key: str, *, retrieval: bool = False) -> dict[str, Any]:
         row = self.server.history.session(key)
         if row is None:
             raise APIError(404, "Session not found")
@@ -36,6 +37,7 @@ class Memory:
         required = required_context(self.server, key, row)
         root = required["scope"].get("root", "")
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
+        canonical = memory_records.canonical(self.server, key, required["scope"])
         sources: dict[str, dict[str, Any]] = {}
         retained_sources: dict[str, dict[str, Any]] = {}
 
@@ -61,6 +63,10 @@ class Memory:
             sources[identity] = entry
             if entry.get("snapshot"):
                 retained_sources[identity + ":" + entry["snapshot"]] = dict(entry)
+
+        for value in canonical["revisions"] + canonical["links"]:
+            for ref in value.get("memory_sources", []):
+                native(ref)
 
         # Oldest to newest: the latest retained boundary for each native identity
         # is searchable; exact older snapshot handles are resolved separately later.
@@ -175,6 +181,16 @@ class Memory:
                 "artifact_id": artifact["id"],
                 "version": artifact["sha256"],
             }
+        text_retained = {}
+        for value in memory_records.references(canonical):
+            for ref in value.get("retained_sources", []):
+                if (
+                    isinstance(ref, dict)
+                    and ref.get("id") in sources
+                    and ref.get("root") == root
+                    and isinstance(ref.get("version"), str)
+                ):
+                    text_retained[ref["id"] + ":" + ref["version"]] = ref
         return {
             "session": key,
             "root": root,
@@ -183,6 +199,8 @@ class Memory:
             "sources": list(sources.values()),
             "missing_identity": missing_identity,
             "retained": retained_sources,
+            "text_retained": text_retained,
+            **({"canonical": canonical, "retrieval": True} if retrieval else {}),
         }
 
     async def retain_current(self, key: str, captured: dict[str, Any]) -> dict[str, Any] | None:
@@ -284,6 +302,10 @@ class Memory:
                             available.append({**loaded, "retained_fallback": True})
                         except (APIError, OSError, UnicodeError):
                             pass
+        if catalog.get("retrieval"):
+            available, missing = memory_records.retained(catalog, available)
+            unavailable.extend(missing)
+            available.extend(memory_records.project(catalog, available))
         return available, unavailable
 
     async def operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:
@@ -291,6 +313,7 @@ class Memory:
             "sources": set(),
             "search": {"q", "limit"},
             "read": {"source", "record", "offset", "limit"},
+            "related": {"source", "record", "limit", "cursor"},
         }
         if (
             action not in allowed
@@ -313,7 +336,7 @@ class Memory:
 
     async def _operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:
         async with self.locks.setdefault(key, asyncio.Lock()):
-            catalog = self.catalog(key)
+            catalog = self.catalog(key, retrieval=True)
             sources, unavailable = await asyncio.to_thread(self.materialize, catalog)
             coverage = {
                 "available": len(sources),
@@ -337,6 +360,9 @@ class Memory:
                             "runtime",
                             "native_id",
                             "current",
+                            "retained",
+                            "revision_id",
+                            "checkpoint_id",
                         )
                         if k in s
                     }
@@ -361,12 +387,29 @@ class Memory:
                 for found in matches:
                     found["source"] = found["source_id"] + ":" + found["version"]
                 result["results"] = matches
+            elif action == "related":
+                handle = query.get("source", [""])[0]
+                record = query.get("record", [""])[0]
+                memory_graph.resolve(sources, {"source": handle, "record": record})
+                result.update(
+                    await asyncio.to_thread(
+                        memory_graph.related,
+                        catalog,
+                        sources,
+                        handle,
+                        record,
+                        self._number(query, "limit", 20, 1, 50),
+                        query.get("cursor", [None])[0],
+                    )
+                )
             else:
                 handle = query.get("source", [""])[0]
                 match = re.fullmatch(r"([a-f0-9]{32}):([a-f0-9]{64})", handle)
                 if match is None:
                     raise APIError(400, "Invalid memory source handle")
-                source = next((s for s in sources if s["id"] == match[1]), None)
+                source = next(
+                    (s for s in sources if s["id"] == match[1] and s["version"] == match[2]), None
+                )
                 if source is None or source["version"] != match[2]:
                     retained = catalog["retained"].get(handle)
                     if retained is not None and not retained.get("unavailable"):
@@ -391,7 +434,7 @@ class Memory:
                     offset=offset,
                     next_offset=end if end < len(text) else None,
                 )
-            if fingerprint(catalog) != fingerprint(self.catalog(key)):
+            if fingerprint(catalog) != fingerprint(self.catalog(key, retrieval=True)):
                 raise APIError(409, "Memory permissions or sources changed; retry")
             # File replacement between worker completion and response must not
             # publish a stale excerpt, even when size and mtime were preserved.
@@ -413,18 +456,108 @@ class Memory:
             raise APIError(400, "Invalid " + key)
         return value
 
+    async def link(self, key: str, body: Any, headers: dict[str, str]) -> dict[str, Any]:
+        async with self.locks.setdefault(key, asyncio.Lock()):
+            catalog = self.catalog(key, retrieval=True)
+            sources, _ = await asyncio.to_thread(self.materialize, catalog)
+            request = memory_graph.request(body, sources)
+            identity = fingerprint([key, "memory_link_v1", request["request_key"]])
+            content_hash = fingerprint(request)
+            old = next((r for r in catalog["canonical"]["links"] if r["id"] == identity), None)
+            if old and old["content_hash"] != content_hash:
+                raise APIError(
+                    409, "Memory link request_key was already used for different content"
+                )
+            text_refs, native_refs = {}, {}
+            for ref in [request["from"], request["to"], *request["evidence"]]:
+                source, _ = memory_graph.resolve(sources, ref)
+                if source["kind"] == "conversation":
+                    saved = await asyncio.to_thread(
+                        memory_sources.read_native, key, source, retain=True
+                    )
+                    if saved["version"] != source["version"]:
+                        raise APIError(409, "Conversation changed before link retention")
+                    native_refs[ref["source"]] = {
+                        **{
+                            k: saved[k]
+                            for k in ("id", "runtime", "native_id", "cwd", "path", "snapshot")
+                        },
+                        "root": catalog["root"],
+                    }
+                elif source["kind"] not in {"revision", "checkpoint", "attachment"}:
+                    text_refs[ref["source"]] = await asyncio.to_thread(
+                        memory_versions.retain, key, source, catalog["root"]
+                    )
+            now = int(time.time() * 1000)
+            value = {
+                **request,
+                "id": identity,
+                "content_hash": content_hash,
+                "root": catalog["root"],
+                "provenance": {
+                    "kind": "agent_assertion",
+                    "author": key,
+                    "created_at": now,
+                    "authority": "none",
+                },
+                "retained_sources": list(text_refs.values()),
+                "memory_sources": list(native_refs.values()),
+            }
+            conn = self.server.history._conn
+            with transaction(conn):
+                if self.server.history.session_api.authenticate(headers) != key:
+                    raise APIError(403, "Session access changed")
+                if fingerprint(catalog) != fingerprint(self.catalog(key, retrieval=True)):
+                    raise APIError(409, "Memory permissions or sources changed; retry")
+                for source in sources:
+                    if source.get("fence") and file_version(source["path"]) != source["fence"]:
+                        raise APIError(409, "Conversation changed before saving link")
+                if old:
+                    return {
+                        "relation": {
+                            k: old[k]
+                            for k in ("id", "from", "to", "relation", "evidence", "provenance")
+                        },
+                        "replayed": True,
+                    }
+                # A request key is session scoped even after a sharing-scope move.
+                existing = conn.execute(
+                    "SELECT id FROM digest_items WHERE id=?", (identity,)
+                ).fetchone()
+                if existing:
+                    raise APIError(409, "Memory link request_key already exists in another scope")
+                conn.execute(
+                    "INSERT INTO digest_items VALUES (?, ?, ?, ?, 'active', ?, ?)",
+                    (identity, key, memory_records.LINK_BUCKET, json.dumps(value), now, now),
+                )
+            return {
+                "relation": {
+                    k: value[k] for k in ("id", "from", "to", "relation", "evidence", "provenance")
+                },
+                "replayed": False,
+            }
+
     async def session_request(
-        self, method: str, path: str, headers: dict[str, str]
+        self, method: str, path: str, headers: dict[str, str], body: bytes = b""
     ) -> dict[str, Any]:
         api = self.server.history.session_api
         key = api.authenticate(headers)
-        if method != "GET":
-            raise APIError(405, "Memory retrieval is read-only")
         parsed = urllib.parse.urlsplit(path)
         action = parsed.path.removeprefix("/api/v1/session/memory/")
-        result = await self.operate(
-            key, action, urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-        )
+        if method == "POST" and action == "link":
+            if parsed.query or len(body) > 32768:
+                raise APIError(400, "Invalid memory link request")
+            try:
+                request = json.loads(body)
+            except (ValueError, UnicodeError) as exc:
+                raise APIError(400, "Invalid memory link JSON") from exc
+            result = await self.link(key, request, headers)
+        elif method == "GET" and action != "link":
+            result = await self.operate(
+                key, action, urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            )
+        else:
+            raise APIError(405, "Use GET for memory retrieval or POST for a typed link")
         # Enrollment/token may have been revoked during a worker read.
         if api.authenticate(headers) != key:
             raise APIError(403, "Session access changed")

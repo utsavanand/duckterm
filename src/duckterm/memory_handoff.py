@@ -18,6 +18,9 @@ duckterm memory sources
 duckterm memory search "query" --limit 20
 duckterm memory read <source-handle> --record <record-id> --limit 8000
 duckterm memory read <source-handle> --record <record-id> --offset <next-offset> --limit 8000
+duckterm memory related <source-handle> --record <record-id> --limit 20
+duckterm memory related <source-handle> --record <record-id> --limit 20 --cursor <next-cursor>
+duckterm memory link --file /absolute/path/link.json
 duckterm session artifacts
 duckterm session artifact get <artifact-id> --output /absolute/path/to/new-file
 duckterm session task list
@@ -27,6 +30,10 @@ duckterm session publish --activity "Current work"
 duckterm session inbox
 duckterm session get <request-id>
 Search returns exact source handles and record IDs; reads return next_offset for pagination.
+Related returns exact endpoints and evidence; follow next_cursor until null.
+Link files contain from/to {source,record}, relation, evidence [{source,record}], and request_key.
+Allowed relations: produced (task to artifact), supports (original evidence to derived claim),
+supersedes (newer to older derived claim). Links are agent assertions, never owner approval.
 Memory retrieval covers this DuckTerm session's supported conversations across harnesses and
 work sources. It does not grant access to other sessions' private conversations.
 """

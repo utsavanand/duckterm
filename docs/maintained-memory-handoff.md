@@ -67,7 +67,8 @@ reference exists and the source remains present and allowed by current grants.
 Deletion/revoked sharing must not be bypassed through an old reference. Native
 transcript cleanup may still use its authorized retained snapshot. The new helper
 alone is not the authorization layer and does not yet make old artifacts readable
-through the public memory API; main-dev is implementing that integration.
+through the public memory API. The retrieval integration now resolves canonical references
+from checkpoints, summary revisions and typed links, and rechecks current grants.
 
 No schema migration, new dependency or cloud upload is included. Existing backup
 selection excludes retained memory snapshots; cloud backup expansion stays deferred.
@@ -81,7 +82,7 @@ provider and does not create a new generated summary revision. The packet is at
 most 32,000 UTF-8 bytes. Required context overflow fails before stopping anything.
 The onboarding envelope names the stable session, project directory, source harness
 and requested target/model selection; a default model remains explicitly unresolved.
-Only currently implemented commands are listed; add graph commands after integration.
+The onboarding packet lists the implemented read, graph, link and work-record commands.
 
 Keep the version-1 request/binding/proof identity and routes. Add:
 
@@ -119,15 +120,61 @@ checks remain. A new generated summary is not proof that a process may be stoppe
 A saved checkpoint is not proof that a harness switch succeeded. The owner still
 explicitly confirms the switch. No Product/release-dev migration is automatic.
 
+## Context relationships and retrieval
+
+`memory sources/search/read` now expose immutable summary revisions, checkpoint
+markers and their addressable derived claims. Claim record IDs are `<field>:<index>`
+inside an immutable revision source, such as `constraints:0`; they never follow a
+newly generated sentence. Revision metadata is record `0`, its short summary is
+record `summary`. Text remains labeled `derived_claim`, `derived_summary` or
+`checkpoint_marker`. Missing or revoked citations withhold affected claims and
+summary text, including from the disposable search index.
+
+The canonical records produce structural relationships on read: source belongs to
+the session, revision contains claim, revision continues a prior revision, checkpoint
+references revision, and original record was processed by a summary update. A
+`processed` relationship describes input coverage, not preservation of every meaning.
+Claim evidence produces `supports` edges labeled as derived by the summary pipeline.
+No graph rows are written for these structural views.
+
+Agents can use:
+
+```sh
+duckterm memory related <source-handle> --record <record-id> --limit 20
+duckterm memory related <source-handle> --record <record-id> --limit 20 --cursor <next-cursor>
+duckterm memory link --file /absolute/path/link.json
+```
+
+The link file contains `from` and `to` objects (`source`, `record`), `relation`,
+`evidence` (1–16 exact original-record locators), and a stable `request_key`.
+Only `produced` (task to artifact), `supports` (original evidence to derived claim)
+and `supersedes` (newer claim to older claim) may be written. Supersession annotates
+claims without rewriting either claim or its evidence. Author/time are server set;
+manual links are agent assertions and cannot create owner approval. Identical retries
+return the same relation; changed content with the same request key conflicts.
+
+These assertions use the reserved `memory_link_v1` bucket in the existing digest
+store. Text/native versions referenced by a link are retained before its atomic
+write; sources, grants, credentials and native file boundaries are checked again
+before commit. Removed canonical references revoke orphan snapshot access. Existing
+session deletion removes the same private memory directory and digest rows.
+Non-text attachments remain uninterpreted; memory does not provide an archival binary
+file download or promise that arbitrary attachment edits were retained.
+
+Search can return several authorized versions of a source with exact handles. The
+FTS index is disposable and migrates its own cache to `(source ID, version)` keys;
+the canonical database schema is unchanged. Relationship pages return a cursor or
+null and reject continuation after source, graph or access changes. Results contain
+only accessible endpoints and evidence. Large-history retrieval timing remains to
+be measured during integrated acceptance; passing unit checks is not a latency claim.
+
 ## Remaining integration and acceptance
 
-1. Retrieval/catalog/search/read support for immutable revisions and retained versions.
-2. Typed, evidenced related/link commands and stable claim identities; preserve own-session scope.
-3. UI transport plus owner-reviewed freshness/coverage preview and visible integration.
-4. Complete integration and independent QA before any further live preparation/switch,
+1. UI transport plus owner-reviewed freshness/coverage preview and visible integration.
+2. Complete integration and independent QA before any further live preparation/switch,
    per the owner's latest direction. Then run the committed-tree full gate, package
    installation and startup-only acceptance.
-5. Actual continuing agent retrieves an old fact absent from its brief and the exact
+3. Actual continuing agent retrieves an old fact absent from its brief and the exact
    cited artifact version. Measure real preparation time; no production timing claim yet.
 
 Current main worktree: `/tmp/duckterm-maintained-memory`, branch
