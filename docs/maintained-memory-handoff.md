@@ -1,10 +1,11 @@
 # Maintained memory and handoff integration contract
 
-Implementation candidate, 2026-10-07. This backend change is not a shipped feature.
+Implementation candidate, 2026-10-07, rebased on installed v0.4.126. This is not yet a shipped feature.
 The owner requested parallel work in existing Codex sessions: main-dev owns this
 backend and retrieval/context links; remote-session-dev declined that assignment
-because of a separate direct owner priority. UI-dev and main-qa have pending
-assignments for UI transport/preview and independent verification respectively. Startup is the sole
+because of a separate direct owner priority. Main-dev took over the unclaimed UI work. The owner approved its status-copy preview;
+transport and visible integration are implemented. Main-qa and remote-session-dev
+have independent review requests, not yet acknowledged. Startup is the sole
 existing-session acceptance target; Product and release-dev are unchanged.
 
 ## One summary writer
@@ -65,9 +66,8 @@ The retrieval integration MUST enumerate canonical checkpoint/revision/link
 references, not orphan files. Old text remains readable only while a canonical
 reference exists and the source remains present and allowed by current grants.
 Deletion/revoked sharing must not be bypassed through an old reference. Native
-transcript cleanup may still use its authorized retained snapshot. The new helper
-alone is not the authorization layer and does not yet make old artifacts readable
-through the public memory API. The retrieval integration now resolves canonical references
+transcript cleanup may still use its authorized retained snapshot. The snapshot helper
+is not the authorization layer. The retrieval integration resolves canonical references
 from checkpoints, summary revisions and typed links, and rechecks current grants.
 
 No schema migration, new dependency or cloud upload is included. Existing backup
@@ -165,13 +165,17 @@ Search can return several authorized versions of a source with exact handles. Th
 FTS index is disposable and migrates its own cache to `(source ID, version)` keys;
 the canonical database schema is unchanged. Relationship pages return a cursor or
 null and reject continuation after source, graph or access changes. Results contain
-only accessible endpoints and evidence. Large-history retrieval timing remains to
-be measured during integrated acceptance; passing unit checks is not a latency claim.
+only accessible endpoints and evidence. An isolated synthetic check with about 4,000 records (3 MB native text) and ten
+maintained revisions measured 0.62 s cold search, 0.41 s warm search, 0.30 s exact
+read and 0.55 s related lookup on this machine. Exact native snapshots occupied
+30 MB across those revisions. This is fixture evidence, not a live-session latency
+promise; storage grows with distinct referenced versions.
 
 ## Remaining integration and acceptance
 
-1. UI transport plus owner-reviewed freshness/coverage preview and visible integration.
-2. Complete integration and independent QA before any further live preparation/switch,
+1. UI integration is implemented; 90 focused frontend checks and the isolated browser
+   scenario pass, including status wording, expanded counts and unchanged controls.
+2. Complete independent QA before any further live preparation/switch,
    per the owner's latest direction. Then run the committed-tree full gate, package
    installation and startup-only acceptance.
 3. Actual continuing agent retrieves an old fact absent from its brief and the exact

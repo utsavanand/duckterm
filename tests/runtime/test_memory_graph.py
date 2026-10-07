@@ -520,3 +520,43 @@ def test_link_rechecks_catalog_after_acquiring_database_write_boundary(memory_ri
     assert not server.history._conn.execute(
         "SELECT 1 FROM digest_items WHERE bucket=?", (memory_records.LINK_BUCKET,)
     ).fetchone()
+
+
+def test_graph_hashes_only_processed_records_once_across_summary_revisions(monkeypatch):
+    from duckterm import memory_graph
+
+    original = memory_graph.fingerprint
+    record = {"id": "0", "role": "user", "text": "Original decision"}
+    digest = original([record["id"], record["role"], record["text"]])
+    source = {
+        "id": "a" * 32,
+        "version": "b" * 64,
+        "kind": "conversation",
+        "records": [record]
+        + [{"id": str(n), "role": "user", "text": "Unread history"} for n in range(1, 100)],
+    }
+    revised = {**source, "version": "c" * 64, "records": [{**record, "text": "Corrected decision"}]}
+    revisions = [
+        {
+            "id": str(n) * 32,
+            "version": "d" * 64,
+            "kind": "revision",
+            "revision_id": str(n),
+            "records": [],
+            "processed": {source["id"]: {"0": digest}},
+        }
+        for n in range(1, 4)
+    ]
+    calls = []
+
+    def counted(value):
+        if isinstance(value, list) and len(value) == 3:
+            calls.append(value)
+        return original(value)
+
+    monkeypatch.setattr(memory_graph, "fingerprint", counted)
+    edges = memory_graph.edges({"canonical": {"links": []}}, [source, revised, *revisions])
+    assert len(calls) == 2  # One exact record per source version, not per revision.
+    processed = [edge for edge in edges if edge["relation"] == "processed"]
+    assert len(processed) == 3
+    assert all(edge["to"]["source"] == source["id"] + ":" + source["version"] for edge in processed)

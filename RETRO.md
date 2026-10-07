@@ -1,5 +1,10 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Graph reads should not rehash the whole history per revision
+
+A scale check with 4,000 conversation records and ten saved revisions exposed duplicate hashing in relationship reads. Hash only records that a revision actually processed, once per exact source version within the request. This keeps checksum and changed-record behavior intact while reducing the measured graph read from 1.64 to 0.55 seconds on the synthetic fixture. The regression verifies multiple revisions and a corrected original; the full retrieval path still rechecks access and canonical references.
+
+
 ## 2026-10-07 — Readiness is retrieval safety, not complete summarization
 
 Problem: the switch UI still required a whole-history summary revision even after preparation moved to maintained memory and bounded recent originals. A valid no-summary packet could therefore remain unusable, and source counts implied more summary coverage than existed.

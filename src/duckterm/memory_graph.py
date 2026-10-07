@@ -94,6 +94,7 @@ def edges(catalog: dict[str, Any], sources: list[dict[str, Any]]) -> list[dict[s
     records = {(s["id"] + ":" + s["version"], r["id"]): r for s in sources for r in s["records"]}
     handles = {s["id"] + ":" + s["version"] for s in sources}
     result: dict[str, dict[str, Any]] = {}
+    record_hashes: dict[tuple[str, str], str] = {}
 
     def allowed(ref: dict[str, str]) -> bool:
         return ref["source"] in handles and (
@@ -149,7 +150,12 @@ def edges(catalog: dict[str, Any], sources: list[dict[str, Any]]) -> list[dict[s
             for (handle, record_id), record in records.items():
                 identity = handle.split(":", 1)[0]
                 expected = source["processed"].get(identity, {}).get(record_id)
-                if expected == fingerprint([record_id, record["role"], record["text"]]):
+                if expected is None:
+                    continue
+                key = (handle, record_id)
+                if key not in record_hashes:
+                    record_hashes[key] = fingerprint([record_id, record["role"], record["text"]])
+                if expected == record_hashes[key]:
                     add("processed", root, {"source": handle, "record": record_id}, [], structural)
         elif source["kind"] == "checkpoint":
             revision = revisions.get(source.get("summary_ref"))
