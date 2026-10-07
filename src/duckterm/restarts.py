@@ -415,7 +415,7 @@ class Restarts:
         if switching:
             version = await self.switch_version(target, binary)
             if require_preparation or memory is not None:
-                memory_job = self.server.memory_preparation.resolve_proof(
+                memory_job = await self.server.memory_preparation.checked_proof(
                     key, memory, target, model
                 )
                 if version != memory_job["cli_version"]:
@@ -580,7 +580,7 @@ class Restarts:
                 assert isinstance(harness, str)
                 version = await self.switch_version(harness, binary)
                 if self.read(key).get("memory"):
-                    job = self.server.memory_preparation.resolve_proof(
+                    job = await self.server.memory_preparation.checked_proof(
                         key, self.read(key)["memory"], harness, self.read(key)["requested_model"]
                     )
                     if version != job["cli_version"]:

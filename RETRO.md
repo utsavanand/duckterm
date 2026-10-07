@@ -1,5 +1,21 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — File metadata is a recheck signal, not changed conversation content
+
+A real preparation tripped the transcript stat fence. Its earlier byte hash was unavailable, so the exact live change could not be reconstructed. Targeted regressions then demonstrated a separate concrete false positive: touching the timestamp or atomically replacing a file with identical bytes invalidated the whole preparation. Re-read changed files off-loop and compare their exact content hashes before refreshing the stat fence. Keep scope/policy checks across that await and the synchronous final-stop fence afterward. Changed, missing, or corrupted bytes still invalidate; do not weaken this to file size, timestamp, or an assumed equivalent summary.
+
+## 2026-10-07 — A late preparation timeout must not discard reviewed work
+
+The first complete startup trial passed two history batches, then timed out on the third. A retry would have regenerated every earlier batch. Keep reviewed intermediate work in the expiring job, reuse it only under matching session/source/model/policy/CLI fences, and never publish partial work as a checkpoint or ready proof. Split a large timed-out batch into smaller ordered pieces with a bounded depth; do not retry authentication, quota or semantic failures as timeouts. Refresh the inactivity deadline only after a whole batch passes review. Test changed sources, cancellation, expiry and server reconstruction as well as the successful retry.
+
+## 2026-10-07 — Hidden windows still need an operation's terminal result
+
+The owner still saw “Preparing” after the backend had failed. A hidden-page guard returned before scheduling another status read, leaving recovery dependent on a visibility event that native windows may not deliver as expected. Keep polling while the operation dialog is mounted, at a slower background rate, and stop after a terminal result or close. Reproduce the persistent-hidden state in component and browser tests; do not force a native acceptance fixture visible and count that as focus behavior coverage.
+
+## 2026-10-07 — Test preparation with real history and repair rejected drafts
+
+The startup harness-switch trial exposed failures hidden by providers mocked to return perfect JSON: a summary used an array for the overview, and another draft omitted an owner constraint. Request the response schema from Codex, retain independent source and UTF-8 validation, and allow at most two corrections against the same sources with a fresh review after each. A rejected draft never becomes coverage or a saved revision. Expose batch progress through preparation status and distinguish a provider timeout from malformed output. Synthetic green checks do not substitute for a complete real-session trial.
+
 ## 2026-10-07 — Viewing an idle session is not changed work
 
 Attended and content-free idle notifications invalidated a prepared handoff even when no work changed. A native acceptance retry hid the same symptom before the owner reproduced it. Treat that failure as a product regression: keep status observations in the audit history but exclude them consistently from progress freshness and memory inputs. Version the event-boundary interpretation so existing checkpoints remain readable. Unknown or content-bearing notifications, real turns, transcript changes, tasks and inbox changes must still invalidate. Test observations during generation, after readiness and at the final stop boundary without retrying.

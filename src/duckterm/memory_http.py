@@ -44,6 +44,7 @@ async def handle(
             result = await manager.start(key, request)
             status = 202
         elif method == "GET" and identity and not set(query) - {"detail", "cursor"}:
+            await manager.recheck(key, identity)
             if query.get("detail") == ["full"]:
                 result = manager.details(key, identity, query.get("cursor", ["0"])[0])
             elif not query:

@@ -92,7 +92,7 @@ async def validate(server: Server, key: str, prepared: dict[str, Any]) -> None:
 
     if prepared.get("_memory_job"):
         manager = server.memory_preparation
-        manager.cheap_validate(manager.get(key, prepared["_memory_job"]))
+        await manager.validate_sources(manager.get(key, prepared["_memory_job"]))
     prepared["_validated_fence"] = current["fence"]
 
 

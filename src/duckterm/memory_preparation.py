@@ -75,7 +75,7 @@ class MemoryPreparation:
         view = job["view"]
         view.update(value, sequence=view["sequence"] + 1)
 
-    def cheap_validate(self, job: dict[str, Any]) -> None:
+    def cheap_validate(self, job: dict[str, Any], *, files: bool = True) -> None:
         if job["canceled"]:
             raise PreparationError(409, "preparation_expired", "Preparation was canceled")
         if job["expires"] <= time.time() * 1000:
@@ -93,9 +93,30 @@ class MemoryPreparation:
             job["catalog"]
         ):
             raise PreparationError(409, "stale_source", "Available history or permissions changed")
-        for source in job.get("sources", []):
+        for source in job.get("sources", []) if files else []:
             if source.get("fence") and file_version(source["path"]) != source["fence"]:
                 raise PreparationError(409, "stale_source", "A conversation changed; prepare again")
+
+    async def validate_sources(self, job: dict[str, Any]) -> None:
+        # A timestamp/inode change is a reason to re-read, not proof of new
+        # conversation bytes. Keep disk reads off-loop; final stop still uses
+        # the cheap, synchronous fence after this exact-content verification.
+        async with self.locks.setdefault(job["key"], asyncio.Lock()):
+            self.cheap_validate(job, files=False)
+            for source in job.get("sources", []):
+                if not source.get("fence") or file_version(source["path"]) == source["fence"]:
+                    continue
+                try:
+                    fresh = await asyncio.to_thread(memory_sources.read_native, job["key"], source)
+                except APIError as exc:
+                    raise PreparationError(409, "stale_source", str(exc)) from exc
+                self.cheap_validate(job, files=False)
+                if fresh["path"] != source["path"] or fresh["version"] != source["version"]:
+                    raise PreparationError(
+                        409, "stale_source", "Conversation contents changed; prepare again"
+                    )
+                source["fence"] = fresh["fence"]
+            self.cheap_validate(job)
 
     async def start(self, key: str, body: dict[str, Any]) -> dict[str, Any]:
         if set(body) != {"request_key", "binding"}:
@@ -222,6 +243,33 @@ class MemoryPreparation:
                 return
             await self.run(job)
 
+    def resumable_progress(self, job: dict[str, Any]) -> memory_summary.BatchProgress | None:
+        candidates: list[memory_summary.BatchProgress] = []
+        for old in self.jobs.values():
+            if (
+                old is not job
+                and old["id"] not in self.tasks
+                and old.get("partial") is not None
+                and old["expires"] > time.time() * 1000
+                and old["key"] == job["key"]
+                and old["binding"] == job["binding"]
+                and old["cli_version"] == job["cli_version"]
+                and old["catalog"] == job["catalog"]
+                and all(
+                    old["captured"][k] == job["captured"][k]
+                    for k in ("facts", "policy", "source", "conversation")
+                )
+            ):
+                candidates.append(old["partial"])
+        return max(candidates, key=lambda p: p.completed) if candidates else None
+
+    def retain_progress(self, job: dict[str, Any], progress: memory_summary.BatchProgress) -> None:
+        self.cheap_validate(job)
+        job["partial"] = progress
+        # Expire abandoned/stalled jobs, not a long history that keeps passing
+        # review. Every provider call still has its own bounded timeout.
+        job["expires"] = time.time() * 1000 + LIFETIME_MS
+
     async def run(self, job: dict[str, Any]) -> None:
         key = job["key"]
         coordinator = self.server.progress_coordinator
@@ -270,7 +318,7 @@ class MemoryPreparation:
                 raise PreparationError(
                     409, "incomplete_source", "Some conversation sources are unavailable"
                 )
-            self.cheap_validate(job)
+            await self.validate_sources(job)
             row = self.server.history.session(key) or {}
             prior = self.server.digests.revision(key, current_revision(row))
             baseline = prior
@@ -280,7 +328,16 @@ class MemoryPreparation:
                 baseline = None
             self.update(job, phase="summarizing")
             context, pieces = await memory_summary.summarize(
-                sources, job["binding"]["target"], baseline, lambda: self.cheap_validate(job)
+                sources,
+                job["binding"]["target"],
+                baseline,
+                lambda: self.validate_sources(job),
+                lambda completed, total, step: self.update(
+                    job,
+                    progress={"completed_batches": completed, "total_batches": total, "step": step},
+                ),
+                resume=self.resumable_progress(job),
+                retain=lambda value: self.retain_progress(job, value),
             )
             self.update(job, phase="validating")
             seed = memory_summary.brief(context, captured["required"])
@@ -301,7 +358,7 @@ class MemoryPreparation:
                 _git_state, Path(str(row.get("worktree_path") or row.get("cwd") or "."))
             )
             current = await coordinator.capture(key)
-            self.cheap_validate(job)
+            await self.validate_sources(job)
             if current is None or any(
                 current[k] != captured[k] for k in ("source", "conversation", "policy")
             ):
@@ -375,7 +432,7 @@ class MemoryPreparation:
                 job["sources"], missing = await asyncio.to_thread(
                     self.server.memory.materialize, job["catalog"]
                 )
-            self.cheap_validate(job)
+            await self.validate_sources(job)
             if missing:
                 raise PreparationError(
                     409, "incomplete_source", "Retained history could not be verified"
@@ -405,19 +462,31 @@ class MemoryPreparation:
                     },
                 },
             )
+            job.pop("partial", None)
         except asyncio.CancelledError:
+            job.pop("partial", None)
             self.update(job, state="canceled")
         except Exception as exc:
             code = exc.code if isinstance(exc, PreparationError) else "preparation_failed"
             state = code if code in {"stale_source", "incomplete_source"} else "failed"
             if job["canceled"]:
                 state = "canceled"
+            if state != "failed":
+                job.pop("partial", None)
             self.update(
                 job,
                 state=state,
                 reason=str(exc) if isinstance(exc, APIError) else "Memory preparation failed",
                 retryable=state == "failed",
             )
+
+    async def recheck(self, key: str, identity: str) -> None:
+        job = self.get(key, identity)
+        if job["view"]["state"] == "ready":
+            try:
+                await self.validate_sources(job)
+            except APIError as exc:
+                self.update(job, state="stale_source", reason=str(exc))
 
     def status(self, key: str, identity: str) -> dict[str, Any]:
         job = self.get(key, identity)
@@ -460,13 +529,17 @@ class MemoryPreparation:
             return {"released": True}
         job["leases"].remove(request_key)
         if not job["leases"] and not job.get("claimed_by"):
+            if job["view"]["state"] != "failed":
+                job.pop("partial", None)
             job["canceled"] = True
             # Do not abandon an off-loop native read/write. Its result observes
             # the canceled fence before persistence; no further provider calls.
             self.update(job, state="canceled")
         return {"released": True}
 
-    def resolve_proof(self, key: str, proof: Any, target: str, model: str) -> dict[str, Any]:
+    def resolve_proof(
+        self, key: str, proof: Any, target: str, model: str, *, files: bool = True
+    ) -> dict[str, Any]:
         if (
             not isinstance(proof, dict)
             or set(proof) != {"version", "preparation_id", "snapshot_id", "source_generation"}
@@ -476,7 +549,7 @@ class MemoryPreparation:
                 409, "preparation_expired", "Prepare the handoff before switching"
             )
         job = self.get(key, identifier(proof["preparation_id"]))
-        self.cheap_validate(job)
+        self.cheap_validate(job, files=files)
         view = job["view"]
         expected = {
             "harness": target,
@@ -492,10 +565,15 @@ class MemoryPreparation:
             raise PreparationError(409, "stale_source", "Prepared context is no longer ready")
         return job
 
+    async def checked_proof(self, key: str, proof: Any, target: str, model: str) -> dict[str, Any]:
+        job = self.resolve_proof(key, proof, target, model, files=False)
+        await self.validate_sources(job)
+        return self.resolve_proof(key, proof, target, model)
+
     async def prepared(
         self, key: str, proof: dict[str, Any], target: str, model: str
     ) -> dict[str, Any]:
-        job = self.resolve_proof(key, proof, target, model)
+        job = await self.checked_proof(key, proof, target, model)
         async with self.server.memory.locks.setdefault(key, asyncio.Lock()):
             sources, missing = await asyncio.to_thread(
                 self.server.memory.materialize, job["catalog"]

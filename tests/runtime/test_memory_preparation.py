@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+from pathlib import Path
 
 import pytest
 from test_memory import transcript
@@ -26,7 +28,7 @@ def preparation(memory_rig, monkeypatch):
     async def version(*args):
         return "codex 0.155.1"
 
-    async def provider(harness, model, prompt):
+    async def provider(harness, model, prompt, schema=None):
         calls.append((harness, model, prompt))
         assert harness == "codex"
         if prompt.startswith("Review the proposed"):
@@ -152,7 +154,7 @@ def test_ready_proof_becomes_stale_after_source_or_scope_change(preparation):
 def test_unchanged_prefix_reuses_summary_but_early_rewrite_forces_complete_read(monkeypatch):
     calls = []
 
-    async def provider(harness, model, prompt):
+    async def provider(harness, model, prompt, schema=None):
         calls.append(prompt)
         if prompt.startswith("Review the proposed"):
             return '{"ready":true,"reason_codes":[]}'
@@ -204,6 +206,95 @@ def test_source_failure_does_not_call_any_provider(preparation):
     view = asyncio.run(prepare(server))
     assert view["state"] == "incomplete_source", view
     assert calls == []
+
+
+@pytest.mark.parametrize("change", ["touch", "identical_replace", "content", "missing"])
+def test_preparation_rechecks_bytes_after_native_file_metadata_changes(
+    preparation, monkeypatch, change
+):
+    server, _, tmp = preparation
+    native = transcript(tmp, "agent-claude", "Owner: retain glacier originals.")
+    from duckterm import memory_provider
+
+    provider = memory_provider.generate
+    changed = False
+
+    async def rewrite(*args):
+        nonlocal changed
+        result = await provider(*args)
+        if not changed:
+            changed = True
+            if change == "touch":
+                st = native.stat()
+                os.utime(native, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+            elif change == "identical_replace":
+                replacement = native.with_suffix(".replacement")
+                replacement.write_bytes(native.read_bytes())
+                replacement.replace(native)
+            elif change == "missing":
+                native.unlink()
+            else:
+                transcript(tmp, "agent-claude", "Owner: a different requirement.")
+        return result
+
+    monkeypatch.setattr(memory_provider, "generate", rewrite)
+    view = asyncio.run(prepare(server))
+    stale = change in {"content", "missing"}
+    assert view["state"] == ("stale_source" if stale else "ready"), view
+    assert len(server.history.checkpoints("agent")) == (0 if stale else 1)
+    assert server.history.session("agent")["runtime"] == "claude-code"
+
+
+def test_ready_status_revalidates_exact_bytes_without_blocking_the_event_loop(
+    preparation, monkeypatch
+):
+    import threading
+
+    from duckterm import memory_sources
+
+    server, _, _ = preparation
+
+    async def run():
+        manager = server.memory_preparation
+        view = await prepare(server)
+        job = manager.jobs[view["preparation_id"]]
+        native = next(s for s in job["sources"] if s.get("fence"))
+        path = Path(native["path"])
+        before = path.stat()
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000))
+        entered, release = threading.Event(), threading.Event()
+        original = memory_sources.read_native
+
+        def slow(*args):
+            entered.set()
+            assert release.wait(5)
+            return original(*args)
+
+        monkeypatch.setattr(memory_sources, "read_native", slow)
+        task = asyncio.create_task(manager.recheck("agent", job["id"]))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            assert not task.done()
+        finally:
+            release.set()
+        await task
+        after = manager.status("agent", job["id"])
+        assert after["state"] == "ready" and after["proof"] == view["proof"]
+        assert native["fence"] == memory_sources.file_version(str(path))
+        proof = {
+            "version": 1,
+            "preparation_id": job["id"],
+            "snapshot_id": view["proof"]["snapshot_id"],
+            "source_generation": view["binding"]["source_generation"],
+        }
+        # A later same-size rewrite still fails even if mtime is restored.
+        raw = path.read_bytes()
+        path.write_bytes(raw.replace(b"glacier", b"volcano"))
+        os.utime(path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        with pytest.raises(APIError, match="changed|checksum"):
+            await manager.checked_proof("agent", proof, "codex", "selected-model")
+
+    asyncio.run(run())
 
 
 def test_turn_progress_updates_overview_without_extending_whole_history_coverage(

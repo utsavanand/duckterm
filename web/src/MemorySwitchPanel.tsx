@@ -58,11 +58,14 @@ export function MemorySwitchPanel(props: {
       }
     }
     async function poll() {
-      if (!live || reading || !ownLease.id || document.visibilityState === "hidden"
+      if (!live || reading || !ownLease.id
         || stateRef.current.submission || !["preparing", "ready"].includes(stateRef.current.phase)) return;
       reading = true;
       try { accept(await service.preparation(ownLease.id)); } catch (cause) { failed(cause); }
-      finally { reading = false; if (live) timer = setTimeout(poll, 2000); }
+      // A mounted operation must learn its terminal outcome even when WebKit
+      // reports the window hidden. Slow background reads instead of relying
+      // on a visibilitychange event to restart a permanently stopped timer.
+      finally { reading = false; if (live) timer = setTimeout(poll, document.visibilityState === "hidden" ? 10000 : 2000); }
     }
     void service.prepare(ownLease.key).then(value => {
       ownLease.id = value.preparationId;
