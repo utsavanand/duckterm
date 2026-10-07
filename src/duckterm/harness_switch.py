@@ -8,6 +8,7 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from duckterm.core import events
+from duckterm.core.saved_progress import file_version, policy_key
 from duckterm.core.session_api import APIError
 from duckterm.harnesses import runtime_for
 from duckterm.persistence.saved_state import fingerprint
@@ -88,12 +89,20 @@ async def validate(server: Server, key: str, prepared: dict[str, Any]) -> None:
             409, "Handoff sources changed while preparing the switch. The agent was kept."
         )
 
+    prepared["_validated_fence"] = current["fence"]
+
 
 def validate_facts(server: Server, key: str, prepared: dict[str, Any]) -> None:
     if fingerprint(server.progress_coordinator.facts(key)) != fingerprint(
         prepared["_captured"]["facts"]
     ):
         raise APIError(409, "Required handoff context changed. The current agent was kept.")
+
+    if prepared["_captured"]["policy"] != policy_key():
+        raise APIError(409, "Handoff settings changed. The current agent was kept.")
+    fence = prepared.get("_validated_fence")
+    if fence is not None and file_version(fence["path"]) != fence["version"]:
+        raise APIError(409, "Handoff transcript changed. The current agent was kept.")
 
 
 def restore(server: Server, key: str) -> None:

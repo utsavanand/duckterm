@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Every awaited check can invalidate the previous check
+
+A handoff was validated before the final awaited terminal prompt probe. QA changed the transcript or summarizer configuration during that probe and reproduced an unsafe stop. Revalidate source bytes after the first probe, check the draft again, then compare current database facts, provider policy and the captured file's device/inode/size/mtime/ctime without another await before beginning stop. Keep expensive transcript reads off the event loop. Test both sides: source changes during either prompt probe and new owner input during the added source read must preserve the original process.
+
 ## 2026-10-07 — A saved checkpoint is not proof of a usable handoff
 
 Exhausted providers left durable checkpoints with mechanical counts while the UI implied they were resumable. Progress, exit and checkpoint summaries also had independent writers. Use one versioned progress pipeline and retain checkpoint references to its original sources; expose summary readiness separately from persistence. Validate the paragraph as well as list items, preserve a last good summary on failure, and recheck the current sources before stopping an agent. Coalesce concurrent refreshes without letting a canceled waiter cancel everyone; compare policy and source identity before promoting late results. A recovery attempt must be able to retry unverified input. Protect both mail expiry paths and their analytics predicates, and refuse older expiry writers before pruning a reference-based database.

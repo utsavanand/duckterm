@@ -497,6 +497,17 @@ class Restarts:
                         "Your input was preserved. Clear the draft and retry."
                     ),
                 )
+            if prepared is not None:
+                # A slow prompt probe can outlive source validation. Read source
+                # bytes again, then recheck the draft. The final non-awaiting
+                # facts/policy/file-version fence closes the opposite race.
+                await validate(self.server, key, prepared)
+                if not self.ready_to_stop(key, epoch, sup, interrupt):
+                    return
+                if not await self.draft_free(sup, rt):
+                    raise APIError(
+                        409, "The prompt changed during handoff preparation. Input kept."
+                    )
             data = self.read(key)
             if data.get("status") != "queued" or data.get("id") != request_id:
                 return

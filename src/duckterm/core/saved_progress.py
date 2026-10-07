@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from duckterm.core import progress
@@ -26,6 +27,39 @@ if TYPE_CHECKING:
 
 POLICY = "progress-v2/summary-validator-v1"
 MAX_REQUIRED_CHARS = 12000
+
+
+def policy_key() -> str:
+    return fingerprint(
+        {
+            "version": POLICY,
+            "enabled": os.environ.get("DUCKTERM_SUMMARIZER", "auto"),
+            "command": os.environ.get("DUCKTERM_SUMMARIZER_CMD", ""),
+            "url": os.environ.get("DUCKTERM_SUMMARIZER_URL", ""),
+        }
+    )
+
+
+def file_version(path: str) -> list[int] | None:
+    """Cheap synchronous final fence; ctime catches same-size/mtime rewrites."""
+    try:
+        stat = Path(path).stat()
+        return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
+    except OSError:
+        return None
+
+
+def transcript_fence(source: tuple[str, str, str | None] | None) -> dict[str, Any] | None:
+    # Locator work belongs off-loop. Final stop checks stat only the captured path.
+    from duckterm.harnesses import runtime_for
+
+    if source is None or not source[2]:
+        return None
+    runtime = runtime_for(source[0], "")
+    path = runtime.locate_transcript(cwd=Path(source[1]), session_id=source[2])
+    if path is None:
+        return None
+    return {"path": str(path), "version": file_version(str(path))}
 
 
 def required_context(server: Server, key: str, row: dict[str, Any]) -> dict[str, Any]:
@@ -91,11 +125,18 @@ class ProgressCoordinator:
         facts = self.facts(key)
         if facts is None:
             return None
-        transcript = await asyncio.to_thread(
-            self.server._progress_transcript,
-            self.server._message_source(key),
-            self.server.orchestrator.get(key),
-        )
+        message_source = self.server._message_source(key)
+        supervisor = self.server.orchestrator.get(key)
+
+        def read() -> tuple[list[dict[str, str]], dict[str, Any] | None, bool]:
+            before = transcript_fence(message_source)
+            transcript = self.server._progress_transcript(message_source, supervisor)
+            after = transcript_fence(message_source)
+            return transcript, after, before == after
+
+        transcript, fence, stable = await asyncio.to_thread(read)
+        if not stable:
+            return None
         if facts != self.facts(key):
             return None
         full = "\n".join(f"{r['role']}: {r['text']}" for r in transcript)
@@ -111,14 +152,7 @@ class ProgressCoordinator:
                 "terminal" if any(r["role"] == "terminal" for r in transcript) else "native"
             ),
         }
-        policy = fingerprint(
-            {
-                "version": POLICY,
-                "enabled": os.environ.get("DUCKTERM_SUMMARIZER", "auto"),
-                "command": os.environ.get("DUCKTERM_SUMMARIZER_CMD", ""),
-                "url": os.environ.get("DUCKTERM_SUMMARIZER_URL", ""),
-            }
-        )
+        policy = policy_key()
         return {
             "source": source,
             "conversation": facts["conversation"],
@@ -127,6 +161,7 @@ class ProgressCoordinator:
             "required": required,
             "facts": facts,
             "captured_at": int(time.time() * 1000),
+            "fence": fence,
         }
 
     async def refresh(
