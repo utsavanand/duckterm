@@ -40,7 +40,7 @@ Rules labeled with a scope apply only to that agent runtime (or runtime/model); 
 
 ## Runtime-specific
 
-- fable-5 sessions have a 1M-token context window — don't compact or trim summaries preemptively at 200k-window thresholds. *(claude-code only)*
+- Keep context lean — every turn re-reads the whole conversation, and that re-reading was 92% of the fleet's tokens. When your context passes ~200k and the work is at a natural pause (a PR handed off, a task done), checkpoint and start fresh from the summary rather than carrying the history; never trim mid-task.
 
 - Answer approval prompts in your own terminal promptly — codex approvals fire no hooks, so nothing else will surface them to the user. *(codex only)*
 
