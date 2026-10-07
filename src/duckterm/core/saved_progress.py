@@ -26,7 +26,7 @@ from duckterm.persistence.saved_state import (
 if TYPE_CHECKING:
     from duckterm.server import Server
 
-POLICY = "progress-v2/summary-validator-v1"
+POLICY = "maintained-progress-v3/summary-validator-v1"
 MAX_REQUIRED_CHARS = 12000
 # Reserve room for the summary and instructions inside the 24 KiB seed limit.
 MAX_REQUIRED_BYTES = 20000
@@ -113,6 +113,7 @@ class ProgressCoordinator:
     def __init__(self, server: Server) -> None:
         self.server = server
         self.pending: dict[str, asyncio.Task[dict[str, Any] | None]] = {}
+        self.active: dict[str, asyncio.Task[dict[str, Any] | None]] = {}
 
     def facts(self, key: str) -> dict[str, Any] | None:
         row = self.server.history.session(key)
@@ -170,8 +171,13 @@ class ProgressCoordinator:
     async def refresh(
         self, key: str, captured: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
+        from duckterm import memory_continuity
+
         captured = captured or await self.capture(key)
         if captured is None:
+            return None
+        captured = await memory_continuity.capture(self.server, key, captured)
+        if self.facts(key) != captured["facts"]:
             return None
         row = self.server.history.session(key)
         if row is None:
@@ -191,11 +197,20 @@ class ProgressCoordinator:
             return existing
         task = self.pending.get(input_key)
         if task is None:
+            active = self.active.get(key)
+            if captured.get("memory_sources") is not None and active and not active.done():
+                # A different manual/automatic trigger waits for the current update,
+                # then captures fresh input. It cannot start another provider batch.
+                await asyncio.shield(active)
+                return await self.refresh(key)
             task = asyncio.create_task(self._generate(key, captured, prior, input_key))
             self.pending[input_key] = task
+            self.active[key] = task
 
             def finished(done: asyncio.Task[dict[str, Any] | None]) -> None:
                 self.pending.pop(input_key, None)
+                if self.active.get(key) is done:
+                    self.active.pop(key, None)
                 if not done.cancelled():
                     done.exception()  # consume errors even if all HTTP waiters canceled
 
@@ -210,6 +225,7 @@ class ProgressCoordinator:
         input_key: str,
     ) -> dict[str, Any] | None:
         # Resolve on the server module to retain one injectable provider boundary.
+        from duckterm import memory_continuity
         from duckterm.server import summarize
 
         if not captured["transcript"]:
@@ -232,18 +248,37 @@ class ProgressCoordinator:
         bounded_required = (
             required[:MAX_REQUIRED_CHARS].encode()[:MAX_REQUIRED_BYTES].decode(errors="ignore")
         )
-        prompt = progress.build_prompt(captured["transcript"], prior_cache, bounded_required)
+        maintained = (
+            memory_continuity.plan(captured, prior) if "memory_sources" in captured else None
+        )
+        if maintained is not None and not maintained["selected"] and maintained["prior_context"]:
+            # Nothing eligible fits this bounded update. Keep explicit gaps and
+            # avoid paying to restate the same summary on every eligible turn.
+            return prior
+        prompt = (
+            memory_continuity.prompt(maintained, bounded_required)
+            if maintained is not None
+            else progress.build_prompt(captured["transcript"], prior_cache, bounded_required)
+        )
         reply = await asyncio.to_thread(summarize, prompt)
         digest = progress.parse(reply.text)
         if digest is None or not digest["summary"]:
             return None
+        context = memory_continuity.context(reply.text, maintained) if maintained else None
         policy_check = await self.capture(key)
         if policy_check is None or policy_check["policy"] != captured["policy"]:
             return None
         verdict_reply = await asyncio.to_thread(
             summarize,
             progress.validate_prompt(
-                digest,
+                (
+                    {
+                        **digest,
+                        "summary": json.dumps({"summary": digest["summary"], "context": context}),
+                    }
+                    if context is not None
+                    else digest
+                ),
                 existing,
                 source=prompt,
                 required=bounded_required,
@@ -259,29 +294,47 @@ class ProgressCoordinator:
         source = captured["source"]
         if source["transcript_kind"] != "native":
             reasons.append("source_missing")
-        if source["transcript_chars"] > source["transcript_used_chars"]:
+        if maintained is None and source["transcript_chars"] > source["transcript_used_chars"]:
             # A tail alone cannot certify a legacy conversation's older constraints.
             reasons.append("legacy_baseline_unreviewed")
         if (
-            prior
+            maintained is None
+            and prior
             and prior.get("review", {}).get("kind") == "owner"
             and prior.get("conversation") == captured["conversation"]
         ):
             # Exact-boundary approval is never extended by an ordinary digest.
             reasons.append("legacy_baseline_unreviewed")
         baseline = None
-        if prior:
+        if prior and maintained is None:
             baseline = prior["id"] if prior.get("memory") else prior.get("memory_baseline_ref")
-        if baseline:
+        if baseline and maintained is None:
             reasons.append("whole_history_preparation_required")
         # Re-read actual bytes, not mtime/size, after both provider calls.
         refreshed = await self.capture(key)
         if refreshed is None or refreshed["conversation"] != captured["conversation"]:
             return None
+        refreshed = await memory_continuity.capture(self.server, key, refreshed)
         if refreshed["policy"] != captured["policy"]:
             return None
         if refreshed["source"] != captured["source"]:
             reasons.append("source_changed")
+        continuity = None
+        retained: dict[str, Any] = {}
+        if maintained is not None and context is not None:
+            # Failures do not advance coverage or replace the last good revision.
+            if reasons:
+                return None
+            continuity = memory_continuity.result(maintained, context, captured["memory_gaps"])
+            retained = await memory_continuity.retain(key, captured, maintained)
+            final = await self.capture(key)
+            if final is None:
+                return None
+            final = await memory_continuity.capture(self.server, key, final)
+            if any(final[k] != captured[k] for k in ("source", "conversation", "policy")):
+                return None
+            if continuity["remaining_records"] or continuity["gaps"]:
+                reasons.append("summary_coverage_partial")
         accepted = verdicts["accept"] if verdicts else []
         candidates = progress.candidate_items(digest)
         accepted = [item for item in accepted if item in candidates]
@@ -291,6 +344,7 @@ class ProgressCoordinator:
             "input_key": input_key,
             "prior_revision": prior["id"] if prior else None,
             "summary": digest["summary"],
+            **({"continuity": continuity, **retained} if continuity is not None else {}),
             **({"memory_baseline_ref": baseline} if baseline else {}),
             "summary_validation": {"ready": not reasons, "reason_codes": reasons},
         }
@@ -359,6 +413,7 @@ class ProgressCoordinator:
             # be displayed, but can never certify a handoff.
             if promote and (
                 value["summary_validation"]["ready"]
+                or value.get("continuity", {}).get("verified")
                 or value.get("memory_baseline_ref")
                 or prior is None
                 or not prior["summary_validation"]["ready"]

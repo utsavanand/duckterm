@@ -70,14 +70,8 @@ def parse(text: str) -> dict[str, Any] | None:
     """The summarizer's reply as a clean digest, or None when unusable.
     Tolerates prose/fences around the JSON (models add them despite the
     prompt) by extracting the outermost {...} block."""
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match is None:
-        return None
-    try:
-        raw = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(raw, dict):
+    raw = json_object(text)
+    if raw is None:
         return None
     digest: dict[str, Any] = {"summary": str(raw.get("summary") or "").strip()[:_MAX_SUMMARY_CHARS]}
     for key in KEYS:
@@ -91,6 +85,20 @@ def parse(text: str) -> dict[str, Any] | None:
     if not digest["summary"] and not any(digest[k] for k in KEYS):
         return None
     return digest
+
+
+def json_object(text: str) -> dict[str, Any] | None:
+    """Extract a JSON object without weakening the schema checks of its caller."""
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match is None:
+        return None
+    try:
+        raw = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return raw
 
 
 # ── validation: L1 (does each item make sense on its own) + L2 (compare

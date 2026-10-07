@@ -23,7 +23,9 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
       if (url.pathname.endsWith("restart-preparation") && request.method() === "POST") {
         const body = request.postDataJSON(), id = String(preparations.size + 1).padStart(32, "a");
         const value = { version: 1, preparation_id: id, request_key: body.request_key, binding: body.binding, sequence: 1, state: "ready",
-          coverage: { state: "partial", available_text: "processed", retrieval: "available", retention: "retained_snapshot", source_count: 3, covered_source_count: 3,
+          coverage: { state: "partial", available_text: "partial", retrieval: "available", retention: "retained_snapshot", source_count: 3, covered_source_count: 3,
+            handoff: { method: "maintained", summary_revision_id: "revision-a", summary_generated_at: Date.now() - 900000,
+              summary_state: "partial", available_records: 500, summarized_records: 120, included_records: 8, omitted_records: 372 },
             gaps: [{ kind: "unread_attachment", reason: "One image remains available as an attachment; its contents were not interpreted.", blocking: false }], gap_count: 1, has_more: false, details_cursor: null },
           proof: { snapshot_id: "snapshot-a", revision_id: "revision-a", prepared_at: Date.now(), expires_at: Date.now() + 60000,
             overview: "Continue keyboard accessibility work.", resolved_model: body.binding.target.model.id ?? null } };
@@ -72,9 +74,12 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
     await page.evaluate(() => Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" }));
     await page.getByRole("button", { name: "Prepare again", exact: true }).click();
     await expect(page.getByText("Ready to switch", { exact: true })).toBeVisible(); expect(switchCount).toBe(0);
+    await expect(page.getByText("The brief uses saved memory and recent messages. Earlier history stays searchable.", { exact: true })).toBeVisible();
     await page.screenshot({ path: "/tmp/memory-switch-implemented-dark.png" });
     await page.getByText("Handoff brief and available context", { exact: true }).click();
     await expect(page.getByRole("region", { name: "Automatically prepared brief" })).toContainText("Owner constraint");
+    await expect(page.getByText("120 of 500 records", { exact: true })).toBeVisible();
+    await expect(page.getByText("372 records available through read tools", { exact: true })).toBeVisible();
     await page.screenshot({ path: "/tmp/memory-switch-implemented-details.png" });
     await page.evaluate(() => document.documentElement.dataset.theme = "light");
     await page.screenshot({ path: "/tmp/memory-switch-implemented-light.png" });

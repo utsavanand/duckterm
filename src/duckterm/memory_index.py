@@ -12,7 +12,9 @@ from duckterm.core.session_api import APIError
 
 CHUNK_CHARS = 4000
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS versions (id TEXT PRIMARY KEY, version TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS versions (
+    id TEXT NOT NULL, version TEXT NOT NULL, PRIMARY KEY(id, version)
+);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
     source_id UNINDEXED, version UNINDEXED, record_id UNINDEXED,
     offset UNINDEXED, title, body, tokenize='porter unicode61'
@@ -28,15 +30,36 @@ def query(path: Path, sources: list[dict[str, Any]], text: str, limit: int) -> l
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     try:
+        # Old disposable indexes used one version per source. Rebuild once.
+        columns = list(conn.execute("PRAGMA table_info(versions)"))
+        if columns and columns[1][5] == 0:
+            conn.executescript("DROP TABLE versions; DROP TABLE chunks;")
         conn.executescript(SCHEMA)
-        current = {s["id"]: s["version"] for s in sources}
+        current = {(s["id"], s["version"]) for s in sources}
         with conn:
             for row in conn.execute("SELECT id,version FROM versions").fetchall():
-                if current.get(row["id"]) != row["version"]:
-                    conn.execute("DELETE FROM chunks WHERE source_id=?", (row["id"],))
-                    conn.execute("DELETE FROM versions WHERE id=?", (row["id"],))
+                if (row["id"], row["version"]) not in current:
+                    conn.execute(
+                        "DELETE FROM chunks WHERE source_id=? AND version=?",
+                        (row["id"], row["version"]),
+                    )
+                    conn.execute(
+                        "DELETE FROM versions WHERE id=? AND version=?", (row["id"], row["version"])
+                    )
             for source in sources:
-                if conn.execute("SELECT 1 FROM versions WHERE id=?", (source["id"],)).fetchone():
+                if source["kind"] in {"revision", "checkpoint"}:
+                    conn.execute(
+                        "DELETE FROM chunks WHERE source_id=? AND version=?",
+                        (source["id"], source["version"]),
+                    )
+                    conn.execute(
+                        "DELETE FROM versions WHERE id=? AND version=?",
+                        (source["id"], source["version"]),
+                    )
+                if conn.execute(
+                    "SELECT 1 FROM versions WHERE id=? AND version=?",
+                    (source["id"], source["version"]),
+                ).fetchone():
                     continue
                 for record in source["records"]:
                     body = record["text"]

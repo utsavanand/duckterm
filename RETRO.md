@@ -1,5 +1,46 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Graph reads should not rehash the whole history per revision
+
+A scale check with 4,000 conversation records and ten saved revisions exposed duplicate hashing in relationship reads. Hash only records that a revision actually processed, once per exact source version within the request. This keeps checksum and changed-record behavior intact while reducing the measured graph read from 1.64 to 0.55 seconds on the synthetic fixture. The regression verifies multiple revisions and a corrected original; the full retrieval path still rechecks access and canonical references.
+
+
+## 2026-10-07 — Readiness is retrieval safety, not complete summarization
+
+Problem: the switch UI still required a whole-history summary revision even after preparation moved to maintained memory and bounded recent originals. A valid no-summary packet could therefore remain unusable, and source counts implied more summary coverage than existed.
+
+Fix: validate the maintained response separately, including exact retrieval/retention, summary identity and record accounting. Show the owner-approved saved-summary, included-record and searchable-history wording in the existing Restart layout; keep draft, expiry and explicit-switch guards.
+
+Validation: 90 focused transport/controller/component checks, including real-decoder component cases for absent summaries, incomplete retrieval, stale sources and duplicate clicks; browser coverage checks the maintained counts and existing controls. Full combined release gate remains required.
+
+
+
+## 2026-10-07 — Graph citations must resolve exact, still-authorized records
+
+Problem: an artifact hash identified a replaced version but did not itself make its content readable, and generated claims could outlive permission to their evidence. A single-version search index could also silently drop cited old text.
+
+Fix: retain only canonically referenced versions, index source/version pairs, and derive checkpoint/revision relationships on read. Validate typed assertion endpoints and original evidence before retention and again before commit. Withdraw dependent claims and edges when their evidence becomes unavailable; never substitute current text for an old citation.
+
+Validation: isolated tests cover source replacement, deletion, orphan references, corrupt snapshots, credential/scope changes during writes, claim supersession, pagination invalidation, retry idempotency and CLI JSON transport. No existing session was switched.
+
+
+## 2026-10-07 — Backfill arrival order is not conversation chronology
+
+Problem: a bounded summary update may process a recent correction first and older history later. Without input provenance, the later update can mistake the older direction for new owner guidance. An onboarding packet also needs the named session, project and chosen harness, not just an opaque session key.
+
+Fix: record observed source frontiers and label historical backfill versus newly appended records. Include that provenance in generation and validation input. Supply the exact session/directory/target envelope in the bounded handoff. These are evidence and context, not additional owner authority.
+
+Validation: regressions exercise an older direction, a later correction and a newly appended owner message across two updates, plus named-session onboarding with an explicit target. No live session was switched.
+
+
+## 2026-10-07 — Harness switching cannot depend on a whole-history model pass
+
+Problem: the source session's long history became a serial generation/review workflow in the switch dialog. Quota failures and large backlogs blocked an owner-requested harness change, even though originals and current work were already available.
+
+Fix: assemble a bounded packet from canonical maintained context, current work and complete recent records; retain exact originals and teach the continuing agent its retrieval tools. Maintain summary coverage separately through the existing progress writer at a fifteen-minute eligible-turn cadence, shared with manual checkpoints. Never call searchable history fully summarized merely to make readiness pass. Changing this architecture also requires moving cancellation/source-change tests from obsolete provider callbacks to actual capture and retention boundaries.
+
+Validation: new quota-disabled, long-history, incremental coverage, coalescing, retention and scope/corruption regressions; integration and the complete release gate remain required before shipping this feature.
+
 ## 2026-10-07 — Configuring a merge must distinguish delivery from integration
 
 Independent agents can combine reviewed context without rewriting conversation

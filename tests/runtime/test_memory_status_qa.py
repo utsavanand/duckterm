@@ -22,7 +22,7 @@ def test_invalidated_http_status_and_details_do_not_return_old_brief(preparation
     status, ready = dispatch(server, "GET", path, headers)
     assert status == 200 and "brief" not in ready["proof"]
     status, detail = dispatch(server, "GET", path + "?detail=full", headers)
-    assert status == 200 and "Retain glacier originals" in detail["brief"]["text"]
+    assert status == 200 and "retain glacier originals" in detail["brief"]["text"]
     if change == "notes":
         server.history.set_meta("agent", notes="Changed owner constraint")
         expected = "stale_source"

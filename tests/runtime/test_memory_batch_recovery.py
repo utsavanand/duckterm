@@ -94,64 +94,48 @@ def test_adaptive_retry_is_bounded_and_never_retries_quota_errors(monkeypatch, t
     "change",
     ["none", "notes", "source", "model", "cli", "policy", "expired", "canceled", "restart"],
 )
-def test_failed_job_reuses_only_reviewed_progress_under_matching_fences(
+def test_failed_capture_retries_with_fresh_fences_without_provider(
     preparation, monkeypatch, change
 ):
+    from duckterm import memory_versions
+    from duckterm.core import saved_progress
+
     server, calls, tmp = preparation
-    original = memory_provider.generate
-    monkeypatch.setattr(memory_summary, "bundle", lambda pieces: [[p] for p in pieces])
-    generation_calls = []
+    original = memory_versions.retain
     fail = True
 
-    async def provider(harness, model, prompt, schema):
-        if schema == memory_summary.SUMMARY_SCHEMA:
-            generation_calls.append(data(prompt)["historical_data"])
-            if fail and len(generation_calls) == 2:
-                raise APIError(503, "Temporary provider failure")
-        return await original(harness, model, prompt, schema)
+    def retaining(*args):
+        if fail:
+            raise APIError(503, "Temporary storage failure")
+        return original(*args)
 
-    monkeypatch.setattr(memory_provider, "generate", provider)
+    monkeypatch.setattr(memory_versions, "retain", retaining)
 
     async def run():
         nonlocal fail
         manager = server.memory_preparation
-        if change == "canceled":
-            retain = manager.retain_progress
-
-            def cancel_after_review(job, value):
-                retain(job, value)
-                manager.cancel("agent", job["id"], "dialog-1")
-
-            monkeypatch.setattr(manager, "retain_progress", cancel_after_review)
         first = await prepare(server)
-        assert first["state"] == ("canceled" if change == "canceled" else "failed")
+        assert first["state"] == "failed" and first["retryable"]
         assert not server.history.checkpoints("agent")
-        assert "partial" not in first and "proof" not in first
+        assert "proof" not in first and calls == []
         assert not server.history.session("agent")["progress"]
         job = manager.jobs[first["preparation_id"]]
-        initial = generation_calls[0]
         if change == "canceled":
-            assert "partial" not in job
-            monkeypatch.setattr(manager, "retain_progress", retain)
-        else:
-            assert job["partial"].completed == 1
-            # Closing a failed dialog must not erase work for its retry.
             manager.cancel("agent", first["preparation_id"], "dialog-1")
-        if change == "notes":
+        elif change == "notes":
             server.history.set_meta("agent", notes="New owner constraint")
         elif change == "source":
             transcript(tmp, "agent-claude", "Changed owner instructions.")
         elif change == "cli":
             job["cli_version"] = "old CLI"
         elif change == "policy":
-            monkeypatch.setattr(memory_summary, "POLICY", "new-test-policy")
+            monkeypatch.setattr(saved_progress, "POLICY", "new-test-policy")
         elif change == "expired":
             job["expires"] = 0
         elif change == "restart":
             server.memory_preparation = type(manager)(server)
             manager = server.memory_preparation
         fail = False
-        generation_calls.clear()
         body = request(server, "retry")
         if change == "model":
             body["binding"]["target"]["model"]["id"] = "different-model"
@@ -159,15 +143,14 @@ def test_failed_job_reuses_only_reviewed_progress_under_matching_fences(
         await manager.tasks[started["preparation_id"]]
         result = manager.status("agent", started["preparation_id"])
         assert result["state"] == "ready", result
+        assert result["preparation_id"] != first["preparation_id"]
         assert len(server.history.checkpoints("agent")) == 1
         assert server.history.session("agent")["runtime"] == "claude-code"
-        assert "partial" not in manager.jobs[started["preparation_id"]]
-        if change == "none":
-            assert initial not in generation_calls
-            assert result["progress"]["completed_batches"] == len(generation_calls) + 1
-        elif change != "source":
-            assert generation_calls[0] == initial
-        else:
-            assert any("Changed owner" in p["text"] for g in generation_calls for p in g)
+        assert calls == []
+        brief = manager.details("agent", result["preparation_id"])["brief"]["text"]
+        if change == "source":
+            assert "Changed owner instructions" in brief
+        if change == "notes":
+            assert "New owner constraint" in brief
 
     asyncio.run(run())

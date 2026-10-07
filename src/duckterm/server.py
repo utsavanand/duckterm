@@ -564,7 +564,7 @@ class Server:
         if path.startswith("/api/v1/session/"):
             try:
                 if urllib.parse.urlsplit(path).path.startswith("/api/v1/session/memory/"):
-                    result = await self.memory.session_request(method, path, headers)
+                    result = await self.memory.session_request(method, path, headers, body)
                     status = 200
                 else:
                     status, result = self.history.session_api.handle(method, path, headers, body)
@@ -2721,33 +2721,37 @@ class Server:
 
     # ── running progress digest (deliverables / learnings / next actions) ──
     # Regenerated on turn ends (Stop), debounced so a chatty session costs at
-    # most one summarizer call per window; stored on the session row so it
+    # most one summary update per window; stored on the session row so it
     # survives restarts and rides along in /sessions.
-    _PROGRESS_MIN_INTERVAL_MS = 90_000
-    _PROGRESS_MIN_NEW_EVENTS = 4
+    _PROGRESS_MIN_INTERVAL_MS = 15 * 60_000
+    _PROGRESS_MIN_NEW_EVENTS = 1
 
     def _maybe_refresh_progress(self, session_key: str) -> None:
         row = self.history.session(session_key)
         if row is None:
             return
         now = int(time.time() * 1000)
-        last_ts, last_count = self._progress_marks.get(session_key, (0, 0))
+        control = self.history.restart_control(session_key)
+        attempt = control.get("progress_attempt", {})
+        last_ts, last_count = self._progress_marks.get(
+            session_key, (int(attempt.get("at", 0)), int(attempt.get("events", 0)))
+        )
+        last_ts = max(last_ts, int(row.get("progress_at") or 0))
         count = int(row.get("event_count") or 0)
         if now - last_ts < self._PROGRESS_MIN_INTERVAL_MS:
             return
         if count - last_count < self._PROGRESS_MIN_NEW_EVENTS:
             return
-        self._progress_marks[session_key] = (now, count)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return  # no loop (sync test context) — the next Stop will retry
-        loop.create_task(self._refresh_progress(session_key))
-
-    def _progress_on_exit(self, session_key: str) -> None:
-        row = self.history.session(session_key)
-        if row is None:
-            return
+        self._progress_marks[session_key] = (now, count)
+        # Persist the attempt, including failures, so a server restart cannot
+        # repeatedly spend on the same stopped conversation.
+        self.history.set_restart_control(
+            session_key, {**control, "progress_attempt": {"at": now, "events": count}}
+        )
         identity = conversation(self.history, session_key, row)
 
         async def refresh() -> None:
@@ -2755,7 +2759,10 @@ class Server:
             if current and conversation(self.history, session_key, current) == identity:
                 await self._refresh_progress(session_key)
 
-        asyncio.create_task(refresh())
+        loop.create_task(refresh())
+
+    def _progress_on_exit(self, session_key: str) -> None:
+        self._maybe_refresh_progress(session_key)
 
     async def _refresh_progress(self, session_key: str) -> None:
         try:
@@ -4621,6 +4628,8 @@ class Server:
     async def _create_checkpoint(
         self, session_key: str, row: dict[str, Any], label: str
     ) -> dict[str, Any]:
+        from duckterm import memory_continuity
+
         captured = await self.progress_coordinator.capture(session_key)
         if captured is None:
             raise APIError(409, "Session changed while capturing checkpoint; try again")
@@ -4638,6 +4647,14 @@ class Server:
         identity = uuid.uuid4().hex
         source = captured["source"]
         record = checkpoint_marker(captured, revision["id"] if revision else prior, git, now)
+        try:
+            original = await memory_continuity.capture(self, session_key, captured)
+            if "memory_sources" in original:
+                plan = memory_continuity.plan(original, None)
+                plan["selected"] = plan["rows"]
+                record.update(await memory_continuity.retain(session_key, original, plan))
+        except APIError:
+            record["memory_retention"] = "unavailable"
         try:
             retained = await self.memory.retain_current(session_key, captured)
         except APIError:

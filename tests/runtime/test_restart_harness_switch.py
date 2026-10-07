@@ -73,7 +73,24 @@ def offline(monkeypatch):
                 "summary_validation": {"ready": True, "reason_codes": []},
             }
         else:
-            text = {"summary": "Checkpoint summary", "deliverables": []}
+            text = {
+                "summary": "Checkpoint summary",
+                "deliverables": [],
+                "context": {
+                    "overview": "Checkpoint summary",
+                    **{
+                        k: []
+                        for k in (
+                            "goals",
+                            "constraints",
+                            "decisions",
+                            "unfinished",
+                            "questions",
+                            "risks",
+                        )
+                    },
+                },
+            }
         return type("Summary", (), {"text": json.dumps(text)})()
 
     monkeypatch.setattr("duckterm.server.summarize", summary)

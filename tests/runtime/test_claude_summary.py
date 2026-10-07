@@ -43,7 +43,23 @@ def test_claude_session_summary_uses_transcript(
                 "summary_validation": {"ready": True, "reason_codes": []},
             }
             if "validating a candidate" in prompt
-            else {"summary": "Added /healthz."}
+            else {
+                "summary": "Added /healthz.",
+                "context": {
+                    "overview": "Added /healthz.",
+                    **{
+                        k: []
+                        for k in (
+                            "goals",
+                            "constraints",
+                            "decisions",
+                            "unfinished",
+                            "questions",
+                            "risks",
+                        )
+                    },
+                },
+            }
         )
         return Summary(json.dumps(data), "stub")
 
@@ -57,9 +73,13 @@ def test_claude_session_summary_uses_transcript(
     transcript = fake_home / ".claude" / "projects" / slug / (sid + ".jsonl")
     transcript.parent.mkdir(parents=True)
     transcript.write_text(
-        json.dumps({"message": {"role": "user", "content": "add a healthcheck endpoint"}})
+        json.dumps(
+            {"type": "user", "message": {"role": "user", "content": "add a healthcheck endpoint"}}
+        )
         + "\n"
-        + json.dumps({"message": {"role": "assistant", "content": "Added /healthz."}})
+        + json.dumps(
+            {"type": "assistant", "message": {"role": "assistant", "content": "Added /healthz."}}
+        )
         + "\n"
     )
 

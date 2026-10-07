@@ -149,3 +149,53 @@ it("passes abort signals to local reads and treats absent or unknown capability 
   expect(memorySwitchAvailable({ ...options, memory_switch: undefined })).toBe(false);
   expect(memorySwitchAvailable({ ...options, current: { harness: "claude-code", model: "" } })).toBe(false);
 });
+
+const maintained = {
+  method: "maintained", summary_revision_id: "revision1", summary_generated_at: 900,
+  summary_state: "partial", available_records: 500, summarized_records: 120,
+  included_records: 8, omitted_records: 372,
+};
+it.each(["partial", "unavailable", "current", "legacy"])("accepts a valid maintained packet with %s summary coverage", async state => {
+  const h = { ...maintained, summary_state: state,
+    ...(state === "unavailable" || state === "legacy" ? { summarized_records: 0, omitted_records: 492 } : {}),
+    ...(state === "unavailable" ? { summary_revision_id: null, summary_generated_at: null } : {}),
+    ...(state === "current" ? { summarized_records: 500, included_records: 0, omitted_records: 0 } : {}),
+  };
+  response({ ...prepared, coverage: { ...prepared.coverage, handoff: h,
+    available_text: state === "current" ? "processed" : state === "partial" ? "partial" : "not_processed" },
+    proof: { ...prepared.proof, revision_id: h.summary_revision_id } });
+  const value = await memorySwitchService(selection).prepare("maintained-dialog");
+  expect(value.result.phase).toBe("ready");
+  expect(value.coverage.handoff).toEqual(h);
+  expect(value.revisionId).toBe(h.summary_revision_id);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock.mock.calls[0][0]).toMatch(/restart-preparation$/);
+});
+it.each([
+  { handoff: { ...maintained, method: "future" } },
+  { handoff: { ...maintained, summarized_records: 501 } },
+  { handoff: { ...maintained, included_records: 9 } },
+  { handoff: { ...maintained, summary_revision_id: null } },
+  { handoff: { ...maintained, summary_state: "current" } },
+  { handoff: { ...maintained, summary_state: "unavailable" } },
+  { retrieval: "partial" }, { retention: "native_conditional" },
+  { available_text: "processed" },
+  { gap_count: 2, has_more: false, details_cursor: null },
+  { gaps: [{ ...prepared.coverage.gaps[0], blocking: true }] },
+])("refuses inconsistent maintained coverage or incomplete retrieval %j", async patch => {
+  response({ ...prepared, coverage: { ...prepared.coverage, available_text: "partial", handoff: maintained, ...patch } });
+  await expect(memorySwitchService(selection).preparation(prepId)).rejects.toMatchObject({ code: "invalid_response" });
+});
+it("does not accept a maintained proof pointing to another summary revision", async () => {
+  response({ ...prepared, coverage: { ...prepared.coverage, available_text: "partial", handoff: maintained },
+    proof: { ...prepared.proof, revision_id: "different-revision" } });
+  await expect(memorySwitchService(selection).preparation(prepId)).rejects.toMatchObject({ code: "invalid_response" });
+});
+it("keeps nonblocking source-detail pagination available on a ready maintained packet", async () => {
+  response({ ...prepared, coverage: { ...prepared.coverage, available_text: "partial", handoff: maintained,
+    gap_count: 60, has_more: true, details_cursor: "50", gaps: Array.from({ length: 50 }, () => prepared.coverage.gaps[0]) } });
+  const value = await memorySwitchService(selection).preparation(prepId);
+  expect(value.result.phase).toBe("ready");
+  expect(value.coverage.has_more).toBe(true);
+  expect(value.coverage.gap_count).toBe(60);
+});

@@ -405,7 +405,23 @@ def test_real_isolated_terminal_restarts_under_same_key(
                 "summary_validation": {"ready": True, "reason_codes": []},
             }
             if "validating a candidate" in prompt
-            else {"summary": "Keep the test task"}
+            else {
+                "summary": "Keep the test task",
+                "context": {
+                    "overview": "Keep the test task",
+                    **{
+                        k: []
+                        for k in (
+                            "goals",
+                            "constraints",
+                            "decisions",
+                            "unfinished",
+                            "questions",
+                            "risks",
+                        )
+                    },
+                },
+            }
         )
         return Summary(json.dumps(value), "stub")
 
