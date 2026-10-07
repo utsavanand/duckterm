@@ -180,8 +180,8 @@ export function MemorySwitchPanel(props: {
       <dl>{handoff ? <>
         <dt>Saved summary</dt><dd>{handoff.summary_generated_at === null ? "No saved summary" : `Updated ${new Date(handoff.summary_generated_at).toLocaleString()}`}</dd>
         <dt>History summarized</dt><dd>{handoff.summarized_records.toLocaleString()} of {handoff.available_records.toLocaleString()} records</dd>
-        <dt>Recent originals in brief</dt><dd>{handoff.included_records.toLocaleString()} records</dd>
-        <dt>Additional history</dt><dd>{handoff.omitted_records.toLocaleString()} records available through read tools</dd>
+        <dt>Recent originals in brief</dt><dd>{handoff.included_records.toLocaleString()} {handoff.included_records === 1 ? "record" : "records"}</dd>
+        <dt>Additional history</dt><dd>{handoff.omitted_records.toLocaleString()} {handoff.omitted_records === 1 ? "record" : "records"} available through read tools</dd>
         <dt>Originals for retrieval</dt><dd>Retained and searchable</dd>
       </> : <>
         <dt>Available text processed</dt><dd>{prepared.coverage.covered_source_count} of {prepared.coverage.source_count} sources</dd>

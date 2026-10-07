@@ -4,8 +4,9 @@ Implementation candidate, 2026-10-07, rebased on installed v0.4.126. This is not
 The owner requested parallel work in existing Codex sessions: main-dev owns this
 backend and retrieval/context links; remote-session-dev declined that assignment
 because of a separate direct owner priority. Main-dev took over the unclaimed UI work. The owner approved its status-copy preview;
-transport and visible integration are implemented. Main-qa and remote-session-dev
-have independent review requests, not yet acknowledged. Startup is the sole
+transport and visible integration are implemented. Remote-session-dev completed 32 independent compatibility checks against its
+agent-merge feature. Main-qa has not acknowledged the broader review; main-dev
+performed the access/retention checks directly after remote-session-dev declined that scope. Startup is the sole
 existing-session acceptance target; Product and release-dev are unchanged.
 
 ## One summary writer
@@ -175,9 +176,11 @@ promise; storage grows with distinct referenced versions.
 
 1. UI integration is implemented; 90 focused frontend checks and the isolated browser
    scenario pass, including status wording, expanded counts and unchanged controls.
-2. Complete independent QA before any further live preparation/switch,
-   per the owner's latest direction. Then run the committed-tree full gate, package
-   installation and startup-only acceptance.
+2. The committed-tree full gate is running. Native WebKit acceptance passed with
+   real isolated records and provider calls forbidden: ready without a summary or
+   retry, four checkpoint markers, preserved controls, and source process intact.
+   Broader independent review is not claimed. Complete package installation and
+   startup-only acceptance after the full gate passes.
 3. Actual continuing agent retrieves an old fact absent from its brief and the exact
    cited artifact version. Measure real preparation time; no production timing claim yet.
 
