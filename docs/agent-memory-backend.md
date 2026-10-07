@@ -32,6 +32,8 @@ The selected target harness prepares a brief from available text and tool record
 
 A later preparation reuses exact unchanged source prefixes. Rewrites, deleted sources, changed permissions and policy changes invalidate reuse. Each generated continuation is checked against its preceding context and new source chunk. This model validation is not a guarantee that no fact was omitted: originals remain retrievable. The full launch brief has a 32,000 UTF-8 byte budget; required context is never silently clipped to fit.
 
+Codex receives JSON schemas for both summary and review responses. Local parsing still enforces source references and UTF-8 byte limits. A malformed or rejected draft can receive at most two corrections against the same sources, each followed by a new content review; failed drafts never count as processed coverage. Source freshness is checked after every model response. Status includes `progress: {completed_batches, total_batches, step}` while summarizing; `step` is `summarizing`, `reviewing`, `repairing`, or `complete`. These counters describe work performed, not readiness. A per-call timeout has its own error and terminates only the preparation subprocess.
+
 Preparation saves one revision and checkpoint through `ProgressCoordinator.persist`. Intermediate model outputs are temporary. Up to two jobs perform preparation concurrently; equivalent dialogs share a job with separate cancellation leases. A source/settings change refuses readiness. Provider failure leaves the current agent untouched.
 
 ## Version 1 HTTP contract
