@@ -685,6 +685,12 @@ export function conversationRecoveryService(key: string): ConversationRecoverySe
     identity: () => get<ConversationIdentity>(path + "recovery", key, { authed: true }),
     candidates: () => get<ConversationCandidates>(path + "candidates", key, { authed: true }),
     installHooks: () => post<ConversationIdentity>(path + "hooks", {}, key),
+    detach: async revision => {
+      const value = await post<ConversationIdentity>(path + "detach", { revision }, key);
+      window.dispatchEvent(new Event("conversation-recovery-changed"));
+      window.dispatchEvent(new Event("remote-sessions-refresh"));
+      return value;
+    },
     adopt: async (handle, revision) => {
       const value = await post<ConversationIdentity>(path + "adopt", { handle, revision }, key);
       window.dispatchEvent(new Event("conversation-recovery-changed"));

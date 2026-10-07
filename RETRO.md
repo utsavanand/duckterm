@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — An explicit recovery choice needs a safe way back
+
+An incorrect transcript attachment must be reversible without deleting its file or starting an agent. Expose Undo only for an adopted binding on a stopped session, send the current revision, and leave launch-assigned or observed identities alone. Disable Resume while Undo is unresolved. A lost response requires a fresh identity read before another action, never an automatic mutation retry. Verify the complete attach/undo/reselect workflow and compare transcript bytes before and after Undo.
+
 ## 2026-10-06 — Show missing conversation identity before Resume is needed
 
 A launched agent could work normally while no conversation ID was recorded, hiding the loss until a later Resume. Show identity, hook configuration and readable transcript readiness as separate facts. Recovery must use an explicit owner choice with bounded project-scoped discovery, opaque handles, whole-file verification and an atomic session revision/duplicate-ownership check; never choose the newest transcript or automatically resume. Preserve a generation barrier when undoing an adopted binding so old hooks cannot restore it. Keep filesystem work off the event loop and reject discovery without a recorded absolute project directory. Test stale files, competing attachments, missing directories, expired handles, uncertain responses and real-browser recovery.

@@ -7,9 +7,9 @@ import type { SessionView } from "./types";
 import { identityPresentation, launchIdentity } from "./conversationRecoveryState";
 import "./conversationRecovery.css";
 
-export function ConversationIdentityNotice({ identity, computer, stopped, busy, onInstall, onChoose }: {
+export function ConversationIdentityNotice({ identity, computer, stopped, busy, onInstall, onChoose, onDetach }: {
   identity: ConversationIdentity; computer: string; stopped: boolean; busy: boolean;
-  onInstall?: () => void; onChoose?: () => void;
+  onInstall?: () => void; onChoose?: () => void; onDetach?: () => void;
 }) {
   const view = identityPresentation(identity);
   return <section className="rd-conversation-health" aria-label="Conversation recovery" aria-live="polite">
@@ -19,6 +19,7 @@ export function ConversationIdentityNotice({ identity, computer, stopped, busy, 
     <div className="rd-conversation-actions">
       {onInstall && identity.hooks.canInstall && identity.hooks.status === "missing" && <button className="rd-btn rd-btn-primary" disabled={busy} onClick={onInstall}>Install hooks</button>}
       {onChoose && stopped && identity.canAdopt && identity.status === "missing" && <button className="rd-btn rd-btn-ghost" disabled={busy} onClick={onChoose}>Choose a conversation</button>}
+      {onDetach && stopped && identity.source === "adopted" && identity.canDetach && identity.revision && <button className="rd-btn rd-btn-ghost" disabled={busy} onClick={onDetach}>Undo attachment</button>}
     </div>
     {identity.hooks.canInstall && identity.hooks.status === "missing" && <p className="hint">Installs hooks globally on {computer} for this harness. If your harness settings are synced, other computers may receive them too. This does not recover a previously unrecorded conversation.</p>}
     <details><summary>Conversation details</summary><p>Computer: {computer}</p><p>{identity.source === "assigned" ? "Identity recorded at launch." : identity.source === "observed" ? "Identity observed from the harness." : identity.source === "adopted" ? "Conversation explicitly chosen by you." : "No conversation identity recorded."}</p><p>Hook configuration is separate from successful identity capture.</p></details>
@@ -102,17 +103,21 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
   const [identity, setIdentity] = useState<ConversationIdentity | null>(session.conversationIdentity ? launchIdentity(session.conversationIdentity) : null);
   const [choosing, setChoosing] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
-  const mounted = useRef(true), installing = useRef(false), generation = useRef(0);
+  const [uncertain, setUncertain] = useState(false), [notice, setNotice] = useState("");
+  const mounted = useRef(true), mutating = useRef(false), generation = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  const update = useCallback((value: ConversationIdentity) => { generation.current += 1; setIdentity(value); onIdentity(value); }, [onIdentity]);
+  const update = useCallback((value: ConversationIdentity) => {
+    generation.current += 1; setIdentity(value); onIdentity(value);
+    if (value.source === "adopted") setNotice("");
+  }, [onIdentity]);
   useEffect(() => {
     let current = true;
     const refresh = async () => {
-      if (document.hidden || installing.current || choosing) return;
+      if (document.hidden || mutating.current || choosing) return;
       const request = ++generation.current;
       try {
         const value = await service.identity();
-        if (current && request === generation.current) { update(value); setError(""); }
+        if (current && request === generation.current) { update(value); setError(""); setUncertain(false); }
       } catch (cause) {
         if (current && request === generation.current) setError(`Recovery status unavailable: ${(cause as Error).message}`);
       }
@@ -122,15 +127,31 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
     return () => { current = false; clearInterval(timer); };
   }, [service, session.conversationIdentity?.status, stopped, retry, update, choosing]);
   async function install() {
-    if (installing.current) return;
-    installing.current = true; generation.current += 1; setBusy(true); setError("");
+    if (mutating.current) return;
+    mutating.current = true; generation.current += 1; setBusy(true); setError("");
     try { const value = await service.installHooks(); if (mounted.current) update(value); }
     catch (cause) { if (mounted.current) setError(`Hook installation could not be confirmed: ${(cause as Error).message}. Check again before retrying.`); }
-    finally { installing.current = false; if (mounted.current) { setBusy(false); setRetry(n => n + 1); } }
+    finally { mutating.current = false; if (mounted.current) { setBusy(false); setRetry(n => n + 1); } }
+  }
+  async function detach() {
+    if (mutating.current || uncertain || !stopped || identity?.source !== "adopted" || !identity.canDetach || !identity.revision) return;
+    mutating.current = true; generation.current += 1; setBusy(true); setError(""); setNotice("");
+    // Disable Resume while this mutation or its reconciliation is unresolved.
+    update({ ...identity, canResume: false });
+    try {
+      const value = await service.detach(identity.revision);
+      if (mounted.current) { update(value); setNotice("Attachment removed. The transcript is unchanged and the session stays stopped."); }
+    } catch (cause) {
+      if (mounted.current) { setUncertain(true); setError(`Undo could not be confirmed: ${(cause as Error).message}. Check the current status before trying again.`); }
+    } finally {
+      mutating.current = false;
+      if (mounted.current) { setBusy(false); setRetry(n => n + 1); }
+    }
   }
   const computer = session.hostLabel || hostName(session.key);
   return <>
-    {identity && <ConversationIdentityNotice identity={identity} computer={computer} stopped={stopped} busy={busy} onChoose={() => { generation.current += 1; setChoosing(true); }} onInstall={() => void install()} />}
+    {identity && <ConversationIdentityNotice identity={identity} computer={computer} stopped={stopped} busy={busy || uncertain} onDetach={() => void detach()} onChoose={() => { generation.current += 1; setChoosing(true); }} onInstall={() => void install()} />}
+    {notice && <p className="hint" role="status">{notice}</p>}
     {error && session.conversationIdentity && <p className="rd-conversation-error" role="status">{error}<button className="rd-btn rd-btn-ghost" onClick={() => setRetry(n => n + 1)}>Check again</button></p>}
     {choosing && <ConversationRecoveryDialog service={service} sessionName={session.label} computer={computer} project={session.worktreePath || session.cwd} onClose={() => setChoosing(false)} onAdopted={update} />}
   </>;

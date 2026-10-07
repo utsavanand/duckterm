@@ -8,7 +8,7 @@ function service(): ConversationRecoveryService {
   return { identity: vi.fn().mockResolvedValue(missing), installHooks: vi.fn(), candidates: vi.fn().mockResolvedValue({ revision: "r1", candidates: [
     { handle: "new", label: "Monday conversation", firstPrompt: "Build navigation", lastPrompt: "Check links", modifiedAt: 1791300000000, available: true },
     { handle: "old", label: "Earlier conversation", firstPrompt: "Fix recovery", lastPrompt: "Review status", modifiedAt: 1791200000000, available: true },
-  ] }), adopt: vi.fn().mockResolvedValue(recorded) };
+  ] }), adopt: vi.fn().mockResolvedValue(recorded), detach: vi.fn().mockResolvedValue(missing) };
 }
 beforeAll(() => { HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); }; });
 afterEach(cleanup);
@@ -83,4 +83,43 @@ it("ignores a stale status response after installing hooks", async () => {
     expect(updated).toHaveBeenLastCalledWith(configured);
     expect(screen.queryByRole("button", { name: "Install hooks" })).toBeNull();
   } finally { cleanup(); timer.mockRestore(); spy.mockRestore(); }
+});
+
+it("offers Undo only for a stopped adopted binding with a current revision", () => {
+  const onDetach = vi.fn();
+  const adopted = { ...recorded, canDetach: true, revision: "revision-one" };
+  const props = { identity: adopted, computer: "Build Mac", busy: false, stopped: true, onDetach };
+  const { rerender } = render(<ConversationIdentityNotice {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Undo attachment" }));
+  expect(onDetach).toHaveBeenCalledOnce();
+  for (const source of ["assigned", "observed"] as const) {
+    rerender(<ConversationIdentityNotice {...props} identity={{ ...adopted, source }} />);
+    expect(screen.queryByRole("button", { name: "Undo attachment" })).toBeNull();
+  }
+  rerender(<ConversationIdentityNotice {...props} stopped={false} />);
+  expect(screen.queryByRole("button", { name: "Undo attachment" })).toBeNull();
+  rerender(<ConversationIdentityNotice {...props} identity={{ ...adopted, revision: undefined }} />);
+  expect(screen.queryByRole("button", { name: "Undo attachment" })).toBeNull();
+});
+it("reconciles an uncertain Undo before allowing another mutation and never retries it automatically", async () => {
+  const apiModule = await import("./api");
+  const api = service();
+  const adopted = { ...recorded, canDetach: true, canResume: true, transcript: "present" as const, revision: "revision-one" };
+  vi.mocked(api.identity).mockResolvedValueOnce(adopted).mockRejectedValueOnce(new Error("offline")).mockResolvedValue(missing);
+  vi.mocked(api.detach).mockRejectedValue(new Error("response lost"));
+  const spy = vi.spyOn(apiModule, "conversationRecoveryService").mockReturnValue(api);
+  const updated = vi.fn();
+  const session = { key: "orphan", label: "Orphan", runtime: "claude-code", conversationIdentity: { status: "recorded", source: "adopted", assignable: false } } as import("./types").SessionView;
+  try {
+    render(<SessionConversationRecovery session={session} stopped onIdentity={updated} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Undo attachment" }));
+    await screen.findByText(/Recovery status unavailable: offline/);
+    expect(screen.getByRole("button", { name: "Undo attachment" })).toBeDisabled();
+    expect(updated).toHaveBeenLastCalledWith({ ...adopted, canResume: false });
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await screen.findByRole("button", { name: "Choose a conversation" });
+    expect(screen.queryByRole("button", { name: "Undo attachment" })).toBeNull();
+    expect(api.detach).toHaveBeenCalledExactlyOnceWith("revision-one");
+    expect(updated).toHaveBeenLastCalledWith(missing);
+  } finally { cleanup(); spy.mockRestore(); }
 });

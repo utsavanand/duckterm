@@ -29,7 +29,7 @@ test("missing conversation identity is visible on launch and does not promise Re
 });
 
 test("owner reviews a real project transcript, stale choices fail, attachment never launches", async ({ page }) => {
-  const { mkdtempSync, realpathSync, mkdirSync, writeFileSync, appendFileSync, rmSync } = await import("node:fs");
+  const { mkdtempSync, realpathSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, rmSync } = await import("node:fs");
   const { tmpdir, homedir } = await import("node:os");
   const { join } = await import("node:path");
   const cwd = realpathSync(mkdtempSync(join(tmpdir(), "recovery-browser-")));
@@ -80,5 +80,33 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
     await page.setViewportSize({ width: 1440, height: 1000 });
     await expect(card.getByRole("heading", { name: "Conversation chosen by you" })).toBeVisible();
     await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeEnabled();
+    const unchanged = readFileSync(join(root, "alpha.jsonl"), "utf8");
+    await expect(card.getByRole("button", { name: "Undo attachment", exact: true })).toBeVisible();
+    await expect.poll(() => card.getByRole("button", { name: "Undo attachment" }).evaluate(node => getComputedStyle(node).backgroundColor)).toBe("rgb(255, 255, 255)");
+    await page.screenshot({ path: "/tmp/conversation-undo-implemented-light.png" });
+    await page.evaluate(() => document.documentElement.dataset.theme = "dark");
+    await expect.poll(() => card.getByRole("button", { name: "Undo attachment" }).evaluate(node => getComputedStyle(node).backgroundColor)).toBe("rgb(21, 24, 31)");
+    await page.screenshot({ path: "/tmp/conversation-undo-implemented-dark.png" });
+    await card.getByRole("button", { name: "Undo attachment", exact: true }).click();
+    await expect(card.getByText("Attachment removed. The transcript is unchanged and the session stays stopped.")).toBeVisible();
+    await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
+    await expect(card.getByRole("button", { name: "Undo attachment", exact: true })).toHaveCount(0);
+    expect(readFileSync(join(root, "alpha.jsonl"), "utf8")).toBe(unchanged);
+    const afterUndo = await (await page.request.get(base() + "/sessions")).json();
+    const undone = afterUndo.sessions.find((s: { session_key: string }) => s.session_key === key);
+    expect(undone.state).toBe("stopped");
+    expect(undone.conversation_identity.status).toBe("missing");
+    // A mistaken choice can be replaced with a different explicit choice.
+    await card.getByRole("button", { name: "Choose a conversation" }).click();
+    await expect(dialog.getByRole("radio")).toHaveCount(2);
+    await expect(dialog.getByRole("radio").first()).not.toBeChecked();
+    await dialog.getByRole("radio", { name: "Conversation 2", exact: true }).check();
+    await dialog.getByRole("button", { name: "Review selection" }).click();
+    await dialog.getByRole("button", { name: "Attach this conversation" }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(card.getByRole("button", { name: "Undo attachment", exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeEnabled();
+    await expect(card.getByText("Attachment removed. The transcript is unchanged and the session stays stopped.")).toHaveCount(0);
+
   } finally { await apiDelete(`/sessions/${key}`); rmSync(root, { recursive: true, force: true }); rmSync(cwd, { recursive: true, force: true }); }
 });

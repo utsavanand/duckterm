@@ -8,6 +8,8 @@ export interface ConversationIdentity {
   hooks: { status: "missing" | "configured" | "unknown"; canInstall: boolean };
   canAdopt: boolean;
   canResume: boolean;
+  canDetach?: boolean;
+  revision?: string;
 }
 
 export interface ConversationCandidate {
@@ -32,6 +34,7 @@ export interface ConversationRecoveryService {
   installHooks: () => Promise<ConversationIdentity>;
   candidates: () => Promise<ConversationCandidates>;
   adopt: (handle: string, revision: string) => Promise<ConversationIdentity>;
+  detach: (revision: string) => Promise<ConversationIdentity>;
 }
 
 export function identityPresentation(value: ConversationIdentity): { title: string; detail: string } {
