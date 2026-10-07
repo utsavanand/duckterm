@@ -168,9 +168,9 @@ test("terminated session rows show only end-state actions", async ({
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
   await row.locator(".rd-row-click").click();
-  await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Delete permanently…" })).toBeVisible();
+  await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Delete permanently" })).toBeVisible();
   await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Notes", exact: true })).toBeVisible();
-  for (const gone of ["Rename…", "Checkpoint", "Fork…", "Stop watching…"]) {
+  for (const gone of ["Rename", "Checkpoint", "Fork", "Stop watching"]) {
     await expect((await sessionMenu(page)).getByRole("menuitem", { name: gone })).toHaveCount(0);
   }
 });

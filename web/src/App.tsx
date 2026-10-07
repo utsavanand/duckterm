@@ -1,3 +1,4 @@
+import { sidebarFolders } from "./sidebarFolders";
 import { SessionActions } from "./SessionActions";
 import type { SessionActionAnchor } from "./SessionActionMenu";
 import { useDesktopNotifications } from "./useDesktopNotifications";
@@ -384,6 +385,7 @@ function Dashboard() {
                 active={!towerOpen && !sidePanels.collapsed.left}
                 folders={folders}
                 selectedKey={selectedFolder === null ? selectedKey : null}
+                contextKey={actionSession?.key}
                 selectedFolder={selectedFolder}
                 onOpenFolder={setSelectedFolder}
                 onFolderRenamed={(from, to) => setSelectedFolder(current => current === from ? to : current?.startsWith(from + "/") ? to + current.slice(from.length) : current)}
@@ -581,6 +583,17 @@ function Dashboard() {
         onClose={closeActions} onFork={setForkKey} onDelete={deleteSession}
         onRename={(key, name) => patchSession(key, { label: name })}
         onNotes={key => { setSelectedKey(key); setSelectedFolder(null); setNotesKey(key); if (sidePanels.collapsed.right) sidePanels.toggle("right"); window.dispatchEvent(new Event("show-session-notes")); }}
+        folders={sidebarFolders(folders, sessions)}
+        onMoveFolder={!actionSession.parentKey ? async group => {
+          await api.setGroup(actionSession.key, group);
+          patchSession(actionSession.key, { group: group || undefined });
+          refreshFolders();
+          if (group) window.dispatchEvent(new CustomEvent("reveal-sidebar-folder", { detail: group }));
+          requestAnimationFrame(() => {
+            if (actionAnchorRef.current && actionAnchorRef.current !== actionAnchor) return;
+            document.querySelector<HTMLElement>(`.rd-row[data-session-key="${CSS.escape(actionSession.key)}"]`)?.focus({ preventScroll: true });
+          });
+        } : undefined}
         onUngroup={actionSession.group && !actionSession.parentKey ? async () => { await api.setGroup(actionSession.key, ""); patchSession(actionSession.key, { group: undefined }); refreshFolders(); } : undefined} />}
       {moveSession && <MoveRemoteModal session={moveSession} onClose={() => setMoveKey(null)} />}
       {forkSession && (

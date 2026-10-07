@@ -30,5 +30,5 @@ test("watched session is observe-only: no Stop or Archive button", async ({
   ).toHaveCount(0);
   await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Archive" })).toHaveCount(0);
   // Fork stays — branching a watched session is fine.
-  await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Fork…" })).toBeVisible();
+  await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Fork" })).toBeVisible();
 });

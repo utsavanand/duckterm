@@ -1,6 +1,16 @@
 # Retro — lessons from real breakage
 
 
+## 2026-10-07 — A context menu needs its own visible target
+
+Right-clicking an unselected session must identify the target without switching
+terminals. Keep its outline tied to the menu's session key, including nested,
+filtered and archived rows, and clear it when the menu or dialog closes. Folder
+moves need the same catalog as the sidebar, including empty and remote folders;
+show an error before changing local grouping if persistence fails. Keep forks
+with their parent and verify that the chosen destination survives reload.
+
+
 ## 2026-10-07 — Session menus must stay tied to the clicked row
 
 Moving session actions out of the detail panel requires an explicit target key;

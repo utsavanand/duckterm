@@ -19,7 +19,7 @@ test("a deleted watched session is not resurrected by its later events", async (
 
   // Remove it from the UI (watched session: "Stop watching", double-confirm).
   await row.locator(".rd-row-click").click();
-  await (await sessionMenu(page)).getByRole("menuitem", { name: "Stop watching…" }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: "Stop watching" }).click();
   await page.getByRole("dialog", { name: "Confirm session removal" }).getByRole("button", { name: "Stop watching" }).click();
   await expect(row).toHaveCount(0);
 

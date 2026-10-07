@@ -18,7 +18,7 @@ test("deleting a parent immediately restores child controls and preserves descen
     await row(child).locator(".rd-row-click").click();
     await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder", exact: true })).toHaveCount(0);
     await row(parent).locator(".rd-row-click").click();
-    await (await sessionMenu(page)).getByRole("menuitem", { name: "Stop watching…", exact: true }).click();
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Stop watching", exact: true }).click();
     await page.getByRole("dialog", { name: "Confirm session removal" }).getByRole("button", { name: "Stop watching", exact: true }).click();
     await expect(row(parent)).toHaveCount(0);
     await row(child).locator(".rd-row-click").click();
