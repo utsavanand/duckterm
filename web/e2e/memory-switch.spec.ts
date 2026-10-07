@@ -53,8 +53,8 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
     await page.addInitScript(() => localStorage.setItem("rd-theme", "dark"));
     await page.goto(base()); await page.locator(".rd-row-name", { hasText: "Workspace developer" }).click();
     const menu = await sessionMenu(page);
-    for (const name of ["Restart…", "Change model…", "Checkpoint", "Notes", "Stop", "Archive"]) await expect(menu.getByRole("menuitem", { name, exact: true })).toBeVisible();
-    await menu.getByRole("menuitem", { name: "Restart…", exact: true }).click();
+    for (const name of ["Restart", "Change model", "Checkpoint", "Notes", "Stop", "Archive"]) await expect(menu.getByRole("menuitem", { name, exact: true })).toBeVisible();
+    await menu.getByRole("menuitem", { name: "Restart", exact: true }).click();
     await page.getByRole("dialog").getByRole("combobox", { name: "Harness", exact: true }).selectOption("codex");
     await page.getByRole("dialog").getByRole("combobox", { name: "Model", exact: true }).selectOption("gpt-6-astra");
     await expect(page.getByText("Ready to switch", { exact: true })).toBeVisible(); expect(switchCount).toBe(0);

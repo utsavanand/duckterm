@@ -16,6 +16,44 @@ from typing import Any
 SCHEMA_VERSION = 12
 REVISION_BUCKET = "summary_revision_v1"
 MARKER_FORMAT = "checkpoint_marker_v2"
+WORK_EVENTS_FILTER = "work-v1"
+
+
+def is_status_observation(event_type: str, payload_json: str) -> bool:
+    """Only known, content-free attendance/idle observations are not new work.
+
+    Keep unknown fields and notification types material: an approval, message,
+    tool result or future event payload must still invalidate prepared context.
+    The original events remain in the audit history.
+    """
+    if event_type not in ("Attended", "Notification"):
+        return False
+    try:
+        payload = json.loads(payload_json)
+    except (ValueError, TypeError):
+        return False
+    return (
+        isinstance(payload, dict)
+        and payload.get("event_type") == event_type
+        and payload.get("notification_type") in (None, "idle_prompt")
+        and not payload.keys()
+        - {
+            "event_type",
+            "session_key",
+            "source_app",
+            "cwd",
+            "runtime",
+            "launched",
+            "test",
+            "name",
+            "_id",
+            "_ts",
+            "reconciled",
+            "notification_type",
+            "branch",
+            "repo_path",
+        }
+    )
 
 
 def checkpoint_marker(
@@ -58,19 +96,25 @@ def transaction(conn: sqlite3.Connection) -> Iterator[None]:
         raise
 
 
-def event_source(conn: sqlite3.Connection, key: str, end: int | None = None) -> dict[str, Any]:
+def event_source(
+    conn: sqlite3.Connection, key: str, end: int | None = None, *, work_only: bool = False
+) -> dict[str, Any]:
     rows = conn.execute(
-        "SELECT rowid, id, payload_json FROM events "
+        "SELECT rowid, id, payload_json, event_type FROM events "
         "WHERE session_key=? AND rowid<=? ORDER BY rowid",
         (key, end if end is not None else 9223372036854775807),
     ).fetchall()
+    if work_only:
+        rows = [r for r in rows if not is_status_observation(r[3], r[2])]
     return {
         "first": rows[0][0] if rows else 0,
         "last": rows[-1][0] if rows else 0,
         "first_id": rows[0][1] if rows else None,
         "last_id": rows[-1][1] if rows else None,
         "count": len(rows),
-        "fingerprint": fingerprint([list(r) for r in rows]),
+        "fingerprint": fingerprint([list(r[:3]) for r in rows]),
+        # Older markers retain the original all-events interpretation.
+        **({"filter": WORK_EVENTS_FILTER} if work_only else {}),
     }
 
 
@@ -202,7 +246,8 @@ def resolve_checkpoint(
             record={"prompts": [], "commands": [], "files": [], "tools": [], "event_count": 0},
         )
         return result
-    actual = event_source(conn, key, int(captured.get("last") or 0))
+    work_only = captured.get("filter") == WORK_EVENTS_FILTER
+    actual = event_source(conn, key, int(captured.get("last") or 0), work_only=work_only)
     complete = actual == captured
     summary = revision(conn, key, record.get("summary_ref"))
     state = "unavailable"
@@ -246,11 +291,13 @@ def resolve_checkpoint(
     if record.get("mail_hash") != fingerprint(mail):
         reasons.append("source_changed")
     rows = conn.execute(
-        "SELECT payload_json FROM events "
+        "SELECT payload_json, event_type FROM events "
         "WHERE session_key=? AND rowid BETWEEN ? AND ? ORDER BY rowid",
         (key, captured.get("first", 0), captured.get("last", 0)),
     ).fetchall()
-    activity = _extract([json.loads(r[0]) for r in rows])
+    activity = _extract(
+        [json.loads(r[0]) for r in rows if not (work_only and is_status_observation(r[1], r[0]))]
+    )
     result["record"] = {**record, **activity, **record.get("git", {})}
     result.update(
         summary_state=state,

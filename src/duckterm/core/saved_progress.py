@@ -120,7 +120,7 @@ class ProgressCoordinator:
             return None
         return {
             "conversation": conversation(self.server.history, key, row),
-            "events": event_source(self.server.history._conn, key),
+            "events": event_source(self.server.history._conn, key, work_only=True),
             "required": required_context(self.server, key, row),
         }
 
@@ -329,7 +329,7 @@ class ProgressCoordinator:
             ):
                 return None
             if (
-                event_source(conn, key, captured["source"]["events"]["last"])
+                event_source(conn, key, captured["source"]["events"]["last"], work_only=True)
                 != captured["source"]["events"]
             ):
                 return None

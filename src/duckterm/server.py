@@ -4610,7 +4610,10 @@ class Server:
                 or conversation(self.history, session_key, current) != captured["conversation"]
             ):
                 raise APIError(409, "Session conversation changed before checkpoint was saved")
-            if event_source(conn, session_key, source["events"]["last"]) != source["events"]:
+            if (
+                event_source(conn, session_key, source["events"]["last"], work_only=True)
+                != source["events"]
+            ):
                 raise APIError(409, "Checkpoint source changed before it could be retained")
             for mail_id in record["mail_ids"]:
                 if not conn.execute(

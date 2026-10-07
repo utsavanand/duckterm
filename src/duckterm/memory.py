@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from duckterm import memory_index, memory_sources
 from duckterm.core.saved_progress import file_version, required_context
 from duckterm.core.session_api import APIError
-from duckterm.persistence.saved_state import fingerprint
+from duckterm.persistence.saved_state import fingerprint, is_status_observation
 
 if TYPE_CHECKING:
     from duckterm.server import Server
@@ -148,6 +148,8 @@ class Memory:
             "SELECT id,event_type,payload_json FROM events WHERE session_key=? ORDER BY rowid",
             (key,),
         ):
+            if is_status_observation(event["event_type"], event["payload_json"]):
+                continue
             text_source("event", event["id"], event["event_type"], event["payload_json"], "event")
         for item in self.server.digests.items(key):
             text_source("progress", item["id"], item["bucket"], item["text"], "derived_progress")

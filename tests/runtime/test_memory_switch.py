@@ -290,3 +290,47 @@ def test_duplicate_request_rechecks_completed_receipt_after_slow_draft_probe(
         assert calls == []
 
     asyncio.run(run())
+
+
+def test_status_observation_at_final_switch_check_does_not_stop_handoff(ready_switch, monkeypatch):
+    server, _, _, calls, _ = ready_switch
+    manager = server.memory_preparation
+    original = manager.prepared
+    checks = []
+
+    async def observed(*args, **kwargs):
+        checks.append(len(checks))
+        server.history.record(
+            {
+                "_id": "observed-" + str(len(checks)),
+                "_ts": 100,
+                "session_key": "a",
+                "event_type": "Notification",
+                "notification_type": "idle_prompt",
+                "reconciled": True,
+                "test": True,
+            }
+        )
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "prepared", observed)
+
+    async def run():
+        proof = await prep(server)
+        await server.restarts.request(
+            "a",
+            "",
+            "claude-code",
+            interrupt=True,
+            memory=proof,
+            request_key="observed-switch",
+            require_preparation=True,
+        )
+        await drain(server)
+        receipt = server.restarts.receipt("a", "observed-switch")
+        assert receipt["status"] == "completed", receipt
+        assert receipt["process_state"] == "target_running"
+        assert len(checks) == 1  # Revalidation immediately before stopping the source.
+        assert [call[0] for call in calls] == ["stop", "launch"]
+
+    asyncio.run(run())
