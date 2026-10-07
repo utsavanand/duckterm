@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Native resume proof must not hide harness switching
+
+A session without a verified conversation could not open Restart, even though another harness can start a seeded conversation on the same card. Discover per-harness availability separately, scope model choices to the selected harness, preserve draft and turn checks, and label switches as new conversations both before and after completion. Test missing native identity, blocked drafts, exact model submission, stale card responses and cancelable queues.
+
 ## 2026-10-06 — A remounted card cannot settle an in-flight Undo
 
 Sharing a Resume block across controls was insufficient: a remounted recovery card could read the old adopted binding and clear the block while detach was still pending. Track the in-flight phase by canonical session key, release it only when that request settles, and then reread identity. A ready read during the write must never clear the guard. Cover remount, duplicate Undo and captured callbacks; guard Continue locally before it changes continuation bookkeeping too.

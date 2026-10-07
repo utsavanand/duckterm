@@ -34,11 +34,21 @@ export interface RestartStatus {
   after_turn?: boolean;
   model?: string;
   requested_model?: string;
+  requested_harness?: string;
+  source_harness?: string;
+  context?: "native" | "seeded_new_conversation";
   configured_model?: string;
   cli_version?: string;
   previous_cli_version?: string;
   reason?: string;
   error?: string;
+}
+
+export interface RestartOptions {
+  current: { harness: string; model: string };
+  resume_restart: { available: boolean; reason?: string };
+  harnesses: { name: string; available: boolean; reason?: string; models: ModelChoice[]; model_selection: { available: boolean; reason?: string }; model_reason?: string; context: "native" | "seeded_new_conversation" }[];
+  draft_clear?: boolean; after_turn?: boolean; reason?: string;
 }
 
 export interface OracleExchange {
@@ -583,7 +593,8 @@ export const api = {
     ),
   models: (key: string) => get<{ models: ModelChoice[] }>(`/sessions/${key}/models`),
   restartStatus: (key: string) => get<RestartStatus>(`/sessions/${key}/restart`),
-  restart: (key: string, model: string) => post<RestartStatus>(`/sessions/${key}/restart`, { model }),
+  restartOptions: (key: string) => get<RestartOptions>(`/sessions/${key}/restart-options`),
+  restart: (key: string, model: string, harness?: string) => post<RestartStatus>(`/sessions/${key}/restart`, { model, ...(harness ? { harness } : {}) }),
   cancelRestart: async (key: string): Promise<RestartStatus> => {
     const response = await fetch(`/sessions/${key}/restart`, { method: "DELETE", headers: authHeaders() });
     const data = await response.json();
