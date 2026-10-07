@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Invalidating readiness must also remove its old payload
+
+A ready preparation stripped its full brief from status responses, but changing its state to stale left the old proof and brief attached. Define the response by the current state: only ready responses carry a proof, and full text belongs only in the separately validated detail read. Test the ready-to-stale transition and serialized response, not just the new state label.
+
 ## 2026-10-07 — Recheck retry identities after awaited probes
 
 QA synchronized two preparations at a target probe and showed the same request key could start two different model jobs. A pre-await lookup cannot establish idempotency. Repeat the exact request/binding check under the creation lock, and recheck restart receipts after the terminal probe before creating another operation. A local retained-history feature also must not widen an existing cloud backup selection merely by placing files under a directory already traversed by backup; exclude its reserved snapshot/cache directory explicitly.

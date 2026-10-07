@@ -247,3 +247,16 @@ def test_turn_progress_updates_overview_without_extending_whole_history_coverage
         assert server.digests.revision("agent", baseline_id)["memory"]["context"]["constraints"]
 
     asyncio.run(run())
+
+
+def test_status_never_returns_brief_or_keeps_proof_after_source_invalidation(preparation):
+    server, _, _ = preparation
+    view = asyncio.run(prepare(server))
+    assert view["state"] == "ready"
+    assert "brief" not in view["proof"]
+    assert server.memory_preparation.details("agent", view["preparation_id"])["brief"]["text"]
+    server.history.set_meta("agent", notes="Owner changed the continuation constraint")
+    stale = server.memory_preparation.status("agent", view["preparation_id"])
+    assert stale["state"] == "stale_source"
+    assert "proof" not in stale
+    assert "Retain glacier originals" not in json.dumps(stale)

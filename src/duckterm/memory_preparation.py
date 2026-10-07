@@ -65,6 +65,10 @@ class MemoryPreparation:
         result["request_key"] = request_key or next(iter(job["leases"]), "")
         if result["state"] == "ready":
             result["proof"].pop("brief", None)
+        else:
+            # A later invalidation must not expose the old proof (including
+            # its private full brief) through the lightweight status route.
+            result.pop("proof", None)
         return result
 
     def update(self, job: dict[str, Any], **value: Any) -> None:
