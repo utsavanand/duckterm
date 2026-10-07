@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — A saved checkpoint is not proof of a usable handoff
+
+Exhausted providers left durable checkpoints with mechanical counts while the UI implied they were resumable. Progress, exit and checkpoint summaries also had independent writers. Use one versioned progress pipeline and retain checkpoint references to its original sources; expose summary readiness separately from persistence. Validate the paragraph as well as list items, preserve a last good summary on failure, and recheck the current sources before stopping an agent. Coalesce concurrent refreshes without letting a canceled waiter cancel everyone; compare policy and source identity before promoting late results. A recovery attempt must be able to retry unverified input. Protect both mail expiry paths and their analytics predicates, and refuse older expiry writers before pruning a reference-based database.
+
 ## 2026-10-06 — Cleanup must not erase the failure it is cleaning up
 
 Two archive browser failures reported only DELETE409 because a finally block replaced the earlier error while an archive request was pending. A controlled primary assertion reproduced the masking; moving cleanup to Playwright afterEach preserved that assertion and allowed the owned archive to settle before deletion. Verify Undo via server state, include response bodies in cleanup errors, and upload retained traces/screenshots from failed CI jobs. A green local rerun or cleanup-only stack does not prove the original product behavior was correct; absent original traces, keep that diagnosis unresolved.

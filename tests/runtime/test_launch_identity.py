@@ -131,7 +131,7 @@ def test_observed_identity_survives_retention_without_a_schema_migration(history
     )
     reopened = HistoryStore(tmp_path / "history.sqlite")
     try:
-        assert reopened._conn.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert reopened._conn.execute("PRAGMA user_version").fetchone()[0] == 12
         assert reopened.native_identity("observed") == {
             "native_id": "old-id",
             "source": "observed",

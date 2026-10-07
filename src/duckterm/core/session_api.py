@@ -19,6 +19,7 @@ from duckterm.helpers import session_credentials
 from duckterm.persistence import mail_analytics
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
 from duckterm.persistence.artifacts import ArtifactError, ArtifactStore
+from duckterm.persistence.saved_state import retention_predicate
 from duckterm.runtimes.base import AT_REST_STATES
 
 # Store a far-future deadline so older servers do not immediately expire
@@ -865,12 +866,13 @@ class SessionAPI:
                 "status NOT IN ('queued', 'accepted') "
                 f"AND NOT {_OPEN_PRIORITY} "
                 "AND CASE WHEN expires_at > 0 AND expires_at < ? THEN expires_at "
-                "ELSE COALESCE(answered_at, created_at) END < ?",
+                "ELSE COALESCE(answered_at, created_at) END < ? AND " + retention_predicate("mail"),
                 (NO_DEADLINE, now - 7 * 86400000),
             )
             mail_analytics.retire_mail(
                 self.conn,
-                f"kind = 'broadcast' AND created_at < ? AND NOT {_OPEN_PRIORITY}",
+                f"kind = 'broadcast' AND created_at < ? AND NOT {_OPEN_PRIORITY} AND "
+                + retention_predicate("mail"),
                 (now - 7 * 86400000,),
             )
             self.conn.execute(

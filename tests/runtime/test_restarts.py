@@ -387,6 +387,30 @@ def test_real_isolated_terminal_restarts_under_same_key(
     monkeypatch.setattr(server, "_maybe_refresh_progress", lambda key: None)
     monkeypatch.setattr(server, "_relay_observe", lambda event: None)
 
+    # Synthetic source/provider, real terminal stop+launch. Handoff readiness is
+    # tested separately; this case proves crossing the process boundary safely.
+    from duckterm.llm.summarizer import Summary
+
+    monkeypatch.setattr(
+        server,
+        "_progress_transcript",
+        lambda *args: [{"role": "user", "text": "Keep the test task on the same card"}],
+    )
+
+    def summarize(prompt):
+        value = (
+            {
+                "accept": [],
+                "done_next_action_ids": [],
+                "summary_validation": {"ready": True, "reason_codes": []},
+            }
+            if "validating a candidate" in prompt
+            else {"summary": "Keep the test task"}
+        )
+        return Summary(json.dumps(value), "stub")
+
+    monkeypatch.setattr("duckterm.server.summarize", summarize)
+
     async def run():
         try:
             await server.orchestrator.launch(

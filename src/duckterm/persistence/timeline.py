@@ -6,6 +6,8 @@ import sqlite3
 import time
 from typing import Any
 
+from duckterm.persistence.saved_state import resolve_checkpoint
+
 KINDS = (
     "prompt",
     "delivered",
@@ -241,6 +243,22 @@ def page(
             query + " ORDER BY ts DESC, entry_id DESC LIMIT ?", [*args, limit + 1]
         ):
             data = json.loads(record["detail"])
+            if table == "checkpoints":
+                stored = conn.execute(
+                    "SELECT * FROM checkpoints WHERE id=? AND session_key=?",
+                    (record["source_id"], key),
+                ).fetchone()
+                if stored:
+                    checkpoint = dict(stored)
+                    try:
+                        checkpoint["record"] = json.loads(checkpoint.pop("record_json"))
+                    except (ValueError, TypeError):
+                        checkpoint["record"] = {"format": "unreadable"}
+                    resolved = resolve_checkpoint(conn, key, checkpoint)
+                    data.update(
+                        summary=resolved["summary"], summary_state=resolved["summary_state"]
+                    )
+
             entries.append(
                 _entry(record["entry_id"], record["ts"], kind, data, table, record["source_id"])
             )

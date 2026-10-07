@@ -23,7 +23,7 @@ import sys
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 
 from duckterm.agents import tmux, tmux_stream
@@ -33,7 +33,6 @@ from duckterm.git.worktrees import WorktreeManager
 from duckterm.helpers import paths, session_credentials, session_instructions
 from duckterm.helpers.pane_log import completion_for
 from duckterm.helpers.private_files import private_write
-from duckterm.llm.summarizer import build_prompt, mechanical_summary, summarize
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.base import AgentRuntime, SessionState, plain_screen
 
@@ -690,6 +689,7 @@ class Orchestrator:
         self.bus = bus
         self.worktrees = worktrees if worktrees is not None else WorktreeManager()
         self.history = history
+        self.on_completed: Callable[[str], None] | None = None
         self._supervisors: dict[str, SessionSupervisor] = {}
 
     async def reconcile(self) -> list[str]:
@@ -846,43 +846,13 @@ class Orchestrator:
                         file=sys.stderr,
                     )
                 try:
-                    self._write_summary(k)
+                    if self.on_completed is not None:
+                        self.on_completed(k)
                 except Exception as e:  # noqa: BLE001 — boundary: DB + summarizer
                     print(f"[duckterm] summary for {k} failed: {e}", file=sys.stderr)
 
             supervisor._task.add_done_callback(_on_done)
         return key
-
-    def _write_summary(self, key: str) -> None:
-        """Write the outcome summary after a session ends. Runs the (possibly
-        slow) summarizer off the event loop so it never stalls the bus."""
-        if self.history is None:
-            return
-        row = self.history.session(key)
-        if row is None:
-            return
-        intention = str(row.get("intention") or "")
-        events_summary = self.history.events_summary(key)
-        transcript = self._transcript_text(key, row)
-        result = summarize(build_prompt(intention, transcript, events_summary))
-        outcome = result.text or mechanical_summary(intention, events_summary)
-        self.history.set_outcome(key, outcome)
-
-    def _transcript_text(self, key: str, row: dict[str, object]) -> str:
-        """Read the runtime's transcript if it has one; else empty (the generic
-        runtime, which makes the summarizer fall back to the activity digest)."""
-        supervisor = self._supervisors.get(key)
-        session_id = self.history.session_id_for(key) if self.history else None
-        cwd = row.get("cwd")
-        if supervisor is None or session_id is None or not cwd:
-            return ""
-        path = supervisor.runtime.locate_transcript(cwd=Path(str(cwd)), session_id=session_id)
-        if path is None:
-            return ""
-        from duckterm.runtimes.claude_code import parse_transcript
-
-        records = parse_transcript(path)
-        return "\n".join(f"{r['role']}: {r['text']}" for r in records)
 
     async def stop(self, session_key: str) -> bool:
         """Terminate a supervised session. Returns False if it isn't one we run

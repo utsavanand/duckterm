@@ -11,11 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from duckterm.core.eventbus import EventBus
-from duckterm.core.orchestrator import Orchestrator
 from duckterm.git.worktrees import WorktreeManager
+from duckterm.llm.summarizer import Summary
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.claude_code import ClaudeCodeRuntime, project_slug
+from duckterm.server import Server
 
 FAKE_AGENT = Path(__file__).parent.parent / "fakes" / "fake_agent.py"
 
@@ -29,9 +29,25 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]
     yield tmp_path / "home"
 
 
-def test_claude_session_summary_uses_transcript(tmp_path: Path, fake_home: Path) -> None:
-    # A summarizer that echoes its stdin so we can see what the transcript fed it.
-    os.environ["DUCKTERM_SUMMARIZER_CMD"] = "cat"
+def test_claude_session_summary_uses_transcript(
+    tmp_path: Path, fake_home: Path, monkeypatch
+) -> None:
+    prompts = []
+
+    def summarize(prompt):
+        prompts.append(prompt)
+        data = (
+            {
+                "accept": [],
+                "done_next_action_ids": [],
+                "summary_validation": {"ready": True, "reason_codes": []},
+            }
+            if "validating a candidate" in prompt
+            else {"summary": "Added /healthz."}
+        )
+        return Summary(json.dumps(data), "stub")
+
+    monkeypatch.setattr("duckterm.server.summarize", summarize)
     work = tmp_path / "work"
     work.mkdir()
 
@@ -48,24 +64,38 @@ def test_claude_session_summary_uses_transcript(tmp_path: Path, fake_home: Path)
     )
 
     store = HistoryStore(tmp_path / "db.sqlite")
-    bus = EventBus(sink=store.record)
-    orch = Orchestrator(bus, worktrees=WorktreeManager(root=tmp_path / "wt"), history=store)
+    server = Server(history=store)
+    bus, orch = server.bus, server.orchestrator
+    orch.worktrees = WorktreeManager(root=tmp_path / "wt")
     runtime = ClaudeCodeRuntime(f"{sys.executable} {FAKE_AGENT} --session-id {sid}")
 
     async def scenario() -> str:
+        finished = asyncio.Event()
+        original = server._refresh_progress
+
+        async def refresh(key):
+            try:
+                await original(key)
+            finally:
+                finished.set()
+
+        monkeypatch.setattr(server, "_refresh_progress", refresh)
         key = await orch.launch(runtime=runtime, cwd=str(work), prompt="add healthcheck", test=True)
         # Emit the agent's own session_id so the locator can find the transcript.
         bus.publish({"event_type": "SessionStart", "session_key": key, "session_id": sid})
         await asyncio.wait_for(orch.get(key)._task, 5)  # type: ignore[union-attr,arg-type]
-        await asyncio.sleep(0)
+        await asyncio.wait_for(finished.wait(), 5)
         return key
 
     key = asyncio.run(scenario())
 
     row = store.session(key)
     assert row is not None
-    # The summary (echoed prompt) contains the transcript text.
-    assert "add a healthcheck endpoint" in row["outcome_summary"]
-    assert "Added /healthz." in row["outcome_summary"]
+    assert "add a healthcheck endpoint" in prompts[0]
+    assert "Added /healthz." in prompts[0]
+    assert row["outcome_summary"] == "Added /healthz."
+    revision_id = json.loads(row["progress"])["revision_id"]
+    assert server.digests.revision(key, revision_id)["summary_validation"]["ready"]
+    assert len(prompts) == 2
     store.purge_test_sessions()
     store.close()

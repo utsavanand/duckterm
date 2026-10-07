@@ -75,7 +75,7 @@ def test_immediate_switch_preserves_work_after_database_reopen(rig, monkeypatch,
     seeds = []
 
     async def checkpoint(*args):
-        return {"id": "synthetic-checkpoint", "summary": "Completed work"}
+        return await fixtures.ready_checkpoint(server, summary="Completed work")
 
     async def launch(**kwargs):
         seeds.append(kwargs["prompt"])
@@ -126,7 +126,7 @@ def test_checkpoint_boundary_failure_never_stops_source(rig, monkeypatch, blocke
             server.history.set_state("a", "archived", now=1)
         else:
             server._transfer_sources.add("a")
-        return {"id": "checkpoint", "summary": "Summary"}
+        return await fixtures.ready_checkpoint(server, summary="Summary")
 
     monkeypatch.setattr(server, "_create_checkpoint", checkpoint)
 

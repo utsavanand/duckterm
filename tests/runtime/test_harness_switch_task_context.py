@@ -35,7 +35,7 @@ def test_switch_seed_includes_owned_open_tasks_without_changing_them(rig, monkey
     changes = history._conn.total_changes
 
     async def checkpoint(*args):
-        return {"id": "checkpoint", "summary": "Completed checkpoint summary"}
+        return await fixtures.ready_checkpoint(server, summary="Completed checkpoint summary")
 
     monkeypatch.setattr(server, "_create_checkpoint", checkpoint)
     prepared = asyncio.run(harness_switch.prepare(server, "a", history.session("a")))
@@ -67,7 +67,7 @@ def test_tasks_are_read_after_checkpoint_and_with_current_shared_scope(rig, monk
         history.set_meta("a", group="NewScope")
         with history._conn:
             history.folder_tasks.start("NewScope", "a", "Current new assignment")
-        return {"id": "checkpoint", "summary": "Summary"}
+        return await fixtures.ready_checkpoint(server, summary="Summary")
 
     monkeypatch.setattr(server, "_create_checkpoint", checkpoint)
     prepared = asyncio.run(harness_switch.prepare(server, "a", history.session("a")))
@@ -121,7 +121,7 @@ def test_switch_launch_gets_task_context_and_leaves_task_ownership_intact(
     launches = []
 
     async def checkpoint(*args):
-        return {"id": "checkpoint", "summary": "Summary"}
+        return await fixtures.ready_checkpoint(server, summary="Summary")
 
     async def launch(**kwargs):
         launches.append(kwargs)
