@@ -12,6 +12,14 @@ no-hook child reading its committed ID, failed writes, retention, duplicate UUID
 and current-generation mismatches. Reuse durable native_binding metadata rather
 than introducing redundant columns and an unnecessary schema migration.
 
+## 2026-10-06 — A resume report needs identity readiness, not just app startup
+The reboot report carried five startup events but omitted whether the native
+conversation ID or expected transcript was missing. Add bounded read-only
+readiness checks to removable diagnostics, exporting only ID presence and file
+existence. Keep SQLite on its owner thread and filesystem work off the loop.
+Do not export conversation IDs, transcript contents, credentials or arbitrary
+paths, and do not mistake hook configuration for successful event delivery.
+
 ## 2026-10-05 — Two terminals in one session need separate paste targets
 
 A companion shell shares an agent's session identity but not its input stream.

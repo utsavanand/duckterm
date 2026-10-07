@@ -1140,6 +1140,12 @@ class Server:
                 # HistoryStore belongs to this event-loop thread. File export and
                 # bundle reads below remain worker operations.
                 result = bug_reports.context(self.history, keys[0] if keys else None)
+                from duckterm import resume_diagnostics
+
+                readiness = resume_diagnostics.snapshot(self.history, keys[0] if keys else None)
+                result["items"].append(
+                    await asyncio.to_thread(resume_diagnostics.render, readiness)
+                )
             elif parsed.path == "/bugreport/submit" and method == "POST":
                 if len(body) > bug_reports.MAX_REQUEST_BYTES:
                     await _write_json(writer, 413, {"error": "report request too large"})
