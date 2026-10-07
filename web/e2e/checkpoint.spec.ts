@@ -52,7 +52,8 @@ test("checkpoint captures the session's prompts and commands", async ({
   await page.emulateMedia({ colorScheme: "dark" });
   await page.locator(".rd-view-toggle").getByRole("button", { name: "Timeline", exact: true }).click();
   const timeline = page.getByRole("region", { name: "Session timeline" });
-  await expect(timeline.locator(".rd-timeline-full-text").filter({ hasText: "add a login form" })).toBeVisible();
+  await expect(timeline.getByText("Owner message", { exact: true })).toHaveCount(0);
+  await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveCount(1);
   await timeline.getByRole("button", { name: "Checkpoints", exact: true }).click();
   await expect(timeline.getByText("Owner message", { exact: true })).toHaveCount(0);
   await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveCount(1);
@@ -72,6 +73,7 @@ test("checkpoint captures the session's prompts and commands", async ({
   await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveAttribute("open", "");
   await timeline.getByRole("button", { name: "Progress", exact: true }).click();
   await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveCount(0);
-  await expect(timeline.getByText("add a login form", { exact: true })).toBeVisible();
+  await expect(timeline.getByText("Owner message", { exact: true })).toHaveCount(0);
+  await expect(timeline.getByRole("button", { name: "Messages", exact: true })).toBeVisible();
   } finally { await apiDelete(`/sessions/${key}`); }
 });

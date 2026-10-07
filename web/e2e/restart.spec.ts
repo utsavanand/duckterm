@@ -72,7 +72,7 @@ test("Restart dialog edits model, queues visibly, survives reload, and cancels",
   } finally { await apiDelete(`/sessions/${key}`); }
 });
 
-test("unverified native conversation can switch harness on the same card with an explicit model", async ({ page }) => {
+test("older backend exposes harness choices but cannot bypass memory preparation", async ({ page }) => {
   const key = `e2e-switch-${Date.now()}`;
   await seedSession(key, { name: "Harness switch review", runtime: "claude-code", launched: true });
   const submitted: { harness: string; model: string }[] = [];
@@ -109,7 +109,7 @@ test("unverified native conversation can switch harness on the same card with an
     await expect(dialog.getByRole("combobox", { name: "Harness", exact: true })).toBeEnabled();
     await dialog.getByRole("combobox", { name: "Harness", exact: true }).selectOption("codex");
     await dialog.getByRole("combobox", { name: "Model", exact: true }).selectOption("gpt-6-astra");
-    await expect(dialog.getByText("New conversation in Codex, seeded from Claude Code")).toBeVisible();
+    await expect(dialog.getByText("Memory-backed switching needs a supporting backend and an available target harness.")).toBeVisible();
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
     await page.screenshot({ path: "/tmp/restart-switch-implemented-dark.png" });
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
@@ -119,9 +119,8 @@ test("unverified native conversation can switch harness on the same card with an
     expect(bounds!.x).toBeGreaterThanOrEqual(0);
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
     await page.screenshot({ path: "/tmp/restart-switch-implemented-mobile.png" });
-    await dialog.getByRole("button", { name: "Switch to Codex" }).click();
-    expect(submitted).toEqual([{ model: "gpt-6-astra", harness: "codex" }]);
-    await expect(page.getByText(/New conversation in Codex, seeded from Claude Code/)).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
+    expect(submitted).toEqual([]);
     await expect(page.getByText(/Restarted — conversation continued/)).toHaveCount(0);
   } finally { await apiDelete(`/sessions/${key}`); }
 });
@@ -131,14 +130,27 @@ test("working session offers an explicit immediate switch with truthful pending 
   await seedSession(key, { name: "Working harness review", runtime: "claude-code", launched: true });
   const submitted: Record<string, unknown>[] = [];
   let requested = false;
+  const preparationId = "b".repeat(32);
+  let binding: Record<string, unknown> = {};
+  await page.route(`**/sessions/${key}/restart-preparation**`, async route => {
+    if (route.request().method() === "DELETE") return route.fulfill({ json: { released: true } });
+    if (route.request().method() === "POST") binding = route.request().postDataJSON().binding;
+    await route.fulfill({ json: { version: 1, preparation_id: preparationId, sequence: 1, state: "ready", binding,
+      coverage: { state: "complete", available_text: "processed", retrieval: "available", retention: "retained_snapshot", source_count: 1, covered_source_count: 1, gap_count: 0, gaps: [], has_more: false, details_cursor: null },
+      proof: { snapshot_id: "snapshot-a", revision_id: "revision-a", prepared_at: Date.now(), expires_at: Date.now() + 60000, overview: "Continue current work", resolved_model: null } } });
+  });
   await page.route(`**/sessions/${key}/restart`, async route => {
-    if (route.request().method() === "POST") { submitted.push(route.request().postDataJSON()); requested = true; }
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON(); submitted.push(body); requested = true;
+      return route.fulfill({ json: { id: "operation-a", request_key: body.request_key, preparation_id: body.memory.preparation_id,
+        sequence: 1, binding, status: "queued", can_cancel: true, process_state: "source_running" } });
+    }
     await route.fulfill({ json: requested
       ? { status: "queued", interrupt: true, context: "seeded_new_conversation", source_harness: "claude-code", requested_harness: "codex", requested_model: "gpt-6-astra" }
       : { can_restart: false, reason: "Cannot verify this conversation." } });
   });
   await page.route(`**/sessions/${key}/restart-options`, route => route.fulfill({ json: {
-    current: { harness: "claude-code", model: "claude-opus-5" }, resume_restart: { available: false }, draft_clear: true, after_turn: true, supports_interrupt_switch: true,
+    current: { harness: "claude-code", model: "claude-opus-5", conversation_generation: "generation-a" }, memory_switch: { version: 1, available: true }, resume_restart: { available: false }, draft_clear: true, after_turn: true, supports_interrupt_switch: true,
     harnesses: [
       { name: "claude-code", available: false, reason: "Cannot verify this conversation.", context: "native", model_selection: { available: true }, models: [] },
       { name: "codex", available: true, context: "seeded_new_conversation", model_selection: { available: true }, models: [{ id: "gpt-6-astra", label: "GPT-6 Astra" }] },
@@ -157,8 +169,10 @@ test("working session offers an explicit immediate switch with truthful pending 
     await expect(checkbox).not.toBeChecked();
     await checkbox.check();
     expect(submitted).toHaveLength(0);
-    await expect(dialog.getByText(/The current turn will stop after its checkpoint/)).toBeVisible();
+    await expect(dialog.getByText(/DuckTerm rechecks the handoff before stopping/)).toBeVisible();
     await dialog.getByRole("combobox", { name: "Model", exact: true }).selectOption("gpt-6-astra");
+    await expect(checkbox).not.toBeChecked();
+    await checkbox.check();
     await page.screenshot({ path: "/tmp/restart-immediate-implemented-dark.png", animations: "disabled" });
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "light"));
     await page.screenshot({ path: "/tmp/restart-immediate-implemented-light.png", animations: "disabled" });
@@ -168,7 +182,9 @@ test("working session offers an explicit immediate switch with truthful pending 
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
     await page.screenshot({ path: "/tmp/restart-immediate-implemented-mobile.png", animations: "disabled" });
     await dialog.getByRole("button", { name: "Stop and switch now" }).click();
-    expect(submitted).toEqual([{ model: "gpt-6-astra", harness: "codex", interrupt: true }]);
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0]).toMatchObject({ model: "gpt-6-astra", harness: "codex", interrupt: true,
+      request_key: expect.any(String), memory: { version: 1, preparation_id: preparationId, snapshot_id: "snapshot-a", source_generation: "generation-a" } });
     await expect(page.getByText(/Preparing to stop and switch now/)).toBeVisible();
     await expect(page.getByText(/Restart pending — after this turn/)).toHaveCount(0);
   } finally { await apiDelete(`/sessions/${key}`); }
