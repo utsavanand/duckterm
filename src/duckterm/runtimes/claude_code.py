@@ -39,6 +39,7 @@ def project_slug(cwd: Path) -> str:
 
 
 class ClaudeCodeRuntime(Harness):
+    session_id_assignable = True
     name = "claude-code"
     turn_end_inbox_notice = True
     priority_delivery = True

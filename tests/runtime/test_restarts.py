@@ -350,8 +350,10 @@ def test_turn_finishing_during_prior_probe_is_not_lost(rig, monkeypatch, finish_
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("switch_harness", [False, True])
-def test_real_isolated_terminal_restarts_under_same_key(tmp_path, monkeypatch, switch_harness):
+@pytest.mark.parametrize("switch_harness,interrupt", [(False, False), (True, False), (True, True)])
+def test_real_isolated_terminal_restarts_under_same_key(
+    tmp_path, monkeypatch, switch_harness, interrupt
+):
     """Exercise the real stop/resume lifecycle using only our fake CLI and tmux socket."""
     import os
     import shlex
@@ -401,10 +403,13 @@ def test_real_isolated_terminal_restarts_under_same_key(tmp_path, monkeypatch, s
                 pytest.fail("fake CLI did not paint its empty prompt")
             version_file.write_text("fake-codex 2.0")
             await server.restarts.request(
-                "a", "test-model", "claude-code" if switch_harness else None
+                "a", "test-model", "claude-code" if switch_harness else None, interrupt=interrupt
             )
             assert server.restarts.read("a")["status"] == "queued"
-            await hook(server)
+            if interrupt:
+                assert not server.restarts.turn_finished("a")
+            else:
+                await hook(server)
             await drain(server)
             state = server.restarts.read("a")
             assert state["status"] == "completed", state
@@ -417,16 +422,18 @@ def test_real_isolated_terminal_restarts_under_same_key(tmp_path, monkeypatch, s
                 assert command[:3] == ["claude", "--model", "test-model"]
                 assert "NEW conversation" in command[-1]
                 assert row["runtime"] == "claude-code"
-                assert store.session_id_for("a") is None
+                assigned = command[command.index("--session-id") + 1]
+                assert uuid.UUID(assigned).version == 4
+                assert store.session_id_for("a") == assigned
                 generation = state["native_binding"]["generation"]
                 await hook(
                     server,
                     event_type="SessionStart",
                     runtime="claude-code",
-                    session_id="new-native-id",
+                    session_id=assigned,
                     launch_generation=generation,
                 )
-                assert store.session_id_for("a") == "new-native-id"
+                assert store.session_id_for("a") == assigned
                 assert state["previous_conversation"]["native_id"] == A
             else:
                 assert command[:5] == ["codex", "-c", 'model="test-model"', "resume", A]

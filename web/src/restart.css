@@ -21,3 +21,23 @@
 .rd-model-menu button > span { display: flex; gap: 12px; justify-content: space-between; }
 .rd-model-menu small { font-size: 11px; }
 .rd-model-menu code { display: block; color: var(--text-soft); font-size: 11px; margin-top: 3px; overflow-wrap: anywhere; }
+
+.rd-restart-backdrop { position: fixed; inset: 0; z-index: 1000; background: #0008; display: grid; place-items: center; padding: 18px; }
+.rd-restart-dialog { width: min(610px, calc(100vw - 36px)); max-width: 100%; max-height: 90vh; overflow-y: auto; box-sizing: border-box; padding: 24px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--card); color: var(--text); box-shadow: 0 20px 60px #0005; }
+.rd-restart-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.rd-restart-dialog h2 { font-size: 19px; font-weight: 600; margin: 0; }
+.rd-restart-pickers { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 20px 0; }
+.rd-restart-pickers label { min-width: 0; margin: 0; }
+.rd-restart-pickers select { margin-top: 8px; text-overflow: ellipsis; }
+.rd-restart-summary { border-radius: 4px; margin: 18px 0; }
+.rd-restart-summary strong { color: var(--text); }
+@media (max-width: 520px) { .rd-restart-pickers { grid-template-columns: 1fr; } .rd-restart-dialog { padding: 18px; } }
+.rd-restart-dialog header { padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.rd-restart-summary { border-inline: 0; border-radius: 0; padding: 16px 0; background: transparent; }
+.rd-restart-footer { border-top: 1px solid var(--border); padding-top: 16px; }
+.rd-restart-dialog .rd-btn { color: var(--text); background: var(--card); border: 1px solid var(--border-strong); }
+.rd-restart-dialog .rd-btn-primary { color: #fff; background: var(--brand-green); border-color: var(--brand-green); }
+
+.rd-restart-interrupt label { display: flex; align-items: start; gap: 8px; font-weight: 500; }
+.rd-restart-interrupt input { flex-shrink: 0; margin-top: 4px; accent-color: var(--brand-green); }
+.rd-restart-interrupt .rd-restart-help { margin: 4px 0 18px 24px; }

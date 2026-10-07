@@ -1,5 +1,9 @@
+import { recoveryBlocksResume } from "./resumeReadiness";
+import { SessionConversationRecovery } from "./ConversationRecovery";
+import { identityBlocksResume } from "./conversationRecoveryState";
+import type { ConversationIdentity } from "./conversationRecoveryState";
 import { requestArchive } from "./ArchiveUndo";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ForkMergeDialog } from "./ForkMergeDialog";
 import { api, forkMergeService } from "./api";
 import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
@@ -20,6 +24,9 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
   onUngroup?: () => Promise<void>;
 }) {
   const toast = useToast();
+  const [recovery, setRecovery] = useState<{ key: string; identity: ConversationIdentity } | null>(null);
+  const updateRecovery = useCallback((identity: ConversationIdentity) => setRecovery({ key: s.key, identity }), [s.key]);
+  const resumeBlocked = recovery?.key === s.key ? !recovery.identity.canResume : identityBlocksResume(s);
   const effState = effectiveState(s, now);
   const archived = effState === "archived" || effState === "merged";
   const [merging, setMerging] = useState(false);
@@ -35,7 +42,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
   const [savedNotes, setSavedNotes] = useState(s.notes ?? "");
   const [capturing, setCapturing] = useState(false);
   const [ending, setEnding] = useState(false);
-  const { resuming, resumeSession } = useResumeSession(s.key);
+  const { resuming, recoveryBlocked, resumeSession } = useResumeSession(s.key);
   const [archiving, setArchiving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -144,6 +151,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
     </div>
     <dl className="rd-session-controls-meta"><div><dt>Harness</dt><dd>{s.runtime ?? "—"}</dd></div>
       <div><dt>Model</dt><dd>{s.model ?? "Not reported yet"}</dd></div></dl>
+    {["claude-code", "codex", "copilot"].includes(s.runtime ?? "") && <SessionConversationRecovery key={s.key} session={s} stopped={!live && !archived} onIdentity={updateRecovery} />}
     <fieldset className="rd-session-controls-actions" disabled={ending || archiving || resuming}>
           {s.launched && <RestartControls key={s.key} session={s} showActions={live} />}
           {s.parentKey && !archived && <button className="rd-btn rd-btn-sm" onClick={() => setMerging(true)}>Merge back</button>}
@@ -151,7 +159,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
             <button
               className="rd-btn rd-btn-sm rd-btn-primary"
               title="Relaunch this session — continues the conversation for Claude Code"
-              disabled={resuming}
+              disabled={resuming || recoveryBlocked || resumeBlocked}
               onClick={resumeSession}
             >
               {resuming ? (
@@ -213,7 +221,8 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
           )}
           {resumable && splitSessionRef(s.key).host === "local" && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "") && <>
             <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key }))}>Move to remote…</button>
-            <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={async () => {
+            <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={recoveryBlocked} onClick={async () => {
+              if (recoveryBlocksResume(s.key)) return;
               if (!window.confirm("Continue this session locally as a separate continuation? A remote session, if created, will remain running.")) return;
               try {
                 await destinationRequest("local", "project-continue", { source_session: s.key });

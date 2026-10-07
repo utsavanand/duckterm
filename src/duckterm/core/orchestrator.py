@@ -107,19 +107,21 @@ class SessionSupervisor:
         self.last_owner_input_ms = 0
 
     def _emit(self, event_type: str, **fields: object) -> None:
-        self.bus.publish(
-            {
-                "event_type": event_type,
-                "session_key": self.session_key,
-                "source_app": Path(self.cwd).name or self.session_key,
-                "cwd": self.cwd,
-                "runtime": self.runtime.name,
-                # The orchestrator only ever runs sessions Duckterm launched.
-                "launched": True,
-                **self._extra,
-                **fields,
-            }
-        )
+        event = {
+            "event_type": event_type,
+            "session_key": self.session_key,
+            "source_app": Path(self.cwd).name or self.session_key,
+            "cwd": self.cwd,
+            "runtime": self.runtime.name,
+            # The orchestrator only ever runs sessions Duckterm launched.
+            "launched": True,
+            **self._extra,
+            **fields,
+        }
+        if fields.get("_assigned_native_id"):
+            self.bus.publish(event, require_persistence=True)
+        else:
+            self.bus.publish(event)
 
     async def start(self) -> None:
         prompt = session_instructions.launch_prompt(
@@ -132,6 +134,24 @@ class SessionSupervisor:
         argv = self.runtime.launch_command(
             cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=prompt
         )
+        assigned = None
+        if self.runtime.session_id_assignable:
+            from duckterm.runtimes.launch_identity import assign
+
+            base = self.runtime.launch_command(
+                cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=""
+            )
+            command, assigned = assign(base)
+            argv = command + argv[len(base) :]
+        identity: dict[str, object] = {}
+        if assigned:
+            generation = self._env.get("DUCKTERM_HARNESS_GENERATION") or uuid.uuid4().hex
+            self._env["DUCKTERM_HARNESS_GENERATION"] = generation
+            identity = {
+                "_assigned_native_id": assigned,
+                "session_id": assigned,
+                "launch_generation": generation,
+            }
         # Fail before publishing a session row for predictable launch errors.
         if not Path(self.cwd).is_dir():
             raise ValueError(f"project folder does not exist: {self.cwd}")
@@ -141,7 +161,11 @@ class SessionSupervisor:
         ):
             raise ValueError(f"command not found: {argv[0] if argv else '(empty)'}")
         # Register and enroll synchronously before the child can use its inbox.
-        self._emit(events.SESSION_START, command=shlex.join(argv))
+        self._emit(
+            events.SESSION_START,
+            command=shlex.join(argv),
+            **identity,
+        )
         try:
             if await asyncio.to_thread(tmux.has_tmux):
                 await self._start_tmux(argv)

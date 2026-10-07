@@ -417,6 +417,9 @@ class Server:
         from duckterm.restarts import Restarts
 
         self.restarts = Restarts(self)
+        from duckterm.conversation_recovery import ConversationRecovery
+
+        self.conversation_recovery = ConversationRecovery(self)
         from duckterm.model_catalog import ModelCatalog
 
         self.model_catalog = ModelCatalog()
@@ -557,6 +560,17 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        recovery_route = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/conversation-(recovery|candidates|adopt|hooks|detach)",
+            path,
+        )
+        if recovery_route:
+            from duckterm.conversation_recovery import handle as recovery_handle
+
+            await recovery_handle(
+                self, writer, headers, recovery_route[1], recovery_route[2], method, body
+            )
+            return
         if urllib.parse.urlsplit(path).path.startswith("/bugreport/"):
             await self._bugreport(writer, headers, method, path, body)
             return
@@ -707,6 +721,8 @@ class Server:
         if not isinstance(raw, dict):
             await _write_json(writer, 400, {"error": "event must be a JSON object"})
             return
+        # Only the supervisor may assign identity; hooks can report observations.
+        raw.pop("_assigned_native_id", None)
         # agent_pid comes from an external hook ($PPID) and is later fed to
         # os.kill in the liveness sweep — coerce to a positive int or drop it.
         if "agent_pid" in raw:
@@ -1138,6 +1154,12 @@ class Server:
                 # HistoryStore belongs to this event-loop thread. File export and
                 # bundle reads below remain worker operations.
                 result = bug_reports.context(self.history, keys[0] if keys else None)
+                from duckterm import resume_diagnostics
+
+                readiness = resume_diagnostics.snapshot(self.history, keys[0] if keys else None)
+                result["items"].append(
+                    await asyncio.to_thread(resume_diagnostics.render, readiness)
+                )
             elif parsed.path == "/bugreport/submit" and method == "POST":
                 if len(body) > bug_reports.MAX_REQUEST_BYTES:
                     await _write_json(writer, 413, {"error": "report request too large"})
@@ -1469,6 +1491,14 @@ class Server:
         sessions = self.history.sessions()
         subagents = self.history.subagents_by_session()
         for s in sessions:
+            identity = self.history.native_identity(str(s["session_key"]))
+            s["conversation_identity"] = {
+                "status": identity["status"],
+                "source": identity["source"],
+                "assignable": _build_runtime(
+                    s.get("runtime"), str(s.get("command") or "")
+                ).session_id_assignable,
+            }
             transfer = transfers.session_transfer(str(s.get("session_key") or ""))
             if transfer:
                 s["remote_transfer"] = {
@@ -2169,7 +2199,10 @@ class Server:
                 if not isinstance(request, dict):
                     raise APIError(400, "Expected a JSON object")
                 result = await self.restarts.request(
-                    key, request.get("model", ""), request.get("harness")
+                    key,
+                    request.get("model", ""),
+                    request.get("harness"),
+                    interrupt=request.get("interrupt", False),
                 )
             await _write_json(writer, 202 if method == "POST" else 200, result)
         except (ValueError, APIError) as exc:
@@ -2205,6 +2238,12 @@ class Server:
             return 400, {"error": "archived sessions can't be resumed (archive is final)"}
         if row.get("state") == "merged" or self.history.fork_merges.closing(session_key):
             return 400, {"error": "Closed or merging sessions cannot be resumed"}
+        identity = self.history.native_identity(session_key)
+        if identity["status"] in {"pending", "contested"}:
+            return 409, {
+                "error": "Cannot safely resume: conversation identity is " + identity["status"],
+                "code": "ambiguous_resume_identity",
+            }
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
         # The saved worktree/dir may be gone (deleted worktree, pruned, wiped
         # home). Relaunching into a missing dir lands the agent in $HOME with no

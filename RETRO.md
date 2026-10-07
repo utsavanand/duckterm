@@ -1,5 +1,127 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Pinning must remain available where sessions are listed
+
+Moving the Focus pin into the context header made a sidebar operation depend on opening another panel. Restore the approved icon beside every session, including filtered rows and forks, and reuse the shared pin handler and three-session limit. Exercise pinning an unselected session with Context collapsed, without changing the active terminal.
+
+## 2026-10-06 — Switch coverage must cross the changed lifecycle boundary
+
+The interruption checks mocked launch, while the real terminal switch still supplied a Stop hook. Added an explicit no-Stop case to the isolated tmux test, retained default quota/no-Stop guards, and checked both-direction task/inbox/artifact and membership preservation after reopening SQLite. Separate checkpoint failure, archive and transfer races assert that the source is never stopped. Compare durable work fields, not intentionally rotating per-process credentials. Focused checks passed; synthetic terminals and test records are cleaned up. These checks do not establish installed-provider, native WebKit or SSH behavior.
+
+
+## 2026-10-06 — Immediate switching needs explicit intent and honest progress
+
+A working or quota-exhausted harness may never reach a Stop hook. Expose the reviewed stop-and-switch choice when the backend supports it, keep draft and source-identity checks, and send interrupt intent only after confirmation for a different harness. Clear the choice when its target changes or a request fails. Pending text must say it is preparing to switch, not waiting for a turn that may never end.
+
+## 2026-10-06 — Keep regression checks isolated from rebuilds
+
+A harness-picker rewrite removed the existing availability explanation used by other session workflows. Retain that explanation while separating it from switch eligibility. Also never run a browser rebuild beside another browser run in the same worktree: Vite briefly removes dist, so the active server can serve its unbuilt-dashboard fallback. Verify the corrected committed tree in its own checkout.
+
+## 2026-10-06 — Native resume proof must not hide harness switching
+
+A session without a verified conversation could not open Restart, even though another harness can start a seeded conversation on the same card. Discover per-harness availability separately, scope model choices to the selected harness, preserve draft and turn checks, and label switches as new conversations both before and after completion. Test missing native identity, blocked drafts, exact model submission, stale card responses and cancelable queues.
+
+## 2026-10-06 — A token-exhausted source may never emit another Stop
+
+An after-turn harness switch could queue forever when the source had exhausted
+its provider quota. Offer an explicit owner-requested immediate switch to a
+different harness, with checkpoint and handoff before stopping. Bind consent to
+the current process, identity, activity epoch and owner-input stamp; recheck the
+empty draft and reject intervening changes. Keep ordinary Restart after-turn,
+and fail pending immediate requests after a server restart instead of replaying
+an interruption against a later process.
+
+## 2026-10-06 — Harness handoffs need current assigned work
+
+A checkpoint summary omitted unfinished task records when switching harnesses.
+Read the same session's in-progress and parked tasks after checkpoint creation,
+within its current shared grant, and include their durable IDs and statuses in
+a bounded handoff brief. Do not copy done or handed-off tasks, turn parked work
+into an instruction, or store a second task snapshot. Exercise completion,
+handoff and folder moves during the checkpoint await, plus the actual switch
+launch, while asserting that task records remain unchanged.
+
+## 2026-10-06 — A remounted card cannot settle an in-flight Undo
+
+Sharing a Resume block across controls was insufficient: a remounted recovery card could read the old adopted binding and clear the block while detach was still pending. Track the in-flight phase by canonical session key, release it only when that request settles, and then reread identity. A ready read during the write must never clear the guard. Cover remount, duplicate Undo and captured callbacks; guard Continue locally before it changes continuation bookkeeping too.
+
+## 2026-10-06: Guard every Resume entry point during recovery
+
+Undo disabled only the session-card Resume button; the sidebar could still resume while the mutation was pending or uncertain. A delayed-request browser regression exposed the bypass. Recovery readiness now guards the card, sidebar and resume handler by canonical session key, including across card unmounts. Test all entry points for shared operations.
+
+## 2026-10-06 — An explicit recovery choice needs a safe way back
+
+An incorrect transcript attachment must be reversible without deleting its file or starting an agent. Expose Undo only for an adopted binding on a stopped session, send the current revision, and leave launch-assigned or observed identities alone. Disable Resume while Undo is unresolved. A lost response requires a fresh identity read before another action, never an automatic mutation retry. Verify the complete attach/undo/reselect workflow and compare transcript bytes before and after Undo.
+
+## 2026-10-06 — Show missing conversation identity before Resume is needed
+
+A launched agent could work normally while no conversation ID was recorded, hiding the loss until a later Resume. Show identity, hook configuration and readable transcript readiness as separate facts. Recovery must use an explicit owner choice with bounded project-scoped discovery, opaque handles, whole-file verification and an atomic session revision/duplicate-ownership check; never choose the newest transcript or automatically resume. Preserve a generation barrier when undoing an adopted binding so old hooks cannot restore it. Keep filesystem work off the event loop and reject discovery without a recorded absolute project directory. Test stale files, competing attachments, missing directories, expired handles, uncertain responses and real-browser recovery.
+
+## 2026-10-06 — Distinguish missing resume inputs from unsupported adapters
+
+A known transcript adapter with no recorded directory was labeled as lacking file-per-conversation lookup. Report the missing directory explicitly so diagnostics direct the owner toward the actual missing input. Keep malformed hook configuration private and report unknown rather than echoing it.
+
+## 2026-10-06 — Empty launch generations must receive a fresh token
+
+Resuming an unidentified legacy conversation passes an empty generation override.
+Using setdefault preserved that empty value when assigning its first native ID,
+so valid hooks from the new process were rejected. Generate a nonempty token for
+both absent and empty values, while preserving an explicit switch generation.
+Reproduce through Resume and verify the child's matching hook is accepted.
+
+## 2026-10-06 — Validate identity evidence before recording a conflict
+
+A malformed current-generation SessionStart could permanently contest an assigned conversation and block Resume. Apply the same native-ID validation to conflicting evidence as to an initial binding. Invalid hook input should be dropped without changing a valid recorded identity; valid mismatches must still remain contested.
+
+## 2026-10-06 — Native bug reports need reviewed server readiness
+
+A post-reboot Resume report contained only app startup events, leaving no
+evidence about resumable IDs or transcript availability. The native reporter
+must retrieve the server's redacted resume-readiness item, wait for that snapshot
+before export, and show the same text it writes. Keep unrelated context out;
+never append raw network errors. The existing diagnostics opt-out must exclude
+the entire snapshot. Label local scope explicitly and retain graceful fallback
+for older or unavailable servers.
+
+## 2026-10-06 — Resume diagnostics must follow durable identity precedence
+
+Saving an observed ID outside retained events is only useful if diagnostics also
+read it. Prefer explicit native bindings, then the saved observation for the same
+harness, then legacy events. Keep contested and pending bindings visible and never
+probe their transcript as though the identity were usable. Verify the report after
+event deletion and ensure it still exports no IDs or paths and writes no data.
+
+## 2026-10-06 — Conversation identity must precede the process
+
+Ordinary launches learned conversation IDs only from optional hooks, then lost
+that evidence when old events were retained away. Assign Claude/Copilot UUIDs
+and commit them with the session before spawn; persist observed identities too.
+The event bus previously swallowed persistence errors, so launch now requires
+its identity write to succeed. Preserve generation barriers and switch rollback;
+never backfill a pending binding from the previous conversation. Test a real
+no-hook child reading its committed ID, failed writes, retention, duplicate UUIDs
+and current-generation mismatches. Reuse durable native_binding metadata rather
+than introducing redundant columns and an unnecessary schema migration.
+
+## 2026-10-06 — A resume report needs identity readiness, not just app startup
+The reboot report carried five startup events but omitted whether the native
+conversation ID or expected transcript was missing. Add bounded read-only
+readiness checks to removable diagnostics, exporting only ID presence and file
+existence. Keep SQLite on its owner thread and filesystem work off the loop.
+Do not export conversation IDs, transcript contents, credentials or arbitrary
+paths, and do not mistake hook configuration for successful event delivery.
+
+
+## 2026-10-06 — Identical timestamps can hide changed transcript bytes
+
+Linux assigned the same size, mtime_ns and ctime_ns to rapid transcript rewrites,
+so a stat-only cache kept returning old Messages and message keys indefinitely.
+Recheck recent file bytes until a content read occurs beyond a two-second
+timestamp window, then retain stat-only polling for settled files. Reuse parsed
+records and serialized responses when the bytes match; hash the partial final
+record as well as complete lines. Cover equal-stamp rewrites during the window
+and the first poll after it, for Claude and Codex, and verify real Linux behavior.
+
 ## 2026-10-05 — Two terminals in one session need separate paste targets
 
 A companion shell shares an agent's session identity but not its input stream.
@@ -34,6 +156,13 @@ also have moved mermaid 12.0 to 12.1, pulling chevrotain 11 to 13; update only
 the flagged packages (`npm update <pkg>`) and diff the lockfile's resolved
 versions before committing. KaTeX's low advisory needs a breaking mermaid
 change and stays open until mermaid ships a fix.
+
+## 2026-10-06 — Session age is not summary freshness
+The timeline labeled time since session start as summary age. Use the existing
+progress_at timestamp saved with the summary, and return null for legacy or
+missing timestamps. Never substitute a related record timestamp for the event
+the UI claims to measure. Regression checks cover old sessions with recent
+summaries, missing timestamps, and clocks ahead of the reader.
 
 ## 2026-10-05 — The gate's temp log name broke on macOS
 `mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's

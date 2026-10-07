@@ -58,12 +58,19 @@ class Restarts:
         self.server = server
         self.tasks: dict[str, asyncio.Task[None]] = {}
         self.epochs: dict[str, int] = {}
+        self.interrupt_sources: dict[str, Any] = {}
         self.closing = False
         # Never repeat a destructive step after a crash. A queued request stays
         # visible and waits for the next real Stop hook; a started one needs review.
         for row in server.history.sessions():
             key = row["session_key"]
             data = self.read(key)
+            if data.get("status") == "queued" and data.get("interrupt"):
+                self.save(
+                    key,
+                    status="failed",
+                    error="DuckTerm restarted before the immediate switch. Review and retry.",
+                )
             if data.get("status") == "restarting":
                 if data.get("source_harness") == row.get("runtime"):
                     self.save(key, configured_model=data.get("previous_configured_model"))
@@ -187,6 +194,7 @@ class Restarts:
             },
             "resume_restart": {"available": False},
             "harnesses": [],
+            "supports_interrupt_switch": True,
         }
         common_error = None
         try:
@@ -307,7 +315,12 @@ class Restarts:
             result["reason"] = str(exc)
         return result
 
-    async def request(self, key: str, model: Any, harness: Any = None) -> dict[str, Any]:
+    async def request(
+        self, key: str, model: Any, harness: Any = None, *, interrupt: Any = False
+    ) -> dict[str, Any]:
+        if not isinstance(interrupt, bool):
+            raise APIError(400, "interrupt must be true or false")
+        request_epoch = self.epochs.get(key, 0)
         if (
             not isinstance(model, str)
             or len(model) > 200
@@ -320,8 +333,11 @@ class Restarts:
         if harness is not None and (not isinstance(harness, str) or harness not in LAUNCH_BINARIES):
             raise APIError(400, "Unknown target harness.")
         row, sup, rt, binary = await self.live_plan(key, harness)
+        input_stamp = sup.last_owner_input_ms
         target = harness or str(row.get("runtime") or "generic")
         switching = target != row.get("runtime")
+        if interrupt and not switching:
+            raise APIError(400, "Immediate interruption is only available for a harness switch")
         if switching:
             await self.switch_version(target, binary)
         if model:
@@ -332,6 +348,7 @@ class Restarts:
             if (
                 previous.get("requested_model") == model
                 and previous.get("requested_harness", row.get("runtime")) == target
+                and bool(previous.get("interrupt")) == interrupt
             ):
                 return await self.describe(key)
             raise APIError(
@@ -350,13 +367,20 @@ class Restarts:
             raise APIError(409, "The terminal changed. Reopen Restart and try again.")
         if self.server.history.session_id_for(key) != native_id:
             raise APIError(409, "The conversation changed. Reopen Restart and try again.")
+        if interrupt and (
+            self.epochs.get(key, 0) != request_epoch or sup.last_owner_input_ms != input_stamp
+        ):
+            raise APIError(409, "Session activity changed. Review and retry the switch.")
         # Another request can arrive while the screen read is in flight.
         if self.read(key).get("status") in ACTIVE:
             raise APIError(409, "A restart is already pending.")
-        self.save(
+        requested = self.save(
             key,
             id=uuid.uuid4().hex,
             status="queued",
+            interrupt=interrupt,
+            interrupt_epoch=request_epoch,
+            interrupt_input_stamp=input_stamp,
             requested_model=model,
             requested_harness=target,
             source_harness=row.get("runtime"),
@@ -365,13 +389,18 @@ class Restarts:
             requested_at=int(time.time() * 1000),
             error=None,
         )
-        if self.turn_finished(key):
+        if interrupt:
+            self.interrupt_sources[requested["id"]] = sup
+        if interrupt or self.turn_finished(key):
             self.schedule(key)
         return await self.describe(key)
 
     def cancel(self, key: str) -> dict[str, Any]:
         if self.running(key):
             raise APIError(409, "Restart has already begun.")
+        request_id = self.read(key).get("id")
+        if isinstance(request_id, str):
+            self.interrupt_sources.pop(request_id, None)
         task = self.tasks.pop(key, None)
         if task:
             task.cancel()
@@ -405,17 +434,37 @@ class Restarts:
             return
         self.tasks[key] = asyncio.create_task(self.execute(key))
 
+    def ready_to_stop(self, key: str, epoch: int, sup: Any, interrupt: bool) -> bool:
+        if not interrupt:
+            return self.epochs.get(key, 0) == epoch and self.turn_finished(key)
+        data = self.read(key)
+        request_id = data.get("id")
+        if (
+            not isinstance(request_id, str)
+            or self.interrupt_sources.get(request_id) is not sup
+            or self.epochs.get(key, 0) != data.get("interrupt_epoch")
+            or sup.last_owner_input_ms != data.get("interrupt_input_stamp")
+            or self.server.history.session_id_for(key) != data.get("conversation_id")
+        ):
+            raise APIError(409, "Session activity changed. Review and retry the switch.")
+        return True
+
     async def execute(self, key: str) -> None:
         epoch = self.epochs.get(key, 0)
         request_id = self.read(key).get("id")
         previous_model = self.read(key).get("configured_model")
         harness = self.read(key).get("requested_harness")
+        interrupt = self.read(key).get("interrupt") is True
         switched = False
         try:
             row, sup, rt, binary = await self.live_plan(key, harness)
             if self.read(key).get("source_harness", row.get("runtime")) != row.get("runtime"):
                 raise APIError(409, "The harness changed while restart was pending.")
             switching = harness is not None and harness != row.get("runtime")
+            if interrupt and not switching:
+                raise APIError(409, "The target changed. Review and retry the switch.")
+            if interrupt:
+                self.ready_to_stop(key, epoch, sup, True)
             native_id = self.server.history.session_id_for(key)
             old_version = self.read(key).get("cli_version")
             if switching:
@@ -431,9 +480,10 @@ class Restarts:
 
                 prepared = await prepare(self.server, key, row)
             # The Stop hook can return just before the CLI paints its prompt.
-            # Wait for that prompt only AFTER positive turn-end evidence.
+            # Normal restarts require positive turn-end evidence. An explicitly
+            # interrupted switch instead requires the unchanged request snapshot.
             for _ in range(20):
-                if self.epochs.get(key, 0) != epoch or not self.turn_finished(key):
+                if not self.ready_to_stop(key, epoch, sup, interrupt):
                     return  # next actual turn end can satisfy the same request
                 if await self.draft_free(sup, rt):
                     break
@@ -451,7 +501,7 @@ class Restarts:
                 return
             # Finish blocking probes before the last draft check. Revalidate
             # metadata on-loop, then begin stop (whose tmux kill runs off-loop).
-            if self.epochs.get(key, 0) != epoch or not self.turn_finished(key):
+            if not self.ready_to_stop(key, epoch, sup, interrupt):
                 return
             if self.plan(key, harness)[1] is not sup:
                 raise APIError(409, "The terminal changed while restart was pending.")
@@ -524,11 +574,13 @@ class Restarts:
                 ),
             )
         finally:
+            if isinstance(request_id, str):
+                self.interrupt_sources.pop(request_id, None)
             if self.tasks.get(key) is asyncio.current_task():
                 self.tasks.pop(key, None)
                 # A new turn can finish while the old task is yielding. Its
                 # hook cannot schedule until this task relinquishes the slot.
-                if self.epochs.get(key, 0) != epoch and self.turn_finished(key):
+                if not interrupt and self.epochs.get(key, 0) != epoch and self.turn_finished(key):
                     self.schedule(key)
 
     async def close(self) -> None:

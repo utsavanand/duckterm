@@ -80,3 +80,16 @@ extension SessionTransportTests {
         for key in ["..", ".", "a/b", "a?token=x"] { XCTAssertThrowsError(try SessionTransport.terminalPath(key: key, kind: "shell")) }
     }
 }
+
+extension SessionTransportTests {
+    @MainActor func testConversationRecoveryRoutesStayBoundToSelectedHostAndMethod() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        for (suffix, method) in [("recovery", "GET"), ("candidates", "GET"), ("adopt", "POST"), ("hooks", "POST"), ("detach", "POST")] {
+            let path = "/sessions/orphan/conversation-" + suffix
+            XCTAssertEqual(try SessionTransport.request(base: base, params: ["path": path, "method": method]).url?.absoluteString, "http://127.0.0.1:14300" + path)
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method == "GET" ? "POST" : "GET"]))
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path + "?path=/tmp/secret", "method": method]))
+        }
+        XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": "/sessions/../conversation-adopt", "method": "POST"]))
+    }
+}

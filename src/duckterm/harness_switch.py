@@ -26,6 +26,9 @@ async def prepare(server: Server, key: str, row: dict[str, Any]) -> dict[str, An
     )
     if row.get("notes"):
         brief += "\nOwner's saved notes (verify before relying on them):\n" + str(row["notes"])
+    tasks = server.history.folder_tasks.handoff_context(key)
+    if tasks:
+        brief += "\n\n" + tasks
     return {
         "runtime": row.get("runtime"),
         "native_id": native_id,
@@ -54,6 +57,7 @@ def restore(server: Server, key: str) -> None:
     control = dict(server.restarts.read(key))
     control.update(
         native_binding={
+            **prior_binding,
             "runtime": previous["runtime"],
             "native_id": previous.get("native_id"),
             "generation": uuid.uuid4().hex,
@@ -77,7 +81,8 @@ async def launch(
     if prepared.get("native_id") and prepared["native_id"] not in retired:
         retired.append(prepared["native_id"])
     # This boundary is durable before the new process can emit a hook. Until
-    # its native start hook arrives, identity is unknown, never the old ID.
+    # a new ID is assigned or its start hook arrives, identity is unknown,
+    # never the old ID.
     generation = uuid.uuid4().hex
     control = dict(server.restarts.read(key))
     control.update(
@@ -142,6 +147,19 @@ def accept_hook(server: Server, raw: dict[str, Any]) -> bool:
         return False
     native_id = raw.get("session_id")
     if binding.get("native_id"):
+        if (
+            binding.get("source") in {"assigned", "adopted"}
+            and isinstance(native_id, str)
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", native_id)
+            and native_id != binding["native_id"]
+            and raw.get("event_type") == events.SESSION_START
+            and not raw.get("agent_id")
+            and native_id not in binding.get("retired_ids", [])
+        ):
+            server.restarts.save(key, native_binding={**binding, "contested": True})
+            return False
+        if binding.get("contested"):
+            return False
         return bool(native_id == binding["native_id"])
     if (
         raw.get("event_type") != events.SESSION_START

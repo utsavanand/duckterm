@@ -37,7 +37,8 @@ def test_claude_session_summary_uses_transcript(tmp_path: Path, fake_home: Path)
 
     # Plant a Claude transcript where the locator will look.
     slug = project_slug(work)
-    transcript = fake_home / ".claude" / "projects" / slug / "claude-sess.jsonl"
+    sid = "11111111-2222-4333-8444-555555555555"
+    transcript = fake_home / ".claude" / "projects" / slug / (sid + ".jsonl")
     transcript.parent.mkdir(parents=True)
     transcript.write_text(
         json.dumps({"message": {"role": "user", "content": "add a healthcheck endpoint"}})
@@ -49,12 +50,12 @@ def test_claude_session_summary_uses_transcript(tmp_path: Path, fake_home: Path)
     store = HistoryStore(tmp_path / "db.sqlite")
     bus = EventBus(sink=store.record)
     orch = Orchestrator(bus, worktrees=WorktreeManager(root=tmp_path / "wt"), history=store)
-    runtime = ClaudeCodeRuntime(f"{sys.executable} {FAKE_AGENT}")
+    runtime = ClaudeCodeRuntime(f"{sys.executable} {FAKE_AGENT} --session-id {sid}")
 
     async def scenario() -> str:
-        key = await orch.launch(runtime=runtime, cwd=str(work), prompt="add healthcheck")
+        key = await orch.launch(runtime=runtime, cwd=str(work), prompt="add healthcheck", test=True)
         # Emit the agent's own session_id so the locator can find the transcript.
-        bus.publish({"event_type": "SessionStart", "session_key": key, "session_id": "claude-sess"})
+        bus.publish({"event_type": "SessionStart", "session_key": key, "session_id": sid})
         await asyncio.wait_for(orch.get(key)._task, 5)  # type: ignore[union-attr,arg-type]
         await asyncio.sleep(0)
         return key
@@ -66,3 +67,5 @@ def test_claude_session_summary_uses_transcript(tmp_path: Path, fake_home: Path)
     # The summary (echoed prompt) contains the transcript text.
     assert "add a healthcheck endpoint" in row["outcome_summary"]
     assert "Added /healthz." in row["outcome_summary"]
+    store.purge_test_sessions()
+    store.close()

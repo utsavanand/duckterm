@@ -15,7 +15,6 @@ import { Analytics } from "./Analytics";
 import { AnalyticsTab } from "./analyticsData";
 import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
-import { SessionPin } from "./SessionPin";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
 import { BugReport } from "./BugReport";
@@ -377,6 +376,7 @@ function Dashboard() {
                 onFolderDeleted={path => setSelectedFolder(current => current === path || current?.startsWith(path + "/") ? null : current)}
                 onOpen={setSelectedKey}
                 onOpenInbox={(key) => { setSelectedKey(key); setView("inbox"); }}
+                onPin={toggleSessionPin}
                 onFoldersChanged={refreshFolders}
                 onSessionMoved={(key, group) =>
                   patchSession(key, { group: group || undefined })
@@ -496,7 +496,6 @@ function Dashboard() {
           <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`} style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-panel-head">
               <span>{selected ? selected.label : "Context"}</span>
-              {selected && <SessionPin session={selected} onToggle={toggleSessionPin} label />}
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
             <ContextViews session={<>

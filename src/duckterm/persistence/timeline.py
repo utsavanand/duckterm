@@ -282,12 +282,16 @@ def page(
     except (ValueError, TypeError):
         progress = {}
     summary = progress.get("summary", "") if isinstance(progress, dict) else ""
+    updated_at = row.get("progress_at")
+    if not isinstance(updated_at, int) or isinstance(updated_at, bool) or updated_at <= 0:
+        updated_at = None
     return {
         "summary": {
             "text": summary,
             "harness": row.get("runtime"),
             "model": row.get("model"),
-            "age_ms": max(0, stamp - row["started_at"]),
+            "updated_at": updated_at,
+            "age_ms": max(0, stamp - updated_at) if updated_at is not None else None,
             "counts": counts,
             "total": sum(counts.values()),
         },

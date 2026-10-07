@@ -1,6 +1,8 @@
+import { identityBlocksResume } from "./conversationRecoveryState";
 import { SidebarFilters } from "./SidebarFilters";
 import { hasFilters, matchesFilters, sidebarSessions, SidebarFilterControls } from "./sidebarFilterState";
 import { desktop } from "./desktop";
+import { SessionPin } from "./SessionPin";
 import { SessionLocationDuck } from "./SessionLocationDuck";
 import { HelperAgents } from "./HelperAgents";
 import { ReactNode, useEffect, useState } from "react";
@@ -13,7 +15,7 @@ import { useResumeSession } from "./useResumeSession";
 import { useToast } from "./ui";
 
 // The left panel: every session as a row, with forks nested under their parent
-// via parentKey. Rows select sessions; actions live in the right-panel card.
+// via parentKey. Keep Focus pins beside sessions; lifecycle actions live in the card.
 export function AgentTree({
   filterControls,
   sessions,
@@ -26,6 +28,7 @@ export function AgentTree({
   onFolderDeleted,
   onOpen,
   onOpenInbox,
+  onPin,
   onFoldersChanged,
   onSessionMoved,
   onOpenGrid,
@@ -46,6 +49,7 @@ export function AgentTree({
   onFolderDeleted?: (folder: string) => void;
   onOpen: (key: string) => void;
   onOpenInbox?: (key: string) => void;
+  onPin?: (session: SessionView) => Promise<void>;
   onFoldersChanged: () => void;
   onSessionMoved: (key: string, group: string) => void;
   onOpenGrid: (folder: string) => void;
@@ -198,6 +202,7 @@ export function AgentTree({
       selectedKey={selectedKey}
       onOpen={onOpen}
       onOpenInbox={onOpenInbox}
+      onPin={onPin}
     />
   );
 
@@ -268,7 +273,7 @@ export function AgentTree({
     <SidebarFilters sessions={visibleSessions} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} expanded={expanded} />
     <div className="rd-tree">
       {filtering ? <>
-        {visibleSessions.filter(s => matchesFilters(s, filters, now)).map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} onOpen={onOpen} onOpenInbox={onOpenInbox} showFolder />)}
+        {visibleSessions.filter(s => matchesFilters(s, filters, now)).map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} onOpen={onOpen} onOpenInbox={onOpenInbox} onPin={onPin} showFolder />)}
         {!visibleSessions.some(s => matchesFilters(s, filters, now)) && <div className="rd-filter-empty">No sessions match these filters.<button onClick={clear}>Clear filters</button></div>}
       </> : <>
       {/* All folders render (even empty ones) so you can create then fill them. */}
@@ -558,6 +563,7 @@ function TreeRow({
   selectedKey,
   onOpen,
   onOpenInbox,
+  onPin,
 }: {
   node: Node;
   depth: number;
@@ -567,9 +573,10 @@ function TreeRow({
   selectedKey: string | null;
   onOpen: (key: string) => void;
   onOpenInbox?: (key: string) => void;
+  onPin?: (session: SessionView) => Promise<void>;
 }) {
   const s = node.session;
-  const { resuming, resumeSession } = useResumeSession(s.key);
+  const { resuming, recoveryBlocked, resumeSession } = useResumeSession(s.key);
   const effState = effectiveState(s, now);
   const live = !["terminated", "stopped", "interrupted", "archived"].includes(effState);
   const stateLabel = effState;
@@ -641,8 +648,9 @@ function TreeRow({
               </span>
             )}
           </span>
+          {onPin && <SessionPin session={s} onToggle={onPin} />}
           {effState === "stopped" && s.launched && <button className="rd-row-resume"
-            aria-label={`Resume ${s.label}`} disabled={resuming} onClick={resumeSession}>
+            aria-label={`Resume ${s.label}`} disabled={resuming || recoveryBlocked || identityBlocksResume(s)} onClick={resumeSession}>
             {resuming ? "Resuming…" : "Resume"}
           </button>}
         </div>
@@ -668,6 +676,7 @@ function TreeRow({
             selectedKey={selectedKey}
             onOpen={onOpen}
             onOpenInbox={onOpenInbox}
+      onPin={onPin}
           />
         ))}
     </>
