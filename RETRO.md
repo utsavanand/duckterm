@@ -8,6 +8,16 @@ A harness-picker rewrite removed the existing availability explanation used by o
 
 A session without a verified conversation could not open Restart, even though another harness can start a seeded conversation on the same card. Discover per-harness availability separately, scope model choices to the selected harness, preserve draft and turn checks, and label switches as new conversations both before and after completion. Test missing native identity, blocked drafts, exact model submission, stale card responses and cancelable queues.
 
+## 2026-10-06 — A token-exhausted source may never emit another Stop
+
+An after-turn harness switch could queue forever when the source had exhausted
+its provider quota. Offer an explicit owner-requested immediate switch to a
+different harness, with checkpoint and handoff before stopping. Bind consent to
+the current process, identity, activity epoch and owner-input stamp; recheck the
+empty draft and reject intervening changes. Keep ordinary Restart after-turn,
+and fail pending immediate requests after a server restart instead of replaying
+an interruption against a later process.
+
 ## 2026-10-06 — Harness handoffs need current assigned work
 
 A checkpoint summary omitted unfinished task records when switching harnesses.

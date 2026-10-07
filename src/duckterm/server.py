@@ -2199,7 +2199,10 @@ class Server:
                 if not isinstance(request, dict):
                     raise APIError(400, "Expected a JSON object")
                 result = await self.restarts.request(
-                    key, request.get("model", ""), request.get("harness")
+                    key,
+                    request.get("model", ""),
+                    request.get("harness"),
+                    interrupt=request.get("interrupt", False),
                 )
             await _write_json(writer, 202 if method == "POST" else 200, result)
         except (ValueError, APIError) as exc:
