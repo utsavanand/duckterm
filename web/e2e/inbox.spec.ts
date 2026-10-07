@@ -7,7 +7,7 @@ test.afterEach(async () => {
   createdSessions.clear();
 });
 
-test("Inbox beside History shows real session questions and replies", async ({ page }) => {
+test("Inbox beside Timeline shows real session questions and replies", async ({ page }) => {
   createdSessions.add("inbox-sender");
   createdSessions.add("inbox-recipient");
   await seedSession("inbox-sender", { name: "API implementation", group: "inbox-test/backend" });
@@ -33,7 +33,7 @@ test("Inbox beside History shows real session questions and replies", async ({ p
   await page.locator(".rd-row-name", { hasText: "Client implementation" }).click();
   const tabs = page.locator(".rd-view-toggle > button");
   await expect(page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" })).toBeVisible();
-  await expect(tabs).toHaveText(["Terminal", "Messages", "History", "Inbox (1)", "Artifacts"]);
+  await expect(tabs).toHaveText(["Terminal", "Messages", "Timeline", "Inbox (1)", "Artifacts"]);
   await page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" }).click();
   await expect(page.locator(".rd-session-card")).not.toHaveAttribute("open", "");
   await page.locator(".rd-session-card > summary").click();
