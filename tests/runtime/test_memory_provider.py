@@ -152,7 +152,7 @@ def test_content_repair_is_reviewed_again_and_only_then_counted(monkeypatch):
         )
     )
     assert context == corrected
-    assert len(calls) == len(checks) == 4
+    assert len(calls) == 4 and len(checks) == 6
     assert "Missing owner constraint" in calls[2][0]
     assert '"candidate":' in calls[3][0] and "Keep originals." in calls[3][0]
     assert progress == [
@@ -192,4 +192,4 @@ def test_changed_sources_stop_before_using_repair_feedback(monkeypatch):
     monkeypatch.setattr(memory_provider, "generate", provider)
     with pytest.raises(APIError, match="Sources changed"):
         asyncio.run(memory_summary.prepare_group("Source", "codex", "selected", set(), changed))
-    assert len(calls) == 1
+    assert len(calls) == 0

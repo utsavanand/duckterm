@@ -21,6 +21,13 @@ MAX_REPLY = 64000
 CALL_TIMEOUT = 180
 
 
+class BatchTimeout(APIError):
+    def __init__(self) -> None:
+        super().__init__(
+            503, "The selected harness took too long to prepare a history batch; try again"
+        )
+
+
 def arguments(harness: str, model: str, schema_path: Path | None = None) -> list[str]:
     if harness == "codex":
         args = [
@@ -127,9 +134,7 @@ async def generate(
                 )
             return b"".join(chunks).decode("utf-8")
         except TimeoutError as exc:
-            raise APIError(
-                503, "The selected harness took too long to prepare a history batch; try again"
-            ) from exc
+            raise BatchTimeout() from exc
         except (UnicodeError, BrokenPipeError) as exc:
             raise APIError(503, "Preparation did not return a complete response") from exc
         finally:

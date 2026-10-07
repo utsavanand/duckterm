@@ -222,6 +222,33 @@ class MemoryPreparation:
                 return
             await self.run(job)
 
+    def resumable_progress(self, job: dict[str, Any]) -> memory_summary.BatchProgress | None:
+        candidates: list[memory_summary.BatchProgress] = []
+        for old in self.jobs.values():
+            if (
+                old is not job
+                and old["id"] not in self.tasks
+                and old.get("partial") is not None
+                and old["expires"] > time.time() * 1000
+                and old["key"] == job["key"]
+                and old["binding"] == job["binding"]
+                and old["cli_version"] == job["cli_version"]
+                and old["catalog"] == job["catalog"]
+                and all(
+                    old["captured"][k] == job["captured"][k]
+                    for k in ("facts", "policy", "source", "conversation")
+                )
+            ):
+                candidates.append(old["partial"])
+        return max(candidates, key=lambda p: p.completed) if candidates else None
+
+    def retain_progress(self, job: dict[str, Any], progress: memory_summary.BatchProgress) -> None:
+        self.cheap_validate(job)
+        job["partial"] = progress
+        # Expire abandoned/stalled jobs, not a long history that keeps passing
+        # review. Every provider call still has its own bounded timeout.
+        job["expires"] = time.time() * 1000 + LIFETIME_MS
+
     async def run(self, job: dict[str, Any]) -> None:
         key = job["key"]
         coordinator = self.server.progress_coordinator
@@ -288,6 +315,8 @@ class MemoryPreparation:
                     job,
                     progress={"completed_batches": completed, "total_batches": total, "step": step},
                 ),
+                resume=self.resumable_progress(job),
+                retain=lambda value: self.retain_progress(job, value),
             )
             self.update(job, phase="validating")
             seed = memory_summary.brief(context, captured["required"])
@@ -412,13 +441,17 @@ class MemoryPreparation:
                     },
                 },
             )
+            job.pop("partial", None)
         except asyncio.CancelledError:
+            job.pop("partial", None)
             self.update(job, state="canceled")
         except Exception as exc:
             code = exc.code if isinstance(exc, PreparationError) else "preparation_failed"
             state = code if code in {"stale_source", "incomplete_source"} else "failed"
             if job["canceled"]:
                 state = "canceled"
+            if state != "failed":
+                job.pop("partial", None)
             self.update(
                 job,
                 state=state,
@@ -467,6 +500,8 @@ class MemoryPreparation:
             return {"released": True}
         job["leases"].remove(request_key)
         if not job["leases"] and not job.get("claimed_by"):
+            if job["view"]["state"] != "failed":
+                job.pop("partial", None)
             job["canceled"] = True
             # Do not abandon an off-loop native read/write. Its result observes
             # the canceled fence before persistence; no further provider calls.

@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — A late preparation timeout must not discard reviewed work
+
+The first complete startup trial passed two history batches, then timed out on the third. A retry would have regenerated every earlier batch. Keep reviewed intermediate work in the expiring job, reuse it only under matching session/source/model/policy/CLI fences, and never publish partial work as a checkpoint or ready proof. Split a large timed-out batch into smaller ordered pieces with a bounded depth; do not retry authentication, quota or semantic failures as timeouts. Refresh the inactivity deadline only after a whole batch passes review. Test changed sources, cancellation, expiry and server reconstruction as well as the successful retry.
+
 ## 2026-10-07 — Hidden windows still need an operation's terminal result
 
 The owner still saw “Preparing” after the backend had failed. A hidden-page guard returned before scheduling another status read, leaving recovery dependent on a visibility event that native windows may not deliver as expected. Keep polling while the operation dialog is mounted, at a slower background rate, and stop after a terminal result or close. Reproduce the persistent-hidden state in component and browser tests; do not force a native acceptance fixture visible and count that as focus behavior coverage.
