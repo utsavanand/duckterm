@@ -17,6 +17,40 @@ beforeEach(() => {
   service.switch.mockImplementation(async s => ({ id: "op1", requestKey: s.requestKey, sequence: 1, phase: "queued", processState: "source_running" }));
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.useRealTimers(); });
+it("shows a terminal preparation failure even if the window remains hidden", async () => {
+  vi.useFakeTimers();
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+  service.prepare.mockResolvedValue({ ...ready(), sequence: 0, result: { phase: "preparing" } });
+  service.preparation.mockResolvedValue({ ...ready(), sequence: 1,
+    result: { phase: "failed", reason: "History batch timed out" } });
+  await act(async () => { render(<MemorySwitchPanel {...props()} />); });
+  expect(screen.getByText("Preparing the handoff…")).toBeInTheDocument();
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(screen.getByText("History batch timed out")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Prepare again" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(service.preparation).toHaveBeenCalledOnce();
+  expect(service.switch).not.toHaveBeenCalled();
+});
+it("throttles background preparation reads and stops them when the dialog closes", async () => {
+  vi.useFakeTimers();
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+  const preparing = { ...ready(), sequence: 0, result: { phase: "preparing" as const } };
+  service.prepare.mockResolvedValue(preparing); service.preparation.mockResolvedValue(preparing);
+  let view!: ReturnType<typeof render>;
+  await act(async () => { view = render(<MemorySwitchPanel {...props()} />); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(service.preparation).toHaveBeenCalledOnce();
+  await act(async () => { await vi.advanceTimersByTimeAsync(9999); });
+  expect(service.preparation).toHaveBeenCalledOnce();
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(service.preparation).toHaveBeenCalledTimes(2);
+  view.unmount();
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(service.preparation).toHaveBeenCalledTimes(2);
+  expect(service.release).toHaveBeenCalledWith("p1", expect.any(String));
+});
 it("prepares automatically but requires explicit Switch and prevents double submission", async () => {
   const p = props(); render(<MemorySwitchPanel {...p} />);
   await screen.findByText("Ready to switch"); expect(service.switch).not.toHaveBeenCalled();

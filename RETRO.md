@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Hidden windows still need an operation's terminal result
+
+The owner still saw “Preparing” after the backend had failed. A hidden-page guard returned before scheduling another status read, leaving recovery dependent on a visibility event that native windows may not deliver as expected. Keep polling while the operation dialog is mounted, at a slower background rate, and stop after a terminal result or close. Reproduce the persistent-hidden state in component and browser tests; do not force a native acceptance fixture visible and count that as focus behavior coverage.
+
 ## 2026-10-07 — Test preparation with real history and repair rejected drafts
 
 The startup harness-switch trial exposed failures hidden by providers mocked to return perfect JSON: a summary used an array for the overview, and another draft omitted an owner constraint. Request the response schema from Codex, retain independent source and UTF-8 validation, and allow at most two corrections against the same sources with a fresh review after each. A rejected draft never becomes coverage or a saved revision. Expose batch progress through preparation status and distinguish a provider timeout from malformed output. Synthetic green checks do not substitute for a complete real-session trial.

@@ -4,7 +4,7 @@ import { apiDelete, apiPost, base, postEvent, seedSession, sessionMenu } from ".
 test("approved preparation dialog and milestone Timeline preserve existing controls", async ({ page }) => {
   const key = await seedSession("memory-ui-test", { name: "Workspace developer", runtime: "claude-code", launched: true, test: true });
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message));
-  let switchCount = 0, releaseCount = 0;
+  let switchCount = 0, releaseCount = 0, hiddenFailureSent = false;
   let current: Record<string, unknown> = { can_restart: true, draft_clear: true, after_turn: true, model: "claude-opus-5" };
   const preparations = new Map<string, Record<string, unknown>>();
   try {
@@ -27,6 +27,11 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
             gaps: [{ kind: "unread_attachment", reason: "One image remains available as an attachment; its contents were not interpreted.", blocking: false }], gap_count: 1, has_more: false, details_cursor: null },
           proof: { snapshot_id: "snapshot-a", revision_id: "revision-a", prepared_at: Date.now(), expires_at: Date.now() + 60000,
             overview: "Continue keyboard accessibility work.", resolved_model: body.binding.target.model.id ?? null } };
+        if (body.binding.target.model.id === "gpt-6-astra" && !hiddenFailureSent) {
+          hiddenFailureSent = true;
+          preparations.set(id, { ...value, state: "failed", reason: "History batch timed out" });
+          return json({ ...value, sequence: 0, state: "preparing", proof: undefined });
+        }
         preparations.set(id, value); return json(value);
       }
       if (url.pathname.includes("restart-preparation/")) {
@@ -50,13 +55,22 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
       return json(current);
     });
     await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.addInitScript(() => localStorage.setItem("rd-theme", "dark"));
+    await page.addInitScript(() => {
+      localStorage.setItem("rd-theme", "dark");
+      // Reproduce a native window that stays hidden without another event.
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+    });
     await page.goto(base()); await page.locator(".rd-row-name", { hasText: "Workspace developer" }).click();
     const menu = await sessionMenu(page);
     for (const name of ["Restart", "Change model", "Checkpoint", "Notes", "Stop", "Archive"]) await expect(menu.getByRole("menuitem", { name, exact: true })).toBeVisible();
     await menu.getByRole("menuitem", { name: "Restart", exact: true }).click();
     await page.getByRole("dialog").getByRole("combobox", { name: "Harness", exact: true }).selectOption("codex");
     await page.getByRole("dialog").getByRole("combobox", { name: "Model", exact: true }).selectOption("gpt-6-astra");
+    await expect(page.getByText("History batch timed out", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Switch to Codex", exact: true })).toBeDisabled();
+    expect(switchCount).toBe(0);
+    await page.evaluate(() => Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" }));
+    await page.getByRole("button", { name: "Prepare again", exact: true }).click();
     await expect(page.getByText("Ready to switch", { exact: true })).toBeVisible(); expect(switchCount).toBe(0);
     await page.screenshot({ path: "/tmp/memory-switch-implemented-dark.png" });
     await page.getByText("Handoff brief and available context", { exact: true }).click();
