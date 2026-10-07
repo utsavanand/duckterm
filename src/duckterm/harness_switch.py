@@ -146,7 +146,8 @@ def accept_hook(server: Server, raw: dict[str, Any]) -> bool:
     if binding.get("native_id"):
         if (
             binding.get("source") in {"assigned", "adopted"}
-            and native_id
+            and isinstance(native_id, str)
+            and re.fullmatch(r"[A-Za-z0-9_-]{1,200}", native_id)
             and native_id != binding["native_id"]
             and raw.get("event_type") == events.SESSION_START
             and not raw.get("agent_id")

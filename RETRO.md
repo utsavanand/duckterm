@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Validate identity evidence before recording a conflict
+
+A malformed current-generation SessionStart could permanently contest an assigned conversation and block Resume. Apply the same native-ID validation to conflicting evidence as to an initial binding. Invalid hook input should be dropped without changing a valid recorded identity; valid mismatches must still remain contested.
+
 ## 2026-10-06 — Native bug reports need reviewed server readiness
 
 A post-reboot Resume report contained only app startup events, leaving no
