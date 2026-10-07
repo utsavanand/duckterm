@@ -159,9 +159,11 @@ def test_open_priority_is_never_swept_but_a_replied_one_is(scenario, monkeypatch
 
 @pytest.mark.parametrize(
     ("priority", "since_stop_ms", "nudged"),
-    [(True, 10_000, True), (False, 10_000, False), (False, oracle.SETTLE_MS, True)],
+    # A plain owner broadcast is an FYI: it never wakes an idle agent, settled
+    # or not (token-saver spec section 2). Priority needs a reply and does.
+    [(True, 10_000, True), (False, 10_000, False), (False, oracle.SETTLE_MS, False)],
 )
-def test_idle_nudge_skips_the_settle_wait_only_for_priority(priority, since_stop_ms, nudged):
+def test_only_a_priority_broadcast_wakes_an_idle_agent(priority, since_stop_ms, nudged):
     now = 10_000_000
     mail = [
         {
