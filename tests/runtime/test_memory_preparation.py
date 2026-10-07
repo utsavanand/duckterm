@@ -26,7 +26,7 @@ def preparation(memory_rig, monkeypatch):
     async def version(*args):
         return "codex 0.155.1"
 
-    async def provider(harness, model, prompt):
+    async def provider(harness, model, prompt, schema=None):
         calls.append((harness, model, prompt))
         assert harness == "codex"
         if prompt.startswith("Review the proposed"):
@@ -152,7 +152,7 @@ def test_ready_proof_becomes_stale_after_source_or_scope_change(preparation):
 def test_unchanged_prefix_reuses_summary_but_early_rewrite_forces_complete_read(monkeypatch):
     calls = []
 
-    async def provider(harness, model, prompt):
+    async def provider(harness, model, prompt, schema=None):
         calls.append(prompt)
         if prompt.startswith("Review the proposed"):
             return '{"ready":true,"reason_codes":[]}'

@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Test preparation with real history and repair rejected drafts
+
+The startup harness-switch trial exposed failures hidden by providers mocked to return perfect JSON: a summary used an array for the overview, and another draft omitted an owner constraint. Request the response schema from Codex, retain independent source and UTF-8 validation, and allow at most two corrections against the same sources with a fresh review after each. A rejected draft never becomes coverage or a saved revision. Expose batch progress through preparation status and distinguish a provider timeout from malformed output. Synthetic green checks do not substitute for a complete real-session trial.
+
 ## 2026-10-07 — Viewing an idle session is not changed work
 
 Attended and content-free idle notifications invalidated a prepared handoff even when no work changed. A native acceptance retry hid the same symptom before the owner reproduced it. Treat that failure as a product regression: keep status observations in the audit history but exclude them consistently from progress freshness and memory inputs. Version the event-boundary interpretation so existing checkpoints remain readable. Unknown or content-bearing notifications, real turns, transcript changes, tasks and inbox changes must still invalidate. Test observations during generation, after readiness and at the final stop boundary without retrying.

@@ -35,7 +35,7 @@ def ready_switch(rig, monkeypatch):
             + "\n"
         )
 
-    async def provider(harness, model, prompt):
+    async def provider(harness, model, prompt, schema=None):
         if prompt.startswith("Review the proposed"):
             return '{"ready":true,"reason_codes":[]}'
         data = json.loads(prompt[prompt.index('{"prior_context"') :])

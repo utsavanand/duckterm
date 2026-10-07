@@ -280,7 +280,14 @@ class MemoryPreparation:
                 baseline = None
             self.update(job, phase="summarizing")
             context, pieces = await memory_summary.summarize(
-                sources, job["binding"]["target"], baseline, lambda: self.cheap_validate(job)
+                sources,
+                job["binding"]["target"],
+                baseline,
+                lambda: self.cheap_validate(job),
+                lambda completed, total, step: self.update(
+                    job,
+                    progress={"completed_batches": completed, "total_batches": total, "step": step},
+                ),
             )
             self.update(job, phase="validating")
             seed = memory_summary.brief(context, captured["required"])

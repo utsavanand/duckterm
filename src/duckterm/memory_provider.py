@@ -8,17 +8,20 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import signal
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from duckterm.core.session_api import APIError
 
 MAX_REPLY = 64000
+CALL_TIMEOUT = 180
 
 
-def arguments(harness: str, model: str) -> list[str]:
+def arguments(harness: str, model: str, schema_path: Path | None = None) -> list[str]:
     if harness == "codex":
         args = [
             "codex",
@@ -50,6 +53,8 @@ def arguments(harness: str, model: str) -> list[str]:
         ]
         if model:
             args += ["--model", model]
+        if schema_path is not None:
+            args += ["--output-schema", str(schema_path)]
         return args + ["-"]
     if harness == "claude-code":
         args = [
@@ -76,15 +81,21 @@ def arguments(harness: str, model: str) -> list[str]:
     raise APIError(409, "Automatic memory preparation is not supported by this target harness")
 
 
-async def generate(harness: str, model: str, prompt: str) -> str:
+async def generate(
+    harness: str, model: str, prompt: str, schema: dict[str, Any] | None = None
+) -> str:
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
         raise APIError(503, "Automatic preparation is disabled on this host")
-    args = arguments(harness, model)
     env = {k: v for k, v in os.environ.items() if not k.startswith("DUCKTERM_")}
     env["DUCKTERM_INTERNAL"] = "1"
     # No repository instructions, project MCP configuration or inherited session
     # capability. CLI login remains available, but this job has no DuckTerm token.
     with tempfile.TemporaryDirectory(prefix="duckterm-memory-") as folder:
+        schema_path = None
+        if schema is not None:
+            schema_path = Path(folder) / "response-schema.json"
+            schema_path.write_text(json.dumps(schema), encoding="utf-8")
+        args = arguments(harness, model, schema_path)
         try:
             proc = await asyncio.create_subprocess_exec(
                 *args,
@@ -99,7 +110,7 @@ async def generate(harness: str, model: str, prompt: str) -> str:
             raise APIError(503, "The selected preparation harness could not start") from exc
         try:
             assert proc.stdin is not None and proc.stdout is not None
-            async with asyncio.timeout(180):
+            async with asyncio.timeout(CALL_TIMEOUT):
                 proc.stdin.write(prompt.encode())
                 await proc.stdin.drain()
                 proc.stdin.close()
@@ -115,7 +126,11 @@ async def generate(harness: str, model: str, prompt: str) -> str:
                     503, "Preparation failed; check the selected harness login or usage limit"
                 )
             return b"".join(chunks).decode("utf-8")
-        except (TimeoutError, UnicodeError, BrokenPipeError) as exc:
+        except TimeoutError as exc:
+            raise APIError(
+                503, "The selected harness took too long to prepare a history batch; try again"
+            ) from exc
+        except (UnicodeError, BrokenPipeError) as exc:
             raise APIError(503, "Preparation did not return a complete response") from exc
         finally:
             if proc.returncode is None:
