@@ -47,6 +47,11 @@ def native_path(source: dict[str, Any]) -> Path | None:
     recorded = source.get("path")
     if recorded and Path(recorded).is_file():
         return Path(recorded)
+    if runtime == "codex":
+        matches = list((Path.home() / ".codex" / "sessions").glob(f"**/rollout-*-{native}.jsonl"))
+        if len(matches) > 1:
+            raise APIError(409, "Multiple native files match this conversation identity")
+        return matches[0] if matches else None
     return runtime_for(runtime, "").locate_transcript(
         cwd=Path(source.get("cwd") or "."), session_id=native
     )
@@ -126,9 +131,26 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
                     raise APIError(
                         409, "Conversation has an incomplete or unreadable record"
                     ) from exc
+                if obj.get("type") == "session_meta" and isinstance(obj.get("payload"), dict):
+                    observed = obj["payload"].get("id")
+                    if observed and observed != source["native_id"]:
+                        raise APIError(409, "Native file contains another conversation identity")
                 payload = obj.get("message", obj.get("payload", {}))
                 content = payload.get("content") if isinstance(payload, dict) else None
+                if "type" in obj and not isinstance(obj["type"], str):
+                    raise APIError(409, "Conversation has an unreadable record type")
                 if isinstance(content, list):
+                    if any(
+                        not isinstance(b, dict) or not isinstance(b.get("type"), str)
+                        for b in content
+                    ):
+                        raise APIError(409, "Conversation has an unreadable content block")
+                    if any(
+                        b["type"] in {"text", "input_text", "output_text"}
+                        and not isinstance(b.get("text"), str)
+                        for b in content
+                    ):
+                        raise APIError(409, "Conversation has an unreadable text block")
                     attachments += sum(
                         isinstance(b, dict)
                         and b.get("type") in {"image", "input_image", "document", "audio"}
@@ -147,7 +169,13 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
                         records.append(
                             {
                                 "id": str(message["id"]),
-                                "role": message["role"],
+                                "role": (
+                                    "derived_context"
+                                    if text.startswith(
+                                        "DuckTerm continuation context (derived summary"
+                                    )
+                                    else message["role"]
+                                ),
                                 "text": text,
                                 "message_key": hashlib.sha256(
                                     json.dumps(

@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 from duckterm.core import events
 from duckterm.core.session_api import APIError
 from duckterm.harnesses import runtime_for
+from duckterm.memory_preparation import PreparationError, generation, identifier
+from duckterm.persistence.saved_state import fingerprint
 from duckterm.runtimes.base import Harness
 
 if TYPE_CHECKING:
@@ -65,7 +67,15 @@ class Restarts:
         for row in server.history.sessions():
             key = row["session_key"]
             data = self.read(key)
-            if data.get("status") == "queued" and data.get("interrupt"):
+            if data.get("status") == "queued" and data.get("memory"):
+                self.save(
+                    key,
+                    status="failed",
+                    code="preparation_expired",
+                    process_state="unknown",
+                    error="DuckTerm restarted; prepare the handoff again before switching.",
+                )
+            elif data.get("status") == "queued" and data.get("interrupt"):
                 self.save(
                     key,
                     status="failed",
@@ -77,6 +87,7 @@ class Restarts:
                 self.save(
                     key,
                     status="failed",
+                    process_state="unknown",
                     error=(
                         "DuckTerm restarted during the restart. Check the terminal before "
                         "retrying."
@@ -88,8 +99,42 @@ class Restarts:
 
     def save(self, key: str, **fields: Any) -> dict[str, Any]:
         value = {**self.read(key), **fields}
+        value["sequence"] = int(value.get("sequence", 0)) + 1
+        if value.get("request_key"):
+            receipts = dict(value.get("receipts") or {})
+            receipts[value["request_key"]] = self.operation(value)
+            while len(receipts) > 100:
+                receipts.pop(next(iter(receipts)))
+            value["receipts"] = receipts
         self.server.history.set_restart_control(key, value)
-        return value
+        return {k: v for k, v in value.items() if k != "receipts"}
+
+    @staticmethod
+    def operation(data: dict[str, Any]) -> dict[str, Any]:
+        fields = (
+            "id",
+            "request_key",
+            "request_hash",
+            "sequence",
+            "binding",
+            "preparation_id",
+            "process_state",
+            "status",
+            "error",
+            "code",
+            "target_generation",
+            "configured_model",
+        )
+        result = {k: data.get(k) for k in fields}
+        result["can_cancel"] = data.get("status") == "queued"
+        return result
+
+    def receipt(self, key: str, request_key: str) -> dict[str, Any]:
+        identifier(request_key)
+        result = self.read(key).get("receipts", {}).get(request_key)
+        if result is None:
+            raise PreparationError(404, "operation_conflict", "No restart receipt for this request")
+        return dict(result)
 
     def pending(self, key: str) -> bool:
         return self.read(key).get("status") in ACTIVE
@@ -190,11 +235,13 @@ class Restarts:
         result: dict[str, Any] = {
             "current": {
                 "harness": current,
+                "conversation_generation": generation(self.server, key),
                 "model": self.read(key).get("configured_model") or row.get("model") or "",
             },
             "resume_restart": {"available": False},
             "harnesses": [],
             "supports_interrupt_switch": True,
+            "memory_switch": {"version": 1, "available": current in {"codex", "claude-code"}},
         }
         common_error = None
         try:
@@ -297,7 +344,7 @@ class Restarts:
         if row is None:
             raise APIError(404, "Session not found")
         result = {
-            **data,
+            **{k: v for k, v in data.items() if k != "receipts"},
             "can_restart": False,
             "model": data.get("configured_model") or row.get("model") or "",
         }
@@ -316,8 +363,32 @@ class Restarts:
         return result
 
     async def request(
-        self, key: str, model: Any, harness: Any = None, *, interrupt: Any = False
+        self,
+        key: str,
+        model: Any,
+        harness: Any = None,
+        *,
+        interrupt: Any = False,
+        memory: Any = None,
+        request_key: Any = None,
+        require_preparation: bool = False,
     ) -> dict[str, Any]:
+        request_hash = fingerprint([model, harness, interrupt, memory])
+        if request_key is not None:
+            identifier(request_key)
+            try:
+                receipt = self.receipt(key, request_key)
+            except APIError as exc:
+                if exc.status != 404:
+                    raise
+            else:
+                if receipt["request_hash"] != request_hash:
+                    raise PreparationError(
+                        409, "operation_conflict", "Request key was used for another switch"
+                    )
+                return receipt
+        if memory is not None and request_key is None:
+            raise APIError(400, "Memory switches require a request key")
         if not isinstance(interrupt, bool):
             raise APIError(400, "interrupt must be true or false")
         request_epoch = self.epochs.get(key, 0)
@@ -338,10 +409,23 @@ class Restarts:
         switching = target != row.get("runtime")
         if interrupt and not switching:
             raise APIError(400, "Immediate interruption is only available for a harness switch")
-        if switching:
-            await self.switch_version(target, binary)
         if model:
             runtime_for(target, binary).model_arguments(model)
+        memory_job = None
+        if switching:
+            version = await self.switch_version(target, binary)
+            if require_preparation or memory is not None:
+                memory_job = self.server.memory_preparation.resolve_proof(
+                    key, memory, target, model
+                )
+                if version != memory_job["cli_version"]:
+                    raise PreparationError(
+                        409, "target_changed", "The target CLI changed; prepare again"
+                    )
+        elif memory is not None:
+            raise PreparationError(
+                409, "target_changed", "The target is already the current harness"
+            )
         native_id = self.server.history.session_id_for(key)
         previous = self.read(key)
         if previous.get("status") in ACTIVE:
@@ -349,6 +433,7 @@ class Restarts:
                 previous.get("requested_model") == model
                 and previous.get("requested_harness", row.get("runtime")) == target
                 and bool(previous.get("interrupt")) == interrupt
+                and previous.get("request_key") == request_key
             ):
                 return await self.describe(key)
             raise APIError(
@@ -374,8 +459,18 @@ class Restarts:
         # Another request can arrive while the screen read is in flight.
         if self.read(key).get("status") in ACTIVE:
             raise APIError(409, "A restart is already pending.")
+        if memory_job is not None:
+            self.server.memory_preparation.cheap_validate(memory_job)
         requested = self.save(
             key,
+            memory=memory,
+            request_key=request_key,
+            request_hash=request_hash,
+            preparation_id=memory_job["id"] if memory_job else None,
+            binding=memory_job["binding"] if memory_job else None,
+            process_state="source_running",
+            code=None,
+            target_generation=None,
             id=uuid.uuid4().hex,
             status="queued",
             interrupt=interrupt,
@@ -389,13 +484,17 @@ class Restarts:
             requested_at=int(time.time() * 1000),
             error=None,
         )
+        if memory_job is not None:
+            memory_job["claimed_by"] = requested["id"]
         if interrupt:
             self.interrupt_sources[requested["id"]] = sup
         if interrupt or self.turn_finished(key):
             self.schedule(key)
-        return await self.describe(key)
+        return self.operation(requested) if memory_job else await self.describe(key)
 
-    def cancel(self, key: str) -> dict[str, Any]:
+    def cancel(self, key: str, operation_id: str | None = None) -> dict[str, Any]:
+        if operation_id is not None and self.read(key).get("id") != operation_id:
+            raise PreparationError(409, "operation_conflict", "Another restart is active")
         if self.running(key):
             raise APIError(409, "Restart has already begun.")
         request_id = self.read(key).get("id")
@@ -469,7 +568,15 @@ class Restarts:
             old_version = self.read(key).get("cli_version")
             if switching:
                 assert isinstance(harness, str)
-                await self.switch_version(harness, binary)
+                version = await self.switch_version(harness, binary)
+                if self.read(key).get("memory"):
+                    job = self.server.memory_preparation.resolve_proof(
+                        key, self.read(key)["memory"], harness, self.read(key)["requested_model"]
+                    )
+                    if version != job["cli_version"]:
+                        raise PreparationError(
+                            409, "target_changed", "The target CLI changed; prepare again"
+                        )
             else:
                 await cli_version(binary)  # verify before stopping
             if (await self.live_plan(key, harness))[1] is not sup:
@@ -541,7 +648,9 @@ class Restarts:
                 ),
             )
             self.server._set_lifecycle(key, "stopped")
+            self.save(key, process_state="unknown")
             await self.server.orchestrator.stop(key)
+            self.save(key, process_state="source_stopped")
             self.server.approvals.drop_session(key)
             if switching:
                 from duckterm.harness_switch import launch
@@ -574,7 +683,14 @@ class Restarts:
                 new_version = await cli_version(binary)
             except (OSError, ValueError, TimeoutError):
                 new_version = "Not reported"
-            self.save(key, status="completed", cli_version=new_version, error=None)
+            self.save(
+                key,
+                status="completed",
+                cli_version=new_version,
+                error=None,
+                process_state="target_running",
+                target_generation=generation(self.server, key),
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -585,6 +701,7 @@ class Restarts:
                 key,
                 status="failed",
                 error=str(exc),
+                code=getattr(exc, "code", "launch_failed" if switched else "preparation_failed"),
                 configured_model=(
                     self.read(key).get("configured_model") if switched else previous_model
                 ),

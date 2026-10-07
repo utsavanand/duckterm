@@ -268,3 +268,28 @@ def test_queries_are_literal_and_read_pagination_is_complete(memory_rig):
 def test_fts_available_in_stdlib():
     with sqlite3.connect(":memory:") as conn:
         conn.execute("CREATE VIRTUAL TABLE words USING fts5(text)")
+
+
+@pytest.mark.parametrize("runtime", ["claude-code", "codex"])
+def test_non_text_block_cannot_be_silently_counted_as_processed(memory_rig, runtime):
+    server, _, _, tmp = memory_rig
+    source = {"id": "source", "runtime": runtime, "native_id": "broken", "cwd": str(tmp)}
+    native = transcript(tmp, "broken", "ignored", runtime)
+    obj = json.loads(native.read_text())
+    payload = obj["message" if runtime == "claude-code" else "payload"]
+    payload["content"] = [{"type": "text", "text": ["not a text field"]}]
+    native.write_text(json.dumps(obj) + "\n")
+    with pytest.raises(APIError, match="unreadable"):
+        read_native("agent", source)
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_current_retained_search_is_partial_after_native_cleanup(memory_rig, cached):
+    server, _, _, tmp = memory_rig
+    native = transcript(tmp, "agent-claude", "glacier original source")
+    asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "saved"))
+    if cached:
+        assert asyncio.run(lookup(server, "glacier"))["results"]
+    native.unlink()
+    result = asyncio.run(lookup(server, "glacier"))
+    assert result["results"] and not result["coverage"]["complete"]

@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — A prepared switch must bind its sources and survive a lost response
+
+Preparing a brief is not permission to stop an agent. Bind the final explicit switch to its target, model, conversation generation and exact source versions; repeat source and draft checks at the stop boundary. Persist operation receipts so a repeated request cannot stop a second process. Keep canceled dialog leases separate from an accepted switch. If target launch fails, report that the source is stopped and preserve its native recovery metadata. A newer short progress summary may update the card but must reference, rather than overwrite or silently extend, the last whole-history revision.
+
+## 2026-10-07 — Saved originals must be discoverable, and malformed blocks are gaps
+
+QA found that retaining a current transcript did not make it discoverable after provider cleanup: the live identity shadowed its retained snapshot. Search the authorized saved version while explicitly reporting incomplete current coverage. Validate native block shapes before counting attachments or normalizing text; valid JSON with an array-valued block type must produce an unavailable source, not crash the API or claim complete empty history. Exercise both runtimes, warm and cold caches, and token revocation during a paused read.
+
 ## 2026-10-07 — A harness change needs the complete chain of original conversations
 
 A single previous-conversation field loses older generations after a second switch. Reconstruct the chain from durable checkpoint identities, retain immutable original bytes at explicit checkpoints, and use content-versioned handles scoped to the owning session. Indexes are disposable; they cannot grant access after source deletion or a scope change. Verify a three-generation chain after native cleanup and service reconstruction, exact older versions, forged handles and mid-read scope changes. A saved checkpoint remains useful even when a native snapshot cannot be retained; state that limitation instead of failing its fact capture.

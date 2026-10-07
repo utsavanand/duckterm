@@ -73,6 +73,9 @@ class Memory:
                 conversation = record.get("conversation")
                 if isinstance(conversation, dict):
                     native(conversation)
+                for retained_item in record.get("memory_sources", []):
+                    if isinstance(retained_item, dict):
+                        native(retained_item)
                 retained = record.get("memory_source")
                 if isinstance(retained, dict):
                     native(retained)
@@ -152,9 +155,17 @@ class Memory:
             "SELECT id,title,sha256,media_type FROM artifacts WHERE session_key=? ORDER BY id",
             (key,),
         ):
-            if not artifact["media_type"].startswith("text/"):
-                continue
             source_id = fingerprint([key, "artifact", artifact["id"]])[:32]
+            if not artifact["media_type"].startswith("text/"):
+                sources[source_id] = {
+                    "id": source_id,
+                    "kind": "attachment",
+                    "title": artifact["title"],
+                    "version": artifact["sha256"],
+                    "records": [],
+                    "unprocessed_attachments": 1,
+                }
+                continue
             sources[source_id] = {
                 "id": source_id,
                 "kind": "artifact",
@@ -224,9 +235,14 @@ class Memory:
                     loaded = cache.get(cache_key)
                     if loaded is None:
                         loaded = memory_sources.read_native(key, source)
-                        if len(cache) >= 8:
-                            cache.pop(next(iter(cache)))
-                        cache[cache_key] = loaded
+                        # The index is the long-lived cache; keep only a small
+                        # normalized source in RAM, never eight huge transcripts.
+                        cache.clear()
+                        if (
+                            sum(len(r["text"].encode()) for r in loaded["records"])
+                            <= 8 * 1024 * 1024
+                        ):
+                            cache[cache_key] = loaded
                     available.append(loaded)
                 elif source["kind"] == "artifact":
                     with sqlite3.connect(self.db_path.as_uri() + "?mode=ro", uri=True) as conn:
@@ -251,6 +267,21 @@ class Memory:
                     available.append(source)
             except (APIError, OSError, UnicodeError) as exc:
                 unavailable.append({"id": source["id"], "reason": str(exc)})
+                # Search can still expose a clearly versioned saved checkpoint
+                # when the live generation disappeared. Preparation remains
+                # incomplete: a retained prefix cannot stand in for later work.
+                if source.get("current") and not source.get("unavailable"):
+                    retained = [
+                        s
+                        for s in catalog["retained"].values()
+                        if s["id"] == source["id"] and not s.get("unavailable")
+                    ]
+                    if retained:
+                        try:
+                            loaded = memory_sources.read_native(key, retained[-1])
+                            available.append({**loaded, "retained_fallback": True})
+                        except (APIError, OSError, UnicodeError):
+                            pass
         return available, unavailable
 
     async def operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:

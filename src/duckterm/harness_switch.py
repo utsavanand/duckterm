@@ -22,6 +22,10 @@ async def prepare(server: Server, key: str, row: dict[str, Any]) -> dict[str, An
     """Checkpoint before stop; callers must recheck turn/draft after this await."""
     native_id = server.history.session_id_for(key)
     previous = server.history.restart_control(key)
+    if previous.get("memory"):
+        return await server.memory_preparation.prepared(
+            key, previous["memory"], previous["requested_harness"], previous["requested_model"]
+        )
     checkpoint = await server._create_checkpoint(key, row, "Before harness switch")
     if checkpoint.get("saved") is not True or checkpoint.get("handoff_eligible") is not True:
         raise APIError(
@@ -86,10 +90,16 @@ async def validate(server: Server, key: str, prepared: dict[str, Any]) -> None:
             409, "Handoff sources changed while preparing the switch. The agent was kept."
         )
 
+    if prepared.get("_memory_job"):
+        manager = server.memory_preparation
+        manager.cheap_validate(manager.get(key, prepared["_memory_job"]))
     prepared["_validated_fence"] = current["fence"]
 
 
 def validate_facts(server: Server, key: str, prepared: dict[str, Any]) -> None:
+    if prepared.get("_memory_job"):
+        manager = server.memory_preparation
+        manager.cheap_validate(manager.get(key, prepared["_memory_job"]))
     if fingerprint(server.progress_coordinator.facts(key)) != fingerprint(
         prepared["_captured"]["facts"]
     ):

@@ -269,6 +269,11 @@ class ProgressCoordinator:
         ):
             # Exact-boundary approval is never extended by an ordinary digest.
             reasons.append("legacy_baseline_unreviewed")
+        baseline = None
+        if prior:
+            baseline = prior["id"] if prior.get("memory") else prior.get("memory_baseline_ref")
+        if baseline:
+            reasons.append("whole_history_preparation_required")
         # Re-read actual bytes, not mtime/size, after both provider calls.
         refreshed = await self.capture(key)
         if refreshed is None or refreshed["conversation"] != captured["conversation"]:
@@ -286,6 +291,7 @@ class ProgressCoordinator:
             "input_key": input_key,
             "prior_revision": prior["id"] if prior else None,
             "summary": digest["summary"],
+            **({"memory_baseline_ref": baseline} if baseline else {}),
             "summary_validation": {"ready": not reasons, "reason_codes": reasons},
         }
         return self.persist(
@@ -341,6 +347,8 @@ class ProgressCoordinator:
             revision_id = self.server.digests.add_revision(key, {**value, "item_refs": refs}, now)
             if checkpoint is not None:
                 record = checkpoint_marker(captured, revision_id, checkpoint["git"], now)
+                if "memory_sources" in checkpoint:
+                    record["memory_sources"] = checkpoint["memory_sources"]
                 conn.execute(
                     "INSERT INTO checkpoints "
                     "(id,session_key,label,summary,record_json,markdown_path,created_at) "
@@ -351,6 +359,7 @@ class ProgressCoordinator:
             # be displayed, but can never certify a handoff.
             if promote and (
                 value["summary_validation"]["ready"]
+                or value.get("memory_baseline_ref")
                 or prior is None
                 or not prior["summary_validation"]["ready"]
             ):
