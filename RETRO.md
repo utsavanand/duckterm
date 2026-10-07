@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Keep regression checks isolated from rebuilds
+
+A harness-picker rewrite removed the existing availability explanation used by other session workflows. Retain that explanation while separating it from switch eligibility. Also never run a browser rebuild beside another browser run in the same worktree: Vite briefly removes dist, so the active server can serve its unbuilt-dashboard fallback. Verify the corrected committed tree in its own checkout.
+
 ## 2026-10-06 — Native resume proof must not hide harness switching
 
 A session without a verified conversation could not open Restart, even though another harness can start a seeded conversation on the same card. Discover per-harness availability separately, scope model choices to the selected harness, preserve draft and turn checks, and label switches as new conversations both before and after completion. Test missing native identity, blocked drafts, exact model submission, stale card responses and cancelable queues.
