@@ -1,7 +1,5 @@
 # Retro — lessons from real breakage
 
-- Tightening screen-state keywords is incomplete if an alternative still matches prose. Pair incident tests with explanations quoting interruption and approval UI text, plus live controls, so documentation on screen cannot become a busy/waiting event.
-
 ## 2026-10-04 — A Codex session's own words kept it "busy" for two hours
 **Broke:** ui-dev sat at an empty Codex prompt from 20:15 while DuckTerm showed
 it busy, so Oracle's idle reminder never fired and its inbox waited about two
@@ -14,6 +12,8 @@ waiting and then busy (events with launched: true).
 line with its timer, the real approval prompt), never free words that prose
 can contain. Every new pattern gets a test with realistic conversation text
 on screen.
+
+Also (main-qa, PR #232): Tightening screen-state keywords is incomplete if an alternative still matches prose. Pair incident tests with explanations quoting interruption and approval UI text, plus live controls, so documentation on screen cannot become a busy/waiting event.
 
 ## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
 
