@@ -88,6 +88,7 @@ from duckterm.helpers import (
 from duckterm.helpers.private_files import private_read, private_write
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize as summarize
+from duckterm.memory import Memory
 from duckterm.persistence import backup_sync, mail_analytics
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
 from duckterm.persistence.artifacts import ArtifactError
@@ -420,6 +421,7 @@ class Server:
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore(conn=self.history._conn)
         self.progress_coordinator = ProgressCoordinator(self)
+        self.memory = Memory(self)
         from duckterm.handoff_review import HandoffReview
 
         self.handoff_review = HandoffReview(self)
@@ -551,7 +553,11 @@ class Server:
             return
         if path.startswith("/api/v1/session/"):
             try:
-                status, result = self.history.session_api.handle(method, path, headers, body)
+                if urllib.parse.urlsplit(path).path.startswith("/api/v1/session/memory/"):
+                    result = await self.memory.session_request(method, path, headers)
+                    status = 200
+                else:
+                    status, result = self.history.session_api.handle(method, path, headers, body)
             except APIError as exc:
                 status, result = exc.status, {"error": str(exc)}
             await _write_json(writer, status, result)
@@ -4528,6 +4534,13 @@ class Server:
         identity = uuid.uuid4().hex
         source = captured["source"]
         record = checkpoint_marker(captured, revision["id"] if revision else prior, git, now)
+        try:
+            retained = await self.memory.retain_current(session_key, captured)
+        except APIError:
+            retained = None
+            record["memory_retention"] = "unavailable"
+        if retained is not None:
+            record["memory_source"] = retained
         conn = self.history._conn
         with transaction(conn):
             current = self.history.session(session_key)
@@ -4571,7 +4584,12 @@ class Server:
         markdown += (
             f"\n## Checkpoint status\n\nSummary: {result['summary_state']}\n"
             f"Handoff at save: {result['handoff_eligible']}\n"
-            "This is a marker over retained history, not a backup of the provider transcript.\n"
+            + (
+                "Original conversation bytes at this checkpoint are retained privately. "
+                "Deleting the session removes its retained copies.\n"
+                if result["record"].get("memory_source")
+                else "This marker has no retained copy of the provider transcript.\n"
+            )
         )
         relative = await asyncio.to_thread(write_markdown, session_key, now, markdown, identity)
         if relative is not None:

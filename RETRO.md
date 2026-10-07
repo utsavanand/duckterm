@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — A harness change needs the complete chain of original conversations
+
+A single previous-conversation field loses older generations after a second switch. Reconstruct the chain from durable checkpoint identities, retain immutable original bytes at explicit checkpoints, and use content-versioned handles scoped to the owning session. Indexes are disposable; they cannot grant access after source deletion or a scope change. Verify a three-generation chain after native cleanup and service reconstruction, exact older versions, forged handles and mid-read scope changes. A saved checkpoint remains useful even when a native snapshot cannot be retained; state that limitation instead of failing its fact capture.
+
 ## 2026-10-07 — Slow background reads can consume the browser's action slots
 
 A retained CI trace showed Undo succeeded only after a seven-second delay before its request was sent. Repeated hidden connector refreshes occupied four browser connections beside the event stream and a slow recovery read. Focus fanout and stale-host overwrites were independently reproduced. Share pending status reads by resolved host, abort obsolete local reads, reject late results after host changes, and coalesce backend CLI probes so abandoned viewers cannot fill the executor. Keep the original action timeout and verify real HTTP congestion, not just mocked responses.
