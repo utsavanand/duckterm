@@ -707,6 +707,8 @@ class Server:
         if not isinstance(raw, dict):
             await _write_json(writer, 400, {"error": "event must be a JSON object"})
             return
+        # Only the supervisor may assign identity; hooks can report observations.
+        raw.pop("_assigned_native_id", None)
         # agent_pid comes from an external hook ($PPID) and is later fed to
         # os.kill in the liveness sweep — coerce to a positive int or drop it.
         if "agent_pid" in raw:
@@ -1469,6 +1471,14 @@ class Server:
         sessions = self.history.sessions()
         subagents = self.history.subagents_by_session()
         for s in sessions:
+            identity = self.history.native_identity(str(s["session_key"]))
+            s["conversation_identity"] = {
+                "status": identity["status"],
+                "source": identity["source"],
+                "assignable": _build_runtime(
+                    s.get("runtime"), str(s.get("command") or "")
+                ).session_id_assignable,
+            }
             transfer = transfers.session_transfer(str(s.get("session_key") or ""))
             if transfer:
                 s["remote_transfer"] = {
@@ -2205,6 +2215,12 @@ class Server:
             return 400, {"error": "archived sessions can't be resumed (archive is final)"}
         if row.get("state") == "merged" or self.history.fork_merges.closing(session_key):
             return 400, {"error": "Closed or merging sessions cannot be resumed"}
+        identity = self.history.native_identity(session_key)
+        if identity["status"] in {"pending", "contested"}:
+            return 409, {
+                "error": "Cannot safely resume: conversation identity is " + identity["status"],
+                "code": "ambiguous_resume_identity",
+            }
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
         # The saved worktree/dir may be gone (deleted worktree, pruned, wiped
         # home). Relaunching into a missing dir lands the agent in $HOME with no

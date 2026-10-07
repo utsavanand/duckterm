@@ -1,5 +1,17 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Conversation identity must precede the process
+
+Ordinary launches learned conversation IDs only from optional hooks, then lost
+that evidence when old events were retained away. Assign Claude/Copilot UUIDs
+and commit them with the session before spawn; persist observed identities too.
+The event bus previously swallowed persistence errors, so launch now requires
+its identity write to succeed. Preserve generation barriers and switch rollback;
+never backfill a pending binding from the previous conversation. Test a real
+no-hook child reading its committed ID, failed writes, retention, duplicate UUIDs
+and current-generation mismatches. Reuse durable native_binding metadata rather
+than introducing redundant columns and an unnecessary schema migration.
+
 ## 2026-10-05 — Two terminals in one session need separate paste targets
 
 A companion shell shares an agent's session identity but not its input stream.

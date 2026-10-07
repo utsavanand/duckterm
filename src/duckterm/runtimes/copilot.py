@@ -18,6 +18,7 @@ _WAITING = re.compile(r"(allow|approve|\(y/n\)|continue\?)", re.IGNORECASE)
 
 
 class CopilotRuntime(Harness):
+    session_id_assignable = True
     name = "copilot"
     # Copilot CLI 1.0.62: preToolUse carries toolArgs {message, requestedSchema}
     # and the agent waits for the answer.

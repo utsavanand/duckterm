@@ -417,16 +417,18 @@ def test_real_isolated_terminal_restarts_under_same_key(tmp_path, monkeypatch, s
                 assert command[:3] == ["claude", "--model", "test-model"]
                 assert "NEW conversation" in command[-1]
                 assert row["runtime"] == "claude-code"
-                assert store.session_id_for("a") is None
+                assigned = command[command.index("--session-id") + 1]
+                assert uuid.UUID(assigned).version == 4
+                assert store.session_id_for("a") == assigned
                 generation = state["native_binding"]["generation"]
                 await hook(
                     server,
                     event_type="SessionStart",
                     runtime="claude-code",
-                    session_id="new-native-id",
+                    session_id=assigned,
                     launch_generation=generation,
                 )
-                assert store.session_id_for("a") == "new-native-id"
+                assert store.session_id_for("a") == assigned
                 assert state["previous_conversation"]["native_id"] == A
             else:
                 assert command[:5] == ["codex", "-c", 'model="test-model"', "resume", A]

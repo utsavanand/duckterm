@@ -22,7 +22,7 @@ from duckterm.core import events
 from duckterm.core.session_api import SessionAPI
 from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
-from duckterm.persistence import mail_analytics
+from duckterm.persistence import mail_analytics, native_identity
 from duckterm.persistence.folder_chats import FolderChats
 from duckterm.persistence.layouts import Layouts
 from duckterm.runtimes.base import AT_REST_STATES, SessionState
@@ -382,6 +382,10 @@ class HistoryStore:
             self._conn.executescript(_SCHEMA)
 
     def record(self, event: Event) -> None:
+        with self._conn:
+            self._record(event)
+
+    def _record(self, event: Event) -> None:
         """Persist an event and fold it into its session row. Called for every
         published event (the EventBus sink)."""
         key = session_key_of(event)
@@ -390,6 +394,8 @@ class HistoryStore:
         # SessionEnd/SessionStart). `clear_tombstones()` (duckterm restart) is
         # the only way back, for a session deleted by mistake.
         if key is not None and self._is_tombstoned(key):
+            if event.get("_assigned_native_id"):
+                raise ValueError("Cannot assign conversation identity to a deleted session")
             return
         parent = event.get("parent_session_key")
         if parent and self._is_tombstoned(str(parent)):
@@ -423,6 +429,7 @@ class HistoryStore:
             return
         if key is not None:
             self._upsert_session(key, event)
+            native_identity.record(self._conn, key, event)
             row = self.session(key)
             if row and row["state"] in AT_REST_STATES:
                 # Use the folded state: late SessionEnd events after Stop must
@@ -557,18 +564,18 @@ class HistoryStore:
         return {r["kind"]: r["count"] for r in rows}
 
     def session_id_for(self, key: str) -> str | None:
-        """The agent runtime's own session id (for transcript correlation), read
-        from the most recent event that carried one."""
-        binding = self.restart_control(key).get("native_binding")
-        if binding is not None:
-            return str(binding["native_id"]) if binding.get("native_id") else None
-        row = self._conn.execute(
-            "SELECT json_extract(payload_json, '$.session_id') AS sid "
-            "FROM events WHERE session_key = ? AND sid IS NOT NULL "
-            "ORDER BY ts DESC LIMIT 1",
-            (key,),
-        ).fetchone()
-        return str(row["sid"]) if row and row["sid"] else None
+        native_id = self.native_identity(key)["native_id"]
+        return str(native_id) if native_id else None
+
+    def native_identity(self, key: str) -> dict[str, Any]:
+        """Identity evidence only; a recorded ID does not prove a transcript exists."""
+        row = self.session(key)
+        if row is None:
+            return {"native_id": None, "source": "none", "status": "missing"}
+        identity = native_identity.info(row)
+        if identity["status"] == "missing":
+            return native_identity.info(row, native_identity.legacy(self._conn, key))
+        return identity
 
     def add_checkpoint(
         self,

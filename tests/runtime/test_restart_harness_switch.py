@@ -410,6 +410,10 @@ def test_seeded_queue_can_learn_initial_id_from_real_parent_turn_end(rig):
     server.history._conn.execute(
         "DELETE FROM events WHERE json_extract(payload_json, '$.session_id') IS NOT NULL"
     )
+    # This fixture models an identity never captured, not telemetry retention.
+    control = server.history.restart_control("a")
+    control.pop("native_observation", None)
+    server.history.set_restart_control("a", control)
     server.history._conn.commit()
     assert server.history.session_id_for("a") is None
 
