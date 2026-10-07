@@ -53,6 +53,7 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
   }, [refresh, remote]);
   const closeMenu = useCallback(() => { setMenuAnchor(null); opener.current?.focus(); }, []);
   useEffect(() => { if (!showActions) { setMenuAnchor(null); setOpen(false); } }, [showActions]);
+  useEffect(() => { setOpen(false); setMenuAnchor(null); setOptions(null); }, [session.runtime]);
   async function loadModels() {
     setLoadingModels(true); setModelsError("");
     try { const data = await api.models(session.key); if (alive.current) setChoices(data.models); }
@@ -106,7 +107,7 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
     finally { actingRef.current = false; if (alive.current) setActing(false); }
   }
   const disabled = remote || pending || acting;
-  const reason = remote ? "Restart and Change model are available on This Mac only for now." : statusError;
+  const reason = remote ? "Restart and Change model are available on This Mac only for now." : statusError || status?.reason;
   const action = switching ? `Switch to ${harnessName(harness)}` : "Restart now";
   return <>
     {showActions && <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={disabled} title={reason} onClick={e => show(e.currentTarget)}>Restart</button>}

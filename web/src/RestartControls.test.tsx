@@ -137,3 +137,12 @@ it("discards late option discovery when the selected card changes", async () => 
   expect(screen.getByText("Other project · This Mac")).toBeVisible();
   expect(api.restart).not.toHaveBeenCalled();
 });
+
+it("closes stale confirmation if the same card changes harness elsewhere", async () => {
+  const view = render(<RestartControls session={session} />);
+  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
+  await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
+  view.rerender(<RestartControls session={{ ...session, runtime: "claude-code" }} />);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(api.restart).not.toHaveBeenCalled();
+});
