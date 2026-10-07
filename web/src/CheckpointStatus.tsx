@@ -8,9 +8,11 @@ export function CheckpointFacts({ checkpoint: cp, compact = false }: { checkpoin
     <dl className="rd-checkpoint-facts">
       <dt>{compact ? "Saved" : "Checkpoint"}</dt><dd>{cp.saved === false ? "Not saved" : compact ? checkpointDate(cp.created_at) : "Saved"}</dd>
       <dt>Summary source</dt><dd>{checkpointDate(cp.summary_source_at)}</dd>
+      {!compact && cp.summary_origin === "owner-reviewed" && <><dt>Summary origin</dt><dd>Owner-reviewed brief</dd></>}
       <dt>Handoff at save</dt><dd className={state.ready ? "ready" : ""}>{state.handoff}</dd>
     </dl>
     {compact ? <p className="rd-checkpoint-coverage">A switch checks current work and notes again before stopping the agent.</p> : <div className="rd-checkpoint-coverage">
+      {cp.summary_origin === "owner-reviewed" && <p>This brief covers the owner-reviewed work and stated gaps.</p>}
       {cp.format === "fork_merge" ? <p>This merge note covers the child’s findings, not the full parent session.</p> : <>
         {checkpointReasons(cp).map(reason => <p key={reason}>{reason}</p>)}
         <p>{cp.coverage?.state === "retained" ? "Referenced event history is retained." : cp.coverage?.state === "missing" ? "Referenced event history is incomplete." : "History coverage is not verified."}

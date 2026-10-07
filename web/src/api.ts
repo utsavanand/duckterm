@@ -669,6 +669,7 @@ export interface CheckpointRecord {
   saved?: boolean;
   summary_state?: string;
   summary_source_at?: number | null;
+  summary_origin?: "generated" | "owner-reviewed";
   handoff_eligible?: boolean;
   coverage?: { state?: string; events?: number; expected_events?: number };
   reason_codes?: string[];

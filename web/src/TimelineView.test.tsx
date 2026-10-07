@@ -80,3 +80,15 @@ it("uses source time and keeps malformed legacy records and merge history readab
   expect(screen.getByText("Fork merges")).toBeVisible();
   expect(screen.getByText("Child findings")).toBeInTheDocument();
 });
+
+it("preserves the complete owner-reviewed brief and identifies its origin", async () => {
+  const text = "Reviewed work. ".repeat(400) + "Known gaps: verify the remote host.";
+  const p = page(); p.entries = [{ id: "cp", ts: 1, kind: "checkpoint", one_line: "Owner-reviewed handoff", detail: { text: "Owner-reviewed handoff" }, refs: [{ source: "checkpoints", id: "cp" }] }];
+  vi.mocked(api.timeline).mockResolvedValue(p);
+  vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [{ id: "cp", label: "Owner-reviewed handoff", summary: text, created_at: 1, saved: true, summary_origin: "owner-reviewed", record: {} as never }] });
+  render(<TimelineView session={session} />);
+  await screen.findByText(text);
+  fireEvent.click(screen.getByText("Owner-reviewed handoff"));
+  expect(screen.getByText("Owner-reviewed brief")).toBeVisible();
+  expect(screen.getByText(text).textContent).toBe(text);
+});
