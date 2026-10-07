@@ -1,3 +1,4 @@
+import type { ConversationRecoveryService, ConversationIdentity, ConversationCandidates } from "./conversationRecoveryState";
 import type { ForkMergePreview, ForkMergeRecord, ForkMergeService } from "./ForkMergeDialog";
 import { routedFetch as fetch, sessionFetch, splitSessionRef, setRemoteGroup, changeRemoteFolders } from "./hostTransport";
 // Thin wrapper over the Duckterm server. Every POST action the backend
@@ -674,6 +675,21 @@ export function forkMergeService(key: string): ForkMergeService {
       const record = (await forkMergeHistory(key)).merges.find(row => row.id === id);
       if (!record) throw new Error("Merge record is unavailable");
       return record;
+    },
+  };
+}
+
+export function conversationRecoveryService(key: string): ConversationRecoveryService {
+  const path = `/sessions/${encodeURIComponent(splitSessionRef(key).key)}/conversation-`;
+  return {
+    identity: () => get<ConversationIdentity>(path + "recovery", key, { authed: true }),
+    candidates: () => get<ConversationCandidates>(path + "candidates", key, { authed: true }),
+    installHooks: () => post<ConversationIdentity>(path + "hooks", {}, key),
+    adopt: async (handle, revision) => {
+      const value = await post<ConversationIdentity>(path + "adopt", { handle, revision }, key);
+      window.dispatchEvent(new Event("conversation-recovery-changed"));
+      window.dispatchEvent(new Event("remote-sessions-refresh"));
+      return value;
     },
   };
 }

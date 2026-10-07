@@ -1,5 +1,8 @@
+import { SessionConversationRecovery } from "./ConversationRecovery";
+import { identityBlocksResume } from "./conversationRecoveryState";
+import type { ConversationIdentity } from "./conversationRecoveryState";
 import { requestArchive } from "./ArchiveUndo";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ForkMergeDialog } from "./ForkMergeDialog";
 import { api, forkMergeService } from "./api";
 import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
@@ -20,6 +23,9 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
   onUngroup?: () => Promise<void>;
 }) {
   const toast = useToast();
+  const [recovery, setRecovery] = useState<{ key: string; identity: ConversationIdentity } | null>(null);
+  const updateRecovery = useCallback((identity: ConversationIdentity) => setRecovery({ key: s.key, identity }), [s.key]);
+  const resumeBlocked = recovery?.key === s.key ? !recovery.identity.canResume : identityBlocksResume(s);
   const effState = effectiveState(s, now);
   const archived = effState === "archived" || effState === "merged";
   const [merging, setMerging] = useState(false);
@@ -144,6 +150,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
     </div>
     <dl className="rd-session-controls-meta"><div><dt>Harness</dt><dd>{s.runtime ?? "—"}</dd></div>
       <div><dt>Model</dt><dd>{s.model ?? "Not reported yet"}</dd></div></dl>
+    {["claude-code", "codex", "copilot"].includes(s.runtime ?? "") && <SessionConversationRecovery key={s.key} session={s} stopped={!live && !archived} onIdentity={updateRecovery} />}
     <fieldset className="rd-session-controls-actions" disabled={ending || archiving || resuming}>
           {s.launched && <RestartControls key={s.key} session={s} showActions={live} />}
           {s.parentKey && !archived && <button className="rd-btn rd-btn-sm" onClick={() => setMerging(true)}>Merge back</button>}
@@ -151,7 +158,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
             <button
               className="rd-btn rd-btn-sm rd-btn-primary"
               title="Relaunch this session — continues the conversation for Claude Code"
-              disabled={resuming}
+              disabled={resuming || resumeBlocked}
               onClick={resumeSession}
             >
               {resuming ? (

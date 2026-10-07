@@ -27,6 +27,8 @@ def info(row: dict[str, Any], legacy_id: str | None = None) -> dict[str, Any]:
     binding = control.get("native_binding")
     if binding is not None:
         source = binding.get("source", "observed")
+        if binding.get("source") == "detached" and binding.get("native_id") is None:
+            return {"native_id": None, "source": "none", "status": "missing"}
         if binding.get("contested"):
             return {"native_id": None, "source": source, "status": "contested"}
         # An explicit empty binding is a generation boundary, never permission
@@ -88,3 +90,84 @@ def record(conn: sqlite3.Connection, key: str, event: dict[str, Any]) -> None:
     conn.execute(
         "UPDATE sessions SET restart_json=? WHERE session_key=?", (json.dumps(control), key)
     )
+
+
+def revision(row: dict[str, Any]) -> str:
+    """Identity and lifecycle snapshot; unrelated display-name edits are safe."""
+    import hashlib
+
+    fields = ("state", "runtime", "cwd", "worktree_path", "launched", "updated_at", "restart_json")
+    raw = json.dumps({field: row.get(field) for field in fields}, sort_keys=True)
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
+def adopt(conn: sqlite3.Connection, key: str, expected: str, native_id: str) -> None:
+    """Serialize the stale/duplicate checks and durable attachment across servers."""
+    import uuid
+
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        saved = conn.execute("SELECT * FROM sessions WHERE session_key=?", (key,)).fetchone()
+        if saved is None or revision(dict(saved)) != expected:
+            raise ValueError("Session changed; reload the conversation picker")
+        row = dict(saved)
+        current = info(row, legacy(conn, key))
+        if row.get("state") not in {"stopped", "interrupted"} or current["status"] != "missing":
+            raise ValueError("This session is no longer eligible for recovery")
+        for peer in conn.execute("SELECT * FROM sessions WHERE runtime=?", (row["runtime"],)):
+            if peer["session_key"] == key:
+                continue
+            control = json.loads(peer["restart_json"] or "{}")
+            binding = control.get("native_binding") or {}
+            identity = info(dict(peer), legacy(conn, peer["session_key"]))
+            if binding.get("native_id") == native_id or identity["native_id"] == native_id:
+                raise ValueError("This conversation already belongs to another DuckTerm session")
+        control = json.loads(row.get("restart_json") or "{}")
+        control["native_binding"] = {
+            "native_id": native_id,
+            "runtime": row["runtime"],
+            "source": "adopted",
+            "generation": uuid.uuid4().hex,
+            "retired_ids": [],
+        }
+        control["native_id_pending"] = False
+        control.pop("native_observation", None)
+        conn.execute(
+            "UPDATE sessions SET restart_json=? WHERE session_key=?", (json.dumps(control), key)
+        )
+
+
+def detach(conn: sqlite3.Connection, key: str, expected: str) -> None:
+    """Undo only an explicit adoption; keep a generation barrier to old hooks."""
+    import time
+    import uuid
+
+    with conn:
+        conn.execute("BEGIN IMMEDIATE")
+        saved = conn.execute("SELECT * FROM sessions WHERE session_key=?", (key,)).fetchone()
+        if saved is None or revision(dict(saved)) != expected:
+            raise ValueError("Session changed; check recovery status before undoing")
+        row = dict(saved)
+        control = json.loads(row.get("restart_json") or "{}")
+        binding = control.get("native_binding") or {}
+        if (
+            row.get("state") not in {"stopped", "interrupted", "terminated"}
+            or binding.get("source") != "adopted"
+        ):
+            raise ValueError("Only a stopped session's explicitly adopted identity can be undone")
+        control["native_detach"] = {
+            "native_id": binding.get("native_id"),
+            "at": int(time.time() * 1000),
+        }
+        control["native_binding"] = {
+            "runtime": row["runtime"],
+            "source": "detached",
+            "native_id": None,
+            "generation": uuid.uuid4().hex,
+            "retired_ids": [binding["native_id"]],
+        }
+        control.pop("native_observation", None)
+        control["native_id_pending"] = False
+        conn.execute(
+            "UPDATE sessions SET restart_json=? WHERE session_key=?", (json.dumps(control), key)
+        )

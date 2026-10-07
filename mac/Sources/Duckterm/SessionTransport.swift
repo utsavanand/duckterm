@@ -149,7 +149,10 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         let shellRoute = ["GET", "POST", "DELETE"].contains(method)
             && components.query == nil
             && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/shell$"#, options: .regularExpression) != nil
-        guard shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
+        let recoveryRoute = components.query == nil && (
+            (method == "GET" && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/conversation-(recovery|candidates)$"#, options: .regularExpression) != nil)
+            || (method == "POST" && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/conversation-(adopt|hooks|detach)$"#, options: .regularExpression) != nil))
+        guard recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
             throw LaunchDestination.Failure.message("Unsupported session operation")
         }
         var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!

@@ -1,3 +1,4 @@
+import { identityBlocksResume } from "./conversationRecoveryState";
 import { SidebarFilters } from "./SidebarFilters";
 import { hasFilters, matchesFilters, sidebarSessions, SidebarFilterControls } from "./sidebarFilterState";
 import { desktop } from "./desktop";
@@ -642,7 +643,7 @@ function TreeRow({
             )}
           </span>
           {effState === "stopped" && s.launched && <button className="rd-row-resume"
-            aria-label={`Resume ${s.label}`} disabled={resuming} onClick={resumeSession}>
+            aria-label={`Resume ${s.label}`} disabled={resuming || identityBlocksResume(s)} onClick={resumeSession}>
             {resuming ? "Resuming…" : "Resume"}
           </button>}
         </div>

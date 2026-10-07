@@ -417,6 +417,9 @@ class Server:
         from duckterm.restarts import Restarts
 
         self.restarts = Restarts(self)
+        from duckterm.conversation_recovery import ConversationRecovery
+
+        self.conversation_recovery = ConversationRecovery(self)
         from duckterm.model_catalog import ModelCatalog
 
         self.model_catalog = ModelCatalog()
@@ -557,6 +560,17 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        recovery_route = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/conversation-(recovery|candidates|adopt|hooks|detach)",
+            path,
+        )
+        if recovery_route:
+            from duckterm.conversation_recovery import handle as recovery_handle
+
+            await recovery_handle(
+                self, writer, headers, recovery_route[1], recovery_route[2], method, body
+            )
+            return
         if urllib.parse.urlsplit(path).path.startswith("/bugreport/"):
             await self._bugreport(writer, headers, method, path, body)
             return

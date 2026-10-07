@@ -17,10 +17,7 @@ test("card actions stay accessible in every density; only stopped rows offer Res
     for (const state of ["interrupted","terminated","busy"]) {
       await expect(page.locator(".rd-row",{has:page.getByText(`Review ${state}`,{exact:true})}).locator(".rd-row-resume")).toHaveCount(0);
     }
-    await page.route(`**/sessions/${keys[0]}/resume`,route=>route.fulfill({status:409,json:{error:"cannot verify which conversation belongs to this session"}}));
-    await stopped.getByRole("button",{name:"Resume Review stopped",exact:true}).click();
-    await expect(page.getByText("Resume failed: cannot verify which conversation belongs to this session",{exact:true})).toBeVisible();
-    await expect(stopped.getByRole("button",{name:"Resume Review stopped",exact:true})).toBeEnabled();
+    await expect(stopped.getByRole("button",{name:"Resume Review stopped",exact:true})).toBeDisabled();
     await stopped.locator(".rd-row-name").click();
     const card=page.getByRole("region",{name:"Session controls"});
     for (const density of ["compact","standard","relaxed"]) {
@@ -30,7 +27,8 @@ test("card actions stay accessible in every density; only stopped rows offer Res
       await expect(card.getByRole("button",{name:"Resume",exact:true})).toBeVisible();
       await expect(card.getByRole("button",{name:"Notes",exact:true})).toBeVisible();
       await expect(card.getByRole("button",{name:"Archive",exact:true})).toBeVisible();
-      await expect(card.locator("summary")).toHaveCount(0);
+      await expect(card.locator(".rd-session-controls-actions summary")).toHaveCount(0);
+      await expect(card.getByRole("button",{name:"Resume",exact:true})).toBeDisabled();
       const deletion=card.locator(".rd-session-controls-danger").getByRole("button",{name:"Delete",exact:true});
       await expect(deletion).toBeVisible();
       const actionsBox=await card.locator(".rd-session-controls-actions").boundingBox();
