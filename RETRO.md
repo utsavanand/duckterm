@@ -11,9 +11,14 @@ handlers, and retain visible recovery/pending-restart notices in the detail pane
 
 Browser acceptance exposed two menu-specific failures: terminal autoscroll closed
 the menu before an action could be clicked, and focus events from a portal-based
-model picker replaced the parent menu's return target. Dismiss only for scrolling
-the row's ancestors, and scope keyboard/focus handling to the menu's own DOM.
+model picker replaced the parent menu's return target. Dismiss on outside pointer/wheel input, not programmatic scroll events, and scope
+keyboard/focus handling to the menu's own DOM.
+Focus the menu and its return target with preventScroll: programmatic scrolling
+at the bottom of a long sidebar otherwise triggers the dismissal listener.
 Archive Undo must continue to preserve the same terminal node and unsent draft.
+Making rows keyboard-focusable also means reselecting the active row takes focus
+from its terminal without changing the selected key. Send an explicit focus
+request for row activation; opening or dismissing its menu must not send one.
 
 ## 2026-10-07 — Slow background reads can consume the browser's action slots
 

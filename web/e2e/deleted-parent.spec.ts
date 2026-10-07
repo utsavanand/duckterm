@@ -35,6 +35,7 @@ test("deleting a parent immediately restores child controls and preserves descen
     await expandFolder(page, group);
     await row(child).locator(".rd-row-click").click();
     await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
     await row(grandchild).locator(".rd-row-click").click();
     await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder", exact: true })).toHaveCount(0);
   } finally {

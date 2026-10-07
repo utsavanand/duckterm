@@ -23,23 +23,19 @@ export function SessionActionMenu({ anchor, label, expanded, children, onClose }
     };
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
     if (menu.current) observer?.observe(menu.current);
-    place(); (focused.current && !focused.current.disabled ? focused.current : menu.current)?.focus();
-    const outside = (event: PointerEvent) => {
+    place(); (focused.current && !focused.current.disabled ? focused.current : menu.current)?.focus({ preventScroll: true });
+    const outside = (event: PointerEvent | WheelEvent) => {
       if (!menu.current?.contains(event.target as Node)) close.current();
-    };
-    const scroll = (event: Event) => {
-      const target = event.target;
-      // Terminal output and context-panel refreshes must not dismiss a row menu.
-      if (target === document || target === window || (target instanceof Element && target.contains(anchor.trigger))) close.current();
     };
     document.addEventListener("pointerdown", outside);
     window.addEventListener("resize", place);
-    window.addEventListener("scroll", scroll, true);
+    // User scrolling outside dismisses; programmatic/autoscroll events do not.
+    document.addEventListener("wheel", outside, { passive: true });
     return () => {
       observer?.disconnect();
       document.removeEventListener("pointerdown", outside);
       window.removeEventListener("resize", place);
-      window.removeEventListener("scroll", scroll, true);
+      document.removeEventListener("wheel", outside);
     };
   }, [anchor, expanded]);
   return createPortal(<div ref={menu} role="menu" aria-label={`Actions for ${label}`} tabIndex={-1}
@@ -54,7 +50,7 @@ export function SessionActionMenu({ anchor, label, expanded, children, onClose }
         e.preventDefault(); e.stopPropagation();
         const next = e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 :
           e.key === "ArrowDown" ? (index + 1) % items.length : (index <= 0 ? items.length : index) - 1;
-        items[next]?.focus();
+        items[next]?.focus({ preventScroll: true });
       }
     }}>{children}</div>, document.body);
 }

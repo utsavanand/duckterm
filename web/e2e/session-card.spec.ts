@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiDelete, base, postEvent, seedSession, sessionMenu } from "./helpers";
+import { apiDelete, apiPost, base, postEvent, seedSession, sessionMenu } from "./helpers";
 
 test("right-click actions work in every density without filling session rows or the information panel", async ({ page }) => {
   const keys: string[] = [];
@@ -90,4 +90,25 @@ test("archived history stays accessible and permanent deletion requires confirma
     await page.reload();
     await expect(page.getByRole("button", { name: /Archived sessions/ })).toHaveCount(0);
   } finally { await apiDelete(`/sessions/${key}`); }
+});
+
+
+test("menu stays open after a long sidebar scrolls a bottom row into view", async ({ page }) => {
+  const folders = Array.from({ length: 25 }, (_, i) => `Menu scroll ${i}`);
+  const key = await seedSession(`menu-scroll-${Date.now()}`, { name: "Bottom menu target", runtime: "generic", test: true });
+  try {
+    for (const name of folders) await apiPost("/folders", { name });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(base());
+    const row = page.locator(".rd-row", { has: page.getByText("Bottom menu target", { exact: true }) });
+    await row.click({ button: "right" });
+    const menu = page.getByRole("menu", { name: "Actions for Bottom menu target" });
+    await expect(menu).toBeInViewport({ ratio: 1 });
+    await page.evaluate(() => document.dispatchEvent(new Event("scroll")));
+    await expect(menu.getByRole("menuitem", { name: "Notes", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape"); await expect(row).toBeFocused();
+  } finally {
+    await apiDelete(`/sessions/${key}`);
+    for (const name of folders) await apiDelete(`/folders/${encodeURIComponent(name)}`);
+  }
 });

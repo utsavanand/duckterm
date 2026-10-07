@@ -81,6 +81,7 @@ function Dashboard() {
   const relayOpen = useRelayCount();
   const defaultSelection = sessions.find(s => s.state !== "archived")?.key ?? null;
   const { selectedKey, selectSession } = useSessionSelection(sessions, defaultSelection, loadedHosts);
+  const [terminalFocus, setTerminalFocus] = useState({ key: "", revision: 0 });
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const setSelectedKey = useCallback((key: string | null) => {
     setSelectedFolder(null);
@@ -118,7 +119,7 @@ function Dashboard() {
   }, []);
   const actionSession = sessions.find(s => s.key === actionAnchor?.key);
   const actionAnchorRef = useRef(actionAnchor); actionAnchorRef.current = actionAnchor;
-  const closeActions = () => { if (actionAnchorRef.current !== actionAnchor) return; actionAnchor?.trigger.focus(); setActionAnchor(null); };
+  const closeActions = () => { if (actionAnchorRef.current !== actionAnchor) return; actionAnchor?.trigger.focus({ preventScroll: true }); setActionAnchor(null); };
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
@@ -387,7 +388,7 @@ function Dashboard() {
                 onOpenFolder={setSelectedFolder}
                 onFolderRenamed={(from, to) => setSelectedFolder(current => current === from ? to : current?.startsWith(from + "/") ? to + current.slice(from.length) : current)}
                 onFolderDeleted={path => setSelectedFolder(current => current === path || current?.startsWith(path + "/") ? null : current)}
-                onOpen={setSelectedKey}
+                onOpen={key => { setSelectedKey(key); setTerminalFocus(previous => ({ key, revision: previous.revision + 1 })); }}
                 onOpenInbox={(key) => { setSelectedKey(key); setView("inbox"); }}
                 onPin={toggleSessionPin}
                 onFoldersChanged={refreshFolders}
@@ -490,7 +491,7 @@ function Dashboard() {
                       : "none",
                 }}
               >
-                <Terminal sessionKey={s.key} active={selectedFolder === null && view === "terminal" && s.key === selectedKey} theme={themeFor(s)} />
+                <Terminal sessionKey={s.key} active={selectedFolder === null && view === "terminal" && s.key === selectedKey} focusRequest={terminalFocus.key === s.key ? terminalFocus.revision : 0} theme={themeFor(s)} />
               </div>
             ))}
             {view === "terminal" && selected && !selected.ptyOwned && !selected.worktreePath && (
