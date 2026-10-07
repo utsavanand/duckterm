@@ -14,3 +14,13 @@
 .rd-row:focus-visible { outline: 2px solid var(--brand-green); outline-offset: -2px; }
 
 .rd-session-menu fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.rd-row.context-target { outline: 2px solid #4389d8; outline-offset: -2px; }
+.rd-row.context-target:not(.selected) { background: color-mix(in srgb, #4389d8 14%, var(--bg)); }
+.rd-folder-choices { max-height: 240px; overflow-y: auto; display: grid; gap: 4px; }
+.rd-folder-choices > button { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.rd-folder-choices > button > span { overflow-wrap: anywhere; }
+.rd-folder-choices > button[aria-pressed="true"] { border-color: var(--brand-green); background: color-mix(in srgb, var(--brand-green) 12%, var(--bg)); }
+.rd-folder-choices > button:focus-visible { outline: 2px solid #4389d8; outline-offset: -2px; }
+.rd-folder-choices small { color: var(--text-soft); }
+.rd-move-folder p { font-size: 13px; line-height: 1.5; }
+.rd-move-folder [role="alert"] { color: var(--danger, #e66b65); }

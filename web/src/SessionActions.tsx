@@ -1,3 +1,4 @@
+import { MoveSessionFolderDialog } from "./MoveSessionFolderDialog";
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { requestArchive } from "./ArchiveUndo";
@@ -16,11 +17,12 @@ import { Modal, useToast } from "./ui";
 import { RestartControls } from "./RestartControls";
 import { SessionActionMenu, type SessionActionAnchor } from "./SessionActionMenu";
 
-export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, onRename, onNotes, onUngroup }: {
+export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, onRename, onNotes, onUngroup, folders = [], onMoveFolder }: {
   session: SessionView; anchor: SessionActionAnchor; onClose: () => void;
   onFork: (key: string) => void; onDelete: (key: string) => Promise<boolean>;
   onRename: (key: string, name: string) => void; onNotes: (key: string) => void;
   onUngroup?: () => Promise<void>;
+  folders?: string[]; onMoveFolder?: (folder: string) => Promise<void>;
 }) {
   const toast = useToast();
   const state = effectiveState(s, useNow());
@@ -29,7 +31,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
   const live = !["stopped", "interrupted", "terminated", "archived", "merged"].includes(state);
   const resumable = !live && !archived && s.launched;
   const [busy, setBusy] = useState("");
-  const [dialog, setDialog] = useState<"rename" | "delete" | "merge" | null>(null);
+  const [dialog, setDialog] = useState<"rename" | "delete" | "merge" | "folder" | null>(null);
   const [restartExpanded, setRestartExpanded] = useState(false);
   const [draft, setDraft] = useState(s.label);
   const { resuming, recoveryBlocked, resumeSession } = useResumeSession(s.key);
@@ -54,15 +56,16 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
         window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: s.key }));
         return checkpointNotice(cp);
       }))}
-      {live && (s.branch || s.runtime === "claude-code") && item("Fork…", () => { onFork(s.key); onClose(); })}
-      {s.parentKey && !archived && item("Merge back…", () => setDialog("merge"))}
+      {live && (s.branch || s.runtime === "claude-code") && item("Fork", () => { onFork(s.key); onClose(); })}
+      {s.parentKey && !archived && item("Merge back", () => setDialog("merge"))}
       <hr role="separator" />
-      {!archived && !ended && item("Rename…", () => setDialog("rename"))}
+      {!archived && !ended && item("Rename", () => setDialog("rename"))}
       {item("Notes", () => { onNotes(s.key); onClose(); })}
+      {onMoveFolder && !archived && item("Move to folder", () => setDialog("folder"))}
       {onUngroup && !archived && item("Remove from folder", () => void act("Removed from folder", onUngroup))}
       {canMove && <>
         <hr role="separator" />
-        {item("Move to remote…", () => { window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key })); onClose(); })}
+        {item("Move to remote", () => { window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key })); onClose(); })}
         {item("Continue locally", () => {
           if (recoveryBlocksResume(s.key)) return;
           if (!window.confirm("Continue this session locally as a separate continuation? A remote session, if created, will remain running.")) return;
@@ -76,9 +79,10 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
       {(s.launched || archived || ended || !live) && <hr role="separator" />}
       {live && s.launched && item(busy === "Stopped" ? "Stopping…" : "Stop", () => void act("Stopped", () => api.stop(s.key)), true)}
       {!archived && s.launched && item("Archive", () => void act("Archived — Undo is available", () => requestArchive(s.key)))}
-      {(archived || ended) && item("Delete permanently…", () => setDialog("delete"), true)}
-      {!s.launched && !ended && !archived && item("Stop watching…", () => setDialog("delete"))}
+      {(archived || ended) && item("Delete permanently", () => setDialog("delete"), true)}
+      {!s.launched && !ended && !archived && item("Stop watching", () => setDialog("delete"))}
     </SessionActionMenu>
+    {dialog === "folder" && onMoveFolder && <MoveSessionFolderDialog session={s} folders={folders} onMove={onMoveFolder} onClose={onClose} />}
     {dialog === "merge" && <ForkMergeDialog service={forkMergeService(s.key)} onClose={onClose} onSaved={() => toast("Merge summary saved")} />}
     {(dialog === "rename" || dialog === "delete") && createPortal(<Modal title={dialog === "rename" ? "Rename session" : !s.launched && live ? "Stop watching session" : "Delete session permanently"} onClose={onClose}>
       <form className="rd-session-action-dialog" role="dialog" aria-label={dialog === "rename" ? "Rename session" : "Confirm session removal"} aria-modal="true" onKeyDown={e => {

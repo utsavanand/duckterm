@@ -115,11 +115,11 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
   const reason = remote ? "Restart and Change model are available on This Mac only for now." : statusError || status?.reason;
   const action = switching ? `Switch to ${harnessName(harness)}` : "Restart now";
   return <>
-    {showActions && <button role={menu ? "menuitem" : undefined} className="rd-btn rd-btn-sm rd-btn-primary" disabled={disabled} title={reason} onClick={e => show(e.currentTarget)}>{menu ? "Restart…" : "Restart"}</button>}
+    {showActions && <button role={menu ? "menuitem" : undefined} className="rd-btn rd-btn-sm rd-btn-primary" disabled={disabled} title={reason} onClick={e => show(e.currentTarget)}>Restart</button>}
     {showActions && <button role={menu ? "menuitem" : undefined} className="rd-btn rd-btn-sm rd-btn-ghost" disabled={disabled || !status?.can_restart} title={reason || status?.reason} aria-haspopup="menu" aria-expanded={!!menuAnchor} onClick={e => {
       if (menuAnchor) { closeMenu(); return; }
       opener.current = e.currentTarget; setMenuAnchor(e.currentTarget); void loadModels();
-    }}>{menu ? "Change model…" : "Change model"}</button>}
+    }}>Change model</button>}
     {menuAnchor && <ModelMenu anchor={menuAnchor} choices={modelChoices} current={currentModel} loading={loadingModels} error={modelsError}
       retry={() => void loadModels()} close={closeMenu} select={picked => picked === currentModel ? closeMenu() : show(menuAnchor, picked)} />}
     {reason && showActions && !menu && !pending && <p className="rd-restart-message">{reason}</p>}

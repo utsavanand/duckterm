@@ -14,7 +14,7 @@ test("reviewed merge preserves exact text and a closed child stays readable", as
     await page.goto(base());
     await expandFolder(page, folder);
     await page.locator(".rd-row-name", { hasText: "Implementation fork" }).click();
-    await (await sessionMenu(page)).getByRole("menuitem", { name: "Merge back…", exact: true }).click();
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Merge back", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Merge back to parent" });
     await expect(dialog.getByText("Planning", { exact: true })).toBeVisible();
     await expect(dialog.getByText(/receives inbox mail only/)).toBeVisible();
