@@ -117,10 +117,9 @@ def test_stop_event_triggers_debounced_refresh(fake_summarizer: Path) -> None:
         server.bus.publish(
             {"event_type": "PreToolUse", "session_key": "S", "cwd": "/tmp", "_ts": i, "test": True}
         )
-    # No running loop here, so the trigger can't schedule — but it must have
-    # recorded its debounce mark only when the gate passed.
+    # No running loop here: do not throttle a job that was never scheduled.
     server.bus.publish({"event_type": "Stop", "session_key": "S"})
-    assert "S" in server._progress_marks  # gate passed (5+ events, first run)
+    assert "S" not in server._progress_marks
 
     marks_before = dict(server._progress_marks)
     server.bus.publish({"event_type": "Stop", "session_key": "S"})

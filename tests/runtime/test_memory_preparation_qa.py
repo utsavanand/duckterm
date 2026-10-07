@@ -46,21 +46,19 @@ def test_concurrent_same_retry_key_cannot_bind_two_different_targets(preparation
     asyncio.run(run())
 
 
-def test_cancel_last_lease_during_generation_cannot_write_revision(preparation, monkeypatch):
-    from duckterm import memory_provider
-
+def test_cancel_last_lease_during_capture_cannot_write_marker(preparation, monkeypatch):
     server, _, _ = preparation
 
     async def run():
         entered, released = asyncio.Event(), asyncio.Event()
-        original = memory_provider.generate
+        original = server.memory_preparation.validate_sources
 
         async def pause(*args):
             entered.set()
             await released.wait()
             return await original(*args)
 
-        monkeypatch.setattr(memory_provider, "generate", pause)
+        monkeypatch.setattr(server.memory_preparation, "validate_sources", pause)
         view = await server.memory_preparation.start("agent", request(server))
         task = server.memory_preparation.tasks[view["preparation_id"]]
         try:

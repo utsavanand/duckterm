@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+
+## 2026-10-07 — Harness switching cannot depend on a whole-history model pass
+
+Problem: the source session's long history became a serial generation/review workflow in the switch dialog. Quota failures and large backlogs blocked an owner-requested harness change, even though originals and current work were already available.
+
+Fix: assemble a bounded packet from canonical maintained context, current work and complete recent records; retain exact originals and teach the continuing agent its retrieval tools. Maintain summary coverage separately through the existing progress writer at a fifteen-minute eligible-turn cadence, shared with manual checkpoints. Never call searchable history fully summarized merely to make readiness pass. Changing this architecture also requires moving cancellation/source-change tests from obsolete provider callbacks to actual capture and retention boundaries.
+
+Validation: new quota-disabled, long-history, incremental coverage, coalescing, retention and scope/corruption regressions; integration and the complete release gate remain required before shipping this feature.
+
 ## 2026-10-07 — Configuring a merge must distinguish delivery from integration
 
 Independent agents can combine reviewed context without rewriting conversation

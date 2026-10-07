@@ -74,21 +74,20 @@ async def prepare(server, identity="dialog-1"):
     return manager.status("agent", view["preparation_id"])
 
 
-def test_preparation_saves_one_canonical_revision_and_marker_without_source_provider(preparation):
+def test_preparation_references_existing_records_without_creating_a_summary(preparation):
     server, calls, _ = preparation
     view = asyncio.run(prepare(server))
     assert view["state"] == "ready", view
-    assert view["coverage"]["available_text"] == "processed"
+    assert view["coverage"]["available_text"] == "not_processed"
     detail = server.memory_preparation.details("agent", view["preparation_id"])
-    assert "Retain glacier originals" in detail["brief"]["text"]
+    assert "retain glacier originals" in detail["brief"]["text"]
     assert "duckterm memory search" in detail["brief"]["text"]
-    row = server.history.session("agent")
-    revision_id = json.loads(row["progress"])["revision_id"]
-    assert revision_id == view["proof"]["revision_id"]
+    assert not server.history.session("agent")["progress"]
+    assert view["proof"]["revision_id"] is None
     cp = server.history.checkpoints("agent")[0]
-    assert cp["record"]["summary_ref"] == revision_id
-    assert cp["record"]["memory_sources"]
-    assert {c[0] for c in calls} == {"codex"}
+    assert cp["record"]["summary_ref"] is None
+    assert cp["record"]["memory_sources"] and cp["record"]["retained_sources"]
+    assert calls == []
     assert server.history.session("agent")["runtime"] == "claude-code"
 
 
@@ -115,28 +114,23 @@ def test_equivalent_dialogs_share_generation_but_have_independent_cancel_leases(
     asyncio.run(run())
 
 
-def test_changed_source_and_provider_failure_never_promote_ready_revision(preparation, monkeypatch):
-    server, _, tmp = preparation
-    original = __import__("duckterm.memory_provider", fromlist=["generate"]).generate
+def test_changed_source_during_capture_cannot_write_marker(preparation, monkeypatch):
+    server, _, _ = preparation
+    original = server.memory_preparation.validate_sources
+    changed = False
 
-    async def changed(*args):
-        result = await original(*args)
-        server.history.set_meta("agent", notes="New owner constraint")
-        return result
+    async def update(job):
+        nonlocal changed
+        await original(job)
+        if not changed:
+            changed = True
+            server.history.set_meta("agent", notes="New owner constraint")
 
-    monkeypatch.setattr("duckterm.memory_provider.generate", changed)
+    monkeypatch.setattr(server.memory_preparation, "validate_sources", update)
     view = asyncio.run(prepare(server))
     assert view["state"] == "stale_source", view
     assert not server.history.checkpoints("agent")
     assert server.history.session("agent")["runtime"] == "claude-code"
-
-    async def failed(*args):
-        raise APIError(503, "Quota exhausted")
-
-    monkeypatch.setattr("duckterm.memory_provider.generate", failed)
-    view = asyncio.run(prepare(server, "retry"))
-    assert view["state"] == "failed" and view["retryable"]
-    assert not server.history.checkpoints("agent")
 
 
 def test_ready_proof_becomes_stale_after_source_or_scope_change(preparation):
@@ -196,7 +190,8 @@ def test_reconstruction_requires_new_preparation_and_preserves_canonical_revisio
     server.memory_preparation = MemoryPreparation(server)
     with pytest.raises(APIError, match="expired"):
         server.memory_preparation.get("agent", view["preparation_id"])
-    assert server.history.checkpoints("agent")[0]["summary"] == "Continue glacier work."
+    assert server.history.checkpoints("agent")[0]["record"]["memory_sources"]
+    assert server.history.checkpoints("agent")[0]["record"]["summary_ref"] is None
 
 
 def test_source_failure_does_not_call_any_provider(preparation):
@@ -214,14 +209,12 @@ def test_preparation_rechecks_bytes_after_native_file_metadata_changes(
 ):
     server, _, tmp = preparation
     native = transcript(tmp, "agent-claude", "Owner: retain glacier originals.")
-    from duckterm import memory_provider
-
-    provider = memory_provider.generate
+    original = server.memory_preparation.validate_sources
     changed = False
 
     async def rewrite(*args):
         nonlocal changed
-        result = await provider(*args)
+        result = await original(*args)
         if not changed:
             changed = True
             if change == "touch":
@@ -237,7 +230,7 @@ def test_preparation_rechecks_bytes_after_native_file_metadata_changes(
                 transcript(tmp, "agent-claude", "Owner: a different requirement.")
         return result
 
-    monkeypatch.setattr(memory_provider, "generate", rewrite)
+    monkeypatch.setattr(server.memory_preparation, "validate_sources", rewrite)
     view = asyncio.run(prepare(server))
     stale = change in {"content", "missing"}
     assert view["state"] == ("stale_source" if stale else "ready"), view
@@ -297,45 +290,22 @@ def test_ready_status_revalidates_exact_bytes_without_blocking_the_event_loop(
     asyncio.run(run())
 
 
-def test_turn_progress_updates_overview_without_extending_whole_history_coverage(
-    preparation, monkeypatch
-):
+def test_turn_progress_creates_revision_after_preparation_marker(preparation, monkeypatch):
+    from test_maintained_progress import provider
+
     server, _, tmp = preparation
-
-    def summarize(prompt):
-        if "validating a candidate" in prompt:
-            value = {
-                "accept": [],
-                "done_next_action_ids": [],
-                "summary_validation": {"ready": True, "reason_codes": []},
-            }
-        else:
-            value = {"summary": "New work after the prepared handoff.", "deliverables": []}
-        return type("Summary", (), {"text": json.dumps(value)})()
-
-    monkeypatch.setattr("duckterm.server.summarize", summarize)
+    calls = provider(monkeypatch)
 
     async def run():
         view = await prepare(server)
-        assert view["state"] == "ready", view
-        baseline_id = view["proof"]["revision_id"]
-        native = tmp / ".claude" / "projects"
-        path = next(native.rglob("agent-claude.jsonl"))
-        with path.open("a") as f:
-            f.write(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {"role": "assistant", "content": "New completed work"},
-                    }
-                )
-                + "\n"
-            )
+        assert view["state"] == "ready" and calls == []
+        checkpoint = server.history.checkpoints("agent")[0]
+        assert checkpoint["record"]["summary_ref"] is None
         value = await server.progress_coordinator.refresh("agent")
-        assert value["memory_baseline_ref"] == baseline_id
-        assert not value["summary_validation"]["ready"]
+        assert value["continuity"]["verified"]
+        assert value["summary_validation"]["ready"]
         assert json.loads(server.history.session("agent")["progress"])["revision_id"] == value["id"]
-        assert server.digests.revision("agent", baseline_id)["memory"]["context"]["constraints"]
+        assert server.history.checkpoints("agent")[0]["record"]["summary_ref"] is None
 
     asyncio.run(run())
 

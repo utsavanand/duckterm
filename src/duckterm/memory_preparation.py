@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import re
 import time
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from duckterm import memory_sources, memory_summary
+from duckterm import memory_handoff, memory_sources, memory_versions
 from duckterm.core.saved_progress import file_version, policy_key
 from duckterm.core.session_api import APIError
 from duckterm.persistence.checkpoints import _git_state
-from duckterm.persistence.saved_state import conversation, current_revision, fingerprint
+from duckterm.persistence.saved_state import (
+    checkpoint_marker,
+    conversation,
+    current_revision,
+    fingerprint,
+    transaction,
+)
 
 if TYPE_CHECKING:
     from duckterm.server import Server
@@ -243,33 +250,6 @@ class MemoryPreparation:
                 return
             await self.run(job)
 
-    def resumable_progress(self, job: dict[str, Any]) -> memory_summary.BatchProgress | None:
-        candidates: list[memory_summary.BatchProgress] = []
-        for old in self.jobs.values():
-            if (
-                old is not job
-                and old["id"] not in self.tasks
-                and old.get("partial") is not None
-                and old["expires"] > time.time() * 1000
-                and old["key"] == job["key"]
-                and old["binding"] == job["binding"]
-                and old["cli_version"] == job["cli_version"]
-                and old["catalog"] == job["catalog"]
-                and all(
-                    old["captured"][k] == job["captured"][k]
-                    for k in ("facts", "policy", "source", "conversation")
-                )
-            ):
-                candidates.append(old["partial"])
-        return max(candidates, key=lambda p: p.completed) if candidates else None
-
-    def retain_progress(self, job: dict[str, Any], progress: memory_summary.BatchProgress) -> None:
-        self.cheap_validate(job)
-        job["partial"] = progress
-        # Expire abandoned/stalled jobs, not a long history that keeps passing
-        # review. Every provider call still has its own bounded timeout.
-        job["expires"] = time.time() * 1000 + LIFETIME_MS
-
     async def run(self, job: dict[str, Any]) -> None:
         key = job["key"]
         coordinator = self.server.progress_coordinator
@@ -300,7 +280,7 @@ class MemoryPreparation:
                             "blocking": False,
                         }
                     )
-            coverage = {
+            coverage: dict[str, Any] = {
                 "state": "partial" if gaps else "complete",
                 "available_text": "not_processed",
                 "retrieval": "partial" if missing else "available",
@@ -321,32 +301,29 @@ class MemoryPreparation:
             await self.validate_sources(job)
             row = self.server.history.session(key) or {}
             prior = self.server.digests.revision(key, current_revision(row))
-            baseline = prior
-            if prior and prior.get("memory_baseline_ref"):
-                baseline = self.server.digests.revision(key, prior["memory_baseline_ref"])
-            if baseline and baseline.get("memory", {}).get("cli_version") != job["cli_version"]:
-                baseline = None
-            self.update(job, phase="summarizing")
-            context, pieces = await memory_summary.summarize(
-                sources,
-                job["binding"]["target"],
-                baseline,
-                lambda: self.validate_sources(job),
-                lambda completed, total, step: self.update(
-                    job,
-                    progress={"completed_batches": completed, "total_batches": total, "step": step},
-                ),
-                resume=self.resumable_progress(job),
-                retain=lambda value: self.retain_progress(job, value),
+            self.update(job, phase="assembling")
+            seed, handoff, included = memory_handoff.assemble(
+                key, sources, captured["required"], prior
             )
-            self.update(job, phase="validating")
-            seed = memory_summary.brief(context, captured["required"])
+            text_refs = []
+            for source in sources:
+                if source["kind"] in memory_handoff.ORIGINAL_KINDS - {"conversation"}:
+                    text_refs.append(
+                        await asyncio.to_thread(
+                            memory_versions.retain, key, source, catalog["root"]
+                        )
+                    )
             retained = []
             for source in sources:
                 if source["kind"] == "conversation":
-                    saved = await asyncio.to_thread(
-                        memory_sources.read_native, key, source, retain=True
-                    )
+                    try:
+                        saved = await asyncio.to_thread(
+                            memory_sources.read_native, key, source, retain=True
+                        )
+                    except APIError as exc:
+                        if exc.status == 409:
+                            raise PreparationError(409, "stale_source", str(exc)) from exc
+                        raise
                     retained.append(
                         {
                             k: saved[k]
@@ -364,60 +341,59 @@ class MemoryPreparation:
             ):
                 raise PreparationError(409, "stale_source", "Sources changed during preparation")
             checkpoint_id = uuid.uuid4().hex
+            count = handoff["summarized_records"]
+            available = handoff["available_records"]
+            usable = memory_handoff.usable_prior(sources, captured["required"], prior)
+            rows = memory_handoff.records(sources)
+            processed, _ = memory_handoff.coverage(rows, usable)
             coverage.update(
-                available_text="processed",
-                covered_source_count=len(sources),
-                retention="retained_snapshot",
-            )
-            value = {
-                **{k: captured[k] for k in ("source", "conversation", "policy")},
-                "source_at": captured["captured_at"],
-                "input_key": fingerprint(
-                    [job["binding"], pieces, captured["source"], captured["policy"]]
+                available_text=(
+                    "processed" if count == available else "partial" if count else "not_processed"
                 ),
-                "prior_revision": prior["id"] if prior else None,
-                "summary": context["overview"],
-                "summary_validation": {
-                    "ready": True,
-                    "reason_codes": [],
-                    "method": "whole-source-generation-and-validation",
-                },
-                "memory": {
-                    "policy": memory_summary.POLICY,
-                    "cli_version": job["cli_version"],
-                    "target": job["binding"]["target"],
-                    "pieces": pieces,
-                    "context": context,
-                    "coverage": coverage,
-                    "checkpoint_id": checkpoint_id,
-                },
-            }
-            digest = {
-                "summary": context["overview"],
-                "deliverables": [],
-                "learnings": [],
-                "user_learnings": [],
-                "next_actions": [],
-            }
-            saved_revision = coordinator.persist(
-                key,
-                captured,
-                prior,
-                value,
-                digest,
-                [],
-                [],
-                require_current=True,
-                checkpoint={
-                    "id": checkpoint_id,
-                    "label": "Prepared harness switch",
-                    "git": git,
-                    "memory_sources": retained,
-                },
+                covered_source_count=sum(
+                    bool(s["records"])
+                    and all(
+                        processed.get(s["id"], {}).get(r["id"])
+                        == fingerprint([r["id"], r["role"], r["text"]])
+                        for r in s["records"]
+                        if r["role"] != "derived_context"
+                    )
+                    for s in sources
+                    if s["kind"] in memory_handoff.ORIGINAL_KINDS
+                ),
+                retention="retained_snapshot",
+                handoff=handoff,
             )
-            if saved_revision is None:
-                raise PreparationError(
-                    409, "stale_source", "Progress changed while preparing; prepare again"
+            # A prepared packet is a render, not another generated summary revision.
+            # The marker keeps its own boundary even when its summary is older/missing.
+            packet_id = fingerprint([seed, handoff, included])
+            record = checkpoint_marker(
+                captured, usable["id"] if usable else None, git, int(time.time() * 1000)
+            )
+            record.update(
+                memory_sources=retained,
+                retained_sources=text_refs,
+                handoff={**handoff, "packet_hash": packet_id, "included": included},
+            )
+            with transaction(self.server.history._conn):
+                self.cheap_validate(job)
+                if current_revision(self.server.history.session(key) or {}) != (
+                    prior["id"] if prior else None
+                ):
+                    raise PreparationError(
+                        409, "stale_source", "Summary changed during preparation; prepare again"
+                    )
+                self.server.history._conn.execute(
+                    "INSERT INTO checkpoints "
+                    "(id,session_key,label,summary,record_json,markdown_path,created_at) "
+                    "VALUES (?,?,?,'',?,NULL,?)",
+                    (
+                        checkpoint_id,
+                        key,
+                        "Prepared harness switch",
+                        json.dumps(record),
+                        record["created_at"],
+                    ),
                 )
             checkpoint = next(
                 cp for cp in self.server.history.checkpoints(key) if cp["id"] == checkpoint_id
@@ -440,9 +416,7 @@ class MemoryPreparation:
             job["sources"] = [
                 {k: v for k, v in source.items() if k != "records"} for source in job["sources"]
             ]
-            snapshot = fingerprint(
-                [job["binding"], value["input_key"], job["catalog"], job["cli_version"]]
-            )
+            snapshot = fingerprint([job["binding"], packet_id, job["catalog"], job["cli_version"]])
             job["expires"] = time.time() * 1000 + LIFETIME_MS
             self.update(
                 job,
@@ -450,15 +424,16 @@ class MemoryPreparation:
                 coverage=coverage,
                 proof={
                     "snapshot_id": snapshot,
-                    "revision_id": saved_revision["id"],
+                    "revision_id": usable["id"] if usable else None,
                     "prepared_at": int(time.time() * 1000),
                     "expires_at": int(job["expires"]),
                     "resolved_model": job["binding"]["target"]["model"].get("id"),
-                    "overview": context["overview"],
+                    "overview": (usable or {}).get("summary")
+                    or "Continue with current work and searchable history.",
                     "brief": {
                         "text": seed,
                         "utf8_bytes": len(seed.encode()),
-                        "budget_bytes": memory_summary.MAX_BRIEF_BYTES,
+                        "budget_bytes": memory_handoff.MAX_BRIEF_BYTES,
                     },
                 },
             )
