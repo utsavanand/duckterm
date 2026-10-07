@@ -158,7 +158,7 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
         {selected && !selected.model_selection.available && <p className="rd-restart-help">{selected.model_selection.reason || "This harness does not support model selection."}</p>}
         <div className="rd-restart-summary"><strong>{switching ? `New conversation in ${harnessName(harness)}, seeded from ${harnessName(currentHarness)}` : "Continue this conversation"}</strong>
           <p>{switching ? "This starts a new conversation with handoff context. It does not resume the previous transcript." : "Restart the harness and resume its existing conversation."}</p>
-          {switching && <p>Handoff includes the latest checkpoint and saved session notes.</p>}
+          {switching && <p>Handoff includes the latest checkpoint, your open tasks (including parked tasks), and saved session notes.</p>}
           <p>Keep the same session name, project folder and history.</p>
         </div>
         <p className="rd-restart-notice" role={error || pathReason || statusError ? "alert" : "status"}>{error || optionsError || statusError || pathReason || (!draftClear && !loadingOptions ? "Send or clear unsent terminal text before restarting." : afterTurn ? "This will wait until the agent finishes its turn. You can cancel it from the Session card." : "The change will start as soon as you confirm.")}</p>

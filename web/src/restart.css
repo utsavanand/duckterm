@@ -35,3 +35,5 @@
 .rd-restart-dialog header { padding-bottom: 12px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
 .rd-restart-summary { border-inline: 0; border-radius: 0; padding: 16px 0; background: transparent; }
 .rd-restart-footer { border-top: 1px solid var(--border); padding-top: 16px; }
+.rd-restart-dialog .rd-btn { color: var(--text); background: var(--card); border: 1px solid var(--border-strong); }
+.rd-restart-dialog .rd-btn-primary { color: #fff; background: var(--brand-green); border-color: var(--brand-green); }
