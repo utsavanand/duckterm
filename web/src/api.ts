@@ -16,6 +16,14 @@ export function authHeaders(extra?: Record<string, string>): HeadersInit {
   return { "X-Duckterm-Token": TOKEN, ...extra };
 }
 
+async function sharedFolder(action: "create" | "move" | "delete", old: string, next: string) {
+  if (!desktop()?.canCollaborate) return null;
+  const result = await destinationRequest<{ handled: boolean; pending: boolean }>("local", "collaboration-folder", { action, old, new: next });
+  if (!result.handled) return null;
+  window.dispatchEvent(new Event("remote-sessions-refresh"));
+  return { pending: result.pending, created: next, moved: old, to: next, deleted: old };
+}
+
 // Oracle's optional local neural voice (Kokoro), from GET /voice/status.
 export type LocalVoiceStatus =
   | { state: "unsupported"; reason: string }
@@ -525,41 +533,41 @@ export const api = {
     }).then((r) => r.json() as Promise<{ removed: boolean }>),
   // Left-panel folders (persist even when empty).
   folders: () => get<{ folders: string[] }>("/folders"),
-  createFolder: (name: string) =>
-    post<{ created: string }>("/folders", { name }),
+  createFolder: async (name: string) =>
+    await sharedFolder("create", "", name) ?? post<{ created: string; pending?: boolean }>("/folders", { name }),
   // Re-parent a folder ("" = top level); subfolders + sessions follow.
-  moveFolder: (name: string, parent: string) =>
-    fetch(`/folders/${encodeURIComponent(name)}`, {
+  moveFolder: async (name: string, parent: string) =>
+    await sharedFolder("move", name, [parent, name.split("/").at(-1)].filter(Boolean).join("/")) ?? fetch(`/folders/${encodeURIComponent(name)}`, {
       method: "PATCH",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ parent }),
     }).then(async (r) => {
-      const d = (await r.json()) as { to?: string; error?: string };
+      const d = (await r.json()) as { to?: string; error?: string; pending?: boolean };
       if (!r.ok) throw new Error(d.error ?? `${r.status}`);
-      changeRemoteFolders(name, d.to!);
-      return d as { moved: string; to: string };
+      if (!d.pending) changeRemoteFolders(name, d.to!);
+      return d as { moved: string; to: string; pending?: boolean };
     }),
   // Rename the leaf (parent unchanged); subfolders + sessions follow.
-  renameFolder: (path: string, name: string) =>
-    fetch(`/folders/${encodeURIComponent(path)}`, {
+  renameFolder: async (path: string, name: string) =>
+    await sharedFolder("move", path, [...path.split("/").slice(0, -1), name].join("/")) ?? fetch(`/folders/${encodeURIComponent(path)}`, {
       method: "PATCH",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ name }),
     }).then(async (r) => {
-      const d = (await r.json()) as { to?: string; error?: string };
+      const d = (await r.json()) as { to?: string; error?: string; pending?: boolean };
       if (!r.ok) throw new Error(d.error ?? `${r.status}`);
-      changeRemoteFolders(path, d.to!);
-      return d as { moved: string; to: string };
+      if (!d.pending) changeRemoteFolders(path, d.to!);
+      return d as { moved: string; to: string; pending?: boolean };
     }),
-  deleteFolder: (name: string) =>
-    fetch(`/folders/${encodeURIComponent(name)}`, {
+  deleteFolder: async (name: string) =>
+    await sharedFolder("delete", name, "") ?? fetch(`/folders/${encodeURIComponent(name)}`, {
       method: "DELETE",
       headers: authHeaders(),
     }).then(async (r) => {
       const result = await r.json();
       if (!r.ok) throw new Error(result.error ?? "Could not delete folder");
-      changeRemoteFolders(name, "");
-      return result as { deleted: string };
+      if (!result.pending) changeRemoteFolders(name, "");
+      return result as { deleted: string; pending?: boolean };
     }),
   getSession: (key: string) =>
     get<{ notes?: string | null; name?: string | null }>(`/sessions/${key}`),

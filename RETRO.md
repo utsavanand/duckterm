@@ -1,5 +1,24 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — A stale sync response cannot confirm a newer owner change
+
+Review reproduced an exchange that captured the old folder tree, then returned
+after an owner rename committed. Settling every locally committed action hid
+the still-unapplied rename and removed its local exclusion. Capture committed
+action IDs before requesting the snapshot, and settle only those IDs after the
+folder plan has been applied and acknowledged. Regressions commit create, rename
+and delete operations while the old response is in flight. Recovery must also
+preserve stable empty-folder IDs, reject a changed membership preview, and
+confirm coordinator revocation before forgetting a disconnected capability.
+
+## 2026-10-06 — Concurrent gates can serve a different dashboard build
+
+Two full gates in one checkout share web/dist even with separate servers and
+test homes. A rebuild briefly removed dist/index.html, so the older browser
+loaded the fallback packaged UI and could not find the current panel control.
+Its trace identified the old bundled JS hash. Run gates serially in a checkout,
+or give each its own build tree; isolated ports alone do not isolate assets.
+
 ## 2026-10-06 — Folder identity cannot depend on a live session card
 
 An empty nested folder appeared in snapshots but had no computer-to-folder

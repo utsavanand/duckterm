@@ -5,3 +5,7 @@
 .rd-backup-result p { white-space: pre-wrap; }
 .rd-backup-succeeded strong { color: var(--accent); }
 .rd-backup footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 24px; }
+
+.rd-collaboration-computer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 18px 0; }
+.rd-collaboration-computer p { margin: 5px 0; }
+.rd-collaboration-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }

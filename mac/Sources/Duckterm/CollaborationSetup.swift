@@ -16,7 +16,7 @@ final class CollaborationSetup {
     }
     private var plan: Plan?
     private let http = BoundedSessionHTTP()
-    private var flushing = false
+    private var activeQueues = Set<String>()
 
     struct HTTPFailure: LocalizedError {
         let status: Int
@@ -49,6 +49,9 @@ final class CollaborationSetup {
     /// The service stores actions, but only this owner-authenticated broker
     /// can forward workspace mutations. Computer exchange never carries them.
     func flush(local: URL, coordinator: URL, api: LaunchDestination) async throws {
+        let queue = local.absoluteString
+        guard activeQueues.insert(queue).inserted else { return }
+        defer { activeQueues.remove(queue) }
         try await flush { onCoordinator, route, method, body in
             try await self.call(base: onCoordinator ? coordinator : local, api: api,
                                 route: route, method: method, body: body)
@@ -56,9 +59,6 @@ final class CollaborationSetup {
     }
 
     func flush(send: (Bool, String, String, [String: Any]) async throws -> [String: Any]) async throws {
-        guard !flushing else { return }
-        flushing = true
-        defer { flushing = false }
         let queued = try await send(false, "/collaboration/owner-queue", "GET", [:])
         let commands = queued["commands"] as? [[String: Any]] ?? []
         guard !commands.isEmpty else { return }
@@ -81,6 +81,28 @@ final class CollaborationSetup {
         for _ in 0..<2 {
             _ = try await send(false, "/collaboration/sync", "POST", [:])
         }
+    }
+
+    func disconnect(source: URL, coordinator: URL, api: LaunchDestination) async throws -> [String: Any] {
+        try await disconnect { onCoordinator, route, method, body in
+            try await self.call(base: onCoordinator ? coordinator : source, api: api,
+                                route: route, method: method, body: body)
+        }
+    }
+
+    func disconnect(send: (Bool, String, String, [String: Any]) async throws -> [String: Any]) async throws -> [String: Any] {
+        let status = try await send(false, "/collaboration/status", "GET", [:])
+        if status["enabled"] as? Bool != true { return ["disconnected": true] }
+        let prepared = try await send(false, "/collaboration/disconnect-prepare", "POST", [:])
+        let hubStatus = try await send(true, "/collaboration/status", "GET", [:])
+        guard let workspace = prepared["workspace_id"] as? String,
+              hubStatus["workspace_id"] as? String == workspace,
+              let computer = prepared["computer_id"] as? String, let id = prepared["id"] as? String else {
+            throw LaunchDestination.Failure.message("Coordinator workspace changed; reconnect to the original coordinator to finish disconnecting")
+        }
+        // Retry revocation after a lost response before forgetting the local capability.
+        _ = try await send(true, "/collaboration/revoke", "POST", ["computer_id": computer])
+        return try await send(false, "/collaboration/disconnect", "POST", ["id": id])
     }
 
     func preview(coordinator: RemoteHost, source: String, sourceName: String, connection: String,

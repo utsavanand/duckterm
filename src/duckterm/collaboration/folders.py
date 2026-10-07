@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from duckterm.core.session_api import APIError
@@ -13,6 +14,14 @@ if TYPE_CHECKING:
 
 def within(path: str, parent: str) -> bool:
     return path == parent or path.startswith(parent + "/")
+
+
+class FolderConflict(APIError):
+    def __init__(self, path: str) -> None:
+        super().__init__(
+            409, "Shared folder conflicts with a local folder; resolve it before syncing"
+        )
+        self.path = path
 
 
 def renamed(path: str, old: str, new: str) -> str:
@@ -84,6 +93,8 @@ def plan_moves(state: dict[str, Any], updates: list[dict[str, Any]]) -> list[dic
             if not old:
                 pending.pop(index)
                 break
+            if new and any(other and other != new and within(new, other) for _, other in pending):
+                continue
             if new in existing or within(new, old):
                 continue
             pending.pop(index)
@@ -100,7 +111,19 @@ def plan_moves(state: dict[str, Any], updates: list[dict[str, Any]]) -> list[dic
                     remaining[0] = renamed(remaining[0], old, new) if new else ""
             break
         else:
-            raise APIError(
-                409, "Shared folder conflicts with a local folder; resolve it before syncing"
+            # A name swap has no free destination. Stage one source in the
+            # durable plan; none of these temporary paths are advertised.
+            sources = {p[0] for p in pending}
+            if all(any(within(new, source) for source in sources) for _, new in pending):
+                old = pending[0][0]
+                new = "Collaboration staging " + uuid.uuid4().hex
+                pending.insert(0, [old, new])
+                continue
+            conflict = next(
+                new for _, new in pending if not any(within(new, source) for source in sources)
             )
+            for step in reversed(steps):
+                if step["new"]:
+                    conflict = renamed(conflict, step["new"], step["old"])
+            raise FolderConflict(conflict)
     return steps

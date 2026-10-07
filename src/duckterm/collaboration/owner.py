@@ -48,6 +48,8 @@ def queue(service: Service, req: dict[str, Any]) -> dict[str, Any]:
     if not service.connected:
         raise APIError(409, "Connect this computer before changing the shared workspace")
     assert service.store
+    if service.store.setting("disconnecting"):
+        raise APIError(409, "Finish disconnecting before changing shared folders")
     action = req.get("action")
     if action not in {"create", "move", "delete"}:
         raise APIError(400, "Unsupported workspace action")
@@ -85,7 +87,7 @@ def queue(service: Service, req: dict[str, Any]) -> dict[str, Any]:
         "parent_id": parent,
         "parent_path": parent_path,
     }
-    with service.store.conn:
+    with service.store.transaction():
         service.store.conn.execute(
             "INSERT INTO local_outbox(id,actor,operation) VALUES (?,?,?)",
             (operation["id"], ACTOR, json.dumps(operation)),
@@ -157,7 +159,7 @@ def acknowledge(service: Service, req: dict[str, Any]) -> dict[str, Any]:
     )
     if row["result"] and json.loads(row["result"]).get("state") == "applied":
         return {"updated": False}
-    with service.store.conn:
+    with service.store.transaction():
         service.store.conn.execute(
             "UPDATE local_outbox SET result=? WHERE id=?", (json.dumps(result), opid)
         )
@@ -168,7 +170,9 @@ def attempt(service: Service, req: dict[str, Any]) -> dict[str, Any]:
     if not service.store:
         raise APIError(409, "Computer is not connected")
     opid = identifier(req.get("id"), "owner operation")
-    with service.store.conn:
+    if service.store.setting("disconnecting"):
+        return {"attempted": False}
+    with service.store.transaction():
         changed = service.store.conn.execute(
             "UPDATE local_outbox SET attempted=1 WHERE id=? AND actor=? AND result IS NULL",
             (opid, ACTOR),
@@ -186,9 +190,13 @@ def cancel(service: Service, req: dict[str, Any]) -> dict[str, Any]:
     if not row:
         raise APIError(404, "Pending action not found")
     state = json.loads(row["result"]).get("state") if row["result"] else None
+    if state == "applied":
+        if json.loads(row["result"]).get("cancelled"):
+            return {"cancelled": True}
+        raise APIError(409, "This folder change has already completed")
     if state == "committed" or (row["attempted"] and state not in {"blocked", "applied"}):
         raise APIError(409, "Delivery is unconfirmed; retry before canceling this action")
-    with service.store.conn:
+    with service.store.transaction():
         service.store.conn.execute(
             "UPDATE local_outbox SET result=? WHERE id=?",
             (json.dumps({"state": "applied", "cancelled": True}), opid),
@@ -196,9 +204,12 @@ def cancel(service: Service, req: dict[str, Any]) -> dict[str, Any]:
     return {"cancelled": True}
 
 
-def settle(service: Service) -> None:
+def settle(service: Service, committed: list[str]) -> None:
     assert service.store
-    service.store.conn.execute(
-        "UPDATE local_outbox SET result=? WHERE actor=? AND result=?",
-        (json.dumps({"state": "applied"}), ACTOR, json.dumps({"state": "committed"})),
+    service.store.conn.executemany(
+        "UPDATE local_outbox SET result=? WHERE actor=? AND result=? AND id=?",
+        [
+            (json.dumps({"state": "applied"}), ACTOR, json.dumps({"state": "committed"}), opid)
+            for opid in committed
+        ],
     )

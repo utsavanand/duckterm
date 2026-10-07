@@ -12,7 +12,8 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 from duckterm.collaboration import owner as owner_commands
-from duckterm.collaboration.folders import plan_moves, snapshot
+from duckterm.collaboration import recovery
+from duckterm.collaboration.folders import FolderConflict, plan_moves, snapshot
 from duckterm.collaboration.store import PROTOCOL, Store, now, reference, split_reference
 from duckterm.collaboration.transport import Transport
 from duckterm.core.session_api import APIError, _text
@@ -180,14 +181,27 @@ class Service:
             return False
         assert self.store
         async with self.lock:
+            if not self.connected:
+                return False
+            if self.store.setting("disconnecting"):
+                self.error = "Disconnecting; retry in Collaboration settings to finish"
+                return False
             # Resume a committed local plan before sending cards. Otherwise an
             # interrupted prefix move could be advertised as a new folder grant.
             try:
+                recovery.resume(self)
                 self.apply_folder_plan()
             except (APIError, OSError, ValueError, sqlite3.Error) as exc:
                 self.error = str(exc)
                 return False
             identity = self.store.setting("identity")
+            # Only a response requested after the owner commit can confirm it.
+            # A rename/delete may commit while an older exchange is in flight.
+            committed = [
+                item["operation"]["id"]
+                for item in owner_commands.pending(self)
+                if item["result"] and item["result"].get("state") == "committed"
+            ]
             pending = self.store.conn.execute(
                 "SELECT actor,operation FROM local_outbox WHERE result IS NULL AND actor!='@owner' "
                 "ORDER BY CASE WHEN actor='' THEN 0 ELSE 1 END,sequence"
@@ -264,20 +278,35 @@ class Service:
                     plan = response["folder_plan"]
                     saved = self.cached("folder_plan")
                     if not saved or saved["id"] != plan["id"]:
-                        steps = plan_moves(snapshot(self.history), plan["updates"])
+                        state = snapshot(self.history)
+                        try:
+                            steps = plan_moves(state, plan["updates"])
+                        except FolderConflict as exc:
+                            with self.store.conn:
+                                self.cache(
+                                    "folder_conflict",
+                                    {
+                                        "path": exc.path,
+                                        "token": recovery.fingerprint(state),
+                                        "updates": plan["updates"],
+                                    },
+                                )
+                            raise
                         with self.store.conn:
+                            self.cache("folder_conflict", None)
                             self.cache("folder_plan", {"id": plan["id"], "steps": steps, "next": 0})
                     self.apply_folder_plan()
                     self.error = "Folder changes are synchronizing"
                     return False
-                with self.store.conn:
+                with self.store.transaction():
                     self.cache("folder_plan", None)
                     self.cache("folders", response.get("folders", []))
                     existing_folders = set(self.history.folders())
                     for folder in response.get("folders", []):
                         if folder["path"] not in existing_folders:
                             self.history.create_folder(folder["path"])
-                    owner_commands.settle(self)
+                    owner_commands.settle(self, committed)
+                    recovery.queue_shared_folder(self)
                     self.cache("cards", response["cards"])
                     self.cache("questions", list(questions.values()))
                     self.cache(
@@ -364,6 +393,8 @@ class Service:
 
     def enqueue(self, actor: str, operation: dict[str, Any]) -> dict[str, Any]:
         assert self.store
+        if self.store.setting("disconnecting"):
+            raise APIError(503, "Computer is disconnecting")
         self.history.session_api._member(actor)
         opid = operation["id"]
         old = self.store.conn.execute("SELECT * FROM local_outbox WHERE id=?", (opid,)).fetchone()
@@ -733,6 +764,8 @@ class Service:
     def open_mail(self, key: str) -> list[dict[str, Any]]:
         """Metadata for the existing guarded Oracle; never inject peer text."""
         if not self.connected or self.error or now() - self.last_sync > 60_000:
+            return []
+        if self.store and self.store.setting("disconnecting"):
             return []
         ref = self.own_ref(key)
         return [

@@ -69,6 +69,10 @@ export function setRemoteGroup(key: string, group: string): void {
   localStorage.setItem(GROUPS, JSON.stringify({ ...remoteGroups(), [key]: group }));
   window.dispatchEvent(new Event("remote-sessions-refresh"));
 }
+export function clearRemoteGroups(host: string): void {
+  const groups = Object.fromEntries(Object.entries(remoteGroups()).filter(([key]) => splitSessionRef(key).host !== host));
+  localStorage.setItem(GROUPS, JSON.stringify(groups));
+}
 export function changeRemoteFolders(path: string, replacement: string): void {
   const groups = remoteGroups();
   for (const [key, group] of Object.entries(groups)) {

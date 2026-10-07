@@ -7,6 +7,7 @@ import urllib.parse
 from typing import Any
 
 from duckterm.collaboration import owner as owner_commands
+from duckterm.collaboration import recovery
 from duckterm.collaboration.service import Service
 from duckterm.collaboration.store import PROTOCOL, folder_path, reference, split_reference
 from duckterm.core.session_api import APIError
@@ -51,6 +52,15 @@ async def owner(service: Service, method: str, route: str, body: bytes) -> dict[
             "schema": {"file": "collaboration.sqlite", "version": 1},
             "pending_changes": owner_commands.pending(service),
             "folders": service.cached("folders", []),
+            "conflict": service.cached("folder_conflict"),
+            "disconnecting": store.setting("disconnecting") if store else None,
+            "unsent_count": (
+                store.conn.execute(
+                    "SELECT count(*) FROM local_outbox WHERE result IS NULL"
+                ).fetchone()[0]
+                if store
+                else 0
+            ),
         }
         if store and store.setting("coordinator"):
             result["computers"] = [
@@ -60,6 +70,12 @@ async def owner(service: Service, method: str, route: str, body: bytes) -> dict[
         return result
     if route == "/collaboration/owner-queue" and method == "GET":
         return {"commands": owner_commands.pending(service)}
+    if route == "/collaboration/keep-separately" and method == "POST":
+        return await recovery.keep_separately(service, req)
+    if route == "/collaboration/disconnect-prepare" and method == "POST":
+        return await recovery.prepare_disconnect(service)
+    if route == "/collaboration/disconnect" and method == "POST":
+        return await recovery.disconnect(service, req)
     if route == "/collaboration/owner-queue" and method == "POST":
         return owner_commands.queue(service, req)
     if route == "/collaboration/owner-result" and method == "POST":

@@ -16,7 +16,7 @@ export type Action =
   | { kind: "remote-snapshot"; host: string; label: string; sessions: PersistedSession[]; groups: Record<string, string> }
   | { kind: "remote-offline"; host: string }
   | { kind: "remote-hosts"; hosts: string[] }
-  | { kind: "seed"; sessions: PersistedSession[] }
+  | { kind: "seed"; sessions: PersistedSession[]; collaboration?: boolean }
   | { kind: "event"; event: DucktermEvent; replay?: boolean; receivedAt?: number }
   | { kind: "remove"; keys: string[] }
   | { kind: "patch"; key: string; fields: Partial<SessionView> };
@@ -95,6 +95,7 @@ export function reduce(state: State, action: Action): State {
       merged.launched = persisted.launched;
       merged.ptyOwned = persisted.ptyOwned;
       merged.pinned = persisted.pinned;
+      if (action.collaboration) merged.group = persisted.group;
       // Active lineage is DB-owned. Historical fork events retain provenance,
       // but cannot override a parent that was deleted while this page was away.
       merged.parentKey = persisted.parentKey;
@@ -211,23 +212,30 @@ export function useEventStream(): {
 
   useEffect(() => {
     let cancelled = false;
-    const seed = () =>
-      fetch("/sessions")
+    let collaboration = false;
+    let lastSeed = 0;
+    const seed = () => {
+      lastSeed = Date.now();
+      return fetch("/sessions")
         .then((r) => { if (!r.ok) throw new Error("Local sessions unavailable"); return r.json(); })
-        .then((data: { sessions: PersistedSession[] }) => {
+        .then((data: { sessions: PersistedSession[]; collaboration_enabled?: boolean }) => {
+          collaboration = !!data.collaboration_enabled;
           if (!cancelled) {
-            dispatch({ kind: "seed", sessions: data.sessions });
+            dispatch({ kind: "seed", sessions: data.sessions, collaboration });
             setLoadedHosts(previous => previous.includes("local") ? previous : [...previous, "local"]);
           }
         })
         .catch(() => undefined);
+    };
     seed();
     // Light periodic re-seed: context_tokens (and other server-computed
     // fields) change as the agent works but emit no SSE event of their own.
-    const t = setInterval(seed, 30_000);
+    const t = setInterval(() => { if (collaboration || Date.now() - lastSeed >= 30_000) void seed(); }, 2500);
+    window.addEventListener("remote-sessions-refresh", seed);
     return () => {
       cancelled = true;
       clearInterval(t);
+      window.removeEventListener("remote-sessions-refresh", seed);
     };
   }, []);
 

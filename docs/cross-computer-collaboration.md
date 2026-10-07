@@ -196,14 +196,18 @@ remain retryable, confirmed rejections can be canceled, and rename/delete plans
 preserve stable identities. Deleted folders ungroup sessions without stopping
 their processes. Queued parent references are checked against their original
 identity and path. Empty canonical folders synchronize to connected computers.
-These APIs are not yet wired to every sidebar control. The recovery UI preview
-is awaiting owner review before implementation. Remote inbox metadata now feeds
+The Mac sidebar create/rename/reparent/delete controls now use these APIs and
+show pending results without moving or ungrouping rows optimistically. The owner
+approved the recovery preview; settings now show computer status, retry/cancel,
+keep-conflict-separate and disconnect confirmation. The disconnect handshake
+quiesces delivery, verifies the coordinator workspace, confirms revocation and
+then detaches the local identity. Remote inbox metadata now feeds
 the existing Oracle idle/draft checks, without sending peer text as owner input.
 
 Remaining implementation/acceptance work before release:
 
-- Wire every ordinary folder create/rename/reparent/delete entry point to canonical policy, including nested and concurrent changes. The coordinator rename protocol now freezes each delivered plan, preflights nested prefix moves, and journals exact membership for recovery after a process exit. Lost acknowledgments and later coordinator renames preserve folder IDs; local collisions fail before any move. Normal sidebar entry points are not yet fully routed through this protocol. Resolve conflicting saved sidebar arrangements explicitly.
-- Complete computer status/disconnect/recovery UX and retry after interruption at every setup phase. Establish that pairing and restart preserve real running processes and drafts.
+- Wire every ordinary folder create/rename/reparent/delete entry point to canonical policy, including nested and concurrent changes. The coordinator rename protocol now freezes each delivered plan, preflights nested prefix moves, and journals exact membership for recovery after a process exit. Lost acknowledgments and later coordinator renames preserve folder IDs; local collisions fail before any move. The ordinary Mac sidebar now routes these operations through the native owner broker. Name swaps use journaled temporary moves, and the approved keep-separate control preserves unrelated local sessions before registering their new shared folder. Verify this in the packaged Mac/remote acceptance run.
+- Computer status/disconnect/conflict recovery controls are implemented with synthetic backend/native/browser regression coverage. Complete retry after interruption at every setup phase and packaged acceptance. Establish that pairing and restart preserve real running processes and drafts.
 - Verify owner folder-interaction history, reminder delivery and pagination with mixed local/remote traffic and large histories.
 - Prove actual server-owned SSH pairing and Mac sleep/wake behavior with isolated Linux services; current transport acceptance uses real local HTTP with synthetic computers.
 - Complete exact-head review with release-dev, fresh committed-tree verification and the release gate. Do not infer installed acceptance from a simulated native bridge.

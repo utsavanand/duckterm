@@ -414,6 +414,9 @@ def test_http_authentication_and_offline_reply_use_existing_session_routes(tmp_p
                 ("owner-result", "POST"),
                 ("owner-attempt", "POST"),
                 ("owner-cancel", "POST"),
+                ("keep-separately", "POST"),
+                ("disconnect-prepare", "POST"),
+                ("disconnect", "POST"),
             ):
                 for credential, denied in (
                     (a, 403),
@@ -992,5 +995,179 @@ def test_empty_nested_folder_keeps_identity_through_rename_and_delete(paired_fol
         await service.sync()
         assert await service.sync()
         assert "Project/New empty" not in service.history.folders()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("action,new", [("move", "Renamed"), ("delete", ""), ("create", "New")])
+def test_owner_receipt_waits_for_a_post_commit_snapshot(paired_folder_service, action, new):
+    import asyncio
+
+    from duckterm.collaboration import owner
+
+    service, hub, _, _ = paired_folder_service
+
+    async def run():
+        assert await service.sync()
+        queued = owner.queue(service, {"action": action, "old": "Project", "new": new})
+        exchange = service.exchange
+
+        async def stale_response(payload):
+            response = await exchange(payload)
+            owner.attempt(service, {"id": queued["id"]})
+            owner.apply(hub, queued["operation"])
+            owner.acknowledge(service, {"id": queued["id"], "committed": True})
+            return response
+
+        service.exchange = stale_response
+        assert await service.sync()
+        assert [item["operation"]["id"] for item in owner.pending(service)] == [queued["id"]]
+        assert service.history.session("parent")["grp"] == "Project"
+        service.exchange = exchange
+        await service.sync()
+        assert await service.sync(), service.error
+        assert owner.pending(service) == []
+        expected = {"move": "Renamed", "delete": None, "create": "Project"}[action]
+        assert service.history.session("parent")["grp"] == expected
+
+    asyncio.run(run())
+
+
+def test_keep_conflict_separately_preserves_sessions_and_replays_after_crash(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration import owner, recovery
+
+    service, hub, root, _ = paired_folder_service
+
+    async def run():
+        assert await service.sync()
+        service.history.record(
+            {
+                "_id": "separate",
+                "_ts": 1,
+                "event_type": "SessionStart",
+                "session_key": "separate",
+                "test": True,
+            }
+        )
+        service.history.set_meta("separate", group="Renamed")
+        hub.change_folder(root, None, "Renamed")
+        assert not await service.sync()
+        conflict = service.cached("folder_conflict")
+        assert conflict["path"] == "Renamed"
+        move = service.move_folder
+
+        def crash(old, new):
+            move(old, new)
+            raise OSError("exit after local history commit")
+
+        service.move_folder = crash
+        with pytest.raises(OSError, match="exit after"):
+            await recovery.keep_separately(
+                service, {"token": conflict["token"], "new": "Kept separately"}
+            )
+        service.move_folder = move
+        assert not await service.sync()
+        assert await service.sync(), service.error
+        assert service.history.session("separate")["grp"] == "Kept separately"
+        assert service.history.session("parent")["grp"] == "Renamed"
+        assert service.history.session("separate")["state"] == "busy"
+        assert service.cached("folder_recovery") is None
+        assert service.cached("folder_conflict") is None
+        assert (
+            hub.conn.execute(
+                "SELECT root FROM peers WHERE ref=?", (service.own_ref("separate"),)
+            ).fetchone()[0]
+            is None
+        )
+
+        # Keeping a separate folder queues its owner-authorized registration;
+        # it inherits sharing after the native owner broker confirms creation.
+        queued = owner.pending(service)
+        assert [item["operation"]["new"] for item in queued] == ["Kept separately"]
+        owner.apply(hub, queued[0]["operation"])
+        owner.acknowledge(service, {"id": queued[0]["operation"]["id"], "committed": True})
+        assert await service.sync()
+        assert hub.path(hub.peer(service.own_ref("separate"))["root"]) == "Kept separately"
+
+    asyncio.run(run())
+
+
+def test_conflict_recovery_refuses_stale_review(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration import recovery
+
+    service, hub, root, _ = paired_folder_service
+
+    async def run():
+        assert await service.sync()
+        service.history.create_folder("Renamed")
+        hub.change_folder(root, None, "Renamed")
+        assert not await service.sync()
+        conflict = service.cached("folder_conflict")
+        service.history.create_folder("Added after review")
+        with pytest.raises(APIError, match="Local folders changed"):
+            await recovery.keep_separately(service, {"token": conflict["token"], "new": "Kept"})
+        assert service.history.session("parent")["grp"] == "Project"
+        assert "Kept" not in service.history.folders()
+
+    asyncio.run(run())
+
+
+def test_name_swap_stages_parents_before_nested_folders(paired_folder_service):
+    import asyncio
+
+    service, hub, root, child = paired_folder_service
+    other = hub.add_folder("Other")
+
+    async def run():
+        assert await service.sync()
+        hub.change_folder(root, None, "Temporary")
+        hub.change_folder(other, None, "Project")
+        hub.change_folder(root, None, "Other")
+        assert not await service.sync()
+        assert await service.sync(), service.error
+        assert service.history.session("parent")["grp"] == "Other"
+        assert service.history.session("child")["grp"] == "Other/Child"
+        assert hub.peer(service.own_ref("child"))["folder"] == child
+        assert service.history.folders() == ["Other", "Other/Child", "Project"]
+
+    asyncio.run(run())
+
+
+def test_disconnect_quiesces_queue_and_never_replays_into_new_identity(paired_folder_service):
+    import asyncio
+
+    from duckterm.collaboration import owner, recovery
+
+    service, hub, root, _ = paired_folder_service
+
+    async def run():
+        assert await service.sync()
+        queued = owner.queue(service, {"action": "move", "old": "Project", "new": "Never sent"})
+        prepared = await recovery.prepare_disconnect(service)
+        assert await recovery.prepare_disconnect(service) == prepared
+        assert owner.attempt(service, {"id": queued["id"]}) == {"attempted": False}
+        assert not await service.sync()
+        with pytest.raises(APIError, match="Finish disconnecting"):
+            owner.queue(service, {"action": "create", "new": "No"})
+        hub.revoke(prepared["computer_id"])
+        assert await recovery.disconnect(service, {"id": prepared["id"]}) == {"disconnected": True}
+        assert not service.connected
+        assert service.history.session("parent")["grp"] == "Project"
+        assert service.history.session("parent")["state"] == "busy"
+        assert owner.pending(service) == []
+        identity = hub.computer("Reconnected")
+        service.join(identity, {"ssh_target": "fixture-only"})
+
+        async def exchange(payload):
+            return hub.exchange(identity["token"], payload)
+
+        service.exchange = exchange
+        assert await service.sync()
+        assert owner.pending(service) == []
+        assert hub.path(root) == "Project"
 
     asyncio.run(run())

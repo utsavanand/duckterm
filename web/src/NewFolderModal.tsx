@@ -26,8 +26,8 @@ export function NewFolderModal({
     }
     setBusy(true);
     try {
-      await api.createFolder(trimmed);
-      toast(`Created folder ${trimmed}`);
+      const result = await api.createFolder(trimmed);
+      toast(result.pending ? "Folder creation pending sync. Open Settings → Collaboration to review." : `Created folder ${trimmed}`);
       onCreated();
     } catch (e) {
       toast(`Create failed: ${(e as Error).message}`, "err");

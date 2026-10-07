@@ -263,3 +263,15 @@ describe("active parent links after deletion", () => {
     expect(state.sessions.get("s1")?.parentKey).toBe("not-arrived");
   });
 });
+
+
+it("canonical folder snapshots replace stale optimistic groups including ungrouping", () => {
+  const row = { session_key: "s1", state: "busy", event_count: 1, started_at: 1, updated_at: 1, grp: "Old" } as PersistedSession;
+  let state = reduce(emptyState(), { kind: "seed", sessions: [row] });
+  state = reduce(state, { kind: "patch", key: "s1", fields: { group: "Stale" } });
+  state = reduce(state, { kind: "seed", sessions: [{ ...row, grp: "Renamed" }], collaboration: true });
+  expect(state.sessions.get("s1")?.group).toBe("Renamed");
+  state = reduce(state, { kind: "seed", sessions: [{ ...row, grp: null }], collaboration: true });
+  expect(state.sessions.get("s1")?.group).toBeUndefined();
+  expect(state.sessions.get("s1")?.state).toBe("busy");
+});
