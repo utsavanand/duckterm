@@ -590,6 +590,7 @@ function Dashboard() {
           refreshFolders();
           if (group) window.dispatchEvent(new CustomEvent("reveal-sidebar-folder", { detail: group }));
           requestAnimationFrame(() => {
+            if (actionAnchorRef.current && actionAnchorRef.current !== actionAnchor) return;
             document.querySelector<HTMLElement>(`.rd-row[data-session-key="${CSS.escape(actionSession.key)}"]`)?.focus({ preventScroll: true });
           });
         } : undefined}
