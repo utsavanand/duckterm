@@ -459,7 +459,7 @@ function Dashboard() {
             )}
             {view === "history" && selected && (
               <div className="rd-messages-wrap">
-                <TimelineView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} checkpointTarget={checkpointTarget?.key === selected.key ? checkpointTarget.request : undefined} onArtifacts={() => setView("artifacts")} />
+                <TimelineView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} checkpointTarget={checkpointTarget?.key === selected.key ? checkpointTarget.request : undefined} onArtifacts={() => setView("artifacts")} onMessages={() => setView("messages")} />
               </div>
             )}
             {view === "inbox" && (

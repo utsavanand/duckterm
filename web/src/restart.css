@@ -41,3 +41,11 @@
 .rd-restart-interrupt label { display: flex; align-items: start; gap: 8px; font-weight: 500; }
 .rd-restart-interrupt input { flex-shrink: 0; margin-top: 4px; accent-color: var(--brand-green); }
 .rd-restart-interrupt .rd-restart-help { margin: 4px 0 18px 24px; }
+.rd-memory-evidence { padding: 12px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.rd-memory-evidence summary { cursor: pointer; }
+.rd-memory-evidence dl { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 6px 14px; }
+.rd-memory-evidence dt { color: var(--text-soft); }
+.rd-memory-evidence dd { margin: 0; overflow-wrap: anywhere; }
+.rd-memory-evidence h3 { font-size: 13px; }
+.rd-memory-brief { max-height: 220px; overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--border); background: var(--bg); padding: 14px; }
+.rd-memory-gap { border-left: 2px solid var(--border); padding-left: 10px; }

@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, forkMergeHistory, TimelinePage } from "./api";
-import { TimelineView } from "./TimelineView";
+import { TimelineView, TIMELINE_MILESTONES } from "./TimelineView";
 import type { SessionView } from "./types";
 vi.mock("./api", () => ({ api: { timeline: vi.fn(), checkpoints: vi.fn() }, forkMergeHistory: vi.fn(), forkMergeService: vi.fn() }));
 vi.mock("./HistoryView", () => ({ HistoryView: () => <p>Earlier digest history</p> }));
@@ -15,12 +15,12 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); });
 it("resets pagination when filtering", async () => {
-  vi.mocked(api.timeline).mockImplementation(async (_key, kinds, before) => before ? page("Older work") : page(kinds || "First page", kinds ? null : "cursor-one"));
+  vi.mocked(api.timeline).mockImplementation(async (_key, kinds, before) => before ? page("Older work") : page(kinds === TIMELINE_MILESTONES ? "First page" : kinds, kinds === TIMELINE_MILESTONES ? "cursor-one" : null));
   render(<TimelineView session={session} />);
   await screen.findByText("First page");
   fireEvent.click(await screen.findByRole("button", { name: "Load older entries" }));
   await screen.findByText("Older work");
-  expect(api.timeline).toHaveBeenCalledWith("one", "", "cursor-one");
+  expect(api.timeline).toHaveBeenCalledWith("one", TIMELINE_MILESTONES, "cursor-one");
   fireEvent.click(screen.getByRole("button", { name: "Checkpoints" }));
   await screen.findByText("checkpoint");
   expect(screen.queryByText("Older work")).toBeNull();
@@ -101,4 +101,15 @@ it("retains remote history when an older native wrapper lacks Timeline transport
   view.rerender(<TimelineView session={session} />);
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Unsupported session operation"));
   expect(screen.queryByText("Earlier digest history")).toBeNull();
+});
+
+it("requests milestones without ordinary prompts and keeps general Messages navigation", async () => {
+  const onMessages = vi.fn(); render(<TimelineView session={session} onMessages={onMessages} />);
+  await screen.findByText("Saved work"); expect(api.timeline).toHaveBeenCalledWith("one", TIMELINE_MILESTONES);
+  expect(TIMELINE_MILESTONES.split(",")).not.toContain("prompt");
+  for (const kind of ["checkpoint", "artifact", "decision", "delivered", "completed", "restart", "model", "harness"]) expect(TIMELINE_MILESTONES.split(",")).toContain(kind);
+  fireEvent.click(screen.getByRole("button", { name: "Progress" }));
+  await waitFor(() => expect(api.timeline).toHaveBeenLastCalledWith("one", "delivered,learned,next_action,completed,decision,restart,model,harness,needs-you"));
+  fireEvent.click(screen.getByRole("button", { name: "Messages" })); expect(onMessages).toHaveBeenCalledOnce();
+  expect(screen.queryByText(/View supporting messages/)).not.toBeInTheDocument();
 });

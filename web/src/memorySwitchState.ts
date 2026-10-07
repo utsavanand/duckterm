@@ -1,5 +1,4 @@
-// Pure UI state guards. Not wired into RestartControls until contract and visual
-// review are complete. API responses must be validated by the future adapter.
+// Pure UI state guards. Wire responses are validated by memorySwitchTransport.
 export interface SwitchSelection {
   sessionRef: string; // Includes owning host, not merely the raw session ID.
   sourceGeneration: string;
@@ -97,6 +96,7 @@ export type MemorySwitchAction =
   | { type: "invalidate"; reason: string }
   | { type: "confirm"; eligibility: SwitchEligibility; requestKey: string }
   | { type: "response_lost"; scope: PreparationScope; requestKey: string }
+  | { type: "rejected"; scope: PreparationScope; requestKey: string; reason: string }
   | { type: "operation"; scope: PreparationScope; result: OperationResult };
 
 export function memorySwitchReducer(state: MemorySwitchState, action: MemorySwitchAction): MemorySwitchState {
@@ -140,6 +140,11 @@ export function memorySwitchReducer(state: MemorySwitchState, action: MemorySwit
       return state.phase === "submitting" && sameScope(state.scope, action.scope)
         && state.submission?.requestKey === action.requestKey
         ? { ...state, phase: "submission_unknown" } : state;
+    case "rejected":
+      return ["submitting", "submission_unknown"].includes(state.phase) && sameScope(state.scope, action.scope)
+        && state.submission?.requestKey === action.requestKey
+        ? { ...state, phase: "failed", submission: undefined, proof: undefined,
+          interrupt: false, reason: action.reason } : state;
     case "operation": {
       const result = action.result;
       if (!state.submission || !sameScope(state.scope, action.scope)

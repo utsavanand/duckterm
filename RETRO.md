@@ -41,6 +41,9 @@ request for row activation; opening or dismissing its menu must not send one.
 When relocating actions, compare every eligibility and click-time guard with
 the original handler. Local continuation must remain blocked across menu reopen
 while conversation Undo is unresolved, before it can change the transfer state.
+## 2026-10-07 — Preparing a handoff must not confirm a switch
+
+Bind preparation to the session, source generation, target harness and exact model choice. Source changes invalidate readiness, closing a dialog releases only its own preparation lease, and only the explicit Switch action may stop the current harness. A lost switch response requires checking its durable receipt; an explicit retry must reuse the same immutable request and idempotency key. Test these boundaries separately from same-harness restart, and keep ordinary conversation turns out of Timeline milestones while retaining checkpoint evidence.
 
 ## 2026-10-07 — Slow background reads can consume the browser's action slots
 
