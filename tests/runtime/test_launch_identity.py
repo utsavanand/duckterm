@@ -373,3 +373,39 @@ def test_switch_generation_barrier_and_restore_preserve_assigned_source(history)
     assert history.session("old")["state"] == "stopped"
     assert history.restart_control("old")["native_binding"]["generation"] != "prior"
     server.digests.close()
+
+
+def test_fresh_resume_of_unidentified_copilot_accepts_its_new_generation(
+    history, tmp_path, monkeypatch
+):
+    (tmp_path / "copilot").symlink_to("/bin/echo")
+    monkeypatch.setenv("PATH", str(tmp_path), prepend=":")
+    server = Server(history=history)
+    seed(history, native_id=None, cwd=str(tmp_path))
+    history._conn.execute(
+        "UPDATE sessions SET runtime='copilot', command='/bin/echo', state='interrupted' "
+        "WHERE session_key='old'"
+    )
+    history._conn.commit()
+    monkeypatch.setattr("duckterm.core.orchestrator.tmux.has_tmux", lambda: False)
+
+    async def spawn(supervisor, argv):
+        generation = supervisor._env["DUCKTERM_HARNESS_GENERATION"]
+        assert generation
+        assert accept_hook(
+            server,
+            {
+                "event_type": "SessionStart",
+                "runtime": "copilot",
+                "session_key": "old",
+                "session_id": argv[argv.index("--session-id") + 1],
+                "launch_generation": generation,
+            },
+        )
+
+    monkeypatch.setattr(SessionSupervisor, "_start_pty", spawn)
+    try:
+        assert asyncio.run(server._resume_session("old"))[0] == 200
+        assert history.native_identity("old")["source"] == "assigned"
+    finally:
+        server.digests.close()

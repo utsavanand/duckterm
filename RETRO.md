@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Empty launch generations must receive a fresh token
+
+Resuming an unidentified legacy conversation passes an empty generation override.
+Using setdefault preserved that empty value when assigning its first native ID,
+so valid hooks from the new process were rejected. Generate a nonempty token for
+both absent and empty values, while preserving an explicit switch generation.
+Reproduce through Resume and verify the child's matching hook is accepted.
+
 ## 2026-10-06 — Validate identity evidence before recording a conflict
 
 A malformed current-generation SessionStart could permanently contest an assigned conversation and block Resume. Apply the same native-ID validation to conflicting evidence as to an initial binding. Invalid hook input should be dropped without changing a valid recorded identity; valid mismatches must still remain contested.

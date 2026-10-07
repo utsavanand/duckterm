@@ -145,7 +145,8 @@ class SessionSupervisor:
             argv = command + argv[len(base) :]
         identity: dict[str, object] = {}
         if assigned:
-            generation = self._env.setdefault("DUCKTERM_HARNESS_GENERATION", uuid.uuid4().hex)
+            generation = self._env.get("DUCKTERM_HARNESS_GENERATION") or uuid.uuid4().hex
+            self._env["DUCKTERM_HARNESS_GENERATION"] = generation
             identity = {
                 "_assigned_native_id": assigned,
                 "session_id": assigned,
