@@ -113,3 +113,21 @@ def test_prepare_reuses_verified_revision_and_refuses_rewritten_evidence(prepara
         assert len(calls) == 2
 
     asyncio.run(run())
+
+
+def test_onboarding_identifies_named_session_directory_and_selected_target(preparation):
+    server, calls, tmp = preparation
+    server.history.set_meta("agent", name="Startup · video")
+    view = asyncio.run(fixtures.prepare(server))
+    assert view["state"] == "ready"
+    detail = server.memory_preparation.details("agent", view["preparation_id"])
+    text = detail["brief"]["text"]
+    launch = json.loads(text.split("Launch context (", 1)[1].split("\n", 1)[1].split("\n", 1)[0])
+    assert launch == {
+        "session_key": "agent",
+        "session_name": "Startup · video",
+        "cwd": str(tmp),
+        "source_harness": "claude-code",
+        "target": {"harness": "codex", "model": {"mode": "explicit", "id": "selected-model"}},
+    }
+    assert calls == [] and len(text.encode()) <= 32000

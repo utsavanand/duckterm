@@ -303,7 +303,17 @@ class MemoryPreparation:
             prior = self.server.digests.revision(key, current_revision(row))
             self.update(job, phase="assembling")
             seed, handoff, included = memory_handoff.assemble(
-                key, sources, captured["required"], prior
+                key,
+                sources,
+                captured["required"],
+                prior,
+                launch={
+                    "session_key": key,
+                    "session_name": row.get("name"),
+                    "cwd": row.get("worktree_path") or row.get("cwd"),
+                    "source_harness": row.get("runtime"),
+                    "target": job["binding"]["target"],
+                },
             )
             text_refs = []
             for source in sources:

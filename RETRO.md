@@ -1,6 +1,15 @@
 # Retro — lessons from real breakage
 
 
+## 2026-10-07 — Backfill arrival order is not conversation chronology
+
+Problem: a bounded summary update may process a recent correction first and older history later. Without input provenance, the later update can mistake the older direction for new owner guidance. An onboarding packet also needs the named session, project and chosen harness, not just an opaque session key.
+
+Fix: record observed source frontiers and label historical backfill versus newly appended records. Include that provenance in generation and validation input. Supply the exact session/directory/target envelope in the bounded handoff. These are evidence and context, not additional owner authority.
+
+Validation: regressions exercise an older direction, a later correction and a newly appended owner message across two updates, plus named-session onboarding with an explicit target. No live session was switched.
+
+
 ## 2026-10-07 — Harness switching cannot depend on a whole-history model pass
 
 Problem: the source session's long history became a serial generation/review workflow in the switch dialog. Quota failures and large backlogs blocked an owner-requested harness change, even though originals and current work were already available.

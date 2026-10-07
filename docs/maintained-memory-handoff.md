@@ -2,8 +2,9 @@
 
 Implementation candidate, 2026-10-07. This backend change is not a shipped feature.
 The owner requested parallel work in existing Codex sessions: main-dev owns this
-backend, remote-session-dev owns retrieval/context links, ui-dev owns UI transport
-and preview, and main-qa owns independent verification. Startup is the sole
+backend and retrieval/context links; remote-session-dev declined that assignment
+because of a separate direct owner priority. UI-dev and main-qa have pending
+assignments for UI transport/preview and independent verification respectively. Startup is the sole
 existing-session acceptance target; Product and release-dev are unchanged.
 
 ## One summary writer
@@ -22,6 +23,9 @@ The immutable `summary_revision_v1` record additionally carries:
   Claims are `{text, refs}`; refs use `source-id:version:record-id`.
 - `continuity.processed`: source ID to record ID to hash of `[id, role, text]`.
   This measures records supplied to successful summary updates, not complete semantic recall.
+- `continuity.frontiers`: the number of original positions observed per source. Updates label
+  native records as initial history, historical backfill or new since the previous update;
+  processing an older record later must not make it a newer owner correction.
 - `continuity.verified`, available/summarized/remaining record counts, gaps and invalidation.
 - `retained_sources`: exact non-native text references, described below.
 - `memory_sources`: existing exact native conversation snapshots.
@@ -63,7 +67,7 @@ reference exists and the source remains present and allowed by current grants.
 Deletion/revoked sharing must not be bypassed through an old reference. Native
 transcript cleanup may still use its authorized retained snapshot. The new helper
 alone is not the authorization layer and does not yet make old artifacts readable
-through the public memory API; remote-session-dev owns that integration.
+through the public memory API; main-dev is implementing that integration.
 
 No schema migration, new dependency or cloud upload is included. Existing backup
 selection excludes retained memory snapshots; cloud backup expansion stays deferred.
@@ -75,6 +79,8 @@ current work, selected complete recent conversation records, source references a
 onboarding instructions with installed commands. It does not call a summarization
 provider and does not create a new generated summary revision. The packet is at
 most 32,000 UTF-8 bytes. Required context overflow fails before stopping anything.
+The onboarding envelope names the stable session, project directory, source harness
+and requested target/model selection; a default model remains explicitly unresolved.
 Only currently implemented commands are listed; add graph commands after integration.
 
 Keep the version-1 request/binding/proof identity and routes. Add:
@@ -118,7 +124,9 @@ explicitly confirms the switch. No Product/release-dev migration is automatic.
 1. Retrieval/catalog/search/read support for immutable revisions and retained versions.
 2. Typed, evidenced related/link commands and stable claim identities; preserve own-session scope.
 3. UI transport plus owner-reviewed freshness/coverage preview and visible integration.
-4. Independent QA, full committed-tree gate, packaged install, and startup-only switch.
+4. Complete integration and independent QA before any further live preparation/switch,
+   per the owner's latest direction. Then run the committed-tree full gate, package
+   installation and startup-only acceptance.
 5. Actual continuing agent retrieves an old fact absent from its brief and the exact
    cited artifact version. Measure real preparation time; no production timing claim yet.
 

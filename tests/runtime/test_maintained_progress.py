@@ -210,3 +210,26 @@ def test_scheduled_exit_update_does_not_summarize_a_replacement_conversation(
         assert calls == []
 
     asyncio.run(run())
+
+
+def test_backfill_is_labeled_older_than_prior_summary_and_new_append(memory_rig, monkeypatch):
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "Earlier direction: " + "x" * 30000)
+    append(path, "Later correction: " + "y" * 30000)
+    calls = provider(monkeypatch)
+
+    async def run():
+        first = await server.progress_coordinator.refresh("agent")
+        assert first["continuity"]["remaining_records"] == 1
+        append(path, "New owner message after the first summary")
+        await server.progress_coordinator.refresh("agent")
+        data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
+        older = next(r for r in data["records"] if r["text"].startswith("Earlier direction"))
+        new = next(r for r in data["records"] if r["text"].startswith("New owner message"))
+        assert older["update_kind"] == "historical_backfill" and older["position"] == 0
+        assert new["update_kind"] == "new_since_previous_update" and new["position"] == 2
+        assert not any(r["text"].startswith("Later correction") for r in data["records"])
+        assert data["prior_context"] == first["continuity"]["context"]
+        assert "NOT conversation chronology" in calls[2]
+
+    asyncio.run(run())
