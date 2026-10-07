@@ -4648,7 +4648,7 @@ class Server:
             + (
                 "Original conversation bytes at this checkpoint are retained privately. "
                 "Deleting the session removes its retained copies.\n"
-                if result["record"].get("memory_source")
+                if result["record"].get("memory_source") or result["record"].get("memory_sources")
                 else "This marker has no retained copy of the provider transcript.\n"
             )
         )

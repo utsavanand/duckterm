@@ -246,3 +246,47 @@ def test_launch_failure_reports_stopped_source_and_keeps_native_recovery(ready_s
         assert len(calls) == 1 and calls[0][0] == "stop"
 
     asyncio.run(run())
+
+
+def test_duplicate_request_rechecks_completed_receipt_after_slow_draft_probe(
+    ready_switch, monkeypatch
+):
+    server, _, _, calls, _ = ready_switch
+
+    async def run():
+        entered = [asyncio.Event(), asyncio.Event()]
+        release = [asyncio.Event(), asyncio.Event()]
+        count = 0
+
+        async def draft(*args):
+            nonlocal count
+            index = count
+            count += 1
+            entered[index].set()
+            await release[index].wait()
+            return True
+
+        monkeypatch.setattr(server.restarts, "draft_free", draft)
+        first = asyncio.create_task(server.restarts.request("a", "model", request_key="retry"))
+        await asyncio.wait_for(entered[0].wait(), 2)
+        second = asyncio.create_task(server.restarts.request("a", "model", request_key="retry"))
+        await asyncio.wait_for(entered[1].wait(), 2)
+        # No real process step is scheduled: this rig has no completed turn.
+        # Simulate receipt completion while the duplicate is still inspecting
+        # the terminal, as can happen with same-conversation model restarts.
+        release[0].set()
+
+        # describe() also probes the draft on a normal restart; avoid that
+        # extra await so this test controls only request's confirmation probe.
+        async def describe(key):
+            return server.restarts.operation(server.restarts.read(key))
+
+        monkeypatch.setattr(server.restarts, "describe", describe)
+        original = await first
+        server.restarts.save("a", status="completed", process_state="target_running")
+        release[1].set()
+        repeated = await second
+        assert repeated["id"] == original["id"] and repeated["status"] == "completed"
+        assert calls == []
+
+    asyncio.run(run())

@@ -456,6 +456,16 @@ class Restarts:
             self.epochs.get(key, 0) != request_epoch or sup.last_owner_input_ms != input_stamp
         ):
             raise APIError(409, "Session activity changed. Review and retry the switch.")
+        # Reconcile a completed receipt as well as an active operation: the
+        # first request can finish while a duplicate awaits a slow screen read.
+        if request_key is not None:
+            previous_receipt = self.read(key).get("receipts", {}).get(request_key)
+            if previous_receipt is not None:
+                if previous_receipt["request_hash"] != request_hash:
+                    raise PreparationError(
+                        409, "operation_conflict", "Request key was used for another switch"
+                    )
+                return dict(previous_receipt)
         # Another request can arrive while the screen read is in flight.
         if self.read(key).get("status") in ACTIVE:
             raise APIError(409, "A restart is already pending.")

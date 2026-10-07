@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Recheck retry identities after awaited probes
+
+QA synchronized two preparations at a target probe and showed the same request key could start two different model jobs. A pre-await lookup cannot establish idempotency. Repeat the exact request/binding check under the creation lock, and recheck restart receipts after the terminal probe before creating another operation. A local retained-history feature also must not widen an existing cloud backup selection merely by placing files under a directory already traversed by backup; exclude its reserved snapshot/cache directory explicitly.
+
 ## 2026-10-07 — A prepared switch must bind its sources and survive a lost response
 
 Preparing a brief is not permission to stop an agent. Bind the final explicit switch to its target, model, conversation generation and exact source versions; repeat source and draft checks at the stop boundary. Persist operation receipts so a repeated request cannot stop a second process. Keep canceled dialog leases separate from an accepted switch. If target launch fails, report that the source is stopped and preserve its native recovery metadata. A newer short progress summary may update the card but must reference, rather than overwrite or silently extend, the last whole-history revision.

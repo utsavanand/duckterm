@@ -141,6 +141,16 @@ class MemoryPreparation:
         _, _, _, binary = await self.server.restarts.live_plan(key, target["harness"])
         cli_version = await self.server.restarts.switch_version(target["harness"], binary)
         async with self.locks.setdefault(key, asyncio.Lock()):
+            # The target/CLI probes yielded. Another dialog may have claimed
+            # this retry key while they were in flight.
+            existing_id = self.requests.get((key, request_key))
+            if existing_id:
+                job = self.get(key, existing_id)
+                if job["binding"] != binding:
+                    raise PreparationError(
+                        409, "operation_conflict", "Request key was used for another target"
+                    )
+                return self.view(job, request_key)
             if generation(self.server, key) != binding["source_generation"]:
                 raise PreparationError(409, "stale_source", "Conversation changed; reopen Restart")
             # Same binding shares work and independent caller leases. Each new
@@ -149,6 +159,7 @@ class MemoryPreparation:
                 if (
                     job["key"] == key
                     and job["binding"] == binding
+                    and job["cli_version"] == cli_version
                     and job["view"]["state"] in {"preparing", "ready"}
                 ):
                     try:
@@ -261,6 +272,8 @@ class MemoryPreparation:
             baseline = prior
             if prior and prior.get("memory_baseline_ref"):
                 baseline = self.server.digests.revision(key, prior["memory_baseline_ref"])
+            if baseline and baseline.get("memory", {}).get("cli_version") != job["cli_version"]:
+                baseline = None
             self.update(job, phase="summarizing")
             context, pieces = await memory_summary.summarize(
                 sources, job["binding"]["target"], baseline, lambda: self.cheap_validate(job)
@@ -310,6 +323,7 @@ class MemoryPreparation:
                 },
                 "memory": {
                     "policy": memory_summary.POLICY,
+                    "cli_version": job["cli_version"],
                     "target": job["binding"]["target"],
                     "pieces": pieces,
                     "context": context,
@@ -344,6 +358,10 @@ class MemoryPreparation:
                 raise PreparationError(
                     409, "stale_source", "Progress changed while preparing; prepare again"
                 )
+            checkpoint = next(
+                cp for cp in self.server.history.checkpoints(key) if cp["id"] == checkpoint_id
+            )
+            await self.server._export_checkpoint(key, checkpoint)
             job["checkpoint_id"] = checkpoint_id
             job["seed"] = seed
             # The new marker has added retained references. Bind readiness to
