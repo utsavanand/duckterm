@@ -212,6 +212,8 @@ def resolve_checkpoint(
         result["summary_origin"] = (
             "owner-reviewed" if summary.get("review", {}).get("kind") == "owner" else "generated"
         )
+        if result["summary_origin"] == "owner-reviewed":
+            result["summary_review"] = summary["review"]
         result["summary_source_at"] = summary.get("source_at", summary["created_at"])
         state = (
             "ready" if summary.get("summary_validation", {}).get("ready") is True else "unverified"

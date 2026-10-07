@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — A source fingerprint is not review evidence
+
+An approval packet needs inspectable source links and the exact bounded excerpts the owner saw, not just hashes and counts. Preserve that immutable packet inside the existing reviewed revision, label omitted tools and attachments, and verify a read after the draft cache is gone reproduces the same packet hash. The frozen evidence is part of the explicit review record; it is not a new continuously maintained memory store.
+
 ## 2026-10-07 — An owner-reviewed handoff must survive retries without approving new work
 
 Quota exhaustion cannot be solved by asking the exhausted provider for one last summary. Prepare an explicit owner review of a bounded brief and its current sources, then save approval through the existing revision writer. Commit the revision, checkpoint retention marker and current projection together. Bind approval to the displayed packet, source boundary and prior revision; make a lost-response retry return the same checkpoint. The first path certifies only the exact reviewed state: a subsequent digest must neither extend that approval nor truncate the reviewed brief into a short card summary.

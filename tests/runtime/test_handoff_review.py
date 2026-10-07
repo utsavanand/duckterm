@@ -257,3 +257,37 @@ def test_concurrent_approval_retry_creates_one_revision_and_marker(rig):
         assert server.history._conn.execute("SELECT count(*) FROM checkpoints").fetchone()[0] == 1
 
     asyncio.run(run())
+
+
+def test_exact_source_packet_can_be_reconstructed_after_draft_cache_loss(rig):
+    from duckterm.handoff_review import HandoffReview
+    from duckterm.persistence.saved_state import fingerprint
+
+    server, transcript, _ = rig
+
+    async def run():
+        packet = await server.handoff_review.prepare(
+            "test-save",
+            {
+                "summary": "Preserve the owner constraint",
+                "gaps": ["Only selected text excerpts were checked."],
+            },
+        )
+        manifest = packet["source_manifest"]
+        source = manifest["conversation"]
+        assert source["read_path"] == "/sessions/test-save/messages"
+        assert source["excerpts"][0]["text"] == transcript[0]["text"]
+        assert source["excerpts"][0]["content_hash"] == fingerprint(transcript[0])
+        assert "not the full conversation" in source["coverage"]
+        body = approval(packet)
+        result = await server.handoff_review.approve("test-save", body)
+        server.handoff_review = HandoffReview(server)
+        again = await server.handoff_review.approve("test-save", body)
+        evidence = again["checkpoint"]["summary_review"]
+        expected = {k: v for k, v in packet.items() if k not in ("review_id", "packet_hash")}
+        assert evidence["packet"] == expected
+        assert fingerprint(evidence["packet"]) == packet["packet_hash"]
+        assert evidence["summary_hash"] == fingerprint(again["checkpoint"]["summary"])
+        assert result["revision_id"] == again["revision_id"]
+
+    asyncio.run(run())

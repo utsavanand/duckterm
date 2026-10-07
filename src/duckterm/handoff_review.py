@@ -27,6 +27,51 @@ MAX_BRIEF_BYTES = 8000
 REVIEW_SECONDS = 1800
 
 
+def source_manifest(key: str, captured: dict[str, Any]) -> dict[str, Any]:
+    """Bounded evidence shown to the owner, with links to current originals."""
+    records = captured["transcript"]
+    indexes = sorted({0, *range(max(0, len(records) - 3), len(records))})
+    excerpts = []
+    for index in indexes:
+        record = records[index]
+        text = record["text"].encode()[:1500].decode(errors="ignore")
+        excerpts.append(
+            {
+                "record_index": index,
+                "role": record["role"],
+                "text": text,
+                "content_hash": fingerprint(record),
+                "truncated": text != record["text"],
+            }
+        )
+    return {
+        "format": "handoff_review_sources_v1",
+        "conversation": {
+            "read_path": f"/sessions/{key}/messages",
+            "identity": captured["conversation"],
+            "record_count": len(records),
+            "content_hash": captured["source"]["transcript_hash"],
+            "excerpts": excerpts,
+            "coverage": (
+                "Text records parsed by the current harness adapter. "
+                "Tool payloads and attachment contents are not reviewed here. "
+                "The excerpts are selected evidence, not the full conversation."
+            ),
+        },
+        "events": {
+            "read_path": f"/sessions/{key}/timeline",
+            "boundary": captured["source"]["events"],
+        },
+        "required_context": {
+            "content_hash": captured["source"]["required_hash"],
+            "scope": captured["facts"]["required"]["scope"],
+            "task_ids": [row["id"] for row in captured["facts"]["required"]["tasks"]],
+            "mail_ids": [row["id"] for row in captured["facts"]["required"]["mail"]],
+            "shown": "Included verbatim in the handoff brief below.",
+        },
+    }
+
+
 def handoff_brief(summary: str, required: str, *, reviewed: bool = False) -> str:
     """The exact mandatory text checked by both readiness and launch."""
     return (
@@ -86,6 +131,7 @@ class HandoffReview:
         while len(self.drafts) >= 32:
             self.drafts.pop(next(iter(self.drafts)))
         packet = {
+            "format": "handoff_review_packet_v1",
             "session": key,
             "conversation": captured["conversation"],
             "source": captured["source"],
@@ -94,6 +140,7 @@ class HandoffReview:
             "gaps": gaps,
             "brief": brief,
             "coverage": "owner-selected",
+            "source_manifest": source_manifest(key, captured),
             "warning": (
                 "The agent keeps this brief, not the full conversation. "
                 "New work requires a new review."
@@ -201,6 +248,8 @@ class HandoffReview:
                 "checkpoint_id": checkpoint_id,
                 "summary_hash": fingerprint(draft["text"]),
                 "purpose": "handoff-at-reviewed-boundary",
+                # Immutable review evidence, not a separately updated memory.
+                "packet": draft["packet"],
             },
         }
         saved = coordinator.persist(
