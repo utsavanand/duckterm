@@ -88,21 +88,17 @@ it("keeps restart usable when catalog fails, retries, and never restarts from se
   expect(button).toHaveFocus();
 });
 
-it("allows another harness when native resume is unverified and resets model scope", async () => {
+it("keeps targets discoverable but blocks legacy switching without memory capability", async () => {
   vi.mocked(api.restartStatus).mockResolvedValue({ can_restart: false, reason: "Cannot verify this conversation." });
-  vi.mocked(api.restartOptions).mockResolvedValue({ ...options, after_turn: false, resume_restart: { available: false, reason: "Cannot verify this conversation." }, harnesses: options.harnesses.map(h => h.name === "codex" ? { ...h, available: false, reason: "Cannot verify this conversation." } : h) });
-  vi.mocked(api.restart).mockResolvedValue({ status: "queued", context: "seeded_new_conversation", requested_harness: "claude-code" });
   render(<RestartControls session={session} />);
   fireEvent.click(screen.getByRole("button", { name: "Restart" }));
   await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
-  expect(screen.getByRole("button", { name: "Restart now" })).toBeDisabled();
   fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "claude-code" } });
   expect(screen.getByLabelText("Model")).toHaveValue("");
   expect(screen.queryByRole("option", { name: /current-model/ })).not.toBeInTheDocument();
-  expect(screen.getByText(/New conversation in Claude Code, seeded from Codex/)).toBeVisible();
-  fireEvent.change(screen.getByLabelText("Model"), { target: { value: "claude-exact" } });
-  fireEvent.click(screen.getByRole("button", { name: "Switch to Claude Code" }));
-  await waitFor(() => expect(api.restart).toHaveBeenCalledWith("a", "claude-exact", "claude-code"));
+  expect(screen.getByText(/Memory-backed switching needs/)).toBeVisible();
+  expect(screen.getByRole("button", { name: /Switch/ })).toBeDisabled();
+  expect(api.restart).not.toHaveBeenCalled();
 });
 
 it("keeps unknown catalogs honest and prevents unavailable or draft-blocked switches", async () => {
@@ -120,7 +116,7 @@ it("keeps unknown catalogs honest and prevents unavailable or draft-blocked swit
 it("does not describe a completed harness switch as a continued conversation", async () => {
   vi.mocked(api.restartStatus).mockResolvedValue({ status: "completed", context: "seeded_new_conversation", source_harness: "claude-code", requested_harness: "codex" });
   render(<RestartControls session={session} />);
-  expect(await screen.findByText(/New conversation in Codex, seeded from Claude Code/)).toBeVisible();
+  expect(await screen.findByText(/Switched to Codex/)).toBeVisible();
   expect(screen.queryByText(/conversation continued/)).not.toBeInTheDocument();
 });
 
@@ -147,59 +143,13 @@ it("closes stale confirmation if the same card changes harness elsewhere", async
   expect(api.restart).not.toHaveBeenCalled();
 });
 
-it("explicitly stops a busy source only after selecting another harness and confirming", async () => {
+it("never bypasses missing memory capability even when interrupt is supported", async () => {
   vi.mocked(api.restartOptions).mockResolvedValue({ ...options, supports_interrupt_switch: true });
-  vi.mocked(api.restart).mockResolvedValue({ status: "queued", interrupt: true, context: "seeded_new_conversation", requested_harness: "claude-code" });
   render(<RestartControls session={session} />);
   fireEvent.click(screen.getByRole("button", { name: "Restart" }));
   await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
-  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "claude-code" } });
-  const choice = screen.getByRole("checkbox", { name: "Stop the current turn and switch now" });
-  expect(choice).not.toBeChecked();
-  fireEvent.click(choice);
+  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Switch after this turn" })).toBeDisabled();
   expect(api.restart).not.toHaveBeenCalled();
-  expect(screen.getByText(/The current turn will stop after its checkpoint/)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Stop and switch now" }));
-  await waitFor(() => expect(api.restart).toHaveBeenCalledWith("a", "", "claude-code", true));
-  expect(await screen.findByText(/Preparing to stop and switch now/)).toBeVisible();
-  expect(screen.queryByText(/Restart pending — after this turn/)).not.toBeInTheDocument();
-});
-
-it("keeps stop intent scoped to the chosen harness and resets it after failure", async () => {
-  vi.mocked(api.restartOptions).mockResolvedValue({ ...options, supports_interrupt_switch: true });
-  vi.mocked(api.restart).mockRejectedValue(new Error("Session activity changed. Review and retry the switch."));
-  render(<RestartControls session={session} />);
-  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "claude-code" } });
-  fireEvent.click(screen.getByRole("checkbox"));
-  fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "codex" } });
-  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-  fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "claude-code" } });
-  expect(screen.getByRole("checkbox")).not.toBeChecked();
-  fireEvent.click(screen.getByRole("checkbox"));
-  fireEvent.click(screen.getByRole("button", { name: "Stop and switch now" }));
-  expect(await screen.findByText("Session activity changed. Review and retry the switch.")).toBeVisible();
-  expect(screen.getByRole("checkbox")).not.toBeChecked();
-  expect(api.restart).toHaveBeenCalledTimes(1);
-});
-
-it("does not bypass draft protection or offer interrupt on an older backend", async () => {
-  vi.mocked(api.restartOptions).mockResolvedValue({ ...options, supports_interrupt_switch: true, draft_clear: false });
-  const view = render(<RestartControls session={session} />);
-  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "claude-code" } });
-  fireEvent.click(screen.getByRole("checkbox"));
-  expect(screen.getByRole("button", { name: "Stop and switch now" })).toBeDisabled();
-  expect(api.restart).not.toHaveBeenCalled();
-  view.unmount();
-  vi.mocked(api.restartOptions).mockResolvedValue(options);
-  render(<RestartControls session={session} />);
-  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "claude-code" } });
-  expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Switch after this turn" })).toBeEnabled();
 });

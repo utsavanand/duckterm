@@ -6,15 +6,17 @@ import { HistoryView } from "./HistoryView";
 import { CheckpointDetails } from "./CheckpointStatus";
 import "./timeline.css";
 
+const PROGRESS_KINDS = "delivered,learned,next_action,completed,decision,restart,model,harness,needs-you";
+export const TIMELINE_MILESTONES = `checkpoint,artifact,${PROGRESS_KINDS}`;
 const FILTERS = [
-  ["all", "All", ""], ["checkpoint", "Checkpoints", "checkpoint"],
-  ["work", "Progress", "prompt,delivered,learned,next_action,completed,decision,restart,model,harness,needs-you"],
+  ["all", "All", TIMELINE_MILESTONES], ["checkpoint", "Checkpoints", "checkpoint"],
+  ["work", "Progress", PROGRESS_KINDS],
   ["artifact", "Artifacts", "artifact"],
 ] as const;
 const LABELS: Record<string, string> = { prompt: "Owner message", delivered: "Delivered", learned: "Task learning", next_action: "Next action", completed: "Completed", decision: "Owner decision", restart: "Restart", model: "Model changed", harness: "Harness switched", "needs-you": "Needs you", artifact: "Artifact" };
 
-export function TimelineView({ session, active = true, checkpointTarget, onArtifacts }: {
-  session: SessionView; active?: boolean; checkpointTarget?: number; onArtifacts?: () => void;
+export function TimelineView({ session, active = true, checkpointTarget, onArtifacts, onMessages }: {
+  session: SessionView; active?: boolean; checkpointTarget?: number; onArtifacts?: () => void; onMessages?: () => void;
 }) {
   const [filter, setFilter] = useState("all");
   const [data, setData] = useState<TimelinePage | null>(null);
@@ -87,7 +89,7 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
   let previousDay = "";
   return <section className="rd-timeline" aria-label="Session timeline">
     <h1>Timeline <span>{data ? `${data.summary.total} ${data.summary.total === 1 ? "entry" : "entries"}` : ""}</span></h1>
-    <p className="rd-timeline-intro">This session’s progress, saved checkpoints and artifacts, in one place.</p>
+    <p className="rd-timeline-intro">Progress, decisions and saved work. The full conversation stays in {onMessages ? <button className="rd-timeline-link" onClick={onMessages}>Messages</button> : "Messages"}.</p>
     <div className="rd-timeline-filters" aria-label="Timeline filter">{FILTERS.map(([id, label]) => <button key={id} className="rd-btn rd-btn-sm rd-btn-ghost" aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}</div>
     {error && <p role="alert">Timeline unavailable: {error}</p>}
     {detailError && <p role="status">{detailError}</p>}

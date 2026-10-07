@@ -28,6 +28,9 @@ export type LocalVoiceStatus =
 export interface ModelChoice { id: string; label: string; }
 
 export interface RestartStatus {
+  id?: string;
+  memory?: { version: number };
+  process_state?: "source_running" | "source_stopped" | "target_running" | "unknown";
   status?: "queued" | "restarting" | "completed" | "failed" | "canceled";
   can_restart?: boolean;
   draft_clear?: boolean;
@@ -46,8 +49,9 @@ export interface RestartStatus {
 }
 
 export interface RestartOptions {
+  memory_switch?: { version: number; available: boolean; reason?: string };
   supports_interrupt_switch?: boolean;
-  current: { harness: string; model: string };
+  current: { harness: string; model: string; conversation_generation?: string };
   resume_restart: { available: boolean; reason?: string };
   harnesses: { name: string; available: boolean; reason?: string; models: ModelChoice[]; model_selection: { available: boolean; reason?: string }; model_reason?: string; context: "native" | "seeded_new_conversation" }[];
   draft_clear?: boolean; after_turn?: boolean; reason?: string;
@@ -597,8 +601,8 @@ export const api = {
   restartStatus: (key: string) => get<RestartStatus>(`/sessions/${key}/restart`),
   restartOptions: (key: string) => get<RestartOptions>(`/sessions/${key}/restart-options`),
   restart: (key: string, model: string, harness?: string, interrupt = false) => post<RestartStatus>(`/sessions/${key}/restart`, { model, ...(harness ? { harness } : {}), ...(interrupt ? { interrupt: true } : {}) }),
-  cancelRestart: async (key: string): Promise<RestartStatus> => {
-    const response = await fetch(`/sessions/${key}/restart`, { method: "DELETE", headers: authHeaders() });
+  cancelRestart: async (key: string, operationId?: string): Promise<RestartStatus> => {
+    const response = await fetch(`/sessions/${key}/restart${operationId ? `?operation_id=${encodeURIComponent(operationId)}` : ""}`, { method: "DELETE", headers: authHeaders() });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error ?? "Could not cancel restart");
     return data;

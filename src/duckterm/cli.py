@@ -139,6 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     from duckterm import session_client
 
     session_client.add_parser(sub)
+    session_client.add_memory_parser(sub)
     return parser
 
 
@@ -466,7 +467,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
-    if args.command == "session":
+    if args.command in {"session", "memory"}:
         from duckterm import session_client
 
         return session_client.main(args)

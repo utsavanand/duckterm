@@ -145,7 +145,17 @@ def test_owner_endpoint_forwards_explicit_mode_and_advertises_capability(rig, mo
     server, _, _, _ = rig
     captured = []
 
-    async def request(key, model, harness=None, *, interrupt=False):
+    async def request(
+        key,
+        model,
+        harness=None,
+        *,
+        interrupt=False,
+        memory=None,
+        request_key=None,
+        require_preparation=False,
+    ):
+        assert require_preparation is True
         captured.append((key, model, harness, interrupt))
         return {"status": "queued"}
 

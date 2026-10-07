@@ -5,6 +5,8 @@ import { splitSessionRef } from "./hostTransport";
 import { SessionView } from "./types";
 import "./restart.css";
 import { ModelMenu } from "./ModelMenu";
+import { MemorySwitchPanel } from "./MemorySwitchPanel";
+import { memorySwitchAvailable } from "./memorySwitchTransport";
 
 const harnessName = (name: string) => ({ "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini CLI" }[name] || name);
 type RestartControlProps = { session: SessionView; showActions?: boolean; menu?: boolean; onExpanded?: (expanded: boolean) => void; onActionComplete?: () => void };
@@ -38,6 +40,7 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
   const currentModel = status?.model || session.model || "";
   const currentHarness = options?.current.harness || session.runtime || "generic";
   const switching = harness !== currentHarness;
+  const memoryAvailable = memorySwitchAvailable(options);
   const selected = options?.harnesses.find(choice => choice.name === harness);
   const pending = status?.status === "queued" || status?.status === "restarting";
   const refresh = useCallback(async () => {
@@ -95,7 +98,7 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
   const allowed = !!selected?.available && (switching || !!options?.resume_restart.available)
     && !!draftClear && !pending && !statusError && !optionsError && !loadingOptions && !acting;
   async function restart() {
-    if (!allowed || actingRef.current) return;
+    if (switching || !allowed || actingRef.current) return;
     actingRef.current = true; setActing(true); ++statusRequest.current;
     try {
       const next = stopNow ? await api.restart(session.key, model, harness, true) : await api.restart(session.key, model, harness);
@@ -107,7 +110,7 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
   async function cancel() {
     if (actingRef.current) return;
     actingRef.current = true; setActing(true); ++statusRequest.current;
-    try { const next = await api.cancelRestart(session.key); if (alive.current) { setStatus(next); setError(""); void refresh(); } }
+    try { const next = status?.memory ? await api.cancelRestart(session.key, status.id) : await api.cancelRestart(session.key); if (alive.current) { setStatus(next); setError(""); void refresh(); } }
     catch (e) { if (alive.current) setError((e as Error).message); }
     finally { actingRef.current = false; if (alive.current) setActing(false); }
   }
@@ -128,18 +131,18 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
       {status?.status === "queued" ? status.interrupt ? "Preparing to stop and switch now." : "Restart pending — after this turn." : status?.interrupt ? "Stopping and switching…" : "Restarting…"}
       {status?.requested_harness && <span> Harness: {harnessName(status.requested_harness)}.</span>}
       {status?.requested_model && <span> Model: {status.requested_model}</span>}
-      {status?.context === "seeded_new_conversation" && <p>A new conversation will start with handoff context.</p>}
+      {status?.context === "seeded_new_conversation" && <p>The selected harness continues on this session with its prepared handoff.</p>}
       {status?.status === "queued" && <button role={menu ? "menuitem" : undefined} className="rd-btn rd-btn-sm" disabled={acting} onClick={() => void cancel()}>Cancel restart</button>}
     </div>}
-    {status?.status === "failed" && <p className="rd-restart-message" role="alert">{status.error}</p>}
+    {status?.status === "failed" && <p className="rd-restart-message" role="alert">{status.error}{status.memory && <><br />{status.process_state === "source_stopped" ? "The previous harness is stopped. Its recovery context is preserved; it has not been restarted automatically." : status.process_state === "source_running" ? "The previous harness is still running." : "The process state could not be verified. Check the terminal before trying again."}</>}</p>}
     {status?.status === "completed" && <p className="rd-restart-message" role="status">{status.context === "seeded_new_conversation"
-      ? `New conversation in ${harnessName(status.requested_harness || session.runtime || "the selected harness")}, seeded from ${harnessName(status.source_harness || "the previous harness")}.`
+      ? `Switched to ${harnessName(status.requested_harness || session.runtime || "the selected harness")}. This DuckTerm session continues with its prepared context.`
       : "Restarted — conversation continued."}<br />CLI: {status.previous_cli_version || "Not reported"} → {status.cli_version || "Not reported"}{status.configured_model ? `. Model requested: ${status.configured_model}.` : ""}</p>}
     {open && createPortal(<div className="rd-restart-backdrop" onClick={close}>
       <div ref={dialog} tabIndex={-1} className="rd-restart-dialog" role="dialog" aria-modal="true" aria-labelledby="restart-title" onClick={e => e.stopPropagation()} onKeyDown={e => {
         if (e.key === "Escape") { e.stopPropagation(); close(); }
         if (e.key !== "Tab") return;
-        const elements = [...e.currentTarget.querySelectorAll<HTMLElement>("select:not(:disabled),input:not(:disabled),button:not(:disabled)")];
+        const elements = [...e.currentTarget.querySelectorAll<HTMLElement>("select:not(:disabled),input:not(:disabled),button:not(:disabled),summary,[tabindex='0']")].filter(el => el.getClientRects().length > 0);
         const first = elements[0], last = elements[elements.length - 1];
         if (e.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { e.preventDefault(); last?.focus(); }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
@@ -162,18 +165,32 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
         {loadingOptions && <p role="status">Checking harnesses and available models…</p>}
         {(optionsError || selected?.model_reason) && <p role="alert">{optionsError || selected?.model_reason} <button className="rd-btn rd-btn-ghost" disabled={loadingOptions || acting} onClick={() => void loadOptions()}>Retry choices</button></p>}
         {selected && !selected.model_selection.available && <p className="rd-restart-help">{selected.model_selection.reason || "This harness does not support model selection."}</p>}
-        <div className="rd-restart-summary"><strong>{switching ? `New conversation in ${harnessName(harness)}, seeded from ${harnessName(currentHarness)}` : "Continue this conversation"}</strong>
-          <p>{switching ? "This starts a new conversation with handoff context. It does not resume the previous transcript." : "Restart the harness and resume its existing conversation."}</p>
-          {switching && <p>Handoff includes the latest checkpoint, your open tasks (including parked tasks), and saved session notes.</p>}
+        {switching && memoryAvailable && selected?.available ? <MemorySwitchPanel
+          key={JSON.stringify([session.key, options?.current.conversation_generation, harness, model])}
+          selection={{ sessionRef: session.key, sourceGeneration: options!.current.conversation_generation!, sourceHarness: currentHarness,
+            harness, model: model ? { mode: "explicit", id: model } : { mode: "default" } }}
+          targetName={harnessName(harness)} allowed={allowed} afterTurn={!!afterTurn} canInterrupt={!!canInterrupt}
+          reason={pathReason || statusError || (!draftClear ? "Send or clear unsent terminal text before switching." : undefined)} close={close}
+          onBusy={value => { actingRef.current = value; setActing(value); }}
+          onAccepted={(result, submission) => {
+            ++statusRequest.current;
+            setStatus({ id: result.id, memory: { version: 1 }, status: result.phase === "switching" ? "restarting" : result.phase,
+              process_state: result.processState, requested_harness: harness, requested_model: model, configured_model: result.configuredModel || undefined,
+              context: "seeded_new_conversation", interrupt: submission.interrupt, error: result.reason });
+            setOpen(false); opener.current?.focus(); onActionComplete?.(); void refresh();
+          }} /> : <>
+        <div className="rd-restart-summary"><strong>{switching ? `Continue with ${harnessName(harness)}` : "Continue this conversation"}</strong>
+          <p>{switching ? "Memory-backed switching needs a supporting backend and an available target harness." : "Restart the harness and resume its existing conversation."}</p>
           <p>Keep the same session name, project folder and history.</p>
         </div>
-        {canInterrupt && <div className="rd-restart-interrupt">
+        {canInterrupt && !switching && <div className="rd-restart-interrupt">
           <label><input type="checkbox" checked={interrupt} disabled={acting || loadingOptions} onChange={e => setInterrupt(e.target.checked)} /> Stop the current turn and switch now</label>
           <p className="rd-restart-help">Use this when you want to switch while the agent is working, including when its budget runs out. Saves a checkpoint and open tasks before stopping. Unfinished work and background jobs may stop.</p>
         </div>}
         <p className="rd-restart-notice" role={error || pathReason || statusError ? "alert" : "status"}>{error || optionsError || statusError || pathReason || (!draftClear && !loadingOptions ? "Send or clear unsent terminal text before restarting." : stopNow ? "The current turn will stop after its checkpoint is saved. A new conversation will start on this card." : afterTurn ? "This will wait until the agent finishes its turn. You can cancel it from the session panel." : "The change will start as soon as you confirm.")}</p>
         <p className="rd-restart-help">Restart reloads the installed CLI, connectors and session instructions. Background processes started in this terminal may stop.</p>
-        <div className="rd-restart-footer"><button className="rd-btn rd-btn-ghost" disabled={acting} onClick={close}>Cancel</button><button className="rd-btn rd-btn-primary" disabled={!allowed} onClick={() => void restart()}>{acting ? "Scheduling…" : stopNow ? "Stop and switch now" : afterTurn ? switching ? "Switch after this turn" : "Restart after this turn" : action}</button></div>
+        <div className="rd-restart-footer"><button className="rd-btn rd-btn-ghost" disabled={acting} onClick={close}>Cancel</button><button className="rd-btn rd-btn-primary" disabled={switching || !allowed} onClick={() => void restart()}>{acting ? "Scheduling…" : afterTurn ? switching ? "Switch after this turn" : "Restart after this turn" : action}</button></div>
+        </>}
       </div>
     </div>, document.body)}
   </>;

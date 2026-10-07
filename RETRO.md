@@ -1,5 +1,28 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Effect cleanup must own its cancellation lease
+
+React development replay reused one preparation key across two effect lifetimes. The disposed effect then released the mounted effect’s lease, canceling active work. Allocate a separate lease for each effect lifetime; preserve the original key only for an explicit retry of a genuinely lost request. Test replay, late close, and lost-response retry together. When integrating a dialog into an existing context menu, also close that menu after an accepted action and preserve its accessibility roles.
+
+## 2026-10-07 — Invalidating readiness must also remove its old payload
+
+A ready preparation stripped its full brief from status responses, but changing its state to stale left the old proof and brief attached. Define the response by the current state: only ready responses carry a proof, and full text belongs only in the separately validated detail read. Test the ready-to-stale transition and serialized response, not just the new state label.
+
+## 2026-10-07 — Recheck retry identities after awaited probes
+
+QA synchronized two preparations at a target probe and showed the same request key could start two different model jobs. A pre-await lookup cannot establish idempotency. Repeat the exact request/binding check under the creation lock, and recheck restart receipts after the terminal probe before creating another operation. A local retained-history feature also must not widen an existing cloud backup selection merely by placing files under a directory already traversed by backup; exclude its reserved snapshot/cache directory explicitly.
+
+## 2026-10-07 — A prepared switch must bind its sources and survive a lost response
+
+Preparing a brief is not permission to stop an agent. Bind the final explicit switch to its target, model, conversation generation and exact source versions; repeat source and draft checks at the stop boundary. Persist operation receipts so a repeated request cannot stop a second process. Keep canceled dialog leases separate from an accepted switch. If target launch fails, report that the source is stopped and preserve its native recovery metadata. A newer short progress summary may update the card but must reference, rather than overwrite or silently extend, the last whole-history revision.
+
+## 2026-10-07 — Saved originals must be discoverable, and malformed blocks are gaps
+
+QA found that retaining a current transcript did not make it discoverable after provider cleanup: the live identity shadowed its retained snapshot. Search the authorized saved version while explicitly reporting incomplete current coverage. Validate native block shapes before counting attachments or normalizing text; valid JSON with an array-valued block type must produce an unavailable source, not crash the API or claim complete empty history. Exercise both runtimes, warm and cold caches, and token revocation during a paused read.
+
+## 2026-10-07 — A harness change needs the complete chain of original conversations
+
+A single previous-conversation field loses older generations after a second switch. Reconstruct the chain from durable checkpoint identities, retain immutable original bytes at explicit checkpoints, and use content-versioned handles scoped to the owning session. Indexes are disposable; they cannot grant access after source deletion or a scope change. Verify a three-generation chain after native cleanup and service reconstruction, exact older versions, forged handles and mid-read scope changes. A saved checkpoint remains useful even when a native snapshot cannot be retained; state that limitation instead of failing its fact capture.
 
 ## 2026-10-07 — A context menu needs its own visible target
 
@@ -32,6 +55,9 @@ request for row activation; opening or dismissing its menu must not send one.
 When relocating actions, compare every eligibility and click-time guard with
 the original handler. Local continuation must remain blocked across menu reopen
 while conversation Undo is unresolved, before it can change the transfer state.
+## 2026-10-07 — Preparing a handoff must not confirm a switch
+
+Bind preparation to the session, source generation, target harness and exact model choice. Source changes invalidate readiness, closing a dialog releases only its own preparation lease, and only the explicit Switch action may stop the current harness. A lost switch response requires checking its durable receipt; an explicit retry must reuse the same immutable request and idempotency key. Test these boundaries separately from same-harness restart, and keep ordinary conversation turns out of Timeline milestones while retaining checkpoint evidence.
 
 ## 2026-10-07 — Slow background reads can consume the browser's action slots
 

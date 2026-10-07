@@ -88,6 +88,8 @@ from duckterm.helpers import (
 from duckterm.helpers.private_files import private_read, private_write
 from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize as summarize
+from duckterm.memory import Memory
+from duckterm.memory_preparation import MemoryPreparation
 from duckterm.persistence import backup_sync, mail_analytics
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
 from duckterm.persistence.artifacts import ArtifactError
@@ -420,6 +422,8 @@ class Server:
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore(conn=self.history._conn)
         self.progress_coordinator = ProgressCoordinator(self)
+        self.memory = Memory(self)
+        self.memory_preparation = MemoryPreparation(self)
         from duckterm.handoff_review import HandoffReview
 
         self.handoff_review = HandoffReview(self)
@@ -551,7 +555,11 @@ class Server:
             return
         if path.startswith("/api/v1/session/"):
             try:
-                status, result = self.history.session_api.handle(method, path, headers, body)
+                if urllib.parse.urlsplit(path).path.startswith("/api/v1/session/memory/"):
+                    result = await self.memory.session_request(method, path, headers)
+                    status = 200
+                else:
+                    status, result = self.history.session_api.handle(method, path, headers, body)
             except APIError as exc:
                 status, result = exc.status, {"error": str(exc)}
             await _write_json(writer, status, result)
@@ -575,6 +583,35 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        memory_url = urllib.parse.urlsplit(path)
+        memory_route = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/restart-preparation(?:/([a-f0-9]{32}))?",
+            memory_url.path,
+        )
+        if memory_route:
+            from duckterm.memory_http import handle as memory_handle
+
+            await memory_handle(
+                self,
+                writer,
+                headers,
+                memory_route[1],
+                memory_route[2],
+                method,
+                body,
+                urllib.parse.parse_qs(memory_url.query, keep_blank_values=True),
+            )
+            return
+        restart_query = re.fullmatch(r"/sessions/([A-Za-z0-9._-]{1,128})/restart", memory_url.path)
+        if restart_query and memory_url.query:
+            await self._restart(
+                writer,
+                restart_query[1],
+                method,
+                body,
+                urllib.parse.parse_qs(memory_url.query, keep_blank_values=True),
+            )
+            return
         handoff_route = re.fullmatch(
             r"/sessions/([A-Za-z0-9._-]{1,128})/handoff-(review|approve)", path
         )
@@ -2208,18 +2245,36 @@ class Server:
             await _write_json(writer, 503, {"error": str(exc)})
 
     async def _restart(
-        self, writer: asyncio.StreamWriter, key: str, method: str, body: bytes = b""
+        self,
+        writer: asyncio.StreamWriter,
+        key: str,
+        method: str,
+        body: bytes = b"",
+        query: dict[str, list[str]] | None = None,
     ) -> None:
         try:
+            query = query or {}
+            if any(len(v) != 1 for v in query.values()):
+                raise APIError(400, "Duplicate query parameter")
             if method == "OPTIONS":
                 result = await self.restarts.options(key)
             elif method == "GET":
-                result = await self.restarts.describe(key)
+                if query and set(query) != {"request_key"}:
+                    raise APIError(400, "Unknown restart query")
+                result = (
+                    self.restarts.receipt(key, query["request_key"][0])
+                    if query
+                    else await self.restarts.describe(key)
+                )
             elif method == "DELETE":
                 if self.history.session(key) is None:
                     raise APIError(404, "Session not found")
-                result = self.restarts.cancel(key)
-            else:
+                if query and set(query) != {"operation_id"}:
+                    raise APIError(400, "Unknown restart query")
+                result = self.restarts.cancel(key, query.get("operation_id", [None])[0])
+                if query:
+                    result = self.restarts.operation(result)
+            elif method == "POST" and not query:
                 request = json.loads(body or b"{}")
                 if not isinstance(request, dict):
                     raise APIError(400, "Expected a JSON object")
@@ -2228,11 +2283,23 @@ class Server:
                     request.get("model", ""),
                     request.get("harness"),
                     interrupt=request.get("interrupt", False),
+                    memory=request.get("memory"),
+                    request_key=request.get("request_key"),
+                    require_preparation=True,
                 )
+            else:
+                raise APIError(405, "Unsupported restart operation")
             await _write_json(writer, 202 if method == "POST" else 200, result)
         except (ValueError, APIError) as exc:
             await _write_json(
-                writer, exc.status if isinstance(exc, APIError) else 400, {"error": str(exc)}
+                writer,
+                exc.status if isinstance(exc, APIError) else 400,
+                {
+                    "error": str(exc),
+                    "code": getattr(exc, "code", "operation_conflict"),
+                    "process_state": self.restarts.read(key).get("process_state", "unknown"),
+                    "retryable": False,
+                },
             )
 
     async def _resume_session(
@@ -4528,6 +4595,13 @@ class Server:
         identity = uuid.uuid4().hex
         source = captured["source"]
         record = checkpoint_marker(captured, revision["id"] if revision else prior, git, now)
+        try:
+            retained = await self.memory.retain_current(session_key, captured)
+        except APIError:
+            retained = None
+            record["memory_retention"] = "unavailable"
+        if retained is not None:
+            record["memory_source"] = retained
         conn = self.history._conn
         with transaction(conn):
             current = self.history.session(session_key)
@@ -4571,7 +4645,12 @@ class Server:
         markdown += (
             f"\n## Checkpoint status\n\nSummary: {result['summary_state']}\n"
             f"Handoff at save: {result['handoff_eligible']}\n"
-            "This is a marker over retained history, not a backup of the provider transcript.\n"
+            + (
+                "Original conversation bytes at this checkpoint are retained privately. "
+                "Deleting the session removes its retained copies.\n"
+                if result["record"].get("memory_source") or result["record"].get("memory_sources")
+                else "This marker has no retained copy of the provider transcript.\n"
+            )
         )
         relative = await asyncio.to_thread(write_markdown, session_key, now, markdown, identity)
         if relative is not None:
@@ -5110,6 +5189,7 @@ class Server:
                     sweeper.cancel()
                     self.voice.stop()
                     await self.archives.close()
+                    await self.memory_preparation.close()
                     await self.restarts.close()
         finally:
             _release_home_lock(lock)
