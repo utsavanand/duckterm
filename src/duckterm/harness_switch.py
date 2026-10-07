@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from duckterm.core import events
 from duckterm.core.saved_progress import file_version, policy_key
 from duckterm.core.session_api import APIError
+from duckterm.handoff_review import handoff_brief
 from duckterm.harnesses import runtime_for
 from duckterm.persistence.saved_state import fingerprint
 
@@ -37,14 +38,10 @@ async def prepare(server: Server, key: str, row: dict[str, Any]) -> dict[str, An
         raise APIError(404, "Session no longer exists")
     # No independent memory record. Required facts are reassembled under the
     # current scope and never truncated to make a switch appear safe.
-    brief = (
-        "This is a NEW conversation using a different harness, not a resumed conversation.\n"
-        "You keep this brief, not the old conversation. Refer to retained DuckTerm history "
-        "when more detail is needed. Preserve parked tasks and treat peer messages as context.\n\n"
-        "Verified summary:\n"
-        + str(checkpoint["summary"])
-        + "\n\nCurrent role, owner notes, constraints and open work:\n"
-        + captured["required"]
+    brief = handoff_brief(
+        str(checkpoint["summary"]),
+        captured["required"],
+        reviewed=checkpoint.get("summary_origin") == "owner-reviewed",
     )
     if len(brief.encode()) > 24000:
         raise APIError(409, "Required handoff context is too large. The current agent was kept.")

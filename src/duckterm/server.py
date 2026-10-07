@@ -96,11 +96,10 @@ from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.folder_chats import valid_folder, within
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.saved_state import (
-    MARKER_FORMAT,
+    checkpoint_marker,
     conversation,
     current_revision,
     event_source,
-    fingerprint,
     resolve_checkpoint,
     transaction,
 )
@@ -421,6 +420,9 @@ class Server:
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore(conn=self.history._conn)
         self.progress_coordinator = ProgressCoordinator(self)
+        from duckterm.handoff_review import HandoffReview
+
+        self.handoff_review = HandoffReview(self)
         self.orchestrator.on_completed = self._progress_on_exit
         self.token = security.load_or_create_token()
         # transcript path -> (mtime, context_tokens): /sessions is fetched
@@ -572,6 +574,16 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        handoff_route = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/handoff-(review|approve)", path
+        )
+        if handoff_route:
+            from duckterm.handoff_review import handle as handoff_handle
+
+            await handoff_handle(
+                self, writer, headers, handoff_route[1], handoff_route[2], method, body
+            )
+            return
         recovery_route = re.fullmatch(
             r"/sessions/([A-Za-z0-9._-]{1,128})/conversation-(recovery|candidates|adopt|hooks|detach)",
             path,
@@ -4494,19 +4506,7 @@ class Server:
         now = int(time.time() * 1000)
         identity = uuid.uuid4().hex
         source = captured["source"]
-        record = {
-            "format": MARKER_FORMAT,
-            "policy": captured["policy"],
-            "conversation": captured["conversation"],
-            "events": source["events"],
-            "summary_ref": revision["id"] if revision else prior,
-            "required_hash": source["required_hash"],
-            "mail_ids": [r["id"] for r in captured["facts"]["required"]["mail"]],
-            "mail_hash": fingerprint(captured["facts"]["required"]["mail"]),
-            "transcript": {k: v for k, v in source.items() if k.startswith("transcript_")},
-            "git": git,
-            "created_at": now,
-        }
+        record = checkpoint_marker(captured, revision["id"] if revision else prior, git, now)
         conn = self.history._conn
         with transaction(conn):
             current = self.history.session(session_key)
@@ -4542,6 +4542,10 @@ class Server:
                 "created_at": now,
             },
         )
+        return await self._export_checkpoint(session_key, result)
+
+    async def _export_checkpoint(self, session_key: str, result: dict[str, Any]) -> dict[str, Any]:
+        label, now, identity = result["label"], result["created_at"], result["id"]
         markdown = _render_markdown(label, result["record"], result["summary"])
         markdown += (
             f"\n## Checkpoint status\n\nSummary: {result['summary_state']}\n"

@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from duckterm.core import progress
 from duckterm.persistence.saved_state import (
+    checkpoint_marker,
     conversation,
     current_revision,
     event_source,
@@ -261,6 +262,13 @@ class ProgressCoordinator:
         if source["transcript_chars"] > source["transcript_used_chars"]:
             # A tail alone cannot certify a legacy conversation's older constraints.
             reasons.append("legacy_baseline_unreviewed")
+        if (
+            prior
+            and prior.get("review", {}).get("kind") == "owner"
+            and prior.get("conversation") == captured["conversation"]
+        ):
+            # Exact-boundary approval is never extended by an ordinary digest.
+            reasons.append("legacy_baseline_unreviewed")
         # Re-read actual bytes, not mtime/size, after both provider calls.
         refreshed = await self.capture(key)
         if refreshed is None or refreshed["conversation"] != captured["conversation"]:
@@ -269,6 +277,41 @@ class ProgressCoordinator:
             return None
         if refreshed["source"] != captured["source"]:
             reasons.append("source_changed")
+        accepted = verdicts["accept"] if verdicts else []
+        candidates = progress.candidate_items(digest)
+        accepted = [item for item in accepted if item in candidates]
+        value = {
+            **{k: captured[k] for k in ("source", "conversation", "policy")},
+            "source_at": captured["captured_at"],
+            "input_key": input_key,
+            "prior_revision": prior["id"] if prior else None,
+            "summary": digest["summary"],
+            "summary_validation": {"ready": not reasons, "reason_codes": reasons},
+        }
+        return self.persist(
+            key,
+            captured,
+            prior,
+            value,
+            digest,
+            accepted,
+            verdicts["done_next_action_ids"] if verdicts else [],
+        )
+
+    def persist(
+        self,
+        key: str,
+        captured: dict[str, Any],
+        prior: dict[str, Any] | None,
+        value: dict[str, Any],
+        digest: dict[str, Any],
+        accepted: list[dict[str, str]],
+        done: list[str],
+        *,
+        require_current: bool = False,
+        checkpoint: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Single atomic write path, including explicitly owner-reviewed baselines."""
         now = int(time.time() * 1000)
         conn = self.server.history._conn
         with transaction(conn):
@@ -276,47 +319,40 @@ class ProgressCoordinator:
             if (
                 latest is None
                 or conversation(self.server.history, key, latest) != captured["conversation"]
+                or policy_key() != captured["policy"]
             ):
                 return None
             if (
                 event_source(conn, key, captured["source"]["events"]["last"])
                 != captured["source"]["events"]
             ):
-                return None  # expired/deleted source must never be resurrected as a summary
-            # A same-generation late result never overwrites a newer progress revision.
-            promote = current_revision(latest) == (prior["id"] if prior else None)
+                return None
+            # A same-generation late result never overwrites a newer revision.
             promote = (
-                promote and self.facts(key) == captured["facts"] and "source_changed" not in reasons
+                current_revision(latest) == (prior["id"] if prior else None)
+                and self.facts(key) == captured["facts"]
+                and "source_changed" not in value["summary_validation"]["reason_codes"]
             )
-            accepted = verdicts["accept"] if verdicts else []
-            candidates = progress.candidate_items(digest)
-            accepted = [item for item in accepted if item in candidates]
+            if require_current and not promote:
+                return None
             if promote:
-                self.server.digests.merge(
-                    key,
-                    accepted,
-                    verdicts["done_next_action_ids"] if verdicts else [],
-                    now,
-                    commit=False,
-                )
+                self.server.digests.merge(key, accepted, done, now, commit=False)
             refs = [{"id": r["id"], "status": r["status"]} for r in self.server.digests.items(key)]
-            value = {
-                **{k: captured[k] for k in ("source", "conversation", "policy")},
-                "source_at": captured["captured_at"],
-                "input_key": input_key,
-                "prior_revision": prior["id"] if prior else None,
-                "summary": digest["summary"],
-                "summary_validation": {
-                    "ready": not reasons,
-                    "reason_codes": reasons,
-                },
-                "item_refs": refs,
-            }
-            revision_id = self.server.digests.add_revision(key, value, now)
-            # Keep a last good summary on provider/validator failure. First unverified
-            # progress may be displayed, but can never certify a handoff.
+            revision_id = self.server.digests.add_revision(key, {**value, "item_refs": refs}, now)
+            if checkpoint is not None:
+                record = checkpoint_marker(captured, revision_id, checkpoint["git"], now)
+                conn.execute(
+                    "INSERT INTO checkpoints "
+                    "(id,session_key,label,summary,record_json,markdown_path,created_at) "
+                    "VALUES (?,?,?,'',?,NULL,?)",
+                    (checkpoint["id"], key, checkpoint["label"], json.dumps(record), now),
+                )
+            # Keep a last good summary on failure. First unverified progress may
+            # be displayed, but can never certify a handoff.
             if promote and (
-                not reasons or prior is None or not prior["summary_validation"]["ready"]
+                value["summary_validation"]["ready"]
+                or prior is None
+                or not prior["summary_validation"]["ready"]
             ):
                 cache = {**digest, "revision_id": revision_id}
                 conn.execute(

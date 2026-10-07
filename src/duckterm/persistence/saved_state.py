@@ -18,6 +18,26 @@ REVISION_BUCKET = "summary_revision_v1"
 MARKER_FORMAT = "checkpoint_marker_v2"
 
 
+def checkpoint_marker(
+    captured: dict[str, Any], summary_ref: str | None, git: dict[str, Any], created_at: int
+) -> dict[str, Any]:
+    source = captured["source"]
+    mail = captured["facts"]["required"]["mail"]
+    return {
+        "format": MARKER_FORMAT,
+        "policy": captured["policy"],
+        "conversation": captured["conversation"],
+        "events": source["events"],
+        "summary_ref": summary_ref,
+        "required_hash": source["required_hash"],
+        "mail_ids": [r["id"] for r in mail],
+        "mail_hash": fingerprint(mail),
+        "transcript": {k: v for k, v in source.items() if k.startswith("transcript_")},
+        "git": git,
+        "created_at": created_at,
+    }
+
+
 def fingerprint(value: Any) -> str:
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
@@ -189,6 +209,9 @@ def resolve_checkpoint(
     reasons = []
     if summary:
         result["summary"] = summary.get("summary", "")
+        result["summary_origin"] = (
+            "owner-reviewed" if summary.get("review", {}).get("kind") == "owner" else "generated"
+        )
         result["summary_source_at"] = summary.get("source_at", summary["created_at"])
         state = (
             "ready" if summary.get("summary_validation", {}).get("ready") is True else "unverified"

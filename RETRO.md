@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — An owner-reviewed handoff must survive retries without approving new work
+
+Quota exhaustion cannot be solved by asking the exhausted provider for one last summary. Prepare an explicit owner review of a bounded brief and its current sources, then save approval through the existing revision writer. Commit the revision, checkpoint retention marker and current projection together. Bind approval to the displayed packet, source boundary and prior revision; make a lost-response retry return the same checkpoint. The first path certifies only the exact reviewed state: a subsequent digest must neither extend that approval nor truncate the reviewed brief into a short card summary.
+
 ## 2026-10-07 — Handoff readers must keep the inbox's original grant and byte limits
 
 A current peer grant does not restore access to messages sent in a previous collaboration root. Apply the message's recorded root check as well as current membership when assembling a handoff. Readiness also needs the launch seed's byte budget: multibyte notes can fit a character bound and still exceed the allowed payload. Preserve the complete source, block readiness on either bound, and test moved-peer mail and multibyte owner notes.
