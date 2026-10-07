@@ -139,3 +139,11 @@ export async function archiveRequests(): Promise<{ session_key: string; status: 
   if (!res.ok) throw new Error(`Archive state failed: ${res.status} ${await res.text()}`);
   return (await res.json()).requests;
 }
+
+// Open the selected row's real context menu; it never changes the terminal selection.
+export async function sessionMenu(page: Page) {
+  const menu = page.getByRole("menu", { name: /^Actions for / });
+  if (!(await menu.isVisible())) await page.locator(".rd-row.selected").click({ button: "right" });
+  await expect(menu).toBeVisible();
+  return menu;
+}

@@ -1,0 +1,16 @@
+.rd-session-menu { position: fixed; z-index: 3000; width: 248px; max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); overflow-y: auto; padding: 6px; border: 1px solid var(--border-strong); border-radius: 8px; color: var(--text); background: var(--bg-soft); box-shadow: 0 12px 32px #0005; }
+.rd-session-menu button[role="menuitem"] { display: block; width: 100%; padding: 8px 12px; min-height: 34px; text-align: left; font: inherit; font-size: 13px; color: var(--text); background: transparent; border: 0; border-radius: 4px; cursor: pointer; white-space: normal; }
+.rd-session-menu button[role="menuitem"]:hover, .rd-session-menu button[role="menuitem"]:focus-visible { background: var(--border); outline: none; }
+.rd-session-menu button[role="menuitem"]:disabled { opacity: .45; cursor: default; }
+.rd-session-menu button.rd-btn-danger { color: var(--danger, #e66b65); }
+.rd-session-menu hr { border: 0; border-top: 1px solid var(--border); margin: 5px 4px; }
+.rd-session-menu .rd-restart-message { margin: 6px 12px; font-size: 12px; }
+.rd-session-menu .rd-restart-message button { margin-top: 6px; }
+.rd-session-action-dialog { min-width: 0; }
+.rd-session-action-dialog input { width: 100%; margin: 14px 0; padding: 10px; color: var(--text); background: var(--bg); border: 1px solid var(--border-strong); border-radius: 5px; }
+.rd-session-action-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.rd-archive-list { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 6px; }
+.rd-archive-list > button { background: none; color: var(--text-soft); border: 0; padding: 10px 12px; cursor: pointer; text-align: left; width: 100%; font: inherit; font-size: 12px; }
+.rd-row:focus-visible { outline: 2px solid var(--brand-green); outline-offset: -2px; }
+
+.rd-session-menu fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }

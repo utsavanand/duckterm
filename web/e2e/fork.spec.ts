@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiPost, seedSession } from "./helpers";
 
@@ -39,7 +40,7 @@ test("fork modal offers both kinds; no-conversation fork starts fresh with a not
   await expect(row).toBeVisible();
 
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").locator("button", { hasText: "Fork" }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: "Fork…", exact: true }).click();
 
   // The modal opened and offers both fork kinds.
   await expect(page.getByText(`Fork ${key}`)).toBeVisible();

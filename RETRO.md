@@ -16,6 +16,28 @@ QA found that retaining a current transcript did not make it discoverable after 
 
 A single previous-conversation field loses older generations after a second switch. Reconstruct the chain from durable checkpoint identities, retain immutable original bytes at explicit checkpoints, and use content-versioned handles scoped to the owning session. Indexes are disposable; they cannot grant access after source deletion or a scope change. Verify a three-generation chain after native cleanup and service reconstruction, exact older versions, forged handles and mid-read scope changes. A saved checkpoint remains useful even when a native snapshot cannot be retained; state that limitation instead of failing its fact capture.
 
+## 2026-10-07 — Session menus must stay tied to the clicked row
+
+Moving session actions out of the detail panel requires an explicit target key;
+right-clicking another row must not switch the active terminal or send an action
+to its session. The menu now retains that row and checks late completions against
+the current menu instance. Keep process and recovery protections in the existing
+handlers, and retain visible recovery/pending-restart notices in the detail panel.
+
+Browser acceptance exposed two menu-specific failures: terminal autoscroll closed
+the menu before an action could be clicked, and focus events from a portal-based
+model picker replaced the parent menu's return target. Dismiss on outside pointer/wheel input, not programmatic scroll events, and scope
+keyboard/focus handling to the menu's own DOM.
+Focus the menu and its return target with preventScroll: programmatic scrolling
+at the bottom of a long sidebar otherwise triggers the dismissal listener.
+Archive Undo must continue to preserve the same terminal node and unsent draft.
+Making rows keyboard-focusable also means reselecting the active row takes focus
+from its terminal without changing the selected key. Send an explicit focus
+request for row activation; opening or dismissing its menu must not send one.
+When relocating actions, compare every eligibility and click-time guard with
+the original handler. Local continuation must remain blocked across menu reopen
+while conversation Undo is unresolved, before it can change the transfer state.
+
 ## 2026-10-07 — Slow background reads can consume the browser's action slots
 
 A retained CI trace showed Undo succeeded only after a seven-second delay before its request was sent. Repeated hidden connector refreshes occupied four browser connections beside the event stream and a slow recovery read. Focus fanout and stale-host overwrites were independently reproduced. Share pending status reads by resolved host, abort obsolete local reads, reject late results after host changes, and coalesce backend CLI probes so abandoned viewers cannot fill the executor. Keep the original action timeout and verify real HTTP congestion, not just mocked responses.

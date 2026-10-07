@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, CheckpointRecord } from "./api";
 import { ContextPanel } from "./ContextPanel";
@@ -13,19 +13,12 @@ const session = { key: "one", label: "Test", startedAt: 1, contextTokens: 190000
 const cp: CheckpointRecord = { id: "c", label: "manual", created_at: 1000, summary: "Saved summary", saved: true, summary_state: "unavailable", record: { prompts: [], files: [], tools: [], event_count: 0 } };
 beforeEach(() => { vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [cp] }); Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" }); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
-it("reports saved-but-unavailable honestly and retains the prior checkpoint on save failure", async () => {
+it("keeps checkpoint information and compact available without duplicating the menu action", async () => {
   render(<ContextPanel session={session} />);
   await screen.findByRole("region", { name: "Latest checkpoint" });
-  vi.mocked(api.checkpoint).mockRejectedValueOnce(new Error("offline"));
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Checkpoint" })); });
-  expect(toast).toHaveBeenLastCalledWith("Checkpoint failed: offline", "err");
   expect(screen.getByText(new Date(cp.created_at).toLocaleString())).toBeInTheDocument();
-  vi.mocked(api.checkpoint).mockResolvedValueOnce({ ...cp, export_reason: "markdown_unavailable" });
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Checkpoint" })); });
-  expect(toast).toHaveBeenLastCalledWith("Checkpoint saved · unavailable · Markdown export unavailable");
   expect(screen.getByText("Not ready")).toBeInTheDocument();
-  expect(screen.getByText("Unknown")).toBeInTheDocument();
-  expect(screen.queryByText(/resumable/)).toBeNull();
+  expect(screen.queryByRole("button", { name: "Checkpoint" })).toBeNull();
   expect(screen.getByRole("button", { name: "Compact" })).toBeEnabled();
 });
 it("ignores a checkpoint fetch from a previous session", async () => {
@@ -35,16 +28,4 @@ it("ignores a checkpoint fetch from a previous session", async () => {
   view.rerender(<ContextPanel session={{ ...session, key: "two" }} />);
   await act(async () => { finish({ checkpoints: [cp] }); });
   expect(screen.queryByRole("region", { name: "Latest checkpoint" })).toBeNull();
-});
-it("ignores a save result after selection changes", async () => {
-  let finish!: (value: CheckpointRecord) => void;
-  vi.mocked(api.checkpoint).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
-  const view = render(<ContextPanel session={session} />);
-  await screen.findByRole("region", { name: "Latest checkpoint" });
-  fireEvent.click(screen.getByRole("button", { name: "Checkpoint" }));
-  vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [] });
-  view.rerender(<ContextPanel session={{ ...session, key: "two" }} />);
-  await act(async () => { finish(cp); });
-  expect(screen.queryByRole("region", { name: "Latest checkpoint" })).toBeNull();
-  expect(toast).not.toHaveBeenCalled();
 });

@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiDelete, checkpoints, postEvent, seedSession } from "./helpers";
 
@@ -35,7 +36,7 @@ test("checkpoint captures the session's prompts and commands", async ({
   await expect(row).toBeVisible();
 
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").locator("button", { hasText: "Checkpoint" }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
 
   // UI: success toast.
   await expect(page.getByText("Checkpoint saved ·", { exact: false })).toBeVisible();
@@ -62,7 +63,7 @@ test("checkpoint captures the session's prompts and commands", async ({
   await expect(timeline.getByText("add a login form", { exact: true })).toBeVisible();
   await timeline.getByText("Commands (1)", { exact: true }).click();
   await expect(timeline.getByText("npm test", { exact: true })).toBeVisible();
-  await expect(page.locator(".rd-session-controls").getByRole("button", { name: "Notes", exact: true })).toBeVisible();
+  await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Notes", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Edit file", exact: true })).toBeVisible();
   await page.screenshot({ path: "/tmp/timeline-implemented-dark.png", animations: "disabled" });
   await page.emulateMedia({ colorScheme: "light" });

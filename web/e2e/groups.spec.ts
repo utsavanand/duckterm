@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiDelete, apiPatch, apiPost, expandFolder, postEvent, seedSession } from "./helpers";
 
@@ -116,7 +117,7 @@ test("Ungroup button moves a session out of its folder", async ({ page }) => {
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Ungroup" }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder" }).click();
 
   // The row now renders in the root drop zone, not inside any folder body.
   await expect(
@@ -154,9 +155,8 @@ test("nested folder moves to top level via the unnest button", async ({
   await expect(body.locator(".rd-row", { hasText: key })).toBeVisible();
 });
 
-// A terminated session's run is over: workflow actions (Rename, Notes,
-// Checkpoint, Fork) must not render — only Resume/Archive/Delete apply, and
-// a watched one says "Delete", never "Stop watching" (nothing is running).
+// A terminated session keeps Notes and destructive cleanup. Running-session
+// actions disappear, and a watched one no longer offers Stop watching.
 test("terminated session rows show only end-state actions", async ({
   page,
 }) => {
@@ -168,9 +168,10 @@ test("terminated session rows show only end-state actions", async ({
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
   await row.locator(".rd-row-click").click();
-  await expect(page.locator(".rd-session-controls").getByRole("button", { name: "Delete" })).toBeVisible();
-  for (const gone of ["Rename", "Notes", "Checkpoint", "Fork", "Stop watching"]) {
-    await expect(page.locator(".rd-session-controls").getByRole("button", { name: gone })).toHaveCount(0);
+  await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Delete permanently…" })).toBeVisible();
+  await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Notes", exact: true })).toBeVisible();
+  for (const gone of ["Rename…", "Checkpoint", "Fork…", "Stop watching…"]) {
+    await expect((await sessionMenu(page)).getByRole("menuitem", { name: gone })).toHaveCount(0);
   }
 });
 
@@ -246,7 +247,7 @@ test("folder remains visible after its last session is ungrouped", async ({ page
     await expandFolder(page, folder);
     const row = page.locator(".rd-row", { has: page.getByText("Last session", { exact: true }) });
     await row.locator(".rd-row-click").click();
-    await page.locator(".rd-session-controls").getByRole("button", { name: "Ungroup", exact: true }).click();
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder", exact: true }).click();
     const header = page.getByRole("button", { name: `View interactions in ${folder}`, exact: true }).locator("..");
     await expect(header).toBeVisible();
     await expect(header.locator(".rd-group-count")).toHaveText("0");

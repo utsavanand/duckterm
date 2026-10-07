@@ -12,7 +12,6 @@ import {
 import { SessionView } from "./types";
 import { useToast } from "./ui";
 import { CheckpointFacts } from "./CheckpointStatus";
-import { checkpointNotice } from "./checkpointState";
 
 function age(startedAt: number): string {
   const mins = Math.max(0, Math.round((Date.now() - startedAt) / 60_000));
@@ -42,26 +41,6 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline }: {
   const onBranch = !!session.branch;
   const dir = session.worktreePath ?? session.cwd ?? null;
   const ctxLevel = contextLevel(session.contextTokens, session.model);
-
-  async function checkpoint() {
-    const key = session.key;
-    const version = selectionVersion.current;
-    const current = () => sessionRef.current === key && selectionVersion.current === version;
-    checkpointGeneration.current++;
-    setActing("checkpoint");
-    try {
-      const cp = await api.checkpoint(key, "context-full");
-      if (!current()) return;
-      checkpointGeneration.current++;
-      setLastCheckpoint(cp);
-      window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: key }));
-      toast(checkpointNotice(cp));
-    } catch (e) {
-      if (current()) toast(`Checkpoint failed: ${(e as Error).message}`, "err");
-    } finally {
-      if (current()) setActing(null);
-    }
-  }
 
   async function compact() {
     setActing("compact");
@@ -220,17 +199,10 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline }: {
         <div className={`rd-ctx-warning ${ctxLevel}`}>
           <div className="rd-ctx-warning-text">
             {ctxLevel === "high"
-              ? "Context is nearly full. A checkpoint saves a record; only compacting frees context."
+              ? "Context is nearly full. Right-click the session to save a checkpoint; only compacting frees context."
               : "Context is filling up. Save a checkpoint to retain the current work, or compact to free context."}
           </div>
           <div className="rd-ctx-warning-actions">
-            <button
-                className="rd-btn rd-btn-sm rd-btn-ghost"
-                disabled={acting !== null}
-                onClick={checkpoint}
-              >
-                {acting === "checkpoint" ? "Capturing…" : "Checkpoint"}
-            </button>
             {session.ptyOwned && (
               <button
                 className="rd-btn rd-btn-sm rd-btn-ghost"
