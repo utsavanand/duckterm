@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from functools import partial
@@ -18,6 +18,14 @@ CHUNK_BYTES = 96000
 MAX_BRIEF_BYTES = 32000
 MAX_SUMMARY_BYTES = 10000
 FIELDS = ("goals", "constraints", "decisions", "unfinished", "questions", "risks")
+Check = Callable[[], Awaitable[None] | None]
+
+
+async def validate(check: Check | None) -> None:
+    if check:
+        pending = check()
+        if pending is not None:
+            await pending
 
 
 @dataclass
@@ -137,7 +145,7 @@ async def summarize(
     sources: list[dict[str, Any]],
     target: dict[str, Any],
     prior: dict[str, Any] | None = None,
-    check: Callable[[], None] | None = None,
+    check: Check | None = None,
     progress: Callable[[int, int, str], None] | None = None,
     resume: BatchProgress | None = None,
     retain: Callable[[BatchProgress], None] | None = None,
@@ -237,7 +245,7 @@ async def prepare_batch(
     harness: str,
     model: str,
     refs: set[str],
-    check: Callable[[], None] | None,
+    check: Check | None,
     progress: Callable[[str], None] | None,
     depth: int = 0,
 ) -> dict[str, Any]:
@@ -262,8 +270,7 @@ async def prepare_batch(
         # Keep the original batch uncounted until BOTH smaller pieces pass.
         if depth >= 2 or sum(len(p["text"].encode()) for p in group) < 16000:
             raise
-        if check:
-            check()
+        await validate(check)
         for half in split_batch(group):
             context = await prepare_batch(
                 half, context, harness, model, refs, check, progress, depth + 1
@@ -277,7 +284,7 @@ async def prepare_group(
     harness: str,
     model: str,
     refs: set[str],
-    check: Callable[[], None] | None,
+    check: Check | None,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     # A model's first draft is not guaranteed to meet either the structural or
@@ -285,13 +292,11 @@ async def prepare_group(
     # Failed drafts never acquire coverage or reach the canonical writer.
     repair = ""
     for attempt in range(3):
-        if check:
-            check()
+        await validate(check)
         if progress:
             progress("repairing" if attempt else "summarizing")
         reply = await memory_provider.generate(harness, model, prompt + repair, SUMMARY_SCHEMA)
-        if check:
-            check()
+        await validate(check)
         try:
             candidate = parse(reply, refs)
         except APIError:
@@ -319,8 +324,7 @@ async def prepare_group(
             + json.dumps({"source": prompt, "candidate": candidate}, ensure_ascii=False),
             VERDICT_SCHEMA,
         )
-        if check:
-            check()
+        await validate(check)
         try:
             valid = json.loads(verdict)
         except ValueError as exc:

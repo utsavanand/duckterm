@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — File metadata is a recheck signal, not changed conversation content
+
+A real preparation tripped the transcript stat fence. Its earlier byte hash was unavailable, so the exact live change could not be reconstructed. Targeted regressions then demonstrated a separate concrete false positive: touching the timestamp or atomically replacing a file with identical bytes invalidated the whole preparation. Re-read changed files off-loop and compare their exact content hashes before refreshing the stat fence. Keep scope/policy checks across that await and the synchronous final-stop fence afterward. Changed, missing, or corrupted bytes still invalidate; do not weaken this to file size, timestamp, or an assumed equivalent summary.
+
 ## 2026-10-07 — A late preparation timeout must not discard reviewed work
 
 The first complete startup trial passed two history batches, then timed out on the third. A retry would have regenerated every earlier batch. Keep reviewed intermediate work in the expiring job, reuse it only under matching session/source/model/policy/CLI fences, and never publish partial work as a checkpoint or ready proof. Split a large timed-out batch into smaller ordered pieces with a bounded depth; do not retry authentication, quota or semantic failures as timeouts. Refresh the inactivity deadline only after a whole batch passes review. Test changed sources, cancellation, expiry and server reconstruction as well as the successful retry.

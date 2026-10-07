@@ -36,6 +36,8 @@ Codex receives JSON schemas for both summary and review responses. Local parsing
 
 A large batch that times out is split in order and retried, at most two split levels and only while at least 16,000 input bytes remain. Both halves must pass generation and review before the original batch counts as complete. Login, quota and semantic errors do not trigger this timeout retry. Reviewed batches remain private in the expiring job so an explicit retry can resume when the session, sources, current work, policy, target and CLI still match. Active cancellation, expiry or server restart discards this intermediate state; closing a failed dialog preserves it for a retry. It is never a saved revision, checkpoint, or ready proof. Passing a whole batch refreshes the 30-minute inactivity deadline; provider calls retain their own timeout.
 
+A changed file stat triggers an off-loop re-read during preparation and ready-status/proof verification. Only exactly identical content hashes can refresh the file fence without repeating preparation. This handles timestamp touches and identical atomic replacements; changed bytes, missing files, corrupt snapshots and changed permissions still block. The final synchronous stop check retains the refreshed stat fence so a subsequent rewrite cannot slip through.
+
 Preparation saves one revision and checkpoint through `ProgressCoordinator.persist`. Intermediate model outputs are temporary. Up to two jobs perform preparation concurrently; equivalent dialogs share a job with separate cancellation leases. A source/settings change refuses readiness. Provider failure leaves the current agent untouched.
 
 ## Version 1 HTTP contract
