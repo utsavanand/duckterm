@@ -1,23 +1,28 @@
-// Backend v1 at e02ce7e. No component imports this service yet. Keep automatic
-// preparation separate from explicit switching; never retry mutations here.
+// Preparation and explicit switching remain separate. Never retry mutations here.
 import { authHeaders, type RestartOptions } from "./api";
 import { routedFetch, splitSessionRef } from "./hostTransport";
 import { type PreparationResult, type SwitchSelection, type SwitchSubmission, type OperationResult } from "./memorySwitchState";
 
 type ObjectValue = Record<string, unknown>;
 export interface MemoryGap { source_id?: string; kind: string; reason: string; blocking: boolean }
+export interface MaintainedHandoff {
+  method: "maintained";
+  summary_revision_id: string | null; summary_generated_at: number | null;
+  summary_state: "current" | "partial" | "legacy" | "unavailable";
+  available_records: number; summarized_records: number; included_records: number; omitted_records: number;
+}
 export interface MemoryCoverage {
   state: "complete" | "partial" | "unknown";
   available_text: "processed" | "partial" | "not_processed";
   retrieval: "available" | "partial" | "unavailable";
   retention: "native_conditional" | "retained_snapshot" | "mixed" | "unknown";
   source_count: number; covered_source_count: number; gap_count: number;
-  gaps: MemoryGap[]; has_more: boolean; details_cursor: string | null;
+  gaps: MemoryGap[]; has_more: boolean; details_cursor: string | null; handoff?: MaintainedHandoff;
 }
 export interface MemoryPreparation {
   preparationId: string; sequence: number; result: PreparationResult;
   coverage: MemoryCoverage; overview?: string; resolvedModel?: string | null;
-  revisionId?: string; preparedAt?: number; retryable?: boolean;
+  revisionId?: string | null; preparedAt?: number; retryable?: boolean;
 }
 export interface MemoryDetails {
   preparationId: string; snapshotId: string;
@@ -59,6 +64,23 @@ function gap(value: unknown): MemoryGap {
   return { ...(v.source_id === undefined ? {} : { source_id: nonempty(v.source_id) }),
     kind: nonempty(v.kind), reason: str(v.reason), blocking: bool(v.blocking) };
 }
+function handoff(value: unknown): MaintainedHandoff {
+  const v = obj(value);
+  const h: MaintainedHandoff = {
+    method: choice(v.method, ["maintained"]),
+    summary_revision_id: v.summary_revision_id === null ? null : nonempty(v.summary_revision_id),
+    summary_generated_at: v.summary_generated_at === null ? null : num(v.summary_generated_at),
+    summary_state: choice(v.summary_state, ["current", "partial", "legacy", "unavailable"]),
+    available_records: num(v.available_records), summarized_records: num(v.summarized_records),
+    included_records: num(v.included_records), omitted_records: num(v.omitted_records),
+  };
+  if (h.summarized_records + h.included_records + h.omitted_records !== h.available_records
+    || (h.summary_revision_id === null) !== (h.summary_generated_at === null)
+    || (h.summary_state === "unavailable") !== (h.summary_revision_id === null)
+    || (h.summary_state === "current" && h.summarized_records !== h.available_records)
+    || (["unavailable", "legacy"].includes(h.summary_state) && h.summarized_records !== 0)) invalid();
+  return h;
+}
 function coverage(value: unknown): MemoryCoverage {
   const v = obj(value);
   const c: MemoryCoverage = {
@@ -68,8 +90,16 @@ function coverage(value: unknown): MemoryCoverage {
     retention: choice(v.retention, ["native_conditional", "retained_snapshot", "mixed", "unknown"]),
     source_count: num(v.source_count), covered_source_count: num(v.covered_source_count), gap_count: num(v.gap_count),
     gaps: list(v.gaps, gap), has_more: bool(v.has_more), details_cursor: cursor(v.details_cursor),
+    ...(v.handoff === undefined ? {} : { handoff: handoff(v.handoff) }),
   };
-  if (c.covered_source_count > c.source_count || c.gaps.length > c.gap_count) invalid();
+  if (c.covered_source_count > c.source_count || c.gaps.length > c.gap_count
+    || c.has_more !== (c.gap_count > c.gaps.length)
+    || c.has_more !== (c.details_cursor !== null)) invalid();
+  if (c.handoff) {
+    const h = c.handoff;
+    const expected = h.summarized_records === h.available_records ? "processed" : h.summarized_records ? "partial" : "not_processed";
+    if (c.available_text !== expected) invalid();
+  }
   return c;
 }
 const processStates = ["source_running", "source_stopped", "target_running", "unknown"] as const;
@@ -95,10 +125,14 @@ function preparation(value: unknown, selection: SwitchSelection, expectedId?: st
     case "ready": {
       const p = obj(v.proof);
       const expiresAt = num(p.expires_at), preparedAt = num(p.prepared_at);
-      if (expiresAt <= preparedAt || base.coverage.available_text !== "processed"
-        || base.coverage.retrieval === "unavailable" || base.coverage.gaps.some(g => g.blocking)) invalid();
+      const h = base.coverage.handoff;
+      const revisionId = p.revision_id === null ? null : nonempty(p.revision_id);
+      if (expiresAt <= preparedAt || base.coverage.retrieval !== "available"
+        || base.coverage.retention !== "retained_snapshot" || base.coverage.state === "unknown"
+        || base.coverage.gaps.some(g => g.blocking)
+        || (h ? revisionId !== h.summary_revision_id : base.coverage.available_text !== "processed" || revisionId === null)) invalid();
       return { ...base, overview: str(p.overview, 32000), preparedAt,
-        revisionId: nonempty(p.revision_id), resolvedModel: p.resolved_model === null ? null : nonempty(p.resolved_model, 200),
+        revisionId, resolvedModel: p.resolved_model === null ? null : nonempty(p.resolved_model, 200),
         result: { phase: "ready", proof: { selection: structuredClone(selection), preparationId,
           snapshotId: nonempty(p.snapshot_id), expiresAt } } };
     }

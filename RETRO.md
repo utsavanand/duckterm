@@ -1,5 +1,14 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Readiness is retrieval safety, not complete summarization
+
+Problem: the switch UI still required a whole-history summary revision even after preparation moved to maintained memory and bounded recent originals. A valid no-summary packet could therefore remain unusable, and source counts implied more summary coverage than existed.
+
+Fix: validate the maintained response separately, including exact retrieval/retention, summary identity and record accounting. Show the owner-approved saved-summary, included-record and searchable-history wording in the existing Restart layout; keep draft, expiry and explicit-switch guards.
+
+Validation: 90 focused transport/controller/component checks, including real-decoder component cases for absent summaries, incomplete retrieval, stale sources and duplicate clicks; browser coverage checks the maintained counts and existing controls. Full combined release gate remains required.
+
+
 
 ## 2026-10-07 — Graph citations must resolve exact, still-authorized records
 

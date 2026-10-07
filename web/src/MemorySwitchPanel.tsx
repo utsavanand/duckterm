@@ -159,23 +159,37 @@ export function MemorySwitchPanel(props: {
   const title = state.phase === "ready" ? "Ready to switch" : state.phase === "incomplete_source" ? "Some prior history is unavailable"
     : state.phase === "stale_source" ? "Work changed during preparation" : state.phase === "failed" || state.phase === "canceled" ? "Could not prepare the handoff"
       : state.phase === "submission_unknown" ? "Checking switch status" : state.phase === "submitting" ? "Scheduling switch…" : "Preparing the handoff…";
+  const handoff = prepared?.coverage.handoff;
+  const readyMessage = handoff?.summary_state === "unavailable"
+    ? "No saved summary yet. The brief uses current work and recent messages; earlier history stays searchable."
+    : handoff ? "The brief uses saved memory and recent messages. Earlier history stays searchable."
+      : "Handoff prepared · required context available. Current work and sources are checked again before the switch.";
   const blocked = ["incomplete_source", "stale_source", "failed", "canceled"].includes(state.phase);
   return <>
     <section className="rd-restart-summary"><strong>Continue with {props.targetName}</strong>
       <p>Keep the same session, project folder, tasks, inbox and artifacts. DuckTerm prepares the handoff automatically from your current work and available prior context.</p></section>
     <div className="rd-restart-notice" role={blocked || error ? "alert" : "status"}><strong>{title}</strong>
-      <p>{state.reason || (state.phase === "ready" ? "Handoff prepared · required context available. Current work and sources are checked again before the switch." : pending ? "Waiting for the recorded switch outcome." : "Your current harness keeps running during preparation.")}</p>
+      <p>{state.reason || (state.phase === "ready" ? readyMessage : pending ? "Waiting for the recorded switch outcome." : "Your current harness keeps running during preparation.")}</p>
       {error && <p>{error}</p>}
       {!pending && (blocked || error) && <button className="rd-btn rd-btn-sm" onClick={prepareAgain}>Prepare again</button>}
       {state.phase === "submission_unknown" && <button className="rd-btn rd-btn-sm" onClick={() => void reconcile(true)}>Check switch status</button>}
     </div>
     {state.phase === "ready" && prepared && <details className="rd-memory-evidence" onToggle={e => { if (e.currentTarget.open && !details) void loadDetails(); }}>
       <summary>Handoff brief and available context</summary>
-      <p>The brief is a starting point. Earlier context can be retrieved from the available sources.</p>
-      <dl><dt>Available text processed</dt><dd>{prepared.coverage.covered_source_count} of {prepared.coverage.source_count} sources</dd>
+      <p>The brief is a starting point. Use the read tools for earlier decisions or missing details.</p>
+      <dl>{handoff ? <>
+        <dt>Saved summary</dt><dd>{handoff.summary_generated_at === null ? "No saved summary" : `Updated ${new Date(handoff.summary_generated_at).toLocaleString()}`}</dd>
+        <dt>History summarized</dt><dd>{handoff.summarized_records.toLocaleString()} of {handoff.available_records.toLocaleString()} records</dd>
+        <dt>Recent originals in brief</dt><dd>{handoff.included_records.toLocaleString()} records</dd>
+        <dt>Additional history</dt><dd>{handoff.omitted_records.toLocaleString()} records available through read tools</dd>
+        <dt>Originals for retrieval</dt><dd>Retained and searchable</dd>
+      </> : <>
+        <dt>Available text processed</dt><dd>{prepared.coverage.covered_source_count} of {prepared.coverage.source_count} sources</dd>
         <dt>Originals for retrieval</dt><dd>{prepared.coverage.retrieval}</dd>
         <dt>Retention</dt><dd>{prepared.coverage.retention === "retained_snapshot" ? "Retained source snapshots" : prepared.coverage.retention === "native_conditional" ? "While native originals remain available" : prepared.coverage.retention}</dd>
+      </>}
         <dt>Exact target model</dt><dd>{prepared.resolvedModel || "Harness default · not reported"}</dd></dl>
+      {handoff && <p>Summarized records were supplied to a summary update. Every detail is not necessarily included in the brief.</p>}
       {(details?.gaps ?? prepared.coverage.gaps).map((g, i) => <p key={`${g.source_id}-${i}`} className="rd-memory-gap">{g.reason}</p>)}
       {prepared.coverage.gap_count > 0 && <p>{prepared.coverage.gap_count} source {prepared.coverage.gap_count === 1 ? "gap" : "gaps"}. Processing available text does not mean every fact is in the brief.</p>}
       {details && <><h3>Automatically prepared brief</h3><div className="rd-memory-brief" role="region" aria-label="Automatically prepared brief" tabIndex={0}>{details.brief.text}</div>
