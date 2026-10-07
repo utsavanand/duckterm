@@ -98,7 +98,7 @@ export function ConversationRecoveryDialog({ service, sessionName, computer, pro
 }
 
 export function SessionConversationRecovery({ session, stopped, onIdentity }: {
-  session: SessionView; stopped: boolean; onIdentity: (value: ConversationIdentity) => void;
+  session: SessionView; stopped: boolean; onIdentity?: (value: ConversationIdentity) => void;
 }) {
   const service = useMemo(() => conversationRecoveryService(session.key), [session.key]);
   const undoPending = useRecoveryUndoPending(session.key);
@@ -109,7 +109,7 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
   const mounted = useRef(true), mutating = useRef(false), generation = useRef(0);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const update = useCallback((value: ConversationIdentity) => {
-    generation.current += 1; setIdentity(value); onIdentity(value);
+    generation.current += 1; setIdentity(value); onIdentity?.(value);
     if (value.canResume) setRecoveryResumeAllowed(session.key, true);
     if (value.source === "adopted") setNotice("");
   }, [onIdentity, session.key]);

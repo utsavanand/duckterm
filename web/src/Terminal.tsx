@@ -20,12 +20,14 @@ import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 export const Terminal = memo(function Terminal({
   sessionKey,
   active = true,
+  focusRequest = 0,
   kind = "agent",
   onConnection,
   theme = DEFAULT_TERM_THEME,
 }: {
   sessionKey: string;
   active?: boolean;
+  focusRequest?: number;
   kind?: "agent" | "shell";
   onConnection?: (connected: boolean) => void;
   theme?: string;
@@ -38,6 +40,7 @@ export const Terminal = memo(function Terminal({
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Xterm | null>(null);
   const activateRef = useRef<((visible: boolean) => void) | null>(null);
+  const focusRef = useRef<(() => void) | null>(null);
 
   // Live theme switch (e.g. toggling the app light/dark): set the new palette
   // and force a full repaint so already-rendered rows recolor immediately,
@@ -99,6 +102,7 @@ export const Terminal = memo(function Terminal({
     };
     host.addEventListener("focusout", refocusOnBlur);
     const focusOnClick = () => focusTerm(true);
+    focusRef.current = focusOnClick;
     host.addEventListener("mousedown", focusOnClick);
 
     // The WS dies whenever the session's PTY goes away — Stop, a server
@@ -282,6 +286,7 @@ export const Terminal = memo(function Terminal({
     return () => {
       disposed = true;
       activateRef.current = null;
+      focusRef.current = null;
       cancelAttachScroll();
       window.cancelAnimationFrame(fitFrame ?? 0);
       window.clearTimeout(retry);
@@ -308,6 +313,9 @@ export const Terminal = memo(function Terminal({
   }, [sessionKey, kind]);
 
   useEffect(() => { activateRef.current?.(active); }, [active, sessionKey]);
+  // Clicking or keyboard-activating the already selected row must also return
+  // focus to its terminal. Context-menu opening does not issue this request.
+  useEffect(() => { if (focusRequest) focusRef.current?.(); }, [focusRequest]);
 
   // height:0 + flex:1 makes the host fill the pane with a DEFINITE height, so
   // xterm scrolls its buffer internally instead of growing the page. (A

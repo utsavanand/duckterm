@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiPost, seedSession } from "./helpers";
 
@@ -25,9 +26,9 @@ test("watched session is observe-only: no Stop or Archive button", async ({
   // Actions are hover-revealed. Stop and Archive must not be among them.
   await row.locator(".rd-row-click").click();
   await expect(
-    page.locator(".rd-session-controls").getByRole("button", { name: "Stop", exact: true }),
+    (await sessionMenu(page)).getByRole("menuitem", { name: "Stop", exact: true }),
   ).toHaveCount(0);
-  await expect(page.locator(".rd-session-controls").getByRole("button", { name: "Archive" })).toHaveCount(0);
+  await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Archive" })).toHaveCount(0);
   // Fork stays — branching a watched session is fine.
-  await expect(page.locator(".rd-session-controls").getByRole("button", { name: "Fork" })).toBeVisible();
+  await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Fork…" })).toBeVisible();
 });

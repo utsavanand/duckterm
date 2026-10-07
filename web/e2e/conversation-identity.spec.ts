@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { apiDelete, base, postEvent, seedSession } from "./helpers";
@@ -17,7 +18,7 @@ test("missing conversation identity is visible on launch and does not promise Re
     await expect(card.getByRole("button", { name: "Install hooks" })).toBeVisible();
     await page.screenshot({ path: "/tmp/conversation-identity-implemented-dark.png" });
     await postEvent({ event_type: "Notification", session_key: key, lifecycle: "stopped" });
-    await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
+    await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true })).toBeDisabled();
     await page.evaluate(() => document.documentElement.dataset.theme = "light");
     await page.screenshot({ path: "/tmp/conversation-identity-implemented-light.png" });
     await postEvent({ event_type: "SessionStart", session_key: key, session_id: "owner-test-conversation", runtime: "codex" });
@@ -48,7 +49,7 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
     const card = page.getByRole("region", { name: "Session controls", exact: true });
     await card.getByRole("button", { name: "Install hooks" }).click();
     await expect(card.getByRole("heading", { name: "Awaiting conversation ID" })).toBeVisible();
-    await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
+    await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true })).toBeDisabled();
     await card.getByRole("button", { name: "Choose a conversation" }).click();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("radio")).toHaveCount(2);
@@ -79,7 +80,7 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
     expect(row.conversation_identity.source).toBe("adopted");
     await page.setViewportSize({ width: 1440, height: 1000 });
     await expect(card.getByRole("heading", { name: "Conversation chosen by you" })).toBeVisible();
-    await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeEnabled();
+    await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true })).toBeEnabled();
     const unchanged = readFileSync(join(root, "alpha.jsonl"), "utf8");
     await expect(card.getByRole("button", { name: "Undo attachment", exact: true })).toBeVisible();
     await expect.poll(() => card.getByRole("button", { name: "Undo attachment" }).evaluate(node => getComputedStyle(node).backgroundColor)).toBe("rgb(255, 255, 255)");
@@ -87,18 +88,18 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
     await page.evaluate(() => document.documentElement.dataset.theme = "dark");
     await expect.poll(() => card.getByRole("button", { name: "Undo attachment" }).evaluate(node => getComputedStyle(node).backgroundColor)).toBe("rgb(21, 24, 31)");
     await page.screenshot({ path: "/tmp/conversation-undo-implemented-dark.png" });
-    const sidebarResume = page.getByRole("button", { name: "Resume Recovery picker reviewer", exact: true });
-    await expect(sidebarResume).toBeEnabled();
+    const sidebarResume = (await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true });
+    await sessionMenu(page); await expect(sidebarResume).toBeEnabled();
     let releaseUndo!: () => void;
     const undoGate = new Promise<void>(resolve => { releaseUndo = resolve; });
     await page.route("**/conversation-detach", async route => { await undoGate; await route.continue(); });
     try {
       await card.getByRole("button", { name: "Undo attachment", exact: true }).click();
-      await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
-      await expect(sidebarResume).toBeDisabled();
+      await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true })).toBeDisabled();
+      await sessionMenu(page); await expect(sidebarResume).toBeDisabled();
     } finally { releaseUndo(); }
     await expect(card.getByText("Attachment removed. The transcript is unchanged and the session stays stopped.")).toBeVisible();
-    await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
+    await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true })).toBeDisabled();
     await expect(card.getByRole("button", { name: "Undo attachment", exact: true })).toHaveCount(0);
     expect(readFileSync(join(root, "alpha.jsonl"), "utf8")).toBe(unchanged);
     const afterUndo = await (await page.request.get(base() + "/sessions")).json();
@@ -114,7 +115,7 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
     await dialog.getByRole("button", { name: "Attach this conversation" }).click();
     await expect(dialog).toHaveCount(0);
     await expect(card.getByRole("button", { name: "Undo attachment", exact: true })).toBeVisible();
-    await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeEnabled();
+    await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true })).toBeEnabled();
     await expect(card.getByText("Attachment removed. The transcript is unchanged and the session stays stopped.")).toHaveCount(0);
 
     // Reopening the card must not treat the still-recorded old binding as
@@ -130,13 +131,13 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
       await expect(card.getByText("Recovery other reviewer", { exact: true })).toBeVisible();
       await page.locator(".rd-row-name", { hasText: "Recovery picker reviewer" }).click();
       await expect(card.getByText("Recovery picker reviewer", { exact: true })).toBeVisible();
-      await expect(sidebarResume).toBeDisabled();
-      await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
+      await sessionMenu(page); await expect(sidebarResume).toBeDisabled();
+      await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true })).toBeDisabled();
       const undo = card.getByRole("button", { name: "Undo attachment", exact: true });
       if (await undo.count()) await expect(undo).toBeDisabled();
       finishDelayed();
       await expect(card.getByRole("button", { name: "Choose a conversation" })).toBeVisible();
-      await expect(sidebarResume).toBeDisabled();
+      await sessionMenu(page); await expect(sidebarResume).toBeDisabled();
       expect(readFileSync(join(root, "alpha.jsonl"), "utf8")).toBe(unchanged);
     } finally { finishDelayed(); await apiDelete(`/sessions/${other}`); }
 

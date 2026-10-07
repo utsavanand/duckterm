@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, ModelChoice, RestartOptions, RestartStatus } from "./api";
 import { splitSessionRef } from "./hostTransport";
@@ -7,10 +7,11 @@ import "./restart.css";
 import { ModelMenu } from "./ModelMenu";
 
 const harnessName = (name: string) => ({ "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini CLI" }[name] || name);
-export function RestartControls(props: { session: SessionView; showActions?: boolean }) {
+type RestartControlProps = { session: SessionView; showActions?: boolean; menu?: boolean; onExpanded?: (expanded: boolean) => void; onActionComplete?: () => void };
+export function RestartControls(props: RestartControlProps) {
   return <SessionRestartControls key={props.session.key} {...props} />;
 }
-function SessionRestartControls({ session, showActions = true }: { session: SessionView; showActions?: boolean }) {
+function SessionRestartControls({ session, showActions = true, menu = false, onExpanded, onActionComplete }: RestartControlProps) {
   const remote = splitSessionRef(session.key).host !== "local";
   const [status, setStatus] = useState<RestartStatus | null>(null);
   const [statusError, setStatusError] = useState("");
@@ -26,6 +27,7 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
   const [loadingModels, setLoadingModels] = useState(false);
   const [modelsError, setModelsError] = useState("");
   const [menuAnchor, setMenuAnchor] = useState<HTMLButtonElement | null>(null);
+  useLayoutEffect(() => { onExpanded?.(open || !!menuAnchor); }, [open, menuAnchor, onExpanded]);
   const [acting, setActing] = useState(false);
   const actingRef = useRef(false);
   const alive = useRef(true);
@@ -97,7 +99,7 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
     actingRef.current = true; setActing(true); ++statusRequest.current;
     try {
       const next = stopNow ? await api.restart(session.key, model, harness, true) : await api.restart(session.key, model, harness);
-      if (alive.current) { setStatus(next); setError(""); setOpen(false); opener.current?.focus(); }
+      if (alive.current) { setStatus(next); setError(""); setOpen(false); opener.current?.focus(); onActionComplete?.(); }
     } catch (e) {
       if (alive.current) { setError((e as Error).message); setInterrupt(false); void loadOptions(); void refresh(); }
     } finally { actingRef.current = false; if (alive.current) setActing(false); }
@@ -113,21 +115,21 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
   const reason = remote ? "Restart and Change model are available on This Mac only for now." : statusError || status?.reason;
   const action = switching ? `Switch to ${harnessName(harness)}` : "Restart now";
   return <>
-    {showActions && <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={disabled} title={reason} onClick={e => show(e.currentTarget)}>Restart</button>}
-    {showActions && <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={disabled || !status?.can_restart} title={reason || status?.reason} aria-haspopup="menu" aria-expanded={!!menuAnchor} onClick={e => {
+    {showActions && <button role={menu ? "menuitem" : undefined} className="rd-btn rd-btn-sm rd-btn-primary" disabled={disabled} title={reason} onClick={e => show(e.currentTarget)}>{menu ? "Restart…" : "Restart"}</button>}
+    {showActions && <button role={menu ? "menuitem" : undefined} className="rd-btn rd-btn-sm rd-btn-ghost" disabled={disabled || !status?.can_restart} title={reason || status?.reason} aria-haspopup="menu" aria-expanded={!!menuAnchor} onClick={e => {
       if (menuAnchor) { closeMenu(); return; }
       opener.current = e.currentTarget; setMenuAnchor(e.currentTarget); void loadModels();
-    }}>Change model <span aria-hidden="true">▾</span></button>}
+    }}>{menu ? "Change model…" : "Change model"}</button>}
     {menuAnchor && <ModelMenu anchor={menuAnchor} choices={modelChoices} current={currentModel} loading={loadingModels} error={modelsError}
       retry={() => void loadModels()} close={closeMenu} select={picked => picked === currentModel ? closeMenu() : show(menuAnchor, picked)} />}
-    {reason && showActions && !pending && <p className="rd-restart-message">{reason}</p>}
+    {reason && showActions && !menu && !pending && <p className="rd-restart-message">{reason}</p>}
     {error && !open && <p className="rd-restart-message" role="alert">{error}</p>}
     {pending && <div className="rd-restart-message rd-restart-notice" role="status">
       {status?.status === "queued" ? status.interrupt ? "Preparing to stop and switch now." : "Restart pending — after this turn." : status?.interrupt ? "Stopping and switching…" : "Restarting…"}
       {status?.requested_harness && <span> Harness: {harnessName(status.requested_harness)}.</span>}
       {status?.requested_model && <span> Model: {status.requested_model}</span>}
       {status?.context === "seeded_new_conversation" && <p>A new conversation will start with handoff context.</p>}
-      {status?.status === "queued" && <button className="rd-btn rd-btn-sm" disabled={acting} onClick={() => void cancel()}>Cancel restart</button>}
+      {status?.status === "queued" && <button role={menu ? "menuitem" : undefined} className="rd-btn rd-btn-sm" disabled={acting} onClick={() => void cancel()}>Cancel restart</button>}
     </div>}
     {status?.status === "failed" && <p className="rd-restart-message" role="alert">{status.error}</p>}
     {status?.status === "completed" && <p className="rd-restart-message" role="status">{status.context === "seeded_new_conversation"
@@ -169,7 +171,7 @@ function SessionRestartControls({ session, showActions = true }: { session: Sess
           <label><input type="checkbox" checked={interrupt} disabled={acting || loadingOptions} onChange={e => setInterrupt(e.target.checked)} /> Stop the current turn and switch now</label>
           <p className="rd-restart-help">Use this when you want to switch while the agent is working, including when its budget runs out. Saves a checkpoint and open tasks before stopping. Unfinished work and background jobs may stop.</p>
         </div>}
-        <p className="rd-restart-notice" role={error || pathReason || statusError ? "alert" : "status"}>{error || optionsError || statusError || pathReason || (!draftClear && !loadingOptions ? "Send or clear unsent terminal text before restarting." : stopNow ? "The current turn will stop after its checkpoint is saved. A new conversation will start on this card." : afterTurn ? "This will wait until the agent finishes its turn. You can cancel it from the Session card." : "The change will start as soon as you confirm.")}</p>
+        <p className="rd-restart-notice" role={error || pathReason || statusError ? "alert" : "status"}>{error || optionsError || statusError || pathReason || (!draftClear && !loadingOptions ? "Send or clear unsent terminal text before restarting." : stopNow ? "The current turn will stop after its checkpoint is saved. A new conversation will start on this card." : afterTurn ? "This will wait until the agent finishes its turn. You can cancel it from the session panel." : "The change will start as soon as you confirm.")}</p>
         <p className="rd-restart-help">Restart reloads the installed CLI, connectors and session instructions. Background processes started in this terminal may stop.</p>
         <div className="rd-restart-footer"><button className="rd-btn rd-btn-ghost" disabled={acting} onClick={close}>Cancel</button><button className="rd-btn rd-btn-primary" disabled={!allowed} onClick={() => void restart()}>{acting ? "Scheduling…" : stopNow ? "Stop and switch now" : afterTurn ? switching ? "Switch after this turn" : "Restart after this turn" : action}</button></div>
       </div>
