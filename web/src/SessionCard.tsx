@@ -41,7 +41,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
   const [savedNotes, setSavedNotes] = useState(s.notes ?? "");
   const [capturing, setCapturing] = useState(false);
   const [ending, setEnding] = useState(false);
-  const { resuming, resumeSession } = useResumeSession(s.key);
+  const { resuming, recoveryBlocked, resumeSession } = useResumeSession(s.key);
   const [archiving, setArchiving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -158,7 +158,7 @@ export function SessionCard({ session: s, now, onFork, onDelete, onRename, onUng
             <button
               className="rd-btn rd-btn-sm rd-btn-primary"
               title="Relaunch this session — continues the conversation for Claude Code"
-              disabled={resuming || resumeBlocked}
+              disabled={resuming || recoveryBlocked || resumeBlocked}
               onClick={resumeSession}
             >
               {resuming ? (

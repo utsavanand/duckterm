@@ -1,3 +1,4 @@
+import { recoveryBlocksResume } from "./resumeReadiness";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { ConversationIdentityNotice, ConversationRecoveryDialog, SessionConversationRecovery } from "./ConversationRecovery";
@@ -116,10 +117,12 @@ it("reconciles an uncertain Undo before allowing another mutation and never retr
     await screen.findByText(/Recovery status unavailable: offline/);
     expect(screen.getByRole("button", { name: "Undo attachment" })).toBeDisabled();
     expect(updated).toHaveBeenLastCalledWith({ ...adopted, canResume: false });
+    expect(recoveryBlocksResume(session.key)).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Check again" }));
     await screen.findByRole("button", { name: "Choose a conversation" });
     expect(screen.queryByRole("button", { name: "Undo attachment" })).toBeNull();
     expect(api.detach).toHaveBeenCalledExactlyOnceWith("revision-one");
     expect(updated).toHaveBeenLastCalledWith(missing);
+    expect(recoveryBlocksResume(session.key)).toBe(true);
   } finally { cleanup(); spy.mockRestore(); }
 });

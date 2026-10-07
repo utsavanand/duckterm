@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06: Guard every Resume entry point during recovery
+
+Undo disabled only the session-card Resume button; the sidebar could still resume while the mutation was pending or uncertain. A delayed-request browser regression exposed the bypass. Recovery readiness now guards the card, sidebar and resume handler by canonical session key, including across card unmounts. Test all entry points for shared operations.
+
 ## 2026-10-06 — An explicit recovery choice needs a safe way back
 
 An incorrect transcript attachment must be reversible without deleting its file or starting an agent. Expose Undo only for an adopted binding on a stopped session, send the current revision, and leave launch-assigned or observed identities alone. Disable Resume while Undo is unresolved. A lost response requires a fresh identity read before another action, never an automatic mutation retry. Verify the complete attach/undo/reselect workflow and compare transcript bytes before and after Undo.

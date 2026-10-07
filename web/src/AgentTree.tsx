@@ -570,7 +570,7 @@ function TreeRow({
   onOpenInbox?: (key: string) => void;
 }) {
   const s = node.session;
-  const { resuming, resumeSession } = useResumeSession(s.key);
+  const { resuming, recoveryBlocked, resumeSession } = useResumeSession(s.key);
   const effState = effectiveState(s, now);
   const live = !["terminated", "stopped", "interrupted", "archived"].includes(effState);
   const stateLabel = effState;
@@ -643,7 +643,7 @@ function TreeRow({
             )}
           </span>
           {effState === "stopped" && s.launched && <button className="rd-row-resume"
-            aria-label={`Resume ${s.label}`} disabled={resuming || identityBlocksResume(s)} onClick={resumeSession}>
+            aria-label={`Resume ${s.label}`} disabled={resuming || recoveryBlocked || identityBlocksResume(s)} onClick={resumeSession}>
             {resuming ? "Resuming…" : "Resume"}
           </button>}
         </div>

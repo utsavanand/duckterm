@@ -1,3 +1,4 @@
+import { setRecoveryResumeAllowed } from "./resumeReadiness";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ConversationCandidate, ConversationCandidates, ConversationIdentity, ConversationRecoveryService } from "./conversationRecoveryState";
@@ -108,8 +109,9 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const update = useCallback((value: ConversationIdentity) => {
     generation.current += 1; setIdentity(value); onIdentity(value);
+    if (value.canResume) setRecoveryResumeAllowed(session.key, true);
     if (value.source === "adopted") setNotice("");
-  }, [onIdentity]);
+  }, [onIdentity, session.key]);
   useEffect(() => {
     let current = true;
     const refresh = async () => {
@@ -136,7 +138,8 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
   async function detach() {
     if (mutating.current || uncertain || !stopped || identity?.source !== "adopted" || !identity.canDetach || !identity.revision) return;
     mutating.current = true; generation.current += 1; setBusy(true); setError(""); setNotice("");
-    // Disable Resume while this mutation or its reconciliation is unresolved.
+    // Disable every Resume entry point until recovery confirms it is safe again.
+    setRecoveryResumeAllowed(session.key, false);
     update({ ...identity, canResume: false });
     try {
       const value = await service.detach(identity.revision);

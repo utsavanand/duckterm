@@ -87,7 +87,16 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
     await page.evaluate(() => document.documentElement.dataset.theme = "dark");
     await expect.poll(() => card.getByRole("button", { name: "Undo attachment" }).evaluate(node => getComputedStyle(node).backgroundColor)).toBe("rgb(21, 24, 31)");
     await page.screenshot({ path: "/tmp/conversation-undo-implemented-dark.png" });
-    await card.getByRole("button", { name: "Undo attachment", exact: true }).click();
+    const sidebarResume = page.getByRole("button", { name: "Resume Recovery picker reviewer", exact: true });
+    await expect(sidebarResume).toBeEnabled();
+    let releaseUndo!: () => void;
+    const undoGate = new Promise<void>(resolve => { releaseUndo = resolve; });
+    await page.route("**/conversation-detach", async route => { await undoGate; await route.continue(); });
+    try {
+      await card.getByRole("button", { name: "Undo attachment", exact: true }).click();
+      await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
+      await expect(sidebarResume).toBeDisabled();
+    } finally { releaseUndo(); }
     await expect(card.getByText("Attachment removed. The transcript is unchanged and the session stays stopped.")).toBeVisible();
     await expect(card.getByRole("button", { name: "Resume", exact: true })).toBeDisabled();
     await expect(card.getByRole("button", { name: "Undo attachment", exact: true })).toHaveCount(0);
