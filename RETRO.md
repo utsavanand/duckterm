@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-06 — Resume diagnostics must follow durable identity precedence
+
+Saving an observed ID outside retained events is only useful if diagnostics also
+read it. Prefer explicit native bindings, then the saved observation for the same
+harness, then legacy events. Keep contested and pending bindings visible and never
+probe their transcript as though the identity were usable. Verify the report after
+event deletion and ensure it still exports no IDs or paths and writes no data.
+
 ## 2026-10-06 — Conversation identity must precede the process
 
 Ordinary launches learned conversation IDs only from optional hooks, then lost

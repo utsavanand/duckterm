@@ -139,6 +139,44 @@ def test_bounds_and_unsupported_harness_are_honest(history, tmp_path, monkeypatc
     assert "hooks (global/project): not applicable" in text
 
 
+def test_retained_observation_is_reported_after_event_retention(history, tmp_path):
+    seed(history, "a", tmp_path, "legacy-id")
+    history.set_restart_control(
+        "a", {"native_observation": {"runtime": "claude-code", "native_id": "PRIVATE-id"}}
+    )
+    history._conn.execute("DELETE FROM events")
+    history._conn.commit()
+    before = history._conn.total_changes
+    result = resume_diagnostics.render(resume_diagnostics.snapshot(history, None))["text"]
+    assert "native conversation ID: present" in result
+    assert "expected transcript exists: no" in result
+    assert "PRIVATE" not in result
+    assert history._conn.total_changes == before
+
+
+@pytest.mark.parametrize("status", ["pending", "contested"])
+def test_binding_barriers_prevent_reporting_a_retained_observation_as_ready(
+    history, tmp_path, status
+):
+    seed(history, "a", tmp_path, "legacy-id")
+    history.set_restart_control(
+        "a",
+        {
+            "native_binding": {
+                "runtime": "claude-code",
+                "native_id": "PRIVATE-id" if status == "contested" else None,
+                "contested": status == "contested",
+            },
+            "native_id_pending": status == "pending",
+            "native_observation": {"runtime": "claude-code", "native_id": "PRIVATE-id"},
+        },
+    )
+    result = resume_diagnostics.render(resume_diagnostics.snapshot(history, None))["text"]
+    assert "native conversation ID: " + status in result
+    assert "not checked (no usable recorded ID)" in result
+    assert "PRIVATE" not in result
+
+
 def test_endpoint_keeps_database_on_owner_thread_and_files_off_loop(history, tmp_path, monkeypatch):
     seed(history, "a", tmp_path)
     server = Server(history=history)

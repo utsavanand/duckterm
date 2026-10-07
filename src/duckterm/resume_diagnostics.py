@@ -32,8 +32,11 @@ def snapshot(history: HistoryStore, selected: str | None) -> dict[str, Any]:
         try:
             control = json.loads(row.pop("restart_json") or "{}")
             binding = control.get("native_binding")
+            observation = control.get("native_observation") or {}
             if binding is not None:
                 native_id = binding.get("native_id")
+            elif observation.get("runtime") == row["runtime"]:
+                native_id = observation.get("native_id")
             else:
                 event = history._conn.execute(
                     "SELECT json_extract(payload_json,'$.session_id') AS sid FROM events "
@@ -54,6 +57,13 @@ def snapshot(history: HistoryStore, selected: str | None) -> dict[str, Any]:
                 and native_id != ""
             ):
                 state = "invalid"
+            if binding is not None and binding.get("contested"):
+                state = "contested"
+            elif binding is not None and (
+                control.get("native_id_pending")
+                or binding.get("runtime", row["runtime"]) != row["runtime"]
+            ):
+                state = "pending"
         except (ValueError, TypeError, AttributeError):
             native_id, state = None, "unknown"
         row.update(
