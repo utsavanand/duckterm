@@ -142,6 +142,8 @@ def render(data: dict[str, Any]) -> dict[str, str]:
                         cwd=cwd, session_id=row["native_id"]
                     )
                     transcript = "yes" if path and path.is_file() else "no"
+                elif runtime in {"claude-code", "codex"}:
+                    transcript = "not checked (no project directory)"
                 else:
                     transcript = "not checked (no file-per-conversation lookup)"
         except (OSError, ValueError, RuntimeError):

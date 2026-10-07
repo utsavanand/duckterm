@@ -4,6 +4,10 @@
 
 A launched agent could work normally while no conversation ID was recorded, hiding the loss until a later Resume. Show identity, hook configuration and readable transcript readiness as separate facts. Recovery must use an explicit owner choice with bounded project-scoped discovery, opaque handles, whole-file verification and an atomic session revision/duplicate-ownership check; never choose the newest transcript or automatically resume. Preserve a generation barrier when undoing an adopted binding so old hooks cannot restore it. Keep filesystem work off the event loop and reject discovery without a recorded absolute project directory. Test stale files, competing attachments, missing directories, expired handles, uncertain responses and real-browser recovery.
 
+## 2026-10-06 — Distinguish missing resume inputs from unsupported adapters
+
+A known transcript adapter with no recorded directory was labeled as lacking file-per-conversation lookup. Report the missing directory explicitly so diagnostics direct the owner toward the actual missing input. Keep malformed hook configuration private and report unknown rather than echoing it.
+
 ## 2026-10-06 — Empty launch generations must receive a fresh token
 
 Resuming an unidentified legacy conversation passes an empty generation override.
