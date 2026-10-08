@@ -70,7 +70,7 @@ from duckterm.core.relay import (
     question_from,
     validate_rule,
 )
-from duckterm.core.saved_progress import ProgressCoordinator
+from duckterm.core.saved_progress import ProgressCoordinator, SummaryUpdate
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
 from duckterm.core.tokens import TokenLedger
 from duckterm.git import gitdetect
@@ -4634,19 +4634,36 @@ class Server:
         if captured is None:
             raise APIError(409, "Session changed while capturing checkpoint; try again")
         prior = current_revision(self.history.session(session_key) or {})
-        revision = None
+        update = SummaryUpdate.failed("update_failed")
         try:
-            revision = await self.progress_coordinator.refresh(session_key, captured)
-        except Exception as exc:  # facts can save even with an unavailable provider
+            update = await self.progress_coordinator.refresh_result(session_key, captured)
+        except APIError:
+            update = SummaryUpdate.failed("source_unavailable")
+        except Exception as exc:
+            # Retain history and a fixed failure code, never raw provider output.
             print(
                 f"[duckterm] checkpoint summary unavailable: {type(exc).__name__}", file=sys.stderr
             )
+        revision = update.revision
+        previous = self.digests.revision(session_key, prior) if prior else None
+        if (
+            update.state == "failed"
+            and previous
+            and (
+                previous.get("summary_validation", {}).get("ready")
+                or previous.get("continuity", {}).get("verified")
+            )
+        ):
+            # A failed candidate must not replace the last saved summary in the
+            # checkpoint's view, even when legacy validation retained a candidate.
+            revision = previous
         cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
         git = await asyncio.to_thread(_git_state, cwd)
         now = int(time.time() * 1000)
         identity = uuid.uuid4().hex
         source = captured["source"]
         record = checkpoint_marker(captured, revision["id"] if revision else prior, git, now)
+        record["summary_update"] = update.metadata(now)
         try:
             original = await memory_continuity.capture(self, session_key, captured)
             if "memory_sources" in original:

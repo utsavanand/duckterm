@@ -46,6 +46,17 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
     catch (error) { toast(`${label} failed: ${(error as Error).message}`, "err"); }
     finally { setBusy(""); }
   }
+  async function checkpoint() {
+    if (disabled) return;
+    setBusy("Checkpoint");
+    try {
+      const cp = await api.checkpoint(s.key, "manual");
+      window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: s.key }));
+      toast(checkpointNotice(cp), cp.summary_update?.state === "failed" || cp.saved === false ? "err" : "ok");
+      onClose();
+    } catch (error) { toast(`Checkpoint failed: ${(error as Error).message}`, "err"); }
+    finally { setBusy(""); }
+  }
   const item = (label: string, action: () => void, danger = false, blocked = false) => <button role="menuitem" className={danger ? "rd-btn-danger" : ""} disabled={disabled || blocked} onClick={action}>{label}</button>;
   const canMove = resumable && splitSessionRef(s.key).host === "local" && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "");
   return <>
@@ -54,11 +65,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
       {resumable && <button role="menuitem" disabled={disabled || recoveryBlocked || identityBlocksResume(s)}
         title={identityBlocksResume(s) ? "Choose a conversation in the session’s recovery panel before resuming" : undefined}
         onClick={async () => { await resumeSession(); onClose(); }}>{resuming ? "Resuming…" : "Resume"}</button>}
-      {!archived && !ended && item(busy === "Checkpoint" ? "Capturing…" : "Checkpoint", () => void act("Checkpoint", async () => {
-        const cp = await api.checkpoint(s.key, "manual");
-        window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: s.key }));
-        return checkpointNotice(cp);
-      }))}
+      {!archived && !ended && item(busy === "Checkpoint" ? "Capturing…" : "Checkpoint", () => void checkpoint())}
       {live && (s.branch || s.runtime === "claude-code") && item("Fork", () => { onFork(s.key); onClose(); })}
       {s.parentKey && !archived && item("Merge back", () => setDialog("merge"))}
       {!archived && item("Merge with agent", () => setDialog("agent-merge"))}

@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from test_memory import memory_rig, transcript
 
 from duckterm import memory_continuity, memory_summary
+from duckterm.llm.summarizer import Summary
 
 __all__ = ["memory_rig"]
 
@@ -231,5 +232,73 @@ def test_backfill_is_labeled_older_than_prior_summary_and_new_append(memory_rig,
         assert not any(r["text"].startswith("Later correction") for r in data["records"])
         assert data["prior_context"] == first["continuity"]["context"]
         assert "NOT conversation chronology" in calls[2]
+
+    asyncio.run(run())
+
+
+def test_partial_checkpoint_reports_saved_revision_without_claiming_complete_summary(
+    memory_rig, monkeypatch
+):
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "Original constraint")
+    for n in range(100):
+        append(path, f"Fact {n}: " + "x" * 1000)
+    calls = provider(monkeypatch)
+
+    async def run():
+        cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
+        assert len(calls) == 2  # One bounded update, not an unbounded backlog loop.
+        assert cp["summary_update"]["state"] == "partial"
+        assert cp["summary_update"]["reason"] == "summary_coverage_partial"
+        revision = server.digests.revision("agent", cp["summary_update"]["revision_id"])
+        assert revision["id"] == cp["record"]["summary_ref"]
+        assert revision["continuity"]["remaining_records"] > 0
+        assert revision["continuity"]["verified"]
+        assert not cp["handoff_eligible"]
+
+    asyncio.run(run())
+
+
+def test_manual_checkpoint_shares_automatic_failure_without_a_second_attempt(
+    memory_rig, monkeypatch
+):
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Preserve this owner constraint")
+    entered, released = threading.Event(), threading.Event()
+    calls = []
+
+    def failed(prompt):
+        calls.append(prompt)
+        entered.set()
+        assert released.wait(3)
+        return Summary("", "none", "provider_timeout")
+
+    monkeypatch.setattr("duckterm.server.summarize", failed)
+
+    async def run():
+        coordinator = server.progress_coordinator
+        automatic = asyncio.create_task(coordinator.refresh_result("agent"))
+        assert await asyncio.to_thread(entered.wait, 3)
+        manual_joined = asyncio.Event()
+        original = asyncio.shield
+
+        def observed(task):
+            if task is coordinator.active.get("agent") and asyncio.current_task() is manual:
+                manual_joined.set()
+            return original(task)
+
+        monkeypatch.setattr(asyncio, "shield", observed)
+        manual = asyncio.create_task(
+            server._create_checkpoint("agent", server.history.session("agent"), "manual")
+        )
+        try:
+            await asyncio.wait_for(manual_joined.wait(), 3)
+        finally:
+            released.set()
+        outcome, cp = await asyncio.gather(automatic, manual)
+        assert len(calls) == 1
+        assert outcome.state == cp["summary_update"]["state"] == "failed"
+        assert outcome.reason == cp["summary_update"]["reason"] == "provider_timeout"
+        assert cp["record"]["summary_ref"] is None
 
     asyncio.run(run())

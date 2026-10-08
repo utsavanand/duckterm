@@ -38,13 +38,14 @@ test("checkpoint captures the session's prompts and commands", async ({
   await row.locator(".rd-row-click").click();
   await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
 
-  // UI: success toast.
-  await expect(page.getByText("Checkpoint saved ·", { exact: false })).toBeVisible();
+  // UI: the row saved, but the fake provider did not generate a usable summary.
+  await expect(page.getByText("Summary update failed ·", { exact: false })).toBeVisible();
 
   // Backend: a checkpoint now exists and captured the prompt + the Bash command.
   await expect.poll(async () => (await checkpoints(key)).length).toBe(1);
   const [cp] = await checkpoints(key);
   expect(cp.label).toBe("manual");
+  expect(cp.summary_update?.state).toBe("failed");
   expect(cp.record.prompts).toContain("add a login form");
   expect(cp.record.commands).toContain("npm test");
   expect(cp.record.tools).toContainEqual({ tool: "Bash", count: 1 });
@@ -58,19 +59,28 @@ test("checkpoint captures the session's prompts and commands", async ({
   await expect(timeline.getByText("Owner message", { exact: true })).toHaveCount(0);
   await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveCount(1);
   await timeline.locator(".rd-timeline-checkpoint > summary").click();
-  await expect(timeline.getByText("Handoff at save", { exact: true })).toBeVisible();
-  await expect(timeline.getByText("Not ready", { exact: true })).toBeVisible();
+  await expect(timeline.getByText("Handoff at save", { exact: true })).toHaveCount(0);
+  await expect(timeline.getByText("Summary update failed", { exact: true })).toBeVisible();
+  await expect(timeline.getByText("Not ready", { exact: true })).toHaveCount(0);
   await timeline.getByText("Original prompts (1)", { exact: true }).click();
   await expect(timeline.getByText("add a login form", { exact: true })).toBeVisible();
   await timeline.getByText("Commands (1)", { exact: true }).click();
   await expect(timeline.getByText("npm test", { exact: true })).toBeVisible();
   await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Notes", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Edit file", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
   await page.screenshot({ path: "/tmp/timeline-implemented-dark.png", animations: "disabled" });
   await page.emulateMedia({ colorScheme: "light" });
   await page.screenshot({ path: "/tmp/timeline-implemented-light.png", animations: "disabled" });
   await page.getByRole("button", { name: "Latest checkpoint ↗", exact: true }).click();
   await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveAttribute("open", "");
+  await timeline.getByRole("button", { name: "Retry summary update", exact: true }).click();
+  await expect.poll(async () => (await checkpoints(key)).length).toBe(2);
+  await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveCount(2);
+  const retried = await checkpoints(key);
+  expect(retried.every(c => c.summary_update?.state === "failed")).toBe(true);
+  expect(retried[0].record.prompts).toEqual(cp.record.prompts);
+  expect(retried[0].record.commands).toEqual(cp.record.commands);
   await timeline.getByRole("button", { name: "Progress", exact: true }).click();
   await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveCount(0);
   await expect(timeline.getByText("Owner message", { exact: true })).toHaveCount(0);

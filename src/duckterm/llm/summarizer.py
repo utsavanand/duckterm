@@ -17,6 +17,7 @@ import json
 import os
 import shutil
 import subprocess
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
@@ -25,6 +26,7 @@ from dataclasses import dataclass
 class Summary:
     text: str
     backend: str
+    failure_reason: str | None = None
 
 
 # CLI agents we'll auto-use for summaries, in preference order. Each entry is
@@ -53,13 +55,13 @@ def summarize(prompt: str, *, claude_model: str | None = None) -> Summary:
     if url:
         return _http_summary(url, prompt)
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
-        return Summary(text="", backend="none")
+        return Summary(text="", backend="none", failure_reason="disabled")
     auto = _auto_command()
     if auto:
         if claude_model and auto.startswith("claude "):
             auto += f" --model {claude_model}"
         return _cli_summary(auto, prompt)
-    return Summary(text="", backend="none")
+    return Summary(text="", backend="none", failure_reason="no_provider")
 
 
 def _auto_command() -> str | None:
@@ -85,10 +87,12 @@ def _cli_summary(cmd: str, prompt: str) -> Summary:
             timeout=60,
             env=env,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return Summary(text="", backend="none")
+    except subprocess.TimeoutExpired:
+        return Summary(text="", backend="none", failure_reason="provider_timeout")
+    except OSError:
+        return Summary(text="", backend="none", failure_reason="provider_failed")
     if result.returncode != 0:
-        return Summary(text="", backend="none")
+        return Summary(text="", backend="none", failure_reason="provider_failed")
     return Summary(text=result.stdout.strip(), backend="cli")
 
 
@@ -102,8 +106,13 @@ def _http_summary(url: str, prompt: str) -> Summary:
     try:
         body = urllib.request.urlopen(req, timeout=60).read()
         text = str(json.loads(body).get("text", "")).strip()
+    except urllib.error.URLError as exc:
+        reason = "provider_timeout" if isinstance(exc.reason, TimeoutError) else "provider_failed"
+        return Summary(text="", backend="none", failure_reason=reason)
+    except TimeoutError:
+        return Summary(text="", backend="none", failure_reason="provider_timeout")
     except (OSError, json.JSONDecodeError):
-        return Summary(text="", backend="none")
+        return Summary(text="", backend="none", failure_reason="provider_failed")
     return Summary(text=text, backend="http")
 
 

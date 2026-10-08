@@ -230,6 +230,13 @@ def resolve_checkpoint(
         }
         return result
     result["format"] = MARKER_FORMAT
+    update = record.get("summary_update")
+    if (
+        isinstance(update, dict)
+        and isinstance(update.get("state"), str)
+        and update["state"] in {"updated", "reused", "partial", "failed"}
+    ):
+        result["summary_update"] = update
     captured = record.get("events")
     if (
         not isinstance(captured, dict)
@@ -272,6 +279,10 @@ def resolve_checkpoint(
             or any(summary_source.get(k) != v for k, v in (record.get("transcript") or {}).items())
         ):
             state = "stale"
+            if result["summary_origin"] == "owner-reviewed":
+                # Keeping the prior brief on a failed update must not imply
+                # that its exact-boundary review covers this new checkpoint.
+                reasons.append("legacy_baseline_unreviewed")
         reasons.extend(summary.get("summary_validation", {}).get("reason_codes", []))
     if state != "ready":
         reasons.append("summary_" + state)
