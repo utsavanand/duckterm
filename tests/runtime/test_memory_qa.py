@@ -114,3 +114,52 @@ def test_credential_revocation_during_worker_read_blocks_return_without_stalling
                 await task
 
     asyncio.run(run())
+
+
+def test_large_codex_compaction_metadata_keeps_original_messages_retrievable(memory_rig):
+    import hashlib
+
+    server, headers, _, tmp = memory_rig
+    server.history.set_harness_identity(
+        "agent",
+        "codex",
+        None,
+        None,
+        control={
+            "native_binding": {"runtime": "codex", "native_id": "agent-codex", "generation": "b"}
+        },
+    )
+    path = transcript(tmp, "agent-codex", "glacier original decision", "codex")
+    # Real Codex metadata exceeded 8 MiB despite <1 MiB of parsed conversation
+    # text. It is hashed/retained, not promoted to a new original message.
+    with path.open("a") as stream:
+        stream.write(
+            json.dumps({"type": "compacted", "payload": {"message": "x" * (9 * 1024 * 1024)}})
+            + "\n"
+        )
+        stream.write(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": "glacier latest correction",
+                    },
+                }
+            )
+            + "\n"
+        )
+    status, body = dispatch(server, "GET", "/api/v1/session/memory/search?q=glacier", headers)
+    assert status == 200 and body["coverage"]["complete"], body["coverage"]
+    assert any("original decision" in r["excerpt"] for r in body["results"])
+    assert any("latest correction" in r["excerpt"] for r in body["results"])
+    source = next(
+        s for s in server.memory.catalog("agent")["sources"] if s["kind"] == "conversation"
+    )
+    saved = memory_sources.read_native("agent", source, retain=True)
+    assert saved["snapshot"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert len(saved["records"]) == 2
+    path.unlink()
+    reread = memory_sources.read_native("agent", saved)
+    assert reread["version"] == saved["version"] and reread["records"] == saved["records"]

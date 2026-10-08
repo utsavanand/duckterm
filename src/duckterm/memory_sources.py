@@ -18,7 +18,9 @@ from duckterm.persistence.saved_state import fingerprint
 
 MAX_SOURCE_BYTES = 512 * 1024 * 1024
 MAX_TEXT_BYTES = 64 * 1024 * 1024
-MAX_LINE_BYTES = 8 * 1024 * 1024
+# Codex compaction metadata can exceed 8 MiB even with little parsed text.
+# Bound each JSON allocation independently of total raw/text budgets.
+MAX_LINE_BYTES = 16 * 1024 * 1024
 
 
 def directory(key: str) -> Path:

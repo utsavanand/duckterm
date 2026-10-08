@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-07 — Native metadata size is not conversation text size
+
+The installed memory smoke test found an 8.8 MB Codex compaction record that exceeded the reader's 8 MiB line bound. The 251 MB raw file normalized to only 0.8 MB of conversation text. Permit records up to 16 MiB while retaining the independent total raw/text limits, exact checksums and file-change fences. A regression fails at the old limit, reads original messages on both sides of a 9 MiB compaction record, and verifies the retained bytes after native cleanup. Do not hide an unreadable source or call partial retrieval complete.
+
 ## 2026-10-07 — Graph reads should not rehash the whole history per revision
 
 A scale check with 4,000 conversation records and ten saved revisions exposed duplicate hashing in relationship reads. Hash only records that a revision actually processed, once per exact source version within the request. This keeps checksum and changed-record behavior intact while reducing the measured graph read from 1.64 to 0.55 seconds on the synthetic fixture. The regression verifies multiple revisions and a corrected original; the full retrieval path still rechecks access and canonical references.
