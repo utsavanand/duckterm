@@ -17,7 +17,7 @@ it("keeps checkpoint information and compact available without duplicating the m
   render(<ContextPanel session={session} />);
   await screen.findByRole("region", { name: "Latest checkpoint" });
   expect(screen.getByText(new Date(cp.created_at).toLocaleString())).toBeInTheDocument();
-  expect(screen.getByText("Not ready")).toBeInTheDocument();
+  expect(screen.getByText("Summary unavailable")).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Checkpoint" })).toBeNull();
   expect(screen.getByRole("button", { name: "Compact" })).toBeEnabled();
 });

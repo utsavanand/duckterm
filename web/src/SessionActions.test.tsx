@@ -24,7 +24,7 @@ it("checkpoint reports failure without closing the menu, then reports incomplete
   expect(close).not.toHaveBeenCalled();
   vi.mocked(api.checkpoint).mockResolvedValueOnce({ id: "cp", label: "manual", created_at: 1, summary: "", saved: true, summary_state: "unavailable", export_reason: "markdown_unavailable", record: { prompts: [], files: [], tools: [], event_count: 0 } });
   await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Checkpoint" })); });
-  expect(toast).toHaveBeenLastCalledWith("Checkpoint saved · unavailable · Markdown export unavailable");
+  expect(toast).toHaveBeenLastCalledWith("Summary unavailable · Markdown export unavailable", "ok");
   expect(close).toHaveBeenCalledOnce();
 });
 
@@ -47,4 +47,14 @@ it("blocks local continuation while conversation Undo is unresolved, including a
     await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Continue locally" })); });
     expect(destinationRequest).toHaveBeenCalledExactlyOnceWith("local", "project-continue", { source_session: s.key });
   } finally { cleanup(); finishRecoveryUndo(s.key); setRecoveryResumeAllowed(s.key, true); }
+});
+
+it("shows a failed summary outcome as an error even when its attempt record saved", async () => {
+  const s = { key: "one", label: "QA", state: "busy", startedAt: 1, runtime: "generic" } as SessionView;
+  const close = vi.fn();
+  render(<SessionActions session={s} anchor={{ key: s.key, x: 10, y: 10, trigger: document.body }} onClose={close} onFork={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} onNotes={vi.fn()} />);
+  vi.mocked(api.checkpoint).mockResolvedValueOnce({ id: "cp", label: "manual", created_at: 1, summary: "", saved: true, summary_state: "unavailable", summary_update: { state: "failed", reason: "provider_timeout" }, record: { prompts: [], files: [], tools: [], event_count: 0 } });
+  await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Checkpoint" })); });
+  expect(toast).toHaveBeenLastCalledWith("Summary update failed · The summary provider timed out", "err");
+  expect(close).toHaveBeenCalledOnce();
 });

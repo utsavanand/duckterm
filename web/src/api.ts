@@ -679,6 +679,7 @@ export interface TimelinePage {
   entries: TimelineEntry[]; next_cursor: string | null;
 }
 export interface CheckpointRecord {
+  summary_update?: { state: "updated" | "reused" | "partial" | "failed"; reason?: string | null; attempted_at?: number; revision_id?: string | null };
   format?: string;
   saved?: boolean;
   summary_state?: string;
@@ -693,6 +694,11 @@ export interface CheckpointRecord {
   summary: string;
   created_at: number;
   record: {
+    summary_ref?: string | null;
+    memory_source?: unknown;
+    memory_sources?: unknown[];
+    memory_retention?: string;
+    handoff?: { method?: string; packet_hash?: string; summary_revision_id?: string | null; included_records?: number; omitted_records?: number };
     intention?: string;
     prompts: string[];
     files: { path: string; edits: number }[];

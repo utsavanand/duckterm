@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, forkMergeHistory, TimelinePage } from "./api";
 import { TimelineView, TIMELINE_MILESTONES } from "./TimelineView";
 import type { SessionView } from "./types";
-vi.mock("./api", () => ({ api: { timeline: vi.fn(), checkpoints: vi.fn() }, forkMergeHistory: vi.fn(), forkMergeService: vi.fn() }));
+vi.mock("./api", () => ({ api: { timeline: vi.fn(), checkpoints: vi.fn(), checkpoint: vi.fn() }, forkMergeHistory: vi.fn(), forkMergeService: vi.fn() }));
 vi.mock("./HistoryView", () => ({ HistoryView: () => <p>Earlier digest history</p> }));
 const session = { key: "one", label: "Test", startedAt: 1 } as SessionView;
 const page = (text = "Saved work", cursor: string | null = null): TimelinePage => ({ summary: { text: "", updated_at: null, total: 1, counts: {} }, entries: [{ id: text, ts: 1791300000000, kind: "delivered", one_line: text, detail: { text }, refs: [] }], next_cursor: cursor });
@@ -74,9 +74,9 @@ it("uses source time and keeps malformed legacy records and merge history readab
   render(<TimelineView session={session} />);
   await screen.findByText("Original summary");
   fireEvent.click(screen.getByText("Before switch"));
-  expect(screen.getByText("Unavailable")).toBeVisible();
-  expect(screen.getByText("Unknown")).toBeVisible();
-  expect(screen.getByText("Not ready")).toBeVisible();
+  expect(screen.getAllByText("Summary unavailable")[0]).toBeVisible();
+  expect(screen.queryByText("Unknown")).toBeNull();
+  expect(screen.queryByText("Not ready")).toBeNull();
   expect(screen.getByText("Fork merges")).toBeVisible();
   expect(screen.getByText("Child findings")).toBeInTheDocument();
 });
@@ -112,4 +112,64 @@ it("requests milestones without ordinary prompts and keeps general Messages navi
   await waitFor(() => expect(api.timeline).toHaveBeenLastCalledWith("one", "delivered,learned,next_action,completed,decision,restart,model,harness,needs-you"));
   fireEvent.click(screen.getByRole("button", { name: "Messages" })); expect(onMessages).toHaveBeenCalledOnce();
   expect(screen.queryByText(/View supporting messages/)).not.toBeInTheDocument();
+});
+
+function failedCheckpoint() {
+  return { id: "failed", label: "manual", created_at: 1791300000000, summary: "", saved: true, format: "checkpoint_marker_v2", summary_state: "unavailable", summary_update: { state: "failed" as const, reason: "provider_timeout" }, coverage: { state: "retained" }, reason_codes: ["summary_unavailable"], record: { prompts: [], files: [], tools: [], event_count: 0 } };
+}
+function checkpointPage(id = "failed"): TimelinePage {
+  return { summary: { text: "", updated_at: null, total: 1, counts: {} }, entries: [{ id, ts: 1791300000000, kind: "checkpoint", one_line: "manual", detail: { text: "manual" }, refs: [{ source: "checkpoints", id }] }], next_cursor: null };
+}
+async function renderRetry(key = "one") {
+  vi.mocked(api.timeline).mockResolvedValue(checkpointPage());
+  vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [failedCheckpoint()] });
+  const view = render(<TimelineView session={{ ...session, key }} checkpointTarget={1} />);
+  await screen.findByRole("button", { name: "Retry summary update" });
+  return view;
+}
+it("retries for the selected host/session once and refreshes after an overlapping poll", async () => {
+  const { sessionRef } = await import("./hostTransport");
+  const key = sessionRef("other-mac", "one");
+  let finish!: (cp: ReturnType<typeof failedCheckpoint>) => void;
+  vi.mocked(api.checkpoint).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await renderRetry(key);
+  fireEvent.click(screen.getByRole("button", { name: "Retry summary update" }));
+  fireEvent.click(screen.getByRole("button", { name: "Updating summary…" }));
+  expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(key, "manual");
+  expect(screen.getByRole("button", { name: "Updating summary…" })).toBeDisabled();
+  const initialLoads = vi.mocked(api.timeline).mock.calls.length;
+  let finishPoll!: (p: TimelinePage) => void;
+  vi.mocked(api.timeline).mockImplementationOnce(() => new Promise(resolve => { finishPoll = resolve; }));
+  await act(async () => { document.dispatchEvent(new Event("visibilitychange")); });
+  const next = { ...failedCheckpoint(), id: "next" };
+  vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [next] });
+  vi.mocked(api.timeline).mockResolvedValue(checkpointPage("next"));
+  await act(async () => { finish(next); });
+  expect(screen.getByRole("status")).toHaveTextContent("Summary update failed · The summary provider timed out");
+  await act(async () => { finishPoll(checkpointPage()); });
+  await waitFor(() => expect(api.timeline).toHaveBeenCalledTimes(initialLoads + 2));
+  await screen.findByRole("button", { name: "Retry summary update" });
+  expect(api.checkpoint).toHaveBeenCalledOnce();
+});
+it("keeps saved records and makes retry available after a transport failure", async () => {
+  vi.mocked(api.checkpoint).mockRejectedValueOnce(new Error("Disconnected"));
+  await renderRetry();
+  fireEvent.click(screen.getByRole("button", { name: "Retry summary update" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Summary update failed: Disconnected"));
+  expect(screen.getByRole("button", { name: "Retry summary update" })).toBeEnabled();
+  expect(screen.getByText("Manual checkpoint attempt")).toBeVisible();
+  expect(api.checkpoint).toHaveBeenCalledOnce();
+});
+it("does not show a previous view's completion after navigating away and back", async () => {
+  let finish!: (cp: ReturnType<typeof failedCheckpoint>) => void;
+  vi.mocked(api.checkpoint).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const view = await renderRetry();
+  fireEvent.click(screen.getByRole("button", { name: "Retry summary update" }));
+  view.rerender(<TimelineView session={{ ...session, key: "two" }} checkpointTarget={1} />);
+  await screen.findByRole("button", { name: "Retry summary update" });
+  view.rerender(<TimelineView session={session} checkpointTarget={1} />);
+  await screen.findByRole("button", { name: "Updating summary…" });
+  await act(async () => { finish(failedCheckpoint()); });
+  expect(screen.queryByText("Summary update failed · The summary provider timed out")).toBeNull();
+  expect(screen.getByRole("button", { name: "Retry summary update" })).toBeEnabled();
 });

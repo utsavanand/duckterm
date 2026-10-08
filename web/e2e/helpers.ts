@@ -101,6 +101,7 @@ export async function seedSession(
 }
 
 export interface Checkpoint {
+  summary_update?: { state: string; reason?: string | null };
   id: string;
   label: string;
   summary: string;

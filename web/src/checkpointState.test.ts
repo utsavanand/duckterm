@@ -8,13 +8,13 @@ it("never infers readiness from a recent save or a summary alone", () => {
   expect(checkpointStatus({ ...ready, handoff_eligible: false }).ready).toBe(false);
   expect(checkpointStatus({ ...ready, format: "future" }).ready).toBe(false);
   expect(checkpointStatus({ ...ready, saved: false }).ready).toBe(false);
-  expect(checkpointStatus(ready).handoff).toBe("Ready");
+  expect(checkpointStatus(ready).handoff).toBe("Checked in Restart");
 });
 it("separates saved success, export failure, stale summary and merge scope", () => {
-  expect(checkpointNotice({ saved: true, summary_state: "unavailable" })).toBe("Checkpoint saved · unavailable");
-  expect(checkpointNotice({ ...ready, export_reason: "markdown_unavailable" })).toContain("saved · ready · Markdown export unavailable");
-  expect(checkpointStatus({ summary_state: "stale" }).label).toBe("Needs updating");
-  expect(checkpointStatus({ format: "fork_merge" }).handoff).toBe("Not assessed");
+  expect(checkpointNotice({ saved: true, summary_state: "unavailable" })).toBe("Summary unavailable");
+  expect(checkpointNotice({ ...ready, export_reason: "markdown_unavailable" })).toContain("Summary saved · Markdown export unavailable");
+  expect(checkpointStatus({ summary_state: "stale" }).label).toBe("Summary needs updating");
+  expect(checkpointStatus({ format: "fork_merge" }).label).toBe("Merge note");
   expect(checkpointDate(null)).toBe("Unknown");
   expect(checkpointReasons({ reason_codes: ["secret error /private/path"] })).toEqual(["Handoff coverage could not be verified."]);
 });

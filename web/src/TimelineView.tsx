@@ -4,6 +4,7 @@ import { splitSessionRef } from "./hostTransport";
 import { SessionView } from "./types";
 import { HistoryView } from "./HistoryView";
 import { CheckpointDetails } from "./CheckpointStatus";
+import { checkpointNotice } from "./checkpointState";
 import "./timeline.css";
 
 const PROGRESS_KINDS = "delivered,learned,next_action,completed,decision,restart,model,harness,needs-you";
@@ -25,6 +26,10 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
+  const [retryNotice, setRetryNotice] = useState("");
+  const retryPending = useRef(new Set<string>());
+  const retryGeneration = useRef(0);
   const [unsupported, setUnsupported] = useState(false);
   const pages = useRef(1);
   const loadMore = useRef<() => void>(() => undefined);
@@ -32,6 +37,26 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
   const jumped = useRef(0);
   const keyRef = useRef(session.key);
   keyRef.current = session.key;
+  useEffect(() => {
+    setRetryNotice(""); setRetryBusy(retryPending.current.has(session.key));
+    const generation = retryGeneration.current;
+    return () => { retryGeneration.current = generation + 1; };
+  }, [session.key]);
+  async function retrySummary() {
+    const key = session.key, generation = retryGeneration.current;
+    if (retryPending.current.has(key)) return;
+    retryPending.current.add(key); setRetryBusy(true); setRetryNotice("");
+    try {
+      const cp = await api.checkpoint(key, "manual");
+      if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice(checkpointNotice(cp));
+      window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: key }));
+    } catch (cause) {
+      if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice(`Summary update failed: ${(cause as Error).message}`);
+    } finally {
+      retryPending.current.delete(key);
+      if (keyRef.current === key) setRetryBusy(false);
+    }
+  }
   useEffect(() => { setFilter("all"); }, [session.key]);
   useEffect(() => { if (checkpointTarget) setFilter("checkpoint"); }, [checkpointTarget]);
   useEffect(() => {
@@ -43,7 +68,7 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
     setData(null); setCheckpoints([]); setMerges([]); setError(""); setDetailError(""); setUnsupported(false);
     pages.current = 1;
     if (!active) return;
-    let live = true, pending = false, unavailable = false;
+    let live = true, pending = false, unavailable = false, refreshRequested = false;
     const kinds = FILTERS.find(f => f[0] === filter)?.[2] ?? "";
     async function load(more = false) {
       if (!live || unavailable || pending || document.visibilityState === "hidden") return;
@@ -74,14 +99,18 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
         const olderNative = splitSessionRef(session.key).host !== "local" && message === "Unsupported session operation";
         if (olderNative || /404|not found|unknown endpoint/i.test(message)) { unavailable = true; setUnsupported(true); }
         else setError(message || "Timeline could not be loaded.");
-      } finally { pending = false; if (live) setBusy(false); }
+      } finally {
+        pending = false;
+        if (live) setBusy(false);
+        if (live && refreshRequested) { refreshRequested = false; void load(); }
+      }
     }
     loadMore.current = () => { void load(true); };
     const visible = () => { void load(); };
     void load();
     const timer = setInterval(visible, 10_000);
     document.addEventListener("visibilitychange", visible);
-    const saved = (event: Event) => { if ((event as CustomEvent<string>).detail === session.key) visible(); };
+    const saved = (event: Event) => { if ((event as CustomEvent<string>).detail === session.key) { if (pending) refreshRequested = true; else visible(); } };
     window.addEventListener("duckterm-checkpoint", saved);
     return () => { live = false; clearInterval(timer); document.removeEventListener("visibilitychange", visible); window.removeEventListener("duckterm-checkpoint", saved); loadMore.current = () => undefined; };
   }, [session.key, active, filter]);
@@ -89,10 +118,11 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
   let previousDay = "";
   return <section className="rd-timeline" aria-label="Session timeline">
     <h1>Timeline <span>{data ? `${data.summary.total} ${data.summary.total === 1 ? "entry" : "entries"}` : ""}</span></h1>
-    <p className="rd-timeline-intro">Progress, decisions and saved work. The full conversation stays in {onMessages ? <button className="rd-timeline-link" onClick={onMessages}>Messages</button> : "Messages"}.</p>
+    <p className="rd-timeline-intro">History is recorded automatically. Checkpoint requests a summary update now. The full conversation stays in {onMessages ? <button className="rd-timeline-link" onClick={onMessages}>Messages</button> : "Messages"}.</p>
     <div className="rd-timeline-filters" aria-label="Timeline filter">{FILTERS.map(([id, label]) => <button key={id} className="rd-btn rd-btn-sm rd-btn-ghost" aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}</div>
     {error && <p role="alert">Timeline unavailable: {error}</p>}
     {detailError && <p role="status">{detailError}</p>}
+    {retryNotice && <p role="status">{retryNotice}</p>}
     {!data && busy && <p role="status">Loading timeline…</p>}
     {data?.entries.length === 0 && <p className="rd-panel-empty">No {filter === "all" ? "timeline entries" : FILTERS.find(f => f[0] === filter)?.[1].toLowerCase()} yet.</p>}
     {data?.entries.map((entry, i) => {
@@ -106,7 +136,7 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
           <time dateTime={new Date(entry.ts).toISOString()}>{new Date(entry.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
           <span aria-hidden="true" className="rd-timeline-mark">{entry.kind === "checkpoint" ? "⚑" : entry.kind === "artifact" ? "▤" : "·"}</span>
           <div ref={i === 0 ? latest : undefined}>{entry.kind === "checkpoint"
-            ? <CheckpointDetails checkpoint={cp ?? { id: cpId ?? entry.id, label: entry.detail.text ?? "Checkpoint", created_at: entry.ts, summary: entry.detail.summary ?? "", summary_state: entry.detail.summary_state, record: { prompts: [], files: [], tools: [], event_count: 0 } }} open={!!checkpointTarget && i === 0} />
+            ? <CheckpointDetails checkpoint={cp ?? { id: cpId ?? entry.id, label: entry.detail.text ?? "Checkpoint", created_at: entry.ts, summary: entry.detail.summary ?? "", summary_state: entry.detail.summary_state, record: { prompts: [], files: [], tools: [], event_count: 0 } }} open={!!checkpointTarget && i === 0} onRetry={cp && !["archived", "merged", "terminated"].includes(session.state) ? () => void retrySummary() : undefined} retrying={retryBusy} />
             : <EventContent entry={entry} onArtifacts={onArtifacts} />}</div>
         </article>
       </Fragment>;

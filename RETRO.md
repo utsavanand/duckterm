@@ -4,7 +4,7 @@
 
 Startup's Timeline showed a saved checkpoint with no summary and generic Unavailable/Not ready labels. History was already recorded automatically; the owner's manual action was intended to update the shared summary. Return an explicit updated, reused, partial or failed outcome from the same coalesced summary job and retain its fixed failure category on the existing marker. Keep the last good summary and its original age when a candidate fails. Never infer an old failure's cause or turn a prepared-switch record into current permission to stop an agent.
 
-Regression coverage uses isolated history and fake providers to check timeout/unavailable/invalid responses, last-good preservation, partial batches and concurrent manual/automatic requests. No second summary store, new schema or provider-selection policy is introduced. Visual correction requires owner review; the backend change alone is not the completed fix.
+Regression coverage uses isolated history and fake providers to check timeout/unavailable/invalid responses, last-good preservation, partial batches and concurrent manual/automatic requests. No second summary store, new schema or provider-selection policy is introduced. The owner approved the revised Timeline preview on October 8. The matching UI reports explicit summary outcomes, retains older failure causes as unknown, and retries through the same pipeline. UI regressions cover duplicate clicks, remote session identity, late responses after navigation and completion during a pending refresh; the isolated browser test verifies a second real attempt without losing the original prompts or commands. Full release checks and installation remain required.
 
 ## 2026-10-07 — Native metadata size is not conversation text size
 
