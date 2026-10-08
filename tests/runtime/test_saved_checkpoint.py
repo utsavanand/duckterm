@@ -315,3 +315,88 @@ def test_unknown_event_filter_cannot_claim_retained_coverage(rig):
     resolved = resolve_checkpoint(server.history._conn, "test-save", cp)
     assert resolved["coverage"]["state"] == "missing"
     assert not resolved["handoff_eligible"]
+
+
+@pytest.mark.parametrize(
+    "reason", ["provider_timeout", "provider_failed", "disabled", "no_provider"]
+)
+def test_manual_checkpoint_records_failed_summary_attempt_without_inventing_success(
+    rig, monkeypatch, reason
+):
+    server, _, _ = rig
+    monkeypatch.setattr(
+        "duckterm.server.summarize", lambda _: Summary("", "none", failure_reason=reason)
+    )
+    cp = asyncio.run(checkpoint(server))
+    assert cp["saved"]  # the marker/history boundary survived, not the summary update
+    assert cp["summary_update"]["state"] == "failed"
+    assert cp["summary_update"]["reason"] == reason
+    assert cp["summary_update"]["revision_id"] is None
+    assert cp["summary_update"]["attempted_at"] == cp["created_at"]
+    assert server.history.checkpoints("test-save")[0]["summary_update"] == cp["summary_update"]
+    assert cp["record"]["event_count"] == 1
+    assert cp["record"]["summary_ref"] is None
+
+
+def test_manual_checkpoint_distinguishes_updated_reused_and_failed_with_old_summary(
+    rig, monkeypatch
+):
+    server, text, calls = rig
+
+    async def run():
+        first = await checkpoint(server)
+        assert first["summary_update"]["state"] == "updated"
+        second = await checkpoint(server)
+        assert second["summary_update"]["state"] == "reused"
+        assert second["summary_update"]["revision_id"] == first["record"]["summary_ref"]
+        assert len(calls) == 2
+        before = server.history.session("test-save")["progress"]
+        text.append({"role": "user", "text": "A later constraint"})
+        monkeypatch.setattr(
+            "duckterm.server.summarize",
+            lambda _: Summary("", "none", failure_reason="provider_timeout"),
+        )
+        failed = await checkpoint(server)
+        assert failed["summary_update"]["state"] == "failed"
+        assert failed["summary_update"]["revision_id"] is None
+        assert failed["summary"] == first["summary"]
+        assert failed["summary_source_at"] == first["summary_source_at"]
+        assert server.history.session("test-save")["progress"] == before
+
+    asyncio.run(run())
+
+
+def test_manual_checkpoint_does_not_store_raw_provider_output_as_a_failure_reason(rig, monkeypatch):
+    server, _, _ = rig
+    monkeypatch.setattr(
+        "duckterm.server.summarize", lambda _: Summary("private invalid response", "cli")
+    )
+    cp = asyncio.run(checkpoint(server))
+    assert cp["summary_update"]["state"] == "failed"
+    assert cp["summary_update"]["reason"] == "invalid_summary"
+    raw = server.history._conn.execute(
+        "SELECT record_json FROM checkpoints WHERE id=?", (cp["id"],)
+    ).fetchone()[0]
+    assert "private invalid response" not in raw
+
+
+def test_rejected_candidate_keeps_last_good_checkpoint_summary(rig, monkeypatch):
+    server, text, _ = rig
+
+    async def run():
+        first = await checkpoint(server)
+        text.append({"role": "user", "text": "An additional constraint"})
+        monkeypatch.setattr(
+            "duckterm.server.summarize",
+            lambda _: Summary(json.dumps({"summary": "Unverified replacement"}), "stub"),
+        )
+        failed = await checkpoint(server)
+        assert failed["summary_update"]["state"] == "failed"
+        assert failed["summary_update"]["reason"] == "summary_unverified"
+        assert failed["record"]["summary_ref"] == first["record"]["summary_ref"]
+        assert failed["summary"] == first["summary"]
+        assert failed["summary_source_at"] == first["summary_source_at"]
+        assert failed["summary_state"] == "stale"
+        assert not failed["handoff_eligible"]
+
+    asyncio.run(run())

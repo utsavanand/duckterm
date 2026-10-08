@@ -10,10 +10,12 @@ import asyncio
 import json
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from duckterm.core import progress
+from duckterm.core.session_api import APIError
 from duckterm.persistence.saved_state import (
     checkpoint_marker,
     conversation,
@@ -109,11 +111,61 @@ def required_context(server: Server, key: str, row: dict[str, Any]) -> dict[str,
     }
 
 
+@dataclass(frozen=True)
+class SummaryUpdate:
+    """Result of the shared update attempt; no extra summary writer or store."""
+
+    revision: dict[str, Any] | None
+    state: str
+    reason: str | None = None
+
+    def metadata(self, attempted_at: int) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "reason": self.reason,
+            "attempted_at": attempted_at,
+            "revision_id": (
+                self.revision["id"] if self.revision and self.state != "failed" else None
+            ),
+        }
+
+    @classmethod
+    def failed(cls, reason: str | None) -> SummaryUpdate:
+        allowed = {
+            "disabled",
+            "no_provider",
+            "provider_timeout",
+            "provider_failed",
+            "invalid_summary",
+            "invalid_context",
+            "summary_unverified",
+            "source_changed",
+            "source_unavailable",
+            "no_transcript",
+            "update_failed",
+        }
+        return cls(None, "failed", reason if reason in allowed else "update_failed")
+
+    @classmethod
+    def from_revision(cls, value: dict[str, Any] | None, *, reused: bool = False) -> SummaryUpdate:
+        if value is None:
+            return cls.failed("source_changed")
+        validation = value.get("summary_validation", {})
+        continuity = value.get("continuity", {})
+        if continuity.get("verified") and (
+            continuity.get("remaining_records") or continuity.get("gaps")
+        ):
+            return cls(value, "partial", "summary_coverage_partial")
+        if validation.get("ready") is True:
+            return cls(value, "reused" if reused else "updated")
+        return cls(value, "failed", "summary_unverified")
+
+
 class ProgressCoordinator:
     def __init__(self, server: Server) -> None:
         self.server = server
-        self.pending: dict[str, asyncio.Task[dict[str, Any] | None]] = {}
-        self.active: dict[str, asyncio.Task[dict[str, Any] | None]] = {}
+        self.pending: dict[str, asyncio.Task[SummaryUpdate]] = {}
+        self.active: dict[str, asyncio.Task[SummaryUpdate]] = {}
 
     def facts(self, key: str) -> dict[str, Any] | None:
         row = self.server.history.session(key)
@@ -171,17 +223,22 @@ class ProgressCoordinator:
     async def refresh(
         self, key: str, captured: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
+        return (await self.refresh_result(key, captured)).revision
+
+    async def refresh_result(
+        self, key: str, captured: dict[str, Any] | None = None
+    ) -> SummaryUpdate:
         from duckterm import memory_continuity
 
         captured = captured or await self.capture(key)
         if captured is None:
-            return None
+            return SummaryUpdate.failed("source_changed")
         captured = await memory_continuity.capture(self.server, key, captured)
         if self.facts(key) != captured["facts"]:
-            return None
+            return SummaryUpdate.failed("source_changed")
         row = self.server.history.session(key)
         if row is None:
-            return None
+            return SummaryUpdate.failed("source_changed")
         prior_id = current_revision(row)
         prior = self.server.digests.revision(key, prior_id)
         identity = {k: captured[k] for k in ("source", "conversation", "policy")}
@@ -190,11 +247,11 @@ class ProgressCoordinator:
             and prior.get("summary_validation", {}).get("ready") is True
             and all(prior.get(k) == v for k, v in identity.items())
         ):
-            return prior
+            return SummaryUpdate.from_revision(prior, reused=True)
         input_key = fingerprint({**identity, "prior_revision": prior_id, "session": key})
         existing = self.server.digests.find_revision(key, input_key)
         if existing and existing.get("summary_validation", {}).get("ready") is True:
-            return existing
+            return SummaryUpdate.from_revision(existing, reused=True)
         task = self.pending.get(input_key)
         if task is None:
             active = self.active.get(key)
@@ -202,12 +259,12 @@ class ProgressCoordinator:
                 # A different manual/automatic trigger waits for the current update,
                 # then captures fresh input. It cannot start another provider batch.
                 await asyncio.shield(active)
-                return await self.refresh(key)
+                return await self.refresh_result(key)
             task = asyncio.create_task(self._generate(key, captured, prior, input_key))
             self.pending[input_key] = task
             self.active[key] = task
 
-            def finished(done: asyncio.Task[dict[str, Any] | None]) -> None:
+            def finished(done: asyncio.Task[SummaryUpdate]) -> None:
                 self.pending.pop(input_key, None)
                 if self.active.get(key) is done:
                     self.active.pop(key, None)
@@ -223,16 +280,16 @@ class ProgressCoordinator:
         captured: dict[str, Any],
         prior: dict[str, Any] | None,
         input_key: str,
-    ) -> dict[str, Any] | None:
+    ) -> SummaryUpdate:
         # Resolve on the server module to retain one injectable provider boundary.
         from duckterm import memory_continuity
         from duckterm.server import summarize
 
         if not captured["transcript"]:
-            return None
+            return SummaryUpdate.failed("no_transcript")
         row = self.server.history.session(key)
         if row is None:
-            return None
+            return SummaryUpdate.failed("source_changed")
         prior_cache = {}
         if (
             prior
@@ -254,7 +311,7 @@ class ProgressCoordinator:
         if maintained is not None and not maintained["selected"] and maintained["prior_context"]:
             # Nothing eligible fits this bounded update. Keep explicit gaps and
             # avoid paying to restate the same summary on every eligible turn.
-            return prior
+            return SummaryUpdate.from_revision(prior, reused=True)
         prompt = (
             memory_continuity.prompt(maintained, bounded_required)
             if maintained is not None
@@ -263,11 +320,14 @@ class ProgressCoordinator:
         reply = await asyncio.to_thread(summarize, prompt)
         digest = progress.parse(reply.text)
         if digest is None or not digest["summary"]:
-            return None
-        context = memory_continuity.context(reply.text, maintained) if maintained else None
+            return SummaryUpdate.failed(getattr(reply, "failure_reason", None) or "invalid_summary")
+        try:
+            context = memory_continuity.context(reply.text, maintained) if maintained else None
+        except (ValueError, APIError):
+            return SummaryUpdate.failed("invalid_context")
         policy_check = await self.capture(key)
         if policy_check is None or policy_check["policy"] != captured["policy"]:
-            return None
+            return SummaryUpdate.failed("source_changed")
         verdict_reply = await asyncio.to_thread(
             summarize,
             progress.validate_prompt(
@@ -284,6 +344,8 @@ class ProgressCoordinator:
                 required=bounded_required,
             ),
         )
+        if failure_reason := getattr(verdict_reply, "failure_reason", None):
+            return SummaryUpdate.failed(failure_reason)
         verdicts = progress.parse_verdicts(verdict_reply.text)
         validation = (verdicts or {}).get("summary_validation") or {}
         reasons = []
@@ -313,10 +375,10 @@ class ProgressCoordinator:
         # Re-read actual bytes, not mtime/size, after both provider calls.
         refreshed = await self.capture(key)
         if refreshed is None or refreshed["conversation"] != captured["conversation"]:
-            return None
+            return SummaryUpdate.failed("source_changed")
         refreshed = await memory_continuity.capture(self.server, key, refreshed)
         if refreshed["policy"] != captured["policy"]:
-            return None
+            return SummaryUpdate.failed("source_changed")
         if refreshed["source"] != captured["source"]:
             reasons.append("source_changed")
         continuity = None
@@ -324,15 +386,17 @@ class ProgressCoordinator:
         if maintained is not None and context is not None:
             # Failures do not advance coverage or replace the last good revision.
             if reasons:
-                return None
+                return SummaryUpdate.failed(
+                    "source_changed" if "source_changed" in reasons else "summary_unverified"
+                )
             continuity = memory_continuity.result(maintained, context, captured["memory_gaps"])
             retained = await memory_continuity.retain(key, captured, maintained)
             final = await self.capture(key)
             if final is None:
-                return None
+                return SummaryUpdate.failed("source_changed")
             final = await memory_continuity.capture(self.server, key, final)
             if any(final[k] != captured[k] for k in ("source", "conversation", "policy")):
-                return None
+                return SummaryUpdate.failed("source_changed")
             if continuity["remaining_records"] or continuity["gaps"]:
                 reasons.append("summary_coverage_partial")
         accepted = verdicts["accept"] if verdicts else []
@@ -348,7 +412,7 @@ class ProgressCoordinator:
             **({"memory_baseline_ref": baseline} if baseline else {}),
             "summary_validation": {"ready": not reasons, "reason_codes": reasons},
         }
-        return self.persist(
+        result = self.persist(
             key,
             captured,
             prior,
@@ -357,6 +421,7 @@ class ProgressCoordinator:
             accepted,
             verdicts["done_next_action_ids"] if verdicts else [],
         )
+        return SummaryUpdate.from_revision(result)
 
     def persist(
         self,
