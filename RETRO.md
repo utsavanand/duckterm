@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-08 — A valid handoff can exceed the terminal launch transport
+
+A harness switch stopped the old agent, then tmux rejected the new launch with "command too long". The complete handoff was nested inside a quoted shell command passed through tmux IPC; the brief's own size budget did not account for that transport limit. Pass a short path to a private, one-use launch script instead. The child removes the script before running the command; failed spawn, capture attachment and startup release also remove it. Preserve the output-capture-before-execution barrier and the full prompt.
+
+The regression reproduced the exact tmux rejection, then verified a large literal prompt including shell syntax and Unicode, cwd/environment preservation, output capture, private permissions and failure cleanup. A real harness-switch launch with a fake Codex executable checks the full 32 KB brief, onboarding instructions, selected model, same card and prior-conversation recovery metadata. Do not mistake preparation-only testing for a successful process launch.
+
 ## 2026-10-08 — Dismiss the originating menu when closing its dialog
 
 Canceling Change harness closed only its dialog, revealing the hidden session context menu again. Dialog dismissal must notify the menu owner so both close and focus returns to the session row. Keep model-picker back navigation separate, and preserve focus return to the direct Session-panel button.

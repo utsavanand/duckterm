@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 
 from duckterm.helpers import instance, pane_log
+from duckterm.helpers.private_files import private_write
 
 _PREFIX = "rd_"
 
@@ -132,9 +133,15 @@ def spawn_piped(
     client = client_command("wait-for", channel)
     client[0] = shutil.which(client[0]) or client[0]
     wait = shlex.join(client)
-    guarded = wait + " && exec " + shlex.join(["/bin/sh", "-c", command])
-    target = spawn(session_id, guarded, cwd, env)
+    # A quoted handoff can exceed tmux's command-message limit. Keep the
+    # command in a private, one-use script; only its path crosses tmux IPC.
+    # The child unlinks it after opening, before running any agent command.
+    script = Path(pipe_path).resolve().with_name(f".launch-{uuid.uuid4().hex}.sh")
+    guarded = wait + " && exec " + shlex.join(["/bin/sh", str(script)])
+    target = None
     try:
+        private_write(script, f"/bin/rm -f -- {shlex.quote(str(script))}\n{command}\n")
+        target = spawn(session_id, guarded, cwd, env)
         ok, error = _tmux(
             "pipe-pane",
             "-t",
@@ -150,7 +157,9 @@ def spawn_piped(
         if not ok:
             raise ValueError(f"Cannot release agent startup: {error.strip()}")
     except BaseException:
-        kill_session(target)
+        if target is not None:
+            kill_session(target)
+        script.unlink(missing_ok=True)
         raise
     return target
 
