@@ -160,8 +160,8 @@ unzip it, and move **DuckTerm.app** to **Applications**.
 
 The app opens the dashboard in a native window with a Dock icon and notifications.
 It starts the local server when needed, or connects to one already running.
-It is ad-hoc signed, **not notarized**; macOS may require you to allow it in
-**System Settings → Privacy & Security** after the first launch attempt.
+Published Mac releases are Developer ID signed and notarized by Apple.
+Local source builds use ad-hoc signing unless you sign them for distribution.
 The browser installation works without the app. Intel Mac users can use the
 browser or [build the native app from source](mac/README.md).
 

@@ -86,7 +86,8 @@ build must not silently use the production icon.
 
 Use the [README Mac app instructions](../README.md#mac-app). The published
 Apple Silicon archive requires macOS 13+ and the separately installed `duckterm`
-CLI, tmux, and your agent CLIs. It is ad-hoc signed, not notarized. The app and
+CLI, tmux, and your agent CLIs. Published releases are Developer ID signed
+and notarized by Apple; local source builds are ad-hoc signed. The app and
 CLI should come from the same release.
 
 ## Production build from source
