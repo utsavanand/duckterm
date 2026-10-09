@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, ModelChoice, RestartOptions, RestartStatus } from "./api";
 import { splitSessionRef } from "./hostTransport";
@@ -9,11 +9,12 @@ import { MemorySwitchPanel } from "./MemorySwitchPanel";
 import { memorySwitchAvailable } from "./memorySwitchTransport";
 
 const harnessName = (name: string) => ({ "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini CLI" }[name] || name);
-type RestartControlProps = { session: SessionView; showActions?: boolean; menu?: boolean; onExpanded?: (expanded: boolean) => void; onActionComplete?: () => void };
+type DialogMode = "restart" | "model" | "harness";
+type RestartControlProps = { children?: (changeHarness: ReactNode) => ReactNode; session: SessionView; showActions?: boolean; menu?: boolean; onExpanded?: (expanded: boolean) => void; onDismiss?: () => void; onActionComplete?: () => void };
 export function RestartControls(props: RestartControlProps) {
   return <SessionRestartControls key={props.session.key} {...props} />;
 }
-function SessionRestartControls({ session, showActions = true, menu = false, onExpanded, onActionComplete }: RestartControlProps) {
+function SessionRestartControls({ children, session, showActions = true, menu = false, onExpanded, onDismiss, onActionComplete }: RestartControlProps) {
   const remote = splitSessionRef(session.key).host !== "local";
   const [status, setStatus] = useState<RestartStatus | null>(null);
   const [statusError, setStatusError] = useState("");
@@ -21,7 +22,7 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
   const [open, setOpen] = useState(false);
   const [harness, setHarness] = useState(session.runtime || "generic");
   const [model, setModel] = useState("");
-  const [interrupt, setInterrupt] = useState(false);
+  const [mode, setMode] = useState<DialogMode>("restart");
   const [options, setOptions] = useState<RestartOptions | null>(null);
   const [optionsError, setOptionsError] = useState("");
   const [loadingOptions, setLoadingOptions] = useState(false);
@@ -39,7 +40,7 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
   const dialog = useRef<HTMLDivElement>(null);
   const currentModel = status?.model || session.model || "";
   const currentHarness = options?.current.harness || session.runtime || "generic";
-  const switching = harness !== currentHarness;
+  const switching = mode === "harness";
   const memoryAvailable = memorySwitchAvailable(options);
   const selected = options?.harnesses.find(choice => choice.name === harness);
   const pending = status?.status === "queued" || status?.status === "restarting";
@@ -58,7 +59,7 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
     return () => { alive.current = false; clearInterval(timer); };
   }, [refresh, remote]);
   const closeMenu = useCallback(() => { setMenuAnchor(null); opener.current?.focus(); }, []);
-  useEffect(() => { if (!showActions) { setMenuAnchor(null); setOpen(false); } }, [showActions]);
+  useEffect(() => { if (!showActions && !children) { setMenuAnchor(null); setOpen(false); } }, [showActions, children]);
   useEffect(() => { setOpen(false); setMenuAnchor(null); setOptions(null); }, [session.runtime]);
   async function loadModels() {
     setLoadingModels(true); setModelsError("");
@@ -66,14 +67,20 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
     catch (e) { if (alive.current) setModelsError((e as Error).message); }
     finally { if (alive.current) setLoadingModels(false); }
   }
-  async function loadOptions(initial?: { model?: string }) {
+  async function loadOptions(initial?: { model?: string; mode: DialogMode }) {
     const request = ++optionsRequest.current;
     setLoadingOptions(true); setOptionsError("");
     try {
       const data = await api.restartOptions(session.key);
       if (!alive.current || request !== optionsRequest.current) return;
       setOptions(data);
-      if (initial) { setHarness(data.current.harness); setModel(initial.model ?? data.current.model); }
+      const requestedMode = initial?.mode ?? mode;
+      if (requestedMode === "harness") {
+        if (initial || !data.harnesses.some(choice => choice.name === harness && choice.name !== data.current.harness)) {
+          const alternatives = data.harnesses.filter(choice => choice.name !== data.current.harness);
+          setHarness((alternatives.find(choice => choice.available) || alternatives[0])?.name || ""); setModel("");
+        }
+      } else if (initial) { setHarness(data.current.harness); setModel(initial.model ?? data.current.model); }
     } catch (e) { if (alive.current && request === optionsRequest.current) setOptionsError((e as Error).message); }
     finally { if (alive.current && request === optionsRequest.current) setLoadingOptions(false); }
   }
@@ -81,30 +88,29 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
     ? [{ id: currentModel, label: currentModel }, ...choices] : choices, [currentModel, choices]);
   const dialogModels = selected?.models || [];
   const retainedModel = !switching ? options?.current.model || currentModel : "";
-  const close = useCallback(() => { if (!actingRef.current) { setOpen(false); opener.current?.focus(); } }, []);
+  const close = useCallback(() => { if (!actingRef.current) { setOpen(false); opener.current?.focus(); onDismiss?.(); } }, [onDismiss]);
   useEffect(() => { if (open) dialog.current?.focus(); }, [open]);
-  function show(button: HTMLButtonElement, picked?: string) {
+  function show(button: HTMLButtonElement, nextMode: DialogMode = "restart", picked?: string) {
     opener.current = button;
-    setHarness(session.runtime || "generic"); setModel(picked ?? currentModel);
-    setMenuAnchor(null); setError(""); setInterrupt(false); setOptions(null); setOpen(true);
-    void loadOptions({ model: picked }); void refresh();
+    setMode(nextMode); setHarness(nextMode === "harness" ? "" : session.runtime || "generic"); setModel(nextMode === "harness" ? "" : picked ?? currentModel);
+    setMenuAnchor(null); setError(""); setOptions(null); setOpen(true);
+    void loadOptions({ model: picked, mode: nextMode }); void refresh();
   }
   // A missing native conversation must not block discovering other harnesses.
   const draftClear = options?.draft_clear && (status?.can_restart ? status.draft_clear : true);
   const afterTurn = status?.can_restart ? status.after_turn : options?.after_turn;
   const canInterrupt = switching && !!afterTurn && !!options?.supports_interrupt_switch;
-  const stopNow = canInterrupt && interrupt;
-  const pathReason = options?.reason || selected?.reason || (!switching && options?.resume_restart.reason);
-  const allowed = !!selected?.available && (switching || !!options?.resume_restart.available)
+  const pathReason = options?.reason || selected?.reason || (switching && options && !harness ? "No other harnesses are available on this Mac." : !switching && options?.resume_restart.reason);
+  const allowed = !!selected?.available && (switching ? harness !== currentHarness : !!options?.resume_restart.available)
     && !!draftClear && !pending && !statusError && !optionsError && !loadingOptions && !acting;
   async function restart() {
     if (switching || !allowed || actingRef.current) return;
     actingRef.current = true; setActing(true); ++statusRequest.current;
     try {
-      const next = stopNow ? await api.restart(session.key, model, harness, true) : await api.restart(session.key, model, harness);
+      const next = await api.restart(session.key, model, harness);
       if (alive.current) { setStatus(next); setError(""); setOpen(false); opener.current?.focus(); onActionComplete?.(); }
     } catch (e) {
-      if (alive.current) { setError((e as Error).message); setInterrupt(false); void loadOptions(); void refresh(); }
+      if (alive.current) { setError((e as Error).message); void loadOptions(); void refresh(); }
     } finally { actingRef.current = false; if (alive.current) setActing(false); }
   }
   async function cancel() {
@@ -115,16 +121,19 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
     finally { actingRef.current = false; if (alive.current) setActing(false); }
   }
   const disabled = remote || pending || acting;
-  const reason = remote ? "Restart and Change model are available on This Mac only for now." : statusError || status?.reason;
-  const action = switching ? `Switch to ${harnessName(harness)}` : "Restart now";
+  const reason = remote ? "Restart, Change model and Change harness are available on This Mac only for now." : statusError || status?.reason;
+  const action = switching ? harness ? `Switch to ${harnessName(harness)}` : "Switch harness" : "Restart now";
+  const changeHarness = <button role={menu ? "menuitem" : undefined} className="rd-btn rd-btn-sm rd-btn-ghost" disabled={disabled} title={remote ? reason : statusError || undefined} onClick={e => show(e.currentTarget, "harness")}>Change harness</button>;
   return <>
+    {children?.(changeHarness)}
     {showActions && <button role={menu ? "menuitem" : undefined} className="rd-btn rd-btn-sm rd-btn-primary" disabled={disabled} title={reason} onClick={e => show(e.currentTarget)}>Restart</button>}
+    {showActions && changeHarness}
     {showActions && <button role={menu ? "menuitem" : undefined} className="rd-btn rd-btn-sm rd-btn-ghost" disabled={disabled || !status?.can_restart} title={reason || status?.reason} aria-haspopup="menu" aria-expanded={!!menuAnchor} onClick={e => {
       if (menuAnchor) { closeMenu(); return; }
       opener.current = e.currentTarget; setMenuAnchor(e.currentTarget); void loadModels();
     }}>Change model</button>}
     {menuAnchor && <ModelMenu anchor={menuAnchor} choices={modelChoices} current={currentModel} loading={loadingModels} error={modelsError}
-      retry={() => void loadModels()} close={closeMenu} select={picked => picked === currentModel ? closeMenu() : show(menuAnchor, picked)} />}
+      retry={() => void loadModels()} close={closeMenu} select={picked => picked === currentModel ? closeMenu() : show(menuAnchor, "model", picked)} />}
     {reason && showActions && !menu && !pending && <p className="rd-restart-message">{reason}</p>}
     {error && !open && <p className="rd-restart-message" role="alert">{error}</p>}
     {pending && <div className="rd-restart-message rd-restart-notice" role="status">
@@ -147,24 +156,24 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
         if (e.shiftKey && (document.activeElement === first || document.activeElement === dialog.current)) { e.preventDefault(); last?.focus(); }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
       }}>
-        <header><h2 id="restart-title">Restart session</h2><button className="rd-btn rd-btn-ghost" aria-label="Close Restart" disabled={acting} onClick={close}>×</button></header>
-        <p className="rd-restart-subtitle">{session.label} · This Mac</p>
-        <div className="rd-restart-pickers">
-          <label>Harness<select value={harness} disabled={acting || loadingOptions || !options} onChange={e => {
-            const next = e.target.value; setHarness(next); setInterrupt(false); setModel(next === currentHarness ? options?.current.model || "" : ""); setError("");
+        <header><h2 id="restart-title">{switching ? "Change harness" : "Restart session"}</h2><button className="rd-btn rd-btn-ghost" aria-label={switching ? "Close Change harness" : "Close Restart"} disabled={acting} onClick={close}>×</button></header>
+        <p className="rd-restart-subtitle">{session.label} · This Mac{switching && ` · Currently ${harnessName(currentHarness)}`}</p>
+        {mode !== "restart" && <div className="rd-restart-pickers">
+          {switching && <label>New harness<select value={harness} disabled={acting || loadingOptions || !options} onChange={e => {
+            const next = e.target.value; setHarness(next); setModel(""); setError("");
           }}>
-            {!options?.harnesses.some(choice => choice.name === harness) && <option value={harness}>{harnessName(harness)}</option>}
-            {options?.harnesses.map(choice => <option key={choice.name} value={choice.name}>{harnessName(choice.name)}{choice.available ? "" : " — unavailable"}</option>)}
-          </select></label>
+            {!harness && <option value="">{loadingOptions ? "Loading harnesses…" : "No other harnesses"}</option>}
+            {options?.harnesses.filter(choice => choice.name !== currentHarness).map(choice => <option key={choice.name} value={choice.name}>{harnessName(choice.name)}{choice.available ? "" : " — unavailable"}</option>)}
+          </select></label>}
           <label>Model<select value={model} disabled={acting || loadingOptions || !selected?.model_selection.available} onChange={e => setModel(e.target.value)}>
             <option value="">{switching ? "Harness default" : "Keep the current model"}</option>
             {retainedModel && !dialogModels.some(choice => choice.id === retainedModel) && <option value={retainedModel}>{retainedModel}</option>}
             {dialogModels.map(choice => <option key={choice.id} value={choice.id}>{choice.label === choice.id ? choice.id : `${choice.label} · ${choice.id}`}</option>)}
           </select></label>
-        </div>
+        </div>}
         {loadingOptions && <p role="status">Checking harnesses and available models…</p>}
         {(optionsError || selected?.model_reason) && <p role="alert">{optionsError || selected?.model_reason} <button className="rd-btn rd-btn-ghost" disabled={loadingOptions || acting} onClick={() => void loadOptions()}>Retry choices</button></p>}
-        {selected && !selected.model_selection.available && <p className="rd-restart-help">{selected.model_selection.reason || "This harness does not support model selection."}</p>}
+        {mode !== "restart" && selected && !selected.model_selection.available && <p className="rd-restart-help">{selected.model_selection.reason || "This harness does not support model selection."}</p>}
         {switching && memoryAvailable && selected?.available ? <MemorySwitchPanel
           key={JSON.stringify([session.key, options?.current.conversation_generation, harness, model])}
           selection={{ sessionRef: session.key, sourceGeneration: options!.current.conversation_generation!, sourceHarness: currentHarness,
@@ -179,15 +188,12 @@ function SessionRestartControls({ session, showActions = true, menu = false, onE
               context: "seeded_new_conversation", interrupt: submission.interrupt, error: result.reason });
             setOpen(false); opener.current?.focus(); onActionComplete?.(); void refresh();
           }} /> : <>
-        <div className="rd-restart-summary"><strong>{switching ? `Continue with ${harnessName(harness)}` : "Continue this conversation"}</strong>
-          <p>{switching ? "Memory-backed switching needs a supporting backend and an available target harness." : "Restart the harness and resume its existing conversation."}</p>
+        <div className="rd-restart-summary"><strong>{switching ? harness ? `Continue with ${harnessName(harness)}` : "Choose another harness" : "Continue this conversation"}</strong>
+          <p>{switching ? "Memory-backed switching needs a supporting backend and an available target harness." : mode === "restart" ? "Restart the current harness and resume this conversation with its current model." : "Restart the current harness and resume this conversation with the selected model."}</p>
           <p>Keep the same session name, project folder and history.</p>
         </div>
-        {canInterrupt && !switching && <div className="rd-restart-interrupt">
-          <label><input type="checkbox" checked={interrupt} disabled={acting || loadingOptions} onChange={e => setInterrupt(e.target.checked)} /> Stop the current turn and switch now</label>
-          <p className="rd-restart-help">Use this when you want to switch while the agent is working, including when its budget runs out. Saves a checkpoint and open tasks before stopping. Unfinished work and background jobs may stop.</p>
-        </div>}
-        <p className="rd-restart-notice" role={error || pathReason || statusError ? "alert" : "status"}>{error || optionsError || statusError || pathReason || (!draftClear && !loadingOptions ? "Send or clear unsent terminal text before restarting." : stopNow ? "The current turn will stop after its checkpoint is saved. A new conversation will start on this card." : afterTurn ? "This will wait until the agent finishes its turn. You can cancel it from the session panel." : "The change will start as soon as you confirm.")}</p>
+        <p className="rd-restart-notice" role={error || pathReason || statusError ? "alert" : "status"}>{error || optionsError || statusError || pathReason || (!draftClear && !loadingOptions ? "Send or clear unsent terminal text before restarting." : afterTurn ? "This will wait until the agent finishes its turn. You can cancel it from the session panel." : "The change will start as soon as you confirm.")}</p>
+        {mode === "restart" && <p className="rd-restart-help">To choose another harness, use Change harness.</p>}
         <p className="rd-restart-help">Restart reloads the installed CLI, connectors and session instructions. Background processes started in this terminal may stop.</p>
         <div className="rd-restart-footer"><button className="rd-btn rd-btn-ghost" disabled={acting} onClick={close}>Cancel</button><button className="rd-btn rd-btn-primary" disabled={switching || !allowed} onClick={() => void restart()}>{acting ? "Scheduling…" : afterTurn ? switching ? "Switch after this turn" : "Restart after this turn" : action}</button></div>
         </>}

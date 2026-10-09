@@ -1,5 +1,23 @@
 # Retro — lessons from real breakage
 
+## 2026-10-08 — A valid handoff can exceed the terminal launch transport
+
+A harness switch stopped the old agent, then tmux rejected the new launch with "command too long". The complete handoff was nested inside a quoted shell command passed through tmux IPC; the brief's own size budget did not account for that transport limit. Pass a short path to a private, one-use launch script instead. The child removes the script before running the command; failed spawn, capture attachment and startup release also remove it. Preserve the output-capture-before-execution barrier and the full prompt.
+
+The regression reproduced the exact tmux rejection, then verified a large literal prompt including shell syntax and Unicode, cwd/environment preservation, output capture, private permissions and failure cleanup. A real harness-switch launch with a fake Codex executable checks the full 32 KB brief, onboarding instructions, selected model, same card and prior-conversation recovery metadata. Do not mistake preparation-only testing for a successful process launch.
+
+## 2026-10-08 — Dismiss the originating menu when closing its dialog
+
+Canceling Change harness closed only its dialog, revealing the hidden session context menu again. Dialog dismissal must notify the menu owner so both close and focus returns to the session row. Keep model-picker back navigation separate, and preserve focus return to the direct Session-panel button.
+
+The browser regression reproduced the lingering menu before the fix and exercises Cancel, Escape, close and backdrop dismissal for both Change harness and Restart, including preparation cleanup and no restart submission.
+
+## 2026-10-08 — Make changing harnesses an explicit action
+
+The owner could not discover harness switching inside Restart. Give Change harness its own Session-panel button and menu action, using the existing preparation and confirmation flow. Restart keeps the current harness/model; Change model stays within that harness. Exclude the current harness from switch choices, so missing alternatives cannot accidentally turn a switch action into a restart.
+
+Validation: focused component and browser checks cover discovery, unchanged-harness restart, model changes, preparation cancellation and focus, drafts, unavailable targets, remote restrictions and stale dialogs. The approved layout was also checked against startup's real data; preparation completed in 4.9 seconds and was canceled without a switch. This UI fix does not claim the missing maintained summary or tool-result provenance findings are fixed.
+
 ## 2026-10-07 — Saving a checkpoint record does not mean its summary update succeeded
 
 Startup's Timeline showed a saved checkpoint with no summary and generic Unavailable/Not ready labels. History was already recorded automatically; the owner's manual action was intended to update the shared summary. Return an explicit updated, reused, partial or failed outcome from the same coalesced summary job and retain its fixed failure category on the existing marker. Keep the last good summary and its original age when a candidate fails. Never infer an old failure's cause or turn a prepared-switch record into current permission to stop an agent.

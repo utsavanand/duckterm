@@ -30,7 +30,7 @@ test("right-click actions work in every density without filling session rows or 
     }
     await page.locator(".rd-row-name", { hasText: "Review busy" }).click();
     const menu = await sessionMenu(page);
-    for (const name of ["Restart", "Change model", "Checkpoint", "Notes", "Stop", "Archive"]) {
+    for (const name of ["Restart", "Change harness", "Change model", "Checkpoint", "Notes", "Stop", "Archive"]) {
       await expect(menu.getByRole("menuitem", { name, exact: true })).toBeVisible();
     }
     await expect(menu.getByRole("menuitem", { name: "Delete permanently", exact: true })).toHaveCount(0);
