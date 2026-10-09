@@ -13,3 +13,7 @@
 .rd-session-controls .rd-row-notes-wrap { padding: 0 16px 16px; }
 .rd-session-controls .rd-row-notes { width: 100%; }
 .rd-session-controls button:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
+
+.rd-session-harness dd { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.rd-session-harness dd > span { min-width: 0; }
+.rd-session-harness dd > button { flex: none; padding: 6px 9px; background: var(--card); color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; }

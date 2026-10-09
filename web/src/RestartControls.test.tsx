@@ -42,7 +42,7 @@ it("shows why drafts block restart without sending a restart request", async () 
   render(<RestartControls session={session} />);
   await waitFor(() => expect(screen.getByRole("button", { name: "Restart" })).toBeEnabled());
   fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(screen.getByLabelText("Model")).toBeEnabled());
+  await waitFor(() => expect(screen.getByRole("button", { name: "Restart after this turn" })).toBeEnabled());
   vi.mocked(api.restartStatus).mockResolvedValue({ ...ready, draft_clear: false, reason: "Unsent text — clear your draft first." });
   // Re-open fetches an execution eligibility check; the dialog never silently sends.
   fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
@@ -60,6 +60,7 @@ it("refuses unsupported identities and explains local-only availability without 
   vi.mocked(api.restartStatus).mockClear();
   view.rerender(<RestartControls session={{ ...session, key: sessionRef("remote", "a") }} />);
   expect(screen.getByText(/available on This Mac only/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Change harness" })).toBeDisabled();
   expect(api.restartStatus).not.toHaveBeenCalled();
 });
 
@@ -91,9 +92,9 @@ it("keeps restart usable when catalog fails, retries, and never restarts from se
 it("keeps targets discoverable but blocks legacy switching without memory capability", async () => {
   vi.mocked(api.restartStatus).mockResolvedValue({ can_restart: false, reason: "Cannot verify this conversation." });
   render(<RestartControls session={session} />);
-  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "claude-code" } });
+  fireEvent.click(screen.getByRole("button", { name: "Change harness" }));
+  await waitFor(() => expect(screen.getByLabelText("New harness")).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("New harness"), { target: { value: "claude-code" } });
   expect(screen.getByLabelText("Model")).toHaveValue("");
   expect(screen.queryByRole("option", { name: /current-model/ })).not.toBeInTheDocument();
   expect(screen.getByText(/Memory-backed switching needs/)).toBeVisible();
@@ -104,10 +105,9 @@ it("keeps targets discoverable but blocks legacy switching without memory capabi
 it("keeps unknown catalogs honest and prevents unavailable or draft-blocked switches", async () => {
   vi.mocked(api.restartOptions).mockResolvedValue({ ...options, draft_clear: false, harnesses: [options.harnesses[0], { ...options.harnesses[1], available: false, reason: "CLI not installed", models: [] }] });
   render(<RestartControls session={session} />);
-  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
-  expect(screen.getByRole("button", { name: "Restart after this turn" })).toBeDisabled();
-  fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "claude-code" } });
+  fireEvent.click(screen.getByRole("button", { name: "Change harness" }));
+  await waitFor(() => expect(screen.getByLabelText("New harness")).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("New harness"), { target: { value: "claude-code" } });
   expect(screen.getByText("CLI not installed")).toBeVisible();
   expect(screen.getByRole("button", { name: "Switch after this turn" })).toBeDisabled();
   expect(api.restart).not.toHaveBeenCalled();
@@ -124,20 +124,20 @@ it("discards late option discovery when the selected card changes", async () => 
   let resolve!: (value: RestartOptions) => void;
   vi.mocked(api.restartOptions).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
   const view = render(<RestartControls session={session} />);
-  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
+  fireEvent.click(screen.getByRole("button", { name: "Change harness" }));
   view.rerender(<RestartControls session={{ ...session, key: "b", label: "Other project" }} />);
   await act(async () => resolve(options));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
-  expect(screen.getByText("Other project · This Mac")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Change harness" }));
+  await waitFor(() => expect(screen.getByLabelText("New harness")).toBeEnabled());
+  expect(screen.getByText("Other project · This Mac · Currently Codex")).toBeVisible();
   expect(api.restart).not.toHaveBeenCalled();
 });
 
 it("closes stale confirmation if the same card changes harness elsewhere", async () => {
   const view = render(<RestartControls session={session} />);
-  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
+  fireEvent.click(screen.getByRole("button", { name: "Change harness" }));
+  await waitFor(() => expect(screen.getByLabelText("New harness")).toBeEnabled());
   view.rerender(<RestartControls session={{ ...session, runtime: "claude-code" }} />);
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(api.restart).not.toHaveBeenCalled();
@@ -146,10 +146,48 @@ it("closes stale confirmation if the same card changes harness elsewhere", async
 it("never bypasses missing memory capability even when interrupt is supported", async () => {
   vi.mocked(api.restartOptions).mockResolvedValue({ ...options, supports_interrupt_switch: true });
   render(<RestartControls session={session} />);
-  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
-  await waitFor(() => expect(screen.getByLabelText("Harness")).toBeEnabled());
-  fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "claude-code" } });
+  fireEvent.click(screen.getByRole("button", { name: "Change harness" }));
+  await waitFor(() => expect(screen.getByLabelText("New harness")).toBeEnabled());
+  fireEvent.change(screen.getByLabelText("New harness"), { target: { value: "claude-code" } });
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Switch after this turn" })).toBeDisabled();
+  expect(api.restart).not.toHaveBeenCalled();
+});
+
+
+it("Restart retains the current harness and model without offering a switch", async () => {
+  vi.mocked(api.restart).mockResolvedValue({ ...ready, status: "queued" });
+  render(<RestartControls session={session} />);
+  fireEvent.click(screen.getByRole("button", { name: "Restart" }));
+  const confirm = await screen.findByRole("button", { name: "Restart after this turn" });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  expect(screen.getByText("To choose another harness, use Change harness.")).toBeVisible();
+  fireEvent.click(confirm);
+  await waitFor(() => expect(api.restart).toHaveBeenCalledWith("a", "current-model", "codex"));
+});
+
+it("offers only other harnesses and restores focus without switching on Cancel", async () => {
+  render(<RestartControls session={session} />);
+  const button = screen.getByRole("button", { name: "Change harness" });
+  fireEvent.click(button);
+  await waitFor(() => expect(screen.getByLabelText("New harness")).toHaveValue("claude-code"));
+  expect(screen.getByRole("dialog", { name: "Change harness" })).toBeVisible();
+  expect(screen.queryByRole("option", { name: "Codex" })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(button).toHaveFocus();
+  expect(api.restart).not.toHaveBeenCalled();
+});
+
+it("retries failed discovery and never falls back to restarting when no other harness exists", async () => {
+  vi.mocked(api.restartOptions).mockRejectedValueOnce(new Error("Choices unavailable"));
+  vi.mocked(api.restartOptions).mockResolvedValue({ ...options, harnesses: [options.harnesses[0]] });
+  render(<RestartControls session={session} />);
+  fireEvent.click(screen.getByRole("button", { name: "Change harness" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("Choices unavailable");
+  fireEvent.click(screen.getByRole("button", { name: "Retry choices" }));
+  expect(await screen.findByText("No other harnesses are available on this Mac.")).toBeVisible();
+  expect(screen.queryByRole("button", { name: /^Restart (now|after)/ })).not.toBeInTheDocument();
   expect(api.restart).not.toHaveBeenCalled();
 });

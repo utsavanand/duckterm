@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-08 — Make changing harnesses an explicit action
+
+The owner could not discover harness switching inside Restart. Give Change harness its own Session-panel button and menu action, using the existing preparation and confirmation flow. Restart keeps the current harness/model; Change model stays within that harness. Exclude the current harness from switch choices, so missing alternatives cannot accidentally turn a switch action into a restart.
+
+Validation: focused component and browser checks cover discovery, unchanged-harness restart, model changes, preparation cancellation and focus, drafts, unavailable targets, remote restrictions and stale dialogs. The approved layout was also checked against startup's real data; preparation completed in 4.9 seconds and was canceled without a switch. This UI fix does not claim the missing maintained summary or tool-result provenance findings are fixed.
+
 ## 2026-10-07 — Saving a checkpoint record does not mean its summary update succeeded
 
 Startup's Timeline showed a saved checkpoint with no summary and generic Unavailable/Not ready labels. History was already recorded automatically; the owner's manual action was intended to update the shared summary. Return an explicit updated, reused, partial or failed outcome from the same coalesced summary job and retain its fixed failure category on the existing marker. Keep the last good summary and its original age when a candidate fails. Never infer an old failure's cause or turn a prepared-switch record into current permission to stop an agent.

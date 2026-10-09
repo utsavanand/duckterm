@@ -2,7 +2,7 @@ import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiDelete, seedSession } from "./helpers";
 
-test("Restart dialog edits model, queues visibly, survives reload, and cancels", async ({ page }) => {
+test("Separate Restart and Change model actions preserve model selection, queues visibly, survives reload, and cancels", async ({ page }) => {
   const key = `e2e-restart-${Date.now()}`;
   await seedSession(key, { name: "Restart review", runtime: "codex", launched: true });
   let state = { can_restart: true, draft_clear: true, after_turn: true, model: "current-model", status: "", requested_model: "" };
@@ -46,8 +46,13 @@ test("Restart dialog edits model, queues visibly, survives reload, and cancels",
     await restart.click();
     const dialog = page.getByRole("dialog", { name: "Restart session" });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByLabel("Model")).toHaveValue("current-model");
-    await dialog.getByLabel("Model").selectOption("new-model");
+    await expect(dialog.getByRole("combobox")).toHaveCount(0);
+    await expect(dialog.getByText("To choose another harness, use Change harness.")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Change model", exact: true }).click();
+    await page.getByRole("menuitemradio", { name: /New model 2.0/ }).click();
+    await expect(dialog.getByLabel("Model")).toHaveValue("new-model");
+    await expect(dialog.getByLabel("New harness", { exact: true })).toHaveCount(0);
     await page.screenshot({ path: "/tmp/duckterm-f15-implemented-dialog.png" });
     await page.setViewportSize({ width: 390, height: 844 });
     const bounds = await dialog.boundingBox();
@@ -95,19 +100,18 @@ test("older backend exposes harness choices but cannot bypass memory preparation
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("/");
     await page.getByText("Harness switch review", { exact: true }).first().click();
-    await (await sessionMenu(page)).getByRole("menuitem", { name: "Restart", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Restart session" });
-    await expect(dialog.getByRole("combobox", { name: "Harness", exact: true })).toHaveValue("claude-code");
-    await expect(dialog.getByRole("button", { name: "Restart now" })).toBeDisabled();
-    await dialog.getByRole("combobox", { name: "Harness", exact: true }).selectOption("codex");
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Change harness", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Change harness" });
+    await expect(dialog.getByRole("combobox", { name: "New harness", exact: true })).toHaveValue("codex");
+    await dialog.getByRole("combobox", { name: "New harness", exact: true }).selectOption("codex");
     await expect(dialog.getByRole("combobox", { name: "Model", exact: true })).toHaveValue("");
     await expect(dialog.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
     await expect(dialog.getByText(/Send or clear unsent/)).toBeVisible();
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     blocked = false;
-    await (await sessionMenu(page)).getByRole("menuitem", { name: "Restart", exact: true }).click();
-    await expect(dialog.getByRole("combobox", { name: "Harness", exact: true })).toBeEnabled();
-    await dialog.getByRole("combobox", { name: "Harness", exact: true }).selectOption("codex");
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Change harness", exact: true }).click();
+    await expect(dialog.getByRole("combobox", { name: "New harness", exact: true })).toBeEnabled();
+    await dialog.getByRole("combobox", { name: "New harness", exact: true }).selectOption("codex");
     await dialog.getByRole("combobox", { name: "Model", exact: true }).selectOption("gpt-6-astra");
     await expect(dialog.getByText("Memory-backed switching needs a supporting backend and an available target harness.")).toBeVisible();
     await page.evaluate(() => document.documentElement.setAttribute("data-theme", "dark"));
@@ -161,10 +165,10 @@ test("working session offers an explicit immediate switch with truthful pending 
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto("/");
     await page.getByText("Working harness review", { exact: true }).first().click();
-    await (await sessionMenu(page)).getByRole("menuitem", { name: "Restart", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Restart session" });
-    await expect(dialog.getByRole("combobox", { name: "Harness", exact: true })).toBeEnabled();
-    await dialog.getByRole("combobox", { name: "Harness", exact: true }).selectOption("codex");
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Change harness", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Change harness" });
+    await expect(dialog.getByRole("combobox", { name: "New harness", exact: true })).toBeEnabled();
+    await dialog.getByRole("combobox", { name: "New harness", exact: true }).selectOption("codex");
     const checkbox = dialog.getByRole("checkbox", { name: "Stop the current turn and switch now" });
     await expect(checkbox).not.toBeChecked();
     await checkbox.check();

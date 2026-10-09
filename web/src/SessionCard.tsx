@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { ReactNode, useEffect, useRef, useState } from "react";
 import { SessionConversationRecovery } from "./ConversationRecovery";
 import { api } from "./api";
 import { effectiveState } from "./sessions";
@@ -7,7 +7,7 @@ import { useToast } from "./ui";
 import { RestartControls } from "./RestartControls";
 import "./sessionCard.css";
 
-// Information and actionable recovery remain visible; routine actions live in the row menu.
+// Harness switching and recovery remain visible; routine actions live in the row menu.
 export function SessionCard({ session: s, now, notesOpen = false, onCloseNotes }: {
   session: SessionView; now: number; notesOpen?: boolean; onCloseNotes?: () => void;
 }) {
@@ -34,16 +34,18 @@ export function SessionCard({ session: s, now, notesOpen = false, onCloseNotes }
     // reloads the latest notes without silently replacing an unsaved draft.
   }, [s.notes]);
   const [saving, setSaving] = useState(false);
+  const details = (changeHarness?: ReactNode) => <>
+    <dl className="rd-session-controls-meta"><div className="rd-session-harness"><dt>Harness</dt><dd><span>{s.runtime ?? "—"}</span>{live && changeHarness}</dd></div>
+      <div><dt>Model</dt><dd>{s.model ?? "Not reported yet"}</dd></div></dl>
+    {["claude-code", "codex", "copilot"].includes(s.runtime ?? "") && <SessionConversationRecovery key={s.key} session={s} stopped={!live && !archived} />}
+  </>;
   return <section className="rd-session-controls" aria-label="Session controls">
     <div className="rd-session-controls-identity">
       <div className="rd-session-controls-caption">Session</div>
       <div className="rd-session-controls-title"><strong>{s.label}</strong><span className={`rd-state st-${state}`}>{state}</span></div>
       <div className="rd-session-controls-folder"><span>{s.group || "Ungrouped"}</span></div>
     </div>
-    <dl className="rd-session-controls-meta"><div><dt>Harness</dt><dd>{s.runtime ?? "—"}</dd></div>
-      <div><dt>Model</dt><dd>{s.model ?? "Not reported yet"}</dd></div></dl>
-    {["claude-code", "codex", "copilot"].includes(s.runtime ?? "") && <SessionConversationRecovery key={s.key} session={s} stopped={!live && !archived} />}
-    {s.launched && <RestartControls session={s} showActions={false} />}
+    {s.launched ? <RestartControls session={s} showActions={false}>{details}</RestartControls> : details()}
     {notesOpen && <div className="rd-row-notes-wrap">
       <label htmlFor="session-notes">Notes</label>
       <textarea id="session-notes" autoFocus aria-label="Session notes" className="rd-row-notes" value={notes}
