@@ -61,7 +61,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
   const canMove = resumable && splitSessionRef(s.key).host === "local" && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "");
   return <>
     <SessionActionMenu anchor={anchor} label={s.label} expanded={!!dialog || restartExpanded} onClose={onClose}>
-      {s.launched && <fieldset disabled={disabled}><RestartControls session={s} showActions={live} menu onExpanded={setRestartExpanded} onActionComplete={onClose} /></fieldset>}
+      {s.launched && <fieldset disabled={disabled}><RestartControls session={s} showActions={live} menu onExpanded={setRestartExpanded} onDismiss={onClose} onActionComplete={onClose} /></fieldset>}
       {resumable && <button role="menuitem" disabled={disabled || recoveryBlocked || identityBlocksResume(s)}
         title={identityBlocksResume(s) ? "Choose a conversation in the session’s recovery panel before resuming" : undefined}
         onClick={async () => { await resumeSession(); onClose(); }}>{resuming ? "Resuming…" : "Resume"}</button>}

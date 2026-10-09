@@ -10,11 +10,11 @@ import { memorySwitchAvailable } from "./memorySwitchTransport";
 
 const harnessName = (name: string) => ({ "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini CLI" }[name] || name);
 type DialogMode = "restart" | "model" | "harness";
-type RestartControlProps = { children?: (changeHarness: ReactNode) => ReactNode; session: SessionView; showActions?: boolean; menu?: boolean; onExpanded?: (expanded: boolean) => void; onActionComplete?: () => void };
+type RestartControlProps = { children?: (changeHarness: ReactNode) => ReactNode; session: SessionView; showActions?: boolean; menu?: boolean; onExpanded?: (expanded: boolean) => void; onDismiss?: () => void; onActionComplete?: () => void };
 export function RestartControls(props: RestartControlProps) {
   return <SessionRestartControls key={props.session.key} {...props} />;
 }
-function SessionRestartControls({ children, session, showActions = true, menu = false, onExpanded, onActionComplete }: RestartControlProps) {
+function SessionRestartControls({ children, session, showActions = true, menu = false, onExpanded, onDismiss, onActionComplete }: RestartControlProps) {
   const remote = splitSessionRef(session.key).host !== "local";
   const [status, setStatus] = useState<RestartStatus | null>(null);
   const [statusError, setStatusError] = useState("");
@@ -88,7 +88,7 @@ function SessionRestartControls({ children, session, showActions = true, menu = 
     ? [{ id: currentModel, label: currentModel }, ...choices] : choices, [currentModel, choices]);
   const dialogModels = selected?.models || [];
   const retainedModel = !switching ? options?.current.model || currentModel : "";
-  const close = useCallback(() => { if (!actingRef.current) { setOpen(false); opener.current?.focus(); } }, []);
+  const close = useCallback(() => { if (!actingRef.current) { setOpen(false); opener.current?.focus(); onDismiss?.(); } }, [onDismiss]);
   useEffect(() => { if (open) dialog.current?.focus(); }, [open]);
   function show(button: HTMLButtonElement, nextMode: DialogMode = "restart", picked?: string) {
     opener.current = button;

@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-08 — Dismiss the originating menu when closing its dialog
+
+Canceling Change harness closed only its dialog, revealing the hidden session context menu again. Dialog dismissal must notify the menu owner so both close and focus returns to the session row. Keep model-picker back navigation separate, and preserve focus return to the direct Session-panel button.
+
+The browser regression reproduced the lingering menu before the fix and exercises Cancel, Escape, close and backdrop dismissal for both Change harness and Restart, including preparation cleanup and no restart submission.
+
 ## 2026-10-08 — Make changing harnesses an explicit action
 
 The owner could not discover harness switching inside Restart. Give Change harness its own Session-panel button and menu action, using the existing preparation and confirmation flow. Restart keeps the current harness/model; Change model stays within that harness. Exclude the current harness from switch choices, so missing alternatives cannot accidentally turn a switch action into a restart.
