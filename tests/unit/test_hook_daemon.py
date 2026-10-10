@@ -105,3 +105,14 @@ def test_url_order(tmp_path, daemon, env_url, file_url, expected) -> None:
 def test_a_daemon_started_by_an_internal_run_does_not_silence_every_hook(tmp_path) -> None:
     _, sent = run_hook(tmp_path, daemon=True, env={"DUCKTERM_INTERNAL": "1"})
     assert sent["hook_host"] == "daemon"  # the server parks it if no session claims it
+
+
+def test_under_the_daemon_a_launchers_harness_generation_is_dropped(tmp_path) -> None:
+    """#222's per-launch generation is env too; under the daemon it is the
+    first launcher's and could satisfy the switch guard for the wrong card."""
+    generation = {"DUCKTERM_HARNESS_GENERATION": "0123456789abcdef0123456789abcdef"}
+    _, sent = run_hook(tmp_path, daemon=True, env=generation)
+    assert ("launch_generation" in sent, sent["hook_host"]) == (False, "daemon")
+    (tmp_path / "own").mkdir()
+    _, own = run_hook(tmp_path / "own", daemon=False, env=generation)
+    assert own["launch_generation"] == generation["DUCKTERM_HARNESS_GENERATION"]
