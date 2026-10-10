@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+
+## 2026-10-10 — A saved artifact path does not prove a file exists
+
+The file explorer must distinguish registered snapshot bytes from the current filesystem. Use only the selected local session's recorded worktree/cwd, never the server's current directory. Read one directory page in a worker; use Git for ignore semantics, and keep the registration list independent of directory traversal. Open relative components without following symlinks, recheck the root after the read, and refuse changed files rather than returning partial downloads. Missing and outside-root sources remain readable as saved artifact copies, with explicit source states. Remote desktop references must not fall back to a same-named local session.
 ## 2026-10-10 — A successful summary sample does not cover malformed next drafts
 
 Product's next manual checkpoint failed with invalid_context after the timeout/citation fix was installed. The saved failure did not identify the rejected field, and a read-only rerun passed; neither result proves which field failed in the owner's attempt. The maintained pipeline had another concrete gap: unlike older preparation, it abandoned the first malformed draft. One successful provider response was not sufficient reliability evidence.
