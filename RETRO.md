@@ -7,6 +7,8 @@ Product's manual checkpoint recorded provider_timeout and no summary revision. T
 
 The shared runner must honor each caller's requested output format, including Oracle prose and checkpoint JSON. Strict settings isolation remains the default for explicit memory preparation; only automatic Claude summaries retain user preferences. Project instructions/settings remain excluded from the private summary working directory.
 
+The owner-approved real product-input probe then took 68.50 seconds and returned a 9,598-byte context with scalar citation strings. This established a second failure: the prompt did not explicitly specify the citation array shape. Specify arrays and complete literal references in the prompt, and losslessly normalize a scalar only if it is an exact supplied reference. Unknown citations, malformed compound strings and oversized context still fail validation. Include the added citation metadata in the existing input budget.
+
 The regression first failed at the legacy runner boundary. Real subprocess fixtures cover generation plus validation, revision reuse, timeout cleanup and last-good preservation. A synthetic 45 KB prompt returned a structured summary through the isolated Claude runner in 29.44 seconds; this is not proof that product's real checkpoint succeeds. Real-history verification and release are still required. Tests must stub the legacy runner too when reproducing dispatch failures so the failing version cannot invoke a real installed provider.
 
 ## 2026-10-08 — A valid handoff can exceed the terminal launch transport
