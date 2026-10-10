@@ -430,7 +430,7 @@ class HistoryStore:
             ),
         )
         etype = event.get("event_type")
-        if etype == events.MERGE_DELIVERED:
+        if etype in (events.MERGE_DELIVERED, events.NATIVE_BOUND):
             # Server bookkeeping for the merge checkpoint, not agent activity:
             # it must not move the session's state, last event or settle time.
             self._conn.commit()
@@ -578,6 +578,45 @@ class HistoryStore:
             "SELECT kind, count FROM metrics WHERE session_key = ?", (key,)
         ).fetchall()
         return {r["kind"]: r["count"] for r in rows}
+
+    def recorded_native_id(self, key: str) -> str | None:
+        """The agent's own session id as DuckTerm itself recorded it: a
+        NativeBound bind, or an event the server published (not a hook's,
+        whose ids could come from another session's environment under Codex's
+        shared daemon). One indexed lookup on this session's events.
+        Only since the agent's last launch: a relaunch (including a switch to
+        another harness) clears the previous agent's id until it binds anew."""
+        row = self._conn.execute(
+            "SELECT COALESCE(json_extract(payload_json, '$.native_session_id'), "
+            "json_extract(payload_json, '$.session_id')) AS sid FROM events "
+            "WHERE session_key = ? AND ts >= ? AND (event_type = ? OR ("
+            "json_extract(payload_json, '$.hook_event') IS NULL "
+            "AND json_extract(payload_json, '$.session_id') IS NOT NULL)) "
+            "ORDER BY ts DESC LIMIT 1",
+            (key, self.last_launch_ts(key), events.NATIVE_BOUND),
+        ).fetchone()
+        return str(row["sid"]) if row and row["sid"] else None
+
+    def retired_native_ids(self, key: str) -> set[str]:
+        """Native ids bound to this session before its last launch. A stale
+        event from one must not re-bind into the new generation; resuming a
+        thread on purpose records its id on the relaunch's SessionStart."""
+        rows = self._conn.execute(
+            "SELECT json_extract(payload_json, '$.native_session_id') AS sid FROM events "
+            "WHERE session_key = ? AND event_type = ? AND ts < ?",
+            (key, events.NATIVE_BOUND, self.last_launch_ts(key)),
+        ).fetchall()
+        return {str(r["sid"]) for r in rows if r["sid"]}
+
+    def last_launch_ts(self, key: str) -> int:
+        """When DuckTerm last started this session's agent: its newest
+        server-published SessionStart (hook-sent ones don't count)."""
+        row = self._conn.execute(
+            "SELECT MAX(ts) AS ts FROM events WHERE session_key = ? AND event_type = ? "
+            "AND json_extract(payload_json, '$.hook_event') IS NULL",
+            (key, events.SESSION_START),
+        ).fetchone()
+        return int(row["ts"] or 0)
 
     def session_id_for(self, key: str) -> str | None:
         native_id = self.native_identity(key)["native_id"]

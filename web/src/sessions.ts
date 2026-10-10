@@ -86,7 +86,7 @@ export function applyEvent(
   const prev = next.get(key);
   // Server bookkeeping for the merge checkpoint; not agent activity, so it
   // must not clear the settle time a Stop just set.
-  if (e.event_type === "MergeDelivered") return sessions;
+  if (e.event_type === "MergeDelivered" || e.event_type === "NativeBound") return sessions;
   if (e.event_type === "Attended") {
     // The owner attended to it: only the raised hand drops. Not agent activity.
     if (prev) next.set(key, { ...prev, attentionSince: undefined });
