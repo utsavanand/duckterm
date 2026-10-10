@@ -27,6 +27,10 @@ the user's work; do not attempt to repair it by changing the installation.
 - `duckterm session publish --purpose "Core purpose" --activity "Current work"`:
   update your card when your purpose or activity materially changes.
   Publish concise, useful context; omit secrets and sensitive task details.
+- `duckterm session publish --needs-owner "What you need from the owner"`: when
+  you are blocked on the owner (a decision, an approval, a login), say so in
+  one line. Oracle lists it under Needs you and your duck waves. It clears
+  when the owner replies, or with `duckterm session publish --clear`.
 
 Scope follows sidebar folders, not filesystem directories. Automatic enrollment
 shares with the top-level sidebar folder. Ungrouped sessions are private. Query
