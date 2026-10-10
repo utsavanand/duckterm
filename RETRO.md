@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+
+## 2026-10-09 — Maintained checkpoints must use the isolated summary runner
+
+Product's manual checkpoint recorded provider_timeout and no summary revision. The maintained-memory writer still auto-launched bare `claude -p` / `codex exec -` through the legacy 60-second shell runner, even though memory already had an isolated, tool-disabled, bounded executor. Route automatic Claude/Codex summary and validation calls through that executor (180 seconds per call, bounded output, temporary working directory, process-group cleanup). Preserve provider preference, explicit model selection and explicit command/HTTP overrides; do not silently route to another provider or label failed output successful.
+
+The regression first failed at the legacy runner boundary. Real subprocess fixtures cover generation plus validation, revision reuse, timeout cleanup and last-good preservation. A synthetic 45 KB prompt returned a structured summary through the isolated Claude runner in 29.44 seconds; this is not proof that product's real checkpoint succeeds. Real-history verification and release are still required. Tests must stub the legacy runner too when reproducing dispatch failures so the failing version cannot invoke a real installed provider.
+
 ## 2026-10-08 — A valid handoff can exceed the terminal launch transport
 
 A harness switch stopped the old agent, then tmux rejected the new launch with "command too long". The complete handoff was nested inside a quoted shell command passed through tmux IPC; the brief's own size budget did not account for that transport limit. Pass a short path to a private, one-use launch script instead. The child removes the script before running the command; failed spawn, capture attachment and startup release also remove it. Preserve the output-capture-before-execution barrier and the full prompt.

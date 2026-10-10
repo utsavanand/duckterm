@@ -13,6 +13,7 @@ an agent installed — they don't have to set an env var. The mechanical fallbac
 still works with zero configuration and zero API key.
 """
 
+import asyncio
 import json
 import os
 import shutil
@@ -58,8 +59,9 @@ def summarize(prompt: str, *, claude_model: str | None = None) -> Summary:
         return Summary(text="", backend="none", failure_reason="disabled")
     auto = _auto_command()
     if auto:
-        if claude_model and auto.startswith("claude "):
-            auto += f" --model {claude_model}"
+        if auto in {"claude -p", "codex exec -"}:
+            harness = "claude-code" if auto.startswith("claude ") else "codex"
+            return _isolated_summary(harness, claude_model or "", prompt)
         return _cli_summary(auto, prompt)
     return Summary(text="", backend="none", failure_reason="no_provider")
 
@@ -70,6 +72,24 @@ def _auto_command() -> str | None:
         if shutil.which(binary):
             return command
     return None
+
+
+def _isolated_summary(harness: str, model: str, prompt: str) -> Summary:
+    # Reuse the bounded memory runner: no project instructions, agent tools,
+    # session enrollment, or shell child left behind when the call times out.
+    # Provider preference and the selected/default model stay unchanged.
+    from duckterm import memory_provider
+    from duckterm.core.session_api import APIError
+
+    try:
+        text = asyncio.run(
+            memory_provider.generate(harness, model if harness == "claude-code" else "", prompt)
+        )
+    except memory_provider.BatchTimeout:
+        return Summary(text="", backend="none", failure_reason="provider_timeout")
+    except APIError:
+        return Summary(text="", backend="none", failure_reason="provider_failed")
+    return Summary(text=text.strip(), backend="cli")
 
 
 def _cli_summary(cmd: str, prompt: str) -> Summary:
