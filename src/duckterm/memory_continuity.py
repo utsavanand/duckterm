@@ -64,7 +64,7 @@ async def capture(server: Any, key: str, captured: dict[str, Any]) -> dict[str, 
     original = [s for s in now["sources"] if s["kind"] in memory_handoff.ORIGINAL_KINDS]
     if fingerprint(original) != fingerprint(catalog["sources"]):
         raise APIError(409, "Memory records changed during capture")
-    stamp = fingerprint([[s["id"], s["version"]] for s in sources] + gaps)
+    stamp = fingerprint([[s["id"], s["version"], s.get("normalization")] for s in sources] + gaps)
     return {
         **captured,
         "source": {**captured["source"], "memory_hash": stamp},

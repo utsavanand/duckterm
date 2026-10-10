@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-10 — A native message's transport role is not always its author
+
+Claude stores tool results inside user-role records, including records that mix owner text and tool output. Flattening the blocks and copying that role made handoffs attribute command output to the owner; Codex outputs similarly inherited an assistant role. Normalize ordered blocks by provenance for memory only: tool outputs keep a tool role and mixed records have exact group locators. Keep native snapshot bytes/checksums unchanged and let old whole-line reads return the typed groups. Salt the existing disposable search cache and maintained-summary input with the reader version; otherwise a correct reader can still return old flattened search results or reuse a summary with wrong attribution. Verify search, reads, retained snapshots, handoff context and summary invalidation with synthetic native records and no live model calls.
+
 ## 2026-10-10 — A successful summary sample does not cover malformed next drafts
 
 Product's next manual checkpoint failed with invalid_context after the timeout/citation fix was installed. The saved failure did not identify the rejected field, and a read-only rerun passed; neither result proves which field failed in the owner's attempt. The maintained pipeline had another concrete gap: unlike older preparation, it abandoned the first malformed draft. One successful provider response was not sufficient reliability evidence.
