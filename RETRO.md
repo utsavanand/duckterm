@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-09 — A changed working directory must not hide an exact conversation
+
+A stopped Claude session kept its recorded conversation ID but its current cwd moved into a child folder. The transcript remained under the original project slug, so DuckTerm incorrectly reported it unavailable. Keep the current-project lookup, then search a bounded set of project directories for the exact recorded filename. Reject duplicates, symlinks, mismatched metadata, metadata-only files and incomplete scans. Require real message evidence in the existing bounded metadata windows. Known-identity recovery can cross directories; the owner-adoption picker stays project-scoped.
+
+Claude Code 2.1.223 and later already supports cross-project resume by exact ID; preserve the current directory, card and ID. The new regression also exposed a check-to-command gap: if exact identity is lost while building Resume's command, fail instead of silently starting a fresh conversation. Tests cover directory drift, retrieval, readiness, launch arguments, duplicate identities, malformed metadata, scan bounds and that race. Read-only verification found the owner's intact transcript without modifying or resuming it. Native launch is not an atomic filesystem operation, and these checks do not claim otherwise.
+
 ## 2026-10-08 — A valid handoff can exceed the terminal launch transport
 
 A harness switch stopped the old agent, then tmux rejected the new launch with "command too long". The complete handoff was nested inside a quoted shell command passed through tmux IPC; the brief's own size budget did not account for that transport limit. Pass a short path to a private, one-use launch script instead. The child removes the script before running the command; failed spawn, capture attachment and startup release also remove it. Preserve the output-capture-before-execution barrier and the full prompt.
