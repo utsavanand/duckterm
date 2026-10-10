@@ -332,6 +332,21 @@ result after focus changes. Verify collapse/reopen against a real shell: close
 the viewer without ending its process, and bind destructive confirmation to the
 backend's observed process token rather than a cached busy label.
 
+## 2026-10-04 — A Codex session's own words kept it "busy" for two hours
+**Broke:** ui-dev sat at an empty Codex prompt from 20:15 while DuckTerm showed
+it busy, so Oracle's idle reminder never fired and its inbox waited about two
+hours (reported by product).
+**Cause:** the hook's Stop set it idle, but at 20:39 a screen repaint
+re-entered the screen watcher. That watcher matched "running" and "would you
+like to" anywhere on screen, including the conversation, and published
+waiting and then busy (events with launched: true).
+**Rule:** screen evidence must match the agent's live UI line shapes (status
+line with its timer, the real approval prompt), never free words that prose
+can contain. Every new pattern gets a test with realistic conversation text
+on screen.
+
+Also (main-qa, PR #232): Tightening screen-state keywords is incomplete if an alternative still matches prose. Pair incident tests with explanations quoting interruption and approval UI text, plus live controls, so documentation on screen cannot become a busy/waiting event.
+
 ## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
 
 Shell browser checks passed but the runner failed probing the departed process

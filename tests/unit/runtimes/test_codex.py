@@ -5,8 +5,8 @@ from duckterm.runtimes.codex import CodexRuntime
 
 def test_detect_state_from_output_markers() -> None:
     rt = CodexRuntime()
-    assert rt.detect_state("Working on it...") == "busy"
-    assert rt.detect_state("applying patch to foo.py") == "busy"
+    assert rt.detect_state("• Working (12s • esc to interrupt)") == "busy"
+    assert rt.detect_state("Applying patch (3s)") == "busy"
     assert rt.detect_state("Allow this command? (y/n)") == "waiting"
     # Unrecognized output does not prove the turn ended.
     assert rt.detect_state("done.\n$ ") is None
@@ -195,3 +195,35 @@ def test_detect_state_ignores_code_text_and_reads_review_as_busy() -> None:
     assert r.detect_state("if approved_by_reviewer(x):") is None
     # real prompts still read as waiting.
     assert r.detect_state("Do you want to proceed?") == "waiting"
+
+
+def test_conversation_prose_on_a_repaint_is_not_state() -> None:
+    """2026-10-04: a repaint of ui-dev's idle screen carried its conversation,
+    and words in it ("running", "would you like to") flipped a hook-stopped
+    session to waiting, then busy, for two hours, so Oracle never nudged it."""
+    idle_repaint = "\n".join(
+        [
+            "• I'm running the full gate now and reviewing the timeline preview.",
+            "• Would you like to see the waving duck variant next?",
+            "  Worked for 2m 28s · done 8:15 PM",
+            "› Ask Codex to do anything",
+            "  gpt-6-astra high · ~/worktrees/duckterm/4491fa9b",
+        ]
+    )
+    with_status = idle_repaint.replace(
+        "  Worked for 2m 28s", "• Working (3s • esc to interrupt)\n  Worked for 2m 28s"
+    )
+    rt = CodexRuntime()
+    assert [rt.detect_state(idle_repaint), rt.detect_state(with_status)] == [None, "busy"]
+
+
+def test_state_marker_explanations_are_not_live_screen_controls() -> None:
+    runtime = CodexRuntime()
+    prose = [
+        "• The status line says esc to interrupt while a command runs.",
+        "• The approval dialog asks Would you like to run the following command?",
+    ]
+    screens = [line + "\n› Ask Codex to do anything" for line in prose]
+    assert [runtime.detect_state(screen) for screen in screens] == [None, None]
+    assert runtime.detect_state("• Searching the web (12s • esc to interrupt)") == "busy"
+    assert runtime.detect_state("Would you like to make the following edits?") == "waiting"
