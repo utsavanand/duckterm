@@ -137,6 +137,11 @@ Test the outcome through an actual checkpoint with more than 5,000 originals and
 ## Checkpoint progress must outlive its menu (2026-10-10)
 
 Checkpoint requests previously kept their busy state inside the context menu, so closing it hid a potentially long summary update. Keep the request and its result outside the mounted menu, keyed by the full host-qualified session reference. Show immediate indeterminate progress and elapsed time in the Session panel; suppress duplicate requests across entry points. A lost connection cannot prove a save failed: report an unconfirmed result and retain the previous summary. Verify menu dismissal, session/host changes, late responses and real returned outcomes.
+## 2026-10-10 — A readable Memory view must use the same evidence checks as agent tools
+
+Session memory existed as saved revisions and linked originals, but the owner could not inspect it in the dashboard. Expose a read-only view of those same records rather than creating another summary store or generating a summary when the panel opens. Keep processed-history counts at save time distinct from source availability now and from the amount of knowledge a summary preserves. Show the last checkpoint outcome separately so a failed update does not hide the previous good revision.
+
+Use the existing memory projection and exact-version reader for evidence. Returning raw revision JSON would bypass the removal and sharing-scope checks that withhold inaccessible claims; the dashboard must not leak those claims from a convenient cached summary. Regression checks cover owner authentication, session isolation, original paging and relationships, historical revisions, partial coverage, failed updates, revoked evidence and a sharing-scope change during projection. Visible UI remains separately preview-reviewed.
 
 ## 2026-10-10 — A native message's transport role is not always its author
 

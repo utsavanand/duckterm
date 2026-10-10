@@ -19,10 +19,16 @@ from duckterm import (
     memory_records,
     memory_sources,
     memory_versions,
+    memory_view,
 )
 from duckterm.core.saved_progress import file_version, required_context
 from duckterm.core.session_api import APIError
-from duckterm.persistence.saved_state import fingerprint, is_status_observation, transaction
+from duckterm.persistence.saved_state import (
+    current_revision,
+    fingerprint,
+    is_status_observation,
+    transaction,
+)
 
 if TYPE_CHECKING:
     from duckterm.server import Server
@@ -208,7 +214,15 @@ class Memory:
             "retained": retained_sources,
             "text_retained": text_retained,
             "lifecycle": [r for r in canonical["links"] if r.get("lifecycle_version") == 1],
-            **({"canonical": canonical, "retrieval": True} if retrieval else {}),
+            **(
+                {
+                    "canonical": canonical,
+                    "retrieval": True,
+                    "current_revision": current_revision(row),
+                }
+                if retrieval
+                else {}
+            ),
         }
 
     async def retain_current(self, key: str, captured: dict[str, Any]) -> dict[str, Any] | None:
@@ -318,6 +332,7 @@ class Memory:
 
     async def operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:
         allowed = {
+            "view": {"revision"},
             "sources": set(),
             "search": {"q", "limit"},
             "read": {"source", "record", "offset", "limit"},
@@ -356,7 +371,13 @@ class Memory:
                 ),
             }
             result: dict[str, Any] = {"coverage": coverage}
-            if action == "sources":
+            if action == "view":
+                result.update(
+                    await asyncio.to_thread(
+                        memory_view.project, catalog, sources, query.get("revision", [None])[0]
+                    )
+                )
+            elif action == "sources":
                 result["sources"] = [
                     {
                         k: s[k]

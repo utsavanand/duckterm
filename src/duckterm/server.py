@@ -609,6 +609,22 @@ class Server:
             return
 
         memory_url = urllib.parse.urlsplit(path)
+        memory_view_route = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/memory(?:/(read|related))?", memory_url.path
+        )
+        if memory_view_route:
+            from duckterm.memory_view_http import handle as memory_view_handle
+
+            await memory_view_handle(
+                self,
+                writer,
+                headers,
+                memory_view_route[1],
+                memory_view_route[2],
+                method,
+                urllib.parse.parse_qs(memory_url.query, keep_blank_values=True),
+            )
+            return
         memory_route = re.fullmatch(
             r"/sessions/([A-Za-z0-9._-]{1,128})/restart-preparation(?:/([a-f0-9]{32}))?",
             memory_url.path,
