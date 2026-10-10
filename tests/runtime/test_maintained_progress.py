@@ -64,7 +64,10 @@ def test_new_revision_processes_only_new_records_and_checkpoint_reuses(memory_ri
         second = await server.progress_coordinator.refresh("agent")
         assert second["id"] != first["id"]
         data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
-        assert [r["text"] for r in data["records"]] == ["New owner constraint"]
+        assert [r["text"] for r in data["records"] if r["update_kind"] != "work_record"] == [
+            "New owner constraint"
+        ]
+        assert any(r["update_kind"] == "work_record" for r in data["records"])
         assert data["prior_context"]
         cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
         assert cp["record"]["summary_ref"] == second["id"]
@@ -300,5 +303,23 @@ def test_manual_checkpoint_shares_automatic_failure_without_a_second_attempt(
         assert outcome.state == cp["summary_update"]["state"] == "failed"
         assert outcome.reason == cp["summary_update"]["reason"] == "provider_timeout"
         assert cp["record"]["summary_ref"] is None
+
+    asyncio.run(run())
+
+
+def test_oversized_current_work_preserves_revision_without_provider_call(memory_rig, monkeypatch):
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Keep the current owner constraint")
+    calls = provider(monkeypatch)
+
+    async def run():
+        first = await server.progress_coordinator.refresh("agent")
+        cached = server.history.session("agent")["progress"]
+        server.history.set_meta("agent", notes="🔒" * 6500)
+        outcome = await server.progress_coordinator.refresh_result("agent")
+        assert outcome.state == "failed" and outcome.reason == "invalid_context"
+        assert len(calls) == 2
+        assert server.history.session("agent")["progress"] == cached
+        assert server.digests.revision("agent", first["id"])["continuity"] == first["continuity"]
 
     asyncio.run(run())
