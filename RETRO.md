@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## Checkpoint progress must outlive its menu (2026-10-10)
+
+Checkpoint requests previously kept their busy state inside the context menu, so closing it hid a potentially long summary update. Keep the request and its result outside the mounted menu, keyed by the full host-qualified session reference. Show immediate indeterminate progress and elapsed time in the Session panel; suppress duplicate requests across entry points. A lost connection cannot prove a save failed: report an unconfirmed result and retain the previous summary. Verify menu dismissal, session/host changes, late responses and real returned outcomes.
+
 ## 2026-10-10 — A native message's transport role is not always its author
 
 Claude stores tool results inside user-role records, including records that mix owner text and tool output. Flattening the blocks and copying that role made handoffs attribute command output to the owner; Codex outputs similarly inherited an assistant role. Normalize ordered blocks by provenance for memory only: tool outputs keep a tool role and mixed records have exact group locators. Keep native snapshot bytes/checksums unchanged and let old whole-line reads return the typed groups. Salt the existing disposable search cache and maintained-summary input with the reader version; otherwise a correct reader can still return old flattened search results or reuse a summary with wrong attribution. Verify search, reads, retained snapshots, handoff context and summary invalidation with synthetic native records and no live model calls.

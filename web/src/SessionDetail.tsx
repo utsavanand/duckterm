@@ -1,3 +1,5 @@
+import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
+import { checkpointNotice } from "./checkpointState";
 import { CheckpointDetails } from "./CheckpointStatus";
 import { routedFetch as fetch } from "./hostTransport";
 import { useCallback, useEffect, useState } from "react";
@@ -20,7 +22,7 @@ export function SessionDetail({
   const [events, setEvents] = useState<RawEvent[]>([]);
   const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([]);
   const [diff, setDiff] = useState<string>("");
-  const [capturing, setCapturing] = useState(false);
+  const capturing = useCheckpointAttempt(session.key)?.state === "running";
 
   // Esc closes the panel.
   useEffect(() => {
@@ -59,15 +61,12 @@ export function SessionDetail({
     if (capturing) return;
     // Capturing runs a summarizer agent (claude -p / codex / copilot), which
     // takes a few seconds — show a loader so the click doesn't feel dead.
-    setCapturing(true);
     try {
-      await api.checkpoint(session.key, "manual");
-      toast("Checkpoint recorded");
+      const cp = await requestCheckpoint(session.key);
+      toast(checkpointNotice(cp), cp.summary_update?.state === "failed" || cp.saved === false ? "err" : "ok");
       loadCheckpoints();
-    } catch (e) {
-      toast((e as Error).message, "err");
-    } finally {
-      setCapturing(false);
+    } catch {
+      toast("Checkpoint result not confirmed. Check the latest checkpoint before trying again.", "err");
     }
   }
 

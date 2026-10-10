@@ -13,6 +13,7 @@ import { FolderView } from "./FolderView";
 import { api } from "./api";
 import { desktop, openNativeBugReport } from "./desktop";
 import { Connectors } from "./Connectors";
+import { CheckpointProgress } from "./CheckpointProgress";
 import { ContextViews } from "./ContextViews";
 import { Analytics } from "./Analytics";
 import { AnalyticsTab } from "./analyticsData";
@@ -101,6 +102,16 @@ function Dashboard() {
     window.addEventListener("select-host-session", select);
     return () => { window.removeEventListener("select-host-session", select); window.removeEventListener("native-select-session", selectNative); };
   }, [setSelectedKey]);
+  const showPanel = sidePanels.show;
+  useEffect(() => {
+    const show = (event: Event) => {
+      setSelectedKey((event as CustomEvent<string>).detail);
+      setTowerOpen(false);
+      showPanel("right");
+    };
+    window.addEventListener("duckterm-checkpoint-started", show);
+    return () => window.removeEventListener("duckterm-checkpoint-started", show);
+  }, [setSelectedKey, showPanel]);
   const messagePins = useMessagePins(selectedKey);
   const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
   const pinSequence = useRef(0);
@@ -517,6 +528,7 @@ function Dashboard() {
             <ContextViews session={<>
               {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}
                 notesOpen={notesKey === selected.key} onCloseNotes={() => setNotesKey(null)} />}
+              {selected && <CheckpointProgress sessionKey={selected.key} />}
               {selected && <LiveContextPanel session={selected} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
