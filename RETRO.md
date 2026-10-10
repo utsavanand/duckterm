@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## File browsing must preserve session origin and snapshot identity (2026-10-10)
+
+A file explorer cannot infer locality from a session key after host routing has stripped its origin. Reject remote keys and remote host identities before issuing any filesystem request. Keep registered snapshots separate from current bytes, and do not turn an outside-root source into a claim that the file is missing. Empty post-ignore pages may still have cursors; stale cursors must discard their old listing. Tests now exercise these boundaries, cancellation on root/session switches, and preserved expanded previews alongside actual filesystem browsing.
+
 ## 2026-10-10 — Reserved paths need the filesystem's case aliases covered
 
 On the default Mac filesystem, `.GIT/config` can open `.git/config`. Excluding only the exact lowercase spelling therefore left Git internals browseable. Reject `.git` case-insensitively in requests, directory entries and saved-source existence checks. Verify both direct and nested aliases, and retain separately registered snapshot access without claiming the excluded original is a browseable file.
