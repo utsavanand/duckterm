@@ -58,6 +58,7 @@ def test_relocated_duplicate_is_ambiguous(relocated):
     duplicate.parent.mkdir()
     duplicate.write_bytes(path.read_bytes())
     assert ClaudeCodeRuntime().locate_transcript(cwd=current, session_id="recorded") is None
+    assert ClaudeCodeRuntime().messages(cwd=current, session_id="recorded") == []
 
 
 @pytest.mark.parametrize("mutation", ["wrong-id", "missing-id", "wrong-project", "symlink"])
@@ -78,12 +79,14 @@ def test_relocated_file_requires_matching_metadata(relocated, mutation):
     else:
         path.write_text("\n".join(json.dumps(row) for row in rows))
     assert ClaudeCodeRuntime().locate_transcript(cwd=current, session_id="recorded") is None
+    assert ClaudeCodeRuntime().messages(cwd=current, session_id="recorded") == []
 
 
 @pytest.mark.parametrize("identity", ["../recorded", "*", "", "/tmp/recorded"])
 def test_relocated_identity_is_never_a_path_or_glob(relocated, identity):
     _, current, _ = relocated
     assert ClaudeCodeRuntime().locate_transcript(cwd=current, session_id=identity) is None
+    assert ClaudeCodeRuntime().messages(cwd=current, session_id=identity) == []
 
 
 def test_incomplete_project_scan_cannot_prove_uniqueness(relocated, monkeypatch):
@@ -91,6 +94,7 @@ def test_incomplete_project_scan_cannot_prove_uniqueness(relocated, monkeypatch)
     (path.parent.parent / "unexamined").mkdir()
     monkeypatch.setattr("duckterm.runtimes.claude_code.MAX_PROJECT_DIRECTORIES", 1)
     assert ClaudeCodeRuntime().locate_transcript(cwd=current, session_id="recorded") is None
+    assert ClaudeCodeRuntime().messages(cwd=current, session_id="recorded") == []
 
 
 def test_current_project_match_keeps_native_lookup_precedence(relocated):
@@ -105,6 +109,7 @@ def test_metadata_without_messages_is_not_resumable(relocated):
     original, current, path = relocated
     path.write_text(json.dumps({"sessionId": "recorded", "cwd": str(original)}))
     assert ClaudeCodeRuntime().locate_transcript(cwd=current, session_id="recorded") is None
+    assert ClaudeCodeRuntime().messages(cwd=current, session_id="recorded") == []
 
 
 def test_tool_content_is_a_message_without_a_user_text_prompt(relocated):
@@ -130,3 +135,4 @@ def test_empty_duplicate_still_blocks_cross_project_lookup(relocated):
     duplicate.parent.mkdir()
     duplicate.touch()
     assert ClaudeCodeRuntime().locate_transcript(cwd=current, session_id="recorded") is None
+    assert ClaudeCodeRuntime().messages(cwd=current, session_id="recorded") == []
