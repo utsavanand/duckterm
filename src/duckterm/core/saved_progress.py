@@ -305,9 +305,15 @@ class ProgressCoordinator:
         bounded_required = (
             required[:MAX_REQUIRED_CHARS].encode()[:MAX_REQUIRED_BYTES].decode(errors="ignore")
         )
-        maintained = (
-            memory_continuity.plan(captured, prior) if "memory_sources" in captured else None
-        )
+        if "memory_sources" in captured and too_large:
+            # Current work must remain intact and parseable, never truncated JSON.
+            return SummaryUpdate.failed("invalid_context")
+        try:
+            maintained = (
+                memory_continuity.plan(captured, prior) if "memory_sources" in captured else None
+            )
+        except (ValueError, APIError):
+            return SummaryUpdate.failed("invalid_context")
         if maintained is not None and not maintained["selected"] and maintained["prior_context"]:
             # Nothing eligible fits this bounded update. Keep explicit gaps and
             # avoid paying to restate the same summary on every eligible turn.
