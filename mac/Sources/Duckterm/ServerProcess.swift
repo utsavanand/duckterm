@@ -7,31 +7,28 @@ final class ServerProcess {
     let url = URL(string: "http://127.0.0.1:\(AppIdentity.localPort)")!
     private var task: Process?
 
-    /// Locate the `duckterm` executable. We can't rely on a GUI app inheriting
-    /// the user's shell PATH, so check the usual install locations explicitly.
-    private func findBinary() -> String? {
+    /// Resolve the CLI with the same PATH its child tools will inherit.
+    private func findBinary(environment: [String: String]) -> String? {
         if AppIdentity.isTest {
             guard let python = Bundle.main.object(forInfoDictionaryKey: "DucktermTestPython") as? String,
                   FileManager.default.isExecutableFile(atPath: python) else { return nil }
             return python
         }
-        let candidates = [
-            "/opt/homebrew/bin/duckterm",
-            "/usr/local/bin/duckterm",
-            "\(NSHomeDirectory())/.local/bin/duckterm",
-            // Dev checkout: the venv the dashboard is developed against.
-            "\(NSHomeDirectory())/workspace-2026/duckterm/.venv/bin/duckterm",
-        ]
-        for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
-            return path
+        if let binary = ServerEnvironment.executable(named: "duckterm", environment: environment) {
+            return binary
+        }
+        let developmentBinary = "\(NSHomeDirectory())/workspace-2026/duckterm/.venv/bin/duckterm"
+        if FileManager.default.isExecutableFile(atPath: developmentBinary) {
+            return developmentBinary
         }
         // Fall back to `which` via a login shell, which sources the user's PATH.
         let probe = Process()
         probe.executableURL = URL(fileURLWithPath: "/bin/zsh")
         probe.arguments = ["-lc", "command -v duckterm"]
+        probe.environment = environment
         let pipe = Pipe()
         probe.standardOutput = pipe
-        try? probe.run()
+        do { try probe.run() } catch { return nil }
         probe.waitUntilExit()
         let out = String(
             data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8
@@ -49,7 +46,8 @@ final class ServerProcess {
             AppDiagnostics.shared.record("Connected to existing local server")
             return true
         }
-        guard let bin = findBinary() else {
+        var env = ServerEnvironment.make(inheriting: ProcessInfo.processInfo.environment)
+        guard let bin = findBinary(environment: env) else {
             AppDiagnostics.shared.record("Server CLI not found")
             return false
         }
@@ -58,7 +56,6 @@ final class ServerProcess {
         proc.arguments = AppIdentity.isTest ? ["-m", "duckterm.cli", "serve"] : ["serve"]
         // The app IS the dashboard window — without this, serve would also
         // open the default browser on the same URL.
-        var env = ProcessInfo.processInfo.environment
         if AppIdentity.isTest {
             for key in ["DUCKTERM_HOME", "DUCKTERM_TMUX_SOCKET", "DUCKTERM_URL", "DUCKTERM_PORT", "DUCKTERM_HOSTED"] {
                 env.removeValue(forKey: key)

@@ -10,9 +10,18 @@ Follow the [README quick start](../README.md#install) for the current release
 wheel and Mac app download. Install with pipx to keep DuckTerm isolated from
 other Python packages. The command is `duckterm`; the product is DuckTerm.
 
-`duckterm serve` runs in the foreground and opens http://127.0.0.1:4300.
-Keep its terminal open while using the browser. The optional Mac app can start
-the server for you and reuses an existing server if one is running.
+Open **DuckTerm.app** to start the local server and dashboard automatically.
+The app finds tools installed in the standard Homebrew and `~/.local/bin`
+directories and reuses an existing server if one is running. No Terminal
+command is needed when using the app.
+
+For browser-only use, `duckterm serve` runs in the foreground and opens
+http://127.0.0.1:4300. Keep its terminal open while using the browser.
+
+Opening the app reconnects terminals that are still running. After a Mac
+reboot, saved sessions whose terminals ended remain **Interrupted** until you
+right-click a session and choose **Resume**. Opening DuckTerm does not restart
+those agents automatically.
 
 Install and sign in to your chosen agent separately:
 

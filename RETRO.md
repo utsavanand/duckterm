@@ -1,5 +1,16 @@
 # Retro — lessons from real breakage
 
+## 2026-10-09 — Finding the server executable does not equip its subprocesses
+
+After a Mac reboot, DuckTerm launched its CLI by absolute path but passed the
+Dock's system-only PATH to the backend. Homebrew's tmux could not be found, so
+startup skipped reconciliation and dead terminals kept stale busy/idle states.
+Build one environment for both CLI discovery and server launch, preserving
+custom PATH priority and adding standard Homebrew and user-tool directories.
+Test discovery and a spawned child tool with the minimal macOS GUI PATH, then
+verify a normal app launch with no pre-existing server; a healthy server started
+from Terminal hides this defect.
+
 ## 2026-10-08 — A valid handoff can exceed the terminal launch transport
 
 A harness switch stopped the old agent, then tmux rejected the new launch with "command too long". The complete handoff was nested inside a quoted shell command passed through tmux IPC; the brief's own size budget did not account for that transport limit. Pass a short path to a private, one-use launch script instead. The child removes the script before running the command; failed spawn, capture attachment and startup release also remove it. Preserve the output-capture-before-execution barrier and the full prompt.
