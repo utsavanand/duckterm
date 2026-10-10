@@ -63,7 +63,10 @@ def transcript_present(runtime: str, cwd: str, native_id: str) -> bool:
     rt = runtime_for(runtime, {"claude-code": "claude", "codex": "codex"}.get(runtime, "true"))
     path = rt.locate_transcript(cwd=Path(cwd), session_id=native_id)
     return bool(
-        path and conversation_files.excerpts(path, runtime, str(Path(cwd).resolve()), False)
+        path
+        and conversation_files.excerpts(
+            path, runtime, str(Path(cwd).resolve()), False, expected_native_id=native_id
+        )
     )
 
 

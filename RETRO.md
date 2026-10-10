@@ -11,6 +11,12 @@ Test discovery and a spawned child tool with the minimal macOS GUI PATH, then
 verify a normal app launch with no pre-existing server; a healthy server started
 from Terminal hides this defect.
 
+## 2026-10-09 — A changed working directory must not hide an exact conversation
+
+A stopped Claude session kept its recorded conversation ID but its current cwd moved into a child folder. The transcript remained under the original project slug, so DuckTerm incorrectly reported it unavailable. Keep the current-project lookup, then search a bounded set of project directories for the exact recorded filename. Reject duplicates, symlinks, mismatched metadata, metadata-only files and incomplete scans. Require real message evidence in the existing bounded metadata windows. Known-identity recovery can cross directories; the owner-adoption picker stays project-scoped.
+
+Claude Code 2.1.223 and later already supports cross-project resume by exact ID; preserve the current directory, card and ID. The new regression also exposed a check-to-command gap: if exact identity is lost while building Resume's command, fail instead of silently starting a fresh conversation. Tests cover directory drift, retrieval, readiness, launch arguments, duplicate identities, malformed metadata, scan bounds and that race. Read-only verification found the owner's intact transcript without modifying or resuming it. Native launch is not an atomic filesystem operation, and these checks do not claim otherwise.
+
 ## 2026-10-08 — A valid handoff can exceed the terminal launch transport
 
 A harness switch stopped the old agent, then tmux rejected the new launch with "command too long". The complete handoff was nested inside a quoted shell command passed through tmux IPC; the brief's own size budget did not account for that transport limit. Pass a short path to a private, one-use launch script instead. The child removes the script before running the command; failed spawn, capture attachment and startup release also remove it. Preserve the output-capture-before-execution barrier and the full prompt.
@@ -33,7 +39,6 @@ Validation: focused component and browser checks cover discovery, unchanged-harn
 
 The centered 680px Messages container applied the paragraph measure to tables and code too, wasting a wide terminal pane and forcing table cells into narrow columns. Let the Messages surface fill its pane, limit prose separately, and contain horizontal table scrolling within a keyboard-focusable region. Give the transcript its own vertical scroll so turn navigation and follow-up stay reachable. Verify pins, annotation selection, clipboard contents, theme changes and the open context panel in the actual dashboard.
 
-
 ## 2026-10-07 — Saving a checkpoint record does not mean its summary update succeeded
 
 Startup's Timeline showed a saved checkpoint with no summary and generic Unavailable/Not ready labels. History was already recorded automatically; the owner's manual action was intended to update the shared summary. Return an explicit updated, reused, partial or failed outcome from the same coalesced summary job and retain its fixed failure category on the existing marker. Keep the last good summary and its original age when a candidate fails. Never infer an old failure's cause or turn a prepared-switch record into current permission to stop an agent.
@@ -48,7 +53,6 @@ The installed memory smoke test found an 8.8 MB Codex compaction record that exc
 
 A scale check with 4,000 conversation records and ten saved revisions exposed duplicate hashing in relationship reads. Hash only records that a revision actually processed, once per exact source version within the request. This keeps checksum and changed-record behavior intact while reducing the measured graph read from 1.64 to 0.55 seconds on the synthetic fixture. The regression verifies multiple revisions and a corrected original; the full retrieval path still rechecks access and canonical references.
 
-
 ## 2026-10-07 — Readiness is retrieval safety, not complete summarization
 
 Problem: the switch UI still required a whole-history summary revision even after preparation moved to maintained memory and bounded recent originals. A valid no-summary packet could therefore remain unusable, and source counts implied more summary coverage than existed.
@@ -56,8 +60,6 @@ Problem: the switch UI still required a whole-history summary revision even afte
 Fix: validate the maintained response separately, including exact retrieval/retention, summary identity and record accounting. Show the owner-approved saved-summary, included-record and searchable-history wording in the existing Restart layout; keep draft, expiry and explicit-switch guards.
 
 Validation: 90 focused transport/controller/component checks, including real-decoder component cases for absent summaries, incomplete retrieval, stale sources and duplicate clicks; browser coverage checks the maintained counts and existing controls. Full combined release gate remains required.
-
-
 
 ## 2026-10-07 — Graph citations must resolve exact, still-authorized records
 
@@ -67,7 +69,6 @@ Fix: retain only canonically referenced versions, index source/version pairs, an
 
 Validation: isolated tests cover source replacement, deletion, orphan references, corrupt snapshots, credential/scope changes during writes, claim supersession, pagination invalidation, retry idempotency and CLI JSON transport. No existing session was switched.
 
-
 ## 2026-10-07 — Backfill arrival order is not conversation chronology
 
 Problem: a bounded summary update may process a recent correction first and older history later. Without input provenance, the later update can mistake the older direction for new owner guidance. An onboarding packet also needs the named session, project and chosen harness, not just an opaque session key.
@@ -75,7 +76,6 @@ Problem: a bounded summary update may process a recent correction first and olde
 Fix: record observed source frontiers and label historical backfill versus newly appended records. Include that provenance in generation and validation input. Supply the exact session/directory/target envelope in the bounded handoff. These are evidence and context, not additional owner authority.
 
 Validation: regressions exercise an older direction, a later correction and a newly appended owner message across two updates, plus named-session onboarding with an explicit target. No live session was switched.
-
 
 ## 2026-10-07 — Harness switching cannot depend on a whole-history model pass
 
@@ -94,7 +94,6 @@ append notes again. Recheck membership and worktree evidence after asynchronous
 Git reads. Send code as a request to integrate exact reviewed commits, with a
 recipient reply; neither delivery nor acknowledgement proves a successful Git
 merge. Keep native route permissions narrow and include their transport tests.
-
 
 ## 2026-10-07 — File metadata is a recheck signal, not changed conversation content
 
@@ -153,7 +152,6 @@ moves need the same catalog as the sidebar, including empty and remote folders;
 show an error before changing local grouping if persistence fails. Keep forks
 with their parent and verify that the chosen destination survives reload.
 
-
 ## 2026-10-07 — Session menus must stay tied to the clicked row
 
 Moving session actions out of the detail panel requires an explicit target key;
@@ -175,6 +173,7 @@ request for row activation; opening or dismissing its menu must not send one.
 When relocating actions, compare every eligibility and click-time guard with
 the original handler. Local continuation must remain blocked across menu reopen
 while conversation Undo is unresolved, before it can change the transfer state.
+
 ## 2026-10-07 — Preparing a handoff must not confirm a switch
 
 Bind preparation to the session, source generation, target harness and exact model choice. Source changes invalidate readiness, closing a dialog releases only its own preparation lease, and only the explicit Switch action may stop the current harness. A lost switch response requires checking its durable receipt; an explicit retry must reuse the same immutable request and idempotency key. Test these boundaries separately from same-harness restart, and keep ordinary conversation turns out of Timeline milestones while retaining checkpoint evidence.
@@ -203,7 +202,6 @@ A current peer grant does not restore access to messages sent in a previous coll
 
 The context panel treated any checkpoint less than thirty minutes old as resumable and substituted the click time for the saved record. Render the backend’s saved, summary-source and historical handoff fields independently; missing or legacy fields must remain unverified. Keep original history readable and guard asynchronous results across session/filter changes. Timeline pagination must stay within one source snapshot, and polling must pause for hidden views. Preserve every existing right-panel action when implementing an abbreviated mock.
 
-
 ## 2026-10-07 — Every awaited check can invalidate the previous check
 
 A handoff was validated before the final awaited terminal prompt probe. QA changed the transcript or summarizer configuration during that probe and reproduced an unsafe stop. Revalidate source bytes after the first probe, check the draft again, then compare current database facts, provider policy and the captured file's device/inode/size/mtime/ctime without another await before beginning stop. Keep expensive transcript reads off the event loop. Test both sides: source changes during either prompt probe and new owner input during the added source read must preserve the original process.
@@ -223,7 +221,6 @@ Moving the Focus pin into the context header made a sidebar operation depend on 
 ## 2026-10-06 — Switch coverage must cross the changed lifecycle boundary
 
 The interruption checks mocked launch, while the real terminal switch still supplied a Stop hook. Added an explicit no-Stop case to the isolated tmux test, retained default quota/no-Stop guards, and checked both-direction task/inbox/artifact and membership preservation after reopening SQLite. Separate checkpoint failure, archive and transfer races assert that the source is never stopped. Compare durable work fields, not intentionally rotating per-process credentials. Focused checks passed; synthetic terminals and test records are cleaned up. These checks do not establish installed-provider, native WebKit or SSH behavior.
-
 
 ## 2026-10-06 — Immediate switching needs explicit intent and honest progress
 
@@ -326,7 +323,6 @@ readiness checks to removable diagnostics, exporting only ID presence and file
 existence. Keep SQLite on its owner thread and filesystem work off the loop.
 Do not export conversation IDs, transcript contents, credentials or arbitrary
 paths, and do not mistake hook configuration for successful event delivery.
-
 
 ## 2026-10-06 — Identical timestamps can hide changed transcript bytes
 

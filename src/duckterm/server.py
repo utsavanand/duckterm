@@ -2416,6 +2416,11 @@ class Server:
                     "code": "ambiguous_resume_identity",
                 }
         argv, carried = self._resume_argv(session_key, runtime, row)
+        if (exact or runtime == "claude-code") and not carried:
+            return 409, {
+                "error": "Cannot verify the exact conversation to restart",
+                "code": "ambiguous_resume_identity",
+            }
         # Report honestly whether the conversation is carried, so the UI can
         # warn — before this, resume always claimed success even when it
         # silently dropped all prior context. When it can't be carried, a
