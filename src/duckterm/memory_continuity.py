@@ -171,8 +171,8 @@ def prompt(plan: dict[str, Any], required: str) -> str:
         "Do not repeat a fact across fields. Use at most 20 claims TOTAL across all six "
         "arrays, combining related facts and keeping only the supporting refs needed. "
         "Keep claims concise. Aim for 6000 UTF-8 bytes "
-        "including references; context must fit 10000 bytes. Do not drop essential constraints to meet "
-        "the budget; report failure if they cannot fit. Do not invent owner approval.\n"
+        "including references; context must fit 10000 bytes. Do not drop essential constraints "
+        "to meet the budget; report failure if they cannot fit. Do not invent owner approval.\n"
         "CURRENT REQUIRED WORK:\n"
         + json.dumps(current, ensure_ascii=False)
         + "\nMEMORY UPDATE:\n"
