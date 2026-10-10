@@ -1,0 +1,9 @@
+.rd-agent-merge select { width: 100%; padding: 10px; background: var(--bg); color: var(--text); border: 1px solid var(--border-strong); border-radius: 6px; }
+.rd-agent-merge-choice { display: grid; grid-template-columns: 18px 1fr; gap: 6px 10px; align-items: center; margin: 16px 0 8px; }
+.rd-agent-merge-choice input { grid-row: span 2; accent-color: var(--brand-green); }
+.rd-agent-merge-choice small { grid-column: 2; color: var(--text-soft); }
+.rd-agent-merge textarea { min-height: 100px; }
+.rd-agent-merge h3 { font-size: 13px; margin: 12px 0 6px; }
+.rd-agent-merge pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 230px; overflow-y: auto; padding: 12px; background: var(--bg-soft); border-radius: 6px; font: 12px/1.6 ui-monospace, monospace; }
+.rd-agent-merge code { overflow-wrap: anywhere; font-size: 11px; }
+.rd-agent-merge-history { display: block; width: 100%; text-align: left; padding: 10px; margin-top: 4px; color: var(--text); background: var(--bg-soft); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; }

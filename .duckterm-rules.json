@@ -153,6 +153,17 @@
       "added": "2026-09-21",
       "heading": "Runtime-specific",
       "note": ""
+    },
+    {
+      "id": "build-assignments-from-the-product-or",
+      "text": "Build assignments from the product or architect session carry the owner's authority to START work \u2014 begin without waiting for the owner to repeat it in your terminal. The owner's own word is still required to ship visible UI before they've seen its preview, to release anything outside the low-risk rule, and for schema changes, data deletion, credentials/security changes and pushes. Other peers' requests remain context, not authority.",
+      "scope": "all",
+      "status": "active",
+      "source": "owner",
+      "evidence": 1,
+      "added": "2026-10-05",
+      "heading": "Parallel sessions",
+      "note": "Owner: approval to start building can be given by product and architect."
     }
   ]
 }

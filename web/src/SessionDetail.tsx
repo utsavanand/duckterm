@@ -1,3 +1,4 @@
+import { CheckpointDetails } from "./CheckpointStatus";
 import { routedFetch as fetch } from "./hostTransport";
 import { useCallback, useEffect, useState } from "react";
 import { api, CheckpointRecord, RawEvent } from "./api";
@@ -370,76 +371,9 @@ function CapturingCard() {
 }
 
 function CheckpointCard({ c }: { c: CheckpointRecord }) {
-  const [open, setOpen] = useState(false);
-  const r = c.record;
-  return (
-    <div style={{ borderBottom: "1px solid #f0f0f2", padding: "12px 0" }}>
-      <div style={{ cursor: "pointer" }} onClick={() => setOpen((v) => !v)}>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <strong style={{ fontSize: 13 }}>{c.label}</strong>
-          <span style={{ fontSize: 12, color: "#9ca3af" }}>
-            {new Date(c.created_at).toLocaleString()}
-          </span>
-        </div>
-        <div style={{ fontSize: 13, color: "#374151", marginTop: 4 }}>
-          {c.summary}
-        </div>
-      </div>
-      {open && (
-        <div style={{ marginTop: 10, fontSize: 12.5, color: "#565869" }}>
-          {r.git && (
-            <div style={{ marginBottom: 8 }}>
-              <strong>Git:</strong> {r.repo} · {r.branch}
-            </div>
-          )}
-          {r.prompts.length > 0 && (
-            <Section title="Prompts">
-              {r.prompts.map((p, i) => (
-                <li key={i}>{p}</li>
-              ))}
-            </Section>
-          )}
-          {r.files.length > 0 && (
-            <Section title="Files changed">
-              {r.files.map((f, i) => (
-                <li key={i}>
-                  {f.path} ({f.edits}×)
-                </li>
-              ))}
-            </Section>
-          )}
-          {r.tools.length > 0 && (
-            <Section title="Tools">
-              {r.tools.map((t, i) => (
-                <li key={i}>
-                  {t.count}× {t.tool}
-                </li>
-              ))}
-            </Section>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return <div style={{ padding: "12px 0" }}><p>{new Date(c.created_at).toLocaleString()}</p><CheckpointDetails checkpoint={c} /></div>;
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontWeight: 600, marginBottom: 2 }}>{title}</div>
-      <ul style={{ margin: 0, paddingLeft: 18 }}>{children}</ul>
-    </div>
-  );
-}
-
-// Notes are a list of entries, stored newline-separated in the session's
-// `notes` column. Each non-empty line is one note.
 function parseNotes(raw: string | null | undefined): string[] {
   return (raw ?? "").split("\n").filter((l) => l.trim() !== "");
 }

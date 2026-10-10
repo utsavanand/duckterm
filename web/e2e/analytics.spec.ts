@@ -1,18 +1,13 @@
 import { expect, test } from "@playwright/test";
-import { readFileSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { readOwnedState } from "./run-state";
 import { base } from "./helpers";
 
 test("Analytics opens from Oracle and shows actual transcript model IDs, filters and exact tables", async ({
   page,
 }) => {
-  const { home } = JSON.parse(
-    readFileSync(
-      process.env.RD_TEST_STATE_FILE || join(tmpdir(), "rd-e2e-state.json"),
-      "utf8",
-    ),
-  );
+  const { home } = readOwnedState();
   const root = join(home, "test-claude", "projects", "analytics-fixture");
   mkdirSync(root, { recursive: true });
   const stamp = new Date().toISOString();

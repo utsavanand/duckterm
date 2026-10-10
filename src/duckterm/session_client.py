@@ -80,6 +80,28 @@ def add_parser(sub: Any) -> None:
     publish.add_argument("--activity")
 
 
+def add_memory_parser(sub: Any) -> None:
+    parser = sub.add_parser("memory", help="search and read your session history across harnesses")
+    parser.set_defaults(session_action="memory")
+    actions = parser.add_subparsers(dest="memory_action", required=True)
+    actions.add_parser("sources", help="show available conversation and work sources")
+    search = actions.add_parser("search", help="find older context in your own session")
+    search.add_argument("query")
+    search.add_argument("--limit", type=int, default=20)
+    read = actions.add_parser("read", help="read a versioned source returned by search")
+    read.add_argument("source")
+    read.add_argument("--record")
+    read.add_argument("--offset", type=int, default=0)
+    read.add_argument("--limit", type=int, default=8000)
+    related = actions.add_parser("related", help="follow evidenced context relationships")
+    related.add_argument("source")
+    related.add_argument("--record")
+    related.add_argument("--limit", type=int, default=20)
+    related.add_argument("--cursor")
+    link = actions.add_parser("link", help="record a typed relationship with original evidence")
+    link.add_argument("--file", required=True, type=Path)
+
+
 def _save_artifact(result: dict[str, Any], destination: Path | None) -> dict[str, Any]:
     artifact = dict(result["artifact"])
     encoded = artifact.pop("content_base64")
@@ -117,7 +139,33 @@ def main(args: argparse.Namespace) -> int:
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         action = args.session_action
         download = False
-        if action == "task":
+        if action == "memory":
+            query: dict[str, Any] = {}
+            if args.memory_action == "search":
+                query = {"q": args.query, "limit": args.limit}
+            elif args.memory_action == "read":
+                query = {"source": args.source, "offset": args.offset, "limit": args.limit}
+                if args.record is not None:
+                    query["record"] = args.record
+            elif args.memory_action == "related":
+                query = {"source": args.source, "limit": args.limit}
+                if args.record is not None:
+                    query["record"] = args.record
+                if args.cursor is not None:
+                    query["cursor"] = args.cursor
+            elif args.memory_action == "link":
+                with args.file.expanduser().open("rb") as stream:
+                    raw = stream.read(32769)
+                if len(raw) > 32768:
+                    raise ValueError("Memory link file exceeds 32 KiB")
+                body = json.loads(raw)
+                if not isinstance(body, dict):
+                    raise ValueError("Memory link file must contain a JSON object")
+                method = "POST"
+            path = "/memory/" + args.memory_action
+            if query:
+                path += "?" + urllib.parse.urlencode(query)
+        elif action == "task":
             path = "/tasks"
             if args.task_action == "start":
                 method, body = "POST", {"title": args.title}

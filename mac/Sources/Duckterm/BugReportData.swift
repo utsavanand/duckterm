@@ -46,6 +46,21 @@ struct BugReportData {
     static let maxTotalBytes = 15 * 1024 * 1024
     var attachments: [BugAttachment] = []
 
+    /// Keep the native report restricted to the reviewed, redacted readiness
+    /// item. Other context entries can contain session names and project paths.
+    static func resumeReadiness(from response: Any) -> String? {
+        guard let response = response as? [String: Any], response["status"] as? Int == 200,
+              let body = response["body"] as? String, body.utf8.count <= 262144,
+              let data = body.data(using: .utf8),
+              let context = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let items = context["items"] as? [[String: Any]] else { return nil }
+        let matches = items.filter { $0["id"] as? String == "resume-readiness" }
+        guard matches.count == 1, let text = matches[0]["text"] as? String,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              text.utf8.count <= 65536 else { return nil }
+        return text
+    }
+
     mutating func add(_ url: URL) throws {
         guard attachments.count < 5 else { throw BugReportError.tooMany }
         let info = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isAliasFileKey, .fileSizeKey])

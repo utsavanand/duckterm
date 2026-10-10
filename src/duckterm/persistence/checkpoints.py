@@ -1,25 +1,9 @@
-"""Session checkpoints: a record of *what was done* in a session so far.
+"""Checkpoint rendering and compatibility with legacy full records.
 
-A checkpoint captures both:
-  - mechanical data — the prompts given to the agent, files changed, tool-use
-    counts, and git state (branch + working-tree status), read out-of-band from
-    the stored events and the worktree;
-  - semantic data — a short "what was done" summary (LLM-written when a
-    summarizer is configured, mechanical fallback otherwise).
-
-It is a read-only record, not a restore point — we use git for code state. The
-record is stored in the DB; the human-readable markdown is written under
-DUCKTERM_HOME/checkpoints/<session_key>/ (a single stable root, NOT inside the
-session's worktree — a worktree is deleted with the session, taking its logs
-with it), and the row stores a path RELATIVE to that root so it survives moving
-DUCKTERM_HOME or restoring on another machine.
-
-Ordering matters for durability: build the record (build_checkpoint, no file
-I/O), insert the DB row (the source of truth), THEN write the markdown as a
-derived artifact. A crash between the row and the file leaves markdown_path NULL,
-never an orphan file with no row.
-
-Modeled on uv-suite's watchtower checkpoint service.
+New checkpoints are markers over shared progress revisions and retained history
+(see saved_state and Server._create_checkpoint). This module extracts legacy
+record fields and renders Markdown; it never generates an independent summary.
+A rendered file is derived from the database and is not a provider backup.
 """
 
 import subprocess
@@ -33,7 +17,6 @@ from typing import Any
 # `events`, which would shadow a module import inside the functions below.
 from duckterm.core.events import POST_TOOL_USE, PRE_TOOL_USE, USER_PROMPT_SUBMIT
 from duckterm.helpers import paths
-from duckterm.llm.summarizer import summarize
 
 Event = dict[str, Any]
 
@@ -143,7 +126,9 @@ def build_checkpoint(
             "event_count": new_activity["event_count"],
         },
     }
-    summary = _summarize(intention, new_activity if since_ms else activity, git, transcript)
+    summary = _mechanical_summary(
+        intention, new_activity if since_ms else activity, git, transcript
+    )
     markdown = _render_markdown(label, record, summary)
     return Checkpoint(
         id=uuid.uuid4().hex,
@@ -157,7 +142,7 @@ def build_checkpoint(
     )
 
 
-def _summarize(
+def _mechanical_summary(
     intention: str,
     activity: dict[str, Any],
     git: dict[str, Any],
@@ -170,19 +155,9 @@ def _summarize(
     )
     if git.get("git"):
         facts += f"; on {git['repo']}@{git['branch']}"
-    prompt = (
-        "Summarize what was done in this coding session in 2-3 sentences.\n\n"
-        f"Intent: {intention or '(none)'}\n"
-        f"Prompts given:\n" + "\n".join(f"- {p}" for p in activity["prompts"]) + "\n\n"
-        f"Activity: {facts}"
-    )
-    # When we have the agent's own conversation, give the summarizer the tail of
-    # it (including the agent's responses) — far better signal than counts alone.
-    convo = _transcript_excerpt(transcript)
-    if convo:
-        prompt += f"\n\nConversation (most recent):\n{convo}"
-    result = summarize(prompt)
-    return result.text or f"{intention or 'Session'} — {facts}."
+    # Legacy render helper only. Production checkpoints reference the shared
+    # progress revision; there is no independent checkpoint provider call.
+    return f"{intention or 'Session'} — {facts}."
 
 
 def _transcript_excerpt(transcript: list[dict[str, str]] | None, budget: int = 4000) -> str:
@@ -263,7 +238,7 @@ def _checkpoints_root() -> Path:
     return paths.home() / "checkpoints"
 
 
-def write_markdown(session_key: str, now_ms: int, text: str) -> str | None:
+def write_markdown(session_key: str, now_ms: int, text: str, checkpoint_id: str = "") -> str | None:
     """Write a checkpoint's markdown under DUCKTERM_HOME/checkpoints/<key>/ and
     return its path RELATIVE to that root (stored in the row so it survives a
     moved home). Called AFTER the DB row is inserted; returns None on write
@@ -272,7 +247,8 @@ def write_markdown(session_key: str, now_ms: int, text: str) -> str | None:
     dest = _checkpoints_root() / session_key
     try:
         dest.mkdir(parents=True, exist_ok=True)
-        name = f"checkpoint-{now_ms}.md"
+        suffix = "-" + checkpoint_id if checkpoint_id else ""
+        name = f"checkpoint-{now_ms}{suffix}.md"
         (dest / name).write_text(text)
         (dest / "latest.md").write_text(text)
     except OSError:

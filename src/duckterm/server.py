@@ -50,10 +50,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from duckterm import connectors, suites, zsh_themes
+from duckterm import bug_reports, connectors, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
-from duckterm.core import events, oracle, progress
+from duckterm.core import events, oracle
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -71,6 +71,7 @@ from duckterm.core.relay import (
     question_from,
     validate_rule,
 )
+from duckterm.core.saved_progress import ProgressCoordinator, SummaryUpdate
 from duckterm.core.session_api import MAX_BODY_BYTES, APIError
 from duckterm.core.tokens import TokenLedger
 from duckterm.git import gitdetect
@@ -87,14 +88,24 @@ from duckterm.helpers import (
 )
 from duckterm.helpers.private_files import private_read, private_write
 from duckterm.llm.suggest import Correction, suggest_rules
-from duckterm.llm.summarizer import summarize
+from duckterm.llm.summarizer import summarize as summarize
+from duckterm.memory import Memory
+from duckterm.memory_preparation import MemoryPreparation
 from duckterm.persistence import backup_sync, mail_analytics
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
 from duckterm.persistence.artifacts import ArtifactError
-from duckterm.persistence.checkpoints import build_checkpoint, write_markdown
+from duckterm.persistence.checkpoints import _git_state, _render_markdown, write_markdown
 from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.folder_chats import valid_folder, within
 from duckterm.persistence.history import HistoryStore
+from duckterm.persistence.saved_state import (
+    checkpoint_marker,
+    conversation,
+    current_revision,
+    event_source,
+    resolve_checkpoint,
+    transaction,
+)
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
 from duckterm.transport.httpio import (
@@ -239,6 +250,14 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/annotations")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._add_annotation(w, seg, b),
           **_mid("/sessions/", "/annotations")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._agent_merge(w, h, seg, "targets", b),
+          **_mid("/sessions/", "/agent-merge")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._agent_merge(w, h, seg, "send", b),
+          **_mid("/sessions/", "/agent-merge")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._agent_merge(w, h, seg, "preview", b),
+          **_mid("/sessions/", "/agent-merge/preview")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._agent_merge(w, h, seg, "history", b),
+          **_mid("/sessions/", "/agent-merges")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "GET", b),
           **_mid("/sessions/", "/merge")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "POST", b),
@@ -329,6 +348,8 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/stop")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._models(w, seg),
           **_mid("/sessions/", "/models")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "OPTIONS"),
+          **_mid("/sessions/", "/restart-options")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "GET"),
           **_mid("/sessions/", "/restart")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._restart(w, seg, "POST", b),
@@ -384,6 +405,9 @@ class Server:
         self.history.layouts.recover()
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
+        from duckterm.session_shells import SessionShells
+
+        self.shells = SessionShells(self)
         self.snapshots = SnapshotManager(self.history)
         self._backup_jobs: BackupJobs | None = None
         self.approvals = ApprovalRegistry(self.orchestrator.inject_key)
@@ -407,7 +431,14 @@ class Server:
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
-        self.digests = DigestStore()
+        self.digests = DigestStore(conn=self.history._conn)
+        self.progress_coordinator = ProgressCoordinator(self)
+        self.memory = Memory(self)
+        self.memory_preparation = MemoryPreparation(self)
+        from duckterm.handoff_review import HandoffReview
+
+        self.handoff_review = HandoffReview(self)
+        self.orchestrator.on_completed = self._progress_on_exit
         self.token = security.load_or_create_token()
         self.native_identity = NativeIdentity(self.history)
         # transcript path -> (mtime, context_tokens): /sessions is fetched
@@ -416,12 +447,16 @@ class Server:
         from duckterm.restarts import Restarts
 
         self.restarts = Restarts(self)
+        from duckterm.conversation_recovery import ConversationRecovery
+
+        self.conversation_recovery = ConversationRecovery(self)
         from duckterm.model_catalog import ModelCatalog
 
         self.model_catalog = ModelCatalog()
         from duckterm.archives import Archives
 
         self.archives = Archives(self)
+        self._connector_status_task: asyncio.Task[list[dict[str, object]]] | None = None
 
     # Activity that means a session moved past an *earlier* permission prompt:
     # any of these arriving AFTER a request means it was answered and the agent
@@ -499,10 +534,12 @@ class Server:
                 limit = MAX_BODY_BYTES if path.startswith("/api/v1/session/") else MAX_REQUEST_BYTES
                 if urllib.parse.urlsplit(path).path == "/api/v1/session/artifacts":
                     limit = MAX_ARTIFACT_REQUEST_BYTES
+                if urllib.parse.urlsplit(path).path == "/bugreport/submit":
+                    limit = bug_reports.MAX_REQUEST_BYTES
                 if size < 0 or size > limit:
                     await _write_json(writer, 413, {"error": "request body too large"})
                     return
-                body = await _read_body(reader, headers)
+                body = await _read_body(reader, headers, max_bytes=limit)
             await self._dispatch(method, path, reader, writer, headers, body)
         except (ValueError, TimeoutError) as exc:
             with contextlib.suppress(OSError):
@@ -530,7 +567,11 @@ class Server:
             return
         if path.startswith("/api/v1/session/"):
             try:
-                status, result = self.history.session_api.handle(method, path, headers, body)
+                if urllib.parse.urlsplit(path).path.startswith("/api/v1/session/memory/"):
+                    result = await self.memory.session_request(method, path, headers, body)
+                    status = 200
+                else:
+                    status, result = self.history.session_api.handle(method, path, headers, body)
             except APIError as exc:
                 status, result = exc.status, {"error": str(exc)}
             await _write_json(writer, status, result)
@@ -554,6 +595,59 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        memory_url = urllib.parse.urlsplit(path)
+        memory_route = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/restart-preparation(?:/([a-f0-9]{32}))?",
+            memory_url.path,
+        )
+        if memory_route:
+            from duckterm.memory_http import handle as memory_handle
+
+            await memory_handle(
+                self,
+                writer,
+                headers,
+                memory_route[1],
+                memory_route[2],
+                method,
+                body,
+                urllib.parse.parse_qs(memory_url.query, keep_blank_values=True),
+            )
+            return
+        restart_query = re.fullmatch(r"/sessions/([A-Za-z0-9._-]{1,128})/restart", memory_url.path)
+        if restart_query and memory_url.query:
+            await self._restart(
+                writer,
+                restart_query[1],
+                method,
+                body,
+                urllib.parse.parse_qs(memory_url.query, keep_blank_values=True),
+            )
+            return
+        handoff_route = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/handoff-(review|approve)", path
+        )
+        if handoff_route:
+            from duckterm.handoff_review import handle as handoff_handle
+
+            await handoff_handle(
+                self, writer, headers, handoff_route[1], handoff_route[2], method, body
+            )
+            return
+        recovery_route = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/conversation-(recovery|candidates|adopt|hooks|detach)",
+            path,
+        )
+        if recovery_route:
+            from duckterm.conversation_recovery import handle as recovery_handle
+
+            await recovery_handle(
+                self, writer, headers, recovery_route[1], recovery_route[2], method, body
+            )
+            return
+        if urllib.parse.urlsplit(path).path.startswith("/bugreport/"):
+            await self._bugreport(writer, headers, method, path, body)
+            return
         if path == "/backup" and method in {"GET", "PUT", "POST"}:
             await self._backup(writer, headers, method, body)
             return
@@ -585,7 +679,17 @@ class Server:
         if pin_match and method in {"GET", "POST", "DELETE"}:
             await self._message_pins(writer, headers, pin_match[1], pin_match[2], method, body)
             return
+        shell_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]{1,128})/shell(/terminal)?", path)
+        if shell_match:
+            await self._session_shell(
+                reader, writer, headers, shell_match[1], bool(shell_match[2]), method, body
+            )
+            return
         inbox_path = urllib.parse.urlsplit(path)
+        timeline_match = re.fullmatch(r"/sessions/([A-Za-z0-9._-]+)/timeline", inbox_path.path)
+        if method == "GET" and timeline_match:
+            await self._session_timeline(writer, headers, timeline_match[1], inbox_path.query)
+            return
         if method == "GET" and inbox_path.path == "/analytics/tokens":
             await self._token_analytics(writer, headers, inbox_path.query)
             return
@@ -691,6 +795,8 @@ class Server:
         if not isinstance(raw, dict):
             await _write_json(writer, 400, {"error": "event must be a JSON object"})
             return
+        # Only the supervisor may assign identity; hooks can report observations.
+        raw.pop("_assigned_native_id", None)
         # agent_pid comes from an external hook ($PPID) and is later fed to
         # os.kill in the liveness sweep — coerce to a positive int or drop it.
         if "agent_pid" in raw:
@@ -710,6 +816,14 @@ class Server:
             *earlier, raw = resolved
             for extra in earlier:
                 self.bus.publish({**extra, "hook_event": True})
+        # The harness-switch guard (#222) runs on the resolved session.
+        from duckterm.harness_switch import accept_hook
+
+        if not accept_hook(self, raw):
+            await _write_json(
+                writer, 200, {"dropped": "hook does not match the current harness conversation"}
+            )
+            return
         # A deleted (tombstoned) session whose agent is still running keeps firing
         # hooks. Drop ALL of its events here — including SessionStart — so a
         # session you deleted stays gone: no phantom rows, no events leaking into
@@ -804,7 +918,9 @@ class Server:
         try:
             params = urllib.parse.parse_qs(query)
             before = int(params["before"][0]) if "before" in params else None
-            result = self.history.session_api.inbox(session_key, owner=True, before=before)
+            result = self.history.session_api.inbox(
+                session_key, owner=True, before=before, view=params.get("view", [None])[0]
+            )
         except ValueError:
             await _write_json(writer, 400, {"error": "invalid cursor"})
             return
@@ -825,7 +941,9 @@ class Server:
             if folder not in self.history.folders():
                 raise APIError(404, "folder not found")
             before = int(params["before"][0]) if "before" in params else None
-            result = self.history.session_api.folder_inbox(folder, before=before)
+            result = self.history.session_api.folder_inbox(
+                folder, before=before, view=params.get("view", [None])[0]
+            )
         except ValueError:
             await _write_json(writer, 400, {"error": "invalid cursor"})
             return
@@ -1099,6 +1217,69 @@ class Server:
                     "removed": sum(bool(row["removed_at"]) for row in artifacts),
                 },
             },
+        )
+
+    async def _bugreport(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        method: str,
+        path: str,
+        body: bytes,
+    ) -> None:
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        parsed = urllib.parse.urlsplit(path)
+        try:
+            if parsed.path == "/bugreport/context" and method == "GET":
+                params = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+                keys = params.get("session_key", [])
+                if set(params) - {"session_key"} or len(keys) > 1 or (keys and not keys[0]):
+                    raise ValueError("Expected one nonempty session_key")
+                # HistoryStore belongs to this event-loop thread. File export and
+                # bundle reads below remain worker operations.
+                result = bug_reports.context(self.history, keys[0] if keys else None)
+                from duckterm import resume_diagnostics
+
+                readiness = resume_diagnostics.snapshot(self.history, keys[0] if keys else None)
+                result["items"].append(
+                    await asyncio.to_thread(resume_diagnostics.render, readiness)
+                )
+            elif parsed.path == "/bugreport/submit" and method == "POST":
+                if len(body) > bug_reports.MAX_REQUEST_BYTES:
+                    await _write_json(writer, 413, {"error": "report request too large"})
+                    return
+                result = await asyncio.to_thread(bug_reports.prepare, json.loads(body))
+            elif parsed.path.startswith("/bugreport/bundles/") and method == "GET":
+                report_id = parsed.path.removeprefix("/bugreport/bundles/")
+                data = await asyncio.to_thread(bug_reports.bundle, report_id)
+                writer.write(
+                    (
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/zip\r\n"
+                        "Content-Disposition: attachment; filename=duckterm-report.zip\r\n"
+                        "Cache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n"
+                        f"Content-Length: {len(data)}\r\nConnection: close\r\n\r\n"
+                    ).encode()
+                    + data
+                )
+                await writer.drain()
+                return
+            else:
+                await _write_json(writer, 404, {"error": "Report route not found"})
+                return
+        except (LookupError, FileNotFoundError):
+            await _write_json(writer, 404, {"error": "Session or report not found"})
+            return
+        except (ValueError, OSError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        await _write_response(
+            writer,
+            200,
+            json.dumps(result),
+            extra_headers={"Cache-Control": "no-store"},
+            content_type="application/json",
         )
 
     async def _folder_view(
@@ -1396,6 +1577,14 @@ class Server:
         sessions = self.history.sessions()
         subagents = self.history.subagents_by_session()
         for s in sessions:
+            identity = self.history.native_identity(str(s["session_key"]))
+            s["conversation_identity"] = {
+                "status": identity["status"],
+                "source": identity["source"],
+                "assignable": _build_runtime(
+                    s.get("runtime"), str(s.get("command") or "")
+                ).session_id_assignable,
+            }
             transfer = transfers.session_transfer(str(s.get("session_key") or ""))
             if transfer:
                 s["remote_transfer"] = {
@@ -2043,6 +2232,18 @@ class Server:
 
         await handle(self, writer, operation, body)
 
+    async def _agent_merge(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        key: str,
+        operation: str,
+        body: bytes,
+    ) -> None:
+        from duckterm.agent_merges import handle
+
+        await handle(self, writer, headers, key, operation, body)
+
     async def _fork_merge(
         self,
         writer: asyncio.StreamWriter,
@@ -2080,24 +2281,61 @@ class Server:
             await _write_json(writer, 503, {"error": str(exc)})
 
     async def _restart(
-        self, writer: asyncio.StreamWriter, key: str, method: str, body: bytes = b""
+        self,
+        writer: asyncio.StreamWriter,
+        key: str,
+        method: str,
+        body: bytes = b"",
+        query: dict[str, list[str]] | None = None,
     ) -> None:
         try:
-            if method == "GET":
-                result = await self.restarts.describe(key)
+            query = query or {}
+            if any(len(v) != 1 for v in query.values()):
+                raise APIError(400, "Duplicate query parameter")
+            if method == "OPTIONS":
+                result = await self.restarts.options(key)
+            elif method == "GET":
+                if query and set(query) != {"request_key"}:
+                    raise APIError(400, "Unknown restart query")
+                result = (
+                    self.restarts.receipt(key, query["request_key"][0])
+                    if query
+                    else await self.restarts.describe(key)
+                )
             elif method == "DELETE":
                 if self.history.session(key) is None:
                     raise APIError(404, "Session not found")
-                result = self.restarts.cancel(key)
-            else:
+                if query and set(query) != {"operation_id"}:
+                    raise APIError(400, "Unknown restart query")
+                result = self.restarts.cancel(key, query.get("operation_id", [None])[0])
+                if query:
+                    result = self.restarts.operation(result)
+            elif method == "POST" and not query:
                 request = json.loads(body or b"{}")
                 if not isinstance(request, dict):
                     raise APIError(400, "Expected a JSON object")
-                result = await self.restarts.request(key, request.get("model", ""))
+                result = await self.restarts.request(
+                    key,
+                    request.get("model", ""),
+                    request.get("harness"),
+                    interrupt=request.get("interrupt", False),
+                    memory=request.get("memory"),
+                    request_key=request.get("request_key"),
+                    require_preparation=True,
+                )
+            else:
+                raise APIError(405, "Unsupported restart operation")
             await _write_json(writer, 202 if method == "POST" else 200, result)
         except (ValueError, APIError) as exc:
             await _write_json(
-                writer, exc.status if isinstance(exc, APIError) else 400, {"error": str(exc)}
+                writer,
+                exc.status if isinstance(exc, APIError) else 400,
+                {
+                    "error": str(exc),
+                    "code": getattr(exc, "code", "operation_conflict"),
+                    "process_state": self.restarts.read(key).get("process_state", "unknown"),
+                    "retryable": False,
+                },
             )
 
     async def _resume_session(
@@ -2128,6 +2366,12 @@ class Server:
             return 400, {"error": "archived sessions can't be resumed (archive is final)"}
         if row.get("state") == "merged" or self.history.fork_merges.closing(session_key):
             return 400, {"error": "Closed or merging sessions cannot be resumed"}
+        identity = self.history.native_identity(session_key)
+        if identity["status"] in {"pending", "contested"}:
+            return 409, {
+                "error": "Cannot safely resume: conversation identity is " + identity["status"],
+                "code": "ambiguous_resume_identity",
+            }
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
         # The saved worktree/dir may be gone (deleted worktree, pruned, wiped
         # home). Relaunching into a missing dir lands the agent in $HOME with no
@@ -2204,11 +2448,17 @@ class Server:
         # PTY-owned again. The supervisor's SessionStart both persists the
         # revive and reaches dashboards over SSE, lifting the stopped/archived
         # rest-state back to busy.
+        binding = self.history.restart_control(session_key).get("native_binding")
+        generation = ""
+        if binding:
+            generation = uuid.uuid4().hex
+            self.restarts.save(session_key, native_binding={**binding, "generation": generation})
         await self.orchestrator.launch(
             runtime=_build_runtime(runtime, shlex.join(argv)),
             cwd=cwd,
             session_key=session_key,
             prompt=prompt,
+            env={"DUCKTERM_HARNESS_GENERATION": generation},
             record_intention=False,
             test=bool(row.get("test")),
         )
@@ -2294,11 +2544,13 @@ class Server:
         await _write_json(writer, 200, result)
 
     async def _commit_archive(self, key: str) -> None:
-        if self.history.session(key) is None:
-            return
-        await self.orchestrator.stop(key)
-        self._set_lifecycle(key, "archived")
-        self.approvals.drop_session(key)
+        async with self.shells.lock(key):
+            await self.shells.destroy(key)
+            if self.history.session(key) is None:
+                return
+            await self.orchestrator.stop(key)
+            self._set_lifecycle(key, "archived")
+            self.approvals.drop_session(key)
 
     async def _archive(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """Put a session away for good: history is kept, the row leaves the
@@ -2366,16 +2618,18 @@ class Server:
     async def _teardown_session(self, session_key: str, row: dict[str, Any] | None) -> bool:
         """Everything a session leaves behind: supervisor/tmux pane, worktree,
         DB rows (cascade), pending approvals. Callers do the unmerged check."""
-        if not await self.orchestrator.stop(session_key):
-            # No supervisor (launched before a server restart and never
-            # re-adopted) — kill any leftover tmux session by its canonical
-            # name so DB deletes never orphan panes.
-            await asyncio.to_thread(tmux.kill_session, tmux.target_for(session_key))
-        self._remove_worktree(row)
-        deleted = self.history.delete_session(session_key, now=int(time.time() * 1000))
-        self.approvals.drop_session(session_key)
-        self.digests.delete_session(session_key)
-        return deleted
+        async with self.shells.lock(session_key):
+            await self.shells.destroy(session_key)
+            if not await self.orchestrator.stop(session_key):
+                # No supervisor (launched before a server restart and never
+                # re-adopted) — kill any leftover tmux session by its canonical
+                # name so DB deletes never orphan panes.
+                await asyncio.to_thread(tmux.kill_session, tmux.target_for(session_key))
+            self._remove_worktree(row)
+            deleted = self.history.delete_session(session_key, now=int(time.time() * 1000))
+            self.approvals.drop_session(session_key)
+            self.digests.delete_session(session_key)
+            return deleted
 
     def _worktree_path_of(self, row: dict[str, Any] | None) -> Path | None:
         """The Duckterm-managed worktree for a session, or None. Guards that we
@@ -2421,6 +2675,29 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        if isinstance(req, dict) and "expected_notes" in req:
+            if set(req) != {"notes", "expected_notes"} or not all(
+                isinstance(req.get(field), str) for field in ("notes", "expected_notes")
+            ):
+                await _write_json(writer, 400, {"error": "Expected notes and expected_notes"})
+                return
+            with self.history._conn:
+                cursor = self.history._conn.execute(
+                    "UPDATE sessions SET notes=? WHERE session_key=? " "AND COALESCE(notes,'')=?",
+                    (req["notes"], session_key, req["expected_notes"]),
+                )
+            if not cursor.rowcount:
+                await _write_json(
+                    writer,
+                    409,
+                    {
+                        "error": "Notes changed elsewhere. Your draft is preserved; "
+                        "review the latest notes before saving.",
+                    },
+                )
+                return
+            await _write_json(writer, 200, {"updated": True})
+            return
         ok = self.history.set_meta(
             session_key,
             name=req.get("name"),
@@ -2460,62 +2737,57 @@ class Server:
 
     # ── running progress digest (deliverables / learnings / next actions) ──
     # Regenerated on turn ends (Stop), debounced so a chatty session costs at
-    # most one summarizer call per window; stored on the session row so it
+    # most one summary update per window; stored on the session row so it
     # survives restarts and rides along in /sessions.
-    _PROGRESS_MIN_INTERVAL_MS = 90_000
-    _PROGRESS_MIN_NEW_EVENTS = 4
+    _PROGRESS_MIN_INTERVAL_MS = 15 * 60_000
+    _PROGRESS_MIN_NEW_EVENTS = 1
 
     def _maybe_refresh_progress(self, session_key: str) -> None:
         row = self.history.session(session_key)
         if row is None:
             return
         now = int(time.time() * 1000)
-        last_ts, last_count = self._progress_marks.get(session_key, (0, 0))
+        control = self.history.restart_control(session_key)
+        attempt = control.get("progress_attempt", {})
+        last_ts, last_count = self._progress_marks.get(
+            session_key, (int(attempt.get("at", 0)), int(attempt.get("events", 0)))
+        )
+        last_ts = max(last_ts, int(row.get("progress_at") or 0))
         count = int(row.get("event_count") or 0)
         if now - last_ts < self._PROGRESS_MIN_INTERVAL_MS:
             return
         if count - last_count < self._PROGRESS_MIN_NEW_EVENTS:
             return
-        self._progress_marks[session_key] = (now, count)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return  # no loop (sync test context) — the next Stop will retry
-        loop.create_task(self._refresh_progress(session_key))
+        self._progress_marks[session_key] = (now, count)
+        # Persist the attempt, including failures, so a server restart cannot
+        # repeatedly spend on the same stopped conversation.
+        self.history.set_restart_control(
+            session_key, {**control, "progress_attempt": {"at": now, "events": count}}
+        )
+        identity = conversation(self.history, session_key, row)
+
+        async def refresh() -> None:
+            current = self.history.session(session_key)
+            if current and conversation(self.history, session_key, current) == identity:
+                await self._refresh_progress(session_key)
+
+        loop.create_task(refresh())
+
+    def _progress_on_exit(self, session_key: str) -> None:
+        self._maybe_refresh_progress(session_key)
 
     async def _refresh_progress(self, session_key: str) -> None:
-        row = self.history.session(session_key)
-        if row is None:
-            return
-        transcript = await asyncio.to_thread(
-            self._progress_transcript,
-            self._message_source(session_key),
-            self.orchestrator.get(session_key),
-        )
-        if not transcript:
-            return
-        prior = None
-        with contextlib.suppress(json.JSONDecodeError, TypeError):
-            prior = json.loads(row.get("progress") or "")
-        prompt = progress.build_prompt(transcript, prior, str(row.get("intention") or ""))
-        summary = await asyncio.to_thread(summarize, prompt)
-        digest = progress.parse(summary.text)
-        if digest is None:
-            return
-        now = int(time.time() * 1000)
-        self.history.set_progress(session_key, json.dumps(digest), now)
-        # Validate before archiving: L1 (each item makes sense on its own) +
-        # L2 (compared against what's already stored) in one summarizer call.
-        # A failed/garbled validation falls back to a code-only merge — the
-        # store's normalized-text dedup still applies, and losing a digest to
-        # a flaky validator would be worse than an occasional near-duplicate.
-        existing = self.digests.items(session_key)
-        verdict_reply = await asyncio.to_thread(
-            summarize, progress.validate_prompt(digest, existing)
-        )
-        verdicts = progress.parse_verdicts(verdict_reply.text) or progress.fallback_verdicts(digest)
-        self.digests.merge(session_key, verdicts["accept"], verdicts["done_next_action_ids"], now)
-        self._file_digest_candidates(row)
+        try:
+            revision = await self.progress_coordinator.refresh(session_key)
+            row = self.history.session(session_key)
+            if revision and row:
+                self._file_digest_candidates(row)
+        except Exception as exc:  # provider/background boundary; retain last good progress
+            print(f"[duckterm] progress refresh failed: {type(exc).__name__}", file=sys.stderr)
 
     # A collaboration pattern seen in this many distinct sessions of one folder
     # graduates from digest observation to a proposed AGENTS.md rule.
@@ -2587,6 +2859,38 @@ class Server:
         merged = agents_rules.merge_candidates(existing, proposals)
         if [asdict(r) for r in merged] != before:
             agents_rules.save_rules(base, merged)
+
+    async def _session_timeline(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], key: str, query: str
+    ) -> None:
+        from duckterm.persistence.timeline import page
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        row = self.history.session(key)
+        if row is None:
+            await _write_json(writer, 404, {"error": "Session not found"})
+            return
+        try:
+            params = urllib.parse.parse_qs(query, keep_blank_values=True)
+            if set(params) - {"before", "limit", "kinds"} or any(
+                len(v) != 1 for v in params.values()
+            ):
+                raise ValueError("Invalid timeline parameters")
+            result = page(
+                self.history._conn,
+                self.digests._conn,
+                row,
+                self.relay.notes,
+                before=params.get("before", [""])[0],
+                limit=int(params.get("limit", ["50"])[0]),
+                kinds=params.get("kinds", [""])[0],
+            )
+        except ValueError as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
 
     async def _session_digest(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         """The accumulated, validated digest archive for a session — the
@@ -3635,8 +3939,13 @@ class Server:
 
     async def _list_connectors(self, writer: asyncio.StreamWriter) -> None:
         # Credential/CLI probes can take seconds. Keep other dashboard requests
-        # and terminal traffic responsive while they finish.
-        statuses = await asyncio.to_thread(connectors.list_status)
+        # responsive without filling the executor when multiple viewers refresh.
+        task = self._connector_status_task
+        if task is None:
+            task = asyncio.create_task(asyncio.to_thread(connectors.list_status))
+            self._connector_status_task = task
+            task.add_done_callback(self._connector_status_finished)
+        statuses = [dict(row) for row in await asyncio.shield(task)]
         # Inline, NOT in a thread. HistoryStore shares one sqlite connection
         # opened with check_same_thread=False and no lock, so every other
         # caller reaches it from this thread; reading it from a worker raced
@@ -3648,6 +3957,12 @@ class Server:
             row["last_used"] = recorded[0] if recorded else None
             row["use_count"] = recorded[1] if recorded else 0
         await _write_json(writer, 200, {"connectors": statuses})
+
+    def _connector_status_finished(self, task: asyncio.Task[list[dict[str, object]]]) -> None:
+        if self._connector_status_task is task:
+            self._connector_status_task = None
+        if not task.cancelled():
+            task.exception()  # Retrieve failure even if every viewer disconnected.
 
     async def _verify_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
         """Prove the harness path works, rather than that a config entry exists."""
@@ -3694,6 +4009,9 @@ class Server:
         except RuntimeError as e:
             await _write_json(writer, 400, {"error": str(e)})
             return
+        finally:
+            # A later read must not join a probe from before this config change.
+            self._connector_status_task = None
         await _write_json(writer, 200, result)
 
     async def _disable_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
@@ -3705,6 +4023,9 @@ class Server:
         except RuntimeError as e:
             await _write_json(writer, 400, {"error": str(e)})
             return
+        finally:
+            # A later read must not join a probe from before this config change.
+            self._connector_status_task = None
         await _write_json(writer, 200, result)
 
     async def _forget_connector(self, writer: asyncio.StreamWriter, name: str) -> None:
@@ -3716,6 +4037,9 @@ class Server:
         except RuntimeError as e:
             await _write_json(writer, 400, {"error": str(e)})
             return
+        finally:
+            # A later read must not join a probe from before this config change.
+            self._connector_status_task = None
         await _write_json(writer, 200, result)
 
     async def _backup(
@@ -4314,44 +4638,123 @@ class Server:
             await _write_json(writer, 404, {"error": msg})
             return
         label = json.loads(body or b"{}").get("label", "checkpoint")
+        result = await self._create_checkpoint(session_key, row, label)
+        await _write_json(writer, 200, result)
+
+    async def _create_checkpoint(
+        self, session_key: str, row: dict[str, Any], label: str
+    ) -> dict[str, Any]:
+        from duckterm import memory_continuity
+
+        captured = await self.progress_coordinator.capture(session_key)
+        if captured is None:
+            raise APIError(409, "Session changed while capturing checkpoint; try again")
+        prior = current_revision(self.history.session(session_key) or {})
+        update = SummaryUpdate.failed("update_failed")
+        try:
+            update = await self.progress_coordinator.refresh_result(session_key, captured)
+        except APIError:
+            update = SummaryUpdate.failed("source_unavailable")
+        except Exception as exc:
+            # Retain history and a fixed failure code, never raw provider output.
+            print(
+                f"[duckterm] checkpoint summary unavailable: {type(exc).__name__}", file=sys.stderr
+            )
+        revision = update.revision
+        previous = self.digests.revision(session_key, prior) if prior else None
+        if (
+            update.state == "failed"
+            and previous
+            and (
+                previous.get("summary_validation", {}).get("ready")
+                or previous.get("continuity", {}).get("verified")
+            )
+        ):
+            # A failed candidate must not replace the last saved summary in the
+            # checkpoint's view, even when legacy validation retained a candidate.
+            revision = previous
         cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
-        # Summarize the delta since the most recent checkpoint (0 if first).
-        prior = self.history.checkpoints(session_key)
-        since_ms = int(prior[0]["created_at"]) if prior else 0
-        # Read the agent's own conversation (including its responses) from its
-        # native transcript, so the checkpoint captures what the agent said and
-        # did — not just the human prompts and tool calls in our event store.
-        transcript = self._read_transcript(session_key, row)
-        cp = await asyncio.to_thread(
-            build_checkpoint,
-            session_key=session_key,
-            label=label,
-            cwd=cwd,
-            # The whole session, not just the last 200 events — a checkpoint is
-            # a complete record and must capture every prompt.
-            events=self.history.events_for(session_key, limit=100_000),
-            transcript=transcript,
-            intention=str(row.get("intention") or ""),
-            now_ms=int(time.time() * 1000),
-            since_ms=since_ms,
+        git = await asyncio.to_thread(_git_state, cwd)
+        now = int(time.time() * 1000)
+        identity = uuid.uuid4().hex
+        source = captured["source"]
+        record = checkpoint_marker(captured, revision["id"] if revision else prior, git, now)
+        record["summary_update"] = update.metadata(now)
+        try:
+            original = await memory_continuity.capture(self, session_key, captured)
+            if "memory_sources" in original:
+                plan = memory_continuity.plan(original, None)
+                plan["selected"] = plan["rows"]
+                record.update(await memory_continuity.retain(session_key, original, plan))
+        except APIError:
+            record["memory_retention"] = "unavailable"
+        try:
+            retained = await self.memory.retain_current(session_key, captured)
+        except APIError:
+            retained = None
+            record["memory_retention"] = "unavailable"
+        if retained is not None:
+            record["memory_source"] = retained
+        conn = self.history._conn
+        with transaction(conn):
+            current = self.history.session(session_key)
+            if (
+                current is None
+                or conversation(self.history, session_key, current) != captured["conversation"]
+            ):
+                raise APIError(409, "Session conversation changed before checkpoint was saved")
+            if (
+                event_source(conn, session_key, source["events"]["last"], work_only=True)
+                != source["events"]
+            ):
+                raise APIError(409, "Checkpoint source changed before it could be retained")
+            for mail_id in record["mail_ids"]:
+                if not conn.execute(
+                    "SELECT 1 FROM session_questions WHERE id=?", (mail_id,)
+                ).fetchone():
+                    raise APIError(
+                        409, "Checkpoint message source expired before it could be retained"
+                    )
+            conn.execute(
+                "INSERT INTO checkpoints "
+                "(id,session_key,label,summary,record_json,markdown_path,created_at) "
+                "VALUES (?,?,?,'',?,NULL,?)",
+                (identity, session_key, label, json.dumps(record), now),
+            )
+        result = resolve_checkpoint(
+            conn,
+            session_key,
+            {
+                "id": identity,
+                "label": label,
+                "summary": "",
+                "record": record,
+                "markdown_path": None,
+                "created_at": now,
+            },
         )
-        # Row FIRST (the source of truth), markdown SECOND (a derived artifact).
-        # A crash between them leaves markdown_path NULL — never an orphan file
-        # with no row. The markdown lives under DUCKTERM_HOME, not the worktree,
-        # so deleting the session's worktree can't destroy its checkpoint log.
-        self.history.add_checkpoint(
-            checkpoint_id=cp.id,
-            session_key=cp.session_key,
-            label=cp.label,
-            summary=cp.summary,
-            record=cp.record,
-            markdown_path=None,
-            created_at=cp.created_at,
+        return await self._export_checkpoint(session_key, result)
+
+    async def _export_checkpoint(self, session_key: str, result: dict[str, Any]) -> dict[str, Any]:
+        label, now, identity = result["label"], result["created_at"], result["id"]
+        markdown = _render_markdown(label, result["record"], result["summary"])
+        markdown += (
+            f"\n## Checkpoint status\n\nSummary: {result['summary_state']}\n"
+            f"Handoff at save: {result['handoff_eligible']}\n"
+            + (
+                "Original conversation bytes at this checkpoint are retained privately. "
+                "Deleting the session removes its retained copies.\n"
+                if result["record"].get("memory_source") or result["record"].get("memory_sources")
+                else "This marker has no retained copy of the provider transcript.\n"
+            )
         )
-        rel = await asyncio.to_thread(write_markdown, cp.session_key, cp.created_at, cp.markdown)
-        if rel is not None:
-            self.history.set_checkpoint_markdown(cp.id, rel)
-        await _write_json(writer, 200, {"id": cp.id, "label": cp.label, "summary": cp.summary})
+        relative = await asyncio.to_thread(write_markdown, session_key, now, markdown, identity)
+        if relative is not None:
+            self.history.set_checkpoint_markdown(identity, relative)
+            result["markdown_path"] = relative
+        else:
+            result["export_reason"] = "markdown_unavailable"
+        return result
 
     def _read_transcript(self, session_key: str, row: dict[str, Any]) -> list[dict[str, str]]:
         """The agent's own conversation for a session (role/text incl. its
@@ -4448,6 +4851,75 @@ class Server:
             disconnect.cancel()
             await feed.aclose()
 
+    async def _session_shell(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        key: str,
+        terminal: bool,
+        method: str,
+        body: bytes,
+    ) -> None:
+        # Browsers cannot set custom WebSocket headers; use a subprotocol token
+        # only on this route, never URL query credentials or ambient session auth.
+        auth = dict(headers)
+        if terminal and "x-duckterm-token" not in auth:
+            for protocol in headers.get("sec-websocket-protocol", "").split(","):
+                if protocol.strip().startswith("duckterm-owner."):
+                    auth["x-duckterm-token"] = protocol.strip()[len("duckterm-owner.") :]
+        if not security.token_valid(auth, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            if terminal and method == "GET":
+                shell = await self.shells.terminal(key)
+                await self._stream_terminal(
+                    reader,
+                    writer,
+                    headers,
+                    shell,
+                    protocol=next(
+                        (
+                            p.strip()
+                            for p in headers.get("sec-websocket-protocol", "").split(",")
+                            if p.strip() == "duckterm-shell"
+                        ),
+                        None,
+                    ),
+                )
+                return
+            if terminal:
+                raise APIError(405, "Method not allowed")
+            if method == "GET":
+                result = await self.shells.status(key)
+            elif method == "POST":
+                if json.loads(body or b"{}") != {}:
+                    raise APIError(
+                        400, "Shell open accepts no command, host or environment overrides"
+                    )
+                result = await self.shells.open(key)
+            elif method == "DELETE":
+                data = json.loads(body or b"{}")
+                if (
+                    not isinstance(data, dict)
+                    or set(data) - {"force", "confirmation_token"}
+                    or type(data.get("force", False)) is not bool
+                ):
+                    raise APIError(400, "Invalid shell close request")
+                result = await self.shells.close(
+                    key, force=data.get("force", False), expected=data.get("confirmation_token")
+                )
+            else:
+                raise APIError(405, "Method not allowed")
+            await _write_json(writer, 409 if result.get("closed") is False else 200, result)
+        except (APIError, ValueError, OSError) as exc:
+            await _write_json(
+                writer,
+                exc.status if isinstance(exc, APIError) else 400,
+                {"error": str(exc), "available": False},
+            )
+
     async def _terminal(
         self,
         reader: asyncio.StreamReader,
@@ -4470,11 +4942,24 @@ class Server:
         if supervisor is None or not await asyncio.to_thread(getattr, supervisor, "running"):
             await _write_json(writer, 404, {"error": "no live session to attach"})
             return
+        await self._stream_terminal(reader, writer, headers, supervisor)
+
+    async def _stream_terminal(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        supervisor: Any,
+        protocol: str | None = None,
+    ) -> None:
         key = headers.get("sec-websocket-key")
         if not key:
             await _write_response(writer, 400, "expected a WebSocket upgrade")
             return
-        writer.write(handshake_response(key))
+        response = handshake_response(key)
+        if protocol:
+            response = response[:-2] + f"Sec-WebSocket-Protocol: {protocol}\r\n\r\n".encode()
+        writer.write(response)
         await writer.drain()
 
         feed = supervisor.subscribe_bytes()
@@ -4528,7 +5013,12 @@ class Server:
             # queue_bytes, not write_bytes: tmux send-keys is a ~10ms
             # subprocess, and running it inline here stalled the event loop
             # (and every other session's stream) on each keypress.
-            supervisor.queue_bytes(payload)
+            from duckterm.session_shells import ShellTerminal
+
+            if isinstance(supervisor, ShellTerminal):
+                await supervisor.write(payload)
+            else:
+                supervisor.queue_bytes(payload)
         elif opcode == 0x1:  # text: a JSON control message
             try:
                 msg = json.loads(payload)
@@ -4795,6 +5285,7 @@ class Server:
                     sweeper.cancel()
                     self.voice.stop()
                     await self.archives.close()
+                    await self.memory_preparation.close()
                     await self.restarts.close()
         finally:
             _release_home_lock(lock)

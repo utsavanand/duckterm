@@ -1,0 +1,31 @@
+import { act, cleanup, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { api, CheckpointRecord } from "./api";
+import { ContextPanel } from "./ContextPanel";
+import type { SessionView } from "./types";
+const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
+vi.mock("./api", () => ({ api: { checkpoints: vi.fn(), checkpoint: vi.fn(), sendInput: vi.fn() } }));
+vi.mock("./ui", () => ({ useToast: () => toast }));
+vi.mock("./Duck", () => ({ Duck: () => null, duckPhrase: () => "idle", poseFor: () => "idle" }));
+vi.mock("./FileEditModal", () => ({ FileEditModal: () => null }));
+vi.mock("./sessions", () => ({ contextLevel: () => "high", contextWindowFor: () => 200000, contextWindowIsAssumed: () => false, fmtTokens: (n: number) => String(n) }));
+const session = { key: "one", label: "Test", startedAt: 1, contextTokens: 190000, ptyOwned: true, runtime: "codex", model: "gpt-6-astra" } as SessionView;
+const cp: CheckpointRecord = { id: "c", label: "manual", created_at: 1000, summary: "Saved summary", saved: true, summary_state: "unavailable", record: { prompts: [], files: [], tools: [], event_count: 0 } };
+beforeEach(() => { vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [cp] }); Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" }); });
+afterEach(() => { cleanup(); vi.resetAllMocks(); });
+it("keeps checkpoint information and compact available without duplicating the menu action", async () => {
+  render(<ContextPanel session={session} />);
+  await screen.findByRole("region", { name: "Latest checkpoint" });
+  expect(screen.getByText(new Date(cp.created_at).toLocaleString())).toBeInTheDocument();
+  expect(screen.getByText("Summary unavailable")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Checkpoint" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Compact" })).toBeEnabled();
+});
+it("ignores a checkpoint fetch from a previous session", async () => {
+  let finish!: (value: { checkpoints: CheckpointRecord[] }) => void;
+  vi.mocked(api.checkpoints).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue({ checkpoints: [] });
+  const view = render(<ContextPanel session={session} />);
+  view.rerender(<ContextPanel session={{ ...session, key: "two" }} />);
+  await act(async () => { finish({ checkpoints: [cp] }); });
+  expect(screen.queryByRole("region", { name: "Latest checkpoint" })).toBeNull();
+});

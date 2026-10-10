@@ -1,6 +1,6 @@
 import { routedFetch as fetch, sessionFetch } from "./hostTransport";
-import { useEffect, useState } from "react";
-import { api } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { api, CheckpointRecord } from "./api";
 import { Duck, duckPhrase, poseFor } from "./Duck";
 import { FileEditModal } from "./FileEditModal";
 import {
@@ -11,15 +11,7 @@ import {
 } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
-
-function checkpointFresh(ts: number | null): boolean {
-  return ts !== null && Date.now() - ts < 30 * 60_000;
-}
-
-function agoShort(ts: number): string {
-  const mins = Math.max(0, Math.round((Date.now() - ts) / 60_000));
-  return mins < 1 ? "just now" : `${mins}m ago`;
-}
+import { CheckpointFacts } from "./CheckpointStatus";
 
 function age(startedAt: number): string {
   const mins = Math.max(0, Math.round((Date.now() - startedAt) / 60_000));
@@ -31,15 +23,17 @@ function age(startedAt: number): string {
 // Right pane: context about the selected agent's terminal. If the session is on
 // a git branch, show a git view (branch, repo, and the working-tree diff). If
 // not, show the folder it's running in. (Approvals render above this in App.)
-export function ContextPanel({ session }: { session: SessionView }) {
+export function ContextPanel({ session, active = true, onCheckpointTimeline }: { session: SessionView; active?: boolean; onCheckpointTimeline?: () => void }) {
   const toast = useToast();
   const [diff, setDiff] = useState<string>("");
   const [branches, setBranches] = useState<string[]>([]);
   const [acting, setActing] = useState<string | null>(null);
   const [editingFile, setEditingFile] = useState(false);
-  // Newest checkpoint timestamp — the context warning acknowledges a fresh
-  // one instead of nagging as if nothing happened.
-  const [lastCheckpoint, setLastCheckpoint] = useState<number | null>(null);
+  const [lastCheckpoint, setLastCheckpoint] = useState<CheckpointRecord | null>(null);
+  const sessionRef = useRef(session.key);
+  sessionRef.current = session.key;
+  const checkpointGeneration = useRef(0);
+  const selectionVersion = useRef<object>({});
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [branchesOpen, setBranchesOpen] = useState(false);
@@ -47,19 +41,6 @@ export function ContextPanel({ session }: { session: SessionView }) {
   const onBranch = !!session.branch;
   const dir = session.worktreePath ?? session.cwd ?? null;
   const ctxLevel = contextLevel(session.contextTokens, session.model);
-
-  async function checkpoint() {
-    setActing("checkpoint");
-    try {
-      await api.checkpoint(session.key, "context-full");
-      setLastCheckpoint(Date.now());
-      toast("Checkpoint recorded — see the History tab");
-    } catch (e) {
-      toast(`Checkpoint failed: ${(e as Error).message}`, "err");
-    } finally {
-      setActing(null);
-    }
-  }
 
   async function compact() {
     setActing("compact");
@@ -74,12 +55,27 @@ export function ContextPanel({ session }: { session: SessionView }) {
   }
 
   useEffect(() => {
-    setLastCheckpoint(null);
-    api
-      .checkpoints(session.key)
-      .then((d) => setLastCheckpoint(d.checkpoints[0]?.created_at ?? null))
-      .catch(() => undefined);
+    setLastCheckpoint(null); setActing(null); checkpointGeneration.current++; selectionVersion.current = {};
+    return () => { selectionVersion.current = {}; };
   }, [session.key]);
+  useEffect(() => {
+    if (!active) return;
+    let live = true, pending = false;
+    const load = () => {
+      if (!live || pending || document.visibilityState === "hidden") return;
+      pending = true;
+      const generation = checkpointGeneration.current;
+      void api.checkpoints(session.key).then(d => {
+        if (live && generation === checkpointGeneration.current) setLastCheckpoint(d.checkpoints[0] ?? null);
+      }).catch(() => undefined).finally(() => { pending = false; });
+    };
+    const updated = (event: Event) => { if ((event as CustomEvent<string>).detail === session.key) load(); };
+    load();
+    const timer = setInterval(load, 10_000);
+    document.addEventListener("visibilitychange", load);
+    window.addEventListener("duckterm-checkpoint", updated);
+    return () => { live = false; clearInterval(timer); document.removeEventListener("visibilitychange", load); window.removeEventListener("duckterm-checkpoint", updated); };
+  }, [session.key, active]);
 
   useEffect(() => {
     setDiffOpen(false); // a new session starts with the diff collapsed
@@ -195,25 +191,18 @@ export function ContextPanel({ session }: { session: SessionView }) {
         )}
       </div>
 
+      {lastCheckpoint && <section className="rd-context-checkpoint" aria-label="Latest checkpoint">
+        {onCheckpointTimeline ? <button className="rd-timeline-link" onClick={onCheckpointTimeline}>Latest checkpoint ↗</button> : <strong>Latest checkpoint</strong>}
+        <CheckpointFacts checkpoint={lastCheckpoint} compact />
+      </section>}
       {ctxLevel && (
         <div className={`rd-ctx-warning ${ctxLevel}`}>
           <div className="rd-ctx-warning-text">
-            {checkpointFresh(lastCheckpoint)
-              ? `Checkpointed ${agoShort(lastCheckpoint!)} — resumable. Only /compact frees context; run it when convenient.`
-              : ctxLevel === "high"
-                ? "Context is nearly full — checkpoint the session, or compact it before quality degrades."
-                : "This session has been going a while and its context is filling up — a checkpoint now makes it resumable later."}
+            {ctxLevel === "high"
+              ? "Context is nearly full. Right-click the session to save a checkpoint; only compacting frees context."
+              : "Context is filling up. Save a checkpoint to retain the current work, or compact to free context."}
           </div>
           <div className="rd-ctx-warning-actions">
-            {!checkpointFresh(lastCheckpoint) && (
-              <button
-                className="rd-btn rd-btn-sm rd-btn-ghost"
-                disabled={acting !== null}
-                onClick={checkpoint}
-              >
-                {acting === "checkpoint" ? "Capturing…" : "Checkpoint"}
-              </button>
-            )}
             {session.ptyOwned && (
               <button
                 className="rd-btn rd-btn-sm rd-btn-ghost"

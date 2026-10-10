@@ -4,7 +4,7 @@ import { InboxView } from "./InboxView";
 import { api, InboxMessage, InboxPage } from "./api";
 import { SessionView } from "./types";
 
-vi.mock("./api", () => ({ api: { inbox: vi.fn(), introduceCollaboration: vi.fn(), collaborationInstructions: vi.fn() } }));
+vi.mock("./api", () => ({ api: { inbox: vi.fn(), folderInbox: vi.fn(), introduceCollaboration: vi.fn(), collaborationInstructions: vi.fn() } }));
 const session = { key: "b", label: "Billing" } as SessionView;
 const message: InboxMessage = {
   id: "q-1", sender: "a", recipient: "b", sender_name: "Client implementation",
@@ -61,7 +61,7 @@ describe("session inbox", () => {
     fireEvent.click(sender.closest("summary")!);
     expect(screen.getByText("From session: a")).toBeVisible();
     expect(screen.getByText(/Retry once/).textContent).toBe(message.answer);
-    expect(api.inbox).toHaveBeenCalledWith("b", undefined);
+    expect(api.inbox).toHaveBeenCalledWith("b", undefined, "all");
   });
 
   it("distinguishes an empty inbox from an API failure and supports retry", async () => {
@@ -82,7 +82,7 @@ describe("session inbox", () => {
     fireEvent.click(await screen.findByText("Load older messages"));
     expect(await screen.findByText("Older sender")).toBeVisible();
     expect(screen.getByText("Client implementation")).toBeVisible();
-    expect(api.inbox).toHaveBeenCalledWith("b", 12);
+    expect(api.inbox).toHaveBeenCalledWith("b", 12, "all");
   });
 
   it("does not leak a late response into the next selected session", async () => {
@@ -128,7 +128,8 @@ it("filters only reply-required work and searches loaded replies without treatin
   expect(screen.getByText("Accepted sender")).toBeVisible();
   expect(screen.queryByText("Notice sender")).toBeNull();
   expect(screen.queryByText("Expired sender")).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "All 6" }));
+  fireEvent.click(await screen.findByRole("button", { name: "All 6" }));
+  await screen.findByRole("button", { name: "All 6" });
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "PRESERVE the request" } });
   expect(screen.getByText("Client implementation")).toBeVisible();
   expect(screen.queryByText("Pending sender")).toBeNull();
@@ -137,4 +138,53 @@ it("filters only reply-required work and searches loaded replies without treatin
   fireEvent.change(screen.getByRole("searchbox"), { target: { value: "<img" } });
   expect(screen.getByText("Literal sender")).toBeVisible();
   expect(container.querySelector("img")).toBeNull();
+});
+
+it.each([false, true])("finds older open work using the server view (folder=%s) and resets its cursor", async (folder) => {
+  const totals = { all: 104, pending: 2, answered: 102 };
+  const old = { ...message, id: "old-open", sender_name: "Older open request", status: "accepted" as const, answer: null };
+  const fetchPage = vi.fn(async (_key: string, before?: number, view?: string) => view === "pending"
+    ? { messages: [old], next_cursor: null, counts: totals }
+    : { messages: [{ ...message, id: before ? "page-two" : "newest" }], next_cursor: before ? null : 75, counts: totals });
+  vi.mocked(api.inbox).mockImplementation(fetchPage);
+  vi.mocked(api.folderInbox).mockImplementation(fetchPage);
+  render(folder ? <InboxView folder="work" /> : <InboxView session={session} />);
+  fireEvent.click(await screen.findByText("Load older messages"));
+  await screen.findByText("2 of 2 loaded messages");
+  fireEvent.click(screen.getByRole("button", { name: "Awaiting reply 2" }));
+  expect(await screen.findByText("Older open request")).toBeVisible();
+  expect(fetchPage).toHaveBeenLastCalledWith(folder ? "work" : "b", undefined, "pending");
+  expect(screen.getByRole("button", { name: "All 104" })).toBeVisible();
+  expect(screen.queryByText("Load older messages")).toBeNull();
+});
+
+it("keeps read priority notices awaiting reply without claiming they were unread", async () => {
+  vi.mocked(api.inbox).mockResolvedValue({ messages: [
+    { ...message, id: "priority", kind: "broadcast", requires_reply: true, status: "read", answer: null, delivery: { last_read_at: 1000001 } },
+    { ...message, id: "notice", sender_name: "Regular notice", kind: "broadcast", requires_reply: false, status: "read", answer: null },
+  ], next_cursor: null });
+  render(<InboxView session={session} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Awaiting reply 1" }));
+  await screen.findByRole("button", { name: "Awaiting reply 1" });
+  expect(screen.getByText("Awaiting reply", { selector: ".rd-inbox-status" })).toBeVisible();
+  expect(screen.queryByText("Regular notice")).toBeNull();
+  fireEvent.click(screen.getByText("Client implementation").closest("summary")!);
+  expect(screen.getByText("Read by session")).toBeVisible();
+  expect(screen.queryByText("Unread")).toBeNull();
+});
+
+it("ignores an in-flight older view response when changing filters", async () => {
+  let resolve!: (value: InboxPage) => void;
+  vi.mocked(api.inbox).mockResolvedValueOnce({ messages: [message], next_cursor: 10, counts: { all: 51, pending: 1, answered: 50 } });
+  render(<InboxView session={session} />);
+  await screen.findByText("Load older messages");
+  vi.mocked(api.inbox).mockReturnValueOnce(new Promise(r => { resolve = r; }));
+  fireEvent.click(screen.getByText("Load older messages"));
+  const old = { ...message, id: "old-open", sender_name: "Older open request", status: "queued" as const, answer: null };
+  vi.mocked(api.inbox).mockResolvedValue({ messages: [old], next_cursor: null });
+  fireEvent.click(screen.getByRole("button", { name: "Awaiting reply 1" }));
+  await screen.findByText("Older open request");
+  resolve({ messages: [{ ...message, sender_name: "Late stale history" }], next_cursor: null });
+  await waitFor(() => expect(screen.queryByText("Late stale history")).toBeNull());
+  expect(screen.getByText("Older open request")).toBeVisible();
 });

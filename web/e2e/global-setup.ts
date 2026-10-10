@@ -1,6 +1,6 @@
+import { writeOwnedState } from "./run-state";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,7 +21,11 @@ const PORT = process.env.RD_TEST_PORT || "4399";
 const REPO = join(__dirname, "..", "..");
 
 export default async function globalSetup() {
-  // Build the dashboard the suite is about to test. Without this, the server
+  const runRoot = process.env.RD_TEST_RUN_ROOT;
+  if (!runRoot || !process.env.RD_TEST_TMUX_SOCKET || !process.env.RD_TEST_STATE_FILE) {
+    throw new Error("Run browser tests with npm run e2e (isolated environment required)");
+  }
+  // Build the dashboard this run is about to test. Without this, the server
   // serves whatever web/dist happens to hold — we spent an afternoon
   // "testing" a bundle three releases old.
   await new Promise<void>((resolve, reject) => {
@@ -36,7 +40,7 @@ export default async function globalSetup() {
     );
   });
 
-  const home = mkdtempSync(join(tmpdir(), "rd-e2e-"));
+  const home = mkdtempSync(join(runRoot, "state-"));
   // Backup UI tests must never collect the developer's actual agent transcripts.
   const testClaudeRoot = join(home, "test-claude");
   const testCodexRoot = join(home, "test-codex");
@@ -55,7 +59,7 @@ export default async function globalSetup() {
 
   // A private tmux namespace for this run's fixture agents, swept wholesale
   // in global-teardown — never the user's real duckterm socket.
-  const tmuxSocket = `rd-e2e-${process.pid}`;
+  const tmuxSocket = process.env.RD_TEST_TMUX_SOCKET!;
 
   const proc = spawn(
     "python",
@@ -82,10 +86,7 @@ export default async function globalSetup() {
   // Setup failures do not run global teardown. Reap only our child and home.
   try {
     await waitForOwnedServer(proc, home, `http://127.0.0.1:${PORT}`);
-    writeFileSync(
-      process.env.RD_TEST_STATE_FILE || join(tmpdir(), "rd-e2e-state.json"),
-      JSON.stringify({ home, pid: proc.pid, port: PORT, tmuxSocket }),
-    );
+    writeOwnedState({ home, pid: proc.pid!, port: PORT, tmuxSocket });
   } catch (error) {
     if (proc.pid && proc.exitCode === null && proc.signalCode === null) {
       await new Promise<void>((resolve) => {

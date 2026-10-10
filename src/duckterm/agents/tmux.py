@@ -13,8 +13,11 @@ import shlex
 import shutil
 import subprocess
 import sys
+import uuid
+from pathlib import Path
 
-from duckterm.helpers import instance
+from duckterm.helpers import instance, pane_log
+from duckterm.helpers.private_files import private_write
 
 _PREFIX = "rd_"
 
@@ -50,11 +53,23 @@ def _tmux(*args: str) -> tuple[bool, str]:
     return result.returncode == 0, (result.stdout if result.returncode == 0 else result.stderr)
 
 
+def exact_target(target: str, *, pane: bool = False) -> str:
+    """Do not let a departed agent resolve to its sibling shell by prefix."""
+    return "=" + target + (":" if pane else "") if target.startswith(_PREFIX) else target
+
+
 def target_for(session_id: str) -> str:
     return f"{_PREFIX}{session_id}"
 
 
-def spawn(session_id: str, command: str, cwd: str, env: dict[str, str] | None = None) -> str:
+def spawn(
+    session_id: str,
+    command: str,
+    cwd: str,
+    env: dict[str, str] | None = None,
+    *,
+    session_options: dict[str, str] | None = None,
+) -> str:
     """Create a detached tmux session running `command` in `cwd`. Returns the
     tmux target name. Raises ValueError when tmux itself refuses — before
     this, a failed spawn 'succeeded' silently and the session just appeared
@@ -68,6 +83,9 @@ def spawn(session_id: str, command: str, cwd: str, env: dict[str, str] | None = 
     env_args: list[str] = []
     for k, v in (env or {}).items():
         env_args += ["-e", f"{k}={v}"]
+    option_args: list[str] = []
+    for option, value in (session_options or {}).items():
+        option_args += [";", "set-option", "-t", target, option, value]
     # `-x/-y` set the initial size; a detached session otherwise defaults to
     # 80x24, which mismatches the browser pane and garbles a TUI's wrapping.
     # Keep our private server alive between agents. Otherwise the last quick
@@ -94,6 +112,7 @@ def spawn(session_id: str, command: str, cwd: str, env: dict[str, str] | None = 
         cwd,
         *env_args,
         command,
+        *option_args,
     )
     if not ok:
         raise ValueError(f"tmux failed to start the session: {err.strip() or 'unknown error'}")
@@ -109,15 +128,39 @@ def spawn_piped(
 ) -> str:
     """Spawn a detached session and stream its pane output to `pipe_path` from
     the start, so live output isn't missed. Returns the tmux target."""
-    target = spawn(session_id, command, cwd, env)
-    # -o starts piping immediately; appends raw pane output to the file.
-    _tmux(
-        "pipe-pane",
-        "-t",
-        target,
-        "-o",
-        shlex.join([sys.executable, "-m", "duckterm.helpers.pane_log", pipe_path]),
-    )
+    completion = pane_log.prepare_completion(Path(pipe_path))
+    channel = "duckterm-start-" + uuid.uuid4().hex
+    client = client_command("wait-for", channel)
+    client[0] = shutil.which(client[0]) or client[0]
+    wait = shlex.join(client)
+    # A quoted handoff can exceed tmux's command-message limit. Keep the
+    # command in a private, one-use script; only its path crosses tmux IPC.
+    # The child unlinks it after opening, before running any agent command.
+    script = Path(pipe_path).resolve().with_name(f".launch-{uuid.uuid4().hex}.sh")
+    guarded = wait + " && exec " + shlex.join(["/bin/sh", str(script)])
+    target = None
+    try:
+        private_write(script, f"/bin/rm -f -- {shlex.quote(str(script))}\n{command}\n")
+        target = spawn(session_id, guarded, cwd, env)
+        ok, error = _tmux(
+            "pipe-pane",
+            "-t",
+            exact_target(target, pane=True),
+            "-o",
+            shlex.join(
+                [sys.executable, "-m", "duckterm.helpers.pane_log", pipe_path, str(completion)]
+            ),
+        )
+        if not ok:
+            raise ValueError(f"Cannot attach terminal output: {error.strip()}")
+        ok, error = _tmux("wait-for", "-S", channel)
+        if not ok:
+            raise ValueError(f"Cannot release agent startup: {error.strip()}")
+    except BaseException:
+        if target is not None:
+            kill_session(target)
+        script.unlink(missing_ok=True)
+        raise
     return target
 
 
@@ -127,7 +170,9 @@ def list_duckterm_sessions() -> list[str]:
     An absent server means no sessions. Permission/socket/probe errors do not:
     treating those as an empty list incorrectly interrupts every live agent.
     """
-    ok, out = _tmux("list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}")
+    ok, out = _tmux(
+        "list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}\t#{@duckterm_owner_shell}"
+    )
     if not ok:
         if "no server running on " in out or (
             "error connecting to " in out and "(No such file or directory)" in out
@@ -136,8 +181,9 @@ def list_duckterm_sessions() -> list[str]:
         raise RuntimeError(f"cannot discover tmux sessions: {out.strip()}")
     live = []
     for line in out.splitlines():
-        name, _, dead = line.partition("\t")
-        if name.startswith(_PREFIX) and dead == "0":
+        name, _, state = line.partition("\t")
+        dead, _, owner_shell = state.partition("\t")
+        if name.startswith(_PREFIX) and not owner_shell and dead == "0":
             key = name[len(_PREFIX) :]
             if key not in live:
                 live.append(key)
@@ -145,7 +191,7 @@ def list_duckterm_sessions() -> list[str]:
 
 
 def send_keys(target: str, keys: str, *, enter: bool = True) -> bool:
-    args = ["send-keys", "-t", target, keys]
+    args = ["send-keys", "-t", exact_target(target, pane=True), keys]
     if enter:
         args.append("Enter")
     ok, _ = _tmux(*args)
@@ -154,7 +200,7 @@ def send_keys(target: str, keys: str, *, enter: bool = True) -> bool:
 
 def send_special(target: str, key: str) -> bool:
     """Send a named key (e.g. 'Escape', 'Enter') without literal interpretation."""
-    ok, _ = _tmux("send-keys", "-t", target, key)
+    ok, _ = _tmux("send-keys", "-t", exact_target(target, pane=True), key)
     return ok
 
 
@@ -165,18 +211,20 @@ def send_raw(target: str, data: bytes) -> bool:
     hex_bytes = [f"{b:02x}" for b in data]
     if not hex_bytes:
         return True
-    ok, _ = _tmux("send-keys", "-t", target, "-H", *hex_bytes)
+    ok, _ = _tmux("send-keys", "-t", exact_target(target, pane=True), "-H", *hex_bytes)
     return ok
 
 
 def resize_window(target: str, cols: int, rows: int) -> bool:
     """Resize the tmux window so the agent's TUI reflows to the browser pane."""
-    ok, _ = _tmux("resize-window", "-t", target, "-x", str(cols), "-y", str(rows))
+    ok, _ = _tmux(
+        "resize-window", "-t", exact_target(target, pane=True), "-x", str(cols), "-y", str(rows)
+    )
     return ok
 
 
 def capture_pane(target: str) -> str:
-    ok, out = _tmux("capture-pane", "-t", target, "-p")
+    ok, out = _tmux("capture-pane", "-t", exact_target(target, pane=True), "-p")
     return out if ok else ""
 
 
@@ -193,7 +241,7 @@ def capture_screen(target: str, history_lines: int = 2000) -> bytes:
     viewport, and painting the padding scrolls short output out of view.
     Lines are joined with CRLF: subprocess text mode normalized the pane's
     newlines to bare LF, which in a raw terminal never returns to column 0."""
-    args = ["capture-pane", "-t", target, "-p", "-e"]
+    args = ["capture-pane", "-t", exact_target(target, pane=True), "-p", "-e"]
     if history_lines:
         args += ["-S", f"-{history_lines}"]
     ok, out = _tmux(*args)
@@ -206,10 +254,10 @@ def capture_screen(target: str, history_lines: int = 2000) -> bytes:
 
 
 def kill_session(target: str) -> bool:
-    ok, _ = _tmux("kill-session", "-t", target)
+    ok, _ = _tmux("kill-session", "-t", exact_target(target))
     return ok
 
 
 def session_exists(target: str) -> bool:
-    ok, _ = _tmux("has-session", "-t", target)
+    ok, _ = _tmux("has-session", "-t", exact_target(target))
     return ok

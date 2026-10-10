@@ -155,6 +155,7 @@ export function applyEvent(
     contextTokens: prev?.contextTokens,
     model: prev?.model,
     metaHarnesses: prev?.metaHarnesses,
+    conversationIdentity: prev?.conversationIdentity,
     startedAt: prev?.startedAt ?? e._ts,
     updatedAt: e._ts,
     eventCount: (prev?.eventCount ?? 0) + 1,

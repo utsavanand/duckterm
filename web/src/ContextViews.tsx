@@ -9,6 +9,10 @@ export function ContextViews({ session, connectors }: { session: ReactNode; conn
     try { return localStorage.getItem("rd.contextView") === "connectors" ? "connectors" : "session"; }
     catch { return "session"; }
   });
+  useEffect(() => {
+    const show = () => setView("session"); window.addEventListener("show-session-notes", show);
+    return () => window.removeEventListener("show-session-notes", show);
+  }, []);
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   useEffect(() => {
     try { localStorage.setItem("rd.contextView", view); }

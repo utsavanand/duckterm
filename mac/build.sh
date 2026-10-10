@@ -16,6 +16,10 @@ cd "$(dirname "$0")"
 
 TEST_BUILD=0
 RUN_APP=0
+# Both the binary's deployment target and Info.plist read this. Without an
+# explicit -target, swiftc stamps the BUILD machine's OS as the minimum, and
+# the app refuses to launch on older macOS despite what Info.plist says.
+MIN_MACOS=13.0
 for arg in "$@"; do
   case "$arg" in
     --test) TEST_BUILD=1 ;;
@@ -43,7 +47,7 @@ fi
 echo "==> compiling"
 rm -rf "$APP"
 mkdir -p "$MACOS" "$CONTENTS/Resources"
-swiftc -O \
+swiftc -O -target "arm64-apple-macos${MIN_MACOS}" \
   -framework AppKit -framework WebKit -framework UserNotifications -framework Foundation \
   -o "$MACOS/DuckTerm" \
   Sources/Duckterm/*.swift
@@ -82,7 +86,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>CFBundleExecutable</key><string>DuckTerm</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>LSMinimumSystemVersion</key><string>${MIN_MACOS}</string>
   <key>NSHumanReadableCopyright</key><string>RubberDuckHQ</string>
 </dict>
 </plist>
@@ -131,6 +135,12 @@ plist = plistlib.loads(path.read_bytes())
 plist["DuckTermSupportEmail"] = os.environ["DUCKTERM_SUPPORT_EMAIL"]
 path.write_bytes(plistlib.dumps(plist))
 PYCONFIG
+fi
+
+built_minos=$(otool -l "$MACOS/DuckTerm" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
+if [[ "$built_minos" != "$MIN_MACOS" ]]; then
+  echo "error: binary minimum macOS is $built_minos, expected $MIN_MACOS" >&2
+  exit 1
 fi
 
 echo "==> ad-hoc signing (runs locally; not notarized for distribution)"

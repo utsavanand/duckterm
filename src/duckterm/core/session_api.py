@@ -19,6 +19,7 @@ from duckterm.helpers import session_credentials
 from duckterm.persistence import mail_analytics
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
 from duckterm.persistence.artifacts import ArtifactError, ArtifactStore
+from duckterm.persistence.saved_state import retention_predicate
 from duckterm.runtimes.base import AT_REST_STATES
 
 # Store a far-future deadline so older servers do not immediately expire
@@ -160,6 +161,22 @@ MERGE_PREFIX = "merge:"
 # A priority owner message nobody has replied to: never swept while open.
 _OPEN_PRIORITY = "(priority = 1 AND status IN ('queued', 'read'))"
 PRIORITY_SNIPPET = 400
+
+
+def _inbox_view(view: str, alias: str = "") -> str:
+    """Fixed SQL predicates; request values never enter SQL text."""
+    predicates = {
+        "all": "1",
+        "pending": (
+            f"(({alias}kind != 'broadcast' AND {alias}status IN ('queued', 'accepted')) "
+            f"OR ({alias}kind = 'broadcast' AND {alias}priority = 1 "
+            f"AND {alias}status IN ('queued', 'accepted', 'read')))"
+        ),
+        "answered": f"{alias}status = 'answered'",
+    }
+    if view not in predicates:
+        raise APIError(400, "invalid inbox view")
+    return predicates[view]
 
 
 class SessionAPI:
@@ -849,12 +866,13 @@ class SessionAPI:
                 "status NOT IN ('queued', 'accepted') "
                 f"AND NOT {_OPEN_PRIORITY} "
                 "AND CASE WHEN expires_at > 0 AND expires_at < ? THEN expires_at "
-                "ELSE COALESCE(answered_at, created_at) END < ?",
+                "ELSE COALESCE(answered_at, created_at) END < ? AND " + retention_predicate("mail"),
                 (NO_DEADLINE, now - 7 * 86400000),
             )
             mail_analytics.retire_mail(
                 self.conn,
-                f"kind = 'broadcast' AND created_at < ? AND NOT {_OPEN_PRIORITY}",
+                f"kind = 'broadcast' AND created_at < ? AND NOT {_OPEN_PRIORITY} AND "
+                + retention_predicate("mail"),
                 (now - 7 * 86400000,),
             )
             self.conn.execute(
@@ -865,15 +883,25 @@ class SessionAPI:
                 "(SELECT id FROM session_questions)"
             )
 
-    def inbox(self, key: str, *, owner: bool = False, before: int | None = None) -> dict[str, Any]:
+    def inbox(
+        self,
+        key: str,
+        *,
+        owner: bool = False,
+        before: int | None = None,
+        view: str | None = None,
+    ) -> dict[str, Any]:
         self._session(key, live=not owner)
+        if view is not None and not owner:
+            raise APIError(403, "filtered inbox requires owner access")
+        predicate = _inbox_view("all" if view is None else view)
         if before is not None and not 0 < before <= 9223372036854775807:
             raise APIError(400, "invalid cursor")
         self._sweep()
         # Sequence cursor uses SQLite rowid, avoiding same-millisecond pagination gaps.
         rows = self.conn.execute(
             "SELECT rowid AS sequence, * FROM session_questions WHERE recipient = ? "
-            "AND rowid < ? ORDER BY rowid DESC LIMIT 51",
+            f"AND rowid < ? AND {predicate} ORDER BY rowid DESC LIMIT 51",
             (key, before if before is not None else 9223372036854775807),
         ).fetchall()
         messages = []
@@ -911,6 +939,8 @@ class SessionAPI:
         self.conn.commit()
         cursor = rows[49]["sequence"] if len(rows) > 50 else None
         result: dict[str, Any] = {"messages": messages, "next_cursor": cursor}
+        if view is not None:
+            result["counts"] = self._inbox_counts("recipient = ?", (key,))
         if owner:
             try:
                 result["card"] = self.card(key)
@@ -918,7 +948,23 @@ class SessionAPI:
                 result["card"] = None
         return result
 
-    def folder_inbox(self, folder: str, *, before: int | None = None) -> dict[str, Any]:
+    def _inbox_counts(self, scope: str, params: tuple[Any, ...]) -> dict[str, int]:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS all_count, "
+            f"COALESCE(SUM({_inbox_view('pending')}), 0) AS pending, "
+            "COALESCE(SUM(status = 'answered'), 0) AS answered "
+            f"FROM session_questions WHERE {scope}",
+            params,
+        ).fetchone()
+        return {"all": row["all_count"], "pending": row["pending"], "answered": row["answered"]}
+
+    def folder_inbox(
+        self,
+        folder: str,
+        *,
+        before: int | None = None,
+        view: str | None = None,
+    ) -> dict[str, Any]:
         """Owner-only history for either participant in a folder's current subtree.
 
         Do not filter by live state or enrollment: completed interactions remain
@@ -927,6 +973,7 @@ class SessionAPI:
         if before is not None and not 0 < before <= 9223372036854775807:
             raise APIError(400, "invalid cursor")
         self._sweep()
+        predicate = _inbox_view("all" if view is None else view, "q.")
         prefix = folder + "/"
         rows = self.conn.execute(
             "WITH members AS (SELECT session_key FROM sessions "
@@ -936,16 +983,23 @@ class SessionAPI:
             "FROM session_questions q LEFT JOIN sessions r ON r.session_key = q.recipient "
             "WHERE q.rowid < ? AND (q.sender IN (SELECT session_key FROM members) "
             "OR q.recipient IN (SELECT session_key FROM members)) "
-            "ORDER BY q.rowid DESC LIMIT 51",
+            f"AND {predicate} ORDER BY q.rowid DESC LIMIT 51",
             (folder, len(prefix), prefix, before if before is not None else 9223372036854775807),
         ).fetchall()
-        return {
+        result: dict[str, Any] = {
             "messages": [
                 {**_public_question(dict(row)), "recipient_name": row["recipient_name"]}
                 for row in rows[:50]
             ],
             "next_cursor": rows[49]["sequence"] if len(rows) > 50 else None,
         }
+        if view is not None:
+            members = "SELECT session_key FROM sessions WHERE grp = ? OR substr(grp, 1, ?) = ?"
+            result["counts"] = self._inbox_counts(
+                f"sender IN ({members}) OR recipient IN ({members})",
+                (folder, len(prefix), prefix) * 2,
+            )
+        return result
 
     def _question(self, key: str, request_id: str) -> dict[str, Any]:
         row = self.conn.execute(

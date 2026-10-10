@@ -5,6 +5,7 @@ type Desktop = {
   currentTarget: string;
   launchTarget?: string;
   testBuild?: boolean;
+  canReportBug?: boolean;
   targets: { id: string; name: string }[];
   draft?: LaunchDraft;
   selectedSession?: string;
@@ -41,4 +42,13 @@ export async function destinationRequest<T>(target: string, operation: "session-
   const bridge = window.webkit?.messageHandlers?.launchRequest;
   if (!bridge) throw new Error("Update RubberTerm Test to browse another computer without switching screens");
   return await bridge.postMessage({ target, operation, params }) as T;
+}
+
+// Older Mac builds have the host bridge but no native reporter action.
+// Feature detection preserves their usable browser report flow.
+export function openNativeBugReport(): boolean {
+  const bridge = window.webkit?.messageHandlers?.remoteSession;
+  if (!desktop()?.canReportBug || !bridge) return false;
+  bridge.postMessage({ action: "report-bug" });
+  return true;
 }

@@ -13,13 +13,15 @@
 # Codex 0.159+ runs every session's hooks in one shared daemon ("codex
 # app-server --managed-daemon"), whose environment is that of whichever
 # session started it. There, every DUCKTERM_* variable belongs to another
-# session (even another instance), and PPID is the daemon. Ignore them all:
+# session (even another instance), including a harness switch's generation,
+# and PPID is the daemon. Ignore them all:
 # the server attributes the event by the agent's own session_id, parks what it
 # can't, and an internal run's events park the same way. Daemon-hosted agents
 # report to the default instance (~/.duckterm).
 case "$(ps -o command= -p "$PPID" 2>/dev/null)" in
   *" app-server "*|*" app-server")
-    unset DUCKTERM_INTERNAL DUCKTERM_URL DUCKTERM_HOME DUCKTERM_SESSION_KEY
+    unset DUCKTERM_INTERNAL DUCKTERM_URL DUCKTERM_HOME DUCKTERM_SESSION_KEY \
+      DUCKTERM_HARNESS_GENERATION
     HOOK_HOST="daemon" ;;
   *) HOOK_HOST="" ;;
 esac
@@ -53,7 +55,8 @@ if command -v jq >/dev/null 2>&1; then
   # tool_name); Copilot uses camelCase (sessionId, toolName). Accept either.
   PAYLOAD=$(printf '%s' "$INPUT" | jq -c \
     --arg etype "$EVENT_TYPE" --arg skey "$SESSION_KEY" --arg rt "$RUNTIME" \
-    --arg host "$HOOK_HOST" --argjson apid "$AGENT_PID" '
+    --arg host "$HOOK_HOST" --arg generation "${DUCKTERM_HARNESS_GENERATION:-}" \
+    --argjson apid "$AGENT_PID" '
     {
       event_type: $etype,
       session_key: (if $skey == "" then null else $skey end),
@@ -68,6 +71,7 @@ if command -v jq >/dev/null 2>&1; then
       message: (if .message | type == "string" then .message[0:200] else null end),
       runtime: $rt,
       hook_host: (if $host == "" then null else $host end),
+      launch_generation: (if $generation == "" then null else $generation end),
       agent_pid: $apid,
       agent_id: .agent_id,
       agent_type: .agent_type,
@@ -88,8 +92,12 @@ if [ -z "$PAYLOAD" ] || [ "$PAYLOAD" = "null" ]; then
   [ -n "$PROMPT" ] && PROMPT_FIELD=$(printf '"prompt":"%s",' "$PROMPT")
   [ -n "$HOOK_HOST" ] && PROMPT_FIELD="$PROMPT_FIELD\"hook_host\":\"$HOOK_HOST\","
   [ -z "$SID" ] && SID=$(printf '%s' "$INPUT" | grep -o '"sessionId"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
-  PAYLOAD=$(printf '{"event_type":"%s",%s%s"session_id":"%s","cwd":"%s","source_app":"%s","tool_name":"%s","runtime":"%s","agent_pid":%s}' \
-    "$EVENT_TYPE" "$SKEY_FIELD" "$PROMPT_FIELD" "$SID" "$CWD" "$APP" "$TOOL" "$RUNTIME" "$AGENT_PID")
+  GENERATION_FIELD=""
+  if [[ "${DUCKTERM_HARNESS_GENERATION:-}" =~ ^[0-9a-f]{32}$ ]]; then
+    GENERATION_FIELD=$(printf '"launch_generation":"%s",' "$DUCKTERM_HARNESS_GENERATION")
+  fi
+  PAYLOAD=$(printf '{"event_type":"%s",%s%s%s"session_id":"%s","cwd":"%s","source_app":"%s","tool_name":"%s","runtime":"%s","agent_pid":%s}' \
+    "$EVENT_TYPE" "$SKEY_FIELD" "$PROMPT_FIELD" "$GENERATION_FIELD" "$SID" "$CWD" "$APP" "$TOOL" "$RUNTIME" "$AGENT_PID")
 fi
 
 # The server writes a per-install secret to this file (0600). We read it and

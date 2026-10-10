@@ -4,6 +4,7 @@ import { apiDelete, apiPost, base, postEvent } from "./helpers";
 test("Focus pins: cap, live input, saved layout, stopped sessions and unpin", async ({ page }) => {
   test.setTimeout(90_000);
   await page.setViewportSize({width:1440,height:1000});
+  await page.emulateMedia({colorScheme:"dark"});
   const keys: string[] = [];
   try {
     for (const name of ["focus-a", "focus-b", "focus-c", "focus-d"]) {
@@ -12,18 +13,31 @@ test("Focus pins: cap, live input, saved layout, stopped sessions and unpin", as
     }
     await page.goto(base());
     await expect(page.getByRole("button", {name:"Focus · 0",exact:true})).toBeDisabled();
+    await page.locator(".rd-row-name", {hasText: "focus-d"}).click();
+    await page.getByRole("button", {name:"Collapse Context panel",exact:true}).click();
     for (const name of ["focus-a", "focus-b", "focus-c"]) {
-      await page.locator(".rd-row-name", {hasText: name}).click();
-      await page.locator(".rd-context-pane").getByRole("button", {name:`Pin ${name}`,exact:true}).click();
-      await expect(page.locator(".rd-context-pane").getByRole("button", {name:`Unpin ${name}`,exact:true})).toHaveAttribute("aria-pressed","true");
+      await page.locator(".rd-agents").getByRole("button", {name:`Pin ${name}`,exact:true}).click();
+      await expect(page.locator(".rd-agents").getByRole("button", {name:`Unpin ${name}`,exact:true})).toHaveAttribute("aria-pressed","true");
+      await expect(page.locator(".rd-row.selected .rd-row-name")).toHaveText("focus-d");
     }
     await page.locator(".rd-row-name", {hasText: "focus-d"}).click();
-    await page.locator(".rd-context-pane").getByRole("button", {name:"Pin focus-d",exact:true}).click();
+    await page.locator(".rd-agents").getByRole("button", {name:"Pin focus-d",exact:true}).click();
     await expect(page.getByText("Unpin one first", {exact:true})).toBeVisible();
     await expect(page.getByRole("button", {name:"Focus · 3",exact:true})).toBeEnabled();
     await page.locator(".rd-row-name",{hasText:"focus-a"}).click();
-    await expect(page.locator(".rd-context-pane").getByRole("button",{name:"Unpin focus-a",exact:true})).toBeVisible();
-    await page.screenshot({path:"/tmp/duckterm-focus-implemented-sessions.png"});
+    await expect(page.locator(".rd-agents").getByRole("button",{name:"Unpin focus-a",exact:true})).toBeVisible();
+    for (const density of ["compact", "standard", "relaxed"]) {
+      await page.getByRole("button", {name:"Settings",exact:true}).click();
+      await page.getByRole("combobox", {name:"Sidebar density"}).selectOption(density);
+      await page.keyboard.press("Escape");
+      const pin = page.locator(".rd-agents").getByRole("button", {name:"Unpin focus-a",exact:true});
+      await expect(pin).toBeVisible();
+      const box = (await pin.boundingBox())!, sidebar = (await page.locator(".rd-agents").boundingBox())!;
+      expect(box.x + box.width).toBeLessThanOrEqual(sidebar.x + sidebar.width);
+      await page.screenshot({path:`/tmp/sidebar-session-pin-${density}.png`});
+    }
+    await page.emulateMedia({colorScheme:"light"});
+    await page.screenshot({path:"/tmp/sidebar-session-pin-light.png"});
     await page.getByRole("button", {name:"Focus · 3",exact:true}).click();
     const tile = (name:string) => page.locator(".rd-grid-tile",{has:page.locator(".rd-grid-tile-name",{hasText:name})});
     await expect(page.locator(".rd-grid-tile")).toHaveCount(3);

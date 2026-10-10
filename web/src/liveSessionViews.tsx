@@ -24,7 +24,7 @@ export function LiveSessionCard({ active, ...props }: Omit<ComponentProps<typeof
 }
 export function LiveContextPanel({ active, ...props }: ComponentProps<typeof ContextPanel> & { active: boolean }) {
   useNow(1000, active);
-  return <ContextPanel {...props} />;
+  return <ContextPanel {...props} active={active} />;
 }
 export function LiveInboxView({ session, active }: { session: SessionView; active: boolean }) {
   const now = useNow(1000, active);

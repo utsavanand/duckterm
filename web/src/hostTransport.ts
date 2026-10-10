@@ -35,9 +35,13 @@ export async function hostFetch(host: string, path: string, init?: RequestInit):
     for (let i = 0; i < bytes.length; i += 8192) binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
     payload = { base64: btoa(binary), contentType: body.type };
   }
-  const response = await destinationRequest<{ status: number; body: string }>(host, "session-request", {
+  const response = await destinationRequest<{ status: number; body: string; base64?: string; contentType?: string }>(host, "session-request", {
     path, method: init?.method ?? "GET", ...payload,
   });
+  if (typeof response.base64 === "string") {
+    const bytes = Uint8Array.from(atob(response.base64), c => c.charCodeAt(0));
+    return new Response(bytes, { status: response.status, headers: { "Content-Type": response.contentType ?? "application/octet-stream" } });
+  }
   let result = response.body;
   try { result = JSON.stringify(qualifyResult(JSON.parse(result), host)); } catch { /* text response */ }
   return new Response(result, { status: response.status });
@@ -104,9 +108,9 @@ class NativeTerminal implements TerminalSocket {
       this.onmessage?.({ data: bytes.buffer });
     }
   };
-  constructor(private host: string, key: string) {
+  constructor(private host: string, key: string, kind: "agent" | "shell" = "agent") {
     window.addEventListener("remote-terminal", this.listener);
-    this.opened = destinationRequest(host, "terminal-open", { id: this.id, key });
+    this.opened = destinationRequest(host, "terminal-open", { id: this.id, key, ...(kind === "shell" ? { kind } : {}) });
     void this.opened.catch(() => this.finish());
   }
   send(data: string | Uint8Array): void {
@@ -133,9 +137,11 @@ class NativeTerminal implements TerminalSocket {
   }
 }
 
-export function terminalSocket(ref: string): TerminalSocket {
+export function terminalSocket(ref: string, kind: "agent" | "shell" = "agent"): TerminalSocket {
   const { host, key } = splitSessionRef(ref);
-  if (host !== "local") return new NativeTerminal(host, key);
+  if (host !== "local") return new NativeTerminal(host, key, kind);
   const protocol = location.protocol === "https:" ? "wss" : "ws";
-  return new WebSocket(`${protocol}://${location.host}/sessions/${encodeURIComponent(key)}/terminal`) as unknown as TerminalSocket;
+  const path = `/sessions/${encodeURIComponent(key)}/${kind === "shell" ? "shell/" : ""}terminal`;
+  const token = document.querySelector('meta[name="duckterm-token"]')?.getAttribute("content") ?? "";
+  return new WebSocket(`${protocol}://${location.host}${path}`, kind === "shell" ? ["duckterm-shell", `duckterm-owner.${token}`] : []) as unknown as TerminalSocket;
 }

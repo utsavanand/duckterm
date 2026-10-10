@@ -57,6 +57,11 @@ test("terminal: typing reaches the agent and echoes back", async ({ page }) => {
     "HELLO_DUCKTERM",
     { timeout: 5_000 },
   );
+  // Keyboard activation of the same row must also return focus to the terminal.
+  const sessionRow = page.locator(".rd-row", { has: row });
+  await sessionRow.focus();
+  await sessionRow.press("Enter");
+  await expect(page.locator(".rd-terminal-slot:visible .xterm-helper-textarea")).toBeFocused();
 });
 
 test("terminal: switching agents shows the other agent's terminal", async ({

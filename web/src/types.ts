@@ -54,7 +54,14 @@ export interface DuckCelebration {
   startedAt: number;
 }
 
+export interface ConversationBinding {
+  status: "missing" | "pending" | "recorded" | "contested";
+  source: "none" | "assigned" | "observed" | "adopted";
+  assignable: boolean;
+}
+
 export interface SessionView {
+  conversationIdentity?: ConversationBinding;
   host?: string;
   hostLabel?: string;
   hostOffline?: boolean;
@@ -107,6 +114,7 @@ export interface ProgressDigest {
 
 /** A persisted session row from GET /sessions (SQLite, snake_case). */
 export interface PersistedSession {
+  conversation_identity?: ConversationBinding;
   remote_transfer?: SessionView["remoteTransfer"];
   session_key: string;
   pinned?: number;
@@ -184,6 +192,7 @@ function parseProgress(raw: string | null | undefined): ProgressDigest | undefin
 export function viewFromPersisted(s: PersistedSession): SessionView {
   return {
     key: s.session_key,
+    conversationIdentity: s.conversation_identity,
     pinned: s.pinned === 1,
     remoteTransfer: s.remote_transfer,
     label: s.name || s.source_app || s.session_key.slice(0, 8),

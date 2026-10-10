@@ -1,4 +1,6 @@
 import os
+import subprocess
+import urllib.error
 from collections.abc import Iterator
 
 import pytest
@@ -26,6 +28,7 @@ def test_no_backend_returns_empty_none(clean_env: None) -> None:
     result = summarize("anything")
     assert result.backend == "none"
     assert result.text == ""
+    assert result.failure_reason == "no_provider"
 
 
 def test_cli_backend_runs_command(clean_env: None) -> None:
@@ -40,6 +43,7 @@ def test_cli_backend_failure_falls_back_to_none(clean_env: None) -> None:
     os.environ["DUCKTERM_SUMMARIZER_CMD"] = "false"
     result = summarize("x")
     assert result.backend == "none"
+    assert result.failure_reason == "provider_failed"
 
 
 def test_cli_subprocess_marks_itself_internal(clean_env: None) -> None:
@@ -90,7 +94,51 @@ def test_summarizer_off_disables_autodetect_only(monkeypatch) -> None:  # type: 
     monkeypatch.setenv("DUCKTERM_SUMMARIZER", "off")
     monkeypatch.setattr(s.shutil, "which", lambda _b: "/usr/bin/claude")
     assert s.summarize("x").backend == "none"
+    assert s.summarize("x").failure_reason == "disabled"
 
     # ...but an explicitly-set backend still wins.
     monkeypatch.setenv("DUCKTERM_SUMMARIZER_CMD", "printf done")
     assert s.summarize("x").text == "done"
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (subprocess.TimeoutExpired("test", 60), "provider_timeout"),
+        (OSError("private detail"), "provider_failed"),
+    ],
+)
+def test_cli_failure_category_excludes_raw_output(clean_env, monkeypatch, failure, reason):
+    import duckterm.llm.summarizer as s
+
+    monkeypatch.setenv("DUCKTERM_SUMMARIZER_CMD", "test-provider")
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(s.subprocess, "run", fail)
+    result = s.summarize("x")
+    assert result.failure_reason == reason
+    assert result.text == ""
+
+
+@pytest.mark.parametrize(
+    ("failure", "reason"),
+    [
+        (TimeoutError("private detail"), "provider_timeout"),
+        (urllib.error.URLError(TimeoutError("private detail")), "provider_timeout"),
+        (urllib.error.URLError("private detail"), "provider_failed"),
+    ],
+)
+def test_http_failure_category_excludes_raw_output(clean_env, monkeypatch, failure, reason):
+    import duckterm.llm.summarizer as s
+
+    monkeypatch.setenv("DUCKTERM_SUMMARIZER_URL", "https://example.invalid/test")
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    monkeypatch.setattr(s.urllib.request, "urlopen", fail)
+    result = s.summarize("x")
+    assert result.failure_reason == reason
+    assert result.text == ""

@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         AppDiagnostics.shared.record("Application launched")
         window = DashboardWindow(url: server.url)
+        window?.onReportBug = { [weak self] in self?.reportBug(nil) }
         window?.desktopHosts = hosts
         sessionTransport.onTerminal = { [weak self] event in self?.window?.dispatch(name: "remote-terminal", detail: event) }
         sessionTransport.onTerminalData = { [weak self] event in await self?.window?.dispatchAndWait(name: "remote-terminal", detail: event) }
@@ -239,14 +240,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window?.captureForReport { [weak self] image in
             guard let self else { return }
             self.capturingReport = false
-            self.bugReport = BugReportController(screenshot: image)
+            self.bugReport = BugReportController(screenshot: image, loadResumeReadiness: self.reportResumeReadiness)
             self.bugReport?.show()
         }
         if window == nil {
             capturingReport = false
-            bugReport = BugReportController(screenshot: nil)
+            bugReport = BugReportController(screenshot: nil, loadResumeReadiness: reportResumeReadiness)
             bugReport?.show()
         }
+    }
+
+    private func reportResumeReadiness() async throws -> String? {
+        // Native app diagnostics describe this Mac. Remote reports keep using
+        // the web form's explicit selected-host context and transport.
+        let response = try await sessionTransport.perform(base: server.url, api: launchAPI,
+            params: ["method": "GET", "path": "/bugreport/context"])
+        return BugReportData.resumeReadiness(from: response)
     }
 
     // ── Edit-menu clipboard bridge ──
