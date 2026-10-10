@@ -28,6 +28,18 @@ client sees the same one; `GET /oracle/chat` reads it and an owner-token
 `DELETE /oracle/chat` clears it. The last two stored exchanges are sent as
 follow-up context.
 
+**Prompt size** (owner's question, 2026-10-06). Each question used to send
+every live session's state, goal, last checkpoint and last 30 terminal lines,
+about 60k characters for 34 sessions, 90% of it idle screens. Now sessions are
+ranked: named in the question (120 screen lines), needing the owner (an open
+note or a live wait), busy (30 lines each), then everything else in one line
+from its own progress report. Digests fill a 24k-character budget in that
+order, and sessions left out are listed by name. Each answer reports
+`prompt_chars` and `sessions_detailed`, `sessions_brief` and
+`sessions_omitted`. On 2026-10-09's live fleet: about 22k characters, against
+32k with the old digest. Digests aren't cached: building one is cheap, and
+the cost is the prompt's size.
+
 ## Idle-inbox nudges
 
 The Stop-hook notice reaches an agent only when a turn ends. An agent that is

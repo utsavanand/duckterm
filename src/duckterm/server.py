@@ -2899,17 +2899,44 @@ class Server:
                 return [{"role": "terminal", "text": screen}]
         return []
 
-    async def _fleet_digest(self, row: dict[str, Any], question: str) -> str:
+    # Ask Oracle prompt size (owner's question, 2026-10-06): one question used
+    # to send every live session's last 30 terminal lines, about 60k characters
+    # for 34 sessions, 90% of it idle screens. Now the screen goes only where
+    # it's likely to matter, idle sessions get one line, and the digests share
+    # a budget filled most relevant first.
+    _FLEET_BUDGET = 24_000
+
+    def _fleet_rank(self, row: dict[str, Any], question: str, needs: set[str]) -> int:
+        """0 named in the question, 1 needs the owner, 2 busy, 3 everything else."""
         key = str(row.get("session_key") or "")
         name = str(row.get("name") or row.get("source_app") or key)
-        # A question that names a session gets a deeper look at that session.
-        focus = name.lower() in question.lower()
-        stats = self._transcript_stats_for(row)
+        if name.lower() in question.lower() or key in question:
+            return 0
+        # An open note or a live wait, not a raised hand: hands stay up until
+        # the owner looks, which on 2026-10-09 was 17 of 34 sessions.
+        if key in needs or row.get("state") == "waiting":
+            return 1
+        return 2 if row.get("state") == "busy" else 3
+
+    async def _fleet_digest(self, row: dict[str, Any], rank: int) -> str:
+        key = str(row.get("session_key") or "")
+        name = str(row.get("name") or row.get("source_app") or key)
         meta = [
             f"folder: {row.get('grp') or '-'}",
             f"state: {row.get('state') or '?'}",
             f"runtime: {row.get('runtime') or '?'}",
         ]
+        try:
+            card: dict[str, Any] = self.history.session_api.card(key)
+        except APIError:
+            card = {}
+        now = str(card.get("activity") or "")
+        nexts = [str(n) for n in card.get("next_actions") or []][:2]
+        if rank == 3:
+            # One line from the session's own progress report, no screen.
+            brief = f"- {name} ({key}) | {' | '.join(meta)}" + (f" | now: {now}" if now else "")
+            return brief + (f" | next: {'; '.join(nexts)}" if nexts else "")
+        stats = self._transcript_stats_for(row)
         if stats.get("model"):
             meta.append(f"model: {stats['model']}")
         if stats.get("context_tokens"):
@@ -2917,16 +2944,56 @@ class Server:
         lines = [f"### {name} ({key})", " | ".join(meta)]
         if row.get("intention"):
             lines.append(f"goal: {row['intention']}")
+        if now:
+            lines.append(f"now: {now}")
+        if nexts:
+            lines.append(f"next: {'; '.join(nexts)}")
         cps = self.history.checkpoints(key)
         if cps:
             lines.append(f"last checkpoint: {cps[0].get('summary') or cps[0].get('label')}")
         sup = self.orchestrator.get(key)
         if sup is not None:
-            screen = await asyncio.to_thread(sup.screen_text, 120 if focus else 30)
+            screen = await asyncio.to_thread(sup.screen_text, 120 if rank == 0 else 30)
             if screen:
                 lines.append("recent terminal output:")
                 lines.append(screen)
         return "\n".join(lines)
+
+    async def _fleet_digests(
+        self, running: list[dict[str, Any]], question: str, *, cap: int | None
+    ) -> tuple[str, dict[str, Any]]:
+        """Digests in relevance order within the budget, and what was included."""
+        needs = {
+            str(n["session_key"]) for n in self.relay.open_notes() if n.get("urgency") != "offer"
+        }
+        ranked = sorted(running, key=lambda r: self._fleet_rank(r, question, needs))
+        parts: list[str] = []
+        used = 0
+        detailed = brief = 0
+        omitted: list[str] = []
+        for row in ranked:
+            rank = self._fleet_rank(row, question, needs)
+            text = await self._fleet_digest(row, rank)
+            if cap is not None:
+                text = text[:cap]
+            if used + len(text) > self._FLEET_BUDGET and rank > 0:
+                omitted.append(str(row.get("name") or row.get("session_key")))
+                continue
+            parts.append(text)
+            used += len(text) + 2
+            if rank == 3:
+                brief += 1
+            else:
+                detailed += 1
+        if omitted:
+            parts.append(
+                "Also running, left out for length (ask about one by name): " + ", ".join(omitted)
+            )
+        return "\n\n".join(parts), {
+            "sessions_detailed": detailed,
+            "sessions_brief": brief,
+            "sessions_omitted": omitted,
+        }
 
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Answer a question about the currently running sessions: build a
@@ -2989,15 +3056,8 @@ class Server:
             )
             await _write_json(writer, 200, {"answer": answer, "exchange": exchange, "sessions": []})
             return
-        digests = "\n\n".join(
-            [
-                (
-                    (await self._fleet_digest(r, question))[:6000]
-                    if folder is not None
-                    else await self._fleet_digest(r, question)
-                )
-                for r in running
-            ]
+        digests, coverage = await self._fleet_digests(
+            running, question, cap=6000 if folder is not None else None
         )
         history = [
             f"Q: {h.get('q')}\nA: {h.get('a')}"
@@ -3006,8 +3066,11 @@ class Server:
         ]
         prompt = (
             "You oversee a fleet of coding-agent sessions. Below is a digest of "
-            "each currently running session (state, goal, recent terminal "
-            "output). Answer the user's question about them, concise and "
+            "the running sessions, most relevant first: sessions named in the "
+            "question, those that need the user, and busy ones in detail (state, "
+            "goal, progress, recent terminal output); idle ones in one line each "
+            "from their own progress report. Answer the user's question about them, "
+            "concise and "
             "concrete — name sessions by their name. If the digests don't hold "
             "the answer, say what to open instead of guessing.\n\n"
             "The answer renders as Markdown in a narrow chat panel. Open with a "
@@ -3066,6 +3129,9 @@ class Server:
                 "exchange": exchange,
                 "sessions": [str(r.get("session_key")) for r in running],
                 "backend": result.backend,
+                # Measured per answer so the prompt size can be compared over time.
+                "prompt_chars": len(prompt),
+                **coverage,
             },
         )
 
