@@ -13,7 +13,10 @@ needs both saved content hash and safe directory traversal, not a marker alone.
 Validation: the pinned native observer selected two synthetic conversations in
 one isolated project; focused tests cover stale/foreign identity, unsupported
 history, uncertain native writes and unowned/modified/symlinked plugin files.
-This is foundation evidence, not complete harness acceptance.
+The full gate also exposed a pre-existing Codex relay test that assumed two
+executor calls completed within 50 ms; wait for its actual confirmation event
+before asserting stale-answer rejection. This is foundation evidence, not
+complete harness acceptance.
 
 
 ## 2026-10-09 — Finding the server executable does not equip its subprocesses
