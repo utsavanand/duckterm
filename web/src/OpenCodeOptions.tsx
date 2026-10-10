@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { api } from "./api";
 import { destinationRequest, desktop } from "./desktop";
 import { Button, Field, inputStyle } from "./ui";
@@ -24,12 +24,15 @@ export function openCodeCommand(model: string): string {
 
 export function useOpenCodeOptions(enabled: boolean, target: string) {
   const [attempt, retry] = useState(0);
-  const [state, setState] = useState<{ target: string; attempt: number; options?: OpenCodeLaunchOptions; error?: string }>();
+  // A new selection needs a new response even when it returns to the same
+  // computer. Keying only by target resurrects an earlier availability result.
+  const query = useMemo(() => ({ enabled, target, attempt }), [enabled, target, attempt]);
+  const [state, setState] = useState<{ query: typeof query; options?: OpenCodeLaunchOptions; error?: string }>();
   useEffect(() => {
-    if (!enabled) return;
+    if (!query.enabled) return;
     let current = true;
-    const read = desktop() && target !== desktop()?.currentTarget
-      ? destinationRequest<OpenCodeLaunchOptions>(target, "opencode-options")
+    const read = desktop() && query.target !== desktop()?.currentTarget
+      ? destinationRequest<OpenCodeLaunchOptions>(query.target, "opencode-options")
       : api.openCodeOptions();
     void read.then(options => {
       if (!options || typeof options.launch?.available !== "boolean"
@@ -41,13 +44,13 @@ export function useOpenCodeOptions(enabled: boolean, target: string) {
         || !options.capabilities.every(item => item && typeof item.id === "string" && typeof item.label === "string" && typeof item.available === "boolean" && (item.reason === undefined || typeof item.reason === "string"))) {
         throw new Error("This computer did not report OpenCode support. Update DuckTerm and retry.");
       }
-      if (current) setState({ target, attempt, options });
+      if (current) setState({ query, options });
     }).catch((error: unknown) => {
-      if (current) setState({ target, attempt, error: error instanceof Error ? error.message : "Could not check OpenCode support" });
+      if (current) setState({ query, error: error instanceof Error ? error.message : "Could not check OpenCode support" });
     });
     return () => { current = false; };
-  }, [enabled, target, attempt]);
-  const current = enabled && state?.target === target && state.attempt === attempt ? state : undefined;
+  }, [query]);
+  const current = enabled && state?.query === query ? state : undefined;
   return { options: current?.options, error: current?.error, retry: () => retry(n => n + 1) };
 }
 

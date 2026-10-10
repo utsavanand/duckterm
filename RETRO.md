@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-10 — Returning to the same destination is a new support check
+
+Independent QA found that keying OpenCode readiness by computer and retry count
+reused a prior available response after changing agents and returning. Bind the
+settled response to the active selection generation instead. The form must stay
+unavailable while that generation's request is pending, including A→B→A changes
+and late replies from B. Dedicated regressions cover both sequences.
+
 ## 2026-10-10 — A model picker must follow the selected computer
 
 OpenCode provider configuration belongs to its destination. Keep model drafts

@@ -96,3 +96,35 @@ it("rejects malformed destination metadata instead of rendering it or enabling l
   expect(screen.getByRole("alert")).toHaveTextContent("did not report OpenCode support");
   expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
 });
+
+it("reselecting OpenCode blocks launch until fresh support arrives", async () => {
+  await form(); await folder();
+  expect(screen.getByRole("button", { name: "Launch" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Codex" }));
+  let finish!: (options: OpenCodeLaunchOptions) => void;
+  vi.mocked(api.openCodeOptions).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "OpenCode" })); });
+  expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
+  await act(async () => { finish(available); });
+  expect(screen.getByRole("button", { name: "Launch" })).toBeEnabled();
+});
+
+it("returning to a computer cannot reuse old support while its new request is pending", async () => {
+  let remoteReply!: (options: OpenCodeLaunchOptions) => void;
+  window.__rubbertermDesktop = { currentTarget: "local", targets: [{ id: "local", name: "This Mac" }, { id: "dev", name: "Remote — dev" }] };
+  window.webkit = { messageHandlers: { launchRequest: { postMessage: async (raw: unknown) => {
+    if ((raw as { operation: string }).operation === "opencode-options") return new Promise<OpenCodeLaunchOptions>(resolve => { remoteReply = resolve; });
+    return { themes: [] };
+  } } } };
+  await form();
+  let localReply!: (options: OpenCodeLaunchOptions) => void;
+  vi.mocked(api.openCodeOptions).mockImplementationOnce(() => new Promise(resolve => { localReply = resolve; }));
+  await act(async () => { fireEvent.change(screen.getByLabelText("Run on"), { target: { value: "dev" } }); });
+  await act(async () => { fireEvent.change(screen.getByLabelText("Run on"), { target: { value: "local" } }); });
+  expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
+  await act(async () => { remoteReply(available); });
+  expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
+  await act(async () => { localReply({ ...available, launch: { available: false, reason: "Destination changed" } }); });
+  expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
+  expect(screen.getByText("Destination changed")).toBeVisible();
+});
