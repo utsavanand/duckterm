@@ -22,6 +22,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
 """
 
 
+def cache_version(source: dict[str, Any]) -> str:
+    """Reader changes invalidate derived chunks without changing raw source handles."""
+    version = str(source["version"])
+    return version + ":" + source["normalization"] if source.get("normalization") else version
+
+
 def query(path: Path, sources: list[dict[str, Any]], text: str, limit: int) -> list[dict[str, Any]]:
     if path.is_symlink():
         raise APIError(409, "Memory index must not be a symbolic link")
@@ -35,18 +41,19 @@ def query(path: Path, sources: list[dict[str, Any]], text: str, limit: int) -> l
         if columns and columns[1][5] == 0:
             conn.executescript("DROP TABLE versions; DROP TABLE chunks;")
         conn.executescript(SCHEMA)
-        current = {(s["id"], s["version"]) for s in sources}
+        current = {(s["id"], cache_version(s)) for s in sources}
         with conn:
             for row in conn.execute("SELECT id,version FROM versions").fetchall():
                 if (row["id"], row["version"]) not in current:
                     conn.execute(
                         "DELETE FROM chunks WHERE source_id=? AND version=?",
-                        (row["id"], row["version"]),
+                        (row["id"], row["version"].split(":", 1)[0]),
                     )
                     conn.execute(
                         "DELETE FROM versions WHERE id=? AND version=?", (row["id"], row["version"])
                     )
             for source in sources:
+                cached = cache_version(source)
                 if source["kind"] in {"revision", "checkpoint"}:
                     conn.execute(
                         "DELETE FROM chunks WHERE source_id=? AND version=?",
@@ -54,11 +61,11 @@ def query(path: Path, sources: list[dict[str, Any]], text: str, limit: int) -> l
                     )
                     conn.execute(
                         "DELETE FROM versions WHERE id=? AND version=?",
-                        (source["id"], source["version"]),
+                        (source["id"], cached),
                     )
                 if conn.execute(
                     "SELECT 1 FROM versions WHERE id=? AND version=?",
-                    (source["id"], source["version"]),
+                    (source["id"], cached),
                 ).fetchone():
                     continue
                 for record in source["records"]:
@@ -75,7 +82,7 @@ def query(path: Path, sources: list[dict[str, Any]], text: str, limit: int) -> l
                                 body[offset : offset + CHUNK_CHARS],
                             ),
                         )
-                conn.execute("INSERT INTO versions VALUES (?,?)", (source["id"], source["version"]))
+                conn.execute("INSERT INTO versions VALUES (?,?)", (source["id"], cached))
         # Natural-language queries remain keyword searches. No raw FTS expression
         # is accepted, and OR avoids requiring stop words from a human's question.
         words = re.findall(r"[^\W_]+", text, re.UNICODE)
