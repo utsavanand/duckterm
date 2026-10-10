@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-10 — A version number does not identify the installed build
+
+An unreleased branch used the same version as a later release, so numeric comparison alone could report it up to date. Stamp the exact commit, Git description, branch, dirty state and main containment into a generated package module before the build. Only a clean commit at the matching version tag, contained in the recorded main ref, can be classified as released; missing or unverifiable metadata remains unknown. Keep the version sed-readable and never import the source package to obtain it. Remove the generated stamp from the checkout after packaging so an editable install does not inherit stale identity.
+
+Updater responses keep the latest release information but do not return `update_available=false` for an unreleased or unknown install. Bug reports include commit and describe beside the existing version. Regressions use isolated Git repositories for clean tags, unmerged and untagged commits, dirty worktrees, missing refs and malformed stamps. Packaging verification must inspect and import the built wheel, rather than trusting the source checkout. The stamp records local Git evidence; it does not attest that an asset was published or signed.
+
 ## 2026-10-10 — A native message's transport role is not always its author
 
 Claude stores tool results inside user-role records, including records that mix owner text and tool output. Flattening the blocks and copying that role made handoffs attribute command output to the owner; Codex outputs similarly inherited an assistant role. Normalize ordered blocks by provenance for memory only: tool outputs keep a tool role and mixed records have exact group locators. Keep native snapshot bytes/checksums unchanged and let old whole-line reads return the typed groups. Salt the existing disposable search cache and maintained-summary input with the reader version; otherwise a correct reader can still return old flattened search results or reuse a summary with wrong attribution. Verify search, reads, retained snapshots, handoff context and summary invalidation with synthetic native records and no live model calls.
