@@ -1,6 +1,9 @@
+import { sidebarFolders } from "./sidebarFolders";
+import { openSessionActions } from "./SessionActionMenu";
 import { SidebarFilters } from "./SidebarFilters";
 import { hasFilters, matchesFilters, sidebarSessions, SidebarFilterControls } from "./sidebarFilterState";
 import { desktop } from "./desktop";
+import { SessionPin } from "./SessionPin";
 import { SessionLocationDuck } from "./SessionLocationDuck";
 import { HelperAgents } from "./HelperAgents";
 import { ReactNode, useEffect, useState } from "react";
@@ -9,23 +12,24 @@ import { Duck, poseFor } from "./Duck";
 import { TermMode, themesForMode } from "./termThemes";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
-import { useResumeSession } from "./useResumeSession";
 import { useToast } from "./ui";
 
 // The left panel: every session as a row, with forks nested under their parent
-// via parentKey. Rows select sessions; actions live in the right-panel card.
+// via parentKey. Keep Focus pins beside sessions; session actions live in the right-click menu.
 export function AgentTree({
   filterControls,
   sessions,
   now,
   folders: savedFolders,
   selectedKey,
+  contextKey,
   selectedFolder,
   onOpenFolder,
   onFolderRenamed,
   onFolderDeleted,
   onOpen,
   onOpenInbox,
+  onPin,
   onFoldersChanged,
   onSessionMoved,
   onOpenGrid,
@@ -40,12 +44,14 @@ export function AgentTree({
   now: number;
   folders: string[];
   selectedKey: string | null;
+  contextKey?: string | null;
   selectedFolder?: string | null;
   onOpenFolder?: (folder: string) => void;
   onFolderRenamed?: (from: string, to: string) => void;
   onFolderDeleted?: (folder: string) => void;
   onOpen: (key: string) => void;
   onOpenInbox?: (key: string) => void;
+  onPin?: (session: SessionView) => Promise<void>;
   onFoldersChanged: () => void;
   onSessionMoved: (key: string, group: string) => void;
   onOpenGrid: (folder: string) => void;
@@ -57,6 +63,8 @@ export function AgentTree({
 }) {
   const { filters, toggle, clear, saveError, expanded } = filterControls;
   const visibleSessions = sidebarSessions(sessions);
+  const archivedSessions = sessions.filter(s => ["archived", "merged"].includes(s.state));
+  const [archivesOpen, setArchivesOpen] = useState(false);
   const filtering = hasFilters(filters);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   useEffect(() => {
@@ -68,13 +76,7 @@ export function AgentTree({
     window.addEventListener("reveal-sidebar-folder", reveal);
     return () => window.removeEventListener("reveal-sidebar-folder", reveal);
   }, []);
-  const folders = [...new Set([...savedFolders, ...sessions.flatMap(session => {
-    // Local folders come from the catalog; stale session snapshots must not
-    // resurrect their old paths while a rename or move refresh is in flight.
-    if (!session.host) return [];
-    const parts = session.group?.split("/") ?? [];
-    return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
-  })])];
+  const folders = sidebarFolders(savedFolders, sessions);
   const toast = useToast();
   const roots = buildForest(visibleSessions);
 
@@ -195,9 +197,10 @@ export function AgentTree({
       depth={0}
       indent={indent}
       now={now}
-      selectedKey={selectedKey}
+      selectedKey={selectedKey} contextKey={contextKey}
       onOpen={onOpen}
       onOpenInbox={onOpenInbox}
+      onPin={onPin}
     />
   );
 
@@ -268,7 +271,7 @@ export function AgentTree({
     <SidebarFilters sessions={visibleSessions} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} expanded={expanded} />
     <div className="rd-tree">
       {filtering ? <>
-        {visibleSessions.filter(s => matchesFilters(s, filters, now)).map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} onOpen={onOpen} onOpenInbox={onOpenInbox} showFolder />)}
+        {visibleSessions.filter(s => matchesFilters(s, filters, now)).map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} contextKey={contextKey} onOpen={onOpen} onOpenInbox={onOpenInbox} onPin={onPin} showFolder />)}
         {!visibleSessions.some(s => matchesFilters(s, filters, now)) && <div className="rd-filter-empty">No sessions match these filters.<button onClick={clear}>Clear filters</button></div>}
       </> : <>
       {/* All folders render (even empty ones) so you can create then fill them. */}
@@ -283,6 +286,10 @@ export function AgentTree({
       >
         {ungrouped.map((n) => renderNode(n, 0))}
       </DropZone>
+      {archivedSessions.length > 0 && <div className="rd-archive-list">
+        <button aria-expanded={archivesOpen} onClick={() => setArchivesOpen(v => !v)}>{archivesOpen ? "▾" : "▸"} Archived sessions ({archivedSessions.length})</button>
+        {archivesOpen && archivedSessions.map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} contextKey={contextKey} onOpen={onOpen} showFolder />)}
+      </div>}
       </>}
     </div>
     </div>
@@ -556,8 +563,10 @@ function TreeRow({
   showFolder = false,
   now,
   selectedKey,
+  contextKey,
   onOpen,
   onOpenInbox,
+  onPin,
 }: {
   node: Node;
   depth: number;
@@ -565,11 +574,12 @@ function TreeRow({
   showFolder?: boolean;
   now: number;
   selectedKey: string | null;
+  contextKey?: string | null;
   onOpen: (key: string) => void;
   onOpenInbox?: (key: string) => void;
+  onPin?: (session: SessionView) => Promise<void>;
 }) {
   const s = node.session;
-  const { resuming, resumeSession } = useResumeSession(s.key);
   const effState = effectiveState(s, now);
   const live = !["terminated", "stopped", "interrupted", "archived"].includes(effState);
   const stateLabel = effState;
@@ -579,11 +589,24 @@ function TreeRow({
   return (
     <>
       <div
-        className={`rd-row${live ? "" : " terminated"}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.inboxPending ? " has-inbox" : ""}`}
+        className={`rd-row${live ? "" : " terminated"}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.key === contextKey ? " context-target" : ""}${s.inboxPending ? " has-inbox" : ""}`}
         title={`${s.label} · ${s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")} · ${s.runtime ?? "agent"} · ${stateLabel} · ${s.eventCount} events`}
         style={{ paddingLeft: 12 + indent * 16 + depth * 18 }}
+        tabIndex={0}
+        aria-label={`${s.label} session`}
+        aria-haspopup="menu"
+        aria-expanded={s.key === contextKey}
+        data-session-key={s.key}
+        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); openSessionActions({ key: s.key, x: e.clientX, y: e.clientY, trigger: e.currentTarget }); }}
+        onKeyDown={e => {
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+            e.preventDefault(); e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect();
+            openSessionActions({ key: s.key, x: rect.left + 24, y: rect.bottom, trigger: e.currentTarget });
+          } else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(s.key); }
+        }}
         // Only root sessions are draggable into groups; forks follow their parent.
-        draggable={depth === 0 && !s.parentKey}
+        draggable={depth === 0 && !s.parentKey && !["archived", "merged"].includes(effState)}
         onDragStart={(e) => {
           e.dataTransfer.setData("text/rd-session", s.key);
           e.dataTransfer.effectAllowed = "move";
@@ -641,10 +664,8 @@ function TreeRow({
               </span>
             )}
           </span>
-          {effState === "stopped" && s.launched && <button className="rd-row-resume"
-            aria-label={`Resume ${s.label}`} disabled={resuming} onClick={resumeSession}>
-            {resuming ? "Resuming…" : "Resume"}
-          </button>}
+          {onPin && <SessionPin session={s} onToggle={onPin} />}
+
         </div>
         {showFolder && <div className="rd-row-folder" title={s.group || "Ungrouped"} onClick={() => onOpen(s.key)}>{s.group || "Ungrouped"}</div>}
         <div className="rd-row-meta" onClick={() => onOpen(s.key)}>
@@ -665,9 +686,10 @@ function TreeRow({
             depth={depth + 1}
             indent={indent}
             now={now}
-            selectedKey={selectedKey}
+            selectedKey={selectedKey} contextKey={contextKey}
             onOpen={onOpen}
             onOpenInbox={onOpenInbox}
+      onPin={onPin}
           />
         ))}
     </>

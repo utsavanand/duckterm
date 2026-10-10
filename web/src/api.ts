@@ -1,3 +1,5 @@
+import type { AgentMergeService, AgentMergePreview, AgentMergeRecord, MergeTarget } from "./AgentMergeDialog";
+import type { ConversationRecoveryService, ConversationIdentity, ConversationCandidates } from "./conversationRecoveryState";
 import type { ForkMergePreview, ForkMergeRecord, ForkMergeService } from "./ForkMergeDialog";
 import { routedFetch as fetch, sessionFetch, splitSessionRef, setRemoteGroup, changeRemoteFolders } from "./hostTransport";
 // Thin wrapper over the Duckterm server. Every POST action the backend
@@ -27,17 +29,33 @@ export type LocalVoiceStatus =
 export interface ModelChoice { id: string; label: string; }
 
 export interface RestartStatus {
+  id?: string;
+  memory?: { version: number };
+  process_state?: "source_running" | "source_stopped" | "target_running" | "unknown";
   status?: "queued" | "restarting" | "completed" | "failed" | "canceled";
   can_restart?: boolean;
   draft_clear?: boolean;
   after_turn?: boolean;
   model?: string;
   requested_model?: string;
+  requested_harness?: string;
+  interrupt?: boolean;
+  source_harness?: string;
+  context?: "native" | "seeded_new_conversation";
   configured_model?: string;
   cli_version?: string;
   previous_cli_version?: string;
   reason?: string;
   error?: string;
+}
+
+export interface RestartOptions {
+  memory_switch?: { version: number; available: boolean; reason?: string };
+  supports_interrupt_switch?: boolean;
+  current: { harness: string; model: string; conversation_generation?: string };
+  resume_restart: { available: boolean; reason?: string };
+  harnesses: { name: string; available: boolean; reason?: string; models: ModelChoice[]; model_selection: { available: boolean; reason?: string }; model_reason?: string; context: "native" | "seeded_new_conversation" }[];
+  draft_clear?: boolean; after_turn?: boolean; reason?: string;
 }
 
 export interface OracleExchange {
@@ -385,7 +403,7 @@ export const api = {
   branches: (path: string) =>
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
-  connectors: (context?: string) => get<{ connectors: Connector[] }>("/connectors", context, { authed: true }),
+  connectors: (context?: string, signal?: AbortSignal) => get<{ connectors: Connector[] }>("/connectors", context, { authed: true, signal }),
   enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string, harnesses?: string[]) =>
     post<Connector>(`/connectors/${name}/enable`, {
       source, write_access,
@@ -468,6 +486,15 @@ export const api = {
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(meta),
     }).then((r) => r.json()),
+  saveNotes: async (key: string, notes: string, expectedNotes: string) => {
+    const response = await fetch(`/sessions/${key}`, {
+      method: "PATCH", headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ notes, expected_notes: expectedNotes }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Could not save notes");
+    return data;
+  },
   // Type a follow-up straight to a live agent's stdin (the terminal path,
   // but from the Messages view — no tab switch to answer or steer).
   sendInput: (key: string, text: string) =>
@@ -582,9 +609,10 @@ export const api = {
     ),
   models: (key: string) => get<{ models: ModelChoice[] }>(`/sessions/${key}/models`),
   restartStatus: (key: string) => get<RestartStatus>(`/sessions/${key}/restart`),
-  restart: (key: string, model: string) => post<RestartStatus>(`/sessions/${key}/restart`, { model }),
-  cancelRestart: async (key: string): Promise<RestartStatus> => {
-    const response = await fetch(`/sessions/${key}/restart`, { method: "DELETE", headers: authHeaders() });
+  restartOptions: (key: string) => get<RestartOptions>(`/sessions/${key}/restart-options`),
+  restart: (key: string, model: string, harness?: string, interrupt = false) => post<RestartStatus>(`/sessions/${key}/restart`, { model, ...(harness ? { harness } : {}), ...(interrupt ? { interrupt: true } : {}) }),
+  cancelRestart: async (key: string, operationId?: string): Promise<RestartStatus> => {
+    const response = await fetch(`/sessions/${key}/restart${operationId ? `?operation_id=${encodeURIComponent(operationId)}` : ""}`, { method: "DELETE", headers: authHeaders() });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error ?? "Could not cancel restart");
     return data;
@@ -616,10 +644,12 @@ export const api = {
   clearTerminated: () =>
     post<{ cleared: number }>("/sessions/clear-terminated"),
   checkpoint: (key: string, label: string) =>
-    post<{ id: string; label: string; summary: string }>(
+    post<CheckpointRecord>(
       `/sessions/${key}/checkpoint`,
       { label },
     ),
+  timeline: (key: string, kinds = "", before = "") =>
+    get<TimelinePage>(`/sessions/${key}/timeline?${new URLSearchParams({ kinds, before, limit: "50" })}`, undefined, { authed: true }),
   checkpoints: (key: string) =>
     get<{ checkpoints: CheckpointRecord[] }>(`/sessions/${key}/checkpoints`),
   spotlight: (key: string) =>
@@ -638,16 +668,42 @@ interface RawEvent {
   tool_name?: string;
 }
 
+export interface TimelineEntry {
+  id: string; ts: number; kind: string; one_line: string;
+  detail: { text?: string; summary?: string; summary_state?: string; bucket?: string;
+    answer?: string; removed?: boolean; from_harness?: string; to_harness?: string; model?: string };
+  refs: { source: string; id: string }[];
+}
+export interface TimelinePage {
+  summary: { text: string; updated_at: number | null; total: number; counts: Record<string, number> };
+  entries: TimelineEntry[]; next_cursor: string | null;
+}
 export interface CheckpointRecord {
+  summary_update?: { state: "updated" | "reused" | "partial" | "failed"; reason?: string | null; attempted_at?: number; revision_id?: string | null };
+  format?: string;
+  saved?: boolean;
+  summary_state?: string;
+  summary_source_at?: number | null;
+  summary_origin?: "generated" | "owner-reviewed";
+  handoff_eligible?: boolean;
+  coverage?: { state?: string; events?: number; expected_events?: number };
+  reason_codes?: string[];
+  export_reason?: string;
   id: string;
   label: string;
   summary: string;
   created_at: number;
   record: {
+    summary_ref?: string | null;
+    memory_source?: unknown;
+    memory_sources?: unknown[];
+    memory_retention?: string;
+    handoff?: { method?: string; packet_hash?: string; summary_revision_id?: string | null; included_records?: number; omitted_records?: number };
     intention?: string;
     prompts: string[];
     files: { path: string; edits: number }[];
     tools: { tool: string; count: number }[];
+    commands?: string[];
     event_count: number;
     git?: boolean;
     repo?: string;
@@ -666,6 +722,16 @@ async function mergeRead<T>(key: string, suffix: string): Promise<T> {
   return data;
 }
 export const forkMergeHistory = (key: string) => mergeRead<{ merges: ForkMergeHistory[] }>(key, "merges");
+export function agentMergeService(key: string): AgentMergeService {
+  const path = `/sessions/${encodeURIComponent(splitSessionRef(key).key)}/agent-merge`;
+  return {
+    targets: () => mergeRead<{ destinations: MergeTarget[] }>(key, "agent-merge"),
+    preview: target => post<AgentMergePreview>(path + "/preview", { target }, key),
+    send: draft => post<AgentMergeRecord>(path, draft, key),
+    history: () => mergeRead<{ merges: AgentMergeRecord[] }>(key, "agent-merges"),
+  };
+}
+
 export function forkMergeService(key: string): ForkMergeService {
   return {
     preview: () => mergeRead<ForkMergePreview>(key, "merge"),
@@ -674,6 +740,27 @@ export function forkMergeService(key: string): ForkMergeService {
       const record = (await forkMergeHistory(key)).merges.find(row => row.id === id);
       if (!record) throw new Error("Merge record is unavailable");
       return record;
+    },
+  };
+}
+
+export function conversationRecoveryService(key: string): ConversationRecoveryService {
+  const path = `/sessions/${encodeURIComponent(splitSessionRef(key).key)}/conversation-`;
+  return {
+    identity: () => get<ConversationIdentity>(path + "recovery", key, { authed: true }),
+    candidates: () => get<ConversationCandidates>(path + "candidates", key, { authed: true }),
+    installHooks: () => post<ConversationIdentity>(path + "hooks", {}, key),
+    detach: async revision => {
+      const value = await post<ConversationIdentity>(path + "detach", { revision }, key);
+      window.dispatchEvent(new Event("conversation-recovery-changed"));
+      window.dispatchEvent(new Event("remote-sessions-refresh"));
+      return value;
+    },
+    adopt: async (handle, revision) => {
+      const value = await post<ConversationIdentity>(path + "adopt", { handle, revision }, key);
+      window.dispatchEvent(new Event("conversation-recovery-changed"));
+      window.dispatchEvent(new Event("remote-sessions-refresh"));
+      return value;
     },
   };
 }

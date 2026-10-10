@@ -63,3 +63,49 @@ extension SessionTransportTests {
         XCTAssertEqual(failed["body"] as? String, "{\"error\":\"missing\"}")
     }
 }
+
+extension SessionTransportTests {
+    @MainActor func testShellRoutesStayOnSelectedHostAndRejectOtherOperations() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        for method in ["GET", "POST", "DELETE"] {
+            let request = try SessionTransport.request(base: base, params: ["path": "/sessions/my.session/shell", "method": method])
+            XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:14300/sessions/my.session/shell")
+        }
+        for (path, method) in [("/sessions/x/shell", "PATCH"), ("/sessions/x/shell?force=true", "DELETE"), ("/sessions/x/shell/terminal", "GET"), ("/sessions/../shell", "POST")] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+        }
+        XCTAssertEqual(try SessionTransport.terminalPath(key: "same", kind: "shell"), "/sessions/same/shell/terminal")
+        XCTAssertEqual(try SessionTransport.terminalPath(key: "same", kind: nil), "/sessions/same/terminal")
+        for kind: Any in ["other", "", 42] { XCTAssertThrowsError(try SessionTransport.terminalPath(key: "same", kind: kind)) }
+        for key in ["..", ".", "a/b", "a?token=x"] { XCTAssertThrowsError(try SessionTransport.terminalPath(key: key, kind: "shell")) }
+    }
+}
+
+extension SessionTransportTests {
+    @MainActor func testConversationRecoveryRoutesStayBoundToSelectedHostAndMethod() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        for (suffix, method) in [("recovery", "GET"), ("candidates", "GET"), ("adopt", "POST"), ("hooks", "POST"), ("detach", "POST")] {
+            let path = "/sessions/orphan/conversation-" + suffix
+            XCTAssertEqual(try SessionTransport.request(base: base, params: ["path": path, "method": method]).url?.absoluteString, "http://127.0.0.1:14300" + path)
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method == "GET" ? "POST" : "GET"]))
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path + "?path=/tmp/secret", "method": method]))
+        }
+        XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": "/sessions/../conversation-adopt", "method": "POST"]))
+    }
+}
+
+extension SessionTransportTests {
+    @MainActor func testTimelineQueriesStayOnTheSelectedHostAndAreReadOnly() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        let path = "/sessions/same.id/timeline?kinds=checkpoint%2Cartifact&before=opaque%2Bcursor"
+        let request = try SessionTransport.request(base: base, params: ["path": path, "method": "GET"])
+        XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:14300" + path)
+        XCTAssertNil(request.value(forHTTPHeaderField: "X-Duckterm-Token"))
+        for method in ["POST", "PATCH", "DELETE"] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+        }
+        for badPath in ["/sessions/../timeline", "/sessions/x/timeline/extra", "/sessions/x/timeline#fragment"] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": badPath, "method": "GET"]))
+        }
+    }
+}

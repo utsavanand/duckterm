@@ -29,8 +29,9 @@ vi.mock("./VoiceControl", async importOriginal => {
 beforeEach(() => {
   vi.useFakeTimers(); vi.setSystemTime(100_000); localStorage.clear(); probe.requests = [];
   Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
-  vi.stubGlobal("fetch", vi.fn(async (path: string) => ({ ok: true, json: async () => String(path).includes("archive-requests") ? { requests: probe.requests } : { pins: [] } })));
+  vi.stubGlobal("fetch", vi.fn(async (path: string) => ({ ok: true, json: async () => String(path).includes("archive-requests") ? { requests: probe.requests } : String(path).endsWith("/shell") ? { open: false } : { pins: [] } })));
   vi.spyOn(api, "voiceStatus").mockResolvedValue({ state: "absent", size: "310 MB" });
   probe.sessions = Array.from({ length: 30 }, (_, i) => ({
     ...viewFromPersisted({ session_key: `test-${i}`, name: `test-${i}`, state: "busy", started_at: 1, updated_at: 100_000, event_count: 1 } as never),

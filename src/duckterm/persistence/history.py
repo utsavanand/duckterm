@@ -22,9 +22,10 @@ from duckterm.core import events
 from duckterm.core.session_api import SessionAPI
 from duckterm.helpers import paths
 from duckterm.helpers.metrics import classify
-from duckterm.persistence import mail_analytics
+from duckterm.persistence import mail_analytics, native_identity
 from duckterm.persistence.folder_chats import FolderChats
 from duckterm.persistence.layouts import Layouts
+from duckterm.persistence.saved_state import resolve_checkpoint, retention_predicate
 from duckterm.runtimes.base import AT_REST_STATES, SessionState
 
 Event = dict[str, Any]
@@ -46,7 +47,8 @@ Event = dict[str, Any]
 # v8 persists archive grace periods so a quit cannot lose an acknowledged archive.
 # v9 was the unreleased fork-merge candidate. v10 shipped Folder Tasks first.
 # v11 adds fork merges to v10, including installations that never had v9.
-_SCHEMA_VERSION = 11
+# v12 protects checkpoint references; older expiry writers must refuse this DB.
+_SCHEMA_VERSION = 12
 
 
 class SchemaTooNewError(RuntimeError):
@@ -306,6 +308,18 @@ class HistoryStore:
                 f"supports up to v{_SCHEMA_VERSION} — upgrade DuckTerm, or point "
                 f"DUCKTERM_HOME/DUCKTERM_INSTANCE at a matching data dir."
             )
+        if 0 < db_version < 12:
+            # SQLite backup includes committed WAL content. Keep the pre-upgrade
+            # database for an explicit rollback; never try to downgrade in place.
+            backup_path = path.with_name(path.name + ".before-saved-state-v12")
+            if not backup_path.exists():
+                backup_path.touch(mode=0o600, exist_ok=False)
+                try:
+                    with sqlite3.connect(str(backup_path)) as backup:
+                        self._conn.backup(backup)
+                except BaseException:
+                    backup_path.unlink(missing_ok=True)
+                    raise
         self._conn.executescript(_SCHEMA)
         self._migrate()
         self._conn.execute(
@@ -336,7 +350,9 @@ class HistoryStore:
         # else ever deletes them — sweep everything older than 30 days at
         # startup so the DB doesn't grow without bound. Session rows stay.
         cutoff = int((time.time() - 30 * 86400) * 1000)
-        mail_analytics.retire_events(self._conn, "ts < ?", (cutoff,))
+        mail_analytics.retire_events(
+            self._conn, "ts < ? AND " + retention_predicate("events"), (cutoff,)
+        )
         self._conn.commit()
 
     def _retain_mail(self) -> None:
@@ -382,6 +398,10 @@ class HistoryStore:
             self._conn.executescript(_SCHEMA)
 
     def record(self, event: Event) -> None:
+        with self._conn:
+            self._record(event)
+
+    def _record(self, event: Event) -> None:
         """Persist an event and fold it into its session row. Called for every
         published event (the EventBus sink)."""
         key = session_key_of(event)
@@ -390,6 +410,8 @@ class HistoryStore:
         # SessionEnd/SessionStart). `clear_tombstones()` (duckterm restart) is
         # the only way back, for a session deleted by mistake.
         if key is not None and self._is_tombstoned(key):
+            if event.get("_assigned_native_id"):
+                raise ValueError("Cannot assign conversation identity to a deleted session")
             return
         parent = event.get("parent_session_key")
         if parent and self._is_tombstoned(str(parent)):
@@ -423,6 +445,7 @@ class HistoryStore:
             return
         if key is not None:
             self._upsert_session(key, event)
+            native_identity.record(self._conn, key, event)
             row = self.session(key)
             if row and row["state"] in AT_REST_STATES:
                 # Use the folded state: late SessionEnd events after Stop must
@@ -557,18 +580,18 @@ class HistoryStore:
         return {r["kind"]: r["count"] for r in rows}
 
     def session_id_for(self, key: str) -> str | None:
-        """The agent runtime's own session id (for transcript correlation), read
-        from the most recent event that carried one."""
-        binding = self.restart_control(key).get("native_binding")
-        if binding is not None:
-            return str(binding["native_id"]) if binding.get("native_id") else None
-        row = self._conn.execute(
-            "SELECT json_extract(payload_json, '$.session_id') AS sid "
-            "FROM events WHERE session_key = ? AND sid IS NOT NULL "
-            "ORDER BY ts DESC LIMIT 1",
-            (key,),
-        ).fetchone()
-        return str(row["sid"]) if row and row["sid"] else None
+        native_id = self.native_identity(key)["native_id"]
+        return str(native_id) if native_id else None
+
+    def native_identity(self, key: str) -> dict[str, Any]:
+        """Identity evidence only; a recorded ID does not prove a transcript exists."""
+        row = self.session(key)
+        if row is None:
+            return {"native_id": None, "source": "none", "status": "missing"}
+        identity = native_identity.info(row)
+        if identity["status"] == "missing":
+            return native_identity.info(row, native_identity.legacy(self._conn, key))
+        return identity
 
     def add_checkpoint(
         self,
@@ -618,8 +641,11 @@ class HistoryStore:
         out = []
         for r in rows:
             d = dict(r)
-            d["record"] = json.loads(d.pop("record_json"))
-            out.append(d)
+            try:
+                d["record"] = json.loads(d.pop("record_json"))
+            except (ValueError, TypeError):
+                d["record"] = {"format": "unreadable"}
+            out.append(resolve_checkpoint(self._conn, key, d))
         return out
 
     def events_for(self, key: str, limit: int = 200) -> list[dict[str, Any]]:
@@ -1181,6 +1207,12 @@ class HistoryStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def _delete_digest_rows(self, key: str) -> None:
+        if self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='digest_items'"
+        ).fetchone():
+            self._conn.execute("DELETE FROM digest_items WHERE session_key=?", (key,))
+
     def delete_session(self, key: str, *, now: int = 0) -> bool:
         """Remove a session and everything attached to it (events, metrics,
         checkpoints). Tombstones the key so a still-running terminal's events
@@ -1197,6 +1229,7 @@ class HistoryStore:
         cur = self._conn.execute("DELETE FROM sessions WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
+        self._delete_digest_rows(key)
         self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
         self._conn.execute("DELETE FROM artifacts WHERE session_key = ?", (key,))
         self._conn.execute(
@@ -1225,6 +1258,7 @@ class HistoryStore:
             self._conn.execute("DELETE FROM events WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM metrics WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM checkpoints WHERE session_key = ?", (key,))
+            self._delete_digest_rows(key)
             self._conn.execute("DELETE FROM message_pins WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM artifacts WHERE session_key = ?", (key,))
             self._conn.execute("DELETE FROM tombstones WHERE session_key = ?", (key,))

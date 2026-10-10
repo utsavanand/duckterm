@@ -20,18 +20,27 @@ import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 export const Terminal = memo(function Terminal({
   sessionKey,
   active = true,
+  focusRequest = 0,
+  kind = "agent",
+  onConnection,
   theme = DEFAULT_TERM_THEME,
 }: {
   sessionKey: string;
   active?: boolean;
+  focusRequest?: number;
+  kind?: "agent" | "shell";
+  onConnection?: (connected: boolean) => void;
   theme?: string;
 }) {
+  const connectionRef = useRef(onConnection);
+  connectionRef.current = onConnection;
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Xterm | null>(null);
   const activateRef = useRef<((visible: boolean) => void) | null>(null);
+  const focusRef = useRef<(() => void) | null>(null);
 
   // Live theme switch (e.g. toggling the app light/dark): set the new palette
   // and force a full repaint so already-rendered rows recolor immediately,
@@ -63,7 +72,7 @@ export const Terminal = memo(function Terminal({
     term.open(host);
     let visible = active;
     if (visible) fit.fit();
-    bindClipboardBridge(term, sessionKey); // Mac-app Edit menu targets the focused terminal
+    bindClipboardBridge(term, sessionKey, kind); // Mac-app Edit menu targets the focused terminal
     // Focus xterm's hidden input directly. term.focus() alone proved unreliable
     // on mount (after selecting an agent, focus stayed on <body>, so keystrokes
     // went nowhere and you had to click the terminal first). Targeting the
@@ -93,6 +102,7 @@ export const Terminal = memo(function Terminal({
     };
     host.addEventListener("focusout", refocusOnBlur);
     const focusOnClick = () => focusTerm(true);
+    focusRef.current = focusOnClick;
     host.addEventListener("mousedown", focusOnClick);
 
     // The WS dies whenever the session's PTY goes away — Stop, a server
@@ -125,7 +135,7 @@ export const Terminal = memo(function Terminal({
 
     const sendResize = () => {
       if (ws?.readyState !== WebSocket.OPEN) return;
-      ws.send(JSON.stringify({ resize: { cols: term.cols, rows: term.rows } }));
+      ws.send(JSON.stringify({ resize: { cols: kind === "shell" ? Math.min(term.cols, 500) : term.cols, rows: kind === "shell" ? Math.min(term.rows, 300) : term.rows } }));
     };
 
     // Hidden terminals have no usable dimensions. Fit only after activation,
@@ -185,9 +195,10 @@ export const Terminal = memo(function Terminal({
       replayReady = false;
       cancelAttachScroll();
       pendingOpenScroll = visible;
-      ws = terminalSocket(sessionKey);
+      ws = terminalSocket(sessionKey, kind);
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
+        connectionRef.current?.(true);
         attempts = 0; // live again — future retries start fast
         settleOpening();
         focusTerm();
@@ -211,6 +222,7 @@ export const Terminal = memo(function Terminal({
       };
       ws.onclose = () => {
         if (disposed) return;
+        connectionRef.current?.(false);
         // Fast retries pick a Resume up promptly; exponential backoff (cap
         // 15s) keeps a long-stopped session from hammering the server with
         // 404 attaches every 1.5s forever.
@@ -223,8 +235,10 @@ export const Terminal = memo(function Terminal({
 
     // User keystrokes -> agent stdin, verbatim (arrows, ctrl-C, partial input).
     const onData = term.onData((data) => {
-      if (ws?.readyState === WebSocket.OPEN)
-        ws.send(new TextEncoder().encode(data));
+      if (ws?.readyState !== WebSocket.OPEN) return;
+      const bytes = new TextEncoder().encode(data);
+      if (kind === "shell") for (let i = 0; i < bytes.length; i += 32768) ws.send(bytes.slice(i, i + 32768));
+      else ws.send(bytes);
     });
 
     // Capture image paste before xterm's normal text handler. Many clipboard
@@ -272,6 +286,7 @@ export const Terminal = memo(function Terminal({
     return () => {
       disposed = true;
       activateRef.current = null;
+      focusRef.current = null;
       cancelAttachScroll();
       window.cancelAnimationFrame(fitFrame ?? 0);
       window.clearTimeout(retry);
@@ -295,9 +310,12 @@ export const Terminal = memo(function Terminal({
     // live terminal in place — re-running this one would tear down the WS and
     // rebuild the terminal on every theme switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionKey]);
+  }, [sessionKey, kind]);
 
   useEffect(() => { activateRef.current?.(active); }, [active, sessionKey]);
+  // Clicking or keyboard-activating the already selected row must also return
+  // focus to its terminal. Context-menu opening does not issue this request.
+  useEffect(() => { if (focusRequest) focusRef.current?.(); }, [focusRequest]);
 
   // height:0 + flex:1 makes the host fill the pane with a DEFINITE height, so
   // xterm scrolls its buffer internally instead of growing the page. (A

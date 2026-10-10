@@ -1,3 +1,4 @@
+import { recoveryBlocksResume, useRecoveryResumeBlocked } from "./resumeReadiness";
 import { useState } from "react";
 import { api } from "./api";
 import { useToast } from "./ui";
@@ -8,8 +9,9 @@ const pending = new Set<string>();
 export function useResumeSession(key: string) {
   const [resuming, setResuming] = useState(false);
   const toast = useToast();
+  const recoveryBlocked = useRecoveryResumeBlocked(key);
   async function resumeSession() {
-    if (pending.has(key)) return;
+    if (pending.has(key) || recoveryBlocksResume(key)) return;
     pending.add(key);
     setResuming(true);
     try {
@@ -25,5 +27,5 @@ export function useResumeSession(key: string) {
       setResuming(false);
     }
   }
-  return { resuming, resumeSession };
+  return { resuming, recoveryBlocked, resumeSession };
 }

@@ -88,6 +88,7 @@ def plain_screen(screen: str) -> str:
 
 class Harness(ABC):
     name: str
+    session_id_assignable = False
     turn_end_inbox_notice = False
     # Owner priority messages can be pinned into this agent's turn-end notice.
     # Declared only where that notice path is proven (contracts §1); others

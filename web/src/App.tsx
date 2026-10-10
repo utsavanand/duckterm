@@ -1,3 +1,6 @@
+import { sidebarFolders } from "./sidebarFolders";
+import { SessionActions } from "./SessionActions";
+import type { SessionActionAnchor } from "./SessionActionMenu";
 import { useDesktopNotifications } from "./useDesktopNotifications";
 import { SidebarFilterToggle } from "./SidebarFilters";
 import { useSidebarFilters } from "./sidebarFilterState";
@@ -15,14 +18,13 @@ import { Analytics } from "./Analytics";
 import { AnalyticsTab } from "./analyticsData";
 import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
-import { SessionPin } from "./SessionPin";
 import { GridView } from "./GridView";
 import { BackupModal } from "./BackupModal";
 import { BugReport } from "./BugReport";
 import { DashboardMenus } from "./DashboardMenus";
 import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
-import { HistoryView } from "./HistoryView";
+import { TimelineView } from "./TimelineView";
 import { ArtifactsView } from "./ArtifactsView";
 import { InboxView } from "./InboxView";
 import { MessageFolderModal } from "./MessageFolderModal";
@@ -33,6 +35,7 @@ import { Messages } from "./Messages";
 import { MessagePinStrip, PinTarget, useMessagePins } from "./MessagePins";
 import { NewFolderModal } from "./NewFolderModal";
 import { Terminal } from "./Terminal";
+import { SessionShell } from "./SessionShell";
 import { useTerminalCache } from "./terminalCache";
 import { PanelToggle, useSidePanels } from "./SidePanels";
 import { SessionView } from "./types";
@@ -79,6 +82,7 @@ function Dashboard() {
   const relayOpen = useRelayCount();
   const defaultSelection = sessions.find(s => s.state !== "archived")?.key ?? null;
   const { selectedKey, selectSession } = useSessionSelection(sessions, defaultSelection, loadedHosts);
+  const [terminalFocus, setTerminalFocus] = useState({ key: "", revision: 0 });
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const setSelectedKey = useCallback((key: string | null) => {
     setSelectedFolder(null);
@@ -107,9 +111,20 @@ function Dashboard() {
     return () => window.removeEventListener("move-to-remote", move);
   }, []);
   const moveSession = sessions.find(s => s.key === moveKey);
+  const [actionAnchor, setActionAnchor] = useState<SessionActionAnchor | null>(null);
+  const [notesKey, setNotesKey] = useState<string | null>(null);
+  useEffect(() => {
+    const show = (event: Event) => setActionAnchor((event as CustomEvent<SessionActionAnchor>).detail);
+    window.addEventListener("session-actions", show);
+    return () => window.removeEventListener("session-actions", show);
+  }, []);
+  const actionSession = sessions.find(s => s.key === actionAnchor?.key);
+  const actionAnchorRef = useRef(actionAnchor); actionAnchorRef.current = actionAnchor;
+  const closeActions = () => { if (actionAnchorRef.current !== actionAnchor) return; actionAnchor?.trigger.focus({ preventScroll: true }); setActionAnchor(null); };
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
+  const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
   const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts">(
     "terminal",
   );
@@ -359,23 +374,25 @@ function Dashboard() {
               {(agents.length > 0 || folders.length > 0) && <SidebarFilterToggle filters={sidebarFilters.filters} expanded={sidebarFilters.expanded} onToggle={sidebarFilters.toggleExpanded} />}
               <PanelToggle side="left" collapsed={sidePanels.collapsed.left} onToggle={() => sidePanels.toggle("left")} />
             </div>
-            {agents.length === 0 && folders.length === 0 ? (
+            {sessions.length === 0 && folders.length === 0 ? (
               <p className="rd-panel-empty">
                 No agents yet. Choose New → New session to start one.
               </p>
             ) : (
               <LiveAgentTree
                 filterControls={sidebarFilters}
-                sessions={agents}
+                sessions={sessions}
                 active={!towerOpen && !sidePanels.collapsed.left}
                 folders={folders}
                 selectedKey={selectedFolder === null ? selectedKey : null}
+                contextKey={actionSession?.key}
                 selectedFolder={selectedFolder}
                 onOpenFolder={setSelectedFolder}
                 onFolderRenamed={(from, to) => setSelectedFolder(current => current === from ? to : current?.startsWith(from + "/") ? to + current.slice(from.length) : current)}
                 onFolderDeleted={path => setSelectedFolder(current => current === path || current?.startsWith(path + "/") ? null : current)}
-                onOpen={setSelectedKey}
+                onOpen={key => { setSelectedKey(key); setTerminalFocus(previous => ({ key, revision: previous.revision + 1 })); }}
                 onOpenInbox={(key) => { setSelectedKey(key); setView("inbox"); }}
+                onPin={toggleSessionPin}
                 onFoldersChanged={refreshFolders}
                 onSessionMoved={(key, group) =>
                   patchSession(key, { group: group || undefined })
@@ -410,9 +427,9 @@ function Dashboard() {
               </button>
               <button
                 className={view === "history" ? "active" : ""}
-                onClick={() => setView("history")}
+                onClick={() => { setCheckpointTarget(null); setView("history"); }}
               >
-                History
+                Timeline
               </button>
               <button
                 className={view === "inbox" ? "active" : ""}
@@ -423,6 +440,7 @@ function Dashboard() {
               <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")}>
                 Artifacts
               </button>
+              <span id="rd-shell-toggle" />
             </div>
             {selected && (view === "terminal" || view === "messages") && (
               <MessagePinStrip pins={messagePins.pins} error={messagePins.error} onOpen={(pin) => {
@@ -443,7 +461,7 @@ function Dashboard() {
             )}
             {view === "history" && selected && (
               <div className="rd-messages-wrap">
-                <HistoryView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} />
+                <TimelineView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} checkpointTarget={checkpointTarget?.key === selected.key ? checkpointTarget.request : undefined} onArtifacts={() => setView("artifacts")} onMessages={() => setView("messages")} />
               </div>
             )}
             {view === "inbox" && (
@@ -475,7 +493,7 @@ function Dashboard() {
                       : "none",
                 }}
               >
-                <Terminal sessionKey={s.key} active={selectedFolder === null && view === "terminal" && s.key === selectedKey} theme={themeFor(s)} />
+                <Terminal sessionKey={s.key} active={selectedFolder === null && view === "terminal" && s.key === selectedKey} focusRequest={terminalFocus.key === s.key ? terminalFocus.revision : 0} theme={themeFor(s)} />
               </div>
             ))}
             {view === "terminal" && selected && !selected.ptyOwned && !selected.worktreePath && (
@@ -483,6 +501,7 @@ function Dashboard() {
                 This agent isn’t running in a terminal Duckterm owns.
               </div>
             )}
+            {selected && <SessionShell key={selected.key} session={selected} active={selectedFolder === null && view === "terminal" && !towerOpen} theme={themeFor(selected)} />}
             {view === "terminal" && !selected && (
               <div className="rd-panel-empty">
                 Select an agent to see its terminal.
@@ -493,19 +512,12 @@ function Dashboard() {
           <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`} style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-panel-head">
               <span>{selected ? selected.label : "Context"}</span>
-              {selected && <SessionPin session={selected} onToggle={toggleSessionPin} label />}
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
             <ContextViews session={<>
               {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}
-                onFork={setForkKey} onDelete={deleteSession}
-                onRename={(key, name) => patchSession(key, { label: name })}
-                onUngroup={selected.group && !selected.parentKey ? async () => {
-                  await api.setGroup(selected.key, "");
-                  patchSession(selected.key, { group: undefined });
-                  refreshFolders();
-                } : undefined} />}
-              {selected && <LiveContextPanel session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
+                notesOpen={notesKey === selected.key} onCloseNotes={() => setNotesKey(null)} />}
+              {selected && <LiveContextPanel session={selected} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
                   terminal theme
@@ -567,6 +579,22 @@ function Dashboard() {
           onClose={() => setModal(null)}
         />
       )}
+      {actionAnchor && actionSession && <SessionActions key={actionSession.key + ":" + actionAnchor.x + ":" + actionAnchor.y} anchor={actionAnchor} session={actionSession}
+        onClose={closeActions} onFork={setForkKey} onDelete={deleteSession}
+        onRename={(key, name) => patchSession(key, { label: name })}
+        onNotes={key => { setSelectedKey(key); setSelectedFolder(null); setNotesKey(key); if (sidePanels.collapsed.right) sidePanels.toggle("right"); window.dispatchEvent(new Event("show-session-notes")); }}
+        folders={sidebarFolders(folders, sessions)}
+        onMoveFolder={!actionSession.parentKey ? async group => {
+          await api.setGroup(actionSession.key, group);
+          patchSession(actionSession.key, { group: group || undefined });
+          refreshFolders();
+          if (group) window.dispatchEvent(new CustomEvent("reveal-sidebar-folder", { detail: group }));
+          requestAnimationFrame(() => {
+            if (actionAnchorRef.current && actionAnchorRef.current !== actionAnchor) return;
+            document.querySelector<HTMLElement>(`.rd-row[data-session-key="${CSS.escape(actionSession.key)}"]`)?.focus({ preventScroll: true });
+          });
+        } : undefined}
+        onUngroup={actionSession.group && !actionSession.parentKey ? async () => { await api.setGroup(actionSession.key, ""); patchSession(actionSession.key, { group: undefined }); refreshFolders(); } : undefined} />}
       {moveSession && <MoveRemoteModal session={moveSession} onClose={() => setMoveKey(null)} />}
       {forkSession && (
         <ForkModal session={forkSession} onClose={() => setForkKey(null)} />

@@ -146,7 +146,21 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         let bugReport = (method == "GET" && route == "/bugreport/context")
             || (method == "POST" && path == "/bugreport/submit")
             || (method == "GET" && path.range(of: #"^/bugreport/bundles/[a-f0-9]{32}$"#, options: .regularExpression) != nil)
-        guard bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
+        let shellRoute = ["GET", "POST", "DELETE"].contains(method)
+            && components.query == nil
+            && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/shell$"#, options: .regularExpression) != nil
+        let recoveryRoute = components.query == nil && (
+            (method == "GET" && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/conversation-(recovery|candidates)$"#, options: .regularExpression) != nil)
+            || (method == "POST" && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/conversation-(adopt|hooks|detach)$"#, options: .regularExpression) != nil))
+        let timelineRoute = method == "GET"
+            && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/timeline$"#, options: .regularExpression) != nil
+        let agentMergeRoot = #"^/sessions/[A-Za-z0-9._-]{1,128}/"#
+        let agentMergeRoute = components.query == nil && (
+            (["GET", "POST"].contains(method) && route.range(of: agentMergeRoot + "agent-merge$", options: .regularExpression) != nil)
+            || (method == "POST" && route.range(of: agentMergeRoot + "agent-merge/preview$", options: .regularExpression) != nil)
+            || (method == "GET" && route.range(of: agentMergeRoot + "agent-merges$", options: .regularExpression) != nil))
+        let memoryRoute = Self.memoryRestartRoute(components: components, method: method)
+        guard agentMergeRoute || memoryRoute || timelineRoute || recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
             throw LaunchDestination.Failure.message("Unsupported session operation")
         }
         var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!
@@ -173,6 +187,36 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         return request
     }
 
+    // Exact v1 route/method/query combinations. The UI still restricts memory
+    // switching to local sessions; this does not expose arbitrary memory reads.
+    static func memoryRestartRoute(components: URLComponents, method: String) -> Bool {
+        let route = components.path
+        let items = components.queryItems ?? []
+        guard Set(items.map(\.name)).count == items.count else { return false }
+        let query = Dictionary(uniqueKeysWithValues: items.map { ($0.name, $0.value ?? "") })
+        let noQuery = components.query == nil
+        func matches(_ pattern: String) -> Bool { route.range(of: pattern, options: .regularExpression) != nil }
+        func identity(_ value: String?) -> Bool {
+            guard let value else { return false }
+            return value.range(of: #"^[A-Za-z0-9._:-]{1,128}$"#, options: .regularExpression) != nil
+        }
+        let root = #"^/sessions/[A-Za-z0-9._-]{1,128}/"#
+        if matches(root + "restart-options$") { return method == "GET" && noQuery }
+        if matches(root + "restart$") {
+            if method == "POST" { return noQuery }
+            if method == "GET" { return noQuery || (query.count == 1 && identity(query["request_key"])) }
+            if method == "DELETE" { return noQuery || (query.count == 1 && identity(query["operation_id"])) }
+            return false
+        }
+        if matches(root + "restart-preparation$") { return method == "POST" && noQuery }
+        guard matches(root + "restart-preparation/[a-f0-9]{32}$") else { return false }
+        if method == "DELETE" { return query.count == 1 && identity(query["request_key"]) }
+        guard method == "GET" else { return false }
+        if noQuery { return true }
+        guard query["detail"] == "full", Set(query.keys).isSubset(of: ["detail", "cursor"]) else { return false }
+        return query["cursor"] == nil || query["cursor"]!.range(of: #"^[0-9]{1,8}$"#, options: .regularExpression) != nil
+    }
+
     func perform(base: URL, api: LaunchDestination, params: [String: Any]) async throws -> Any {
         var request = try Self.request(base: base, params: params)
         request.setValue(try await api.token(base: base, attempts: 2), forHTTPHeaderField: "X-Duckterm-Token")
@@ -181,6 +225,14 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             throw LaunchDestination.Failure.message("Invalid or oversized response")
         }
         return Self.responsePayload(data: data, response: http, path: request.url!.path)
+    }
+
+    static func terminalPath(key: String, kind: Any?) throws -> String {
+        guard key != ".", key != "..", key.range(of: #"^[A-Za-z0-9._-]{1,128}$"#, options: .regularExpression) != nil,
+              kind == nil || (kind as? String).map({ ["agent", "shell"].contains($0) }) == true else {
+            throw LaunchDestination.Failure.message("Invalid terminal target")
+        }
+        return "/sessions/\(key)/" + ((kind as? String) == "shell" ? "shell/terminal" : "terminal")
     }
 
     func terminal(host: String, base: URL, api: LaunchDestination, operation: String, params: [String: Any]) async throws -> Any {
@@ -194,6 +246,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
                   key.range(of: #"^[A-Za-z0-9._-]{1,128}$"#, options: .regularExpression) != nil else {
                 throw LaunchDestination.Failure.message("Invalid terminal session")
             }
+            let path = try Self.terminalPath(key: key, kind: params["kind"])
             let openingGeneration = generation
             let token = try await api.token(base: base, attempts: 2)
             guard openingGeneration == generation, sockets[id] == nil, sockets.count < 128 else {
@@ -201,7 +254,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             }
             var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!
             url.scheme = "ws"
-            url.path = "/sessions/\(key)/terminal"
+            url.path = path
             var request = URLRequest(url: url.url!)
             request.setValue(token, forHTTPHeaderField: "X-Duckterm-Token")
             request.setValue(base.absoluteString, forHTTPHeaderField: "Origin")

@@ -74,7 +74,7 @@ def test_v10_without_merge_schema_preserves_tasks_and_adds_final_merges(tmp_path
     for first_open in (True, False):
         history = HistoryStore(path)
         try:
-            assert history._conn.execute("PRAGMA user_version").fetchone()[0] == 11
+            assert history._conn.execute("PRAGMA user_version").fetchone()[0] == 12
             assert history.folder_tasks.get(saved["id"])["title"] == saved["title"]
             if first_open:
                 merge(history)
@@ -104,7 +104,7 @@ def test_v9_merged_child_and_delivery_checkpoint_survive(tmp_path, monkeypatch, 
     for _ in range(2):
         history = HistoryStore(path)
         try:
-            assert history._conn.execute("PRAGMA user_version").fetchone()[0] == 11
+            assert history._conn.execute("PRAGMA user_version").fetchone()[0] == 12
             assert [
                 tuple(row) for row in history._conn.execute("SELECT * FROM fork_merges")
             ] == merges

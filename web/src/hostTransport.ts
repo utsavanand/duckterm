@@ -108,9 +108,9 @@ class NativeTerminal implements TerminalSocket {
       this.onmessage?.({ data: bytes.buffer });
     }
   };
-  constructor(private host: string, key: string) {
+  constructor(private host: string, key: string, kind: "agent" | "shell" = "agent") {
     window.addEventListener("remote-terminal", this.listener);
-    this.opened = destinationRequest(host, "terminal-open", { id: this.id, key });
+    this.opened = destinationRequest(host, "terminal-open", { id: this.id, key, ...(kind === "shell" ? { kind } : {}) });
     void this.opened.catch(() => this.finish());
   }
   send(data: string | Uint8Array): void {
@@ -137,9 +137,11 @@ class NativeTerminal implements TerminalSocket {
   }
 }
 
-export function terminalSocket(ref: string): TerminalSocket {
+export function terminalSocket(ref: string, kind: "agent" | "shell" = "agent"): TerminalSocket {
   const { host, key } = splitSessionRef(ref);
-  if (host !== "local") return new NativeTerminal(host, key);
+  if (host !== "local") return new NativeTerminal(host, key, kind);
   const protocol = location.protocol === "https:" ? "wss" : "ws";
-  return new WebSocket(`${protocol}://${location.host}/sessions/${encodeURIComponent(key)}/terminal`) as unknown as TerminalSocket;
+  const path = `/sessions/${encodeURIComponent(key)}/${kind === "shell" ? "shell/" : ""}terminal`;
+  const token = document.querySelector('meta[name="duckterm-token"]')?.getAttribute("content") ?? "";
+  return new WebSocket(`${protocol}://${location.host}${path}`, kind === "shell" ? ["duckterm-shell", `duckterm-owner.${token}`] : []) as unknown as TerminalSocket;
 }
