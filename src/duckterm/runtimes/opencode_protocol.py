@@ -116,6 +116,10 @@ class NativeClient:
             if not 200 <= response.status < 300:
                 # Never expose provider/server error bodies or follow redirects.
                 raise OpenCodeError(f"Native OpenCode returned HTTP {response.status}")
+            # The pinned prompt_async route acknowledges with an empty 204.
+            # Acceptance still requires message-ID reconciliation by the caller.
+            if response.status == 204 and not chunks:
+                return None
             return json.loads(chunks)
         except (OSError, http.client.HTTPException, ValueError) as exc:
             if method != "GET" and attempted:
@@ -199,6 +203,7 @@ def messages(value: Any, identity: str) -> list[dict[str, Any]]:
         if (
             info.get("sessionID") != identity
             or mid in seen
+            or not isinstance(info.get("role"), str)
             or info.get("role") not in {"user", "assistant"}
         ):
             raise OpenCodeError("Native message identity is ambiguous")
@@ -213,6 +218,8 @@ def messages(value: Any, identity: str) -> list[dict[str, Any]]:
                 raise OpenCodeError("Native message part identity is ambiguous")
             part_ids.add(pid)
             kind = part.get("type")
+            if not isinstance(kind, str):
+                raise OpenCodeError("Malformed native message part type")
             if kind in {"text", "reasoning"} and isinstance(part.get("text"), str):
                 blocks.append({"id": pid, "type": kind, "text": part["text"]})
             elif kind == "tool" and isinstance(part.get("state"), dict):

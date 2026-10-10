@@ -16,7 +16,13 @@ Run `python3 scripts/qa_opencode_identity.py /absolute/path/to/opencode`.
 It uses a temporary HOME/XDG/config/cache/project, no inherited provider secrets,
 no provider calls, a dedicated tmux server and two synthetic native sessions.
 Both native sessions are removed; the fixture server and tmux server stop.
-No DuckTerm production card is created or changed.
+The disposable home is removed after cleanup. No DuckTerm production card is
+created or changed. Add `--models` to run the deterministic loopback provider:
+two custom model IDs (`fixture/alpha`, `fixture/beta`) complete in the same native
+conversation, with the selected model checked on each completed assistant
+message. This exercises the shipped native client and history/catalog parsers,
+including the prompt endpoint's empty HTTP 204 acknowledgment. It uses a fake
+key and makes no paid provider calls; it does not prove DuckTerm model switching.
 
 The pinned release exposes `api.route.current` through its TUI plugin API.
 The shipped observer plugin reports the actual selected session ID, canonical
@@ -57,6 +63,14 @@ history, selected versus observed model, honest capability presentation and
 independent isolated-home QA. Programmatic approvals, safe restart, fork,
 priority delivery and remote transfer remain unsupported until separately proven.
 No capability is enabled solely by this foundation checkpoint.
+
+Independent QA reproduced the pinned two-session identity probe and found
+malformed role/part discriminators escaping as TypeError. The correction rejects
+non-string discriminators as protocol errors while preserving unknown string
+part types as unsupported. The foundation at `7e43b87` passed the full gate
+(443 frontend and 119 browser tests plus Python/static checks). Subsequent
+parser/204 corrections passed 52 focused tests and static checks, plus the
+two-model native fixture. This does not replace end-to-end harness acceptance.
 
 The New Session/model/support preview is artifact
 `1d8f02376ff9403c821ad52d6244b26b`; visual implementation awaits owner review.

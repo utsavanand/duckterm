@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Pinned macOS native identity probe; no provider calls or production state.
 
-Usage: python3 scripts/qa_opencode_identity.py /absolute/path/to/pinned/opencode
+Usage: python3 scripts/qa_opencode_identity.py /absolute/path/to/pinned/opencode [--models]
 Creates two native synthetic sessions in a disposable home and removes them.
+--models uses only a deterministic loopback provider with a synthetic key.
 """
 import base64
 import hashlib
@@ -11,6 +12,7 @@ import json
 import pathlib
 import secrets
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
@@ -18,6 +20,9 @@ import tempfile
 import threading
 import time
 import urllib.request
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
+from duckterm.runtimes.opencode_protocol import NativeClient, models  # noqa: E402
 
 root = pathlib.Path(tempfile.mkdtemp(prefix="duckterm-opencode-probe-")).resolve()
 binary = pathlib.Path(sys.argv[1]).resolve()
@@ -105,6 +110,114 @@ def request(method, path, body=None):
 
 name = "oc-proof-" + secrets.token_hex(5)
 native = []
+provider_calls = []
+
+
+class Provider(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        size = int(self.headers.get("Content-Length", "0"))
+        if not 0 < size <= 4 * 1024 * 1024:
+            self.send_error(413)
+            return
+        body = json.loads(self.rfile.read(size))
+        model = body.get("model")
+        if model not in ("alpha", "beta"):
+            self.send_error(400)
+            return
+        provider_calls.append(model)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        for delta, finish in [
+            ({"role": "assistant", "content": "fixture response"}, None),
+            ({}, "stop"),
+        ]:
+            data = {
+                "id": "chatcmpl_fixture",
+                "object": "chat.completion.chunk",
+                "created": 1,
+                "model": model,
+                "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+            }
+            if finish:
+                data["usage"] = {"prompt_tokens": 5, "completion_tokens": 3, "total_tokens": 8}
+            self.wfile.write(("data: " + json.dumps(data) + "\n\n").encode())
+        self.wfile.write(b"data: [DONE]\n\n")
+
+    def log_message(self, *args):
+        pass
+
+
+provider = None
+if "--models" in sys.argv[2:]:
+    provider = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+    threading.Thread(target=provider.serve_forever, daemon=True).start()
+    env["OPENCODE_CONFIG_CONTENT"] = json.dumps(
+        {
+            "autoupdate": False,
+            "share": "disabled",
+            "enabled_providers": ["fixture"],
+            "model": "fixture/alpha",
+            "small_model": "fixture/alpha",
+            "permission": "deny",
+            "provider": {
+                "fixture": {
+                    "npm": "@ai-sdk/openai-compatible",
+                    "name": "Local fixture",
+                    "options": {
+                        "baseURL": f"http://127.0.0.1:{provider.server_port}/v1",
+                        "apiKey": "synthetic-only",
+                    },
+                    "models": {
+                        model: {"name": model, "limit": {"context": 8192, "output": 1024}}
+                        for model in ("alpha", "beta")
+                    },
+                }
+            },
+        }
+    )
+
+
+def verify_models(client):
+    catalog = models(client.request("GET", "/provider"))
+    assert {"fixture/alpha", "fixture/beta"} <= {item["id"] for item in catalog}
+    for index, model in enumerate(("alpha", "beta")):
+        message_id = "msg_ducktermfixture" + str(index)
+        assert (
+            client.request(
+                "POST",
+                "/session/" + native[-1] + "/prompt_async",
+                {
+                    "messageID": message_id,
+                    "model": {"providerID": "fixture", "modelID": model},
+                    "parts": [{"type": "text", "text": "Return a short fixture response."}],
+                },
+            )
+            is None
+        )
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            rows = client.request("GET", "/session/" + native[-1] + "/message")
+            match = [
+                row
+                for row in rows
+                if row["info"].get("parentID") == message_id
+                and row["info"].get("time", {}).get("completed")
+            ]
+            if match:
+                assert match[-1]["info"]["providerID"] == "fixture"
+                assert match[-1]["info"]["modelID"] == model
+                break
+            time.sleep(0.1)
+        else:
+            raise RuntimeError("Native fixture prompt did not complete")
+    normalized = client.messages(native[-1])
+    observed_models = {item["model"] for item in normalized if item["role"] == "assistant"}
+    assert {"alpha", "beta"} <= observed_models
+    assert len({item["id"] for item in normalized}) == len(normalized)
+    assert set(provider_calls) == {"alpha", "beta"}
+
+
 try:
     version = subprocess.check_output(
         [str(binary), "--version"], env=env, cwd=root / "project", text=True, timeout=20
@@ -157,6 +270,10 @@ try:
                 timeout=10,
             )
         assert proven, "No TUI selection proof"
+    client = NativeClient(port, password, str(root / "project"))
+    client.health()
+    if provider is not None:
+        verify_models(client)
     assert all(x["generation"] == env["DUCKTERM_HARNESS_GENERATION"] for x in observed)
     assert all(x["directory"] == str(root / "project") for x in observed)
     assert len({x["pid"] for x in observed}) == 1
@@ -167,6 +284,7 @@ try:
                 "version": version,
                 "executable_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                 "native_ids": native,
+                "fixture_models_passed": provider_calls,
                 "observed": [
                     {k: v for k, v in item.items() if k != "generation"} for item in observed
                 ],
@@ -201,3 +319,7 @@ finally:
         subprocess.run(["tmux", "-L", name, "kill-server"], capture_output=True)
         collector.shutdown()
         collector.server_close()
+        if provider is not None:
+            provider.shutdown()
+            provider.server_close()
+        shutil.rmtree(root)

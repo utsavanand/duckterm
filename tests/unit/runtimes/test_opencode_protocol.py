@@ -33,6 +33,10 @@ def endpoint():
         def do_POST(self):
             calls.append((self.command, self.path, dict(self.headers)))
             self.rfile.read(int(self.headers["Content-Length"]))
+            if state.get("post_status"):
+                self.send_response(state["post_status"])
+                self.end_headers()
+                return
             self.close_connection = True  # accepted write, response lost
 
         def log_message(self, *args):
@@ -70,6 +74,21 @@ def test_accepted_write_without_response_is_uncertain_and_not_retried(endpoint):
     client, _, calls = endpoint
     with pytest.raises(UncertainWrite):
         client.request("POST", "/session", {"title": "Synthetic"})
+    assert len(calls) == 1
+
+
+def test_empty_204_is_a_valid_native_acknowledgment(endpoint):
+    client, state, calls = endpoint
+    state["post_status"] = 204
+    assert client.request("POST", "/session/ses_fixture/prompt_async", {}) is None
+    assert len(calls) == 1
+
+
+def test_empty_json_response_is_still_an_uncertain_write(endpoint):
+    client, state, calls = endpoint
+    state["post_status"] = 200
+    with pytest.raises(UncertainWrite):
+        client.request("POST", "/session", {})
     assert len(calls) == 1
 
 
@@ -156,6 +175,25 @@ def test_messages_have_stable_ids_unknown_usage_and_no_invented_completion():
         "cacheWrite": None,
     }
     assert new["cost"] == 0 and new["complete"]
+
+
+@pytest.mark.parametrize("field", ["role", "type"])
+@pytest.mark.parametrize("value", [[], {}, None, 1, True])
+def test_malformed_discriminators_are_protocol_errors(field, value):
+    # Independent QA reproduced unhashable JSON discriminators escaping as TypeError.
+    rows = record()
+    target = rows[0]["info"] if field == "role" else rows[0]["parts"][0]
+    target[field] = value
+    with pytest.raises(OpenCodeError):
+        messages(rows, "ses_1")
+
+
+def test_unknown_string_part_type_remains_explicitly_unsupported():
+    rows = record()
+    rows[0]["parts"][0]["type"] = "future-native-part"
+    assert messages(rows, "ses_1")[0]["blocks"] == [
+        {"id": "part_1", "type": "unsupported", "nativeType": "future-native-part"}
+    ]
 
 
 @pytest.mark.parametrize(

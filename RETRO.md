@@ -1,5 +1,17 @@
 # Retro — lessons from real breakage
 
+## 2026-10-10 — Validate native discriminators before classifying them
+
+Independent OpenCode QA supplied JSON arrays as a message role and part type.
+Set membership raised an uncontrolled TypeError before the parser could reject
+the malformed response. Validate discriminator string types first; keep future
+string part types explicitly unsupported. Regression coverage includes arrays,
+objects, null, numbers and booleans for both fields, plus a future string type.
+Native fixture review also identified the prompt route's valid empty HTTP 204:
+accept that acknowledgment without trying to parse JSON, while retaining
+uncertain-write handling for a missing response or malformed expected JSON.
+An acknowledgment alone still does not prove delivery to the intended session.
+
 ## 2026-10-09 — Native selection success must come from the terminal
 
 A native API can accept conversation selection while the terminal stays on its
