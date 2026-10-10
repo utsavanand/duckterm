@@ -15,6 +15,25 @@ from duckterm.model_catalog import CatalogError
 from duckterm.persistence.history import HistoryStore
 
 
+async def ready_checkpoint(server, key="a", summary="Checkpoint summary"):
+    """A current, explicit ready response for tests of the later stop guards."""
+    captured = await server.progress_coordinator.capture(key)
+    source = captured["source"]
+    return {
+        "id": "checkpoint",
+        "summary": summary,
+        "saved": True,
+        "handoff_eligible": True,
+        "record": {
+            "policy": captured["policy"],
+            "conversation": captured["conversation"],
+            "events": source["events"],
+            "required_hash": source["required_hash"],
+            "transcript": {k: v for k, v in source.items() if k.startswith("transcript_")},
+        },
+    }
+
+
 @pytest.fixture
 def rig(tmp_path, monkeypatch):
     for value in restart_rig.__wrapped__(tmp_path, monkeypatch):
@@ -23,6 +42,13 @@ def rig(tmp_path, monkeypatch):
             return "codex 0.155.1" if binary == "codex" else binary + " 1.0.0"
 
         monkeypatch.setattr("duckterm.restarts.cli_version", version)
+        monkeypatch.setattr(
+            value[0],
+            "_progress_transcript",
+            lambda *args: [
+                {"role": "assistant", "text": "Checkpoint summary; review the work before release."}
+            ],
+        )
         yield value
 
 
@@ -38,10 +64,36 @@ def offline(monkeypatch):
 
     monkeypatch.setattr("duckterm.model_catalog.ModelCatalog.choices", choices)
     monkeypatch.setattr("duckterm.restarts.cli_version", version)
-    monkeypatch.setattr(
-        "duckterm.persistence.checkpoints.summarize",
-        lambda _: type("Summary", (), {"text": "Checkpoint summary"})(),
-    )
+
+    def summary(prompt):
+        if "validating a candidate" in prompt:
+            text = {
+                "accept": [],
+                "done_next_action_ids": [],
+                "summary_validation": {"ready": True, "reason_codes": []},
+            }
+        else:
+            text = {
+                "summary": "Checkpoint summary",
+                "deliverables": [],
+                "context": {
+                    "overview": "Checkpoint summary",
+                    **{
+                        k: []
+                        for k in (
+                            "goals",
+                            "constraints",
+                            "decisions",
+                            "unfinished",
+                            "questions",
+                            "risks",
+                        )
+                    },
+                },
+            }
+        return type("Summary", (), {"text": json.dumps(text)})()
+
+    monkeypatch.setattr("duckterm.server.summarize", summary)
 
 
 def test_unknown_resume_identity_still_offers_switch(rig, monkeypatch):
@@ -232,7 +284,7 @@ def test_input_during_checkpoint_never_stops_old_agent(rig, monkeypatch):
 
     async def checkpoint(*args):
         await hook(server, event_type="UserPromptSubmit")
-        return {"id": "checkpoint", "summary": "notes"}
+        return await ready_checkpoint(server, summary="notes")
 
     monkeypatch.setattr(server, "_create_checkpoint", checkpoint)
 
@@ -410,6 +462,10 @@ def test_seeded_queue_can_learn_initial_id_from_real_parent_turn_end(rig):
     server.history._conn.execute(
         "DELETE FROM events WHERE json_extract(payload_json, '$.session_id') IS NOT NULL"
     )
+    # This fixture models an identity never captured, not telemetry retention.
+    control = server.history.restart_control("a")
+    control.pop("native_observation", None)
+    server.history.set_restart_control("a", control)
     server.history._conn.commit()
     assert server.history.session_id_for("a") is None
 
@@ -467,7 +523,7 @@ def test_failed_switch_drains_delayed_eof_before_restoring(rig, monkeypatch, sta
             orchestrator, "get", lambda key: orchestrator._supervisors.get(key, original)
         )
         monkeypatch.setattr(orchestrator, "stop", stop)
-        monkeypatch.setattr(orchestrator, "_write_summary", lambda key: None)
+        monkeypatch.setattr(orchestrator, "on_completed", lambda key: None)
         await server.restarts.request("a", "invalid", "claude-code")
         await hook(server)
         await asyncio.wait_for(draining.wait(), 5)

@@ -163,3 +163,17 @@ def test_natural_voice_files_stay_out_of_the_archive(source, tmp_path):
     assert "duckterm/checkpoints/session/checkpoint.md" in names
     assert not any("voice" in n or n.endswith((".safetensors", ".wav")) for n in names)
     assert any(item.startswith("voice") for item in manifest["excluded"])
+
+
+def test_new_local_memory_does_not_expand_existing_backup_scope(source, tmp_path):
+    home, root, _ = source
+    put(root / "checkpoints/session/memory/source.jsonl", '{"private":"retained"}\n')
+    put(root / "checkpoints/session/memory/index.sqlite3", "private derived cache")
+    put(root / "checkpoints/session/checkpoint.md", "existing marker export")
+    put(home / ".codex/sessions/date/rollout.jsonl", '{"original":"selected"}\n')
+    with tarfile.open(backup.create(str(tmp_path / "backup.tar.gz"))) as archive:
+        assert "duckterm/checkpoints/session/checkpoint.md" in archive.getnames()
+        assert "codex/sessions/date/rollout.jsonl" in archive.getnames()
+        assert not any("/memory/" in name for name in archive.getnames())
+        manifest = json.load(archive.extractfile("manifest.json"))
+        assert any("memory snapshots" in entry for entry in manifest["excluded"])

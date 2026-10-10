@@ -16,6 +16,7 @@ Response:
     "text": "Existing stored progress summary",
     "harness": "claude-code",
     "model": null,
+    "updated_at": 1000,
     "age_ms": 10000,
     "counts": {"prompt": 1},
     "total": 1
@@ -33,7 +34,7 @@ Response:
 }
 ```
 
-`icon` is a semantic token equal to kind, not HTML or an asset URL. Render all text as untrusted text. `one_line` is whitespace-normalized and capped at 240 characters; detailed text is capped at 16,000 characters. Refs identify source records for deep links. Summary/counts describe the selected kinds across the pagination boundary, not only the current page. Summary text, age, harness and model are current values.
+`icon` is a semantic token equal to kind, not HTML or an asset URL. Render all text as untrusted text. `one_line` is whitespace-normalized and capped at 240 characters; detailed text is capped at 16,000 characters. Refs identify source records for deep links. Summary/counts describe the selected kinds across the pagination boundary, not only the current page. Summary text, update time, age, harness and model are current values. `summary.updated_at` is the stored progress-digest update timestamp in Unix milliseconds; `age_ms` is its nonnegative age at request time. Both are null when no valid update timestamp was recorded. Session start time and unrelated digest-item updates are never substituted for summary freshness.
 
 Ordering is descending `(ts, id)`. Cursor state retains the initial timestamp and source rowid upper bounds, excluding new inserts even if they carry older or identical timestamps. Each source returns at most `limit+1` candidates before merging. Refresh without a cursor to see new records. Each cursor also retains the ID at every source rowid boundary. If that record is deleted or replaced, continuation returns 400 and the client must refresh; this prevents SQLite rowid reuse from admitting later inserts. Boundaries are table-wide, so another session deleting a boundary record can also require a refresh. This is a live projection, not a retained database snapshot: edits, deletions, completion status changes and relay trimming can change existing entries between pages. No historical record is fabricated to compensate. Counts use SQL aggregation scoped to the selected session; sorting/counting costs can grow with its stored history. Existing source indexes are reused; some sources (notably checkpoints) lack session indexes, so no constant-time or universally index-bounded query claim is made. No schema change is introduced.
 

@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiDelete, base, expandFolder, postEvent, seedSession } from "./helpers";
 
@@ -14,15 +15,14 @@ test("deleting a parent immediately restores child controls and preserves descen
     await page.goto("/");
     await expandFolder(page, group);
     const row = (name: string) => page.locator(".rd-row").filter({ has: page.locator(".rd-row-name", { hasText: name }) });
-    const controls = page.locator(".rd-session-controls");
     await row(child).locator(".rd-row-click").click();
-    await expect(controls.getByRole("button", { name: "Ungroup", exact: true })).toHaveCount(0);
+    await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder", exact: true })).toHaveCount(0);
     await row(parent).locator(".rd-row-click").click();
-    await controls.getByRole("button", { name: "Stop watching", exact: true }).click();
-    await controls.getByRole("button", { name: "Confirm?", exact: true }).click();
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Stop watching", exact: true }).click();
+    await page.getByRole("dialog", { name: "Confirm session removal" }).getByRole("button", { name: "Stop watching", exact: true }).click();
     await expect(row(parent)).toHaveCount(0);
     await row(child).locator(".rd-row-click").click();
-    await expect(controls.getByRole("button", { name: "Ungroup", exact: true })).toBeVisible();
+    await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder", exact: true })).toBeVisible();
     await expect(row(grandchild)).toBeVisible();
 
     // The real server rejects a late supervisor event's stale parent link.
@@ -34,9 +34,10 @@ test("deleting a parent immediately restores child controls and preserves descen
     await page.reload();
     await expandFolder(page, group);
     await row(child).locator(".rd-row-click").click();
-    await expect(controls.getByRole("button", { name: "Ungroup", exact: true })).toBeVisible();
+    await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
     await row(grandchild).locator(".rd-row-click").click();
-    await expect(controls.getByRole("button", { name: "Ungroup", exact: true })).toHaveCount(0);
+    await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder", exact: true })).toHaveCount(0);
   } finally {
     for (const key of [grandchild, child, parent]) await apiDelete(`/sessions/${key}`);
     await apiDelete(`/groups/${encodeURIComponent(group)}`);

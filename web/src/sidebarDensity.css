@@ -22,7 +22,7 @@
 [data-density="relaxed"] .rd-row-meta { font-size: 12px; margin-top: 6px; white-space: normal; }
 [data-density="relaxed"] .rd-row-density-detail { display: block; font-size: 11px; line-height: 1.6; color: var(--muted); margin-top: 5px; }
 
-/* The sole row action: recovery of an explicitly stopped, owned session. */
+/* Keep recovery of explicitly stopped sessions beside their Focus pin. */
 .rd-row-resume { flex: 0 0 auto; border: 1px solid var(--border-strong); background: transparent; color: var(--text-soft); font: inherit; font-size: 11px; padding: 3px 7px; border-radius: 5px; cursor: pointer; }
 .rd-row-resume:hover:not(:disabled) { color: var(--brand-green); border-color: var(--brand-green); }
 .rd-row-resume:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }

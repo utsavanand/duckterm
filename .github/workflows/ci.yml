@@ -62,6 +62,15 @@ jobs:
         run: npm run e2e
         working-directory: web
 
+      - name: Retain browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure-evidence
+          path: web/test-results/
+          retention-days: 7
+          if-no-files-found: warn
+
   native:
     runs-on: macos-14
     steps:

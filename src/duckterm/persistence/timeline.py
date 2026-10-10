@@ -6,6 +6,8 @@ import sqlite3
 import time
 from typing import Any
 
+from duckterm.persistence.saved_state import resolve_checkpoint
+
 KINDS = (
     "prompt",
     "delivered",
@@ -241,6 +243,22 @@ def page(
             query + " ORDER BY ts DESC, entry_id DESC LIMIT ?", [*args, limit + 1]
         ):
             data = json.loads(record["detail"])
+            if table == "checkpoints":
+                stored = conn.execute(
+                    "SELECT * FROM checkpoints WHERE id=? AND session_key=?",
+                    (record["source_id"], key),
+                ).fetchone()
+                if stored:
+                    checkpoint = dict(stored)
+                    try:
+                        checkpoint["record"] = json.loads(checkpoint.pop("record_json"))
+                    except (ValueError, TypeError):
+                        checkpoint["record"] = {"format": "unreadable"}
+                    resolved = resolve_checkpoint(conn, key, checkpoint)
+                    data.update(
+                        summary=resolved["summary"], summary_state=resolved["summary_state"]
+                    )
+
             entries.append(
                 _entry(record["entry_id"], record["ts"], kind, data, table, record["source_id"])
             )
@@ -282,12 +300,16 @@ def page(
     except (ValueError, TypeError):
         progress = {}
     summary = progress.get("summary", "") if isinstance(progress, dict) else ""
+    updated_at = row.get("progress_at")
+    if not isinstance(updated_at, int) or isinstance(updated_at, bool) or updated_at <= 0:
+        updated_at = None
     return {
         "summary": {
             "text": summary,
             "harness": row.get("runtime"),
             "model": row.get("model"),
-            "age_ms": max(0, stamp - row["started_at"]),
+            "updated_at": updated_at,
+            "age_ms": max(0, stamp - updated_at) if updated_at is not None else None,
             "counts": counts,
             "total": sum(counts.values()),
         },

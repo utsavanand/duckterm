@@ -1,0 +1,52 @@
+.rd-conversation-health { padding:16px; border-top:1px solid var(--border-strong); }
+.rd-conversation-health h3 { font-size:14px; margin:0 0 6px; font-weight:600; }
+.rd-conversation-warning { color:var(--amber-text); }
+.rd-conversation-health p { font-size:13px; margin:6px 0 12px; }
+.rd-conversation-health details { margin-top:14px; font-size:12px; color:var(--text-soft); }
+.rd-conversation-health summary { cursor:pointer; }
+.rd-conversation-actions { display:flex; flex-wrap:wrap; gap:8px; }
+.rd-conversation-health button { font-size:12px; }
+.rd-conversation-dialog { color:var(--text); background:var(--bg); border:1px solid var(--border-strong); border-radius:6px; width:min(920px,calc(100% - 32px)); max-height:calc(100dvh - 32px); padding:0; overflow:hidden; }
+.rd-conversation-dialog::backdrop { background:rgba(0,0,0,.65); }
+.rd-conversation-shell { display:flex; flex-direction:column; max-height:calc(100dvh - 34px); }
+.rd-conversation-shell > header { display:flex; align-items:start; gap:20px; justify-content:space-between; padding:20px 24px 14px; border-bottom:1px solid var(--border); }
+.rd-conversation-shell h2 { font-size:20px; margin:0; }
+.rd-conversation-shell .hint { font-size:12px; color:var(--text-soft); }
+.rd-conversation-shell header .hint { margin:0 0 5px; overflow-wrap:anywhere; }
+.rd-conversation-body { overflow:auto; min-height:0; padding:20px 24px; }
+.rd-conversation-notice { border:1px solid var(--amber-border); background:var(--amber-bg); padding:13px 15px; font-size:13px; margin-bottom:20px; }
+.rd-conversation-notice strong { display:block; margin-bottom:5px; font-weight:550; }
+.rd-conversation-notice p { margin:0; }
+.rd-conversation-candidates { border-block:1px solid var(--border); }
+.rd-conversation-candidate { display:grid; grid-template-columns:18px minmax(0,1fr); gap:12px; padding:16px 12px; border-bottom:1px solid var(--border); cursor:pointer; }
+.rd-conversation-candidate:last-child { border-bottom:0; }
+.rd-conversation-candidate.selected { background:color-mix(in srgb,var(--brand-green) 13%,transparent); box-shadow:inset 3px 0 var(--brand-green); }
+.rd-conversation-candidate input { margin:5px 0 0; accent-color:var(--brand-green); }
+.rd-conversation-candidate-title { display:flex; gap:12px; align-items:baseline; justify-content:space-between; flex-wrap:wrap; margin-bottom:10px; }
+.rd-conversation-candidate-title strong { font-weight:550; }
+.rd-conversation-candidate time, .rd-conversation-candidate small { color:var(--text-soft); font-size:12px; }
+.rd-conversation-prompts { display:grid; grid-template-columns:82px minmax(0,1fr); gap:5px 12px; font-size:13px; margin:0; }
+.rd-conversation-prompts dt { color:var(--text-soft); font-size:12px; }
+.rd-conversation-prompts dd { margin:0; overflow-wrap:anywhere; white-space:pre-wrap; }
+.rd-conversation-candidate small { display:block; margin-top:10px; }
+.rd-conversation-shell > footer { padding:14px 24px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:16px; background:var(--bg-soft); }
+.rd-conversation-shell > footer > p { font-size:12px; color:var(--text-soft); margin:0; }
+.rd-conversation-shell footer .rd-conversation-actions { flex-shrink:0; }
+.rd-conversation-empty { padding:30px 4px; }
+.rd-conversation-empty h3 { font-size:16px; font-weight:550; margin:0 0 8px; }
+.rd-conversation-error { padding:12px 14px; border:1px solid var(--amber-border); color:var(--amber-text); font-size:13px; margin-bottom:16px; }
+.rd-conversation-error button { display:block; margin-top:10px; }
+.rd-conversation-choice { border-block:1px solid var(--border); padding:16px 0; }
+.rd-conversation-choice h3 { font-size:15px; margin-top:0; }
+.rd-conversation-choice .rd-conversation-prompts { margin:14px 0; }
+@media(max-width:690px) {
+  .rd-conversation-dialog { width:calc(100% - 16px); max-height:calc(100dvh - 16px); }
+  .rd-conversation-shell { max-height:calc(100dvh - 18px); }
+  .rd-conversation-shell > header,.rd-conversation-body { padding:16px; }
+  .rd-conversation-shell h2 { font-size:18px; }
+  .rd-conversation-shell > footer { padding:12px 16px; align-items:stretch; flex-direction:column; gap:10px; }
+  .rd-conversation-shell footer .rd-conversation-actions { justify-content:flex-end; }
+  .rd-conversation-candidate { padding:14px 4px; gap:8px; }
+  .rd-conversation-prompts { grid-template-columns:1fr; gap:2px; }
+  .rd-conversation-prompts dd { margin-bottom:10px; }
+}

@@ -87,7 +87,14 @@ def _add_file(archive: tarfile.TarFile, fd: int, name: str) -> None:
         archive.addfile(entry, stream)
 
 
-def _tree(archive: tarfile.TarFile, root: Path, prefix: str, transcripts: bool = False) -> None:
+def _tree(
+    archive: tarfile.TarFile,
+    root: Path,
+    prefix: str,
+    transcripts: bool = False,
+    *,
+    exclude_session_memory: bool = False,
+) -> None:
     if not root.exists():
         return
     if root.is_symlink():
@@ -97,6 +104,10 @@ def _tree(archive: tarfile.TarFile, root: Path, prefix: str, transcripts: bool =
         raise error
 
     for directory, dirs, files, dirfd in os.fwalk(root, follow_symlinks=False, onerror=fail):
+        if exclude_session_memory and len(Path(directory).relative_to(root).parts) == 1:
+            # Memory retention is local-only; adding private snapshots/indexes
+            # must not silently broaden an existing cloud backup selection.
+            dirs[:] = [name for name in dirs if name != "memory"]
         dirs.sort()
         for name in sorted(files):
             if transcripts and not (name.endswith(".jsonl") or name == "sessions-index.json"):
@@ -149,7 +160,12 @@ def create(destination: str | None = None) -> str:
             with tarfile.open(fileobj=raw, mode="w:gz") as archive:
                 archive.add(database, arcname="duckterm/db.sqlite", recursive=False)
                 for directory in ("checkpoints", "snapshots"):
-                    _tree(archive, root / directory, f"duckterm/{directory}")
+                    _tree(
+                        archive,
+                        root / directory,
+                        f"duckterm/{directory}",
+                        exclude_session_memory=directory == "checkpoints",
+                    )
                 _tree(archive, claude / "projects", "claude/projects", True)
                 for directory in ("sessions", "archived_sessions"):
                     _tree(archive, codex.expanduser() / directory, f"codex/{directory}", True)
@@ -172,6 +188,7 @@ def create(destination: str | None = None) -> str:
                             "worktrees",
                             "logs",
                             "symlinks",
+                            "session memory snapshots and derived indexes (local-only)",
                             # About 800 MB and reinstallable from Settings.
                             "voice (natural-voice environment, model, and cache)",
                         ],
