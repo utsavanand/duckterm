@@ -86,9 +86,22 @@ The current backend reports launch unavailable; adding the picker must not
 silently use a generic runtime before controlled launch/recovery is integrated.
 This also means model suggestions are currently empty. Backend delivery, not a
 further layout decision, is the remaining requirement before enabling launch.
-Focused checks cover 8 component cases, 4 browser scenarios and 5 native bridge
-cases. The form was inspected in light/dark themes and at desktop/narrow widths.
-Dark form labels now use the existing theme text color.
+Independent UI QA found stale readiness after reselecting OpenCode; `e360802`
+binds replies to the active selection generation. Ten focused component cases
+cover that correction, including switching computers A→B→A during pending reads.
+All 450 frontend tests pass on the correction, plus TypeScript and ESLint.
+Five native bridge checks passed. Five focused browser scenarios pass on the
+rebuilt correction, including existing custom-agent launch and remote selection.
+The full gate at `72fdd44` passed Python/static and 448 frontend checks, but
+finished with 119/120 browser passes because the older picker test expected four
+agents. Its expectation now includes OpenCode and its focused rerun passes;
+there is no claim of a subsequent full-gate pass on this checkpoint.
+
+The form was inspected in light/dark themes and at desktop/narrow widths.
+Dark form labels now use the existing theme text color. Screenshots are saved
+as artifacts `926b65bb3454448c87164791561c24ae` (desktop) and
+`f98dc52ed16446e79380d509b17b9b40` (narrow). A direct HTTP launch probe returned
+400 with no new session row; the isolated visual QA server and state were removed.
 No production install, schema migration, provider credential change, remote
 upload or public release is part of this checkpoint.
 
