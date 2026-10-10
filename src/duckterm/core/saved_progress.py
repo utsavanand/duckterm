@@ -118,11 +118,13 @@ class SummaryUpdate:
     revision: dict[str, Any] | None
     state: str
     reason: str | None = None
+    diagnostic: str | None = None
 
     def metadata(self, attempted_at: int) -> dict[str, Any]:
         return {
             "state": self.state,
             "reason": self.reason,
+            **({"diagnostic": self.diagnostic} if self.diagnostic else {}),
             "attempted_at": attempted_at,
             "revision_id": (
                 self.revision["id"] if self.revision and self.state != "failed" else None
@@ -130,7 +132,7 @@ class SummaryUpdate:
         }
 
     @classmethod
-    def failed(cls, reason: str | None) -> SummaryUpdate:
+    def failed(cls, reason: str | None, *, diagnostic: str | None = None) -> SummaryUpdate:
         allowed = {
             "disabled",
             "no_provider",
@@ -144,7 +146,7 @@ class SummaryUpdate:
             "no_transcript",
             "update_failed",
         }
-        return cls(None, "failed", reason if reason in allowed else "update_failed")
+        return cls(None, "failed", reason if reason in allowed else "update_failed", diagnostic)
 
     @classmethod
     def from_revision(cls, value: dict[str, Any] | None, *, reused: bool = False) -> SummaryUpdate:
@@ -274,6 +276,49 @@ class ProgressCoordinator:
             task.add_done_callback(finished)
         return await asyncio.shield(task)
 
+    async def _draft(
+        self, key: str, captured: dict[str, Any], maintained: dict[str, Any] | None, prompt: str
+    ) -> tuple[dict[str, Any], dict[str, Any] | None] | SummaryUpdate:
+        from duckterm import memory_continuity, memory_summary
+        from duckterm.server import summarize
+
+        original = prompt
+        for attempt in range(2 if maintained is not None else 1):
+            reply = await asyncio.to_thread(summarize, prompt)
+            if failure := getattr(reply, "failure_reason", None):
+                return SummaryUpdate.failed(failure)
+            digest = progress.parse(reply.text)
+            reason, diagnostic = "invalid_summary", "invalid_digest"
+            if digest and digest["summary"]:
+                try:
+                    context = (
+                        memory_continuity.context(reply.text, maintained)
+                        if maintained is not None
+                        else None
+                    )
+                    return digest, context
+                except memory_summary.InvalidContext as exc:
+                    reason, diagnostic = "invalid_context", exc.reason
+                except (ValueError, APIError):
+                    reason, diagnostic = "invalid_context", "invalid_context_object"
+            if maintained is None or attempt == 1:
+                return SummaryUpdate.failed(
+                    reason, diagnostic=diagnostic if maintained is not None else None
+                )
+            # Retry only a rejected draft, once, against exactly the same work.
+            # Quota/auth/deadline errors return above without another provider call.
+            current = await self.capture(key)
+            if current is None:
+                return SummaryUpdate.failed("source_changed")
+            try:
+                current = await memory_continuity.capture(self.server, key, current)
+            except APIError:
+                return SummaryUpdate.failed("source_changed")
+            if any(current[k] != captured[k] for k in ("source", "conversation", "policy")):
+                return SummaryUpdate.failed("source_changed")
+            prompt = memory_continuity.repair_prompt(original, reply.text, diagnostic)
+        raise AssertionError("draft loop exhausted without a result")
+
     async def _generate(
         self,
         key: str,
@@ -307,13 +352,13 @@ class ProgressCoordinator:
         )
         if "memory_sources" in captured and too_large:
             # Current work must remain intact and parseable, never truncated JSON.
-            return SummaryUpdate.failed("invalid_context")
+            return SummaryUpdate.failed("invalid_context", diagnostic="required_context_too_large")
         try:
             maintained = (
                 memory_continuity.plan(captured, prior) if "memory_sources" in captured else None
             )
         except (ValueError, APIError):
-            return SummaryUpdate.failed("invalid_context")
+            return SummaryUpdate.failed("invalid_context", diagnostic="invalid_required_records")
         if maintained is not None and not maintained["selected"] and maintained["prior_context"]:
             # Nothing eligible fits this bounded update. Keep explicit gaps and
             # avoid paying to restate the same summary on every eligible turn.
@@ -323,14 +368,10 @@ class ProgressCoordinator:
             if maintained is not None
             else progress.build_prompt(captured["transcript"], prior_cache, bounded_required)
         )
-        reply = await asyncio.to_thread(summarize, prompt)
-        digest = progress.parse(reply.text)
-        if digest is None or not digest["summary"]:
-            return SummaryUpdate.failed(getattr(reply, "failure_reason", None) or "invalid_summary")
-        try:
-            context = memory_continuity.context(reply.text, maintained) if maintained else None
-        except (ValueError, APIError):
-            return SummaryUpdate.failed("invalid_context")
+        drafted = await self._draft(key, captured, maintained, prompt)
+        if isinstance(drafted, SummaryUpdate):
+            return drafted
+        digest, context = drafted
         policy_check = await self.capture(key)
         if policy_check is None or policy_check["policy"] != captured["policy"]:
             return SummaryUpdate.failed("source_changed")
