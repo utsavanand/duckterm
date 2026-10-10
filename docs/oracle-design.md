@@ -57,6 +57,7 @@ pass, and together they answer that objection:
 | No owner keystroke in the last 2 minutes | Someone may be typing right now. A draft left earlier shows on screen and fails the next check. (Until 2026-09-25 this was "since the turn ended", which let one stray key block nudges until the agent's next turn.) Focus and mouse reports the terminal sends by itself never count |
 | The harness sees an empty input box on screen | Catches any draft, however old, including typing duckterm never saw |
 | Mail is an owner broadcast, accepted work, or an unread peer question 5+ minutes old (10 until 2026-09-26) | Fresh peer mail gives an active recipient time to check itself; a question the agent read and left queued was its choice, often a status update needing no answer |
+| The mail needs a reply: a question, accepted work, or a priority broadcast | An FYI (an owner broadcast or note that needs no reply) waits for the agent's next turn end or inbox check. Waking an agent costs its whole context in tokens, about 400k for a long session (token-saver spec section 2, owner-approved 2026-10-06). One reminder still covers everything pending |
 | New mail since the last nudge; if mail from that nudge is still open, wait an hour | A session that chose not to act is not nagged, while one that handled its last reminder is woken for new mail right away |
 
 The reminder never quotes the mail, so a peer cannot steer another agent

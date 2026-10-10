@@ -72,7 +72,9 @@ GATES = dict(
         ({"mail": [{**OLD_PEER, "created_at": NOW - 60_000}]}, True),  # idle recipient, fresh mail
         ({"mail": [{**OLD_PEER, "last_read_at": NOW - HOUR}]}, False),  # read, left queued
         ({"mail": [{**OLD_PEER, "status": "accepted", "last_read_at": NOW - HOUR}]}, True),
-        ({"mail": [{**OLD_PEER, "kind": "broadcast", "created_at": NOW - 60_000}]}, True),
+        # An FYI (no reply needed) never wakes an idle agent: it waits for its
+        # next turn end or inbox check (token-saver spec section 2).
+        ({"mail": [{**OLD_PEER, "kind": "broadcast", "created_at": NOW - 60_000}]}, False),
         ({"previous": oracle.Nudge(frozenset({"q1"}), NOW - 5 * HOUR)}, False),  # same mail
         # New mail, earlier nudged mail handled: no need to wait out the hour.
         ({"previous": oracle.Nudge(frozenset({"q0"}), NOW - 10 * 60_000)}, True),
@@ -395,3 +397,11 @@ def test_delayed_read_reminder_survives_server_restart(idle_recipient, monkeypat
     assert previous and previous.read_ids == previous.ids
     asyncio.run(restarted._oracle_tick())
     assert len(sup.pasted) == 2
+
+
+def test_a_question_wakes_and_an_fyi_waits_in_the_same_pass() -> None:
+    """Token saver (owner-approved): one wake for what needs a reply; the FYI
+    is seen at the agent's next inbox check instead of costing its own wake."""
+    fyi = {**OLD_PEER, "id": "b1", "kind": "broadcast"}
+    picked = oracle.should_nudge(**{**GATES, "mail": [fyi, OLD_PEER]})
+    assert [m["id"] for m in picked] == [OLD_PEER["id"]]
