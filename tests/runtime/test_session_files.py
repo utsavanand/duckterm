@@ -349,7 +349,8 @@ def test_listing_does_not_block_the_server_event_loop(app, tmp_path, monkeypatch
     asyncio.run(run())
 
 
-def test_replaced_root_ancestor_cannot_redirect_listing(app, tmp_path, monkeypatch):
+@pytest.mark.parametrize("route", ["files", "file-content?path=safe.txt"])
+def test_replaced_root_ancestor_cannot_redirect_reads(app, tmp_path, monkeypatch, route):
     server, _, owner = app
     parent = tmp_path / "workspace-parent"
     root = parent / "project"
@@ -358,6 +359,7 @@ def test_replaced_root_ancestor_cannot_redirect_listing(app, tmp_path, monkeypat
     outside = tmp_path / "outside"
     (outside / "project").mkdir(parents=True)
     (outside / "project" / "outside.txt").write_text("outside")
+    (outside / "project" / "safe.txt").write_text("outside synthetic bytes")
     set_paths(server, cwd=str(root))
     original = session_files.directory
 
@@ -367,6 +369,39 @@ def test_replaced_root_ancestor_cannot_redirect_listing(app, tmp_path, monkeypat
         return original(base, relative)
 
     monkeypatch.setattr(session_files, "directory", swapped)
-    status, body = dispatch(server, "GET", "/sessions/a/files", owner)
+    status, body = dispatch(server, "GET", "/sessions/a/" + route, owner)
     assert status == 200 and not body["available"]
-    assert "outside.txt" not in json.dumps(body)
+    assert "outside.txt" not in json.dumps(body) and "content_base64" not in body
+
+
+@pytest.mark.parametrize("path", [".GIT", "child/.GiT"])
+def test_git_case_aliases_cannot_be_browsed_or_marked_present(app, tmp_path, path):
+    server, agents, owner, root = root_for(app, tmp_path)
+    reserved = root / path
+    reserved.mkdir(parents=True)
+    config = reserved / "config.txt"
+    config.write_text("synthetic repository metadata")
+    saved = register(server, agents["a"], artifacts.registration(config))[1]["artifact"]
+    parent = str(reserved.parent.relative_to(root))
+    status, body = dispatch(server, "GET", "/sessions/a/files?path=" + quote(parent), owner)
+    assert status == 200 and reserved.name not in names(body)
+    metadata = next(a for a in body["artifacts"] if a["id"] == saved["id"])
+    assert metadata["source_state"] == "unavailable" and metadata["content_only"]
+    assert dispatch(server, "GET", "/sessions/a/files?path=" + quote(path), owner)[0] == 400
+    assert (
+        dispatch(
+            server, "GET", "/sessions/a/file-content?path=" + quote(path + "/config.txt"), owner
+        )[0]
+        == 400
+    )
+    assert dispatch(server, "GET", f"/sessions/a/artifacts/{saved['id']}", owner)[0] == 200
+
+
+@pytest.mark.parametrize("route", ["files?path=.GIT", "file-content?path=.GIT/config"])
+def test_mac_case_alias_of_git_metadata_is_refused(app, tmp_path, route):
+    server, _, owner, root = root_for(app, tmp_path)
+    subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+    if not (root / ".GIT").exists():
+        pytest.skip("requires a case-insensitive filesystem")
+    status, body = dispatch(server, "GET", "/sessions/a/" + route, owner)
+    assert status == 400 and "content_base64" not in body

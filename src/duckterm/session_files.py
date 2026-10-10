@@ -38,7 +38,7 @@ def relative_path(value: str) -> str:
         or value.startswith("/")
         or "\\" in value
         or "\x00" in value
-        or any(p in {"..", ".git"} for p in value.split("/"))
+        or any(p.casefold() in {"..", ".git"} for p in value.split("/"))
     ):
         raise APIError(400, "Choose a relative path inside the session folder")
     return str(Path(value)) if value else "."
@@ -161,7 +161,7 @@ def listing(
             )
         more = len(page) > PAGE_SIZE
         for entry in page[:PAGE_SIZE]:
-            if entry.name == ".git":
+            if entry.name.casefold() == ".git":
                 continue
             relative_name = str(Path(relative) / entry.name)
             try:

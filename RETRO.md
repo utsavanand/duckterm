@@ -1,5 +1,8 @@
 # Retro — lessons from real breakage
 
+## 2026-10-10 — Reserved paths need the filesystem's case aliases covered
+
+On the default Mac filesystem, `.GIT/config` can open `.git/config`. Excluding only the exact lowercase spelling therefore left Git internals browseable. Reject `.git` case-insensitively in requests, directory entries and saved-source existence checks. Verify both direct and nested aliases, and retain separately registered snapshot access without claiming the excluded original is a browseable file.
 
 ## 2026-10-10 — A saved artifact path does not prove a file exists
 
