@@ -29,6 +29,11 @@ The owner could not discover harness switching inside Restart. Give Change harne
 
 Validation: focused component and browser checks cover discovery, unchanged-harness restart, model changes, preparation cancellation and focus, drafts, unavailable targets, remote restrictions and stale dialogs. The approved layout was also checked against startup's real data; preparation completed in 4.9 seconds and was canceled without a switch. This UI fix does not claim the missing maintained summary or tool-result provenance findings are fixed.
 
+## 2026-10-08 — A prose width limit must not constrain message tables
+
+The centered 680px Messages container applied the paragraph measure to tables and code too, wasting a wide terminal pane and forcing table cells into narrow columns. Let the Messages surface fill its pane, limit prose separately, and contain horizontal table scrolling within a keyboard-focusable region. Give the transcript its own vertical scroll so turn navigation and follow-up stay reachable. Verify pins, annotation selection, clipboard contents, theme changes and the open context panel in the actual dashboard.
+
+
 ## 2026-10-07 — Saving a checkpoint record does not mean its summary update succeeded
 
 Startup's Timeline showed a saved checkpoint with no summary and generic Unavailable/Not ready labels. History was already recorded automatically; the owner's manual action was intended to update the shared summary. Return an explicit updated, reused, partial or failed outcome from the same coalesced summary job and retain its fixed failure category on the existing marker. Keep the last good summary and its original age when a candidate fails. Never infer an old failure's cause or turn a prepared-switch record into current permission to stop an agent.
