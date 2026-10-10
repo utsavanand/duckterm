@@ -39,8 +39,9 @@ AT_REST_STATES: tuple[SessionState, ...] = (
 @dataclass(frozen=True)
 class HookSpec:
     """An agent's observe half: where its hook config lives and how to merge/strip
-    Duckterm's entries. `build` and `strip` operate on the parsed JSON config so
-    install/uninstall stay symmetric and idempotent.
+    Duckterm's entries. Config-entry transports use `build`/`strip` on JSON;
+    file-drop transports use `payload` and a marker plus saved content hash.
+    Install/uninstall stay symmetric and refuse modified or unowned files.
 
     `global_rel` is the config path relative to the user home; `repo_rel` is
     relative to the project dir. Paths are resolved at call time (not import) so
@@ -48,12 +49,15 @@ class HookSpec:
 
     global_rel: Path
     repo_rel: Path
-    build: Callable[[dict[str, Any], str, str], dict[str, Any]]
-    strip: Callable[[dict[str, Any]], dict[str, Any]]
+    build: Callable[[dict[str, Any], str, str], dict[str, Any]] | None = None
+    strip: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    transport: Literal["config-entry", "file-drop"] = "config-entry"
+    payload: Callable[[], bytes] | None = None
+    global_path: Callable[[], Path] | None = None
 
     def path(self, *, global_scope: bool, project_dir: Path) -> Path:
         if global_scope:
-            return Path.home() / self.global_rel
+            return self.global_path() if self.global_path else Path.home() / self.global_rel
         return project_dir / self.repo_rel
 
 

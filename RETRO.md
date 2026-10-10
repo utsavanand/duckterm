@@ -1,5 +1,21 @@
 # Retro — lessons from real breakage
 
+## 2026-10-09 — Native selection success must come from the terminal
+
+A native API can accept conversation selection while the terminal stays on its
+previous route. In the OpenCode native probe, a macOS `/var` versus `/private/var`
+project alias also separated API and TUI instance identity. Canonicalize the
+project directory before launch and require a fresh TUI observation bound to
+version, process, generation and exact conversation. Never substitute HTTP 200,
+matching cwd or session existence for that proof. File-drop ownership likewise
+needs both saved content hash and safe directory traversal, not a marker alone.
+
+Validation: the pinned native observer selected two synthetic conversations in
+one isolated project; focused tests cover stale/foreign identity, unsupported
+history, uncertain native writes and unowned/modified/symlinked plugin files.
+This is foundation evidence, not complete harness acceptance.
+
+
 ## 2026-10-09 — Finding the server executable does not equip its subprocesses
 
 After a Mac reboot, DuckTerm launched its CLI by absolute path but passed the
