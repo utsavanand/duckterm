@@ -34,6 +34,10 @@ REGISTRY: dict[str, type[Harness]] = {
 def runtime_for(name: str | None, command: str) -> AgentRuntime:
     """Build the drive-adapter for `name` (falling back to generic)."""
     cls = REGISTRY.get(name or "", GenericRuntime)
+    if name == "opencode" and name not in REGISTRY:
+        from duckterm.runtimes.opencode_options import LAUNCH_REASON
+
+        raise ValueError(LAUNCH_REASON)
     return cls(command)
 
 
@@ -49,6 +53,8 @@ def infer_runtime(command: str) -> str:
         return "codex"
     if first.startswith("copilot"):
         return "copilot"
+    if first == "opencode":
+        return "opencode"
     return "generic"
 
 

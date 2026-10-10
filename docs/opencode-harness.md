@@ -1,7 +1,9 @@
 # OpenCode harness implementation
 
-Status: backend foundations in progress. OpenCode is not registered in the
-production picker and this checkpoint does not claim a working DuckTerm session.
+Status: backend foundations and approved launch form in progress. The candidate
+New Session form includes OpenCode, but its launch capability remains disabled.
+It is not registered as a runtime and this checkpoint does not claim a working
+DuckTerm OpenCode session.
 The accepted design is the October 4 pre-code plan (artifact
 `2dbdf0af4657401b965f497555872e44`), including its native identity proof gate.
 
@@ -72,8 +74,21 @@ part types as unsupported. The foundation at `7e43b87` passed the full gate
 parser/204 corrections passed 52 focused tests and static checks, plus the
 two-model native fixture. This does not replace end-to-end harness acceptance.
 
-The New Session/model/support preview is artifact
-`1d8f02376ff9403c821ad52d6244b26b`; visual implementation awaits owner review.
+The owner approved the New Session/model/support preview (artifact
+`1d8f02376ff9403c821ad52d6244b26b`) on October 10. The implemented form adds
+OpenCode, optional provider/model entry with configured-model suggestions when
+available, and expandable support details. Drafts are isolated by computer;
+stale or malformed capability replies cannot enable Launch. The native bridge
+reads the selected computer's fixed options endpoint without changing windows.
+Model arguments are passed literally and do not carry over to another agent.
+
+The current backend reports launch unavailable; adding the picker must not
+silently use a generic runtime before controlled launch/recovery is integrated.
+This also means model suggestions are currently empty. Backend delivery, not a
+further layout decision, is the remaining requirement before enabling launch.
+Focused checks cover 8 component cases, 4 browser scenarios and 5 native bridge
+cases. The form was inspected in light/dark themes and at desktop/narrow widths.
+Dark form labels now use the existing theme text color.
 No production install, schema migration, provider credential change, remote
 upload or public release is part of this checkpoint.
 

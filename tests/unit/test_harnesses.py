@@ -1,6 +1,18 @@
 from duckterm.harnesses import REGISTRY, installable_agents, runtime_for
 
 
+def test_opencode_cannot_silently_fall_back_to_generic() -> None:
+    import pytest
+
+    from duckterm.harnesses import infer_runtime
+    from duckterm.runtimes.opencode_options import snapshot
+
+    assert infer_runtime("opencode --model 'local/org/model'") == "opencode"
+    assert snapshot()["launch"]["available"] is False
+    with pytest.raises(ValueError, match="not available"):
+        runtime_for("opencode", "opencode")
+
+
 def test_runtime_for_resolves_each_agent() -> None:
     assert runtime_for("claude-code", "claude").name == "claude-code"
     assert runtime_for("codex", "codex").name == "codex"

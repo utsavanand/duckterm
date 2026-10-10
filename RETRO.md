@@ -1,5 +1,18 @@
 # Retro — lessons from real breakage
 
+## 2026-10-10 — A model picker must follow the selected computer
+
+OpenCode provider configuration belongs to its destination. Keep model drafts
+separate by computer, ignore late replies from a previous destination, and do
+not enable Launch without an affirmative capability response. Unregistered
+OpenCode must fail clearly rather than silently become a generic runtime.
+The approved form's real dark-theme preview also exposed hard-coded dark field
+labels; use the existing theme text color so both themes remain readable.
+
+Validation covers destination changes during requests, literal custom model
+IDs, other-agent launches, unavailable/malformed support responses, the native
+read-only bridge and the actual form against an isolated dashboard.
+
 ## 2026-10-10 — Validate native discriminators before classifying them
 
 Independent OpenCode QA supplied JSON arrays as a message role and part type.

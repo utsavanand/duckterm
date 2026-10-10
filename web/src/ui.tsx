@@ -90,7 +90,7 @@ export function Field({
         style={{
           display: "block",
           fontSize: 13,
-          color: "#374151",
+          color: "var(--text-soft)",
           marginBottom: 4,
         }}
       >

@@ -106,6 +106,7 @@ from duckterm.persistence.saved_state import (
     transaction,
 )
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
+from duckterm.runtimes import opencode_options
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
 from duckterm.transport.httpio import (
     KEEPALIVE_SECONDS,
@@ -268,6 +269,8 @@ _ROUTES: list[Route] = [
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_digest(w, seg),
           **_mid("/sessions/", "/digest")),
     # ── control ──
+    Route("GET", "/runtimes/opencode/launch-options",
+          lambda s, r, w, h, b, seg: _write_json(w, 200, opencode_options.snapshot())),
     Route("POST", "/sessions/launch", lambda s, r, w, h, b, seg: s._launch(w, b)),
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
