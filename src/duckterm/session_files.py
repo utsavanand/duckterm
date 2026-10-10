@@ -47,9 +47,9 @@ def relative_path(value: str) -> str:
 @contextlib.contextmanager
 def directory(root: Path, relative: str) -> Iterator[int]:
     """Pin each directory component; never follow a swapped-in symbolic link."""
-    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    descriptor = os.open(root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        for part in Path(relative).parts:
+        for part in (*root.parts[1:], *Path(relative).parts):
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child

@@ -347,3 +347,26 @@ def test_listing_does_not_block_the_server_event_loop(app, tmp_path, monkeypatch
         assert json.loads(writer.data.split(b"\r\n\r\n", 1)[1])["available"]
 
     asyncio.run(run())
+
+
+def test_replaced_root_ancestor_cannot_redirect_listing(app, tmp_path, monkeypatch):
+    server, _, owner = app
+    parent = tmp_path / "workspace-parent"
+    root = parent / "project"
+    root.mkdir(parents=True)
+    (root / "safe.txt").write_text("safe")
+    outside = tmp_path / "outside"
+    (outside / "project").mkdir(parents=True)
+    (outside / "project" / "outside.txt").write_text("outside")
+    set_paths(server, cwd=str(root))
+    original = session_files.directory
+
+    def swapped(base, relative):
+        parent.rename(tmp_path / "original-parent")
+        parent.symlink_to(outside, target_is_directory=True)
+        return original(base, relative)
+
+    monkeypatch.setattr(session_files, "directory", swapped)
+    status, body = dispatch(server, "GET", "/sessions/a/files", owner)
+    assert status == 200 and not body["available"]
+    assert "outside.txt" not in json.dumps(body)
