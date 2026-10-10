@@ -6,6 +6,18 @@ An unreleased branch used the same version as a later release, so numeric compar
 
 Updater responses keep the latest release information but do not return `update_available=false` for an unreleased or unknown install. Bug reports include commit and describe beside the existing version. Regressions use isolated Git repositories for clean tags, unmerged and untagged commits, dirty worktrees, missing refs and malformed stamps. Packaging verification must inspect and import the built wheel, rather than trusting the source checkout. The stamp records local Git evidence; it does not attest that an asset was published or signed.
 
+## 2026-10-10 — A native message's transport role is not always its author
+
+Claude stores tool results inside user-role records, including records that mix owner text and tool output. Flattening the blocks and copying that role made handoffs attribute command output to the owner; Codex outputs similarly inherited an assistant role. Normalize ordered blocks by provenance for memory only: tool outputs keep a tool role and mixed records have exact group locators. Keep native snapshot bytes/checksums unchanged and let old whole-line reads return the typed groups. Salt the existing disposable search cache and maintained-summary input with the reader version; otherwise a correct reader can still return old flattened search results or reuse a summary with wrong attribution. Verify search, reads, retained snapshots, handoff context and summary invalidation with synthetic native records and no live model calls.
+
+## 2026-10-10 — A successful summary sample does not cover malformed next drafts
+
+Product's next manual checkpoint failed with invalid_context after the timeout/citation fix was installed. The saved failure did not identify the rejected field, and a read-only rerun passed; neither result proves which field failed in the owner's attempt. The maintained pipeline had another concrete gap: unlike older preparation, it abandoned the first malformed draft. One successful provider response was not sufficient reliability evidence.
+
+Allow one correction against the same captured evidence for malformed digest/context output. Recheck the complete source and policy before the correction, then require the unchanged strict parser and normal independent review before the sole canonical writer can persist. Keep timeout/quota/login/disabled failures and negative/unavailable reviews as failures; do not blindly retry them or switch providers. Bound the rejected draft in the correction prompt and never append corrections cumulatively. This path permits at most two generation calls plus one review, with the existing per-call deadline; it is not an indefinite retry loop.
+
+Persist only a fixed diagnostic code (such as unknown_reference or context_too_large), never rejected model text, alongside the existing failed checkpoint outcome. Failed attempts preserve the previous revision and coverage. Regression fixtures must exercise bad-first/good-second responses, exhausted corrections, changed evidence, reviewer rejection, and actual checkpoint persistence, not only a successful generation sample. Real-data acceptance uses a disposable test instance, never the owner's live session.
+
 ## 2026-10-09 — Finding the server executable does not equip its subprocesses
 
 After a Mac reboot, DuckTerm launched its CLI by absolute path but passed the
