@@ -45,7 +45,7 @@ def setup_runner(monkeypatch, tmp, mode="success"):
     monkeypatch.setattr(
         memory_provider,
         "arguments",
-        lambda *args: [sys.executable, "-c", SCRIPT, str(log), mode],
+        lambda *args, **kwargs: [sys.executable, "-c", SCRIPT, str(log), mode],
     )
     return log
 

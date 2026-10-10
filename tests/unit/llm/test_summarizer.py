@@ -144,7 +144,7 @@ def test_http_failure_category_excludes_raw_output(clean_env, monkeypatch, failu
     assert result.text == ""
 
 
-@pytest.mark.parametrize("binary,harness", [("claude", "claude-code"), ("codex", "codex")])
+@pytest.mark.parametrize("binary,harness", [("claude", "claude-code")])
 def test_auto_summary_uses_bounded_isolated_runner(clean_env, monkeypatch, binary, harness):
     from duckterm import memory_provider
     from duckterm.llm import summarizer
@@ -159,8 +159,9 @@ def test_auto_summary_uses_bounded_isolated_runner(clean_env, monkeypatch, binar
     monkeypatch.setattr(summarizer, "_cli_summary", legacy)
     calls = []
 
-    async def generate(selected, model, prompt):
+    async def generate(selected, model, prompt, **options):
         calls.append((selected, model, prompt))
+        assert options == {"user_settings": True}
         return "Prepared summary"
 
     monkeypatch.setattr(memory_provider, "generate", generate)
@@ -184,7 +185,7 @@ def test_auto_summary_runner_failure_stays_explicit(clean_env, monkeypatch, time
 
     monkeypatch.setattr(summarizer, "_cli_summary", legacy)
 
-    async def generate(*args):
+    async def generate(*args, **kwargs):
         raise (
             memory_provider.BatchTimeout() if timed_out else APIError(503, "private provider data")
         )
@@ -193,3 +194,21 @@ def test_auto_summary_runner_failure_stays_explicit(clean_env, monkeypatch, time
     result = summarizer.summarize("Original evidence")
     assert result.text == "" and result.backend == "none"
     assert result.failure_reason == ("provider_timeout" if timed_out else "provider_failed")
+
+
+def test_auto_codex_keeps_existing_user_configuration_path(clean_env, monkeypatch):
+    from duckterm.llm import summarizer
+
+    monkeypatch.setattr(
+        summarizer.shutil, "which", lambda b: "/fixture/codex" if b == "codex" else None
+    )
+    calls = []
+
+    def cli(command, prompt):
+        calls.append((command, prompt))
+        return summarizer.Summary("Default Codex result", "cli")
+
+    monkeypatch.setattr(summarizer, "_cli_summary", cli)
+    result = summarizer.summarize("fixture", claude_model="claude-only-model")
+    assert result.text == "Default Codex result"
+    assert calls == [("codex exec -", "fixture")]

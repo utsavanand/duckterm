@@ -59,9 +59,8 @@ def summarize(prompt: str, *, claude_model: str | None = None) -> Summary:
         return Summary(text="", backend="none", failure_reason="disabled")
     auto = _auto_command()
     if auto:
-        if auto in {"claude -p", "codex exec -"}:
-            harness = "claude-code" if auto.startswith("claude ") else "codex"
-            return _isolated_summary(harness, claude_model or "", prompt)
+        if auto == "claude -p":
+            return _isolated_summary(claude_model or "", prompt)
         return _cli_summary(auto, prompt)
     return Summary(text="", backend="none", failure_reason="no_provider")
 
@@ -74,7 +73,7 @@ def _auto_command() -> str | None:
     return None
 
 
-def _isolated_summary(harness: str, model: str, prompt: str) -> Summary:
+def _isolated_summary(model: str, prompt: str) -> Summary:
     # Reuse the bounded memory runner: no project instructions, agent tools,
     # session enrollment, or shell child left behind when the call times out.
     # Provider preference and the selected/default model stay unchanged.
@@ -83,7 +82,7 @@ def _isolated_summary(harness: str, model: str, prompt: str) -> Summary:
 
     try:
         text = asyncio.run(
-            memory_provider.generate(harness, model if harness == "claude-code" else "", prompt)
+            memory_provider.generate("claude-code", model, prompt, user_settings=True)
         )
     except memory_provider.BatchTimeout:
         return Summary(text="", backend="none", failure_reason="provider_timeout")
