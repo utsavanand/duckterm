@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-10 — Historical backlog is not a failed current summary update
+
+A verified, saved summary over current work was permanently labeled partial because thousands of older, searchable records had not been summarized. Keep historical processing counts separate from whether the bounded update covers required work and new records. Observation frontiers are not processed frontiers: remember skipped new records in the existing revision metadata so a later capture cannot silently turn a missed owner constraint into historical backlog. Genuine source gaps, oversized records, reviewer rejection and changed evidence still prevent a complete update. Never rewrite an old revision's readiness after changing policy.
+
+Test the outcome through an actual checkpoint with more than 5,000 originals and resolvable evidence in goals, constraints, decisions and unfinished work; also prove deferred new records remain partial until consumed. Replay retained real-session evidence read-only, and state the limits: citation presence and a better status label do not establish current handoff usefulness or replace owner acceptance on the installed build.
+
 ## 2026-10-10 — A native message's transport role is not always its author
 
 Claude stores tool results inside user-role records, including records that mix owner text and tool output. Flattening the blocks and copying that role made handoffs attribute command output to the owner; Codex outputs similarly inherited an assistant role. Normalize ordered blocks by provenance for memory only: tool outputs keep a tool role and mixed records have exact group locators. Keep native snapshot bytes/checksums unchanged and let old whole-line reads return the typed groups. Salt the existing disposable search cache and maintained-summary input with the reader version; otherwise a correct reader can still return old flattened search results or reuse a summary with wrong attribution. Verify search, reads, retained snapshots, handoff context and summary invalidation with synthetic native records and no live model calls.

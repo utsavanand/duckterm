@@ -127,7 +127,24 @@ def plan(captured: dict[str, Any], prior: dict[str, Any] | None) -> dict[str, An
                 )
             )
         )
+    # frontiers records everything observed, NOT everything processed. Carry
+    # skipped new records separately so advancing a snapshot cannot hide them.
+    pending_before = continuity.get("pending_updates", {}) if reuse else {}
+    latest = {
+        row["source"]: row["record"]
+        for row in rows
+        if row["kind"] == "conversation" and row["current"]
+    }
+    updates = [
+        row
+        for row in rows
+        if (row["source"], row["record"]) in required_ids
+        or row["record"] in pending_before.get(row["source"], {})
+        or (reuse and row["position"] >= frontiers.get(row["source"], 0))
+        or (not reuse and latest.get(row["source"]) == row["record"])
+    ]
     return {
+        "updates": updates,
         "rows": rows,
         "selected": selected,
         "processed": processed,
@@ -293,7 +310,13 @@ def result(plan: dict[str, Any], context: dict[str, Any], gaps: list[Any]) -> di
         for r in plan["rows"]
         if _record_size(r) > MAX_UPDATE_BYTES
     ]
+    pending: dict[str, dict[str, str]] = {}
+    for row in plan["updates"]:
+        if processed.get(row["source"], {}).get(row["record"]) != row["hash"]:
+            pending.setdefault(row["source"], {})[row["record"]] = row["hash"]
     return {
+        "pending_updates": pending,
+        "update_complete": not pending and not gaps,
         "context": context,
         "processed": processed,
         "frontiers": frontiers,
