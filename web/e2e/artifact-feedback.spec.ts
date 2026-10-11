@@ -25,6 +25,7 @@ test("artifact selections and whole-file feedback reach their agent, with isolat
     await page.locator(".rd-row-name", { hasText: "artifact-feedback-agent" }).click();
     await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("FEEDBACK_READY");
     await page.getByRole("button", { name: "Artifacts", exact: true }).click();
+    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     const leaks: string[] = [];
     await page.route("**/artifact-leak", route => { leaks.push(route.request().url()); return route.abort(); });
     for (const [type, title, quote] of [["Markdown", "Report", "Clearer heading"], ["HTML", "Layout", "Layout heading"], ["Text", "Notes", "Text selection works here."]]) {
@@ -54,6 +55,7 @@ test("artifact selections and whole-file feedback reach their agent, with isolat
       await page.getByRole("button", { name: "Terminal", exact: true }).click();
       await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText(`RECEIVED_Improve_${title}`);
       await page.getByRole("button", { name: "Artifacts", exact: true }).click();
+    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     }
     await page.getByRole("button", { name: /Image Diagram/ }).click();
     await page.getByRole("button", { name: "Feedback", exact: true }).click();

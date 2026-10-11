@@ -27,6 +27,7 @@ test("full-window artifacts preserve the preview, selection feedback and return 
     await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
     await page.keyboard.type("PRESERVE_EXPANSION_DRAFT");
     await page.getByRole("button", { name: "Artifacts", exact: true }).click();
+    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     await page.getByRole("button", { name: /Markdown Release review/ }).click();
     const heading = page.frameLocator('.rd-artifact-frame').getByRole("heading");
     await heading.click();

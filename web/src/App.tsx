@@ -26,7 +26,7 @@ import { DashboardMenus } from "./DashboardMenus";
 import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
 import { TimelineView } from "./TimelineView";
-import { ArtifactsView } from "./ArtifactsView";
+import { SessionFilesView } from "./SessionFilesView";
 import { InboxView } from "./InboxView";
 import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
@@ -485,8 +485,8 @@ function Dashboard() {
               </div>
             )}
             {view === "artifacts" && (
-              <div className="rd-messages-wrap">
-                {selected ? <ArtifactsView key={selected.key} sessionKey={selected.key} sessionName={selected.label} />
+              <div className="rd-messages-wrap rd-files-wrap">
+                {selected ? <SessionFilesView session={selected} />
                   : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
               </div>
             )}
