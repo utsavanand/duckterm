@@ -5,6 +5,7 @@ Usage: python3 scripts/qa_opencode_identity.py /absolute/path/to/pinned/opencode
 Creates two native synthetic sessions in a disposable home and removes them.
 --models uses only a deterministic loopback provider with a synthetic key.
 """
+import asyncio
 import base64
 import hashlib
 import http.server
@@ -22,7 +23,11 @@ import time
 import urllib.request
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
-from duckterm.runtimes.opencode_protocol import NativeClient, models  # noqa: E402
+from duckterm.persistence import opencode_launch as journal  # noqa: E402
+from duckterm.persistence.history import HistoryStore  # noqa: E402
+from duckterm.runtimes.opencode_identity import Selection  # noqa: E402
+from duckterm.runtimes.opencode_prepare import prepare  # noqa: E402
+from duckterm.runtimes.opencode_protocol import NativeClient, UncertainWrite, models  # noqa: E402
 
 root = pathlib.Path(tempfile.mkdtemp(prefix="duckterm-opencode-probe-")).resolve()
 binary = pathlib.Path(sys.argv[1]).resolve()
@@ -65,6 +70,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
         data = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        data["_received_at"] = time.monotonic()
         with condition:
             observed.append(data)
             condition.notify_all()
@@ -149,7 +155,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
 
 
 provider = None
-if "--models" in sys.argv[2:]:
+if "--models" in sys.argv[2:] or "--prepare" in sys.argv[2:]:
     provider = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     threading.Thread(target=provider.serve_forever, daemon=True).start()
     env["OPENCODE_CONFIG_CONTENT"] = json.dumps(
@@ -218,6 +224,88 @@ def verify_models(client):
     assert set(provider_calls) == {"alpha", "beta"}
 
 
+def verify_preparation(client):
+    """Real native create/select/prompt; lose the prompt receipt and recover it.
+
+    The test card is local to the disposable DB and flagged test:true. No
+    production server or credentials are involved. This exercises preparation,
+    not the still-unregistered DuckTerm supervisor adapter.
+    """
+    db = root / "duckterm-fixture.sqlite"
+    history = HistoryStore(db)
+    key = "opencode-preparation-fixture"
+    history.record(
+        {
+            "_id": "fixture-start",
+            "_ts": int(time.time() * 1000),
+            "event_type": "SessionStart",
+            "session_key": key,
+            "runtime": "opencode",
+            "cwd": client.directory,
+            "test": True,
+        }
+    )
+    generation = env["DUCKTERM_HARNESS_GENERATION"]
+    pid = observed[-1]["pid"]
+    writes = []
+
+    class LostReceiptClient(NativeClient):
+        def request(self, method, path, body=None):
+            if method == "POST":
+                writes.append(path)
+            result = super().request(method, path, body)
+            if path.endswith("/prompt_async"):
+                raise UncertainWrite("Fixture dropped acknowledgment after native acceptance")
+            return result
+
+    async def selected(state):
+        while True:
+            with condition:
+                event = dict(observed[-1]) if observed else None
+            if event and event.get("sessionID") == state.session_id:
+                proof = Selection(generation, client.directory, pid, state.session_id)
+                return proof.observe(event, now=event["_received_at"])
+            await asyncio.sleep(0.05)
+
+    probe = LostReceiptClient(client.port, client.password, client.directory)
+    state = journal.Launch(
+        generation,
+        "isolated-fixture",
+        str(root / "data/opencode"),
+        client.directory,
+        pid,
+        prompt="Return a short fixture response.",
+        model="fixture/alpha",
+    )
+    try:
+        journal.begin(history._conn, key, state)
+        result = asyncio.run(prepare(history._conn, key, generation, probe, selected, lambda: True))
+        assert result.phase == "ready"
+        assert writes == [
+            "/session",
+            "/tui/select-session",
+            "/session/" + result.session_id + "/prompt_async",
+        ]
+        # Reopen the actual DuckTerm journal to model server recovery; this must
+        # read the same native identity and never send the initial prompt again.
+        history.close()
+        history = HistoryStore(db)
+        recovered = asyncio.run(
+            prepare(history._conn, key, generation, probe, selected, lambda: True)
+        )
+        assert recovered == result and len(writes) == 3
+        rows = client.messages(result.session_id)
+        assert sum(row["id"] == result.message_id for row in rows) == 1
+        return {"passed": True, "native_id": result.session_id, "native_write_count": len(writes)}
+    finally:
+        saved = journal.read(history._conn, key, generation)
+        if saved.session_id and saved.session_id not in native:
+            native.append(saved.session_id)
+        history.delete_session(key)
+        assert history.session(key) is None
+        history.close()
+
+
 try:
     version = subprocess.check_output(
         [str(binary), "--version"], env=env, cwd=root / "project", text=True, timeout=20
@@ -274,6 +362,7 @@ try:
     client.health()
     if provider is not None:
         verify_models(client)
+    preparation = verify_preparation(client) if "--prepare" in sys.argv[2:] else None
     assert all(x["generation"] == env["DUCKTERM_HARNESS_GENERATION"] for x in observed)
     assert all(x["directory"] == str(root / "project") for x in observed)
     assert len({x["pid"] for x in observed}) == 1
@@ -285,6 +374,7 @@ try:
                 "executable_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
                 "native_ids": native,
                 "fixture_models_passed": provider_calls,
+                "preparation": preparation,
                 "observed": [
                     {k: v for k, v in item.items() if k != "generation"} for item in observed
                 ],

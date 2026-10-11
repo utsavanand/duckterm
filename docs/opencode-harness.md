@@ -4,6 +4,8 @@ Status: backend foundations and approved launch form in progress. The candidate
 New Session form includes OpenCode, but its launch capability remains disabled.
 It is not registered as a runtime and this checkpoint does not claim a working
 DuckTerm OpenCode session.
+The owner explicitly resumed OpenCode implementation on October 11 after the
+temporary memory/checkpoint priority hold.
 The accepted design is the October 4 pre-code plan (artifact
 `2dbdf0af4657401b965f497555872e44`), including its native identity proof gate.
 
@@ -96,6 +98,22 @@ The full gate at `72fdd44` passed Python/static and 448 frontend checks, but
 finished with 119/120 browser passes because the older picker test expected four
 agents. Its expectation now includes OpenCode and its focused rerun passes;
 there is no claim of a subsequent full-gate pass on this checkpoint.
+
+On October 11 the unchanged saved candidate `a7ab92e` passed the complete gate,
+including its corrected browser expectations. Subsequent launch preparation
+work adds a durable journal in existing restart metadata (no schema change),
+generation-checked native creation/selection/prompt claims, and off-loop native
+requests. It cannot repeat an uncertain creation or initial prompt. A prompt
+receipt must match the exact native user message, content and requested model;
+selection still requires fresh native TUI proof. The driver is not yet wired
+into the supervisor, so this does not enable the New Session action.
+
+Run the pinned probe with `--prepare` to exercise that driver against the real
+CLI and synthetic loopback provider. It drops the native prompt acknowledgment,
+reopens the disposable DuckTerm database, and confirms the same conversation
+and one initial prompt. The `test:true` card and all native fixture sessions are
+deleted on cleanup. This is native preparation evidence, not full launch,
+lifecycle, history or remote acceptance.
 
 The form was inspected in light/dark themes and at desktop/narrow widths.
 Dark form labels now use the existing theme text color. Screenshots are saved

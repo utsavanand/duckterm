@@ -1,5 +1,19 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — A lost launch receipt must never authorize another prompt
+
+Native OpenCode acknowledges asynchronous prompt submission with HTTP 204; that
+receipt can be lost after the prompt is accepted. Persist the conversation and
+message identities, and claim each write before sending it. Recover by reading
+that exact native user message, including its content and requested model.
+Neither a timeout nor server restart resets the write claim. Missing native
+creation identity remains uncertain instead of creating another conversation.
+
+The isolated pinned-native fixture drops the real prompt acknowledgment, reopens
+DuckTerm's test database, and verifies one user message with no repeated write.
+Fault tests cover every persisted boundary, competing claims, wrong selection,
+changed generation, failed persistence and foreign conversation receipts.
+
 ## 2026-10-10 — Returning to the same destination is a new support check
 
 Independent QA found that keying OpenCode readiness by computer and retry count
