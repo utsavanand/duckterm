@@ -24,6 +24,7 @@ from duckterm.persistence.saved_state import (
     fingerprint,
     transaction,
 )
+from duckterm.runtimes.native_history import MessageSource, NativeSnapshot
 
 if TYPE_CHECKING:
     from duckterm.server import Server
@@ -54,10 +55,17 @@ def file_version(path: str) -> list[int] | None:
         return None
 
 
-def transcript_fence(source: tuple[str, str, str | None] | None) -> dict[str, Any] | None:
+def transcript_fence(source: MessageSource) -> dict[str, Any] | None:
     # Locator work belongs off-loop. Final stop checks stat only the captured path.
     from duckterm.harnesses import runtime_for
 
+    if isinstance(source, NativeSnapshot):
+        return {
+            "path": source.path,
+            "version": file_version(source.path),
+            "source_kind": "native-api-cache",
+            "scope": source.scope(),
+        }
     if source is None or not source[2]:
         return None
     runtime = runtime_for(source[0], "")

@@ -200,3 +200,49 @@ def test_dead_process_cannot_receive_prompt(fixture):
     with pytest.raises(OpenCodeError, match="no longer owns"):
         asyncio.run(prepare(conn, "fixture", state.generation, native, died, lambda: alive))
     assert native.writes == ["/session", "/tui/select-session"]
+
+
+# Independent QA regression: recovery starts while the canceled native worker finishes.
+def test_cancelled_inflight_prompt_recovers_without_second_write(fixture):
+    conn, state, _ = fixture
+    entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+    native = Native(fixture)
+    original = native.request
+
+    def request(method, path, body=None):
+        if path.endswith("/prompt_async"):
+            entered.set()
+            assert release.wait(5)
+            try:
+                return original(method, path, body)
+            finally:
+                finished.set()
+        return original(method, path, body)
+
+    native.request = request
+
+    async def run():
+        task = asyncio.create_task(
+            prepare(conn, "fixture", state.generation, native, selected, lambda: True)
+        )
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert journal.read(conn, "fixture", state.generation).phase == "submitting"
+            recovered = asyncio.create_task(
+                prepare(conn, "fixture", state.generation, native, selected, lambda: True)
+            )
+            release.set()
+            result = await recovered
+            assert result.phase == "ready"
+            assert finished.is_set()
+            assert native.writes.count("/session") == 1
+            assert native.writes.count("/session/ses_fixture/prompt_async") == 1
+        finally:
+            release.set()
+            if not task.done():
+                task.cancel()
+
+    asyncio.run(run())

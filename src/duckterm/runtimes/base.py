@@ -23,7 +23,15 @@ if TYPE_CHECKING:
     from duckterm.persistence.history import HistoryStore
 
 SessionState = Literal[
-    "idle", "busy", "waiting", "terminated", "stopped", "interrupted", "archived", "merged"
+    "idle",
+    "busy",
+    "waiting",
+    "unknown",
+    "terminated",
+    "stopped",
+    "interrupted",
+    "archived",
+    "merged",
 ]
 
 # States that are "at rest" — the session is finished or put away, so the sweeps

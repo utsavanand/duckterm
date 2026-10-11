@@ -1,5 +1,15 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Native history refreshes need a durable ordering barrier
+
+A canceled native read can finish after a new server has already refreshed
+Messages. Bind snapshots to destination, store, conversation and generation;
+serialize cache writes and reject an older observation even if it finishes
+last. Keep unchanged content files stable while recording a separate revision
+watermark, so polling does not invalidate every checkpoint's content fence.
+Native status loss is unknown, never inferred idle. Parent completion and its
+own pending questions/permissions must be checked before reporting Idle.
+
 ## 2026-10-11 — A lost launch receipt must never authorize another prompt
 
 Native OpenCode acknowledges asynchronous prompt submission with HTTP 204; that

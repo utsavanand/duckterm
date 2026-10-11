@@ -12,6 +12,7 @@ import json
 import math
 import re
 import time
+import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -67,13 +68,22 @@ class NativeClient:
         if not 0 < self.timeout <= READ_TIMEOUT or not 0 < self.limit <= MAX_RESPONSE:
             raise OpenCodeError("Invalid native request bounds")
 
-    def request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
+    def request(
+        self,
+        method: str,
+        path: str,
+        body: dict[str, Any] | None = None,
+        *,
+        with_cursor: bool = False,
+    ) -> Any:
         if method not in {"GET", "POST", "DELETE"}:
             raise OpenCodeError("Unsupported native request method")
         if not path.startswith("/") or path.startswith("//") or any(c in path for c in "\r\n"):
             raise OpenCodeError("Invalid native request path")
         if body is not None and method == "GET":
             raise OpenCodeError("A native read cannot contain a write body")
+        if with_cursor and method != "GET":
+            raise OpenCodeError("Pagination is only supported for native reads")
         payload = json.dumps(body).encode() if body is not None else None
         if payload is not None and len(payload) > self.limit:
             raise OpenCodeError("Native request exceeds the size bound")
@@ -119,8 +129,9 @@ class NativeClient:
             # The pinned prompt_async route acknowledges with an empty 204.
             # Acceptance still requires message-ID reconciliation by the caller.
             if response.status == 204 and not chunks:
-                return None
-            return json.loads(chunks)
+                return (None, None) if with_cursor else None
+            result = json.loads(chunks)
+            return (result, response.getheader("X-Next-Cursor")) if with_cursor else result
         except (OSError, http.client.HTTPException, ValueError) as exc:
             if method != "GET" and attempted:
                 raise UncertainWrite(
@@ -142,9 +153,31 @@ class NativeClient:
             raise OpenCodeError("This adapter requires verified OpenCode " + VERSION)
 
     def messages(self, identity: str) -> list[dict[str, Any]]:
-        return messages(
-            self.request("GET", "/session/" + native_id(identity) + "/message"), identity
-        )
+        pages = []
+        cursor = None
+        cursors = set()
+        size = 0
+        deadline = time.monotonic() + 30
+        for _ in range(100):
+            if time.monotonic() >= deadline:
+                raise OpenCodeError("Native history reconciliation timed out")
+            path = "/session/" + native_id(identity) + "/message?limit=100"
+            if cursor is not None:
+                path += "&before=" + urllib.parse.quote(cursor, safe="")
+            page, cursor = self.request("GET", path, with_cursor=True)
+            # Validate each page before collecting a bounded full snapshot.
+            messages(page, identity)
+            size += len(json.dumps(page).encode())
+            if size > 20 * 1024 * 1024:
+                raise OpenCodeError("Native history exceeds the reconciliation bound")
+            pages.append(page)
+            if cursor is None:
+                # Each page is chronological; pages arrive newest first.
+                return messages([row for page in reversed(pages) for row in page], identity)
+            if not isinstance(cursor, str) or not cursor or len(cursor) > 2048 or cursor in cursors:
+                raise OpenCodeError("Invalid or repeated native history cursor")
+            cursors.add(cursor)
+        raise OpenCodeError("Native history exceeds the page bound")
 
 
 def models(value: Any) -> list[dict[str, Any]]:
@@ -247,6 +280,11 @@ def messages(value: Any, identity: str) -> list[dict[str, Any]]:
             {
                 "id": mid,
                 "role": info["role"],
+                "parent_id": (
+                    info.get("parentID") if isinstance(info.get("parentID"), str) else None
+                ),
+                "finish": info.get("finish") if isinstance(info.get("finish"), str) else None,
+                "error": info.get("error") is not None,
                 "blocks": blocks,
                 "provider": info.get("providerID"),
                 "model": info.get("modelID"),

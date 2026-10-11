@@ -7,8 +7,14 @@ from typing import Protocol
 class LaunchPreparation(Protocol):
     argv: list[str]
     env: dict[str, str]
+    allow_automation: bool
 
-    async def ready(self, pid: int, owns_process: Callable[[], bool]) -> None:
+    async def ready(
+        self,
+        pid: int,
+        owns_process: Callable[[], bool],
+        on_status: Callable[[str], None] | None = None,
+    ) -> None:
         """Verify the child and finish native preparation before admitting input."""
         ...
 

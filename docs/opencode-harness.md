@@ -132,6 +132,26 @@ deleted. This proves local native launch/recovery under the fixture. Live
 lifecycle/Message-cache integration and final harness/remote acceptance remain;
 the product registry and launch-capability response are still disabled.
 
+API-backed Messages and lifecycle reconciliation now have a local native proof:
+the supervisor fixture reads its completed assistant response through the
+Messages cache, observes verified Idle, and retains identical message keys
+after recovery. History pages are bounded and reject duplicate identities or
+repeated cursors. Cache scope includes destination, store, generation and exact
+native conversation; older workers cannot replace a newer snapshot. Unchanged
+content stays stable for checkpoint fences. Native outages are unknown rather
+than fabricated completion. Automated terminal pasting remains disabled for
+OpenCode; owner keystrokes work after preparation. Usage fields remain native
+measurements, not an enabled aggregate analytics capability.
+
+The additional visible recovery treatment is awaiting owner preview review:
+`/tmp/duckterm-opencode-status-preview.html` (artifact
+`becf866299cc43d9b77c4cd6e1683a46`). No new UI recovery treatment is implemented
+yet. Main-qa independently cleared committed recovery checkpoint `0a1f319`,
+including cancellation while a native prompt worker is still completing. That
+additional regression is now included with the preparation tests. Supervisor,
+observer and history integration still require independent integrated review
+and a fresh full gate before activation.
+
 The form was inspected in light/dark themes and at desktop/narrow widths.
 Dark form labels now use the existing theme text color. Screenshots are saved
 as artifacts `926b65bb3454448c87164791561c24ae` (desktop) and

@@ -23,12 +23,16 @@ from typing import Any
 from duckterm.helpers.private_files import private_read, private_write
 from duckterm.persistence import opencode_launch as journal
 from duckterm.persistence.history import HistoryStore
+from duckterm.runtimes import native_history
 from duckterm.runtimes.opencode_identity import Selection
 from duckterm.runtimes.opencode_prepare import prepare
 from duckterm.runtimes.opencode_protocol import VERSION, NativeClient, OpenCodeError
+from duckterm.runtimes.opencode_snapshot import snapshot
 
 
 class OpenCodeProcess:
+    allow_automation = False
+
     def __init__(
         self,
         binary: str,
@@ -56,6 +60,9 @@ class OpenCodeProcess:
         self._connections: set[asyncio.StreamWriter] = set()
         self._closed = False
         self._recovering = False
+        self._monitor: asyncio.Task[None] | None = None
+        self._on_status: Callable[[str], None] | None = None
+        self._status: str | None = None
         self._root = (
             history.session_api.credential_dir.parent
             / "opencode"
@@ -287,7 +294,12 @@ class OpenCodeProcess:
                 await asyncio.sleep(0.05)
         raise OpenCodeError("Native observation closed during preparation")
 
-    async def ready(self, pid: int, owns_process: Callable[[], bool]) -> None:
+    async def ready(
+        self,
+        pid: int,
+        owns_process: Callable[[], bool],
+        on_status: Callable[[str], None] | None = None,
+    ) -> None:
         if self._recovering and pid != self._pid:
             raise OpenCodeError("Native recovery found a different terminal process")
         self._pid = pid
@@ -334,9 +346,93 @@ class OpenCodeProcess:
                 self.selection,
                 owns_process,
             )
+            self._on_status = on_status
+            self._monitor = asyncio.create_task(self._watch(owns_process))
+
+    async def _watch(self, owns_process: Callable[[], bool]) -> None:
+        assert self.client is not None
+        while not self._closed:
+            try:
+                revision = time.monotonic_ns()
+                state = journal.read(self.history._conn, self.key, self.generation)
+                if not owns_process() or self._selection is None:
+                    raise OpenCodeError("Native process is unavailable")
+                self._selection.require_selected()
+                assert state.session_id is not None
+                records, status = await asyncio.wait_for(
+                    asyncio.to_thread(snapshot, self.client, state.session_id), 30
+                )
+                journal.read(self.history._conn, self.key, self.generation)
+                self._selection.require_selected()
+                info = self.database.stat()
+                if json.dumps([str(self.database), info.st_dev, info.st_ino]) != state.store:
+                    raise OpenCodeError("Native conversation store was replaced")
+                source = native_history.NativeSnapshot(
+                    str(
+                        native_history.snapshot_path(
+                            self._root.parent.parent, self.key, state.generation
+                        )
+                    ),
+                    state.generation,
+                    state.destination,
+                    state.store,
+                    state.session_id,
+                )
+                stamp = int(time.time() * 1000)
+
+                saved = await asyncio.to_thread(
+                    native_history.persist, source, records, stamp, revision
+                )
+                journal.read(self.history._conn, self.key, self.generation)
+                self._selection.require_selected()
+                if saved:
+                    model = next(
+                        (
+                            str(m["provider"]) + "/" + str(m["model"])
+                            for m in reversed(records)
+                            if m["role"] == "assistant"
+                            and isinstance(m.get("provider"), str)
+                            and isinstance(m.get("model"), str)
+                        ),
+                        None,
+                    )
+                    control = self.history.restart_control(self.key)
+                    control["opencode_observation"] = {
+                        "state": status,
+                        "observed_at": stamp,
+                        "model": model,
+                        "revision": revision,
+                    }
+                    self.history.set_restart_control(self.key, control)
+                self._report_status(status)
+            except (OpenCodeError, OSError, TimeoutError):
+                self._report_status("unknown")
+            await asyncio.sleep(2)
+
+    def _report_status(self, state: str) -> None:
+        if state != self._status and not self._closed:
+            row = self.history.session(self.key)
+            control = self.history.restart_control(self.key)
+            if (
+                row is None
+                or row.get("runtime") != "opencode"
+                or control.get("opencode_launch", {}).get("generation") != self.generation
+            ):
+                return
+            observation = dict(control.get("opencode_observation") or {})
+            observation["state"] = state
+            control["opencode_observation"] = observation
+            self.history.set_restart_control(self.key, control)
+            self._status = state
+            if self._on_status:
+                self._on_status(state)
 
     async def close(self) -> None:
         self._closed = True
+        if self._monitor is not None:
+            self._monitor.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._monitor
         if self._server is not None:
             self._server.close()
             await self._server.wait_closed()

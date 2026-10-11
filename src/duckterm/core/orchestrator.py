@@ -122,7 +122,9 @@ class SessionSupervisor:
             **self._extra,
             **fields,
         }
-        if fields.get("_assigned_native_id"):
+        if fields.get("_assigned_native_id") or (
+            event_type == events.SESSION_START and self._preparation is not None
+        ):
             self.bus.publish(event, require_persistence=True)
         else:
             self.bus.publish(event)
@@ -196,7 +198,7 @@ class SessionSupervisor:
                     pid = self._proc.pid
                 else:
                     raise ValueError("Native preparation has no owned terminal process")
-                await self._preparation.ready(pid, lambda: self.running)
+                await self._preparation.ready(pid, lambda: self.running, self._native_status)
                 self._preparing = False
         except BaseException as exc:
             self._emit(
@@ -274,8 +276,13 @@ class SessionSupervisor:
             if self._preparation is None:
                 raise ValueError("This harness requires verified native recovery")
             pid = await asyncio.to_thread(tmux.pane_pid, self._tmux_target)
-            await self._preparation.ready(pid, lambda: self.running)
+            await self._preparation.ready(pid, lambda: self.running, self._native_status)
             self._preparing = False
+
+    def _native_status(self, state: str) -> None:
+        if state not in ("idle", "busy", "waiting", "unknown"):
+            return
+        self._emit(events.NATIVE_STATUS, native_state=state)
 
     async def _tail_pipe(self) -> None:
         """Follow the tmux pane's output file, applying the same state/tool
@@ -632,6 +639,8 @@ class SessionSupervisor:
 
     async def write_queued_bytes(self, data: bytes) -> bool:
         """Deliver owner feedback after earlier keystrokes and report its result."""
+        if self._preparation is not None and not self._preparation.allow_automation:
+            return False
         result: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         self._enqueue_input(data, result)
         return await result
@@ -695,7 +704,9 @@ class SessionSupervisor:
     def write_input(self, text: str) -> bool:
         """Write to the agent's stdin (terminal-attach / approvals). Routes to
         tmux send-keys or the PTY depending on how the session is backed."""
-        if self._preparing:
+        if self._preparing or (
+            self._preparation is not None and not self._preparation.allow_automation
+        ):
             return False
         self.last_owner_input_ms = int(time.time() * 1000)
         if self._tmux_target is not None and self.running:
@@ -807,7 +818,9 @@ class Orchestrator:
                     file=sys.stderr,
                 )
                 if not supervisor.runtime.requires_launch_preparation:
+                    self._supervisors.pop(key, None)
                     raise
+                supervisor._native_status("unknown")
                 continue
             adopted.append(key)
             if self.history is not None:

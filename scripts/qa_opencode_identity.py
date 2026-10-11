@@ -23,6 +23,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+from types import SimpleNamespace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from duckterm.persistence import opencode_launch as journal  # noqa: E402
@@ -34,6 +35,7 @@ from duckterm.runtimes.generic import GenericRuntime  # noqa: E402
 from duckterm.runtimes.opencode_identity import Selection  # noqa: E402
 from duckterm.runtimes.opencode_prepare import prepare  # noqa: E402
 from duckterm.runtimes.opencode_protocol import NativeClient, UncertainWrite, models  # noqa: E402
+from duckterm.server import Server  # noqa: E402
 
 root = pathlib.Path(tempfile.mkdtemp(prefix="duckterm-opencode-probe-")).resolve()
 binary = pathlib.Path(sys.argv[1]).resolve()
@@ -393,6 +395,23 @@ def verify_supervisor():
                 await asyncio.sleep(0.1)
             else:
                 raise RuntimeError("Supervised native initial prompt did not complete")
+            source = Server._message_source(SimpleNamespace(history=history), key)
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                cached = await asyncio.to_thread(Server._read_messages_response, source)
+                payload = json.loads(cached)
+                if (
+                    any(
+                        row["role"] == "assistant" and row["complete"]
+                        for row in payload["messages"]
+                    )
+                    and history.session(key)["state"] == "idle"
+                ):
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                raise RuntimeError("Native Messages/lifecycle did not reconcile")
+            keys_before_recovery = [row["message_key"] for row in payload["messages"]]
             calls_before_recovery = list(provider_calls)
             for old in list(owner._supervisors.values()):
                 old._task.cancel()
@@ -405,6 +424,8 @@ def verify_supervisor():
             assert not recovered._preparing and recovered.running
             assert history.restart_control(key)["opencode_launch"] == state
             assert calls_before_recovery == provider_calls
+            payload = json.loads(await asyncio.to_thread(Server._read_messages_response, source))
+            assert keys_before_recovery == [row["message_key"] for row in payload["messages"]]
             assert (
                 sibling_pid
                 == subprocess.check_output(
@@ -429,6 +450,7 @@ def verify_supervisor():
                 "same_process_recovered": True,
                 "sibling_preserved": True,
                 "initial_prompt_not_replayed": True,
+                "messages_and_idle_verified": True,
             }
         finally:
             if not launch.done():

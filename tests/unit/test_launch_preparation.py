@@ -17,9 +17,10 @@ def test_all_terminal_input_paths_reject_before_native_preparation_and_allow_aft
     class Preparation:
         argv = ["/bin/cat"]
         env = {}
+        allow_automation = True
         closed = False
 
-        async def ready(self, pid, owns_process):
+        async def ready(self, pid, owns_process, on_status=None):
             assert pid == 123 and owns_process()
             reached.set()
             await release.wait()
@@ -36,7 +37,7 @@ def test_all_terminal_input_paths_reject_before_native_preparation_and_allow_aft
             return prepared
 
     supervisor = SessionSupervisor(
-        bus=EventBus(),
+        bus=EventBus(sink=lambda event: None),
         runtime=Runtime("/bin/cat"),
         session_key="test-native-preparation",
         cwd=str(tmp_path),
