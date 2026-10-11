@@ -28,7 +28,7 @@ from duckterm.persistence.saved_state import (
 if TYPE_CHECKING:
     from duckterm.server import Server
 
-POLICY = "maintained-progress-v4/summary-validator-v1"
+POLICY = "maintained-progress-v5/summary-validator-v1"
 MAX_REQUIRED_CHARS = 12000
 # Reserve room for the summary and instructions inside the 24 KiB seed limit.
 MAX_REQUIRED_BYTES = 20000
@@ -367,6 +367,8 @@ class ProgressCoordinator:
             maintained is not None
             and not maintained["selected"]
             and maintained["prior_context"]
+            and prior is not None
+            and prior.get("source") == captured["source"]
             and not any(
                 maintained["processed"].get(r["source"], {}).get(r["record"]) != r["hash"]
                 for r in maintained["updates"]

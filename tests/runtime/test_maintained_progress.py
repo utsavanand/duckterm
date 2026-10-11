@@ -57,7 +57,7 @@ def test_new_revision_processes_only_new_records_and_checkpoint_reuses(memory_ri
 
     async def run():
         first = await server.progress_coordinator.refresh("agent")
-        assert first["continuity"]["remaining_records"] == 0
+        assert first["continuity"]["summary_input"]["remaining_eligible_records"] == 0
         assert first["memory_sources"] and first["retained_sources"]
         again = await server.progress_coordinator.refresh("agent")
         assert again["id"] == first["id"] and len(calls) == 2
@@ -225,7 +225,7 @@ def test_backfill_is_labeled_older_than_prior_summary_and_new_append(memory_rig,
 
     async def run():
         first = await server.progress_coordinator.refresh("agent")
-        assert first["continuity"]["remaining_records"] == 1
+        assert first["continuity"]["summary_input"]["remaining_eligible_records"] == 1
         append(path, "New owner message after the first summary")
         await server.progress_coordinator.refresh("agent")
         data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])

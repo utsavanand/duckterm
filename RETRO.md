@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Project summary inputs without rewriting original evidence
+
+Successful tool output and command arguments can dominate memory input through both hook events and native transcripts. Filter both at the summarization boundary; retain conversation text, current work and explicit failures. Keep native text, roles, locators and original hashes unchanged so search and reads still recover evidence. Treat mixed messages per block, preserving narrative and failed results while excluding successful bodies. Version the summary policy so older coverage is not reused under changed input semantics.
+
+Report eligible versus reference-only input separately from original-history counts. A reference is not proof a body was summarized, and fixture byte reduction is not measured token savings or semantic completeness. A new reference-only event still changes the source boundary: refresh that boundary instead of returning a stale ready revision. Tests must exercise this through checkpoint persistence and prove excluded originals remain readable.
+
 ## 2026-10-11 — Do not reject summary inputs for a duplicate copy of current work
 
 Maintained memory already supplies citable session, task and inbox originals within its 48,000-byte record budget. Copying the same text into a separate 12,000-character required-context field made checkpoints fail before generation as open tasks and mail accumulated. Send originals once, accompanied by explicit coverage counts. If whole required records span multiple updates, process unseen records first and retain skipped identities as pending; never certify incomplete current work as complete or repeatedly fill the budget with already processed tasks. An indivisible oversized original stays readable and reports its size and budget as a gap. Keep the independent harness-launch limit intact.

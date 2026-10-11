@@ -176,9 +176,28 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
                         for b in content
                     )
                 try:
-                    messages = [
-                        part for message in parser([line], index) for part in normalized(message)
-                    ]
+                    parsed: list[dict[str, Any]] = parser([line], index)
+                    # Preserve raw locators, roles and text. Failure metadata is
+                    # used only by the summary projection, never search/read.
+                    failures = iter(
+                        b.get("is_error") is True
+                        for b in (content if isinstance(content, list) else [])
+                        if b.get("type") == "tool_result"
+                    )
+                    failed_blocks = {
+                        id(block)
+                        for message in parsed
+                        for block in message.get("blocks", [])
+                        if block.get("type") == "tool_result" and next(failures, False)
+                    }
+                    if isinstance(payload, dict) and payload.get("is_error") is True:
+                        failed_blocks.update(
+                            id(block)
+                            for message in parsed
+                            for block in message.get("blocks", [])
+                            if block.get("type") == "tool_result"
+                        )
+                    messages = [part for message in parsed for part in normalized(message)]
                 except (ValueError, TypeError, AttributeError, KeyError) as exc:
                     raise APIError(409, "Conversation has an unreadable message record") from exc
                 for message in messages:
@@ -199,6 +218,16 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
                                     else message["role"]
                                 ),
                                 "text": text,
+                                "summary_text": flatten(
+                                    {
+                                        "blocks": [
+                                            block
+                                            for block in message.get("blocks", [])
+                                            if block.get("type") not in {"tool_use", "tool_result"}
+                                            or id(block) in failed_blocks
+                                        ]
+                                    }
+                                ),
                                 "message_key": hashlib.sha256(
                                     json.dumps(
                                         [source["runtime"], source["native_id"], message],
