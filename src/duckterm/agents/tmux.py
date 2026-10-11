@@ -261,3 +261,11 @@ def kill_session(target: str) -> bool:
 def session_exists(target: str) -> bool:
     ok, _ = _tmux("has-session", "-t", exact_target(target))
     return ok
+
+
+def pane_pid(target: str) -> int:
+    """Exact pane process for adapters which exec their native child in place."""
+    ok, value = _tmux("display-message", "-p", "-t", exact_target(target, pane=True), "#{pane_pid}")
+    if not ok or not value.strip().isdigit() or int(value) <= 0:
+        raise ValueError("Cannot verify the owned terminal process")
+    return int(value)

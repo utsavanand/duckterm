@@ -15,7 +15,12 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+from duckterm.runtimes.preparation import LaunchPreparation
+
+if TYPE_CHECKING:
+    from duckterm.persistence.history import HistoryStore
 
 SessionState = Literal[
     "idle", "busy", "waiting", "terminated", "stopped", "interrupted", "archived", "merged"
@@ -92,6 +97,7 @@ def plain_screen(screen: str) -> str:
 
 class Harness(ABC):
     name: str
+    requires_launch_preparation = False
     session_id_assignable = False
     turn_end_inbox_notice = False
     # Owner priority messages can be pinned into this agent's turn-end notice.
@@ -133,6 +139,23 @@ class Harness(ABC):
 
     @abstractmethod
     def launch_command(self, *, cwd: Path, session_key: str, initial_prompt: str) -> list[str]: ...
+
+    async def prepare_launch(
+        self,
+        *,
+        cwd: Path,
+        session_key: str,
+        initial_prompt: str,
+        env: dict[str, str],
+        history: "HistoryStore | None",
+    ) -> LaunchPreparation | None:
+        """Optional two-phase preparation; ordinary harness launches stay synchronous."""
+        return None
+
+    async def prepare_recovery(
+        self, *, cwd: Path, session_key: str, env: dict[str, str], history: "HistoryStore | None"
+    ) -> LaunchPreparation | None:
+        return None
 
     @abstractmethod
     def detect_state(self, recent_output: str) -> SessionState | None:

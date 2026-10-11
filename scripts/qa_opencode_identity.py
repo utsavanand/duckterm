@@ -7,9 +7,11 @@ Creates two native synthetic sessions in a disposable home and removes them.
 """
 import asyncio
 import base64
+import contextlib
 import hashlib
 import http.server
 import json
+import os
 import pathlib
 import secrets
 import shlex
@@ -25,6 +27,10 @@ import urllib.request
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from duckterm.persistence import opencode_launch as journal  # noqa: E402
 from duckterm.persistence.history import HistoryStore  # noqa: E402
+from duckterm.core.eventbus import EventBus  # noqa: E402
+from duckterm.core.orchestrator import Orchestrator  # noqa: E402
+from duckterm.runtimes.opencode import OpenCodeRuntime  # noqa: E402
+from duckterm.runtimes.generic import GenericRuntime  # noqa: E402
 from duckterm.runtimes.opencode_identity import Selection  # noqa: E402
 from duckterm.runtimes.opencode_prepare import prepare  # noqa: E402
 from duckterm.runtimes.opencode_protocol import NativeClient, UncertainWrite, models  # noqa: E402
@@ -155,7 +161,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
 
 
 provider = None
-if "--models" in sys.argv[2:] or "--prepare" in sys.argv[2:]:
+if any(flag in sys.argv[2:] for flag in ("--models", "--prepare", "--supervisor")):
     provider = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     threading.Thread(target=provider.serve_forever, daemon=True).start()
     env["OPENCODE_CONFIG_CONTENT"] = json.dumps(
@@ -289,6 +295,7 @@ def verify_preparation(client):
         # Reopen the actual DuckTerm journal to model server recovery; this must
         # read the same native identity and never send the initial prompt again.
         history.close()
+
         history = HistoryStore(db)
         recovered = asyncio.run(
             prepare(history._conn, key, generation, probe, selected, lambda: True)
@@ -304,6 +311,157 @@ def verify_preparation(client):
         history.delete_session(key)
         assert history.session(key) is None
         history.close()
+
+
+def verify_supervisor():
+    """Exercise the actual owned terminal and early-input gate, no registry activation."""
+    overrides = {
+        "DUCKTERM_HOME": str(root / "duckterm"),
+        "DUCKTERM_TMUX_SOCKET": name + "-supervisor",
+    }
+    saved_env = {key: os.environ.get(key) for key in overrides}
+    os.environ.update(overrides)
+    history = HistoryStore(root / "duckterm/db.sqlite")
+    bus = EventBus(sink=history.record)
+    owner = Orchestrator(bus, history=history)
+    key = "native-supervisor-fixture"
+
+    async def run():
+        nonlocal owner
+        from duckterm.harnesses import REGISTRY
+
+        # Registry injection is confined to this disposable QA process; the
+        # product registry deliberately stays unchanged in source.
+        previous_runtime = REGISTRY.get("opencode")
+        REGISTRY["opencode"] = OpenCodeRuntime
+        await owner.launch(
+            runtime=GenericRuntime("/bin/cat"),
+            cwd=str(root / "project"),
+            session_key="native-sibling-fixture",
+            env=env,
+            test=True,
+        )
+        sibling_pid = subprocess.check_output(
+            [
+                "tmux",
+                "-L",
+                overrides["DUCKTERM_TMUX_SOCKET"],
+                "display-message",
+                "-p",
+                "-t",
+                "=rd_native-sibling-fixture:",
+                "#{pane_pid}",
+            ],
+            text=True,
+        ).strip()
+        launch = asyncio.create_task(
+            owner.launch(
+                runtime=OpenCodeRuntime(shlex.join([str(binary), "--model", "fixture/alpha"])),
+                cwd=str(root / "project"),
+                session_key=key,
+                prompt="Return a short fixture response.",
+                env={k: v for k, v in env.items() if not k.startswith("DUCKTERM_")},
+                test=True,
+            )
+        )
+        try:
+            while owner.get(key) is None and not launch.done():
+                await asyncio.sleep(0)
+            sup = owner.get(key)
+            assert sup is not None
+            assert not sup.write_bytes(b"must not reach native input")
+            assert not sup.write_input("must not reach native input\n")
+            assert not await sup.write_queued_bytes(b"must not be queued")
+            assert await launch == key
+            assert not sup._preparing and sup.running
+            state = history.restart_control(key)["opencode_launch"]
+            assert state["phase"] == "ready"
+            native.append(state["session_id"])
+            assert history.session(key)["test"]
+            prep_client = sup._preparation.client
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                rows = await asyncio.to_thread(prep_client.messages, state["session_id"])
+                if any(
+                    row["role"] == "assistant"
+                    and row["complete"]
+                    and row["provider"] == "fixture"
+                    and row["model"] == "alpha"
+                    for row in rows
+                ):
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                raise RuntimeError("Supervised native initial prompt did not complete")
+            calls_before_recovery = list(provider_calls)
+            for old in list(owner._supervisors.values()):
+                old._task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await old._task
+            owner = Orchestrator(bus, history=history)
+            adopted = await owner.reconcile()
+            assert set(adopted) == {key, "native-sibling-fixture"}
+            recovered = owner.get(key)
+            assert not recovered._preparing and recovered.running
+            assert history.restart_control(key)["opencode_launch"] == state
+            assert calls_before_recovery == provider_calls
+            assert (
+                sibling_pid
+                == subprocess.check_output(
+                    [
+                        "tmux",
+                        "-L",
+                        overrides["DUCKTERM_TMUX_SOCKET"],
+                        "display-message",
+                        "-p",
+                        "-t",
+                        "=rd_native-sibling-fixture:",
+                        "#{pane_pid}",
+                    ],
+                    text=True,
+                ).strip()
+            )
+            return {
+                "passed": True,
+                "native_id": state["session_id"],
+                "pid": state["pid"],
+                "early_input_blocked": True,
+                "same_process_recovered": True,
+                "sibling_preserved": True,
+                "initial_prompt_not_replayed": True,
+            }
+        finally:
+            if not launch.done():
+                launch.cancel()
+                try:
+                    await launch
+                except asyncio.CancelledError:
+                    pass
+            control = history.restart_control(key).get("opencode_launch", {})
+            if control.get("session_id") and control["session_id"] not in native:
+                native.append(control["session_id"])
+            await owner.stop(key)
+            await owner.stop("native-sibling-fixture")
+            if previous_runtime is None:
+                REGISTRY.pop("opencode", None)
+            else:
+                REGISTRY["opencode"] = previous_runtime
+
+    try:
+        return asyncio.run(run())
+    finally:
+        history.delete_session(key)
+        history.delete_session("native-sibling-fixture")
+        assert history.session(key) is None
+        history.close()
+        subprocess.run(
+            ["tmux", "-L", overrides["DUCKTERM_TMUX_SOCKET"], "kill-server"], capture_output=True
+        )
+        for key, value in saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 try:
@@ -363,6 +521,7 @@ try:
     if provider is not None:
         verify_models(client)
     preparation = verify_preparation(client) if "--prepare" in sys.argv[2:] else None
+    supervisor = verify_supervisor() if "--supervisor" in sys.argv[2:] else None
     assert all(x["generation"] == env["DUCKTERM_HARNESS_GENERATION"] for x in observed)
     assert all(x["directory"] == str(root / "project") for x in observed)
     assert len({x["pid"] for x in observed}) == 1
@@ -375,6 +534,7 @@ try:
                 "native_ids": native,
                 "fixture_models_passed": provider_calls,
                 "preparation": preparation,
+                "supervisor": supervisor,
                 "observed": [
                     {k: v for k, v in item.items() if k != "generation"} for item in observed
                 ],

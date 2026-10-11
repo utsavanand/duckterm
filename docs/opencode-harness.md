@@ -105,8 +105,8 @@ work adds a durable journal in existing restart metadata (no schema change),
 generation-checked native creation/selection/prompt claims, and off-loop native
 requests. It cannot repeat an uncertain creation or initial prompt. A prompt
 receipt must match the exact native user message, content and requested model;
-selection still requires fresh native TUI proof. The driver is not yet wired
-into the supervisor, so this does not enable the New Session action.
+selection still requires fresh native TUI proof. Supervisor integration follows
+in the next checkpoint; the New Session action remains disabled.
 
 Run the pinned probe with `--prepare` to exercise that driver against the real
 CLI and synthetic loopback provider. It drops the native prompt acknowledgment,
@@ -114,6 +114,23 @@ reopens the disposable DuckTerm database, and confirms the same conversation
 and one initial prompt. The `test:true` card and all native fixture sessions are
 deleted on cleanup. This is native preparation evidence, not full launch,
 lifecycle, history or remote acceptance.
+
+The next native acceptance step (`--supervisor`) now uses the real DuckTerm
+session supervisor and terminal path. Every input path rejects early input;
+the initial prompt is held until selection proof. The child runs with a private
+TUI plugin configuration and authenticated loopback observer, and its exact
+owned pane PID must match the observer. Recovery rebinds the original observer
+port, verifies the retained PID and native store identity, and reconciles the
+same journal. An occupied port, replaced store or contested binding refuses
+recovery without killing a foreign process or interrupting other cards.
+
+The pinned native supervisor fixture completed an assistant response using
+`fixture/alpha`, reattached the same process/conversation after observer
+shutdown, preserved a neighboring synthetic terminal, and verified that the
+initial prompt was not replayed. All fixture cards carry `test:true` and are
+deleted. This proves local native launch/recovery under the fixture. Live
+lifecycle/Message-cache integration and final harness/remote acceptance remain;
+the product registry and launch-capability response are still disabled.
 
 The form was inspected in light/dark themes and at desktop/narrow widths.
 Dark form labels now use the existing theme text color. Screenshots are saved
