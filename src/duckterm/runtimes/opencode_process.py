@@ -362,6 +362,8 @@ class OpenCodeProcess:
                 records, status = await asyncio.wait_for(
                     asyncio.to_thread(snapshot, self.client, state.session_id), 30
                 )
+                if not owns_process():
+                    raise OpenCodeError("Native process exited during observation")
                 journal.read(self.history._conn, self.key, self.generation)
                 self._selection.require_selected()
                 info = self.database.stat()
@@ -383,6 +385,8 @@ class OpenCodeProcess:
                 saved = await asyncio.to_thread(
                     native_history.persist, source, records, stamp, revision
                 )
+                if not owns_process():
+                    raise OpenCodeError("Native process exited during observation")
                 journal.read(self.history._conn, self.key, self.generation)
                 self._selection.require_selected()
                 if saved:

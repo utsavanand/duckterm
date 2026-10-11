@@ -1,5 +1,9 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Recheck native ownership after awaited observation work
+
+OpenCode monitoring checked process ownership before snapshot I/O but could publish idle after the owned process exited during snapshot or cache persistence. Recheck ownership after each awaited worker before updating lifecycle state. Two independent regressions fail on 3edb52f and pass with these checks.
+
 ## 2026-10-11 — Owner Stop must fence a late native launch result
 
 Generation checks alone do not cancel a launch whose owner has stopped,
