@@ -363,7 +363,15 @@ class ProgressCoordinator:
             )
         except (ValueError, APIError):
             return SummaryUpdate.failed("invalid_context", diagnostic="invalid_required_records")
-        if maintained is not None and not maintained["selected"] and maintained["prior_context"]:
+        if (
+            maintained is not None
+            and not maintained["selected"]
+            and maintained["prior_context"]
+            and not any(
+                maintained["processed"].get(r["source"], {}).get(r["record"]) != r["hash"]
+                for r in maintained["updates"]
+            )
+        ):
             # Nothing eligible fits this bounded update. Keep explicit gaps and
             # avoid paying to restate the same summary on every eligible turn.
             return SummaryUpdate.from_revision(prior, reused=True)

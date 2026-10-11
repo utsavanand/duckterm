@@ -382,3 +382,34 @@ def test_checkpoint_with_large_task_and_mail_inputs(memory_rig, monkeypatch, tas
         assert server.history.session("agent")["progress"] == cached
 
     asyncio.run(run())
+
+
+def test_new_oversized_mail_cannot_reuse_a_previously_ready_revision(memory_rig, monkeypatch):
+    from test_session_api import call
+
+    server, _, peer, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Original owner instruction")
+    provider(monkeypatch)
+
+    async def run():
+        first = await server.progress_coordinator.refresh_result("agent")
+        assert first.state == "updated"
+        # API-valid input expands beyond the serialized source-record budget.
+        call(
+            server.history,
+            {**peer, "idempotency-key": "escaped-mail"},
+            "POST",
+            "/questions",
+            {
+                "target_session_id": "agent",
+                "question": "\x01" * 10000,
+            },
+        )
+        second = await server.progress_coordinator.refresh_result("agent")
+        assert second.state == "partial"
+        assert second.revision["id"] != first.revision["id"]
+        assert second.revision["continuity"]["pending_updates"]
+        assert second.revision["continuity"]["gaps"]
+        assert not second.revision["summary_validation"]["ready"]
+
+    asyncio.run(run())
