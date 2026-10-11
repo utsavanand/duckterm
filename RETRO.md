@@ -20,6 +20,18 @@ Checkpoint requests previously kept their busy state inside the context menu, so
 
 Claude stores tool results inside user-role records, including records that mix owner text and tool output. Flattening the blocks and copying that role made handoffs attribute command output to the owner; Codex outputs similarly inherited an assistant role. Normalize ordered blocks by provenance for memory only: tool outputs keep a tool role and mixed records have exact group locators. Keep native snapshot bytes/checksums unchanged and let old whole-line reads return the typed groups. Salt the existing disposable search cache and maintained-summary input with the reader version; otherwise a correct reader can still return old flattened search results or reuse a summary with wrong attribution. Verify search, reads, retained snapshots, handoff context and summary invalidation with synthetic native records and no live model calls.
 
+## File browsing must preserve session origin and snapshot identity (2026-10-10)
+
+A file explorer cannot infer locality from a session key after host routing has stripped its origin. Reject remote keys and remote host identities before issuing any filesystem request. Keep registered snapshots separate from current bytes, and do not turn an outside-root source into a claim that the file is missing. Empty post-ignore pages may still have cursors; stale cursors must discard their old listing. Tests now exercise these boundaries, cancellation on root/session switches, and preserved expanded previews alongside actual filesystem browsing.
+
+## 2026-10-10 — Reserved paths need the filesystem's case aliases covered
+
+On the default Mac filesystem, `.GIT/config` can open `.git/config`. Excluding only the exact lowercase spelling therefore left Git internals browseable. Reject `.git` case-insensitively in requests, directory entries and saved-source existence checks. Verify both direct and nested aliases, and retain separately registered snapshot access without claiming the excluded original is a browseable file.
+
+## 2026-10-10 — A saved artifact path does not prove a file exists
+
+The file explorer must distinguish registered snapshot bytes from the current filesystem. Use only the selected local session's recorded worktree/cwd, never the server's current directory. Read one directory page in a worker; use Git for ignore semantics, and keep the registration list independent of directory traversal. Pin every component from the filesystem root, then the relative components, without following symlinks; guarding only the final root component allows an ancestor-replacement race after resolve(). Recheck the root after the read, and refuse changed files rather than returning partial downloads. Missing and outside-root sources remain readable as saved artifact copies, with explicit source states. Remote desktop references must not fall back to a same-named local session.
+
 ## 2026-10-10 — A successful summary sample does not cover malformed next drafts
 
 Product's next manual checkpoint failed with invalid_context after the timeout/citation fix was installed. The saved failure did not identify the rejected field, and a read-only rerun passed; neither result proves which field failed in the owner's attempt. The maintained pipeline had another concrete gap: unlike older preparation, it abandoned the first malformed draft. One successful provider response was not sufficient reliability evidence.
