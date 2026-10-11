@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Do not reject summary inputs for a duplicate copy of current work
+
+Maintained memory already supplies citable session, task and inbox originals within its 48,000-byte record budget. Copying the same text into a separate 12,000-character required-context field made checkpoints fail before generation as open tasks and mail accumulated. Send originals once, accompanied by explicit coverage counts. If whole required records span multiple updates, process unseen records first and retain skipped identities as pending; never certify incomplete current work as complete or repeatedly fill the budget with already processed tasks. An indivisible oversized original stays readable and reports its size and budget as a gap. Keep the independent harness-launch limit intact.
+
+Exercise checkpoint persistence with 45 open tasks, a 13,000-character incoming message, their combination across bounded updates, multibyte notes, and provider failure preserving the last good revision. A deterministic provider verifies plumbing and coverage, not semantic summary quality or success on the installed runtime.
+
 ## 2026-10-10 — A version number does not identify the installed build
 
 An unreleased branch used the same version as a later release, so numeric comparison alone could report it up to date. Stamp the exact commit, Git description, branch, dirty state and main containment into a generated package module before the build. Only a clean commit at the matching version tag, contained in the recorded main ref, can be classified as released; missing or unverifiable metadata remains unknown. Keep the version sed-readable and never import the source package to obtain it. Remove the generated stamp from the checkout after packaging so an editable install does not inherit stale identity.

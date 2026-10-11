@@ -28,7 +28,7 @@ from duckterm.persistence.saved_state import (
 if TYPE_CHECKING:
     from duckterm.server import Server
 
-POLICY = "maintained-progress-v3/summary-validator-v1"
+POLICY = "maintained-progress-v4/summary-validator-v1"
 MAX_REQUIRED_CHARS = 12000
 # Reserve room for the summary and instructions inside the 24 KiB seed limit.
 MAX_REQUIRED_BYTES = 20000
@@ -357,9 +357,6 @@ class ProgressCoordinator:
         bounded_required = (
             required[:MAX_REQUIRED_CHARS].encode()[:MAX_REQUIRED_BYTES].decode(errors="ignore")
         )
-        if "memory_sources" in captured and too_large:
-            # Current work must remain intact and parseable, never truncated JSON.
-            return SummaryUpdate.failed("invalid_context", diagnostic="required_context_too_large")
         try:
             maintained = (
                 memory_continuity.plan(captured, prior) if "memory_sources" in captured else None
@@ -370,8 +367,12 @@ class ProgressCoordinator:
             # Nothing eligible fits this bounded update. Keep explicit gaps and
             # avoid paying to restate the same summary on every eligible turn.
             return SummaryUpdate.from_revision(prior, reused=True)
+        if maintained is not None:
+            # Original current-work records already occupy the bounded update.
+            # Do not copy their full JSON into a second, smaller input budget.
+            bounded_required = json.dumps(maintained["required_work"], ensure_ascii=False)
         prompt = (
-            memory_continuity.prompt(maintained, bounded_required)
+            memory_continuity.prompt(maintained)
             if maintained is not None
             else progress.build_prompt(captured["transcript"], prior_cache, bounded_required)
         )
@@ -405,7 +406,7 @@ class ProgressCoordinator:
         reasons = []
         if validation.get("ready") is not True or validation.get("reason_codes") != []:
             reasons.append("summary_unverified")
-        if too_large:
+        if too_large and maintained is None:
             reasons.append("required_context_too_large")
         source = captured["source"]
         if source["transcript_kind"] != "native":
