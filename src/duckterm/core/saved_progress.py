@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from duckterm.core import progress
+from duckterm.core import progress, work_pointers
 from duckterm.core.session_api import APIError
 from duckterm.persistence.saved_state import (
     checkpoint_marker,
@@ -28,7 +28,7 @@ from duckterm.persistence.saved_state import (
 if TYPE_CHECKING:
     from duckterm.server import Server
 
-POLICY = "maintained-progress-v5/summary-validator-v1"
+POLICY = "maintained-progress-v6/summary-validator-v1"
 MAX_REQUIRED_CHARS = 12000
 # Reserve room for the summary and instructions inside the 24 KiB seed limit.
 MAX_REQUIRED_BYTES = 20000
@@ -76,38 +76,18 @@ def required_context(server: Server, key: str, row: dict[str, Any]) -> dict[str,
     scope = dict(member) if member else {}
     # A moved card whose enrollment has not caught up has no peer-source grant.
     permitted = bool(scope.get("root") and scope.get("folder") == (row.get("grp") or ""))
-    tasks = []
-    mail = []
-    if permitted:
-        tasks = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT id,title,note,status FROM folder_tasks WHERE owner_session=? "
-                "AND status IN ('in_progress','parked') "
-                "AND (folder=? OR substr(folder,1,length(?)+1)=?||'/') ORDER BY id",
-                (key, scope["root"], scope["root"], scope["root"]),
-            )
-        ]
-        mail = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT q.id,q.sender,q.question,q.answer,q.status FROM session_questions q "
-                "WHERE q.recipient=? AND q.root=? AND ((q.status IN ('queued','accepted')) "
-                "OR (q.sender='owner' AND q.status='answered')) AND (q.sender='owner' OR "
-                "EXISTS (SELECT 1 FROM session_api_members m JOIN sessions s "
-                "ON s.session_key=m.session_key WHERE m.session_key=q.sender "
-                "AND m.root=? AND m.folder=coalesce(s.grp,''))) ORDER BY q.rowid",
-                (key, scope["root"], scope["root"]),
-            )
-        ]
+    pointers = (
+        work_pointers.capture(conn, key, scope)
+        if permitted
+        else {"tasks": [], "mail": [], "work_references": {"available": False}}
+    )
     return {
         "name": row.get("name"),
         "purpose": scope.get("purpose"),
         "intention": row.get("intention"),
         "notes": row.get("notes"),
         "scope": scope,
-        "tasks": tasks,
-        "mail": mail,
+        **pointers,
     }
 
 

@@ -42,8 +42,9 @@ def test_switch_seed_includes_owned_open_tasks_without_changing_them(rig, monkey
     seed = prepared["seed"]
     for value in (active["id"], parked["id"], "Finish the release", "in_progress", "parked"):
         assert value in seed
-    assert "publish after review" in seed
-    assert "Wait for owner feedback" in seed
+    assert "publish after review" not in seed
+    assert "Wait for owner feedback" not in seed
+    assert "duckterm session task list" in seed
     assert "Completed checkpoint summary" in seed
     assert "NEW conversation" in seed
     for value in ("Already shipped", "Another agent owns this", "Outside the shared scope"):

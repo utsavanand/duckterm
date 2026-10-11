@@ -7,7 +7,7 @@ from typing import Any
 
 from duckterm import memory_handoff
 
-POLICY = "conversation-current-work-and-failures-v1"
+POLICY = "conversation-session-and-failures-v2"
 CONVERSATION_EVENTS = {"UserPromptSubmit", "Stop", "SubagentStop", "PostToolUseFailure"}
 
 
@@ -35,7 +35,7 @@ def records(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
             event_id = value.get("_id", value.get("id"))
             if value.get("event_type") not in CONVERSATION_EVENTS:
                 text = ""
-        elif row["kind"] not in {"session", "task", "inbox"}:
+        elif row["kind"] != "session":
             text = ""
         eligible_bytes += len(text.encode())
         projected.append(

@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Query tasks and mail instead of copying their bodies into memory
+
+Folder tasks and the inbox already have canonical stores and read commands. Do not send notes, questions or answers through the session summarizer merely because they are assigned to that session. Keep them reference-only, and onboard with a bounded selection of IDs, short title previews, counts and read commands. Distinguish folder-wide work from assigned work, disclose omitted pointers and preserve current sharing checks. A title is discovery metadata, not the instruction or evidence of authorization.
+
+Exercise long notes, escaped mail, many open assignments, scope changes and original retrieval. Successful pointer delivery does not certify that the task or message bodies were read. Conversation statements about the work still remain eligible narrative; current canonical records must be read before action. This does not remove the separate bounds on conversation updates, session notes or final launch context.
+
 ## 2026-10-11 — Project summary inputs without rewriting original evidence
 
 Successful tool output and command arguments can dominate memory input through both hook events and native transcripts. Filter both at the summarization boundary; retain conversation text, current work and explicit failures. Keep native text, roles, locators and original hashes unchanged so search and reads still recover evidence. Treat mixed messages per block, preserving narrative and failed results while excluding successful bodies. Version the summary policy so older coverage is not reused under changed input semantics.

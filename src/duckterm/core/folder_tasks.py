@@ -76,8 +76,7 @@ class FolderTasks:
         # Match the owner's current grant, including after a folder move. Limit
         # both rows and text in SQLite so a long task history is never loaded.
         rows = self.conn.execute(
-            "SELECT t.id, t.status, substr(t.title,1,201) AS title, "
-            "substr(t.note,1,301) AS note FROM folder_tasks t "
+            "SELECT t.id, t.status, substr(t.title,1,201) AS title FROM folder_tasks t "
             "JOIN session_api_members m ON m.session_key=t.owner_session "
             "JOIN sessions s ON s.session_key=t.owner_session "
             "WHERE t.owner_session=? AND t.status IN ('in_progress','parked') "
@@ -96,8 +95,8 @@ class FolderTasks:
         more = len(rows) > 10
         for row in rows[:10]:
             task = dict(row)
-            task["truncated"] = len(task["title"]) > 200 or len(task["note"]) > 300
-            task["title"], task["note"] = task["title"][:200], task["note"][:300]
+            task["truncated"] = len(task["title"]) > 200
+            task["title"] = task["title"][:200]
             line = json.dumps(task, ensure_ascii=False)
             # Reserve room for the final notice, even with heavily escaped text.
             if sum(len(value) + 1 for value in lines) + len(line) > 5800:
