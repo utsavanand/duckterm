@@ -25,6 +25,7 @@ export interface DucktermEvent {
   // Set by the server on a PermissionRequest from an agent that reviews its
   // own requests (Codex); it stays busy until its prompt shows on screen.
   auto_reviewed?: boolean;
+  cleared?: boolean; // NeedsOwner: the session no longer needs the owner
   notification_type?: string;
   message?: string;
 }

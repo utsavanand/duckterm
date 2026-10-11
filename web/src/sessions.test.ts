@@ -19,6 +19,15 @@ function ev(
 const empty = () => new Map<string, SessionView>();
 
 describe("applyEvent", () => {
+  it("raises a session's hand when it says it needs the owner, and lowers it on clear", () => {
+    const idle = applyAll([ev({ event_type: "SessionStart" }), ev({ event_type: "Stop", _ts: 2000 })]);
+    const raised = applyEvent(idle, ev({ event_type: "NeedsOwner", _ts: 3000 }));
+    expect(raised.get("s1")!.attentionSince).toBe(3000);
+    expect(raised.get("s1")!.state).toBe(idle.get("s1")!.state); // not agent activity
+    const cleared = applyEvent(raised, ev({ event_type: "NeedsOwner", _ts: 4000, cleared: true }));
+    expect(cleared.get("s1")!.attentionSince).toBeUndefined();
+  });
+
   it("never revives a merged fork, even on a late SessionStart", () => {
     let state = applyAll([ev({ event_type: "SessionStart" }), ev({ event_type: "Notification", lifecycle: "merged" })]);
     for (const event_type of ["SessionStart", "PostToolUse", "SessionEnd"]) {

@@ -29,6 +29,10 @@ ATTENDED = "Attended"
 # for the first time. The parent's merge checkpoint is taken here, never on
 # enqueue, cancel or a failed paste (architect, "Design — Fork merge-back").
 MERGE_DELIVERED = "MergeDelivered"
+# Published by the server: a session said it needs the owner (publish
+# --needs-owner), raising its hand; cleared=True lowers it unless the session
+# is waiting for another reason.
+NEEDS_OWNER = "NeedsOwner"
 
 # The full set an agent's hooks are wired for (order preserved for the installer).
 ALL = [

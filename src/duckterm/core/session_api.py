@@ -161,6 +161,8 @@ MERGE_PREFIX = "merge:"
 # A priority owner message nobody has replied to: never swept while open.
 _OPEN_PRIORITY = "(priority = 1 AND status IN ('queued', 'read'))"
 PRIORITY_SNIPPET = 400
+# What a session says it needs from the owner (publish --needs-owner).
+NEEDS_OWNER_LIMIT = 500
 
 
 def _inbox_view(view: str, alias: str = "") -> str:
@@ -1083,8 +1085,13 @@ class SessionAPI:
         if path == "/self" and method == "GET":
             return 200, self._public(member)
         if path == "/self" and method == "PATCH":
-            if set(req) - {"purpose", "activity"}:
-                raise APIError(400, "only purpose and activity can be updated")
+            if set(req) - {"purpose", "activity", "needs_owner"}:
+                raise APIError(400, "only purpose, activity and needs_owner can be updated")
+            # needs_owner is not stored on the card: the server turns it into a
+            # Needs-you note and a raised hand (null clears both).
+            needs = req.get("needs_owner", ...)
+            if needs is not ... and needs is not None:
+                needs = _text(needs, "needs_owner", NEEDS_OWNER_LIMIT)
             purpose = _text(req.get("purpose", member["purpose"]), "purpose", 2048, empty=True)
             activity = _text(req.get("activity", member["activity"]), "activity", 2048, empty=True)
             with self.conn:
@@ -1093,7 +1100,10 @@ class SessionAPI:
                     "WHERE session_key = ?",
                     (purpose, activity, int(time.time() * 1000), key),
                 )
-            return 200, self._public(self._member(key))
+            card = self._public(self._member(key))
+            if needs is not ...:
+                card["needs_owner"] = needs
+            return 200, card
         if path == "/peers" and method == "GET":
             scope = query.get("scope", ["self_folder"])[0]
             levels = {"self_folder": 0, "parent": 1, "grandparent": 2}

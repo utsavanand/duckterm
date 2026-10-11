@@ -570,6 +570,8 @@ class Server:
                     status, result = self.history.session_api.handle(method, path, headers, body)
             except APIError as exc:
                 status, result = exc.status, {"error": str(exc)}
+            if status == 200 and isinstance(result, dict) and "needs_owner" in result:
+                self._needs_owner(str(result["session_id"]), result["needs_owner"])
             await _write_json(writer, status, result)
             return
         # A presented agent credential must never fall through to owner routes.
@@ -1586,6 +1588,30 @@ class Server:
             s["suites"] = self._suites_for(s.get("worktree_path") or s.get("cwd"))
             await self._reconcile_waiting(s)
         await _write_json(writer, 200, {"sessions": sessions})
+
+    def _needs_owner(self, key: str, text: str | None) -> None:
+        """A session said it needs the owner (publish --needs-owner), or that it
+        no longer does (--clear). The same note and raised hand an open
+        question gets: Oracle's Needs you, the voice, the waving duck. The note
+        closes like any question note when the owner replies."""
+        now = int(time.time() * 1000)
+        for note in self.relay.open_notes():
+            if note["session_key"] == key and note.get("source") == "needs_owner":
+                self.relay.close(note, "handled", closed_at=now)
+        if text:
+            self.relay.add(
+                {
+                    **self._relay_session_fields(key),
+                    "kind": "question",
+                    "urgency": "blocked",
+                    "created_at": now,
+                    "question": text,
+                    "options": [],
+                    "source": "needs_owner",
+                }
+            )
+        event = {"event_type": events.NEEDS_OWNER, "session_key": key, "reconciled": True}
+        self.bus.publish({**event, **({"text": text} if text else {"cleared": True})})
 
     def _attend(self, key: str) -> None:
         """The owner attended to this session: drop its raised hand. Only the
