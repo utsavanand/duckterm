@@ -39,7 +39,7 @@ test("checkpoint captures the session's prompts and commands", async ({
   await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
 
   // UI: the row saved, but the fake provider did not generate a usable summary.
-  await expect(page.getByText("Summary update failed ·", { exact: false })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Checkpoint progress" }).getByText("Summary update failed", { exact: true })).toBeVisible();
 
   // Backend: a checkpoint now exists and captured the prompt + the Bash command.
   await expect.poll(async () => (await checkpoints(key)).length).toBe(1);

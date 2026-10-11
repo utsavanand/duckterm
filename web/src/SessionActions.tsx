@@ -9,6 +9,7 @@ import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
 import { splitSessionRef } from "./hostTransport";
 import { effectiveState } from "./sessions";
 import { identityBlocksResume } from "./conversationRecoveryState";
+import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
 import { checkpointNotice } from "./checkpointState";
 import { recoveryBlocksResume } from "./resumeReadiness";
 import { SessionView } from "./types";
@@ -38,6 +39,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
   const [restartExpanded, setRestartExpanded] = useState(false);
   const [draft, setDraft] = useState(s.label);
   const { resuming, recoveryBlocked, resumeSession } = useResumeSession(s.key);
+  const checkpointPending = useCheckpointAttempt(s.key)?.state === "running";
   const disabled = !!busy || resuming;
   async function act(label: string, action: () => Promise<unknown>) {
     if (disabled) return;
@@ -47,16 +49,15 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
     finally { setBusy(""); }
   }
   async function checkpoint() {
-    if (disabled) return;
-    setBusy("Checkpoint");
+    if (disabled || checkpointPending) return;
+    const request = requestCheckpoint(s.key);
+    onClose();
     try {
-      const cp = await api.checkpoint(s.key, "manual");
-      window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: s.key }));
+      const cp = await request;
       toast(checkpointNotice(cp), cp.summary_update?.state === "failed" || cp.saved === false ? "err" : "ok");
-      onClose();
-    } catch (error) { toast(`Checkpoint failed: ${(error as Error).message}`, "err"); }
-    finally { setBusy(""); }
+    } catch { toast("Checkpoint result not confirmed. Check the latest checkpoint before trying again.", "err"); }
   }
+
   const item = (label: string, action: () => void, danger = false, blocked = false) => <button role="menuitem" className={danger ? "rd-btn-danger" : ""} disabled={disabled || blocked} onClick={action}>{label}</button>;
   const canMove = resumable && splitSessionRef(s.key).host === "local" && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "");
   return <>
@@ -65,7 +66,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
       {resumable && <button role="menuitem" disabled={disabled || recoveryBlocked || identityBlocksResume(s)}
         title={identityBlocksResume(s) ? "Choose a conversation in the session’s recovery panel before resuming" : undefined}
         onClick={async () => { await resumeSession(); onClose(); }}>{resuming ? "Resuming…" : "Resume"}</button>}
-      {!archived && !ended && item(busy === "Checkpoint" ? "Capturing…" : "Checkpoint", () => void checkpoint())}
+      {!archived && !ended && item(checkpointPending ? "Updating summary…" : "Checkpoint", () => void checkpoint(), false, checkpointPending)}
       {live && (s.branch || s.runtime === "claude-code") && item("Fork", () => { onFork(s.key); onClose(); })}
       {s.parentKey && !archived && item("Merge back", () => setDialog("merge"))}
       {!archived && item("Merge with agent", () => setDialog("agent-merge"))}

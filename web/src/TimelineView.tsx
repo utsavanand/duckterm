@@ -4,6 +4,7 @@ import { splitSessionRef } from "./hostTransport";
 import { SessionView } from "./types";
 import { HistoryView } from "./HistoryView";
 import { CheckpointDetails } from "./CheckpointStatus";
+import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
 import { checkpointNotice } from "./checkpointState";
 import "./timeline.css";
 
@@ -26,7 +27,7 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [retryBusy, setRetryBusy] = useState(false);
+  const retryBusy = useCheckpointAttempt(session.key)?.state === "running";
   const [retryNotice, setRetryNotice] = useState("");
   const retryPending = useRef(new Set<string>());
   const retryGeneration = useRef(0);
@@ -38,23 +39,21 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
   const keyRef = useRef(session.key);
   keyRef.current = session.key;
   useEffect(() => {
-    setRetryNotice(""); setRetryBusy(retryPending.current.has(session.key));
+    setRetryNotice("");
     const generation = retryGeneration.current;
     return () => { retryGeneration.current = generation + 1; };
   }, [session.key]);
   async function retrySummary() {
     const key = session.key, generation = retryGeneration.current;
-    if (retryPending.current.has(key)) return;
-    retryPending.current.add(key); setRetryBusy(true); setRetryNotice("");
+    if (retryBusy || retryPending.current.has(key)) return;
+    retryPending.current.add(key); setRetryNotice("");
     try {
-      const cp = await api.checkpoint(key, "manual");
+      const cp = await requestCheckpoint(key);
       if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice(checkpointNotice(cp));
-      window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: key }));
-    } catch (cause) {
-      if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice(`Summary update failed: ${(cause as Error).message}`);
+    } catch {
+      if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice("Checkpoint result not confirmed. Check the latest checkpoint before trying again.");
     } finally {
       retryPending.current.delete(key);
-      if (keyRef.current === key) setRetryBusy(false);
     }
   }
   useEffect(() => { setFilter("all"); }, [session.key]);
