@@ -90,7 +90,7 @@ def test_backlog_is_one_bounded_update_and_failure_never_advances_coverage(memor
         assert (
             0 < first["continuity"]["summarized_records"] < first["continuity"]["available_records"]
         )
-        assert "summary_coverage_partial" in first["summary_validation"]["reason_codes"]
+        assert first["summary_validation"] == {"ready": True, "reason_codes": []}
         data = json.loads(calls[0].split("MEMORY UPDATE:\n", 1)[1])
         assert len(json.dumps(data["records"]).encode()) < memory_continuity.MAX_UPDATE_BYTES
         second = await server.progress_coordinator.refresh("agent")
@@ -239,7 +239,7 @@ def test_backfill_is_labeled_older_than_prior_summary_and_new_append(memory_rig,
     asyncio.run(run())
 
 
-def test_partial_checkpoint_reports_saved_revision_without_claiming_complete_summary(
+def test_bounded_checkpoint_reports_updated_without_claiming_complete_history(
     memory_rig, monkeypatch
 ):
     server, _, _, tmp = memory_rig
@@ -251,13 +251,14 @@ def test_partial_checkpoint_reports_saved_revision_without_claiming_complete_sum
     async def run():
         cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
         assert len(calls) == 2  # One bounded update, not an unbounded backlog loop.
-        assert cp["summary_update"]["state"] == "partial"
-        assert cp["summary_update"]["reason"] == "summary_coverage_partial"
+        assert cp["summary_update"]["state"] == "updated"
+        assert cp["summary_update"]["reason"] is None
         revision = server.digests.revision("agent", cp["summary_update"]["revision_id"])
         assert revision["id"] == cp["record"]["summary_ref"]
         assert revision["continuity"]["remaining_records"] > 0
         assert revision["continuity"]["verified"]
-        assert not cp["handoff_eligible"]
+        assert revision["continuity"]["update_complete"]
+        assert cp["handoff_eligible"]  # Still rechecked against current work before any switch.
 
     asyncio.run(run())
 
