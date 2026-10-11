@@ -18,7 +18,12 @@ MAX_FILE_BYTES = 32 * 1024 * 1024
 
 
 def excerpts(
-    path: Path, runtime: str, cwd: str, verify_digest: bool = True
+    path: Path,
+    runtime: str,
+    cwd: str,
+    verify_digest: bool = True,
+    *,
+    expected_native_id: str | None = None,
 ) -> dict[str, Any] | None:
     # Refuse symlinks at every component, including renamed roots. O_NOFOLLOW
     # closes the final-component race between the resolution and open checks.
@@ -78,7 +83,7 @@ def excerpts(
         first_lines = first_lines[:-1]
         last_lines = last_lines[1:]
     objects: list[dict[str, Any]] = []
-    for line in first_lines:
+    for line in first_lines + last_lines:
         try:
             value = json.loads(line)
             if isinstance(value, dict):
@@ -105,7 +110,33 @@ def excerpts(
 
     if not valid(native_id) or not isinstance(recorded_cwd, str):
         return None
-    if not Path(recorded_cwd).is_absolute() or str(Path(recorded_cwd).resolve()) != cwd:
+    if expected_native_id is not None and native_id != expected_native_id:
+        return None
+    if (
+        runtime == "claude-code"
+        and expected_native_id is not None
+        and not any(
+            isinstance(obj.get("message"), dict)
+            and obj["message"].get("role") in {"user", "assistant"}
+            and isinstance(obj["message"].get("content"), str | list)
+            and obj["message"]["content"]
+            for obj in objects
+        )
+    ):
+        return None
+    if not Path(recorded_cwd).is_absolute():
+        return None
+    if (
+        runtime == "claude-code"
+        and expected_native_id is not None
+        and project_slug(Path(recorded_cwd)) != path.parent.name
+    ):
+        return None
+    # Only an already-recorded exact Claude identity may cross project
+    # directories. Discovery/adoption keeps its original cwd restriction.
+    if str(Path(recorded_cwd).resolve()) != cwd and (
+        runtime != "claude-code" or expected_native_id != native_id
+    ):
         return None
 
     def prompts(lines: list[bytes]) -> list[str]:

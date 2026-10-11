@@ -4,6 +4,17 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Capture identity before building. The generated module belongs in artifacts,
+# not the source checkout; a later editable install must remain unknown.
+VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/duckterm/__init__.py)
+BUILD_STAMP=src/duckterm/_build.py
+if [ -e "$BUILD_STAMP" ] || [ -L "$BUILD_STAMP" ]; then
+  echo "Refusing to overwrite an existing build stamp: $BUILD_STAMP" >&2
+  exit 1
+fi
+"${PYTHON:-.venv/bin/python}" scripts/stamp_build.py "$VERSION"
+trap 'rm -f "$BUILD_STAMP"' EXIT
+
 echo "==> building dashboard"
 (cd web && npm ci --silent && npm run build --silent)
 

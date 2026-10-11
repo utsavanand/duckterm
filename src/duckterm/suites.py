@@ -22,7 +22,7 @@ The contract is a `duckterm-harness.json` at the suite's root:
 - `args_choices` maps a flag to its allowed values; the dashboard renders one
   picker per flag and appends `flag value` to the argv.
 - `detect` is a path (relative to an install target) whose existence proves
-  the suite is installed there — how the dashboard shows which meta-harness a
+  the skill kit is installed there — how the dashboard shows which skill kit a
   session is running under.
 - `compatible` names the agent harnesses the suite works with (registry names
   like "claude-code"); omitted means it doesn't say.

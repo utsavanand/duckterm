@@ -7,7 +7,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from duckterm import __version__
+from duckterm import __version__, build_info
 
 RELEASES = "https://github.com/utsavanand/duckterm/releases"
 REASON = "In-app installation is not available yet. Download the release to update manually."
@@ -16,6 +16,7 @@ REASON = "In-app installation is not available yet. Download the release to upda
 def status() -> dict[str, Any]:
     result: dict[str, Any] = {
         "installed_version": __version__,
+        **build_info.installed(),
         "latest_version": None,
         "release_url": RELEASES,
         "update_available": None,
@@ -56,7 +57,7 @@ def status() -> dict[str, Any]:
             release_url=RELEASES + "/tag/" + tag,
             update_available=(
                 (tuple(map(int, latest.groups())) > tuple(map(int, installed.groups())))
-                if installed
+                if installed and result["installed_is_release"] is True
                 else None
             ),
         )

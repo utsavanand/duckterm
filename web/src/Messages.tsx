@@ -7,6 +7,7 @@ import "./messageAnnotations.css";
 import { useToast } from "./ui";
 import { Message, MessagePin, PinTarget } from "./MessagePins";
 import { useSessionResource } from "./useSessionResource";
+import "./messages.css";
 
 // Structured view of an agent's latest reply (HTML-annotation mode,
 // docs/structured-render-design.md). Renders the response as HTML; select any
@@ -21,8 +22,9 @@ interface Selection {
   y: number;
 }
 
-export function Messages({ sessionKey, active = true, pins = [], pinPending = false, onTogglePin, target, onClearTarget }: {
+export function Messages({ sessionKey, sessionName = "Messages", active = true, pins = [], pinPending = false, onTogglePin, target, onClearTarget }: {
   sessionKey: string;
+  sessionName?: string;
   active?: boolean;
   pins?: MessagePin[];
   pinPending?: boolean;
@@ -68,6 +70,16 @@ export function Messages({ sessionKey, active = true, pins = [], pinPending = fa
       toast(`Send failed: ${(e as Error).message}`, "err");
     } finally {
       setSending(false);
+    }
+  }
+
+  async function copyResponse(message: Message) {
+    const text = message.blocks.filter(block => block.type === "text").map(block => block.text).join("\n\n");
+    try {
+      await navigator.clipboard.writeText(text);
+      toast("Response copied");
+    } catch {
+      toast("Could not copy. Select the response and use Copy.", "err");
     }
   }
 
@@ -206,12 +218,12 @@ export function Messages({ sessionKey, active = true, pins = [], pinPending = fa
   function navigate(index: number) {
     onClearTarget?.();
     setBack(turns.length - 1 - index);
+    wrapRef.current?.scrollTo?.({ top: 0 });
   }
 
   return (
-    <div className="rd-messages" ref={wrapRef} onMouseUp={onMouseUp}>
-      {comments}
-      {transcriptNotice}
+    <div className="rd-messages">
+      <div className="rd-message-toolbar"><strong title={sessionName}>{sessionName}</strong><span>{savedCopy ? "Saved message" : showingLatest ? "Latest exchange" : "Earlier exchange"}</span>
       {/* Step through interaction turns; ‹ goes to the previous exchange. */}
       {!savedCopy && turns.length > 1 && (
         <div className="rd-turn-nav">
@@ -234,6 +246,10 @@ export function Messages({ sessionKey, active = true, pins = [], pinPending = fa
           </button>
         </div>
       )}
+      </div>
+      <div className="rd-message-reader" ref={wrapRef} onMouseUp={onMouseUp}>
+      {comments}
+      {transcriptNotice}
       {loadError && <div role="alert">{loadError}</div>}
       {savedCopy && <div className="rd-pin-saved" role="status">
         Saved copy · The original message is no longer available in this transcript.
@@ -248,15 +264,18 @@ export function Messages({ sessionKey, active = true, pins = [], pinPending = fa
         const pinned = pins.some((p) => p.message_key === message.message_key);
         return <article key={message.message_key ?? message.id} data-message-key={message.message_key}
           className={`rd-message${target?.pin.message_key === message.message_key ? " rd-message-target" : ""}`}>
-          {onTogglePin && message.message_key && <div className="rd-message-head">
-            <span>{message.role === "user" ? "You" : "Assistant"}</span>
-            <button className="rd-btn rd-btn-sm" disabled={pinPending}
-              aria-pressed={pinned} onClick={() => onTogglePin(message)}>{pinned ? "Unpin" : "Pin"}</button>
-          </div>}
+          <div className="rd-message-head">
+            <strong>{message.role === "user" ? "You" : "Assistant"}</strong>
+            <div className="rd-message-actions">
+            {message.role === "assistant" && <button className="rd-btn rd-btn-sm" onClick={() => void copyResponse(message)}>Copy</button>}
+            {onTogglePin && message.message_key && <button className="rd-btn rd-btn-sm" disabled={pinPending}
+              aria-pressed={pinned} onClick={() => onTogglePin(message)}>{pinned ? "Unpin" : "Pin"}</button>}
+            </div>
+          </div>
           {message.blocks.map((block, i) => block.type === "tool_use"
             ? <div key={i} className="rd-message-tool">Tool: {block.name}</div>
             : message.role === "user" && block.type === "text"
-              ? <div key={i} className="rd-turn-user"><span className="rd-prompt-mark">❯</span>
+              ? <div key={i} className="rd-turn-user">
                 <AnnotatedText className="rd-turn-prompt" source={block.text} plain annotations={annotations} /></div>
               : <AnnotatedText key={i} className="rd-msg-text" source={block.text} annotations={annotations} />)}
         </article>;
@@ -264,24 +283,6 @@ export function Messages({ sessionKey, active = true, pins = [], pinPending = fa
       {latest.texts.length === 0 && (latest.prompt || latest.tools.length) && <div className="rd-msg-pending">
         {showingLatest ? "working — no reply yet" : "no reply in this turn"}
       </div>}
-      <div className="rd-followup">
-        <span className="rd-prompt-mark">❯</span>
-        <input
-          value={followUp}
-          placeholder="send a follow-up to the agent…"
-          onChange={(e) => setFollowUp(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") sendFollowUp();
-          }}
-        />
-        <button
-          className="rd-btn rd-btn-sm rd-btn-primary"
-          onClick={sendFollowUp}
-          disabled={sending || !followUp.trim()}
-        >
-          {sending ? "Sending…" : "Send"}
-        </button>
-      </div>
       {sel && (
         <div
           className="rd-annotate-pop"
@@ -310,6 +311,25 @@ export function Messages({ sessionKey, active = true, pins = [], pinPending = fa
           </div>
         </div>
       )}
+      </div>
+      <div className="rd-followup">
+        <input
+          aria-label="Follow-up message"
+          value={followUp}
+          placeholder="send a follow-up to the agent…"
+          onChange={(e) => setFollowUp(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.nativeEvent.isComposing) sendFollowUp();
+          }}
+        />
+        <button
+          className="rd-btn rd-btn-sm rd-btn-primary"
+          onClick={sendFollowUp}
+          disabled={sending || !followUp.trim()}
+        >
+          {sending ? "Sending…" : "Send"}
+        </button>
+      </div>
     </div>
   );
 }

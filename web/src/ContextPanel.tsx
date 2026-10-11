@@ -151,7 +151,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline }: {
         <div className="rd-context-tools">
           <span title="Harness">{session.runtime ?? "—"}</span>
           {session.metaHarnesses?.map((harness) => (
-            <span key={harness} className="rd-context-meta-harness" title="Meta-harness">{harness}</span>
+            <span key={harness} className="rd-context-skill-kit" title="Skill kit">{harness}</span>
           ))}
         </div>
         {session.model && (

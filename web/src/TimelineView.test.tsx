@@ -135,7 +135,7 @@ it("retries for the selected host/session once and refreshes after an overlappin
   await renderRetry(key);
   fireEvent.click(screen.getByRole("button", { name: "Retry summary update" }));
   fireEvent.click(screen.getByRole("button", { name: "Updating summary…" }));
-  expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(key, "manual");
+  await waitFor(() => expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(key, "manual"));
   expect(screen.getByRole("button", { name: "Updating summary…" })).toBeDisabled();
   const initialLoads = vi.mocked(api.timeline).mock.calls.length;
   let finishPoll!: (p: TimelinePage) => void;
@@ -155,7 +155,7 @@ it("keeps saved records and makes retry available after a transport failure", as
   vi.mocked(api.checkpoint).mockRejectedValueOnce(new Error("Disconnected"));
   await renderRetry();
   fireEvent.click(screen.getByRole("button", { name: "Retry summary update" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Summary update failed: Disconnected"));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Checkpoint result not confirmed. Check the latest checkpoint before trying again."));
   expect(screen.getByRole("button", { name: "Retry summary update" })).toBeEnabled();
   expect(screen.getByText("Manual checkpoint attempt")).toBeVisible();
   expect(api.checkpoint).toHaveBeenCalledOnce();

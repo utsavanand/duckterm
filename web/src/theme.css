@@ -979,10 +979,10 @@ code,
   font-size: 12px;
   overflow-wrap: anywhere;
 }
-.rd-context-meta-harness {
+.rd-context-skill-kit {
   color: var(--muted);
 }
-.rd-context-meta-harness::before {
+.rd-context-skill-kit::before {
   content: "·";
   margin-right: 8px;
 }

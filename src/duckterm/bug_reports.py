@@ -16,7 +16,7 @@ from email.policy import SMTP
 from pathlib import Path
 from typing import Any
 
-from duckterm import __version__
+from duckterm import __version__, build_info
 from duckterm.core import events
 from duckterm.helpers import paths
 from duckterm.persistence.history import HistoryStore
@@ -59,8 +59,13 @@ def recipient() -> str:
 
 
 def context(history: HistoryStore, session_key: str | None) -> dict[str, Any]:
+    build = build_info.installed()
+    version = (
+        f"{__version__} (commit: {build['installed_commit'] or 'unknown'}; "
+        f"describe: {build['installed_describe'] or 'unknown'})"
+    )
     items = [
-        {"id": "version", "label": "DuckTerm version", "text": __version__},
+        {"id": "version", "label": "DuckTerm version", "text": version},
         {
             "id": "schema",
             "label": "Database schema",

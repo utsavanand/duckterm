@@ -40,7 +40,7 @@ print(json.dumps({
     monkeypatch.setattr(
         memory_provider,
         "arguments",
-        lambda harness, model, path: [sys.executable, "-c", script, str(path)],
+        lambda harness, model, path, **kwargs: [sys.executable, "-c", script, str(path)],
     )
     reply = asyncio.run(
         memory_provider.generate("codex", "chosen-model", "fixture", memory_summary.SUMMARY_SCHEMA)
@@ -70,7 +70,7 @@ def test_timeout_has_specific_error_and_reaps_only_owned_process(monkeypatch):
     monkeypatch.setattr(
         memory_provider,
         "arguments",
-        lambda *args: [sys.executable, "-c", "import time; time.sleep(30)"],
+        lambda *args, **kwargs: [sys.executable, "-c", "import time; time.sleep(30)"],
     )
     with pytest.raises(APIError, match="took too long.*history batch"):
         asyncio.run(memory_provider.generate("codex", "chosen-model", "fixture"))
@@ -148,7 +148,7 @@ def test_content_repair_is_reviewed_again_and_only_then_counted(monkeypatch):
             sources,
             {"harness": "codex", "model": {"mode": "default"}},
             check=lambda: checks.append(True),
-            progress=lambda *args: progress.append(args),
+            progress=lambda *args, **kwargs: progress.append(args),
         )
     )
     assert context == corrected
@@ -193,3 +193,17 @@ def test_changed_sources_stop_before_using_repair_feedback(monkeypatch):
     with pytest.raises(APIError, match="Sources changed"):
         asyncio.run(memory_summary.prepare_group("Source", "codex", "selected", set(), changed))
     assert len(calls) == 0
+
+
+@pytest.mark.parametrize("user_settings", [False, True])
+def test_claude_runner_preserves_callers_format_and_optional_user_preferences(user_settings):
+    args = memory_provider.arguments("claude-code", "chosen-model", user_settings=user_settings)
+    instruction = args[args.index("--system-prompt") + 1]
+    assert "requested output format" in instruction
+    assert "JSON" not in instruction
+    assert args[args.index("--setting-sources") + 1] == ("user" if user_settings else "")
+    assert args[args.index("--tools") + 1] == ""
+    assert json.loads(args[args.index("--settings") + 1]) == {"disableAllHooks": True}
+    assert json.loads(args[args.index("--mcp-config") + 1]) == {"mcpServers": {}}
+    assert "--strict-mcp-config" in args and "--no-session-persistence" in args
+    assert args[args.index("--model") + 1] == "chosen-model"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -21,6 +22,7 @@ MAX_TEXT_BYTES = 64 * 1024 * 1024
 # Codex compaction metadata can exceed 8 MiB even with little parsed text.
 # Bound each JSON allocation independently of total raw/text budgets.
 MAX_LINE_BYTES = 16 * 1024 * 1024
+NORMALIZATION = "native-blocks-v2"
 
 
 def directory(key: str) -> Path:
@@ -72,6 +74,21 @@ def flatten(message: dict[str, Any]) -> str:
         elif isinstance(block.get("text"), str):
             pieces.append(block["text"])
     return "\n".join(pieces)
+
+
+def normalized(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """A native transport role can wrap both typed text and tool output."""
+    groups = [
+        {"role": role, "blocks": list(blocks)}
+        for role, blocks in itertools.groupby(
+            message.get("blocks", []),
+            key=lambda block: "tool" if block.get("type") == "tool_result" else message["role"],
+        )
+    ]
+    return [
+        {**group, "id": message["id"] if len(groups) == 1 else f"{message['id']}:{index}"}
+        for index, group in enumerate(groups)
+    ]
 
 
 def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> dict[str, Any]:
@@ -159,7 +176,9 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
                         for b in content
                     )
                 try:
-                    messages = parser([line], index)
+                    messages = [
+                        part for message in parser([line], index) for part in normalized(message)
+                    ]
                 except (ValueError, TypeError, AttributeError, KeyError) as exc:
                     raise APIError(409, "Conversation has an unreadable message record") from exc
                 for message in messages:
@@ -173,7 +192,8 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
                                 "id": str(message["id"]),
                                 "role": (
                                     "derived_context"
-                                    if text.startswith(
+                                    if message["role"] == "user"
+                                    and text.startswith(
                                         "DuckTerm continuation context (derived summary"
                                     )
                                     else message["role"]
@@ -214,6 +234,7 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
             "bytes": size,
             "unprocessed_attachments": attachments,
             "coverage": "parsed_text_and_tool_records",
+            "normalization": NORMALIZATION,
             **({"snapshot": version} if retain else {}),
         }
     except OSError as exc:

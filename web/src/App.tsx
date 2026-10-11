@@ -13,6 +13,7 @@ import { FolderView } from "./FolderView";
 import { api } from "./api";
 import { desktop, openNativeBugReport } from "./desktop";
 import { Connectors } from "./Connectors";
+import { CheckpointProgress } from "./CheckpointProgress";
 import { ContextViews } from "./ContextViews";
 import { Analytics } from "./Analytics";
 import { AnalyticsTab } from "./analyticsData";
@@ -25,7 +26,7 @@ import { DashboardMenus } from "./DashboardMenus";
 import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
 import { TimelineView } from "./TimelineView";
-import { ArtifactsView } from "./ArtifactsView";
+import { SessionFilesView } from "./SessionFilesView";
 import { InboxView } from "./InboxView";
 import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
@@ -101,6 +102,16 @@ function Dashboard() {
     window.addEventListener("select-host-session", select);
     return () => { window.removeEventListener("select-host-session", select); window.removeEventListener("native-select-session", selectNative); };
   }, [setSelectedKey]);
+  const showPanel = sidePanels.show;
+  useEffect(() => {
+    const show = (event: Event) => {
+      setSelectedKey((event as CustomEvent<string>).detail);
+      setTowerOpen(false);
+      showPanel("right");
+    };
+    window.addEventListener("duckterm-checkpoint-started", show);
+    return () => window.removeEventListener("duckterm-checkpoint-started", show);
+  }, [setSelectedKey, showPanel]);
   const messagePins = useMessagePins(selectedKey);
   const [pinTarget, setPinTarget] = useState<(PinTarget & { sessionKey: string }) | null>(null);
   const pinSequence = useRef(0);
@@ -452,7 +463,7 @@ function Dashboard() {
               select-to-annotate. */}
             {view === "messages" && selected && (
               <div className="rd-messages-wrap">
-                <Messages key={selected.key} sessionKey={selected.key} active={!towerOpen && selectedFolder === null}
+                <Messages key={selected.key} sessionKey={selected.key} sessionName={selected.label} active={!towerOpen && selectedFolder === null}
                   pins={messagePins.pins} pinPending={messagePins.pending || !!messagePins.error}
                   onTogglePin={messagePins.toggle}
                   target={pinTarget?.sessionKey === selected.key ? pinTarget : null}
@@ -474,8 +485,8 @@ function Dashboard() {
               </div>
             )}
             {view === "artifacts" && (
-              <div className="rd-messages-wrap">
-                {selected ? <ArtifactsView key={selected.key} sessionKey={selected.key} sessionName={selected.label} />
+              <div className="rd-messages-wrap rd-files-wrap">
+                {selected ? <SessionFilesView session={selected} />
                   : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
               </div>
             )}
@@ -517,6 +528,7 @@ function Dashboard() {
             <ContextViews session={<>
               {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}
                 notesOpen={notesKey === selected.key} onCloseNotes={() => setNotesKey(null)} />}
+              {selected && <CheckpointProgress sessionKey={selected.key} />}
               {selected && <LiveContextPanel session={selected} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">

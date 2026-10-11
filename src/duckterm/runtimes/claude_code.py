@@ -18,6 +18,7 @@ every other runtime path stays generic.
 """
 
 import json
+import os
 import re
 import shlex
 from collections.abc import Iterable
@@ -26,6 +27,38 @@ from pathlib import Path
 from duckterm.agents.hooks_install import claude_style_build, claude_style_strip
 from duckterm.runtimes.base import Harness, HookSpec, SessionState, prompt_line_rest
 from duckterm.runtimes.message_cache import MessageCache, unavailable_response
+
+MAX_PROJECT_DIRECTORIES = 2000
+
+
+def relocated_transcript(cwd: Path, session_id: str) -> Path | None:
+    """Find one exact ID outside its current project; never choose by recency."""
+    from duckterm.conversation_files import excerpts
+
+    root = Path.home() / ".claude" / "projects"
+    try:
+        if root.resolve() != root.absolute():
+            return None
+        found: Path | None = None
+        with os.scandir(root) as entries:
+            for count, entry in enumerate(entries, 1):
+                if count > MAX_PROJECT_DIRECTORIES:
+                    return None  # An incomplete search cannot prove uniqueness.
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                candidate = Path(entry.path) / f"{session_id}.jsonl"
+                if not candidate.is_file():
+                    continue
+                if found is not None:
+                    return None
+                found = candidate
+        if found and excerpts(
+            found, "claude-code", str(cwd.resolve()), False, expected_native_id=session_id
+        ):
+            return found
+    except OSError:
+        pass
+    return None
 
 
 def project_slug(cwd: Path) -> str:
@@ -76,9 +109,11 @@ class ClaudeCodeRuntime(Harness):
         return prompt_line_rest(screen, "❯", ignore_dim=True) == ""
 
     def locate_transcript(self, *, cwd: Path, session_id: str) -> Path | None:
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", session_id):
+            return None
         slug = project_slug(cwd)
         path = Path.home() / ".claude" / "projects" / slug / f"{session_id}.jsonl"
-        return path if path.exists() else None
+        return path if path.is_file() else relocated_transcript(cwd, session_id)
 
     def latest_transcript(self, *, cwd: Path) -> Path | None:
         """Newest transcript for directory-level discovery, never session identity."""

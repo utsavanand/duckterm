@@ -13,19 +13,19 @@ vi.mock("./desktop", () => ({ desktop: () => ({ currentTarget: "local" }), desti
 vi.mock("./RestartControls", () => ({ RestartControls: () => null }));
 vi.mock("./ForkMergeDialog", () => ({ ForkMergeDialog: () => null }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.restoreAllMocks(); });
-it("checkpoint reports failure without closing the menu, then reports incomplete export honestly", async () => {
+it("checkpoint closes the menu immediately and reports an uncertain transport result honestly", async () => {
   const close = vi.fn();
   const s = { key: "remote:build:one", label: "QA", state: "busy", startedAt: 1, runtime: "generic" } as SessionView;
   render(<SessionActions session={s} anchor={{ key: s.key, x: 10, y: 10, trigger: document.body }} onClose={close} onFork={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} onNotes={vi.fn()} />);
   vi.mocked(api.checkpoint).mockRejectedValueOnce(new Error("offline"));
   await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Checkpoint" })); });
   expect(api.checkpoint).toHaveBeenCalledWith(s.key, "manual");
-  expect(toast).toHaveBeenLastCalledWith("Checkpoint failed: offline", "err");
-  expect(close).not.toHaveBeenCalled();
+  expect(toast).toHaveBeenLastCalledWith("Checkpoint result not confirmed. Check the latest checkpoint before trying again.", "err");
+  expect(close).toHaveBeenCalledOnce();
   vi.mocked(api.checkpoint).mockResolvedValueOnce({ id: "cp", label: "manual", created_at: 1, summary: "", saved: true, summary_state: "unavailable", export_reason: "markdown_unavailable", record: { prompts: [], files: [], tools: [], event_count: 0 } });
   await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Checkpoint" })); });
   expect(toast).toHaveBeenLastCalledWith("Summary unavailable · Markdown export unavailable", "ok");
-  expect(close).toHaveBeenCalledOnce();
+  expect(close).toHaveBeenCalledTimes(2);
 });
 
 it("blocks local continuation while conversation Undo is unresolved, including after reopening the menu", async () => {

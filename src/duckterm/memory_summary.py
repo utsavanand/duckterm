@@ -112,33 +112,50 @@ def bundle(pieces: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     return groups
 
 
+class InvalidContext(APIError):
+    """Fixed diagnostic codes only; never persist rejected provider text."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(503, "Preparation returned an invalid or oversized continuation summary")
+
+
 def parse(text: str, valid_refs: set[str]) -> dict[str, Any]:
     try:
         value = json.loads(text)
-        if set(value) != {"overview", *FIELDS}:
-            raise ValueError
-        if not isinstance(value["overview"], str) or not value["overview"].strip():
-            raise ValueError
-        if len(value["overview"].encode()) > 800:
-            raise ValueError
-        for name in FIELDS:
-            if not isinstance(value[name], list) or len(value[name]) > 60:
-                raise ValueError
-            for item in value[name]:
-                if set(item) != {"text", "refs"} or not isinstance(item["text"], str):
-                    raise ValueError
-                if not item["text"].strip() or len(item["text"].encode()) > 2000:
-                    raise ValueError
-                refs = item["refs"]
-                if not isinstance(refs, list) or not refs or any(r not in valid_refs for r in refs):
-                    raise ValueError
-        if len(json.dumps(value, ensure_ascii=False).encode()) > MAX_SUMMARY_BYTES:
-            raise ValueError
-        return cast(dict[str, Any], value)
-    except (ValueError, TypeError, KeyError) as exc:
-        raise APIError(
-            503, "Preparation returned an invalid or oversized continuation summary"
-        ) from exc
+    except (ValueError, TypeError) as exc:
+        raise InvalidContext("invalid_json") from exc
+    if not isinstance(value, dict) or set(value) != {"overview", *FIELDS}:
+        raise InvalidContext("invalid_fields")
+    try:
+        context_bytes = len(json.dumps(value, ensure_ascii=False).encode())
+    except UnicodeError as exc:
+        raise InvalidContext("invalid_unicode") from exc
+    if not isinstance(value["overview"], str) or not value["overview"].strip():
+        raise InvalidContext("invalid_overview")
+    if len(value["overview"].encode()) > 800:
+        raise InvalidContext("overview_too_large")
+    for name in FIELDS:
+        if not isinstance(value[name], list) or len(value[name]) > 60:
+            raise InvalidContext("invalid_claims")
+        for item in value[name]:
+            if (
+                not isinstance(item, dict)
+                or set(item) != {"text", "refs"}
+                or not isinstance(item["text"], str)
+                or not item["text"].strip()
+            ):
+                raise InvalidContext("invalid_claim")
+            if len(item["text"].encode()) > 2000:
+                raise InvalidContext("claim_too_large")
+            refs = item["refs"]
+            if not isinstance(refs, list) or not refs or any(not isinstance(r, str) for r in refs):
+                raise InvalidContext("invalid_references")
+            if any(r not in valid_refs for r in refs):
+                raise InvalidContext("unknown_reference")
+    if context_bytes > MAX_SUMMARY_BYTES:
+        raise InvalidContext("context_too_large")
+    return cast(dict[str, Any], value)
 
 
 async def summarize(

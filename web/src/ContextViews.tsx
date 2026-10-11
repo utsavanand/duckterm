@@ -11,7 +11,11 @@ export function ContextViews({ session, connectors }: { session: ReactNode; conn
   });
   useEffect(() => {
     const show = () => setView("session"); window.addEventListener("show-session-notes", show);
-    return () => window.removeEventListener("show-session-notes", show);
+    window.addEventListener("duckterm-checkpoint-started", show);
+    return () => {
+      window.removeEventListener("show-session-notes", show);
+      window.removeEventListener("duckterm-checkpoint-started", show);
+    };
   }, []);
   const tabs = useRef<(HTMLButtonElement | null)[]>([]);
   useEffect(() => {

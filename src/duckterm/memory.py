@@ -384,8 +384,18 @@ class Memory:
                         return memory_index.query(path, sources, text, limit)
 
                 matches = await asyncio.to_thread(search)
+                identities = {(m["source_id"], m["version"], m["record_id"]) for m in matches}
+                roles = {
+                    (s["id"], s["version"], r["id"]): r["role"]
+                    for s in sources
+                    for r in s["records"]
+                    if (s["id"], s["version"], r["id"]) in identities
+                }
                 for found in matches:
                     found["source"] = found["source_id"] + ":" + found["version"]
+                    found["role"] = roles[
+                        (found["source_id"], found["version"], found["record_id"])
+                    ]
                 result["results"] = matches
             elif action == "related":
                 handle = query.get("source", [""])[0]
@@ -420,7 +430,19 @@ class Memory:
                 record_id = query.get("record", [""])[0]
                 records = source["records"]
                 if record_id:
-                    records = [r for r in records if r["id"] == record_id]
+                    # Old locators addressed a whole native line. A mixed line
+                    # now has typed groups; reading its old ID still returns
+                    # all groups with their roles, without duplicating evidence.
+                    records = [
+                        r
+                        for r in records
+                        if r["id"] == record_id
+                        or (
+                            source["kind"] == "conversation"
+                            and record_id.isdecimal()
+                            and r["id"].startswith(record_id + ":")
+                        )
+                    ]
                     if not records:
                         raise APIError(404, "Memory record is unavailable")
                 text = "\n\n".join(str(r["role"]) + ": " + r["text"] for r in records)

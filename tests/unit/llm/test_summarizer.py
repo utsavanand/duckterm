@@ -142,3 +142,73 @@ def test_http_failure_category_excludes_raw_output(clean_env, monkeypatch, failu
     result = s.summarize("x")
     assert result.failure_reason == reason
     assert result.text == ""
+
+
+@pytest.mark.parametrize("binary,harness", [("claude", "claude-code")])
+def test_auto_summary_uses_bounded_isolated_runner(clean_env, monkeypatch, binary, harness):
+    from duckterm import memory_provider
+    from duckterm.llm import summarizer
+
+    monkeypatch.setattr(
+        summarizer.shutil, "which", lambda b: "/fixture/" + b if b == binary else None
+    )
+
+    def legacy(*args):
+        raise AssertionError("Unisolated CLI runner must not be used")
+
+    monkeypatch.setattr(summarizer, "_cli_summary", legacy)
+    calls = []
+
+    async def generate(selected, model, prompt, **options):
+        calls.append((selected, model, prompt))
+        assert options == {"user_settings": True}
+        return "Prepared summary"
+
+    monkeypatch.setattr(memory_provider, "generate", generate)
+    result = summarizer.summarize("Original evidence", claude_model="selected-model")
+    assert result.text == "Prepared summary" and result.backend == "cli"
+    assert calls == [(harness, "selected-model" if binary == "claude" else "", "Original evidence")]
+
+
+@pytest.mark.parametrize("timed_out", [True, False])
+def test_auto_summary_runner_failure_stays_explicit(clean_env, monkeypatch, timed_out):
+    from duckterm import memory_provider
+    from duckterm.core.session_api import APIError
+    from duckterm.llm import summarizer
+
+    monkeypatch.setattr(
+        summarizer.shutil, "which", lambda b: "/fixture/claude" if b == "claude" else None
+    )
+
+    def legacy(*args):
+        raise AssertionError("Unisolated CLI runner must not be used")
+
+    monkeypatch.setattr(summarizer, "_cli_summary", legacy)
+
+    async def generate(*args, **kwargs):
+        raise (
+            memory_provider.BatchTimeout() if timed_out else APIError(503, "private provider data")
+        )
+
+    monkeypatch.setattr(memory_provider, "generate", generate)
+    result = summarizer.summarize("Original evidence")
+    assert result.text == "" and result.backend == "none"
+    assert result.failure_reason == ("provider_timeout" if timed_out else "provider_failed")
+
+
+def test_auto_codex_keeps_existing_user_configuration_path(clean_env, monkeypatch):
+    from duckterm.llm import summarizer
+
+    monkeypatch.setattr(
+        summarizer.shutil, "which", lambda b: "/fixture/codex" if b == "codex" else None
+    )
+    calls = []
+
+    def cli(command, prompt):
+        calls.append((command, prompt))
+        return summarizer.Summary("Default Codex result", "cli")
+
+    monkeypatch.setattr(summarizer, "_cli_summary", cli)
+    result = summarizer.summarize("fixture", claude_model="claude-only-model")
+    assert result.text == "Default Codex result"
+    assert calls == [("codex exec -", "fixture")]

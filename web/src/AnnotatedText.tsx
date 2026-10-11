@@ -3,7 +3,20 @@ import { Annotation, clearHighlights, highlightAnnotations } from "./annotationH
 import { html } from "./render";
 
 export function messageMarkup(source: string, plain = false) {
-  return plain ? source.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;") : html(source);
+  if (plain) return source.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const content = document.createElement("div");
+  content.innerHTML = html(source);
+  // Wrap sanitized tables without changing their semantics or annotated text.
+  // Only the table scrolls when a pane is too narrow for its columns.
+  for (const table of content.querySelectorAll("table")) {
+    const viewport = document.createElement("div");
+    viewport.className = "rd-message-table";
+    viewport.tabIndex = 0;
+    viewport.setAttribute("role", "region");
+    viewport.setAttribute("aria-label", "Message table, scroll horizontally for more columns");
+    table.replaceWith(viewport); viewport.append(table);
+  }
+  return content.innerHTML;
 }
 
 export function AnnotatedText({ source, plain = false, annotations, className }: {

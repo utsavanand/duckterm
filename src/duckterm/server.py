@@ -663,6 +663,21 @@ class Server:
                 writer, headers, urllib.parse.unquote(folder_view[1]), folder_view[2]
             )
             return
+        file_url = urllib.parse.urlsplit(path)
+        file_match = re.fullmatch(r"/sessions/([^/]+)/(files|file-content)", file_url.path)
+        if file_match:
+            from duckterm.session_files import handle as files_handle
+
+            await files_handle(
+                self,
+                writer,
+                headers,
+                urllib.parse.unquote(file_match[1]),
+                method,
+                file_match[2],
+                urllib.parse.parse_qs(file_url.query, keep_blank_values=True),
+            )
+            return
         artifact_match = re.fullmatch(
             r"/sessions/([A-Za-z0-9._-]+)/artifacts(?:/([a-f0-9]{32}))?", path
         )
@@ -1713,8 +1728,8 @@ class Server:
         return stats
 
     def _suites_for(self, directory: object) -> list[str]:
-        """Which installed harness suites (meta-harnesses, e.g. uv-suite) a
-        session runs under: each registered suite with a `detect` marker is
+        """Which installed skill kits (e.g. uv-suite) a
+        session loads: each registered skill kit with a `detect` marker is
         checked in the session's own folder, then globally (~/.claude)."""
         out: list[str] = []
         for row in self.history.harnesses():
@@ -2459,6 +2474,11 @@ class Server:
                     "code": "ambiguous_resume_identity",
                 }
         argv, carried = self._resume_argv(session_key, runtime, row)
+        if (exact or runtime == "claude-code") and not carried:
+            return 409, {
+                "error": "Cannot verify the exact conversation to restart",
+                "code": "ambiguous_resume_identity",
+            }
         # Report honestly whether the conversation is carried, so the UI can
         # warn — before this, resume always claimed success even when it
         # silently dropped all prior context. When it can't be carried, a
@@ -3985,8 +4005,15 @@ class Server:
         # Inline, NOT in a thread. HistoryStore shares one sqlite connection
         # opened with check_same_thread=False and no lock, so every other
         # caller reaches it from this thread; reading it from a worker raced
-        # the write paths and corrupted cursor state. This is a bounded
-        # indexed read, unlike the CLI probes above that earn their thread.
+        # the write paths and corrupted cursor state.
+        #
+        # It is not cheap: a full scan of events that json_extracts every
+        # PreToolUse row — ~40ms over 27k such rows, and it grows with the
+        # table. An index on event_type does not help, because the cost is the
+        # JSON parsing rather than the scan. So this blocks the loop briefly on
+        # each panel load, which is the lesser evil only until the connection
+        # is safe to use off-thread; main-dev's single-owner-thread work is
+        # what lets this move back off the loop.
         used = self.history.connector_last_used()
         for row in statuses:
             recorded = used.get(str(row["name"]))

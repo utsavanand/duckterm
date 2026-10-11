@@ -1,0 +1,10 @@
+.rd-checkpoint-progress { margin: 18px; padding: 13px 0; border-block: 1px solid var(--border); }
+.rd-checkpoint-progress-title { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+.rd-checkpoint-progress-title strong { font-weight: 500; overflow-wrap: anywhere; }
+.rd-checkpoint-progress-title time { color: var(--muted); font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.rd-checkpoint-progress-track { height: 3px; background: var(--border); overflow: hidden; margin: 12px 0; }
+.rd-checkpoint-progress-track span { display: block; background: var(--text-soft); width: 35%; height: 100%; animation: rd-checkpoint-running 1.6s ease-in-out infinite; }
+.rd-checkpoint-progress p { font-size: 12px; color: var(--text-soft); line-height: 1.6; margin: 8px 0 0; }
+.rd-checkpoint-progress-failure .rd-checkpoint-progress-title { color: var(--amber-text); }
+@keyframes rd-checkpoint-running { from { transform: translateX(-100%); } to { transform: translateX(390%); } }
+@media (prefers-reduced-motion: reduce) { .rd-checkpoint-progress-track span { animation: none; margin-left: 30%; } }
