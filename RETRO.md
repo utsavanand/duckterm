@@ -1,5 +1,21 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Owner Stop must fence a late native launch result
+
+Generation checks alone do not cancel a launch whose owner has stopped,
+archived or merged its card. Check that durable lifecycle state before every
+new native write claim and before accepting a returned result. An uncertain
+prompt stays claimed after Stop; a late receipt cannot make it ready again.
+
+## 2026-10-11 — Environment secrets must not become tmux command arguments
+
+Passing a native endpoint password through tmux's `-e` option puts the value in
+the tmux client's command line. Native preparation now exports its environment
+from the existing mode-0600, one-use launch script instead. Values stay literal
+and the child unlinks the script before executing the agent. QA also restarts
+its entire probe with an allowlisted environment so the supervisor's tmux
+server and version preflight cannot inherit provider or SSH-agent credentials.
+
 ## 2026-10-11 — Native history refreshes need a durable ordering barrier
 
 A canceled native read can finish after a new server has already refreshed

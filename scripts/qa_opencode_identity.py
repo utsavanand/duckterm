@@ -25,6 +25,16 @@ import time
 import urllib.request
 from types import SimpleNamespace
 
+# Every fixture subprocess, including the supervisor's tmux server and version
+# preflight, starts without inherited provider credentials or SSH-agent access.
+if os.environ.get("DUCKTERM_OPENCODE_QA_CLEAN") != "1":
+    clean = {
+        "PATH": "/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "en_US.UTF-8",
+        "DUCKTERM_OPENCODE_QA_CLEAN": "1",
+    }
+    raise SystemExit(subprocess.run([sys.executable, *sys.argv], env=clean).returncode)
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "src"))
 from duckterm.persistence import opencode_launch as journal  # noqa: E402
 from duckterm.persistence.history import HistoryStore  # noqa: E402

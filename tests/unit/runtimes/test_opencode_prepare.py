@@ -17,9 +17,13 @@ def fixture(tmp_path):
     path = tmp_path / "launch.sqlite"
     conn = sqlite3.connect(path)
     conn.execute(
-        "CREATE TABLE sessions (session_key TEXT PRIMARY KEY, runtime TEXT, restart_json TEXT)"
+        "CREATE TABLE sessions (session_key TEXT PRIMARY KEY, runtime TEXT, restart_json TEXT, "
+        "state TEXT DEFAULT 'busy')"
     )
-    conn.execute("INSERT INTO sessions VALUES ('fixture', 'opencode', '{}')")
+    conn.execute(
+        "INSERT INTO sessions(session_key,runtime,restart_json) "
+        "VALUES ('fixture', 'opencode', '{}')"
+    )
     conn.commit()
     state = journal.begin(
         conn,

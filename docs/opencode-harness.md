@@ -152,6 +152,14 @@ additional regression is now included with the preparation tests. Supervisor,
 observer and history integration still require independent integrated review
 and a fresh full gate before activation.
 
+The integration gate completed successfully on October 11. Follow-up native
+launch hardening moves sensitive environment values out of tmux command
+arguments into its private one-use script, and the entire QA probe now starts
+with an allowlisted environment. Both `--prepare --supervisor` pass together
+under that clean environment. Owner Stop/Archive/Merge now fence late journal
+results as well as new claims. These follow-ups and main integration need their
+own final gate; no release-readiness claim follows from the earlier gate.
+
 The form was inspected in light/dark themes and at desktop/narrow widths.
 Dark form labels now use the existing theme text color. Screenshots are saved
 as artifacts `926b65bb3454448c87164791561c24ae` (desktop) and

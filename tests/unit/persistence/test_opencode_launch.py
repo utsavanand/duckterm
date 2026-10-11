@@ -15,10 +15,11 @@ def db(tmp_path):
     path = tmp_path / "fixture.sqlite"
     conn = sqlite3.connect(path)
     conn.execute(
-        "CREATE TABLE sessions (session_key TEXT PRIMARY KEY, runtime TEXT, restart_json TEXT)"
+        "CREATE TABLE sessions (session_key TEXT PRIMARY KEY, runtime TEXT, restart_json TEXT, "
+        "state TEXT DEFAULT 'busy')"
     )
     conn.execute(
-        "INSERT INTO sessions VALUES ('fixture', 'opencode', ?)",
+        "INSERT INTO sessions(session_key,runtime,restart_json) VALUES ('fixture', 'opencode', ?)",
         (json.dumps({"unrelated": {"keep": True}}),),
     )
     conn.commit()
@@ -211,7 +212,7 @@ def test_duplicate_binding_is_scoped_to_destination_and_store(db, tmp_path):
     journal.claim_create(conn, "fixture", state.generation)
     binding = {"native_id": "ses_owned", "destination": state.destination, "store": state.store}
     conn.execute(
-        "INSERT INTO sessions VALUES ('other', 'opencode', ?)",
+        "INSERT INTO sessions(session_key,runtime,restart_json) VALUES ('other', 'opencode', ?)",
         (json.dumps({"native_binding": binding}),),
     )
     conn.commit()
@@ -253,3 +254,17 @@ def test_changed_binding_or_harness_rejects_delayed_result(db, tmp_path):
     conn.commit()
     with pytest.raises(OpenCodeError, match="no longer owns"):
         journal.claim_select(conn, "fixture", state.generation)
+
+
+@pytest.mark.parametrize("state", ["stopped", "archived", "merged"])
+def test_owner_stop_fences_claims_and_late_native_receipts(db, tmp_path, state):
+    conn, _ = db
+    launch = bind(conn, start(db, tmp_path))
+    journal.claim_select(conn, "fixture", launch.generation)
+    launch = journal.claim_prompt(conn, "fixture", launch.generation, selected(launch))
+    conn.execute("UPDATE sessions SET state=?", (state,))
+    conn.commit()
+    with pytest.raises(OpenCodeError, match="owner stopped or archived"):
+        journal.reconcile_prompt(conn, "fixture", launch.generation, receipt(launch))
+    control = json.loads(conn.execute("SELECT restart_json FROM sessions").fetchone()[0])
+    assert control["opencode_launch"]["phase"] == "submitting"

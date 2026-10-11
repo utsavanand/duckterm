@@ -9,6 +9,7 @@ Ported from uv-suite's watchtower tmux service. All calls are synchronous
 subprocess; drive them from async code via asyncio.to_thread.
 """
 
+import re
 import shlex
 import shutil
 import subprocess
@@ -124,7 +125,13 @@ def spawn(
 
 
 def spawn_piped(
-    session_id: str, command: str, cwd: str, pipe_path: str, env: dict[str, str] | None = None
+    session_id: str,
+    command: str,
+    cwd: str,
+    pipe_path: str,
+    env: dict[str, str] | None = None,
+    *,
+    private_env: bool = False,
 ) -> str:
     """Spawn a detached session and stream its pane output to `pipe_path` from
     the start, so live output isn't missed. Returns the tmux target."""
@@ -140,8 +147,15 @@ def spawn_piped(
     guarded = wait + " && exec " + shlex.join(["/bin/sh", str(script)])
     target = None
     try:
-        private_write(script, f"/bin/rm -f -- {shlex.quote(str(script))}\n{command}\n")
-        target = spawn(session_id, guarded, cwd, env)
+        exports = ""
+        if private_env:
+            if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) for key in (env or {})):
+                raise ValueError("Invalid private launch environment name")
+            exports = "".join(
+                f"export {key}={shlex.quote(value)}\n" for key, value in (env or {}).items()
+            )
+        private_write(script, f"/bin/rm -f -- {shlex.quote(str(script))}\n{exports}{command}\n")
+        target = spawn(session_id, guarded, cwd, None if private_env else env)
         ok, error = _tmux(
             "pipe-pane",
             "-t",

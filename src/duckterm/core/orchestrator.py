@@ -254,6 +254,7 @@ class SessionSupervisor:
             self.cwd,
             self._pipe_path,
             env={"DUCKTERM_SESSION_KEY": self.session_key, **self._env},
+            **({"private_env": True} if self._preparation is not None else {}),
         )
         self._task = asyncio.create_task(self._tail_pipe())
 

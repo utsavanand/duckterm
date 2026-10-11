@@ -95,10 +95,12 @@ class Launch:
 
 def _control(conn: sqlite3.Connection, key: str) -> dict[str, Any]:
     row = conn.execute(
-        "SELECT runtime, restart_json FROM sessions WHERE session_key=?", (key,)
+        "SELECT runtime, restart_json, state FROM sessions WHERE session_key=?", (key,)
     ).fetchone()
     if row is None or row[0] != "opencode":
         raise OpenCodeError("OpenCode launch no longer owns this card")
+    if row[2] in ("stopped", "archived", "merged"):
+        raise OpenCodeError("The owner stopped or archived this native launch")
     try:
         control = json.loads(row[1] or "{}")
     except ValueError as exc:
