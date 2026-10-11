@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Rename a badge selector with its rendered class
+
+Terminology changes can affect styling when a retired term is also a CSS
+selector. Change JSX className and both base/pseudo-element selectors together;
+preserve wire fields and verify the style declarations remain identical.
+
 ## 2026-10-10 — A version number does not identify the installed build
 
 An unreleased branch used the same version as a later release, so numeric comparison alone could report it up to date. Stamp the exact commit, Git description, branch, dirty state and main containment into a generated package module before the build. Only a clean commit at the matching version tag, contained in the recorded main ref, can be classified as released; missing or unverifiable metadata remains unknown. Keep the version sed-readable and never import the source package to obtain it. Remove the generated stamp from the checkout after packaging so an editable install does not inherit stale identity.

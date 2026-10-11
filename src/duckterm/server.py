@@ -1685,8 +1685,8 @@ class Server:
         return stats
 
     def _suites_for(self, directory: object) -> list[str]:
-        """Which installed harness suites (meta-harnesses, e.g. uv-suite) a
-        session runs under: each registered suite with a `detect` marker is
+        """Which installed skill kits (e.g. uv-suite) a
+        session loads: each registered skill kit with a `detect` marker is
         checked in the session's own folder, then globally (~/.claude)."""
         out: list[str] = []
         for row in self.history.harnesses():
