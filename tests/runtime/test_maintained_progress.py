@@ -5,6 +5,7 @@ import json
 import threading
 from types import SimpleNamespace
 
+import pytest
 from test_memory import memory_rig, transcript
 
 from duckterm import memory_continuity, memory_summary
@@ -308,19 +309,107 @@ def test_manual_checkpoint_shares_automatic_failure_without_a_second_attempt(
     asyncio.run(run())
 
 
-def test_oversized_current_work_preserves_revision_without_provider_call(memory_rig, monkeypatch):
+def test_large_notes_are_processed_once_instead_of_rejected_by_duplicate_budget(
+    memory_rig, monkeypatch
+):
     server, _, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Keep the current owner constraint")
     calls = provider(monkeypatch)
 
     async def run():
         first = await server.progress_coordinator.refresh("agent")
-        cached = server.history.session("agent")["progress"]
         server.history.set_meta("agent", notes="🔒" * 6500)
         outcome = await server.progress_coordinator.refresh_result("agent")
-        assert outcome.state == "failed" and outcome.reason == "invalid_context"
-        assert len(calls) == 2
-        assert server.history.session("agent")["progress"] == cached
+        assert outcome.state == "updated"
+        assert len(calls) == 4
+        assert calls[2].count("🔒" * 6500) == 1
         assert server.digests.revision("agent", first["id"])["continuity"] == first["continuity"]
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("task_count,mail_size", [(45, 0), (1, 13000), (45, 13000)])
+def test_checkpoint_with_large_task_and_mail_inputs(memory_rig, monkeypatch, task_count, mail_size):
+    from test_session_api import call
+
+    server, _, peer, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Continue assigned work without losing owner decisions")
+    calls = provider(monkeypatch)
+    for n in range(task_count):
+        server.history.folder_tasks.start("Tests", "agent", f"Task {n}: " + "t" * 230)
+    call(
+        server.history,
+        {**peer, "idempotency-key": "large-mail"},
+        "POST",
+        "/questions",
+        {
+            "target_session_id": "agent",
+            "question": "Assignment: " + "m" * mail_size,
+        },
+    )
+
+    async def run():
+        captured = await server.progress_coordinator.capture("agent")
+        assert len(captured["required"]) > 12000
+        cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
+        assert cp["summary_update"]["state"] in {"updated", "partial"}
+        revision = server.digests.revision("agent", cp["record"]["summary_ref"])
+        if cp["summary_update"]["state"] == "partial":
+            assert revision["continuity"]["pending_updates"]
+            assert not revision["summary_validation"]["ready"]
+            cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
+            revision = server.digests.revision("agent", cp["record"]["summary_ref"])
+        assert cp["summary_update"]["state"] == "updated"
+        stats = revision["continuity"]["required_work"]["kinds"]
+        assert stats["task"]["available"] == task_count
+        assert stats["inbox"]["available"] == 1
+        assert all(stat["pending"] == 0 for stat in stats.values())
+        for prompt in calls[::2]:
+            data = json.loads(prompt.split("MEMORY UPDATE:\n", 1)[1])
+            assert len(json.dumps(data["records"]).encode()) < memory_continuity.MAX_UPDATE_BYTES
+            if mail_size:
+                assert prompt.count("m" * mail_size) <= 1
+        assert len(server.history.folder_tasks.list_tasks()) == task_count
+        cached = server.history.session("agent")["progress"]
+        server.history.set_meta("agent", notes="A new owner note")
+        monkeypatch.setattr(
+            "duckterm.server.summarize", lambda _: Summary("", "none", "provider_timeout")
+        )
+        failed = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
+        assert failed["summary_update"]["state"] == "failed"
+        assert failed["summary_update"]["revision_id"] is None
+        assert failed["record"]["summary_ref"] == revision["id"]
+        assert server.history.session("agent")["progress"] == cached
+
+    asyncio.run(run())
+
+
+def test_new_oversized_mail_cannot_reuse_a_previously_ready_revision(memory_rig, monkeypatch):
+    from test_session_api import call
+
+    server, _, peer, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Original owner instruction")
+    provider(monkeypatch)
+
+    async def run():
+        first = await server.progress_coordinator.refresh_result("agent")
+        assert first.state == "updated"
+        # API-valid input expands beyond the serialized source-record budget.
+        call(
+            server.history,
+            {**peer, "idempotency-key": "escaped-mail"},
+            "POST",
+            "/questions",
+            {
+                "target_session_id": "agent",
+                "question": "\x01" * 10000,
+            },
+        )
+        second = await server.progress_coordinator.refresh_result("agent")
+        assert second.state == "partial"
+        assert second.revision["id"] != first.revision["id"]
+        assert second.revision["continuity"]["pending_updates"]
+        assert second.revision["continuity"]["gaps"]
+        assert not second.revision["summary_validation"]["ready"]
 
     asyncio.run(run())

@@ -88,20 +88,40 @@ def test_required_tasks_and_mail_stay_citable_with_large_conversation_backlog():
     captured = required_fixture()
     plan = memory_continuity.plan(captured, None)
     assert {r["source"] for r in plan["selected"]} == {"conversation", "task-source", "mail-source"}
-    text = memory_continuity.prompt(plan, captured["required"])
+    text = memory_continuity.prompt(plan)
     current = json.loads(
-        text.split("CURRENT REQUIRED WORK:\n", 1)[1].split("\nMEMORY UPDATE:", 1)[0]
+        text.split("CURRENT REQUIRED WORK COVERAGE:\n", 1)[1].split("\nMEMORY UPDATE:", 1)[0]
     )
-    assert current["tasks"][0]["memory_ref"] == "task-source:v1:0"
-    assert current["mail"][0]["memory_ref"] == "mail-source:v1:0"
+    assert current["kinds"]["task"] == {"available": 1, "included": 1, "pending": 0}
+    assert current["kinds"]["inbox"] == {"available": 1, "included": 1, "pending": 0}
+    assert text.count("t" * 2000) == text.count("m" * 2000) == 1
     data = json.loads(text.split("MEMORY UPDATE:\n", 1)[1])
     assert len(json.dumps(data["records"]).encode()) < memory_continuity.MAX_UPDATE_BYTES
-    context = memory_continuity.context(
-        response([current["tasks"][0]["memory_ref"], current["mail"][0]["memory_ref"]]), plan
-    )
+    context = memory_continuity.context(response(["task-source:v1:0", "mail-source:v1:0"]), plan)
     assert context["constraints"][0]["refs"] == ["task-source:v1:0", "mail-source:v1:0"]
 
 
-def test_oversized_required_work_fails_instead_of_losing_its_evidence():
-    with pytest.raises(APIError, match="Current work exceeds"):
-        memory_continuity.plan(required_fixture(26000), None)
+def test_required_backlog_advances_without_reprocessing_the_same_large_task():
+    captured = required_fixture(26000)
+    first = memory_continuity.plan(captured, None)
+    assert first["required_work"]["kinds"]["inbox"]["pending"] == 1
+    context = json.loads(response(["task-source:v1:0"]))["context"]
+    result = memory_continuity.result(first, context, [])
+    assert not result["update_complete"]
+    assert result["pending_updates"]["mail-source"]
+    prior = {"continuity": result, "policy": "test", "source": captured["source"]}
+    second = memory_continuity.plan(captured, prior)
+    assert "mail-source" in {r["source"] for r in second["selected"]}
+    complete = memory_continuity.result(second, context, [])
+    assert not complete["pending_updates"]
+    assert complete["update_complete"]
+    assert complete["remaining_records"] > 0  # Old conversation remains separate.
+
+
+def test_indivisible_oversized_current_record_stays_pending_with_readable_gap():
+    plan = memory_continuity.plan(required_fixture(50000), None)
+    result = memory_continuity.result(plan, {}, [])
+    assert not result["update_complete"]
+    assert set(result["pending_updates"]) == {"mail-source", "task-source"}
+    assert len(result["gaps"]) == 2
+    assert all("original remains readable" in gap["reason"] for gap in result["gaps"])
