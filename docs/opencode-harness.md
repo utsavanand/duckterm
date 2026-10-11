@@ -186,3 +186,8 @@ configuration without starting inference. Runtime registration remains a
 separate activation requirement. The support contract separates Messages from
 unsupported aggregate usage. The additional recovery display still awaits
 owner approval; no runtime activation or release has occurred.
+
+OpenCode now receives the credential-free collaboration guide through the
+verified initial prompt, preserving the literal owner task. This is distinct
+from later terminal injection, which remains disabled. Native acceptance
+asserts that the saved initial prompt points to the generated private guide.

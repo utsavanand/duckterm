@@ -388,6 +388,14 @@ def verify_supervisor():
             assert not sup._preparing and sup.running
             state = history.restart_control(key)["opencode_launch"]
             assert state["phase"] == "ready"
+            assert state["prompt"].startswith("Duckterm session capability:")
+            assert state["prompt"].endswith("User's task:\nReturn a short fixture response.")
+            guide = next(
+                (history.session_api.credential_dir.parent / "session-instructions").glob(
+                    "*/collaboration.md"
+                )
+            )
+            assert str(guide.resolve()) in state["prompt"]
             native.append(state["session_id"])
             assert history.session(key)["test"]
             prep_client = sup._preparation.client

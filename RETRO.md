@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Native launch support does not imply terminal-paste support
+
+OpenCode needs its session/inbox guide in the verified initial prompt, but
+that does not make later automated terminal pastes safe. Keep launch prompt
+introduction separate from the existing live-introduction capability. Verify
+the guide and literal owner task reach the native launch journal together.
+
 ## 2026-10-11 — Destination readiness must check the actual executable
 
 A picker choice does not prove its selected computer can launch the agent.
