@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Destination readiness must check the actual executable
+
+A picker choice does not prove its selected computer can launch the agent.
+Use the same bounded version check for the options endpoint and actual launch;
+recheck at launch, reject unsupported configuration, and reap the probe child
+on cancellation. Keep registration separate from installation and do not claim
+aggregate usage merely because native Messages contain usage fields.
+
 ## 2026-10-11 — Recheck native ownership after awaited observation work
 
 OpenCode monitoring checked process ownership before snapshot I/O but could publish idle after the owned process exited during snapshot or cache persistence. Recheck ownership after each awaited worker before updating lifecycle state. Two independent regressions fail on 3edb52f and pass with these checks.

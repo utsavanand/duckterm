@@ -271,7 +271,7 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/digest")),
     # ── control ──
     Route("GET", "/runtimes/opencode/launch-options",
-          lambda s, r, w, h, b, seg: _write_json(w, 200, opencode_options.snapshot())),
+          lambda s, r, w, h, b, seg: s._opencode_options(w)),
     Route("POST", "/sessions/launch", lambda s, r, w, h, b, seg: s._launch(w, b)),
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
@@ -1744,6 +1744,9 @@ class Server:
             elif suite.detect.startswith(".claude/") and (Path.home() / suite.detect).exists():
                 out.append(f"{suite.name} (global)")
         return out
+
+    async def _opencode_options(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, await opencode_options.launch_options())
 
     async def _launch(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         try:

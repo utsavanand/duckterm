@@ -126,26 +126,9 @@ class OpenCodeProcess:
             raise
 
     async def _verify_binary(self) -> None:
-        child = await asyncio.create_subprocess_exec(
-            self.argv[0],
-            "--version",
-            cwd=self.directory,
-            env=self.base_env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        try:
-            async with asyncio.timeout(5):
-                assert child.stdout is not None
-                output = await child.stdout.read(128)
-                if output.strip() != VERSION.encode():
-                    raise OpenCodeError("This adapter requires verified OpenCode " + VERSION)
-                if await child.wait() != 0:
-                    raise OpenCodeError("Could not verify the installed OpenCode version")
-        finally:
-            if child.returncode is None:
-                child.kill()
-                await child.wait()
+        from duckterm.runtimes.opencode_installation import verify_binary
+
+        await verify_binary(self.argv[0], self.directory, self.base_env)
 
     @classmethod
     async def recover(

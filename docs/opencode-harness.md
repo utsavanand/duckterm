@@ -171,3 +171,18 @@ upload or public release is part of this checkpoint.
 Upstream references: [pinned release](https://github.com/anomalyco/opencode/releases/tag/v1.18.34),
 [TUI plugin contract](https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/specs/tui-plugins.md),
 [plugins](https://opencode.ai/docs/plugins/).
+
+Current integration includes main at `b7356fa` and independent QA correction
+`5d67618`: process ownership is checked again after each awaited snapshot/cache
+worker, preventing a late result from publishing false Idle after native exit.
+Both independent regression cases pass. The pinned native preparation/supervisor
+probe passed again after integration, preserving the sibling terminal and exact
+conversation without replaying its initial prompt; fixture cleanup removed its
+isolated root.
+
+Destination readiness now shares the bounded, cancelable version check used at
+actual launch, and reports missing/incompatible installations or unsupported
+configuration without starting inference. Runtime registration remains a
+separate activation requirement. The support contract separates Messages from
+unsupported aggregate usage. The additional recovery display still awaits
+owner approval; no runtime activation or release has occurred.
