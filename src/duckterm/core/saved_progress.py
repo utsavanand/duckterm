@@ -155,7 +155,9 @@ class SummaryUpdate:
         validation = value.get("summary_validation", {})
         continuity = value.get("continuity", {})
         if continuity.get("verified") and (
-            continuity.get("remaining_records") or continuity.get("gaps")
+            continuity.get("gaps")
+            or continuity.get("pending_updates")
+            or ("update_complete" not in continuity and continuity.get("remaining_records"))
         ):
             return cls(value, "partial", "summary_coverage_partial")
         if validation.get("ready") is True:
@@ -247,12 +249,17 @@ class ProgressCoordinator:
         if (
             prior
             and prior.get("summary_validation", {}).get("ready") is True
+            and not prior.get("continuity", {}).get("remaining_records")
             and all(prior.get(k) == v for k, v in identity.items())
         ):
             return SummaryUpdate.from_revision(prior, reused=True)
         input_key = fingerprint({**identity, "prior_revision": prior_id, "session": key})
         existing = self.server.digests.find_revision(key, input_key)
-        if existing and existing.get("summary_validation", {}).get("ready") is True:
+        if (
+            existing
+            and existing.get("summary_validation", {}).get("ready") is True
+            and not existing.get("continuity", {}).get("remaining_records")
+        ):
             return SummaryUpdate.from_revision(existing, reused=True)
         task = self.pending.get(input_key)
         if task is None:
@@ -444,7 +451,7 @@ class ProgressCoordinator:
             final = await memory_continuity.capture(self.server, key, final)
             if any(final[k] != captured[k] for k in ("source", "conversation", "policy")):
                 return SummaryUpdate.failed("source_changed")
-            if continuity["remaining_records"] or continuity["gaps"]:
+            if not continuity["update_complete"]:
                 reasons.append("summary_coverage_partial")
         accepted = verdicts["accept"] if verdicts else []
         candidates = progress.candidate_items(digest)

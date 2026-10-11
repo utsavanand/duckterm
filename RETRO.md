@@ -6,6 +6,16 @@ An unreleased branch used the same version as a later release, so numeric compar
 
 Updater responses keep the latest release information but do not return `update_available=false` for an unreleased or unknown install. Bug reports include commit and describe beside the existing version. Regressions use isolated Git repositories for clean tags, unmerged and untagged commits, dirty worktrees, missing refs and malformed stamps. Packaging verification must inspect and import the built wheel, rather than trusting the source checkout. The stamp records local Git evidence; it does not attest that an asset was published or signed.
 
+## 2026-10-10 — Historical backlog is not a failed current summary update
+
+A verified, saved summary over current work was permanently labeled partial because thousands of older, searchable records had not been summarized. Keep historical processing counts separate from whether the bounded update covers required work and new records. Observation frontiers are not processed frontiers: remember skipped new records in the existing revision metadata so a later capture cannot silently turn a missed owner constraint into historical backlog. Genuine source gaps, oversized records, reviewer rejection and changed evidence still prevent a complete update. Never rewrite an old revision's readiness after changing policy.
+
+Test the outcome through an actual checkpoint with more than 5,000 originals and resolvable evidence in goals, constraints, decisions and unfinished work; also prove deferred new records remain partial until consumed. Replay retained real-session evidence read-only, and state the limits: citation presence and a better status label do not establish current handoff usefulness or replace owner acceptance on the installed build.
+
+## Checkpoint progress must outlive its menu (2026-10-10)
+
+Checkpoint requests previously kept their busy state inside the context menu, so closing it hid a potentially long summary update. Keep the request and its result outside the mounted menu, keyed by the full host-qualified session reference. Show immediate indeterminate progress and elapsed time in the Session panel; suppress duplicate requests across entry points. A lost connection cannot prove a save failed: report an unconfirmed result and retain the previous summary. Verify menu dismissal, session/host changes, late responses and real returned outcomes.
+
 ## 2026-10-10 — A native message's transport role is not always its author
 
 Claude stores tool results inside user-role records, including records that mix owner text and tool output. Flattening the blocks and copying that role made handoffs attribute command output to the owner; Codex outputs similarly inherited an assistant role. Normalize ordered blocks by provenance for memory only: tool outputs keep a tool role and mixed records have exact group locators. Keep native snapshot bytes/checksums unchanged and let old whole-line reads return the typed groups. Salt the existing disposable search cache and maintained-summary input with the reader version; otherwise a correct reader can still return old flattened search results or reuse a summary with wrong attribution. Verify search, reads, retained snapshots, handoff context and summary invalidation with synthetic native records and no live model calls.
@@ -617,6 +627,23 @@ persistent WKWebView cache. Cache only the content-hashed dashboard assets as
 immutable; stable URLs must revalidate. Bundle the header and favicon from one
 SVG source so an update changes their URLs and bypasses already-cached icons.
 Verify the actual app window after release, not just a fresh browser profile.
+
+## 2026-10-04 — Don't justify a change with a performance claim you didn't measure
+**Broke:** the fix that moved `connector_last_used` back onto the serving
+thread shipped with a comment calling it "a bounded indexed read". Review
+caught it: the query is a full `SCAN events`, ~40 ms on a 67k-row database.
+**Cause:** the claim was reasoning, not measurement. The method filters on
+`event_type`, which sounds selective, and I never ran `EXPLAIN QUERY PLAN`.
+The only index on `events` is `(session_key, ts)`, which that filter cannot
+use. Measuring afterwards also showed an index on `event_type` changes the
+plan but *not* the time — the cost is `json_extract` over 27k PreToolUse
+rows, so the obvious follow-up fix would have bought nothing either.
+**Rule:** a performance adjective in a comment is a claim, and a claim in
+shipped code outlives the conversation that produced it. Run
+`EXPLAIN QUERY PLAN` and time it, or describe what the code does and leave
+cost out. The correctness argument for this change stood on its own; the
+unmeasured aside was the only part that was wrong, and it would have told
+the next reader not to bother looking.
 
 ## 2026-10-03 — A convention nothing checks is a trap for the next caller
 **Broke:** `GET /connectors` logged an `IndexError` on a zero-column row.
