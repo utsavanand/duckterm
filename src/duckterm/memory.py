@@ -9,6 +9,7 @@ import re
 import sqlite3
 import time
 import urllib.parse
+from contextlib import closing
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -252,11 +253,48 @@ class Memory:
             "unprocessed_attachments": result["unprocessed_attachments"],
         }
 
+    def _read_native(self, key: str, source: dict[str, Any]) -> dict[str, Any]:
+        """Reuse bounded normalized records only while the exact file fence holds."""
+        snapshot = source.get("snapshot")
+        if snapshot is not None and (
+            not isinstance(snapshot, str) or not re.fullmatch(r"[a-f0-9]{64}", snapshot)
+        ):
+            raise APIError(409, "Invalid retained conversation reference")
+        path = (
+            memory_sources.directory(key) / (snapshot + ".jsonl")
+            if snapshot is not None
+            else memory_sources.native_path(source)
+        )
+        if path is not None and path.is_symlink():
+            raise APIError(409, "Conversation must not be a symbolic link")
+        stamp = file_version(str(path)) if path is not None else None
+        identity = fingerprint([source, str(path), stamp])
+        cache = self.cache.setdefault(key, {})
+        loaded = cache.pop(identity, None)
+        if loaded is not None:
+            cache[identity] = loaded
+            return loaded
+        loaded = memory_sources.read_native(key, source)
+        # Retained versions used to bypass the cache altogether. Keep current
+        # and retained sources together under the existing 8 MiB/session cap.
+        for old in list(cache):
+            if cache[old].get("path") == str(path):
+                del cache[old]
+        size = sum(len(r["text"].encode()) for r in loaded["records"])
+        if size <= 8 * 1024 * 1024:
+
+            def bytes_used() -> int:
+                return sum(len(r["text"].encode()) for v in cache.values() for r in v["records"])
+
+            while cache and bytes_used() + size > 8 * 1024 * 1024:
+                del cache[next(iter(cache))]
+            cache[identity] = loaded
+        return loaded
+
     def materialize(
         self, catalog: dict[str, Any]
     ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
         key = catalog["session"]
-        cache = self.cache.setdefault(key, {})
         available, unavailable = [], []
         if catalog["missing_identity"]:
             unavailable.append(
@@ -267,27 +305,12 @@ class Memory:
                 if source.get("unavailable"):
                     raise APIError(409, source["unavailable"])
                 if source["kind"] == "conversation":
-                    path = (
-                        memory_sources.directory(key) / (source["snapshot"] + ".jsonl")
-                        if source.get("snapshot")
-                        else memory_sources.native_path(source)
-                    )
-                    stamp = file_version(str(path)) if path is not None else None
-                    cache_key = fingerprint([source, str(path), stamp])
-                    loaded = cache.get(cache_key)
-                    if loaded is None:
-                        loaded = memory_sources.read_native(key, source)
-                        # The index is the long-lived cache; keep only a small
-                        # normalized source in RAM, never eight huge transcripts.
-                        cache.clear()
-                        if (
-                            sum(len(r["text"].encode()) for r in loaded["records"])
-                            <= 8 * 1024 * 1024
-                        ):
-                            cache[cache_key] = loaded
+                    loaded = self._read_native(key, source)
                     available.append(loaded)
                 elif source["kind"] == "artifact":
-                    with sqlite3.connect(self.db_path.as_uri() + "?mode=ro", uri=True) as conn:
+                    with closing(
+                        sqlite3.connect(self.db_path.as_uri() + "?mode=ro", uri=True)
+                    ) as conn:
                         row = conn.execute(
                             "SELECT content,sha256 FROM artifacts WHERE id=? AND session_key=?",
                             (source["artifact_id"], key),
@@ -320,15 +343,52 @@ class Memory:
                     ]
                     if retained:
                         try:
-                            loaded = memory_sources.read_native(key, retained[-1])
+                            loaded = self._read_native(key, retained[-1])
                             available.append({**loaded, "retained_fallback": True})
                         except (APIError, OSError, UnicodeError):
                             pass
         if catalog.get("retrieval"):
-            available, missing = memory_records.retained(catalog, available)
+            available, missing = memory_records.retained(
+                catalog, available, native_reader=self._read_native
+            )
             unavailable.extend(missing)
             available.extend(memory_records.project(catalog, available))
         return available, unavailable
+
+    @staticmethod
+    def _read_catalog(catalog: dict[str, Any], handle: str) -> dict[str, Any]:
+        """Exact original reads need one source, not every conversation generation."""
+        match = re.fullmatch(r"([a-f0-9]{32}):([a-f0-9]{64})", handle)
+        if match is None:
+            raise APIError(400, "Invalid memory source handle")
+        source = next((s for s in catalog["sources"] if s["id"] == match[1]), None)
+        if source is None:
+            # Derived revisions/checkpoints still require all their evidence.
+            return catalog
+        retained = catalog["retained"].get(handle)
+        if retained is not None and not source.get("unavailable"):
+            source = retained
+        return {
+            **catalog,
+            "sources": [source],
+            "retained": {handle: retained} if retained is not None else {},
+            "text_retained": {k: v for k, v in catalog["text_retained"].items() if k == handle},
+            "canonical": {"revisions": [], "links": [], "checkpoints": []},
+            "current_revision": None,
+            "missing_identity": False,
+        }
+
+    @staticmethod
+    def _catalog_valid(captured: dict[str, Any], current: dict[str, Any]) -> bool:
+        """New sources may arrive; captured sources and their grants must be unchanged."""
+        # Retrieval is an as-of read. An unrelated new hook event need not abort
+        # it, but edits, removals, scope changes and derived-state changes do.
+        if {k: v for k, v in captured.items() if k != "sources"} != {
+            k: v for k, v in current.items() if k != "sources"
+        }:
+            return False
+        latest = {s["id"]: s for s in current["sources"]}
+        return all(latest.get(s["id"]) == s for s in captured["sources"])
 
     async def operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:
         allowed = {
@@ -360,12 +420,19 @@ class Memory:
     async def _operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:
         async with self.locks.setdefault(key, asyncio.Lock()):
             catalog = self.catalog(key, retrieval=True)
-            sources, unavailable = await asyncio.to_thread(self.materialize, catalog)
+            read_catalog = (
+                self._read_catalog(catalog, query.get("source", [""])[0])
+                if action == "read"
+                else catalog
+            )
+            sources, unavailable = await asyncio.to_thread(self.materialize, read_catalog)
             coverage = {
                 "available": len(sources),
                 "unavailable": unavailable,
                 "complete": not unavailable,
                 "scope": "own_session",
+                "selection": "requested_source" if read_catalog is not catalog else "catalog",
+                "consistency": "captured_sources",
                 "unprocessed_attachments": sum(
                     s.get("unprocessed_attachments", 0) for s in sources
                 ),
@@ -505,7 +572,7 @@ class Memory:
                         for r in records
                         if r["role"] == "derived_claim"
                     ]
-            if fingerprint(catalog) != fingerprint(self.catalog(key, retrieval=True)):
+            if not self._catalog_valid(catalog, self.catalog(key, retrieval=True)):
                 raise APIError(409, "Memory permissions or sources changed; retry")
             # File replacement between worker completion and response must not
             # publish a stale excerpt, even when size and mtime were preserved.

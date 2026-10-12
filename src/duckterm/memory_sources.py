@@ -180,7 +180,14 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
                         for b in content
                     )
                 try:
-                    parsed: list[dict[str, Any]] = parser([line], index)
+                    # Codex metadata (especially replacement_history) was decoded
+                    # a second time by the message parser only to be discarded.
+                    # Integrity/type validation above still covers every raw line.
+                    parsed: list[dict[str, Any]] = (
+                        []
+                        if source["runtime"] == "codex" and obj.get("type") != "response_item"
+                        else parser([line], index)
+                    )
                     # Preserve raw locators, roles and text. Failure metadata is
                     # used only by the summary projection, never search/read.
                     failures = iter(

@@ -1,3 +1,11 @@
+## 2026-10-12 — Retrieval must close resources and avoid rereading unrelated history
+
+A SQLite connection context commits or rolls back; it does not close the connection. Repeated artifact reads exhausted the live server's file handles and closed requests without responses. Close each temporary connection explicitly and test closure while retaining references so garbage collection cannot hide the leak. Read exact original handles without loading every conversation generation; reuse retained native parsing under file fences and the existing bounded cache. Ignore unrelated new sources during an as-of read, but still reject edited/deleted sources, changed grants, and changed native files.
+
+## 2026-10-12 — A bounded handoff needs declared optional omissions
+
+Apply the final handoff budget after assembling all open claims, not the smaller per-revision summary cap. Preserve protected claims, identity, and retrieval tools. Omit complete optional narratives, source references, or current-work fields only with explicit budget gaps, preserving any prior unknown coverage. Return the same coverage that appears in the brief. If mandatory content cannot fit, leave the source agent intact and name the protected kinds; never cut claims or sentences to manufacture success.
+
 ## 2026-10-12 — Read saved memory without creating another summary
 
 Use the existing publication pointer for current memory and exact revision IDs for historical views. Resolve evidence only on expansion and hide stale text when the source read fails. Share checkpoint-clock data from the existing session read; never start provider work on a display timer. Failed attempts must keep the last-success timestamp and their own failure message. Verify the web view, host-qualified reads and native GET admission together.

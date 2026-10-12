@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from duckterm import memory_contract, memory_sources, memory_summary, memory_versions
@@ -54,9 +55,13 @@ def references(canonical: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def retained(
-    catalog: dict[str, Any], sources: list[dict[str, Any]]
+    catalog: dict[str, Any],
+    sources: list[dict[str, Any]],
+    *,
+    native_reader: Callable[[str, dict[str, Any]], dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     """Only read registered snapshots whose source is still present and authorized."""
+    native_reader = native_reader or memory_sources.read_native
     found = {s["id"] + ":" + s["version"]: s for s in sources}
     allowed = {s["id"] for s in catalog["sources"]}
     unavailable = []
@@ -65,7 +70,7 @@ def retained(
             continue
         try:
             value = (
-                memory_sources.read_native(catalog["session"], ref)
+                native_reader(catalog["session"], ref)
                 if ref.get("kind") == "conversation"
                 else memory_versions.read(catalog["session"], ref, catalog["root"])
             )

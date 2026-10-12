@@ -137,7 +137,7 @@ def claim_state(item: dict[str, Any]) -> str:
 
 
 def read_context(
-    value: Any, version: int = 1, *, valid_refs: set[str] | None = None
+    value: Any, version: int = 1, *, valid_refs: set[str] | None = None, check_budget: bool = True
 ) -> dict[str, Any]:
     """Keep v1 bytes/shape; callers display its claims as unclassified.
 
@@ -222,7 +222,7 @@ def read_context(
                 raise ValueError("supersession_cycle")
             seen.add(current)
             current = identities[current][1].get("supersedes")
-    if len(json.dumps(value, ensure_ascii=False).encode()) > MAX_SUMMARY_BYTES:
+    if check_budget and len(json.dumps(value, ensure_ascii=False).encode()) > MAX_SUMMARY_BYTES:
         raise BudgetExceeded(value)
     return deepcopy(value)
 

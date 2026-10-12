@@ -109,7 +109,9 @@ class HandoffReview:
             + ("\n".join("- " + g for g in gaps) if gaps else "None declared by the reviewer.")
         )
         if len(text.encode()) > MAX_BRIEF_BYTES:
-            raise APIError(400, "Reviewed handoff exceeds 8000 UTF-8 bytes")
+            raise APIError(
+                400, "Reviewed handoff exceeds 8000 UTF-8 bytes; shorten your summary or known gaps"
+            )
         captured = await self.server.progress_coordinator.capture(key)
         if captured is None:
             raise APIError(409, "Session changed; capture a new handoff review")
