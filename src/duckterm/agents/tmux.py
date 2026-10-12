@@ -80,6 +80,11 @@ def spawn(
     under claude's own session_id and the launched-only ingest drops those
     events as foreign."""
     target = target_for(session_id)
+    # Automated callers often export NO_COLOR for their own command logs.
+    # A persistent tmux server retains it even after that caller is gone.
+    # Interactive panes should use ANSI colors unless this launch opts out.
+    if "NO_COLOR" not in (env or {}):
+        command = "unset NO_COLOR; " + command
     env_args: list[str] = []
     for k, v in (env or {}).items():
         env_args += ["-e", f"{k}={v}"]
