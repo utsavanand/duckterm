@@ -74,7 +74,11 @@ def assemble(
         "summarized_records": eligible_count,
         "included_records": 0,
         "omitted_records": len(rows) - eligible_count,
-        "protected_kinds": {field: len(items) for field, items in protected.items()},
+        "protected_kinds": {
+            kind: sum(c["kind"] == kind for items in protected.values() for c in items)
+            for kind in sorted(set().union(*memory_contract.KINDS.values()))
+        },
+        "protected_fields": {field: len(items) for field, items in protected.items()},
         "coverage": coverage,
     }
     from duckterm import memory_budget

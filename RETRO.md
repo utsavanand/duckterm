@@ -1,3 +1,7 @@
+## 2026-10-12 — Read current memory across immutable spans
+
+A Memory view that shows only the newest span loses older constraints from sight. Assemble published spans for current memory and retain exact historical revision views separately. Search and read responses must expose current lifecycle state alongside immutable saved text, so retirement cannot look like an open constraint. Replay an authenticated identical lifecycle request before applying new-transition preconditions. Age checkpoints by successful outcomes, never the latest attempt. Verify removed evidence, multi-span aggregation, long-running receipts, lifecycle replay and actual typed coverage together.
+
 ## 2026-10-12 — Follow the operation, not a short HTTP timeout
 
 A cold start can require several bounded summary spans. Once an exact receipt confirms that the request is running, keep showing the existing running state and keep polling that request; apply the recovery deadline to loss of contact, not confirmed work. A canceled handoff stops before the next model batch unless another dialog or accepted checkpoint still needs the shared range. Server shutdown cancels both the range coordinator and its writer before closing storage. Verify cancellation/retry reuse and a confirmed operation lasting longer than the former three-minute recovery window.

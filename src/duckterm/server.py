@@ -4806,7 +4806,17 @@ class Server:
             return []
 
     async def _list_checkpoints(self, writer: asyncio.StreamWriter, session_key: str) -> None:
-        await _write_json(writer, 200, {"checkpoints": self.history.checkpoints(session_key)})
+        from duckterm import checkpoint_clock
+
+        checkpoints = self.history.checkpoints(session_key)
+        await _write_json(
+            writer,
+            200,
+            {
+                "checkpoints": checkpoints,
+                "checkpoint_clock": checkpoint_clock.project(checkpoints),
+            },
+        )
 
     async def _spotlight(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         row = self.history.session(session_key)

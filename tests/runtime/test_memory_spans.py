@@ -205,8 +205,8 @@ def test_shared_writer_saves_typed_leaf_and_reuses_it_without_promoting_handoff(
 
 def test_failed_subrange_keeps_previous_success_reusable_and_no_overlap(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
-    path = transcript(tmp, "agent-claude", "First " + "x" * 22000)
-    append(path, "Second " + "y" * 22000)
+    path = transcript(tmp, "agent-claude", "First " + "x" * 11000)
+    append(path, "Second " + "y" * 11000)
     calls, fail = provider(monkeypatch)
 
     async def run():

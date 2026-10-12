@@ -15,8 +15,10 @@ from duckterm.persistence.saved_state import fingerprint
 
 POLICY = "independent-conversation-spans-v2"
 MAX_INPUT_BYTES = 48000
-# Leave room for the generated context and the independent review instructions.
-MAX_GENERATION_BYTES = 32000
+# The 48 KB call budget reserves 32 KB for generation. Bound the *encoded
+# prompt*, including metadata/instructions, to the remaining 16 KB.
+GENERATION_RESERVE_BYTES = 32000
+MAX_GENERATION_BYTES = MAX_INPUT_BYTES - GENERATION_RESERVE_BYTES
 MAX_RECORDS = 50
 
 

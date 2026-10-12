@@ -1,7 +1,6 @@
 """The owner's Memory view reads existing verified revisions and exact original evidence."""
 
 import asyncio
-import json
 import urllib.parse
 from types import SimpleNamespace
 
@@ -11,7 +10,7 @@ from test_memory import memory_rig, transcript
 from test_session_api import dispatch
 
 from duckterm import memory_view
-from duckterm.persistence.artifacts import registration
+from duckterm.memory_sources import directory
 
 __all__ = ["memory_rig"]
 
@@ -90,25 +89,32 @@ def test_view_and_evidence_reuse_records_without_generation_or_writes(memory_rig
     assert get(server, key="peer", revision=revision["id"])[0] == 404
 
 
-def test_partial_coverage_and_historical_revision_are_distinct(memory_rig, monkeypatch):
+def test_complete_range_and_historical_span_are_distinct(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Oldest direction")
-    for n in range(100):
+    monkeypatch.setattr("duckterm.memory_spans.MAX_RECORDS", 4)
+    for n in range(12):
         append(path, f"Record {n}: " + "x" * 1000)
     provider(monkeypatch)
     first = asyncio.run(server.progress_coordinator.refresh("agent"))
+    append(path, "One more owner direction")
     second = asyncio.run(server.progress_coordinator.refresh("agent"))
     code, latest = get(server)
     assert code == 200 and latest["revision"]["id"] == second["id"]
     coverage = latest["revision"]["coverage_at_save"]
-    assert 0 < coverage["summarized_records"] < coverage["available_records"]
-    assert coverage["remaining_records"] > 0 and latest["revision"]["verified_at_save"]
+    assert coverage["summarized_records"] == coverage["available_records"] == 1
+    assert coverage["remaining_records"] == 0 and latest["revision"]["verified_at_save"]
+    assert latest["memory"]["state"] == "available"
+    assert latest["memory"]["span_count"] > 2
+    assert len(latest["memory"]["groups"][1]["claims"]) == latest["memory"]["span_count"]
     code, older = get(server, revision=first["id"])
     assert code == 200 and not older["revision"]["is_current"]
     assert older["current_revision_id"] == second["id"]
     assert (
-        older["revision"]["coverage_at_save"]["summarized_records"] < coverage["summarized_records"]
+        older["revision"]["coverage_at_save"]["summarized_records"]
+        == first["continuity"]["summarized_records"]
     )
+    assert "memory" not in older
 
 
 def test_failed_checkpoint_keeps_last_good_summary_visible(memory_rig, monkeypatch):
@@ -131,25 +137,18 @@ def test_failed_checkpoint_keeps_last_good_summary_visible(memory_rig, monkeypat
 
 def test_removed_evidence_hides_claim_and_summary_instead_of_leaking_cache(memory_rig, monkeypatch):
     server, headers, _, tmp = memory_rig
-    transcript(tmp, "agent-claude", "Original task")
-    path = tmp / "original.txt"
-    path.write_text("Unique artifact evidence")
-    code, result = dispatch(
-        server,
-        "POST",
-        "/api/v1/session/artifacts",
-        headers,
-        json.dumps(registration(path)).encode(),
-    )
-    assert code == 200
+    path = transcript(tmp, "agent-claude", "Unique original task evidence")
     provider(monkeypatch)
     asyncio.run(server.progress_coordinator.refresh("agent"))
     code, before = get(server)
     assert code == 200 and before["state"] == "available"
     citation = next(
-        e for claim in claims(before) for e in claim["evidence"] if e["kind"] == "artifact"
+        e for claim in claims(before) for e in claim["evidence"] if e["kind"] == "conversation"
     )
-    server.history.artifacts.remove("agent", result["artifact"]["id"])
+    path.unlink()
+    for snapshot in directory("agent").glob("*.jsonl"):
+        snapshot.unlink()
+    server.memory.cache.clear()
     code, after = get(server)
     assert code == 200 and after["state"] == "unavailable"
     assert after["revision"]["summary"] is None and after["revision"]["overview"] is None

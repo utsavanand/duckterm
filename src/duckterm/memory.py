@@ -429,6 +429,11 @@ class Memory:
                     if record["role"] == "derived_claim":
                         for name in ("kind", "state", "preview", "preview_truncated"):
                             found[name] = record[name]
+                        found.update(
+                            memory_lifecycle.effective(
+                                json.loads(record["text"]), catalog.get("lifecycle", []), sources
+                            )
+                        )
                 result["results"] = matches
             elif action == "related":
                 handle = query.get("source", [""])[0]
@@ -489,6 +494,17 @@ class Memory:
                     offset=offset,
                     next_offset=end if end < len(text) else None,
                 )
+                if source["kind"] == "revision":
+                    result["current_claim_states"] = [
+                        {
+                            "record": r["id"],
+                            **memory_lifecycle.effective(
+                                json.loads(r["text"]), catalog.get("lifecycle", []), sources
+                            ),
+                        }
+                        for r in records
+                        if r["role"] == "derived_claim"
+                    ]
             if fingerprint(catalog) != fingerprint(self.catalog(key, retrieval=True)):
                 raise APIError(409, "Memory permissions or sources changed; retry")
             # File replacement between worker completion and response must not
@@ -585,8 +601,6 @@ class Memory:
                 for source in sources:
                     if source.get("fence") and file_version(source["path"]) != source["fence"]:
                         raise APIError(409, "Conversation changed before saving link")
-                if lifecycle:
-                    memory_lifecycle.validate_new(value, catalog["canonical"]["links"])
                 if old:
                     return {
                         "relation": {
@@ -595,6 +609,8 @@ class Memory:
                         },
                         "replayed": True,
                     }
+                if lifecycle:
+                    memory_lifecycle.validate_new(value, catalog["canonical"]["links"])
                 # A request key is session scoped even after a sharing-scope move.
                 existing = conn.execute(
                     "SELECT id FROM digest_items WHERE id=?", (identity,)

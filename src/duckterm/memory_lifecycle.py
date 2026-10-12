@@ -120,6 +120,33 @@ def validate_new(value: dict[str, Any], links: list[dict[str, Any]]) -> None:
         raise APIError(409, str(exc)) from exc
 
 
+def effective(
+    claim: dict[str, Any], links: list[dict[str, Any]], sources: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Current read metadata; the saved claim text and version stay immutable."""
+    saved = claim.get("state", "open")
+    link = transitions(links).get(str(claim.get("id", "")))
+    result: dict[str, Any] = {
+        "saved_state": saved,
+        "state": saved,
+        "state_provenance": "saved_revision",
+    }
+    if link is None:
+        return result
+    result.update(state_provenance="explicit_claim_transition", transition_id=link["id"])
+    try:
+        for ref in link["evidence"]:
+            memory_graph.resolve(sources, ref)
+    except APIError:
+        return {**result, "state": "unknown", "state_reason": "transition_evidence_unavailable"}
+    return {
+        **result,
+        "state": "retired" if link["relation"] == "claim_retired" else "superseded",
+        "replacement": link.get("to") if link.get("replacement_id") else None,
+        "replacement_id": link.get("replacement_id"),
+    }
+
+
 def project(
     context: dict[str, Any], links: list[dict[str, Any]], sources: list[dict[str, Any]]
 ) -> dict[str, Any]:

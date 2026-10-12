@@ -50,7 +50,7 @@ def test_existing_complete_spans_prepare_without_model_or_raw_tail(preparation, 
         detail = server.memory_preparation.details("agent", result["preparation_id"])
         text = detail["brief"]["text"]
         assert "duckterm memory read" in text and "x" * 100 not in text
-        assert result["coverage"]["handoff"]["protected_kinds"]["constraints"] == 2
+        assert result["coverage"]["handoff"]["protected_kinds"]["constraint"] == 2
         assert len(text.encode()) <= 32000
 
     asyncio.run(run())

@@ -19,8 +19,8 @@ def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
     memory_rig, monkeypatch
 ):
     server, _, _, tmp = memory_rig
-    path = transcript(tmp, "agent-claude", "Initial constraint " + "x" * 22000)
-    append(path, "Second instruction " + "y" * 22000)
+    path = transcript(tmp, "agent-claude", "Initial constraint " + "x" * 11000)
+    append(path, "Second instruction " + "y" * 11000)
     calls, _ = provider(monkeypatch)
 
     async def run():
@@ -54,7 +54,7 @@ def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
             evidence_sources=evidence_sources,
         )
         assert len(rows) == 3
-        assert coverage["protected_kinds"]["constraints"] == 3
+        assert coverage["protected_kinds"]["constraint"] == 3
         assert "duckterm memory read" in brief
         assert "x" * 100 not in brief  # no raw transcript tail in a span brief
         assert included == []
@@ -150,8 +150,8 @@ def test_different_capture_cannot_join_an_older_update(memory_rig, monkeypatch):
 
 def test_failed_later_batch_keeps_boundary_and_retry_does_not_repeat_first(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
-    path = transcript(tmp, "agent-claude", "First " + "x" * 22000)
-    append(path, "Second " + "y" * 22000)
+    path = transcript(tmp, "agent-claude", "First " + "x" * 11000)
+    append(path, "Second " + "y" * 11000)
     calls, fail = provider(monkeypatch)
     real_write = server.progress_coordinator.write_span
 
@@ -181,8 +181,8 @@ def test_canceled_preparation_stops_before_next_batch_and_retry_reuses_leaf(
     memory_rig, monkeypatch
 ):
     server, _, _, tmp = memory_rig
-    path = transcript(tmp, "agent-claude", "First " + "x" * 22000)
-    append(path, "Second " + "y" * 22000)
+    path = transcript(tmp, "agent-claude", "First " + "x" * 11000)
+    append(path, "Second " + "y" * 11000)
     calls, _ = provider(monkeypatch)
     coordinator = server.progress_coordinator
     real_write = coordinator.write_span
@@ -212,8 +212,8 @@ def test_canceling_one_preparation_does_not_cancel_shared_checkpoint(memory_rig,
     from duckterm import server as server_module
 
     server, _, _, tmp = memory_rig
-    path = transcript(tmp, "agent-claude", "First " + "x" * 22000)
-    append(path, "Second " + "y" * 22000)
+    path = transcript(tmp, "agent-claude", "First " + "x" * 11000)
+    append(path, "Second " + "y" * 11000)
     calls, _ = provider(monkeypatch)
     original = server_module.summarize
     entered, released = threading.Event(), threading.Event()
