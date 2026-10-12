@@ -50,7 +50,7 @@ duckterm memory claim --file lifecycle-change.json
 
 A source handle includes its version, never an arbitrary filesystem path. Search results identify an exact record; reads return a character-based pagination offset. Related reads follow evidenced links. Write tools validate the caller, relation, evidence, current versions and session scope. They do not replace original history.
 
-Retrieval remains scoped to the calling session and currently permitted work records. Source versions, grants and credentials are rechecked before returning. Native reads accept at most 512 MiB per raw file, 8 MiB per JSONL line and 64 MiB normalized text per source. Exceeding a bound reports unavailable coverage. Native reads/indexing run outside the event loop; a corrupt derived index can be rebuilt.
+Retrieval remains scoped to the calling session and currently permitted work records. Source versions, grants and credentials are rechecked before returning. Native reads stream the captured file prefix rather than imposing the former 512 MiB whole-file ceiling. Each JSONL line is limited to 16 MiB, and normalized text is limited to 64 MiB per source. Exceeding a bound reports unavailable coverage. Native reads/indexing run outside the event loop; a corrupt derived index can be rebuilt.
 
 The owner opens Memory through **Read saved memory** in the right panel. Current memory assembles published spans, including earlier claims; selecting a revision reads that historical span separately. Expanding evidence performs an exact original-record read. Opening Memory never calls a summary provider. Missing or revoked evidence is withheld instead of returning cached text.
 
@@ -83,5 +83,7 @@ Checkpoint requests carry stable request IDs. Their bounded durable receipts sur
 Candidate tests cover complete and failed multi-span ranges, retry reuse, source mutation, filtering, typed claims, folding, lifecycle replay, retired-claim budgets, current versus historical memory, lost responses, cancellation and native host isolation. Browser checks cover the approved Memory screen, original evidence expansion and the checkpoint clock. Model prompts are package resources and must be verified in both wheel and Mac bundles.
 
 Deterministic tests do not prove that a generated handoff is useful. Real-history retrieval and a bounded real-provider handoff review remain separate acceptance steps. The earlier synthetic Claude-to-Codex probe established the launch/read-tool mechanism, not the quality or reliability of this complete candidate on a long production session.
+
+The handoff-budget-refusal spec is only partly implemented: the shared final check and named budget exist, but an over-budget selected narrative/source map still refuses instead of shortening optional content with declared gaps. Protected claims must remain intact. Live acceptance on the product session remains outstanding.
 
 Bulk artifact backfill, automatic legacy-summary conversion, automatic checkpoint cadence, automatic context trimming and an independent folder-retirement synthesis service are not implemented here. Folder tasks and other permitted records continue using their existing stores and access rules. Shipping or owner migration must not be inferred from an implementation commit or this document.
