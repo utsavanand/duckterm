@@ -318,6 +318,9 @@ class ProgressCoordinator:
         existing = self.server.digests.find_revision(key, input_key)
         if existing is not None:
             return SummaryUpdate.from_revision(existing, reused=True), planned
+        saved = memory_folding.rows(self.server.digests, key, captured["source"]["scope_hash"])
+        if any(memory_spans.overlaps(planned, revision) for revision in saved):
+            return SummaryUpdate.failed("invalid_context", diagnostic="overlapping_span"), planned
         # Join the existing single-writer guard rather than introducing a queue.
         active = self.active.get(key)
         if active and not active.done():
@@ -632,6 +635,18 @@ class ProgressCoordinator:
             )
             if require_current and not promote:
                 return None
+            if stage_only:
+                from duckterm import memory_spans
+
+                # Another coordinator/process may have committed while providers ran.
+                duplicate = self.server.digests.find_revision(key, value["input_key"])
+                if duplicate is not None:
+                    return duplicate
+                saved = memory_folding.rows(
+                    self.server.digests, key, captured["source"]["scope_hash"]
+                )
+                if any(memory_spans.overlaps(value["span_input"], revision) for revision in saved):
+                    return None
             if promote and not stage_only:
                 self.server.digests.merge(key, accepted, done, now, commit=False)
             if folding is not None:

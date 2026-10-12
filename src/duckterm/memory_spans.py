@@ -237,3 +237,19 @@ def metadata(plan: dict[str, Any]) -> dict[str, Any]:
             "pending_refs": plan["pending_refs"],
         },
     }
+
+
+def overlaps(plan: dict[str, Any], revision: dict[str, Any]) -> bool:
+    """Reject a second leaf for already committed original positions.
+
+    Appending to a source changes its version, but does not make the earlier
+    positions new work. Exact batch retries are handled before this check.
+    """
+    if revision.get("span") != "incremental" or revision.get("fold", {}).get("tier") != 0:
+        return False
+    previous = revision.get("span_input", {}).get("ranges", [])
+    return any(
+        a["source"] == b["source"] and max(a["first"], b["first"]) < min(a["end"], b["end"])
+        for a in plan["ranges"]
+        for b in previous
+    )

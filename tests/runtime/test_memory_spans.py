@@ -342,3 +342,24 @@ def test_cancelled_waiter_does_not_cancel_a_span_write(memory_rig, monkeypatch):
         assert reused.state == "reused" and len(calls) == 2
 
     asyncio.run(run())
+
+
+def test_changed_snapshot_does_not_allow_rewriting_an_already_committed_span(
+    memory_rig, monkeypatch
+):
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "First owner instruction")
+    calls, _ = provider(monkeypatch)
+
+    async def run():
+        frozen = await capture(server)
+        lower = memory_spans.boundary(frozen, empty=True)
+        first, _ = await server.progress_coordinator.write_span("agent", frozen, lower)
+        assert first.state == "updated"
+        append(path, "Appended owner instruction")
+        newer = await capture(server)
+        overlap, _ = await server.progress_coordinator.write_span("agent", newer, lower)
+        assert overlap.state == "failed" and overlap.diagnostic == "overlapping_span"
+        assert len(calls) == 2
+
+    asyncio.run(run())
