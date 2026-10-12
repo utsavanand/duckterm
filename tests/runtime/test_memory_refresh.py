@@ -175,3 +175,83 @@ def test_failed_later_batch_keeps_boundary_and_retry_does_not_repeat_first(memor
         assert current_revision(server.history.session("agent")) == result.revision["id"]
 
     asyncio.run(run())
+
+
+def test_canceled_preparation_stops_before_next_batch_and_retry_reuses_leaf(
+    memory_rig, monkeypatch
+):
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "First " + "x" * 22000)
+    append(path, "Second " + "y" * 22000)
+    calls, _ = provider(monkeypatch)
+    coordinator = server.progress_coordinator
+    real_write = coordinator.write_span
+    keep = [True]
+
+    async def cancel_after_leaf(*args):
+        result = await real_write(*args)
+        keep[0] = False
+        return result
+
+    monkeypatch.setattr(coordinator, "write_span", cancel_after_leaf)
+
+    async def run():
+        canceled = await coordinator.refresh_result("agent", continue_if=lambda: keep[0])
+        assert canceled.diagnostic == "update_canceled"
+        assert len(calls) == 2 and current_revision(server.history.session("agent")) is None
+        monkeypatch.setattr(coordinator, "write_span", real_write)
+        result = await coordinator.refresh_result("agent")
+        assert result.state == "updated" and len(calls) == 4
+        assert "First " not in calls[2] and "Second " in calls[2]
+        assert not coordinator.span_waiters
+
+    asyncio.run(run())
+
+
+def test_canceling_one_preparation_does_not_cancel_shared_checkpoint(memory_rig, monkeypatch):
+    from duckterm import server as server_module
+
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "First " + "x" * 22000)
+    append(path, "Second " + "y" * 22000)
+    calls, _ = provider(monkeypatch)
+    original = server_module.summarize
+    entered, released = threading.Event(), threading.Event()
+    keep = [True]
+
+    def slow(prompt):
+        if not entered.is_set():
+            entered.set()
+            assert released.wait(5)
+        return original(prompt)
+
+    monkeypatch.setattr(server_module, "summarize", slow)
+    coordinator = server.progress_coordinator
+
+    async def run():
+        captured = await coordinator.capture("agent")
+        captured = await memory_continuity.capture(server, "agent", captured)
+        preparation = asyncio.create_task(
+            coordinator.refresh_result("agent", captured, continue_if=lambda: keep[0])
+        )
+        checkpoint = None
+        try:
+            assert await asyncio.to_thread(entered.wait, 5)
+            checkpoint = asyncio.create_task(coordinator.refresh_result("agent", captured))
+            async with asyncio.timeout(5):
+                while len(coordinator.span_waiters.get("agent", {})) < 2:
+                    await asyncio.sleep(0)
+            keep[0] = False
+            released.set()
+            results = await asyncio.gather(preparation, checkpoint)
+            assert all(r.state == "updated" for r in results)
+            assert len(calls) == 4
+            assert current_revision(server.history.session("agent")) == results[1].revision["id"]
+        finally:
+            released.set()
+            await coordinator.close()
+            await asyncio.gather(
+                preparation, *([checkpoint] if checkpoint else []), return_exceptions=True
+            )
+
+    asyncio.run(run())

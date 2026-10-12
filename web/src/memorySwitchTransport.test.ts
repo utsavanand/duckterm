@@ -199,3 +199,31 @@ it("keeps nonblocking source-detail pagination available on a ready maintained p
   expect(value.coverage.has_more).toBe(true);
   expect(value.coverage.gap_count).toBe(60);
 });
+
+const spanHandoff = {
+  method: "independent_spans", summary_revision_id: "revision1", summary_generated_at: 900,
+  summary_state: "current", available_records: 100, eligible_records: 25, reference_only_records: 75,
+  summarized_records: 25, included_records: 0, omitted_records: 75,
+  coverage: { declared: true, unknown: false, omitted: [] },
+};
+it("accepts complete eligible span coverage without calling tool bodies unsummarized conversation", async () => {
+  response({ ...prepared, coverage: { ...prepared.coverage, handoff: spanHandoff } });
+  const value = await memorySwitchService(selection).prepare("spans");
+  expect(value.result.phase).toBe("ready");
+  expect(value.coverage.handoff).toEqual(spanHandoff);
+});
+it.each([
+  { eligible_records: 26 }, { reference_only_records: 74 }, { included_records: 1 },
+  { summarized_records: 24 }, { omitted_records: 74 },
+  { coverage: { declared: false, unknown: false, omitted: [] } },
+  { coverage: undefined },
+])("rejects inconsistent independent-span coverage %j", async overrides => {
+  response({ ...prepared, coverage: { ...prepared.coverage, handoff: { ...spanHandoff, ...overrides } } });
+  await expect(memorySwitchService(selection).prepare("bad-spans")).rejects.toThrow("Invalid memory response");
+});
+it("preserves unknown coverage separately from an empty omitted list", async () => {
+  response({ ...prepared, coverage: { ...prepared.coverage, handoff: { ...spanHandoff,
+    coverage: { declared: true, unknown: true, omitted: [] } } } });
+  const value = await memorySwitchService(selection).prepare("unknown-span-coverage");
+  expect(value.coverage.handoff?.coverage).toEqual({ declared: true, unknown: true, omitted: [] });
+});

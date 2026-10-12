@@ -41,7 +41,7 @@ export function requestCheckpoint(key: string): Promise<CheckpointRecord> {
       return result;
     } catch (error) {
       publish(key, { state: "unknown", startedAt, recovering: true });
-      const result = await recoverCheckpoint(key, requestId);
+      const result = await recoverCheckpoint(key, requestId, startedAt);
       if (!result) throw error;
       return result;
     }
@@ -67,8 +67,8 @@ export function requestCheckpoint(key: string): Promise<CheckpointRecord> {
 
 // Recovery reads never create another checkpoint. Keep the original promise in
 // `pending` throughout recovery so repeated clicks cannot issue a duplicate POST.
-async function recoverCheckpoint(key: string, requestId: string): Promise<CheckpointRecord | null> {
-  const deadline = Date.now() + 180_000;
+async function recoverCheckpoint(key: string, requestId: string, startedAt: number): Promise<CheckpointRecord | null> {
+  let deadline = Date.now() + 180_000;
   let interval = 1000;
   const pause = async () => {
     await new Promise(resolve => setTimeout(resolve, Math.min(interval, Math.max(0, deadline - Date.now()))));
@@ -100,6 +100,11 @@ async function recoverCheckpoint(key: string, requestId: string): Promise<Checkp
     // A failed/interrupted receipt without its exact result cannot establish
     // whether a checkpoint was saved. Preserve the existing unknown status.
     if (receipt.state !== "running") return null;
+    // Cold starts may span many bounded model calls. A validated receipt means
+    // work is still running, not an unknown result. Bound loss of contact, not
+    // the duration of confirmed work; duplicate clicks still join this request.
+    deadline = Date.now() + 180_000;
+    publish(key, { state: "running", startedAt });
     await pause();
   }
   return null;

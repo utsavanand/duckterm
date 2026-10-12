@@ -263,7 +263,10 @@ class MemoryPreparation:
                     409, "incomplete_source", "Conversation source is unavailable"
                 )
             self.update(job, phase="summarizing")
-            summary_update = await coordinator.refresh_result(key, captured)
+            summary_update = await coordinator.refresh_result(
+                key, captured, continue_if=lambda: not job["canceled"]
+            )
+            self.cheap_validate(job)
             if summary_update.state not in {"updated", "reused"}:
                 raise PreparationError(
                     409,

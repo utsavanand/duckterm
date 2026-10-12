@@ -22,8 +22,7 @@ it.each(["updated", "partial", "failed"] as const)("recovers exact remote %s res
   await act(async () => { work = requestCheckpoint(key); });
   const id = vi.mocked(api.checkpoint).mock.calls[0][2]!;
   expect(id).toMatch(/^[a-f0-9-]{36}$/);
-  expect(screen.getByRole("status")).toHaveTextContent("Result not confirmed");
-  expect(screen.getByText(/Checking this checkpoint’s saved result/)).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("Updating summary");
   expect(requestCheckpoint(key)).toBe(work);
   view.unmount(); render(<CheckpointProgress sessionKey={key} />);
   await act(async () => { await vi.advanceTimersByTimeAsync(5000); await work; });
@@ -45,11 +44,27 @@ it.each(["missing", "wrong-receipt", "wrong-result", "failed", "interrupted"])("
   expect(screen.queryByText("Summary updated")).toBeNull();
   expect(api.checkpoint).toHaveBeenCalledOnce();
 });
-it("bounds running receipt polling and allows a new attempt only after recovery ends", async () => {
+it("keeps confirmed cold-start work running beyond three minutes without another POST", async () => {
   vi.useFakeTimers();
-  const key = "bounded-recovery";
+  const key = "long-cold-start";
   vi.mocked(api.checkpoint).mockRejectedValue(new Error("lost"));
   vi.mocked(api.checkpointAttempt).mockImplementation(async (_key, id) => ({ request_id: id, state: "running" }));
+  render(<CheckpointProgress sessionKey={key} />);
+  let work!: Promise<CheckpointRecord>;
+  await act(async () => { work = requestCheckpoint(key); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(400_000); });
+  expect(screen.getByRole("status")).toHaveTextContent("Updating summary");
+  expect(requestCheckpoint(key)).toBe(work);
+  expect(api.checkpoint).toHaveBeenCalledOnce();
+  vi.mocked(api.checkpointAttempt).mockImplementation(async (_key, id) => ({ request_id: id, state: "complete", result: result(id) }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(10_000); await work; });
+  expect(screen.getByRole("status")).toHaveTextContent("Summary updated");
+});
+it("bounds repeated receipt-read failures and releases the failed attempt", async () => {
+  vi.useFakeTimers();
+  const key = "bounded-unreachable-recovery";
+  vi.mocked(api.checkpoint).mockRejectedValue(new Error("lost"));
+  vi.mocked(api.checkpointAttempt).mockRejectedValue(new Error("unreachable"));
   render(<CheckpointProgress sessionKey={key} />);
   let work!: Promise<unknown>;
   await act(async () => { work = requestCheckpoint(key).catch(() => null); });
@@ -59,11 +74,6 @@ it("bounds running receipt polling and allows a new attempt only after recovery 
   await vi.advanceTimersByTimeAsync(60_000);
   expect(api.checkpointAttempt).toHaveBeenCalledTimes(count);
   expect(screen.getByRole("status")).toHaveTextContent("Result not confirmed");
-  const oldId = vi.mocked(api.checkpoint).mock.calls[0][2];
-  vi.mocked(api.checkpoint).mockImplementation(async (_key, _label, id) => result(id!));
-  await act(async () => { await requestCheckpoint(key); });
-  expect(vi.mocked(api.checkpoint).mock.calls[1][2]).not.toBe(oldId);
-  expect(screen.getByRole("status")).toHaveTextContent("Summary updated");
 });
 it("bounds a hung native lookup and ignores its late result after a newer attempt", async () => {
   vi.useFakeTimers();

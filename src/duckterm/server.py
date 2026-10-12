@@ -5283,13 +5283,6 @@ class Server:
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
-            # Backfill progress digests: sessions whose turns all happened
-            # before this server started would otherwise stay digest-less
-            # until their NEXT turn end (Stop events don't replay).
-            for row in self.history.sessions():
-                at_rest = row.get("state") in AT_REST_STATES
-                if not at_rest and not row.get("progress"):
-                    self._maybe_refresh_progress(str(row["session_key"]))
             server = await asyncio.start_server(self.handle, host, port)
             actual_port = server.sockets[0].getsockname()[1]
             self.history.session_api.set_url(f"http://127.0.0.1:{actual_port}")
@@ -5307,6 +5300,7 @@ class Server:
                     await self.checkpoint_requests.close()
                     await self.memory_preparation.close()
                     await self.restarts.close()
+                    await self.progress_coordinator.close()
         finally:
             _release_home_lock(lock)
 

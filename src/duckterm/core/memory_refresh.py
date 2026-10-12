@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
@@ -18,7 +19,11 @@ if TYPE_CHECKING:
 
 
 async def refresh(
-    coordinator: ProgressCoordinator, key: str, captured: dict[str, Any]
+    coordinator: ProgressCoordinator,
+    key: str,
+    captured: dict[str, Any],
+    *,
+    continue_if: Callable[[], bool] | None = None,
 ) -> SummaryUpdate:
     """Join a session's update without letting an HTTP disconnect cancel its work."""
     from duckterm.core.saved_progress import SummaryUpdate
@@ -32,26 +37,39 @@ async def refresh(
         ]
     )
     active = coordinator.span_refreshes.get(key)
-    if active is not None:
-        if coordinator.span_refresh_inputs.get(key) != identity:
-            return SummaryUpdate.failed("source_changed", diagnostic="different_active_capture")
+    if active is not None and coordinator.span_refresh_inputs.get(key) != identity:
+        return SummaryUpdate.failed("source_changed", diagnostic="different_active_capture")
+    token = object()
+    waiters = coordinator.span_waiters.setdefault(key, {})
+    waiters[token] = continue_if
+    if active is None:
+        active = asyncio.create_task(_run(coordinator, key, captured))
+        coordinator.span_refreshes[key] = active
+        coordinator.span_refresh_inputs[key] = identity
+
+        def finished(done: asyncio.Task[Any]) -> None:
+            if coordinator.span_refreshes.get(key) is done:
+                coordinator.span_refreshes.pop(key, None)
+                coordinator.span_refresh_inputs.pop(key, None)
+            if not done.cancelled():
+                done.exception()
+
+        active.add_done_callback(finished)
+    try:
         result = await asyncio.shield(active)
         if not current(coordinator, key, captured):
             return SummaryUpdate.failed("source_changed")
         return result
-    task = asyncio.create_task(_run(coordinator, key, captured))
-    coordinator.span_refreshes[key] = task
-    coordinator.span_refresh_inputs[key] = identity
+    finally:
+        waiters.pop(token, None)
+        if not waiters:
+            coordinator.span_waiters.pop(key, None)
 
-    def finished(done: asyncio.Task[Any]) -> None:
-        if coordinator.span_refreshes.get(key) is done:
-            coordinator.span_refreshes.pop(key, None)
-            coordinator.span_refresh_inputs.pop(key, None)
-        if not done.cancelled():
-            done.exception()
 
-    task.add_done_callback(finished)
-    return await asyncio.shield(task)
+def wanted(coordinator: ProgressCoordinator, key: str) -> bool:
+    # A canceled preparation stops before the next batch; another dialog or an
+    # accepted checkpoint may still need the same range. No new queue or timer.
+    return any(check is None or check() for check in coordinator.span_waiters.get(key, {}).values())
 
 
 def current(
@@ -97,6 +115,8 @@ async def _run(
     )
     changed = False
     while True:
+        if not wanted(coordinator, key):
+            return SummaryUpdate.failed("update_failed", diagnostic="update_canceled")
         try:
             planned = memory_spans.plan(captured, lower)
         except ValueError as exc:
@@ -118,6 +138,8 @@ async def _run(
         lower = planned["next_boundary"]
         if not planned["pending_records"]:
             break
+    if not wanted(coordinator, key):
+        return SummaryUpdate.failed("update_failed", diagnostic="update_canceled")
     if latest is None:
         return SummaryUpdate.failed("no_transcript")
     try:

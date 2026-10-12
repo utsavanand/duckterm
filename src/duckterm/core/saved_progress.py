@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -176,7 +177,18 @@ class ProgressCoordinator:
         self.active: dict[str, asyncio.Task[SummaryUpdate]] = {}
         self.span_refreshes: dict[str, asyncio.Task[SummaryUpdate]] = {}
         self.span_refresh_inputs: dict[str, str] = {}
+        self.span_waiters: dict[str, dict[object, Callable[[], bool] | None]] = {}
         self.span_status: dict[str, dict[str, int]] = {}
+
+    async def close(self) -> None:
+        tasks = (
+            set(self.span_refreshes.values())
+            | set(self.active.values())
+            | set(self.pending.values())
+        )
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
     def facts(self, key: str) -> dict[str, Any] | None:
         row = self.server.history.session(key)
@@ -240,7 +252,11 @@ class ProgressCoordinator:
         return (await self.refresh_result(key, captured)).revision
 
     async def refresh_result(
-        self, key: str, captured: dict[str, Any] | None = None
+        self,
+        key: str,
+        captured: dict[str, Any] | None = None,
+        *,
+        continue_if: Callable[[], bool] | None = None,
     ) -> SummaryUpdate:
         from duckterm import memory_continuity
 
@@ -258,7 +274,7 @@ class ProgressCoordinator:
         if "memory_sources" in captured:
             from duckterm.core import memory_refresh
 
-            return await memory_refresh.refresh(self, key, captured)
+            return await memory_refresh.refresh(self, key, captured, continue_if=continue_if)
         row = self.server.history.session(key)
         if row is None:
             return SummaryUpdate.failed("source_changed")

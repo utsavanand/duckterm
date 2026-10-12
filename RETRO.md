@@ -1,3 +1,7 @@
+## 2026-10-12 — Follow the operation, not a short HTTP timeout
+
+A cold start can require several bounded summary spans. Once an exact receipt confirms that the request is running, keep showing the existing running state and keep polling that request; apply the recovery deadline to loss of contact, not confirmed work. A canceled handoff stops before the next model batch unless another dialog or accepted checkpoint still needs the shared range. Server shutdown cancels both the range coordinator and its writer before closing storage. Verify cancellation/retry reuse and a confirmed operation lasting longer than the former three-minute recovery window.
+
 ## 2026-10-12 — Integrate memory contracts before asking for another checkpoint trial
 
 A span writer alone does not implement span memory. The reader, handoff, coverage counters,
