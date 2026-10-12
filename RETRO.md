@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Bound reader allocations, not raw transcript age
+
+UI-dev's checkpoint retained an accepted summary but failed completeness because its native Codex file exceeded the reader's 512 MiB whole-file ceiling. The 778 MB file contained repeated compaction metadata; streaming it produced only about 696 KB of searchable text and 392 KB of summary-eligible text in a 3.9-second read-only replay. Filtering tools after materialization cannot help when an earlier raw-file guard refuses the source. Inspect the specific saved source gap before attributing a partial checkpoint to the summarizer or the entire historical backlog.
+
+Remove the total raw-file guard from the existing line-streaming reader. Keep per-record and accumulated-text allocation bounds, exact checksums, identity validation, source-change fences and capture cleanup. Stop at the initially captured byte extent so a concurrent append cannot prolong a scan indefinitely. Regressions must include a real file larger than the old ceiling, first/last conversation records around metadata, exact retained-byte roundtrip and concurrent growth. This fixes raw-size admission; it does not implement incremental indexing, eliminate retention copies or prove a complete checkpoint/handoff.
+
 ## 2026-10-11 — Do not clip generated summaries before reviewing them
 
 The parser sliced summary text at 400 characters before validation. A complete provider response could therefore reach the reviewer as a sentence DuckTerm itself cut off. The live summary_truncated rejection identified the symptom; inspecting the parser exposed a deterministic corruption path. This does not prove every historical unverified summary had that cause.
