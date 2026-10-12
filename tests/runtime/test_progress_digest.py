@@ -1,6 +1,4 @@
-"""The running progress digest: Stop events trigger a debounced summarizer
-call whose parsed digest lands on the session row (and therefore in
-/sessions). The summarizer is a stub script so no real agent runs."""
+"""Explicit refresh stores progress; Stop and exit events never request generation."""
 
 import asyncio
 import json
@@ -111,20 +109,50 @@ def test_refresh_twice_does_not_duplicate_archive(fake_summarizer: Path) -> None
     assert len(archived) == 3  # not 6 — the normalized-text guard held
 
 
-def test_stop_event_triggers_debounced_refresh(fake_summarizer: Path) -> None:
+def test_stop_and_exit_do_not_schedule_refresh(fake_summarizer: Path, monkeypatch) -> None:
     server = _server()
-    for i in range(5):
-        server.bus.publish(
-            {"event_type": "PreToolUse", "session_key": "S", "cwd": "/tmp", "_ts": i, "test": True}
-        )
-    # No running loop here: do not throttle a job that was never scheduled.
-    server.bus.publish({"event_type": "Stop", "session_key": "S"})
-    assert "S" not in server._progress_marks
+    refreshes, model_calls = [], []
 
-    marks_before = dict(server._progress_marks)
-    server.bus.publish({"event_type": "Stop", "session_key": "S"})
-    # Within the debounce window with no new events: no new mark taken.
-    assert server._progress_marks == marks_before
+    async def refresh(key):
+        refreshes.append(key)
+
+    def summarize(prompt):
+        model_calls.append(prompt)
+        raise AssertionError("Automatic events must not call the model")
+
+    monkeypatch.setattr(server, "_refresh_progress", refresh)
+    monkeypatch.setattr("duckterm.server.summarize", summarize)
+
+    def events():
+        for i in range(5):
+            server.bus.publish(
+                {
+                    "event_type": "PreToolUse",
+                    "session_key": "S",
+                    "cwd": "/tmp",
+                    "test": True,
+                    "_ts": i,
+                }
+            )
+        for _ in range(2):
+            server.bus.publish({"event_type": "Stop", "session_key": "S", "test": True})
+        server._progress_on_exit("S")
+
+    async def running_loop():
+        events()
+        await asyncio.sleep(0)
+        assert refreshes == [] and model_calls == []
+
+    try:
+        events()  # The same behavior is required without a running event loop.
+        asyncio.run(running_loop())
+        assert refreshes == [] and model_calls == []
+        assert not server.history.session("S")["progress"]
+        assert server.history.session("S")["outcome_summary"] is None
+        assert server.digests.items("S") == []
+    finally:
+        server.history.purge_test_sessions()
+        server.history.close()
 
 
 def test_digest_bridge_files_recurring_learnings_as_candidates(
