@@ -24,6 +24,7 @@ async def refresh(
     captured: dict[str, Any],
     *,
     continue_if: Callable[[], bool] | None = None,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> SummaryUpdate:
     """Join a session's update without letting an HTTP disconnect cancel its work."""
     from duckterm.core.saved_progress import SummaryUpdate
@@ -43,6 +44,12 @@ async def refresh(
     waiters = coordinator.span_waiters.setdefault(key, {})
     waiters[token] = continue_if
     if active is None:
+        coordinator.span_progress.pop(key, None)
+    if on_progress is not None:
+        coordinator.span_observers.setdefault(key, {})[token] = on_progress
+        if key in coordinator.span_progress:
+            on_progress(dict(coordinator.span_progress[key]))
+    if active is None:
         active = asyncio.create_task(_run(coordinator, key, captured))
         coordinator.span_refreshes[key] = active
         coordinator.span_refresh_inputs[key] = identity
@@ -61,6 +68,10 @@ async def refresh(
             return SummaryUpdate.failed("source_changed")
         return result
     finally:
+        observers = coordinator.span_observers.get(key, {})
+        observers.pop(token, None)
+        if not observers:
+            coordinator.span_observers.pop(key, None)
         waiters.pop(token, None)
         if not waiters:
             coordinator.span_waiters.pop(key, None)
@@ -114,6 +125,8 @@ async def _run(
         else memory_spans.boundary(captured, empty=True)
     )
     changed = False
+    total: int | None = None
+    completed = 0
     while True:
         if not wanted(coordinator, key):
             return SummaryUpdate.failed("update_failed", diagnostic="update_canceled")
@@ -121,6 +134,9 @@ async def _run(
             planned = memory_spans.plan(captured, lower)
         except ValueError as exc:
             return SummaryUpdate.failed("source_changed", diagnostic=str(exc))
+        if total is None:
+            total = len(planned["selected"]) + planned["pending_records"]
+        coordinator.report_span_progress(key, stage="writing", completed=completed, total=total)
         coordinator.span_status[key] = {
             "completed_spans": len(leaves),
             "pending_records": len(planned["selected"]) + planned["pending_records"],
@@ -132,6 +148,8 @@ async def _run(
         update, planned = await coordinator.write_span(key, captured, lower)
         if update.state not in {"updated", "reused"} or update.revision is None:
             return update
+        completed += len(planned["selected"])
+        coordinator.report_span_progress(key, completed=completed, stage="checking")
         latest = update.revision
         leaves.append(update.revision)
         changed = changed or update.state == "updated"
@@ -142,6 +160,7 @@ async def _run(
         return SummaryUpdate.failed("update_failed", diagnostic="update_canceled")
     if latest is None:
         return SummaryUpdate.failed("no_transcript")
+    coordinator.report_span_progress(key, stage="checking")
     try:
         final = await coordinator.capture(key)
         if final is None:

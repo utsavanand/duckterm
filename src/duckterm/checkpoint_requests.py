@@ -117,13 +117,19 @@ class CheckpointRequests:
         return 409 if receipt["state"] == "interrupted" else 500, receipt
 
     async def _run(self, key: str, row: dict[str, Any], receipt: dict[str, Any]) -> None:
+        def report(value: dict[str, Any]) -> None:
+            receipt["progress"] = {**receipt.get("progress", {}), **value}
+            self._save(key, receipt)
+
         try:
+            report({"stage": "checking"})
             result = await self.server._create_checkpoint(
                 key,
                 row,
                 receipt["label"],
                 identity=receipt["checkpoint_id"],
                 request_id=receipt["request_id"],
+                on_progress=report,
             )
             receipt = {**receipt, "state": "complete"}
             if result.get("export_reason"):

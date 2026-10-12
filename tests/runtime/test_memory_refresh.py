@@ -163,7 +163,11 @@ def test_failed_later_batch_keeps_boundary_and_retry_does_not_repeat_first(memor
     monkeypatch.setattr(server.progress_coordinator, "write_span", write)
 
     async def run():
-        failed = await server.progress_coordinator.refresh_result("agent")
+        progress = []
+        failed = await server.progress_coordinator.refresh_result(
+            "agent", on_progress=progress.append
+        )
+        assert progress[-1]["completed"] == 1 and progress[-1]["total"] == 2
         assert failed.state == "failed" and failed.reason == "provider_timeout"
         assert current_revision(server.history.session("agent")) is None
         assert len(calls) == 3
@@ -253,5 +257,57 @@ def test_canceling_one_preparation_does_not_cancel_shared_checkpoint(memory_rig,
             await asyncio.gather(
                 preparation, *([checkpoint] if checkpoint else []), return_exceptions=True
             )
+
+    asyncio.run(run())
+
+
+def test_progress_counts_only_checked_new_entries_and_joiners_share_progress(
+    memory_rig, monkeypatch
+):
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "First instruction " + "x" * 11000)
+    append(path, "Second instruction " + "y" * 11000)
+    provider(monkeypatch)
+    first, joined = [], []
+    coordinator = server.progress_coordinator
+    real_write = coordinator.write_span
+
+    async def run():
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def write(*args):
+            entered.set()
+            await release.wait()
+            return await real_write(*args)
+
+        monkeypatch.setattr(coordinator, "write_span", write)
+        captured = await coordinator.capture("agent")
+        a = asyncio.create_task(
+            coordinator.refresh_result("agent", captured, on_progress=first.append)
+        )
+        await entered.wait()
+        b = asyncio.create_task(
+            coordinator.refresh_result("agent", captured, on_progress=joined.append)
+        )
+        # Wait for the second capture to join the identical active range.
+        for _ in range(1000):
+            if joined:
+                break
+            await asyncio.sleep(0.001)
+        assert joined and joined[0]["completed"] == 0
+        assert joined[0]["total"] == 2
+        release.set()
+        results = await asyncio.gather(a, b)
+        assert all(r.state == "updated" for r in results)
+        assert first == joined
+        assert {p["stage"] for p in first} >= {"writing", "reviewing", "checking"}
+        assert [p["completed"] for p in first] == sorted(p["completed"] for p in first)
+        assert first[-1]["completed"] == first[-1]["total"] == 2
+        assert not coordinator.span_observers
+        append(path, "Third instruction")
+        delta = []
+        await coordinator.refresh_result("agent", on_progress=delta.append)
+        assert delta[0]["completed"] == 0 and delta[0]["total"] == 1
+        assert delta[-1]["completed"] == 1
 
     asyncio.run(run())

@@ -1,16 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { useCheckpointAttempt } from "./checkpointRequests";
 import { checkpointAttemptFailed, checkpointFailure } from "./checkpointState";
 import "./checkpointProgress.css";
 
-function Elapsed({ startedAt }: { startedAt: number }) {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  return <time aria-label="Elapsed time">{Math.max(0, Math.floor((now - startedAt) / 1000))}s</time>;
-}
 export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
   const attempt = useCheckpointAttempt(sessionKey);
   const section = useRef<HTMLElement>(null);
@@ -23,8 +15,15 @@ export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
   const running = attempt.state === "running";
   const result = attempt.state === "complete" ? attempt.result : null;
   const failed = attempt.state === "unknown" || !!result && checkpointAttemptFailed(result);
-  const label = running ? "Updating summary…" : result ? result.label : "Result not confirmed";
-  let detail = "The request is running. You can continue using this session.";
+  const progress = attempt.state === "running" ? attempt.progress : undefined;
+  const stages = { checking: "Checking checkpoint…", writing: "Writing summary…", reviewing: "Reviewing summary…", repairing: "Correcting summary…", saving: "Saving checkpoint…" };
+  const label = running ? progress ? stages[progress.stage] : "Updating summary…" : result ? result.label : "Result not confirmed";
+  const measured = progress?.total !== undefined && progress.total > 0 && progress.completed !== undefined;
+  const percent = measured ? 100 * progress.completed! / progress.total! : undefined;
+  let detail = measured
+    ? `${progress.completed!.toLocaleString()} of ${progress.total!.toLocaleString()} conversation entries checked. Earlier saved summaries are reused.`
+    : "Checking the work to do. You can continue using this session.";
+  if (running && progress?.stage === "saving") detail = "Finishing saved checkpoint checks. The result will appear when saving finishes.";
   if (attempt.state === "unknown") detail = attempt.recovering
     ? "The connection ended before a result arrived. Checking this checkpoint’s saved result."
     : "The connection ended before a result arrived. Check the latest checkpoint before trying again.";
@@ -40,8 +39,11 @@ export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
   }
   if (result?.export_reason) detail += " Markdown export is unavailable.";
   return <section ref={section} className={`rd-checkpoint-progress${failed ? " rd-checkpoint-progress-failure" : ""}`} aria-label="Checkpoint progress">
-    <div className="rd-checkpoint-progress-title"><strong role="status">{label}</strong>{running && <Elapsed key={attempt.startedAt} startedAt={attempt.startedAt} />}</div>
-    {running && <div className="rd-checkpoint-progress-track" role="progressbar" aria-label="Updating summary"><span /></div>}
+    <div className="rd-checkpoint-progress-title"><strong role="status">{label}</strong></div>
+    {running && <div className={`rd-checkpoint-progress-track${measured ? " rd-checkpoint-progress-measured" : ""}`} role="progressbar" aria-label="Checkpoint entries checked"
+      aria-valuemin={measured ? 0 : undefined} aria-valuemax={measured ? progress.total : undefined}
+      aria-valuenow={measured ? progress.completed : undefined} aria-valuetext={measured ? `${progress.completed} of ${progress.total} entries checked; ${label}` : label}>
+      <span style={measured ? { width: `${percent}%` } : undefined} /></div>}
     <p>{detail}</p>
   </section>;
 }

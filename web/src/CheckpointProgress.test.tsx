@@ -22,12 +22,12 @@ it("retains pending work across unmount, isolates equal keys on different hosts,
   await act(async () => { work = requestCheckpoint(local); expect(requestCheckpoint(local)).toBe(work); });
   expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
   act(() => vi.advanceTimersByTime(5000));
-  expect(screen.getByLabelText("Elapsed time")).toHaveTextContent("5s");
+  expect(screen.queryByLabelText("Elapsed time")).toBeNull();
   view.rerender(<CheckpointProgress sessionKey={remote} />);
   expect(screen.queryByRole("region")).toBeNull();
   view.unmount();
   render(<CheckpointProgress sessionKey={local} />);
-  expect(screen.getByLabelText("Elapsed time")).toHaveTextContent("5s");
+  expect(screen.queryByLabelText("Elapsed time")).toBeNull();
   await act(async () => { finish(result("partial")); await work; });
   expect(screen.queryByRole("progressbar")).toBeNull();
   expect(screen.getByRole("status")).toHaveTextContent("Checkpoint failed · summary incomplete");
@@ -54,4 +54,44 @@ it("keeps a remote failure uncertain and does not fall back locally or alter the
   expect(screen.getByText("Last good saved summary")).toBeVisible();
   expect(screen.queryByText(/not saved|Summary update failed/)).toBeNull();
   expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(key, "manual", expect.any(String));
+});
+
+it("shows measured remote progress during POST, preserves it across navigation, and stops polling on completion", async () => {
+  vi.useFakeTimers();
+  const key = sessionRef("progress-host", "measured");
+  let finish!: (cp: CheckpointRecord) => void;
+  vi.mocked(api.checkpoint).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  vi.mocked(api.checkpointAttempt).mockImplementation(async (_key, id) => ({ request_id: id, state: "running", progress: { stage: "reviewing", completed: 20, total: 50 } }));
+  const view = render(<CheckpointProgress sessionKey={key} />);
+  let work!: Promise<CheckpointRecord>;
+  await act(async () => { work = requestCheckpoint(key); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "20");
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuemax", "50");
+  expect(screen.getByRole("status")).toHaveTextContent("Reviewing summary");
+  expect(screen.getByText(/20 of 50 conversation entries checked/)).toBeVisible();
+  expect(screen.queryByLabelText("Elapsed time")).toBeNull();
+  expect(screen.getByRole("progressbar").firstChild).toHaveStyle({ width: "40%" });
+  view.unmount(); render(<CheckpointProgress sessionKey={key} />);
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "20");
+  expect(requestCheckpoint(key)).toBe(work);
+  await act(async () => { finish(result("updated")); await work; });
+  const count = vi.mocked(api.checkpointAttempt).mock.calls.length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(api.checkpointAttempt).toHaveBeenCalledTimes(count);
+  expect(api.checkpoint).toHaveBeenCalledOnce();
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});
+
+it.each(["wrong-id", "invalid-count"])("does not display fabricated progress from %s", async kind => {
+  vi.useFakeTimers();
+  let finish!: (cp: CheckpointRecord) => void;
+  vi.mocked(api.checkpoint).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  vi.mocked(api.checkpointAttempt).mockImplementation(async (_key, id) => ({ request_id: kind === "wrong-id" ? "other" : id, state: "running", progress: { stage: "writing", completed: 60, total: 50 } }));
+  render(<CheckpointProgress sessionKey={kind} />);
+  let work!: Promise<CheckpointRecord>;
+  await act(async () => { work = requestCheckpoint(kind); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+  await act(async () => { finish(result("failed")); await work; });
 });

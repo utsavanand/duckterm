@@ -35,7 +35,7 @@ test("checkpoint progress opens the Session panel immediately and survives navig
     await expect(page.getByRole("menu")).toHaveCount(0);
     await expect(page.getByRole("tab", { name: "Session", exact: true })).toHaveAttribute("aria-selected", "true");
     await expect(progress.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
-    await expect(progress.getByLabel("Elapsed time")).not.toHaveText("0s");
+    await expect(progress.getByLabel("Elapsed time")).toHaveCount(0);
     await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Updating summary…" })).toBeDisabled();
     await page.keyboard.press("Escape");
     await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
@@ -99,4 +99,56 @@ test("a saved partial checkpoint reports incomplete failure instead of success",
     await page.screenshot({ path: "/tmp/checkpoint-partial-mobile.png" });
     expect(await progress.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   } finally { await apiDelete(`/sessions/${key}`); }
+});
+
+test("checkpoint displays checked work instead of elapsed time at real panel sizes", async ({ page }) => {
+  const key = `e2e-measured-${Date.now()}`;
+  await seedSession(key, { name: "Progress review", group: "Checkpoint QA" });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let completed = 12, stage = "reviewing";
+  let requestId = "";
+  try {
+    await page.route(`**/sessions/${key}/checkpoint`, async route => {
+      requestId = route.request().postDataJSON().request_id;
+      const response = await route.fetch();
+      await held;
+      await route.fulfill({ response });
+    });
+    // Real response outcome above; progress fixture exercises intermediate UI.
+    // Backend progress counts and shared-writer boundaries are tested in Python.
+    await page.route(`**/sessions/${key}/checkpoint-attempts/*`, route => route.fulfill({ json: {
+      request_id: requestId, state: "running", progress: { stage, completed, total: 40 },
+    } }));
+    await page.addInitScript(() => localStorage.setItem("rd.collapsedGroups", "[]"));
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto("/");
+    const folder = page.locator(".rd-group-head", { hasText: "Checkpoint QA" });
+    if (await folder.locator(".rd-group-caret").textContent() === "▸") await folder.locator(".rd-group-caret").click();
+    await page.locator(".rd-row", { hasText: "Progress review" }).locator(".rd-row-click").click();
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
+    const progress = page.getByRole("region", { name: "Checkpoint progress" });
+    const bar = progress.getByRole("progressbar");
+    await expect(bar).toHaveAttribute("aria-valuenow", "12");
+    await expect(bar).toHaveAttribute("aria-valuemax", "40");
+    await expect(progress.getByRole("status")).toHaveText("Reviewing summary…");
+    await expect(progress.getByLabel("Elapsed time")).toHaveCount(0);
+    await expect(bar.locator("span")).toHaveCSS("animation-name", "none");
+    for (const colorScheme of ["dark", "light"] as const) {
+      await page.emulateMedia({ colorScheme });
+      await page.screenshot({ path: `/tmp/checkpoint-measured-${colorScheme}.png` });
+    }
+    completed = 28; stage = "writing";
+    await expect(bar).toHaveAttribute("aria-valuenow", "28");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await progress.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: "/tmp/checkpoint-measured-mobile.png" });
+    expect(await progress.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
+    completed = 40; stage = "saving";
+    await expect(progress.getByRole("status")).toHaveText("Saving checkpoint…");
+    await expect(progress.getByText(/Summary updated/)).toHaveCount(0);
+    release();
+    await expect(progress.getByRole("status")).toHaveText("Summary update failed");
+    await expect(bar).toHaveCount(0);
+  } finally { release?.(); await apiDelete(`/sessions/${key}`); }
 });
