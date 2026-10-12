@@ -481,6 +481,14 @@ def verify_supervisor():
             if control.get("session_id") and control["session_id"] not in native:
                 native.append(control["session_id"])
             await owner.stop(key)
+            stopped_pid = control.get("pid")
+            if stopped_pid:
+                remaining = subprocess.run(
+                    ["ps", "-p", str(stopped_pid), "-o", "stat="],
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                assert not remaining or remaining.startswith("Z"), "Native process survived Stop"
             await owner.stop("native-sibling-fixture")
 
     try:

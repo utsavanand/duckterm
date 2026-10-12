@@ -58,7 +58,11 @@ def test_all_terminal_input_paths_reject_before_native_preparation_and_allow_aft
     monkeypatch.setattr(
         "duckterm.agents.tmux.send_keys", lambda target, data, **kw: writes.append(data) or True
     )
-    monkeypatch.setattr("duckterm.agents.tmux.kill_session", lambda target: True)
+    stopped = []
+    monkeypatch.setattr(
+        "duckterm.agents.tmux.kill_session",
+        lambda target, **kwargs: stopped.append((target, kwargs)) or True,
+    )
 
     async def run():
         task = asyncio.create_task(supervisor.start())
@@ -76,6 +80,7 @@ def test_all_terminal_input_paths_reject_before_native_preparation_and_allow_aft
         assert writes == [b"after bytes", "after command", b"after feedback"]
         await supervisor.stop()
         assert prepared.closed and not supervisor.write_bytes(b"after stop")
+        assert stopped == [("fixture-only", {"terminate_process": True})]
 
     asyncio.run(run())
 

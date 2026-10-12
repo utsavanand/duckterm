@@ -9,11 +9,14 @@ Ported from uv-suite's watchtower tmux service. All calls are synchronous
 subprocess; drive them from async code via asyncio.to_thread.
 """
 
+import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -267,7 +270,23 @@ def capture_screen(target: str, history_lines: int = 2000) -> bytes:
     return "\r\n".join(lines).encode(errors="replace")
 
 
-def kill_session(target: str) -> bool:
+def kill_session(target: str, *, terminate_process: bool = False) -> bool:
+    if terminate_process:
+        # Some native TUIs survive terminal hangup. Signal only the process
+        # still attached to this exact owned pane, before removing the pane.
+        try:
+            pid = pane_pid(target)
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if pane_pid(target) != pid:
+                    break
+                time.sleep(0.05)
+            else:
+                if pane_pid(target) == pid:
+                    os.kill(pid, signal.SIGKILL)
+        except (ValueError, ProcessLookupError):
+            pass
     ok, _ = _tmux("kill-session", "-t", exact_target(target))
     return ok
 

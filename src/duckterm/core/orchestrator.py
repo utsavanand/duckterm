@@ -739,7 +739,12 @@ class SessionSupervisor:
             # A task cancelled before its first run never enters its finally.
             self._fail_pending_input()
         if self._tmux_target is not None:
-            await asyncio.to_thread(tmux.kill_session, self._tmux_target)
+            if self._preparation is not None:
+                await asyncio.to_thread(
+                    tmux.kill_session, self._tmux_target, terminate_process=True
+                )
+            else:
+                await asyncio.to_thread(tmux.kill_session, self._tmux_target)
         elif self._proc is not None and self._proc.returncode is None:
             os.killpg(os.getpgid(self._proc.pid), signal.SIGTERM)
         if self._task is not None:

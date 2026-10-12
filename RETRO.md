@@ -1,5 +1,12 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Closing a terminal is not proof its native process stopped
+
+OpenCode fixture processes survived tmux hangup and consumed CPU after successful
+QA. Stop native panes with an explicit signal before removing their terminal;
+recheck the exact pane PID before escalation. Native acceptance must verify the
+saved process exited, not merely that its card and temporary files were removed.
+
 ## 2026-10-11 — Bind freshness to the displayed native content
 
 An awaited Messages read can finish after a newer observation. Comparing only
