@@ -89,6 +89,23 @@ The isolated pinned-native fixture drops the real prompt acknowledgment, reopens
 DuckTerm's test database, and verifies one user message with no repeated write.
 Fault tests cover every persisted boundary, competing claims, wrong selection,
 changed generation, failed persistence and foreign conversation receipts.
+## 2026-10-11 — Bound reader allocations, not raw transcript age
+
+UI-dev's checkpoint retained an accepted summary but failed completeness because its native Codex file exceeded the reader's 512 MiB whole-file ceiling. The 778 MB file contained repeated compaction metadata; streaming it produced only about 696 KB of searchable text and 392 KB of summary-eligible text in a 3.9-second read-only replay. Filtering tools after materialization cannot help when an earlier raw-file guard refuses the source. Inspect the specific saved source gap before attributing a partial checkpoint to the summarizer or the entire historical backlog.
+
+Remove the total raw-file guard from the existing line-streaming reader. Keep per-record and accumulated-text allocation bounds, exact checksums, identity validation, source-change fences and capture cleanup. Stop at the initially captured byte extent so a concurrent append cannot prolong a scan indefinitely. Regressions must include a real file larger than the old ceiling, first/last conversation records around metadata, exact retained-byte roundtrip and concurrent growth. This fixes raw-size admission; it does not implement incremental indexing, eliminate retention copies or prove a complete checkpoint/handoff.
+
+## 2026-10-11 — Do not clip generated summaries before reviewing them
+
+The parser sliced summary text at 400 characters before validation. A complete provider response could therefore reach the reviewer as a sentence DuckTerm itself cut off. The live summary_truncated rejection identified the symptom; inspecting the parser exposed a deterministic corruption path. This does not prove every historical unverified summary had that cause.
+
+Reject overlong drafts with summary_too_long and use the existing single correction attempt to request complete, concise sentences. State the limit in generation and correction prompts. Review only the intact corrected candidate, retain strict semantic validation, and preserve the last good revision when correction fails. Regression tests must assert the exact text sent to the reviewer and saved in the checkpoint, and verify failures never advance coverage or turn a clipped prefix into a success.
+
+## 2026-10-11 — Preserve the reason a checkpoint review failed
+
+A missing or malformed reviewer response is not a negative review. Preserve the distinction between malformed responses, missing or invalid verdicts, reviewer rejection, and a contradictory ready verdict with non-empty reason codes. Carry bounded structured codes into the checkpoint attempt; never store arbitrary rejected provider prose as a diagnostic. Failed attempts must still retain the last good revision without presenting it as a new success.
+
+Do not remove a validation gate merely because its error reporting was inadequate. Capture the actual reviewer outcome first. Historical attempts without those diagnostics cannot establish whether the writer or reviewer was wrong. Regression tests must cover both maintained-memory and stored-revision paths, including contradictory ready states and malformed envelopes carrying valid rejection codes.
 
 ## 2026-10-11 — Rename a badge selector with its rendered class
 
@@ -146,6 +163,29 @@ The full gate also exposed a pre-existing Codex relay test that assumed two
 executor calls completed within 50 ms; wait for its actual confirmation event
 before asserting stale-answer rejection. This is foundation evidence, not
 complete harness acceptance.
+## 2026-10-11 — Prompt pointers are not a checkpoint retention boundary
+
+Bounding the inbox pointers in required context accidentally shortened the checkpoint's mail ID list and changed its hash input from canonical messages to metadata. The checkpoint resolver still hashes full messages; this would report false source changes and leave omitted messages outside the retention boundary. Capture complete authorized IDs and the canonical hash separately from prompt context. Persist only those IDs and the hash, never another copy of message bodies. Changes beyond the pointer limit must still change the source fence.
+
+Test more than eight messages through checkpoint creation, resolution and the retention predicate. Verify omitted pointers remain retained and an edit to an omitted message invalidates the saved hash. Model-input tests alone cannot establish checkpoint retention correctness.
+
+## 2026-10-11 — Query tasks and mail instead of copying their bodies into memory
+
+Folder tasks and the inbox already have canonical stores and read commands. Do not send notes, questions or answers through the session summarizer merely because they are assigned to that session. Keep them reference-only, and onboard with a bounded selection of IDs, short title previews, counts and read commands. Distinguish folder-wide work from assigned work, disclose omitted pointers and preserve current sharing checks. A title is discovery metadata, not the instruction or evidence of authorization.
+
+Exercise long notes, escaped mail, many open assignments, scope changes and original retrieval. Successful pointer delivery does not certify that the task or message bodies were read. Conversation statements about the work still remain eligible narrative; current canonical records must be read before action. This does not remove the separate bounds on conversation updates, session notes or final launch context.
+
+## 2026-10-11 — Project summary inputs without rewriting original evidence
+
+Successful tool output and command arguments can dominate memory input through both hook events and native transcripts. Filter both at the summarization boundary; retain conversation text, current work and explicit failures. Keep native text, roles, locators and original hashes unchanged so search and reads still recover evidence. Treat mixed messages per block, preserving narrative and failed results while excluding successful bodies. Version the summary policy so older coverage is not reused under changed input semantics.
+
+Report eligible versus reference-only input separately from original-history counts. A reference is not proof a body was summarized, and fixture byte reduction is not measured token savings or semantic completeness. A new reference-only event still changes the source boundary: refresh that boundary instead of returning a stale ready revision. Tests must exercise this through checkpoint persistence and prove excluded originals remain readable.
+
+## 2026-10-11 — Do not reject summary inputs for a duplicate copy of current work
+
+Maintained memory already supplies citable session, task and inbox originals within its 48,000-byte record budget. Copying the same text into a separate 12,000-character required-context field made checkpoints fail before generation as open tasks and mail accumulated. Send originals once, accompanied by explicit coverage counts. If whole required records span multiple updates, process unseen records first and retain skipped identities as pending; never certify incomplete current work as complete or repeatedly fill the budget with already processed tasks. An indivisible oversized original stays readable and reports its size and budget as a gap. Keep the independent harness-launch limit intact.
+
+Exercise checkpoint persistence with 45 open tasks, a 13,000-character incoming message, their combination across bounded updates, multibyte notes, and provider failure preserving the last good revision. A deterministic provider verifies plumbing and coverage, not semantic summary quality or success on the installed runtime.
 
 ## 2026-10-10 — A version number does not identify the installed build
 

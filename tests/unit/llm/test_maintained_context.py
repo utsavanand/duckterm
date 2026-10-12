@@ -84,24 +84,50 @@ def required_fixture(note_size=2000):
     }
 
 
-def test_required_tasks_and_mail_stay_citable_with_large_conversation_backlog():
-    captured = required_fixture()
-    plan = memory_continuity.plan(captured, None)
-    assert {r["source"] for r in plan["selected"]} == {"conversation", "task-source", "mail-source"}
-    text = memory_continuity.prompt(plan, captured["required"])
-    current = json.loads(
-        text.split("CURRENT REQUIRED WORK:\n", 1)[1].split("\nMEMORY UPDATE:", 1)[0]
-    )
-    assert current["tasks"][0]["memory_ref"] == "task-source:v1:0"
-    assert current["mail"][0]["memory_ref"] == "mail-source:v1:0"
+def test_task_and_mail_bodies_cannot_be_cited_as_processed_evidence():
+    plan = memory_continuity.plan(required_fixture(), None)
+    assert {r["source"] for r in plan["selected"]} == {"conversation"}
+    text = memory_continuity.prompt(plan)
+    assert "t" * 2000 not in text and "m" * 2000 not in text
     data = json.loads(text.split("MEMORY UPDATE:\n", 1)[1])
+    assert data["summary_input"]["reference_only_records"] == 2
+    assert {r["source"] for r in data["reference_only"]} == {"task-source", "mail-source"}
     assert len(json.dumps(data["records"]).encode()) < memory_continuity.MAX_UPDATE_BYTES
-    context = memory_continuity.context(
-        response([current["tasks"][0]["memory_ref"], current["mail"][0]["memory_ref"]]), plan
+    with pytest.raises(APIError, match="invalid or oversized"):
+        memory_continuity.context(response(["task-source:v1:0", "mail-source:v1:0"]), plan)
+
+
+def test_large_reference_only_work_does_not_starve_conversation_backlog():
+    captured = required_fixture(50000)
+    first = memory_continuity.plan(captured, None)
+    context = json.loads(response(["conversation:v1:29"]))["context"]
+    result = memory_continuity.result(first, context, [])
+    assert result["update_complete"] and not result["gaps"]
+    assert set(result["processed"]) == {"conversation"}
+    assert result["summary_input"]["remaining_eligible_records"] > 0
+    prior = {"continuity": result, "policy": "test", "source": captured["source"]}
+    second = memory_continuity.plan(captured, prior)
+    assert {r["source"] for r in second["selected"]} == {"conversation"}
+    later = memory_continuity.result(second, context, [])
+    assert later["summarized_records"] > result["summarized_records"]
+    assert later["remaining_records"] > 2  # Reference-only originals and older conversation.
+
+
+def test_indivisible_oversized_session_notes_stay_pending_with_readable_gap():
+    captured = required_fixture(50000)
+    captured["memory_sources"].append(
+        {
+            "id": "session-source",
+            "version": "v1",
+            "kind": "session",
+            "records": [
+                {"id": "0", "role": "current_facts", "text": json.dumps({"notes": "s" * 50000})}
+            ],
+        }
     )
-    assert context["constraints"][0]["refs"] == ["task-source:v1:0", "mail-source:v1:0"]
-
-
-def test_oversized_required_work_fails_instead_of_losing_its_evidence():
-    with pytest.raises(APIError, match="Current work exceeds"):
-        memory_continuity.plan(required_fixture(26000), None)
+    plan = memory_continuity.plan(captured, None)
+    result = memory_continuity.result(plan, {}, [])
+    assert not result["update_complete"]
+    assert set(result["pending_updates"]) == {"session-source"}
+    assert len(result["gaps"]) == 1
+    assert "original remains readable" in result["gaps"][0]["reason"]

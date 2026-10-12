@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from duckterm.core import progress
+from duckterm.core import progress, work_pointers
 from duckterm.core.session_api import APIError
 from duckterm.persistence.saved_state import (
     checkpoint_marker,
@@ -29,7 +29,7 @@ from duckterm.runtimes.native_history import MessageSource, NativeSnapshot
 if TYPE_CHECKING:
     from duckterm.server import Server
 
-POLICY = "maintained-progress-v3/summary-validator-v1"
+POLICY = "maintained-progress-v6/summary-validator-v1"
 MAX_REQUIRED_CHARS = 12000
 # Reserve room for the summary and instructions inside the 24 KiB seed limit.
 MAX_REQUIRED_BYTES = 20000
@@ -84,38 +84,18 @@ def required_context(server: Server, key: str, row: dict[str, Any]) -> dict[str,
     scope = dict(member) if member else {}
     # A moved card whose enrollment has not caught up has no peer-source grant.
     permitted = bool(scope.get("root") and scope.get("folder") == (row.get("grp") or ""))
-    tasks = []
-    mail = []
-    if permitted:
-        tasks = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT id,title,note,status FROM folder_tasks WHERE owner_session=? "
-                "AND status IN ('in_progress','parked') "
-                "AND (folder=? OR substr(folder,1,length(?)+1)=?||'/') ORDER BY id",
-                (key, scope["root"], scope["root"], scope["root"]),
-            )
-        ]
-        mail = [
-            dict(r)
-            for r in conn.execute(
-                "SELECT q.id,q.sender,q.question,q.answer,q.status FROM session_questions q "
-                "WHERE q.recipient=? AND q.root=? AND ((q.status IN ('queued','accepted')) "
-                "OR (q.sender='owner' AND q.status='answered')) AND (q.sender='owner' OR "
-                "EXISTS (SELECT 1 FROM session_api_members m JOIN sessions s "
-                "ON s.session_key=m.session_key WHERE m.session_key=q.sender "
-                "AND m.root=? AND m.folder=coalesce(s.grp,''))) ORDER BY q.rowid",
-                (key, scope["root"], scope["root"]),
-            )
-        ]
+    pointers = (
+        work_pointers.capture(conn, key, scope)
+        if permitted
+        else {"tasks": [], "mail": [], "work_references": {"available": False}}
+    )
     return {
         "name": row.get("name"),
         "purpose": scope.get("purpose"),
         "intention": row.get("intention"),
         "notes": row.get("notes"),
         "scope": scope,
-        "tasks": tasks,
-        "mail": mail,
+        **pointers,
     }
 
 
@@ -127,12 +107,14 @@ class SummaryUpdate:
     state: str
     reason: str | None = None
     diagnostic: str | None = None
+    review: dict[str, Any] | None = None
 
     def metadata(self, attempted_at: int) -> dict[str, Any]:
         return {
             "state": self.state,
             "reason": self.reason,
             **({"diagnostic": self.diagnostic} if self.diagnostic else {}),
+            **({"review": self.review} if self.review is not None else {}),
             "attempted_at": attempted_at,
             "revision_id": (
                 self.revision["id"] if self.revision and self.state != "failed" else None
@@ -140,7 +122,13 @@ class SummaryUpdate:
         }
 
     @classmethod
-    def failed(cls, reason: str | None, *, diagnostic: str | None = None) -> SummaryUpdate:
+    def failed(
+        cls,
+        reason: str | None,
+        *,
+        diagnostic: str | None = None,
+        review: dict[str, Any] | None = None,
+    ) -> SummaryUpdate:
         allowed = {
             "disabled",
             "no_provider",
@@ -154,13 +142,15 @@ class SummaryUpdate:
             "no_transcript",
             "update_failed",
         }
-        return cls(None, "failed", reason if reason in allowed else "update_failed", diagnostic)
+        return cls(
+            None, "failed", reason if reason in allowed else "update_failed", diagnostic, review
+        )
 
     @classmethod
     def from_revision(cls, value: dict[str, Any] | None, *, reused: bool = False) -> SummaryUpdate:
         if value is None:
             return cls.failed("source_changed")
-        validation = value.get("summary_validation", {})
+        validation = value.get("summary_validation")
         continuity = value.get("continuity", {})
         if continuity.get("verified") and (
             continuity.get("gaps")
@@ -168,9 +158,21 @@ class SummaryUpdate:
             or ("update_complete" not in continuity and continuity.get("remaining_records"))
         ):
             return cls(value, "partial", "summary_coverage_partial")
-        if validation.get("ready") is True:
+        review = value.get("summary_review") or progress.summary_review(validation)
+        stored_verdict = progress.summary_review(validation)
+        if stored_verdict["state"] == "accepted":
             return cls(value, "reused" if reused else "updated")
-        return cls(value, "failed", "summary_unverified")
+        if review["state"] == "accepted":
+            # A passing review does not override a failed source/coverage fence.
+            diagnostic = "summary_not_ready" + (
+                ":" + ",".join(stored_verdict["reason_codes"])
+                if stored_verdict["reason_codes"]
+                else ""
+            )
+            return cls(value, "failed", "summary_unverified", diagnostic, review)
+        return cls(
+            value, "failed", "summary_unverified", progress.review_diagnostic(review), review
+        )
 
 
 class ProgressCoordinator:
@@ -183,10 +185,12 @@ class ProgressCoordinator:
         row = self.server.history.session(key)
         if row is None:
             return None
+        required = required_context(self.server, key, row)
         return {
             "conversation": conversation(self.server.history, key, row),
             "events": event_source(self.server.history._conn, key, work_only=True),
-            "required": required_context(self.server, key, row),
+            "required": required,
+            "mail_boundary": work_pointers.mail_boundary(self.server.history._conn, key, required),
         }
 
     async def capture(self, key: str) -> dict[str, Any] | None:
@@ -212,6 +216,7 @@ class ProgressCoordinator:
         source = {
             "events": facts["events"],
             "required_hash": fingerprint(facts["required"]),
+            "mail_hash": facts["mail_boundary"]["hash"],
             "scope_hash": fingerprint(facts["required"]["scope"]),
             "transcript_hash": fingerprint(transcript),
             "transcript_chars": len(full),
@@ -303,7 +308,7 @@ class ProgressCoordinator:
             if failure := getattr(reply, "failure_reason", None):
                 return SummaryUpdate.failed(failure)
             digest = progress.parse(reply.text)
-            reason, diagnostic = "invalid_summary", "invalid_digest"
+            reason, diagnostic = "invalid_summary", progress.parse_diagnostic(reply.text)
             if digest and digest["summary"]:
                 try:
                     context = (
@@ -365,21 +370,32 @@ class ProgressCoordinator:
         bounded_required = (
             required[:MAX_REQUIRED_CHARS].encode()[:MAX_REQUIRED_BYTES].decode(errors="ignore")
         )
-        if "memory_sources" in captured and too_large:
-            # Current work must remain intact and parseable, never truncated JSON.
-            return SummaryUpdate.failed("invalid_context", diagnostic="required_context_too_large")
         try:
             maintained = (
                 memory_continuity.plan(captured, prior) if "memory_sources" in captured else None
             )
         except (ValueError, APIError):
             return SummaryUpdate.failed("invalid_context", diagnostic="invalid_required_records")
-        if maintained is not None and not maintained["selected"] and maintained["prior_context"]:
+        if (
+            maintained is not None
+            and not maintained["selected"]
+            and maintained["prior_context"]
+            and prior is not None
+            and prior.get("source") == captured["source"]
+            and not any(
+                maintained["processed"].get(r["source"], {}).get(r["record"]) != r["hash"]
+                for r in maintained["updates"]
+            )
+        ):
             # Nothing eligible fits this bounded update. Keep explicit gaps and
             # avoid paying to restate the same summary on every eligible turn.
             return SummaryUpdate.from_revision(prior, reused=True)
+        if maintained is not None:
+            # Original current-work records already occupy the bounded update.
+            # Do not copy their full JSON into a second, smaller input budget.
+            bounded_required = json.dumps(maintained["required_work"], ensure_ascii=False)
         prompt = (
-            memory_continuity.prompt(maintained, bounded_required)
+            memory_continuity.prompt(maintained)
             if maintained is not None
             else progress.build_prompt(captured["transcript"], prior_cache, bounded_required)
         )
@@ -409,11 +425,11 @@ class ProgressCoordinator:
         if failure_reason := getattr(verdict_reply, "failure_reason", None):
             return SummaryUpdate.failed(failure_reason)
         verdicts = progress.parse_verdicts(verdict_reply.text)
-        validation = (verdicts or {}).get("summary_validation") or {}
+        review = progress.review_outcome(verdict_reply.text, verdicts)
         reasons = []
-        if validation.get("ready") is not True or validation.get("reason_codes") != []:
+        if review["state"] != "accepted":
             reasons.append("summary_unverified")
-        if too_large:
+        if too_large and maintained is None:
             reasons.append("required_context_too_large")
         source = captured["source"]
         if source["transcript_kind"] != "native":
@@ -449,7 +465,13 @@ class ProgressCoordinator:
             # Failures do not advance coverage or replace the last good revision.
             if reasons:
                 return SummaryUpdate.failed(
-                    "source_changed" if "source_changed" in reasons else "summary_unverified"
+                    "source_changed" if "source_changed" in reasons else "summary_unverified",
+                    diagnostic=(
+                        progress.review_diagnostic(review)
+                        if "summary_unverified" in reasons
+                        else None
+                    ),
+                    review=review,
                 )
             continuity = memory_continuity.result(maintained, context, captured["memory_gaps"])
             retained = await memory_continuity.retain(key, captured, maintained)
@@ -473,6 +495,7 @@ class ProgressCoordinator:
             **({"continuity": continuity, **retained} if continuity is not None else {}),
             **({"memory_baseline_ref": baseline} if baseline else {}),
             "summary_validation": {"ready": not reasons, "reason_codes": reasons},
+            "summary_review": review,
         }
         result = self.persist(
             key,

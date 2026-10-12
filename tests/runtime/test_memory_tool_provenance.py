@@ -144,6 +144,7 @@ def test_old_incorrect_attribution_cannot_reuse_a_verified_summary(memory_rig, m
         source.pop("normalization", None)
         for row in source["records"]:
             row["role"] = "user"
+            row.pop("summary_text", None)
         return source
 
     async def run():
@@ -165,7 +166,6 @@ def test_old_incorrect_attribution_cannot_reuse_a_verified_summary(memory_rig, m
         assert data["prior_context"] is None
         assert [r["role"] for r in data["records"] if r["update_kind"] != "work_record"] == [
             "user",
-            "tool",
         ]
         assert second["continuity"]["prior_coverage_invalidated"]
         assert server.digests.revision("agent", first["id"])["summary"] == first["summary"]
