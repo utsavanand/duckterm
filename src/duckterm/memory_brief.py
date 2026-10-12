@@ -22,7 +22,7 @@ def assemble(
 
     try:
         assembled = memory_assembly.assemble(
-            revisions, links=links, sources=evidence_sources or sources
+            revisions, links=links, sources=evidence_sources or sources, active_only=True
         )
     except memory_contract.BudgetExceeded as exc:
         raise APIError(

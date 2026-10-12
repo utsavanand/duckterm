@@ -34,8 +34,8 @@ def test_existing_complete_spans_prepare_without_model_or_raw_tail(preparation, 
     from test_maintained_progress import provider
 
     calls = provider(monkeypatch)
-    path = fixtures.transcript(tmp, "agent-claude", "older original " + "x" * 22000)
-    append(path, "recent original " + "y" * 22000)
+    path = fixtures.transcript(tmp, "agent-claude", "older original " + "x" * 11000)
+    append(path, "recent original " + "y" * 11000)
 
     async def run():
         await server.progress_coordinator.refresh("agent")

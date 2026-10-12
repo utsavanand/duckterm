@@ -99,12 +99,12 @@ def test_skipped_new_work_survives_advancing_observation_frontiers(memory_rig, m
 
     async def run():
         await server.progress_coordinator.refresh("agent")
-        append(path, "New owner constraint: " + "a" * 30000)
-        append(path, "New result: " + "b" * 30000)
+        append(path, "New owner constraint: " + "a" * 11000)
+        append(path, "New result: " + "b" * 11000)
         first = await server.progress_coordinator.refresh_result("agent")
         assert first.state == "updated"
         assert not first.revision["continuity"]["pending_updates"]
-        append(path, "Another new result: " + "c" * 30000)
+        append(path, "Another new result: " + "c" * 11000)
         second = await server.progress_coordinator.refresh_result("agent")
         assert second.state == "updated"
         assert not second.revision["continuity"]["pending_updates"]

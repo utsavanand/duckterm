@@ -18,6 +18,7 @@ def assemble(
     *,
     links: list[dict[str, Any]] | None = None,
     sources: list[dict[str, Any]] | None = None,
+    active_only: bool = False,
 ) -> dict[str, Any]:
     """Resolve all active protected claims; use recent heads for narrative only.
 
@@ -67,6 +68,16 @@ def assemble(
         from duckterm import memory_lifecycle
 
         context = memory_lifecycle.project(context, links, sources or [])
+    if active_only:
+        # The handoff budget protects open work. Explicitly closed claims stay
+        # in immutable revisions and retrieval, not in the active-claim budget.
+        context = {
+            **context,
+            **{
+                field: [c for c in context[field] if c.get("state", "open") == "open"]
+                for field in memory_summary.FIELDS
+            },
+        }
     refs = (
         {s["id"] + ":" + s["version"] + ":" + r["id"] for s in sources for r in s["records"]}
         if sources is not None

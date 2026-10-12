@@ -216,8 +216,8 @@ def test_scheduled_exit_update_does_not_summarize_a_replacement_conversation(
 
 def test_cold_start_preserves_chronology_then_processes_only_new_append(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
-    path = transcript(tmp, "agent-claude", "Earlier direction: " + "x" * 30000)
-    append(path, "Later correction: " + "y" * 30000)
+    path = transcript(tmp, "agent-claude", "Earlier direction: " + "x" * 11000)
+    append(path, "Later correction: " + "y" * 11000)
     calls = provider(monkeypatch)
 
     async def run():

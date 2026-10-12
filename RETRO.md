@@ -1,6 +1,6 @@
 ## 2026-10-12 — Read current memory across immutable spans
 
-A Memory view that shows only the newest span loses older constraints from sight. Assemble published spans for current memory and retain exact historical revision views separately. Search and read responses must expose current lifecycle state alongside immutable saved text, so retirement cannot look like an open constraint. Replay an authenticated identical lifecycle request before applying new-transition preconditions. Age checkpoints by successful outcomes, never the latest attempt. Verify removed evidence, multi-span aggregation, long-running receipts, lifecycle replay and actual typed coverage together.
+A Memory view that shows only the newest span loses older constraints from sight. Assemble published spans for current memory and retain exact historical revision views separately. Search and read responses must expose current lifecycle state alongside immutable saved text, so retirement cannot look like an open constraint. Replay an authenticated identical lifecycle request before applying new-transition preconditions. Age checkpoints by successful outcomes, never the latest attempt. Explicitly retired claims remain retrievable but must stop consuming the open-claim handoff budget. Verify removed evidence, multi-span aggregation, long-running receipts, lifecycle replay and actual typed coverage together.
 
 ## 2026-10-12 — Follow the operation, not a short HTTP timeout
 

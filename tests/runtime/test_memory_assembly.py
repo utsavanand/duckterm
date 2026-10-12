@@ -74,3 +74,26 @@ def test_legacy_remains_identified_and_is_not_relabelled_as_a_span():
     assert result["legacy_revisions"] == ["legacy"]
     assert len(result["heads"]) == 1
     assert legacy["span"] == "cumulative"
+
+
+def test_explicitly_retired_history_does_not_consume_open_handoff_budget(monkeypatch):
+    from duckterm import memory_lifecycle
+
+    values = rows(100)
+    before = deepcopy(values)
+
+    def resolved_lifecycle(context, links, sources):
+        # Exercise aggregate sizing after authorized transitions have resolved;
+        # the real transition's evidence/authority is covered by lifecycle tests.
+        value = deepcopy(context)
+        for claim in value["constraints"][:-1]:
+            claim["state"] = "retired"
+        return value
+
+    monkeypatch.setattr(memory_lifecycle, "project", resolved_lifecycle)
+    result = memory_assembly.assemble(values, links=[{}], active_only=True)
+    assert len(result["context"]["constraints"]) == 1
+    assert (
+        result["context"]["constraints"][0] == values[-1]["continuity"]["context"]["constraints"][0]
+    )
+    assert values == before
