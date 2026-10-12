@@ -162,6 +162,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             || (method == "POST" && route.range(of: agentMergeRoot + "agent-merge/preview$", options: .regularExpression) != nil)
             || (method == "GET" && route.range(of: agentMergeRoot + "agent-merges$", options: .regularExpression) != nil))
         let memoryRoute = Self.memoryRestartRoute(components: components, method: method)
+            || Self.memoryReadRoute(components: components, method: method)
         guard checkpointAttemptRoute || agentMergeRoute || memoryRoute || timelineRoute || recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
             throw LaunchDestination.Failure.message("Unsupported session operation")
         }
@@ -187,6 +188,26 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         return request
+    }
+
+    // Owner-authenticated reads use the selected connection's existing transport.
+    // Query values remain data; the backend validates locators and pagination.
+    static func memoryReadRoute(components: URLComponents, method: String) -> Bool {
+        guard method == "GET" else { return false }
+        let root = #"^/sessions/[A-Za-z0-9._-]{1,128}/memory"#
+        let allowed: Set<String>
+        if components.path.range(of: root + "$", options: .regularExpression) != nil {
+            allowed = ["revision"]
+        } else if components.path.range(of: root + "/read$", options: .regularExpression) != nil {
+            allowed = ["source", "record", "offset", "limit"]
+        } else if components.path.range(of: root + "/related$", options: .regularExpression) != nil {
+            allowed = ["source", "record", "limit", "cursor"]
+        } else {
+            return false
+        }
+        let items = components.queryItems ?? []
+        return Set(items.map(\.name)).count == items.count
+            && Set(items.map(\.name)).isSubset(of: allowed)
     }
 
     // Exact v1 route/method/query combinations. The UI still restricts memory

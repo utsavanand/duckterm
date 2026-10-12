@@ -46,3 +46,52 @@ final class MemoryTransportTests: XCTestCase {
         }
     }
 }
+
+
+extension MemoryTransportTests {
+    @MainActor func testOwnerMemoryReadsPreserveSelectedHostAndEncodedQueries() throws {
+        let handle = String(repeating: "a", count: 32) + "%3A" + String(repeating: "b", count: 64)
+        let root = "/sessions/same.id/memory"
+        let paths = [
+            root,
+            root + "?revision=" + String(repeating: "c", count: 32),
+            root + "/read?source=" + handle + "&record=constraints%3A0&offset=16&limit=8000",
+            root + "/related?source=" + handle + "&record=constraints%3A0&limit=20&cursor=opaque%2B%2F%3D",
+        ]
+        // Same session key on local and SSH-tunnel bases must stay host-bound.
+        for port in [4300, 14300] {
+            let base = URL(string: "http://127.0.0.1:\(port)")!
+            for path in paths {
+                let request = try SessionTransport.request(base: base, params: [
+                    "path": path, "method": "GET",
+                    "headers": ["X-Duckterm-Token": "untrusted"],
+                    "url": "https://untrusted.example",
+                ])
+                XCTAssertEqual(request.url?.absoluteString, base.absoluteString + path)
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertNil(request.value(forHTTPHeaderField: "X-Duckterm-Token"))
+                XCTAssertNil(request.httpBody)
+            }
+        }
+    }
+
+    @MainActor func testMemoryReadsRejectMutationsAndUnrelatedQueries() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        for path in ["/sessions/x/memory", "/sessions/x/memory/read", "/sessions/x/memory/related"] {
+            for method in ["POST", "PATCH", "DELETE"] {
+                XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+            }
+        }
+        for path in [
+            "/sessions/x/memory/claim", "/sessions/x/memory/search", "/sessions/x/memory/read/extra",
+            "/sessions/x/memory?path=/tmp/secret", "/sessions/x/memory/read?url=https://example.com",
+            "/sessions/x/memory/read?source=a&source=b", "/sessions/x/memory?revision=a&revision=b",
+            "/sessions/x/memory/related?cursor=a&cursor=b", "/sessions/x/memory/related?offset=1",
+            "/sessions/x/memory/read?cursor=a", "/sessions/x/memory?source=a",
+            "/sessions/%2e%2e/memory", "/sessions/x/memory/%2e%2e/read",
+            "//example.com/sessions/x/memory", "/sessions/x/memory#fragment",
+        ] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": "GET"]), path)
+        }
+    }
+}
