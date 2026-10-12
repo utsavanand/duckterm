@@ -1,3 +1,7 @@
+## 2026-10-12 — Compare the same evidence projection at checkpoint publication
+
+Checkpoint capture excluded generated progress notes, but publication compared that original-only catalog against an unfiltered catalog. An unchanged session with any ordinary progress item therefore failed as `source_changed` after completing its summary. Use one projection at both boundaries, test with pre-existing derived progress, and attach fixed stage diagnostics to source refusals. Keep permission, native-file, original-record and publication-race checks intact; do not weaken them to hide a projection mismatch.
+
 ## 2026-10-12 — Retrieval must close resources and avoid rereading unrelated history
 
 A SQLite connection context commits or rolls back; it does not close the connection. Repeated artifact reads exhausted the live server's file handles and closed requests without responses. Close each temporary connection explicitly and test closure while retaining references so garbage collection cannot hide the leak. Read exact original handles without loading every conversation generation; reuse retained native parsing under file fences and the existing bounded cache. Ignore unrelated new sources during an as-of read, but still reject edited/deleted sources, changed grants, and changed native files.

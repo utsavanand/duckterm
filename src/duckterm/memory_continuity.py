@@ -36,16 +36,20 @@ def _required_rows(rows: list[dict[str, Any]], required: str) -> list[dict[str, 
     return [row for row in rows if row["kind"] == "session"]
 
 
+def original_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
+    """Use the same original-evidence projection at capture and publication."""
+    return {
+        **catalog,
+        "sources": [s for s in catalog["sources"] if s["kind"] in memory_handoff.ORIGINAL_KINDS],
+    }
+
+
 async def capture(server: Any, key: str, captured: dict[str, Any]) -> dict[str, Any]:
     """Read originals off-loop. Mechanical/unsupported sources keep legacy diagnostics."""
     if not captured.get("fence") or not hasattr(server, "memory"):
         return captured
-    catalog = server.memory.catalog(key)
     # Projections must never recursively become fresh evidence.
-    catalog = {
-        **catalog,
-        "sources": [s for s in catalog["sources"] if s["kind"] in memory_handoff.ORIGINAL_KINDS],
-    }
+    catalog = original_catalog(server.memory.catalog(key))
     async with server.memory.locks.setdefault(key, asyncio.Lock()):
         sources, gaps = await asyncio.to_thread(server.memory.materialize, catalog)
     if any(
