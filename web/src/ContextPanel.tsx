@@ -11,6 +11,7 @@ import {
 } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
+import { CheckpointAge, publishCheckpointClock } from "./CheckpointAge";
 import { CheckpointFacts } from "./CheckpointStatus";
 
 function age(startedAt: number): string {
@@ -23,7 +24,7 @@ function age(startedAt: number): string {
 // Right pane: context about the selected agent's terminal. If the session is on
 // a git branch, show a git view (branch, repo, and the working-tree diff). If
 // not, show the folder it's running in. (Approvals render above this in App.)
-export function ContextPanel({ session, active = true, onCheckpointTimeline }: { session: SessionView; active?: boolean; onCheckpointTimeline?: () => void }) {
+export function ContextPanel({ session, active = true, onCheckpointTimeline, onMemory }: { session: SessionView; active?: boolean; onCheckpointTimeline?: () => void; onMemory?: () => void }) {
   const toast = useToast();
   const [diff, setDiff] = useState<string>("");
   const [branches, setBranches] = useState<string[]>([]);
@@ -66,8 +67,8 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline }: {
       pending = true;
       const generation = checkpointGeneration.current;
       void api.checkpoints(session.key).then(d => {
-        if (live && generation === checkpointGeneration.current) setLastCheckpoint(d.checkpoints[0] ?? null);
-      }).catch(() => undefined).finally(() => { pending = false; });
+        if (live && generation === checkpointGeneration.current) { setLastCheckpoint(d.checkpoints[0] ?? null); publishCheckpointClock(session.key, d.checkpoint_clock); }
+      }).catch(() => { if (live) publishCheckpointClock(session.key, null); }).finally(() => { pending = false; });
     };
     const updated = (event: Event) => { if ((event as CustomEvent<string>).detail === session.key) load(); };
     load();
@@ -191,6 +192,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline }: {
         )}
       </div>
 
+      <section className="rd-context-checkpoint" aria-label="Saved memory"><CheckpointAge sessionKey={session.key} />{onMemory && <button className="rd-timeline-link" onClick={onMemory}>Read saved memory ↗</button>}</section>
       {lastCheckpoint && <section className="rd-context-checkpoint" aria-label="Latest checkpoint">
         {onCheckpointTimeline ? <button className="rd-timeline-link" onClick={onCheckpointTimeline}>Latest checkpoint ↗</button> : <strong>Latest checkpoint</strong>}
         <CheckpointFacts checkpoint={lastCheckpoint} compact />

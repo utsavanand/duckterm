@@ -1,3 +1,7 @@
+## 2026-10-12 — Read saved memory without creating another summary
+
+Use the existing publication pointer for current memory and exact revision IDs for historical views. Resolve evidence only on expansion and hide stale text when the source read fails. Share checkpoint-clock data from the existing session read; never start provider work on a display timer. Failed attempts must keep the last-success timestamp and their own failure message. Verify the web view, host-qualified reads and native GET admission together.
+
 ## Native Memory reads need exact bridge routes
 Backend read routes also require native transport admission. Test GET-only query keys, encoded pagination and the same session key on distinct tunnel ports; retain native token injection.
 

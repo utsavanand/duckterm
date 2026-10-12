@@ -1,3 +1,4 @@
+import type { CheckpointClock } from "./CheckpointAge";
 import type { AgentMergeService, AgentMergePreview, AgentMergeRecord, MergeTarget } from "./AgentMergeDialog";
 import type { ConversationRecoveryService, ConversationIdentity, ConversationCandidates } from "./conversationRecoveryState";
 import type { ForkMergePreview, ForkMergeRecord, ForkMergeService } from "./ForkMergeDialog";
@@ -657,7 +658,7 @@ export const api = {
   timeline: (key: string, kinds = "", before = "") =>
     get<TimelinePage>(`/sessions/${key}/timeline?${new URLSearchParams({ kinds, before, limit: "50" })}`, undefined, { authed: true }),
   checkpoints: (key: string) =>
-    get<{ checkpoints: CheckpointRecord[] }>(`/sessions/${key}/checkpoints`),
+    get<{ checkpoints: CheckpointRecord[]; checkpoint_clock?: CheckpointClock }>(`/sessions/${key}/checkpoints`),
   spotlight: (key: string) =>
     post<{ synced_files: string[] }>(`/sessions/${key}/spotlight`),
   sessionEvents: (key: string) =>
@@ -711,7 +712,7 @@ export interface CheckpointRecord {
     memory_source?: unknown;
     memory_sources?: unknown[];
     memory_retention?: string;
-    handoff?: { method?: string; packet_hash?: string; summary_revision_id?: string | null; included_records?: number; omitted_records?: number };
+    handoff?: { method?: string; packet_hash?: string; summary_revision_id?: string | null; eligible_records?: number; summarized_records?: number; reference_only_records?: number; included_records?: number; omitted_records?: number };
     intention?: string;
     prompts: string[];
     files: { path: string; edits: number }[];

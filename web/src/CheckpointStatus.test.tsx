@@ -19,6 +19,15 @@ export function checkpoint(prepared = false): CheckpointRecord {
   };
 }
 afterEach(cleanup);
+it("counts eligible independent spans separately from reference-only history", () => {
+  const cp = checkpoint(true);
+  cp.record.handoff = { method: "independent_spans", summary_revision_id: "last-span", eligible_records: 92, summarized_records: 92, included_records: 0, omitted_records: 7700, reference_only_records: 7700, packet_hash: "b".repeat(64) };
+  render(<CheckpointDetails checkpoint={cp} open />);
+  expect(screen.getByText("92 of 92 eligible records")).toBeVisible();
+  expect(screen.getByText("Reference-only history")).toBeVisible();
+  expect(screen.queryByText("Included directly")).toBeNull();
+  expect(screen.getByText(/recent span summaries, open memory claims and current work/)).toBeVisible();
+});
 it("calls an old missing-summary checkpoint an attempt without inventing its failure cause", () => {
   const cp = checkpoint(), retry = vi.fn(); render(<CheckpointDetails checkpoint={cp} onRetry={retry} open />);
   expect(screen.getByText("Manual checkpoint attempt")).toBeVisible();

@@ -112,7 +112,9 @@ def test_summary_excludes_noise_without_claiming_originals_were_summarized(memor
                 (
                     "error"
                     if event_type == "PostToolUseFailure"
-                    else "last_assistant_message" if event_type == "Stop" else "prompt"
+                    else "last_assistant_message"
+                    if event_type == "Stop"
+                    else "prompt"
                 ): text,
             }
         )

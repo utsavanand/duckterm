@@ -110,7 +110,9 @@ def assemble(
         else (
             "legacy"
             if not continuity
-            else "current" if count == len(rows) and continuity.get("verified") else "partial"
+            else "current"
+            if count == len(rows) and continuity.get("verified")
+            else "partial"
         )
     )
     handoff = {

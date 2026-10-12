@@ -8,6 +8,7 @@ export function CheckpointFacts({ checkpoint: cp, compact = false }: { checkpoin
   const state = checkpointStatus(cp);
   const handoff = checkpointHandoff(cp);
   const update = cp.summary_update?.state;
+  const spans = handoff?.method === "independent_spans";
   const missing = checkpointHasNoSummary(cp);
   const nativeSaved = snapshot(cp.record?.memory_source) || (Array.isArray(cp.record?.memory_sources) && cp.record.memory_sources.some(snapshot));
   const summary = checkpointSummaryMissing(cp) ? "The referenced summary is unavailable" : handoff ? handoff.summary_revision_id ? "Saved revision included" : "No saved summary used"
@@ -23,14 +24,14 @@ export function CheckpointFacts({ checkpoint: cp, compact = false }: { checkpoin
       {typeof cp.summary_source_at === "number" && cp.summary_source_at > 0 && <><dt>{update === "failed" ? "Previous summary" : "Summary source"}</dt><dd>{update === "failed" && "Kept · "}{checkpointDate(cp.summary_source_at)}</dd></>}
       {!compact && cp.summary_origin === "owner-reviewed" && <><dt>Summary origin</dt><dd>Owner-reviewed brief</dd></>}
       {!compact && handoff && <>
-        {count(handoff.included_records) && <><dt>Included directly</dt><dd>{handoff.included_records.toLocaleString()} recent records</dd></>}
-        {count(handoff.omitted_records) && <><dt>Left for retrieval</dt><dd>{handoff.omitted_records.toLocaleString()} records</dd></>}
+        {spans && count(handoff.summarized_records) && count(handoff.eligible_records) ? <><dt>Conversation summarized</dt><dd>{handoff.summarized_records.toLocaleString()} of {handoff.eligible_records.toLocaleString()} eligible records</dd></> : count(handoff.included_records) && <><dt>Included directly</dt><dd>{handoff.included_records.toLocaleString()} recent records</dd></>}
+        {count(handoff.omitted_records) && <><dt>{spans ? "Reference-only history" : "Left for retrieval"}</dt><dd>{handoff.omitted_records.toLocaleString()} records</dd></>}
       </>}
     </dl>
     {compact ? <p className="rd-checkpoint-coverage">History is recorded automatically. Checkpoint requests a summary update now.</p> : <div className="rd-checkpoint-coverage">
       {cp.summary_origin === "owner-reviewed" && <p>This brief covers the owner-reviewed work and stated gaps.</p>}
       {cp.format === "fork_merge" ? <p>This merge note covers the child’s findings, not the full parent session.</p> : <>
-        {handoff ? <><p>The brief uses saved work and recent original records. No new summary was generated during preparation.</p><p>This is a preparation record. Restart checks current work before switching; this entry does not mean a switch occurred.</p></>
+        {handoff ? <><p>{spans ? "The brief uses recent span summaries, open memory claims and current work. Original records remain available through the read tools." : "The brief uses saved work and recent original records. No new summary was generated during preparation."}</p><p>This is a preparation record. Restart checks current work before switching; this entry does not mean a switch occurred.</p></>
           : update === "failed" ? <p>No new validated summary was saved. Recorded history and any previous validated summary are unchanged.</p>
           : missing ? <p>History was already being recorded automatically. This attempt did not produce a summary.</p>
           : update === "partial" ? <p>Some history remains unsummarized. This checkpoint is incomplete and not ready for handoff. The saved text is available for inspection.</p>

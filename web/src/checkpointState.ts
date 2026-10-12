@@ -2,7 +2,7 @@ import type { CheckpointRecord } from "./api";
 
 export function checkpointHandoff(cp: Partial<CheckpointRecord>) {
   const handoff = cp.record?.handoff;
-  return cp.saved === true && cp.format === "checkpoint_marker_v2" && handoff?.method === "maintained"
+  return cp.saved === true && cp.format === "checkpoint_marker_v2" && (handoff?.method === "maintained" || handoff?.method === "independent_spans")
     && typeof handoff.packet_hash === "string" && handoff.packet_hash ? handoff : null;
 }
 export function checkpointHasNoSummary(cp: Partial<CheckpointRecord>) {
