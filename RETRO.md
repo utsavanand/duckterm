@@ -45,6 +45,12 @@ Stage the policy switch with span-only writes, revision version metadata and rea
 Two individually valid summary contexts can create a supersession cycle when combined: each context may reference a claim held only by the other. Per-child checks therefore cannot certify a compacted parent. Validate the complete protected-claim union before calling either provider. On failure preserve the children and report a pending compaction; do not edit their relationships to make the fold pass.
 
 QA caught this in the isolated compactor foundation before runtime integration. The regression starts with ten valid children, creates a cycle across two of them, and verifies rejection without provider calls or input mutation. A generated parent must obey the same reader contract as its inputs.
+## 2026-10-09 — Interactive panes must not inherit automation's no-color flag
+
+The terminal palettes were intact, but the agent and the persistent tmux server had inherited `NO_COLOR=1`; captured output contained only bold/dim styling. A theme cannot recolor ANSI foreground values that the process never emits. Unset inherited `NO_COLOR` in each interactive pane's launch command, while preserving an explicitly supplied launch override. Sanitizing the current server process alone cannot repair environment already retained by tmux. Existing running agents retain their environment until restarted; do not interrupt live work merely to restore color.
+
+The isolated tmux regression failed before the fix on both direct and piped launches. It checks the child environment, actual green ANSI output, explicit opt-out preservation, and that the shared tmux environment is left untouched. Test panes are removed in cleanup.
+
 ## 2026-10-11 — Rename a badge selector with its rendered class
 
 Terminology changes can affect styling when a retired term is also a CSS
