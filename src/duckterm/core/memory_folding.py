@@ -64,6 +64,8 @@ def active(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _node(row: dict[str, Any], index: dict[str, dict[str, Any]], tier: int) -> dict[str, Any]:
+    if row.get("summary_validation", {}).get("ready") is not True:
+        raise ValueError("unverified_fold_input")
     context, origins = memory_contract.resolve_revision(row, index.get)
     return {
         "id": row["id"],
@@ -236,4 +238,13 @@ def apply(store: Any, key: str, proposal: dict[str, Any], now: int) -> dict[str,
         status.pop("parent_ids", None)
     finally:
         conn.execute("RELEASE memory_compaction")
+    if "parent_ids" not in status:
+        status["attempts"] = [
+            (
+                {**attempt, "state": "pending", "reason": status["reason"], "retry_after": 0}
+                if attempt["state"] == "compacted"
+                else attempt
+            )
+            for attempt in status.get("attempts", [])
+        ]
     return status

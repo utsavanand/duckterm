@@ -224,6 +224,7 @@ def test_optional_parent_failure_preserves_leaf_and_checkpoint(memory_rig, monke
         assert saved["compaction"]["state"] == "pending"
         assert saved["compaction"]["reason"] == mode
         assert "parent_ids" not in saved["compaction"]
+        assert all(a["state"] == "pending" for a in saved["compaction"]["attempts"])
         assert not any(
             r.get("fold")
             for r in folding.rows(server.digests, "agent", captured["source"]["scope_hash"])
@@ -360,5 +361,26 @@ def test_cancellation_before_write_creates_no_parent_or_checkpoint(memory_rig, m
         with pytest.raises(asyncio.CancelledError):
             await task
         assert folding.rows(server.digests, "agent", captured["source"]["scope_hash"]) == before
+
+    asyncio.run(run())
+
+
+def test_rejected_summary_is_never_certified_by_folding(memory_rig, monkeypatch):
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Owner work")
+    calls = provider(server, monkeypatch)
+
+    async def run():
+        captured = await server.progress_coordinator.capture("agent")
+        bad = leaf(captured, 0)
+        bad["summary_validation"] = {"ready": False, "reason_codes": ["summary_unverified"]}
+        with transaction(server.history._conn):
+            server.digests.add_revision("agent", bad, -1)
+        seed(server, captured, 49)
+        proposal = await folding.prepare(
+            server.progress_coordinator, "agent", captured, leaf(captured, 51)
+        )
+        assert proposal["state"] == "pending" and proposal["parents"] == []
+        assert calls == []
 
     asyncio.run(run())
