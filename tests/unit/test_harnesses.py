@@ -1,6 +1,20 @@
 from duckterm.harnesses import REGISTRY, installable_agents, runtime_for
 
 
+def test_opencode_cannot_silently_fall_back_to_generic(monkeypatch) -> None:
+    import pytest
+
+    from duckterm.harnesses import infer_runtime
+    from duckterm.runtimes.opencode_options import snapshot
+
+    assert infer_runtime("opencode --model 'local/org/model'") == "opencode"
+    assert runtime_for("opencode", "opencode").name == "opencode"
+    monkeypatch.delitem(REGISTRY, "opencode")
+    assert snapshot()["launch"]["available"] is False
+    with pytest.raises(ValueError, match="not available"):
+        runtime_for("opencode", "opencode")
+
+
 def test_runtime_for_resolves_each_agent() -> None:
     assert runtime_for("claude-code", "claude").name == "claude-code"
     assert runtime_for("codex", "codex").name == "codex"
@@ -32,3 +46,10 @@ def test_installable_agents_carry_a_hook_spec() -> None:
         # exactly our entries, leaving nothing behind.
         built = spec.build({}, "/path/to/duckterm-hook.sh", name)
         assert spec.strip(built) == {}
+
+
+def test_native_preparation_arguments_are_not_replayed_as_the_user_command():
+    runtime = runtime_for("opencode", "opencode --model fixture/alpha")
+    saved = runtime.command_for_history(["opencode", "/project", "--port", "1234"])
+    assert saved == "opencode --model fixture/alpha"
+    assert runtime_for("opencode", saved).model == "fixture/alpha"

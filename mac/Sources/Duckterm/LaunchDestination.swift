@@ -25,7 +25,8 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
         guard base.scheme == "http", base.host == "127.0.0.1" else {
             throw Failure.message("Invalid destination")
         }
-        var paths = ["browse": "/browse", "branches": "/branches", "themes": "/zsh-themes", "launch": "/sessions/launch"]
+        var paths = ["browse": "/browse", "branches": "/branches", "themes": "/zsh-themes", "launch": "/sessions/launch", "opencode-options": "/runtimes/opencode/launch-options"]
+        if operation == "opencode-options" && !params.isEmpty { throw Failure.message("Invalid OpenCode options parameters") }
         let transfers = ["mkdir", "repositories", "preview", "prepare", "chunk", "begin", "receive", "finish", "clone", "launch", "status", "preflight", "link", "continue"]
         for name in transfers { paths["transfer-" + name] = "/transfers/" + name }
         guard let path = paths[operation] else { throw Failure.message("Unsupported operation") }

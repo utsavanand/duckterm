@@ -9,6 +9,10 @@ from duckterm.helpers import instance, session_credentials
 # Copilot's current adapter uses non-interactive -p; adding a prompt to an empty
 # launch would change its lifetime. Do not apply this until it has an interactive adapter.
 SUPPORTED_RUNTIMES = {"codex", "claude-code"}
+# OpenCode receives this through its verified initial native prompt. Later
+# terminal injection is deliberately unsupported, so keep it out of the set
+# used by the owner-introduction and restart paths.
+LAUNCH_RUNTIMES = SUPPORTED_RUNTIMES | {"opencode"}
 
 GUIDE = """# Duckterm session collaboration
 
@@ -165,7 +169,7 @@ def scoped_rules(cwd: Path, runtime: str, model: str | None = None) -> str:
 def launch_prompt(
     runtime: str, key: str, prompt: str, *, home: Path | None = None, cwd: Path | None = None
 ) -> str:
-    if runtime not in SUPPORTED_RUNTIMES:
+    if runtime not in LAUNCH_RUNTIMES:
         return prompt
     intro = introduction(key, home=home)
     if cwd is not None:

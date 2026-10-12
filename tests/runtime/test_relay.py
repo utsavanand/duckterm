@@ -444,13 +444,25 @@ def test_codex_request_becomes_a_note_once_its_prompt_shows_and_approve_presses_
     assert server.approvals.pending() == []
 
 
-def test_codex_approval_answered_after_its_prompt_left_presses_nothing(codex_world) -> None:
+def test_codex_approval_answered_after_its_prompt_left_presses_nothing(
+    codex_world, monkeypatch
+) -> None:
     server, owner, sup = codex_world
 
     async def scenario():
+        confirmed = asyncio.Event()
+        original = server._relay_confirm
+
+        def confirm(approval_id, key):
+            original(approval_id, key)
+            confirmed.set()
+
+        monkeypatch.setattr(server, "_relay_confirm", confirm)
         request(server)
         sup.screen = CODEX_APPROVAL
-        await asyncio.sleep(0.05)
+        # Two awaited executor calls may exceed 50 ms under the full gate.
+        # Observe actual confirmation before testing stale-answer rejection.
+        await asyncio.wait_for(confirmed.wait(), timeout=2)
 
     asyncio.run(scenario())
     [note] = notes(server)

@@ -121,3 +121,34 @@ def test_discovery_excludes_dead_panes_and_foreign_sessions(monkeypatch):
         tmux, "_tmux", lambda *args: (True, "rd_alive\t0\nrd_dead\t1\nother\t0\nrd_alive\t0\n")
     )
     assert tmux.list_duckterm_sessions() == ["alive"]
+
+
+def test_native_stop_signals_only_the_original_exact_pane(monkeypatch):
+    import signal
+
+    from duckterm.agents import tmux
+
+    pids = iter([123, 456])
+    signals = []
+    calls = []
+    monkeypatch.setattr(tmux, "pane_pid", lambda target: next(pids))
+    monkeypatch.setattr(tmux.os, "kill", lambda pid, sig: signals.append((pid, sig)))
+    monkeypatch.setattr(tmux, "_tmux", lambda *args: calls.append(args) or (True, ""))
+    assert tmux.kill_session("owned", terminate_process=True)
+    assert signals == [(123, signal.SIGTERM)]
+    assert calls == [("kill-session", "-t", tmux.exact_target("owned"))]
+
+
+def test_native_stop_escalates_only_while_original_pane_is_present(monkeypatch):
+    import signal
+
+    from duckterm.agents import tmux
+
+    ticks = iter([0, 3])
+    signals = []
+    monkeypatch.setattr(tmux.time, "monotonic", lambda: next(ticks))
+    monkeypatch.setattr(tmux, "pane_pid", lambda target: 123)
+    monkeypatch.setattr(tmux.os, "kill", lambda pid, sig: signals.append((pid, sig)))
+    monkeypatch.setattr(tmux, "_tmux", lambda *args: (True, ""))
+    assert tmux.kill_session("owned", terminate_process=True)
+    assert signals == [(123, signal.SIGTERM), (123, signal.SIGKILL)]

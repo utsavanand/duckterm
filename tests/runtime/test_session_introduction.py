@@ -62,6 +62,19 @@ def test_blank_launch_and_unsupported_runtime(tmp_path):
         assert launch_prompt(runtime, "other", "unchanged", home=tmp_path) == "unchanged"
 
 
+def test_opencode_introduction_is_launch_only_and_keeps_task_literal(tmp_path):
+    from duckterm.helpers.session_instructions import SUPPORTED_RUNTIMES
+
+    task = "Keep $variables and `literal code` intact."
+    prompt = launch_prompt("opencode", "native", task, home=tmp_path)
+    assert prompt.startswith("Duckterm session capability:")
+    assert prompt.endswith("User's task:\n" + task)
+    assert "opencode" not in SUPPORTED_RUNTIMES
+    guide = next((tmp_path / "session-instructions").glob("*/collaboration.md"))
+    assert guide.read_text() == GUIDE
+    assert guide.stat().st_mode & 0o777 == 0o600
+
+
 def test_owner_introduction_requires_idle_live_agent(tmp_path, monkeypatch):
     store = HistoryStore(tmp_path / "db.sqlite")
     store.record(

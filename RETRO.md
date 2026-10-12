@@ -1,5 +1,94 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Closing a terminal is not proof its native process stopped
+
+OpenCode fixture processes survived tmux hangup and consumed CPU after successful
+QA. Stop native panes with an explicit signal before removing their terminal;
+recheck the exact pane PID before escalation. Native acceptance must verify the
+saved process exited, not merely that its card and temporary files were removed.
+
+## 2026-10-11 — Bind freshness to the displayed native content
+
+An awaited Messages read can finish after a newer observation. Comparing only
+session liveness labelled an older response with the newer check time. Match a
+content fingerprint before borrowing an observation timestamp; unchanged polling
+must still leave the snapshot file stable for checkpoint fences. Regression
+checks cover changed content, unchanged content and legacy revision matching.
+
+## 2026-10-11 — Exercise native launch through the dashboard sink
+
+A supervisor-only fixture persisted directly to HistoryStore and missed the
+dashboard sink rebuilding an adapter from its saved command. OpenCode saved
+temporary port/directory arguments that its user-command parser rightly
+rejected, preventing HTTP launch. Persist the original adapter command while
+keeping temporary process arguments in preparation. Native acceptance now
+launches through the real authenticated HTTP endpoint and reads Messages.
+
+## 2026-10-11 — Unknown native state must remain unknown in the browser
+
+Mirror native lifecycle events in the browser and exclude unknown status from
+the idle grace timer. Keep cached Messages with an explicit last-check notice;
+remove it after verified recovery, and never call a missing first snapshot a
+previously verified conversation. Test real stored history and both themes.
+
+## 2026-10-11 — Native launch support does not imply terminal-paste support
+
+OpenCode needs its session/inbox guide in the verified initial prompt, but
+that does not make later automated terminal pastes safe. Keep launch prompt
+introduction separate from the existing live-introduction capability. Verify
+the guide and literal owner task reach the native launch journal together.
+
+## 2026-10-11 — Destination readiness must check the actual executable
+
+A picker choice does not prove its selected computer can launch the agent.
+Use the same bounded version check for the options endpoint and actual launch;
+recheck at launch, reject unsupported configuration, and reap the probe child
+on cancellation. Keep registration separate from installation and do not claim
+aggregate usage merely because native Messages contain usage fields.
+
+## 2026-10-11 — Recheck native ownership after awaited observation work
+
+OpenCode monitoring checked process ownership before snapshot I/O but could publish idle after the owned process exited during snapshot or cache persistence. Recheck ownership after each awaited worker before updating lifecycle state. Two independent regressions fail on 3edb52f and pass with these checks.
+
+## 2026-10-11 — Owner Stop must fence a late native launch result
+
+Generation checks alone do not cancel a launch whose owner has stopped,
+archived or merged its card. Check that durable lifecycle state before every
+new native write claim and before accepting a returned result. An uncertain
+prompt stays claimed after Stop; a late receipt cannot make it ready again.
+
+## 2026-10-11 — Environment secrets must not become tmux command arguments
+
+Passing a native endpoint password through tmux's `-e` option puts the value in
+the tmux client's command line. Native preparation now exports its environment
+from the existing mode-0600, one-use launch script instead. Values stay literal
+and the child unlinks the script before executing the agent. QA also restarts
+its entire probe with an allowlisted environment so the supervisor's tmux
+server and version preflight cannot inherit provider or SSH-agent credentials.
+
+## 2026-10-11 — Native history refreshes need a durable ordering barrier
+
+A canceled native read can finish after a new server has already refreshed
+Messages. Bind snapshots to destination, store, conversation and generation;
+serialize cache writes and reject an older observation even if it finishes
+last. Keep unchanged content files stable while recording a separate revision
+watermark, so polling does not invalidate every checkpoint's content fence.
+Native status loss is unknown, never inferred idle. Parent completion and its
+own pending questions/permissions must be checked before reporting Idle.
+
+## 2026-10-11 — A lost launch receipt must never authorize another prompt
+
+Native OpenCode acknowledges asynchronous prompt submission with HTTP 204; that
+receipt can be lost after the prompt is accepted. Persist the conversation and
+message identities, and claim each write before sending it. Recover by reading
+that exact native user message, including its content and requested model.
+Neither a timeout nor server restart resets the write claim. Missing native
+creation identity remains uncertain instead of creating another conversation.
+
+The isolated pinned-native fixture drops the real prompt acknowledgment, reopens
+DuckTerm's test database, and verifies one user message with no repeated write.
+Fault tests cover every persisted boundary, competing claims, wrong selection,
+changed generation, failed persistence and foreign conversation receipts.
 ## 2026-10-11 — Bound reader allocations, not raw transcript age
 
 UI-dev's checkpoint retained an accepted summary but failed completeness because its native Codex file exceeded the reader's 512 MiB whole-file ceiling. The 778 MB file contained repeated compaction metadata; streaming it produced only about 696 KB of searchable text and 392 KB of summary-eligible text in a 3.9-second read-only replay. Filtering tools after materialization cannot help when an earlier raw-file guard refuses the source. Inspect the specific saved source gap before attributing a partial checkpoint to the summarizer or the entire historical backlog.
@@ -30,6 +119,56 @@ Terminology changes can affect styling when a retired term is also a CSS
 selector. Change JSX className and both base/pseudo-element selectors together;
 preserve wire fields and verify the style declarations remain identical.
 
+## 2026-10-10 — Returning to the same destination is a new support check
+
+Independent QA found that keying OpenCode readiness by computer and retry count
+reused a prior available response after changing agents and returning. Bind the
+settled response to the active selection generation instead. The form must stay
+unavailable while that generation's request is pending, including A→B→A changes
+and late replies from B. Dedicated regressions cover both sequences.
+
+## 2026-10-10 — A model picker must follow the selected computer
+
+OpenCode provider configuration belongs to its destination. Keep model drafts
+separate by computer, ignore late replies from a previous destination, and do
+not enable Launch without an affirmative capability response. Unregistered
+OpenCode must fail clearly rather than silently become a generic runtime.
+The approved form's real dark-theme preview also exposed hard-coded dark field
+labels; use the existing theme text color so both themes remain readable.
+
+Validation covers destination changes during requests, literal custom model
+IDs, other-agent launches, unavailable/malformed support responses, the native
+read-only bridge and the actual form against an isolated dashboard.
+
+## 2026-10-10 — Validate native discriminators before classifying them
+
+Independent OpenCode QA supplied JSON arrays as a message role and part type.
+Set membership raised an uncontrolled TypeError before the parser could reject
+the malformed response. Validate discriminator string types first; keep future
+string part types explicitly unsupported. Regression coverage includes arrays,
+objects, null, numbers and booleans for both fields, plus a future string type.
+Native fixture review also identified the prompt route's valid empty HTTP 204:
+accept that acknowledgment without trying to parse JSON, while retaining
+uncertain-write handling for a missing response or malformed expected JSON.
+An acknowledgment alone still does not prove delivery to the intended session.
+
+## 2026-10-09 — Native selection success must come from the terminal
+
+A native API can accept conversation selection while the terminal stays on its
+previous route. In the OpenCode native probe, a macOS `/var` versus `/private/var`
+project alias also separated API and TUI instance identity. Canonicalize the
+project directory before launch and require a fresh TUI observation bound to
+version, process, generation and exact conversation. Never substitute HTTP 200,
+matching cwd or session existence for that proof. File-drop ownership likewise
+needs both saved content hash and safe directory traversal, not a marker alone.
+
+Validation: the pinned native observer selected two synthetic conversations in
+one isolated project; focused tests cover stale/foreign identity, unsupported
+history, uncertain native writes and unowned/modified/symlinked plugin files.
+The full gate also exposed a pre-existing Codex relay test that assumed two
+executor calls completed within 50 ms; wait for its actual confirmation event
+before asserting stale-answer rejection. This is foundation evidence, not
+complete harness acceptance.
 ## 2026-10-11 — Prompt pointers are not a checkpoint retention boundary
 
 Bounding the inbox pointers in required context accidentally shortened the checkpoint's mail ID list and changed its hash input from canonical messages to metadata. The checkpoint resolver still hashes full messages; this would report false source changes and leave omitted messages outside the retention boundary. Capture complete authorized IDs and the canonical hash separately from prompt context. Persist only those IDs and the hash, never another copy of message bodies. Changes beyond the pointer limit must still change the source fence.
