@@ -16,7 +16,7 @@ import shutil
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from duckterm.core import events
 from duckterm.core.session_api import SessionAPI
@@ -201,6 +201,11 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
     if lifecycle == "terminated" or event.get("event_type") == events.SESSION_END:
         return "terminated"
     match event.get("event_type"):
+        case "NativeStatus" if event.get("runtime") == "opencode":
+            native = event.get("native_state")
+            if native in ("idle", "busy", "waiting", "unknown"):
+                return cast(SessionState, native)
+            return prev or "unknown"
         case "Notification" if _is_idle_notice(event):
             # Claude Code notifies ~60s after a turn ends with nothing to answer.
             # Counting that as waiting flooded the "needs you" count with idle

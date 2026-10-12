@@ -9,10 +9,14 @@ Ported from uv-suite's watchtower tmux service. All calls are synchronous
 subprocess; drive them from async code via asyncio.to_thread.
 """
 
+import os
+import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 
@@ -129,7 +133,13 @@ def spawn(
 
 
 def spawn_piped(
-    session_id: str, command: str, cwd: str, pipe_path: str, env: dict[str, str] | None = None
+    session_id: str,
+    command: str,
+    cwd: str,
+    pipe_path: str,
+    env: dict[str, str] | None = None,
+    *,
+    private_env: bool = False,
 ) -> str:
     """Spawn a detached session and stream its pane output to `pipe_path` from
     the start, so live output isn't missed. Returns the tmux target."""
@@ -145,8 +155,15 @@ def spawn_piped(
     guarded = wait + " && exec " + shlex.join(["/bin/sh", str(script)])
     target = None
     try:
-        private_write(script, f"/bin/rm -f -- {shlex.quote(str(script))}\n{command}\n")
-        target = spawn(session_id, guarded, cwd, env)
+        exports = ""
+        if private_env:
+            if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) for key in (env or {})):
+                raise ValueError("Invalid private launch environment name")
+            exports = "".join(
+                f"export {key}={shlex.quote(value)}\n" for key, value in (env or {}).items()
+            )
+        private_write(script, f"/bin/rm -f -- {shlex.quote(str(script))}\n{exports}{command}\n")
+        target = spawn(session_id, guarded, cwd, None if private_env else env)
         ok, error = _tmux(
             "pipe-pane",
             "-t",
@@ -258,7 +275,23 @@ def capture_screen(target: str, history_lines: int = 2000) -> bytes:
     return "\r\n".join(lines).encode(errors="replace")
 
 
-def kill_session(target: str) -> bool:
+def kill_session(target: str, *, terminate_process: bool = False) -> bool:
+    if terminate_process:
+        # Some native TUIs survive terminal hangup. Signal only the process
+        # still attached to this exact owned pane, before removing the pane.
+        try:
+            pid = pane_pid(target)
+            os.kill(pid, signal.SIGTERM)
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if pane_pid(target) != pid:
+                    break
+                time.sleep(0.05)
+            else:
+                if pane_pid(target) == pid:
+                    os.kill(pid, signal.SIGKILL)
+        except (ValueError, ProcessLookupError):
+            pass
     ok, _ = _tmux("kill-session", "-t", exact_target(target))
     return ok
 
@@ -266,3 +299,11 @@ def kill_session(target: str) -> bool:
 def session_exists(target: str) -> bool:
     ok, _ = _tmux("has-session", "-t", exact_target(target))
     return ok
+
+
+def pane_pid(target: str) -> int:
+    """Exact pane process for adapters which exec their native child in place."""
+    ok, value = _tmux("display-message", "-p", "-t", exact_target(target, pane=True), "#{pane_pid}")
+    if not ok or not value.strip().isdigit() or int(value) <= 0:
+        raise ValueError("Cannot verify the owned terminal process")
+    return int(value)

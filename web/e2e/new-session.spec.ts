@@ -21,6 +21,7 @@ test("new session: agent picker + launch creates a session", async ({
     "Claude Code",
     "Codex",
     "Copilot",
+    "OpenCode",
     "Custom…",
   ]);
   await page.getByRole("button", { name: "Custom…", exact: true }).click();

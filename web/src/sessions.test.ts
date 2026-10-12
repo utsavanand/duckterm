@@ -260,3 +260,14 @@ describe("label precedence (renames must survive restarts)", () => {
     expect(m.get("k")!.label).toBe("Main");
   });
 });
+
+it("keeps lost native status unknown until a verified update and honors owner Stop", () => {
+  let state = applyAll([ev({ event_type: "SessionStart", runtime: "opencode" }), ev({ event_type: "Stop" })]);
+  state = applyEvent(state, ev({ event_type: "NativeStatus", runtime: "opencode", native_state: "unknown" }));
+  expect(effectiveState(state.get("s1")!, Date.now())).toBe("unknown");
+  state = applyEvent(state, ev({ event_type: "NativeStatus", runtime: "opencode", native_state: "idle" }));
+  expect(state.get("s1")!.state).toBe("idle");
+  state = applyEvent(state, ev({ event_type: "SessionEnd", lifecycle: "stopped" }));
+  state = applyEvent(state, ev({ event_type: "NativeStatus", runtime: "opencode", native_state: "busy" }));
+  expect(state.get("s1")!.state).toBe("stopped");
+});

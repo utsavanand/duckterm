@@ -17,6 +17,7 @@ from duckterm.runtimes.claude_code import ClaudeCodeRuntime
 from duckterm.runtimes.codex import CodexRuntime
 from duckterm.runtimes.copilot import CopilotRuntime
 from duckterm.runtimes.generic import GenericRuntime
+from duckterm.runtimes.opencode import OpenCodeRuntime
 
 # name -> adapter class. The class is the factory (called with a command) and
 # carries the agent's hook_spec as a class attribute, so installable_agents can
@@ -25,6 +26,7 @@ REGISTRY: dict[str, type[Harness]] = {
     "claude-code": ClaudeCodeRuntime,
     "codex": CodexRuntime,
     "copilot": CopilotRuntime,
+    "opencode": OpenCodeRuntime,
     # The lowest-common-denominator: any CLI agent, driven only (no hooks, so
     # not watchable). Not offered as an install-hooks choice.
     "generic": GenericRuntime,
@@ -34,6 +36,10 @@ REGISTRY: dict[str, type[Harness]] = {
 def runtime_for(name: str | None, command: str) -> AgentRuntime:
     """Build the drive-adapter for `name` (falling back to generic)."""
     cls = REGISTRY.get(name or "", GenericRuntime)
+    if name == "opencode" and name not in REGISTRY:
+        from duckterm.runtimes.opencode_options import LAUNCH_REASON
+
+        raise ValueError(LAUNCH_REASON)
     return cls(command)
 
 
@@ -49,6 +55,8 @@ def infer_runtime(command: str) -> str:
         return "codex"
     if first.startswith("copilot"):
         return "copilot"
+    if first == "opencode":
+        return "opencode"
     return "generic"
 
 

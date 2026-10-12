@@ -60,7 +60,7 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
   // the terminal types into, one text box away from the rendered reply.
   async function sendFollowUp() {
     const text = followUp.trim();
-    if (!text || sending) return;
+    if (!text || sending || nativeHistory) return;
     setSending(true);
     try {
       await api.sendInput(sessionKey, text + "\n");
@@ -203,15 +203,20 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
       jumped.current = target.request;
     }
   }, [target, messages, loaded, loadError]);
-  const unavailable = transcript?.status === "identity_missing" || transcript?.status === "not_found";
+  const nativeHistory = transcript?.status === "native_cached" || transcript?.status === "native_current" || transcript?.status === "native_unavailable";
+  const recoveryNotice = nativeHistory && (transcript?.status === "native_cached" || messageState.error) && <div className="rd-native-history-notice" role="status">
+    Showing the last verified conversation. Native status is unavailable.
+    {transcript?.checked_at && <> These messages were checked at {new Date(transcript.checked_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.</>}
+  </div>;
+  const unavailable = transcript?.status === "identity_missing" || transcript?.status === "not_found" || transcript?.status === "native_unavailable";
   const transcriptNotice = unavailable && <div className="rd-panel-empty" role="status">
-    <p>{transcript.status === "identity_missing"
+    <p>{transcript.status === "native_unavailable" ? "No verified conversation snapshot is available yet." : transcript.status === "identity_missing"
       ? "Conversation not identified yet"
       : "Conversation transcript not found on this machine"}</p>
     {transcript.reason && <p>{transcript.reason}</p>}
     {transcript.status === "identity_missing" && <p>Messages will appear once the agent reports its conversation ID.</p>}
   </div>;
-  if (!latest) return <div className="rd-messages">{comments}{loadError
+  if (!latest) return <div className="rd-messages">{comments}{recoveryNotice}{loadError
     ? <div className="rd-panel-empty" role="status">{loadError}</div>
     : transcriptNotice || <div className="rd-panel-empty">{loaded ? "No agent reply yet." : "Loading messages…"}</div>}</div>;
   const showingLatest = currentIndex === turns.length - 1;
@@ -249,6 +254,7 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
       </div>
       <div className="rd-message-reader" ref={wrapRef} onMouseUp={onMouseUp}>
       {comments}
+      {recoveryNotice}
       {transcriptNotice}
       {loadError && <div role="alert">{loadError}</div>}
       {savedCopy && <div className="rd-pin-saved" role="status">
@@ -316,7 +322,8 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
         <input
           aria-label="Follow-up message"
           value={followUp}
-          placeholder="send a follow-up to the agent…"
+          placeholder={nativeHistory ? "Continue in the OpenCode terminal" : "send a follow-up to the agent…"}
+          disabled={nativeHistory}
           onChange={(e) => setFollowUp(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.nativeEvent.isComposing) sendFollowUp();
@@ -325,7 +332,7 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
         <button
           className="rd-btn rd-btn-sm rd-btn-primary"
           onClick={sendFollowUp}
-          disabled={sending || !followUp.trim()}
+          disabled={nativeHistory || sending || !followUp.trim()}
         >
           {sending ? "Sending…" : "Send"}
         </button>

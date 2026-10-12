@@ -170,6 +170,15 @@ def settings_path(*, global_scope: bool, project_dir: Path, agent: str = "claude
 def install(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
     name, spec = _spec(agent)
     path = spec.path(global_scope=global_scope, project_dir=project_dir)
+    if spec.transport == "file-drop":
+        from duckterm.agents.hook_files import install_file
+
+        if spec.payload is None:
+            raise ValueError("file-drop hook has no payload")
+        install_file(path, spec.payload())
+        return path
+    if spec.build is None:
+        raise ValueError("config-entry hook has no builder")
     config = spec.build(_load(path), str(hook_script_path()), name)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(config, indent=2) + "\n")
@@ -179,8 +188,15 @@ def install(*, global_scope: bool, project_dir: Path, agent: str = "claude-code"
 def uninstall(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
     _, spec = _spec(agent)
     path = spec.path(global_scope=global_scope, project_dir=project_dir)
+    if spec.transport == "file-drop":
+        from duckterm.agents.hook_files import uninstall_file
+
+        uninstall_file(path)
+        return path
     if not path.exists():
         return path
+    if spec.strip is None:
+        raise ValueError("config-entry hook has no stripper")
     config = spec.strip(_load(path))
     path.write_text(json.dumps(config, indent=2) + "\n")
     return path

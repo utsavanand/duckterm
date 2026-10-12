@@ -11,14 +11,28 @@ kept so existing drive-only callers don't need to change.
 """
 
 import re
+import shlex
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+from duckterm.runtimes.preparation import LaunchPreparation
+
+if TYPE_CHECKING:
+    from duckterm.persistence.history import HistoryStore
 
 SessionState = Literal[
-    "idle", "busy", "waiting", "terminated", "stopped", "interrupted", "archived", "merged"
+    "idle",
+    "busy",
+    "waiting",
+    "unknown",
+    "terminated",
+    "stopped",
+    "interrupted",
+    "archived",
+    "merged",
 ]
 
 # States that are "at rest" — the session is finished or put away, so the sweeps
@@ -39,8 +53,9 @@ AT_REST_STATES: tuple[SessionState, ...] = (
 @dataclass(frozen=True)
 class HookSpec:
     """An agent's observe half: where its hook config lives and how to merge/strip
-    Duckterm's entries. `build` and `strip` operate on the parsed JSON config so
-    install/uninstall stay symmetric and idempotent.
+    Duckterm's entries. Config-entry transports use `build`/`strip` on JSON;
+    file-drop transports use `payload` and a marker plus saved content hash.
+    Install/uninstall stay symmetric and refuse modified or unowned files.
 
     `global_rel` is the config path relative to the user home; `repo_rel` is
     relative to the project dir. Paths are resolved at call time (not import) so
@@ -48,12 +63,15 @@ class HookSpec:
 
     global_rel: Path
     repo_rel: Path
-    build: Callable[[dict[str, Any], str, str], dict[str, Any]]
-    strip: Callable[[dict[str, Any]], dict[str, Any]]
+    build: Callable[[dict[str, Any], str, str], dict[str, Any]] | None = None
+    strip: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    transport: Literal["config-entry", "file-drop"] = "config-entry"
+    payload: Callable[[], bytes] | None = None
+    global_path: Callable[[], Path] | None = None
 
     def path(self, *, global_scope: bool, project_dir: Path) -> Path:
         if global_scope:
-            return Path.home() / self.global_rel
+            return self.global_path() if self.global_path else Path.home() / self.global_rel
         return project_dir / self.repo_rel
 
 
@@ -88,6 +106,7 @@ def plain_screen(screen: str) -> str:
 
 class Harness(ABC):
     name: str
+    requires_launch_preparation = False
     session_id_assignable = False
     turn_end_inbox_notice = False
     # Owner priority messages can be pinned into this agent's turn-end notice.
@@ -129,6 +148,26 @@ class Harness(ABC):
 
     @abstractmethod
     def launch_command(self, *, cwd: Path, session_key: str, initial_prompt: str) -> list[str]: ...
+
+    def command_for_history(self, argv: list[str]) -> str:
+        return shlex.join(argv)
+
+    async def prepare_launch(
+        self,
+        *,
+        cwd: Path,
+        session_key: str,
+        initial_prompt: str,
+        env: dict[str, str],
+        history: "HistoryStore | None",
+    ) -> LaunchPreparation | None:
+        """Optional two-phase preparation; ordinary harness launches stay synchronous."""
+        return None
+
+    async def prepare_recovery(
+        self, *, cwd: Path, session_key: str, env: dict[str, str], history: "HistoryStore | None"
+    ) -> LaunchPreparation | None:
+        return None
 
     @abstractmethod
     def detect_state(self, recent_output: str) -> SessionState | None:
