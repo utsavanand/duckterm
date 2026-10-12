@@ -151,8 +151,17 @@ class SummaryUpdate:
         ):
             return cls(value, "partial", "summary_coverage_partial")
         review = value.get("summary_review") or progress.summary_review(validation)
-        if progress.summary_review(validation)["state"] == "accepted":
+        stored_verdict = progress.summary_review(validation)
+        if stored_verdict["state"] == "accepted":
             return cls(value, "reused" if reused else "updated")
+        if review["state"] == "accepted":
+            # A passing review does not override a failed source/coverage fence.
+            diagnostic = "summary_not_ready" + (
+                ":" + ",".join(stored_verdict["reason_codes"])
+                if stored_verdict["reason_codes"]
+                else ""
+            )
+            return cls(value, "failed", "summary_unverified", diagnostic, review)
         return cls(
             value, "failed", "summary_unverified", progress.review_diagnostic(review), review
         )
