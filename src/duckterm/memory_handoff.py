@@ -133,7 +133,8 @@ def assemble(
         "Launch context (model mode=default means the harness chooses its configured model):\n"
         + json.dumps(launch or {"session_key": key}, ensure_ascii=False)
         + "\n\n"
-        "Current session and work records (author fields identify provenance):\n"
+        "Current session and work pointers (read task/mail contents with the listed tools "
+        "before acting; pointers do not mean their bodies were summarized):\n"
         + required
         + "\n\nSaved summary:\n"
         + (summary or "No generated summary is available. Use recent records and retrieval.")

@@ -6,6 +6,24 @@ Terminology changes can affect styling when a retired term is also a CSS
 selector. Change JSX className and both base/pseudo-element selectors together;
 preserve wire fields and verify the style declarations remain identical.
 
+## 2026-10-11 — Prompt pointers are not a checkpoint retention boundary
+
+Bounding the inbox pointers in required context accidentally shortened the checkpoint's mail ID list and changed its hash input from canonical messages to metadata. The checkpoint resolver still hashes full messages; this would report false source changes and leave omitted messages outside the retention boundary. Capture complete authorized IDs and the canonical hash separately from prompt context. Persist only those IDs and the hash, never another copy of message bodies. Changes beyond the pointer limit must still change the source fence.
+
+Test more than eight messages through checkpoint creation, resolution and the retention predicate. Verify omitted pointers remain retained and an edit to an omitted message invalidates the saved hash. Model-input tests alone cannot establish checkpoint retention correctness.
+
+## 2026-10-11 — Query tasks and mail instead of copying their bodies into memory
+
+Folder tasks and the inbox already have canonical stores and read commands. Do not send notes, questions or answers through the session summarizer merely because they are assigned to that session. Keep them reference-only, and onboard with a bounded selection of IDs, short title previews, counts and read commands. Distinguish folder-wide work from assigned work, disclose omitted pointers and preserve current sharing checks. A title is discovery metadata, not the instruction or evidence of authorization.
+
+Exercise long notes, escaped mail, many open assignments, scope changes and original retrieval. Successful pointer delivery does not certify that the task or message bodies were read. Conversation statements about the work still remain eligible narrative; current canonical records must be read before action. This does not remove the separate bounds on conversation updates, session notes or final launch context.
+
+## 2026-10-11 — Project summary inputs without rewriting original evidence
+
+Successful tool output and command arguments can dominate memory input through both hook events and native transcripts. Filter both at the summarization boundary; retain conversation text, current work and explicit failures. Keep native text, roles, locators and original hashes unchanged so search and reads still recover evidence. Treat mixed messages per block, preserving narrative and failed results while excluding successful bodies. Version the summary policy so older coverage is not reused under changed input semantics.
+
+Report eligible versus reference-only input separately from original-history counts. A reference is not proof a body was summarized, and fixture byte reduction is not measured token savings or semantic completeness. A new reference-only event still changes the source boundary: refresh that boundary instead of returning a stale ready revision. Tests must exercise this through checkpoint persistence and prove excluded originals remain readable.
+
 ## 2026-10-11 — Do not reject summary inputs for a duplicate copy of current work
 
 Maintained memory already supplies citable session, task and inbox originals within its 48,000-byte record budget. Copying the same text into a separate 12,000-character required-context field made checkpoints fail before generation as open tasks and mail accumulated. Send originals once, accompanied by explicit coverage counts. If whole required records span multiple updates, process unseen records first and retain skipped identities as pending; never certify incomplete current work as complete or repeatedly fill the budget with already processed tasks. An indivisible oversized original stays readable and reports its size and budget as a gap. Keep the independent harness-launch limit intact.
