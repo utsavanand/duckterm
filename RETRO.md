@@ -23,6 +23,9 @@ A span writer must not replace the current cumulative summary before the handoff
 ## 2026-10-12 — Size saved summaries for useful content
 
 The inherited 400-character overview cap rejected otherwise useful checkpoint summaries after silent clipping was removed. Allow 2,000 characters, with a 100–200 word prompt target when needed; keep writer, correction prompt and parser limits aligned. Test that 100+ words survive unchanged and over-limit text is rejected rather than sliced. This change does not resolve incomplete input coverage.
+## 2026-10-11 — Recover a checkpoint by its request, not the newest row
+
+A lost HTTP response does not say whether the summary was saved. Assign a request ID before work starts, keep a bounded durable receipt, and resolve only the checkpoint linked to that receipt. A duplicate request joins the original operation. Keep accepted work alive after its HTTP waiter disconnects; after a server restart, an exact saved checkpoint wins over an unfinished receipt, while an unfinished request without a checkpoint stays interrupted. A completed request may still contain a failed or partial summary. Test those outcomes separately and never infer success from a newer checkpoint or a timestamp.
 
 ## 2026-10-11 — Bound reader allocations, not raw transcript age
 

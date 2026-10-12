@@ -428,6 +428,9 @@ class Server:
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore(conn=self.history._conn)
+        from duckterm.checkpoint_requests import CheckpointRequests
+
+        self.checkpoint_requests = CheckpointRequests(self)
         self.progress_coordinator = ProgressCoordinator(self)
         self.memory = Memory(self)
         self.memory_preparation = MemoryPreparation(self)
@@ -623,6 +626,20 @@ class Server:
                 body,
                 urllib.parse.parse_qs(memory_url.query, keep_blank_values=True),
             )
+            return
+        checkpoint_status = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/checkpoint-attempts/([A-Za-z0-9._-]{1,128})",
+            path,
+        )
+        if checkpoint_status and method == "GET":
+            try:
+                result = self.checkpoint_requests.receipt(
+                    checkpoint_status[1], checkpoint_status[2]
+                )
+                status = 200
+            except APIError as exc:
+                status, result = exc.status, {"error": str(exc)}
+            await _write_json(writer, status, result)
             return
         restart_query = re.fullmatch(r"/sessions/([A-Za-z0-9._-]{1,128})/restart", memory_url.path)
         if restart_query and memory_url.query:
@@ -4621,19 +4638,26 @@ class Server:
     async def _checkpoint(
         self, writer: asyncio.StreamWriter, session_key: str, body: bytes
     ) -> None:
-        row = self.history.session(session_key)
-        if row is None:
-            # The row is gone — almost always because the session was deleted
-            # while its (watched) row still lingered in a stale dashboard tab.
-            msg = f"session {session_key} no longer exists (it may have been deleted)"
-            await _write_json(writer, 404, {"error": msg})
-            return
-        label = json.loads(body or b"{}").get("label", "checkpoint")
-        result = await self._create_checkpoint(session_key, row, label)
-        await _write_json(writer, 200, result)
+        try:
+            try:
+                payload = json.loads(body or b"{}")
+            except ValueError as exc:
+                raise APIError(400, "Invalid checkpoint request JSON") from exc
+            if not isinstance(payload, dict):
+                raise APIError(400, "Checkpoint request must be an object")
+            status, result = await self.checkpoint_requests.request(session_key, payload)
+        except APIError as exc:
+            status, result = exc.status, {"error": str(exc)}
+        await _write_json(writer, status, result)
 
     async def _create_checkpoint(
-        self, session_key: str, row: dict[str, Any], label: str
+        self,
+        session_key: str,
+        row: dict[str, Any],
+        label: str,
+        *,
+        identity: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         from duckterm import memory_continuity
 
@@ -4667,12 +4691,14 @@ class Server:
         cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
         git = await asyncio.to_thread(_git_state, cwd)
         now = int(time.time() * 1000)
-        identity = uuid.uuid4().hex
+        identity = identity or uuid.uuid4().hex
         source = captured["source"]
         record = checkpoint_marker(captured, revision["id"] if revision else prior, git, now)
         record["summary_update"] = update.metadata(now)
         if revision and revision.get("span") == "incremental":
             record["summary_span_verified"] = update.state in {"updated", "reused"}
+        if request_id is not None:
+            record["request_id"] = request_id
         try:
             original = await memory_continuity.capture(self, session_key, captured)
             if "memory_sources" in original:
@@ -5278,6 +5304,7 @@ class Server:
                     sweeper.cancel()
                     self.voice.stop()
                     await self.archives.close()
+                    await self.checkpoint_requests.close()
                     await self.memory_preparation.close()
                     await self.restarts.close()
         finally:
