@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pinned macOS native identity probe; no provider calls or production state.
+"""Pinned native identity probe; no provider calls or production state.
 
 Usage: python3 scripts/qa_opencode_identity.py /absolute/path/to/pinned/opencode [--models]
 Creates two native synthetic sessions in a disposable home and removes them.
@@ -49,9 +49,12 @@ from duckterm.server import Server  # noqa: E402
 
 root = pathlib.Path(tempfile.mkdtemp(prefix="duckterm-opencode-probe-")).resolve()
 binary = pathlib.Path(sys.argv[1]).resolve()
-assert (
-    hashlib.sha256(binary.read_bytes()).hexdigest()
-    == "7b63b34fafabded7d9231f6a9032755d0cdeaf8b9d2b70df8e25535471469eea"
+pinned_hashes = {
+    "darwin": "7b63b34fafabded7d9231f6a9032755d0cdeaf8b9d2b70df8e25535471469eea",
+    "linux": "9ca0b9953d49997601655e54f846a3efa464f237e47c6f1b04716d0f2e64c4c2",
+}
+assert hashlib.sha256(binary.read_bytes()).hexdigest() == pinned_hashes.get(
+    sys.platform
 ), "Unexpected native executable hash"
 for name in ("home", "data", "config", "cache", "state", "tmp", "project"):
     (root / name).mkdir()

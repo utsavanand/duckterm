@@ -139,3 +139,11 @@ server. No remote acceptance or production release is implied.
 
 Upstream references: [pinned release](https://github.com/anomalyco/opencode/releases/tag/v1.18.34),
 [TUI plugin contract](https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/specs/tui-plugins.md).
+
+Linux acceptance is prepared for the official 1.18.34 x64 baseline binary.
+Archive SHA-256: `24b0d458d21ef548b2752166303defcf7f4945b049fb4876ab78dfaf86d81b27`.
+Executable SHA-256: `9ca0b9953d49997601655e54f846a3efa464f237e47c6f1b04716d0f2e64c4c2`.
+The existing duckterm-dev host is Linux x86_64 with Python 3.12 and tmux; OpenCode
+is not on its PATH. The binary is downloaded and verified locally only. Remote
+QA must use a disposable directory, synthetic providers and dedicated tmux
+namespace; no production service restart or global installation is needed.
