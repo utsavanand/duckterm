@@ -4,7 +4,7 @@ import { api, type CheckpointRecord } from "./api";
 import { CheckpointProgress } from "./CheckpointProgress";
 import { requestCheckpoint } from "./checkpointRequests";
 import { sessionRef } from "./hostTransport";
-vi.mock("./api", () => ({ api: { checkpoint: vi.fn() } }));
+vi.mock("./api", () => ({ api: { checkpointAttempt: vi.fn(), checkpoint: vi.fn() } }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.useRealTimers(); });
 const result = (state: "updated" | "reused" | "partial" | "failed"): CheckpointRecord => ({
   id: "cp", label: "manual", created_at: 1, saved: true, summary: "Previously saved summary",
@@ -32,7 +32,7 @@ it("retains pending work across unmount, isolates equal keys on different hosts,
   expect(screen.queryByRole("progressbar")).toBeNull();
   expect(screen.getByRole("status")).toHaveTextContent("Checkpoint failed · summary incomplete");
   expect(screen.getByText(/Some history remains unsummarized/)).toBeVisible();
-  expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(local, "manual");
+  expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(local, "manual", expect.any(String));
 });
 it.each(["updated", "reused", "partial", "failed"] as const)("renders the returned %s outcome without a completion percentage", async state => {
   vi.mocked(api.checkpoint).mockResolvedValue(result(state));
@@ -53,5 +53,5 @@ it("keeps a remote failure uncertain and does not fall back locally or alter the
   expect(screen.getByRole("status")).toHaveTextContent("Result not confirmed");
   expect(screen.getByText("Last good saved summary")).toBeVisible();
   expect(screen.queryByText(/not saved|Summary update failed/)).toBeNull();
-  expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(key, "manual");
+  expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(key, "manual", expect.any(String));
 });

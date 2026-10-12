@@ -25,7 +25,9 @@ export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
   const failed = attempt.state === "unknown" || !!result && checkpointAttemptFailed(result);
   const label = running ? "Updating summary…" : result ? result.label : "Result not confirmed";
   let detail = "The request is running. You can continue using this session.";
-  if (attempt.state === "unknown") detail = "The connection ended before a result arrived. Check the latest checkpoint before trying again.";
+  if (attempt.state === "unknown") detail = attempt.recovering
+    ? "The connection ended before a result arrived. Checking this checkpoint’s saved result."
+    : "The connection ended before a result arrived. Check the latest checkpoint before trying again.";
   else if (result) {
     if (result.saved === false) detail = "The checkpoint was not saved. Any previously saved summary is unchanged.";
     else switch (result.summary_update?.state) {

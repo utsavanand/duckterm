@@ -38,6 +38,16 @@ Remove the total raw-file guard from the existing line-streaming reader. Keep pe
 The parser sliced summary text at 400 characters before validation. A complete provider response could therefore reach the reviewer as a sentence DuckTerm itself cut off. The live summary_truncated rejection identified the symptom; inspecting the parser exposed a deterministic corruption path. This does not prove every historical unverified summary had that cause.
 
 Reject overlong drafts with summary_too_long and use the existing single correction attempt to request complete, concise sentences. State the limit in generation and correction prompts. Review only the intact corrected candidate, retain strict semantic validation, and preserve the last good revision when correction fails. Regression tests must assert the exact text sent to the reviewer and saved in the checkpoint, and verify failures never advance coverage or turn a clipped prefix into a success.
+## Recover checkpoint outcomes by exact request, on the same host (2026-10-11)
+
+A disconnected checkpoint request can finish on the server after the UI loses
+its response. Give each attempt a caller-generated ID and reconcile with bounded,
+read-only receipt queries. Never infer completion from a newer timestamp, retry
+the POST automatically, or query the local server for a remote attempt. Native
+remote routing must allow the exact GET endpoint. Test delayed completion,
+unknown receipts, host isolation, duplicate clicks and bounded hung lookups.
+
+
 ## Incomplete checkpoints must not look successful (2026-10-11)
 
 A saved, reviewer-accepted draft can still omit required history. The checkpoint

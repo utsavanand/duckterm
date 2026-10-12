@@ -6,7 +6,7 @@ import type { SessionView } from "./types";
 import { beginRecoveryUndo, finishRecoveryUndo, setRecoveryResumeAllowed, useRecoveryResumeBlocked } from "./resumeReadiness";
 import { destinationRequest } from "./desktop";
 const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
-vi.mock("./api", () => ({ api: { checkpoint: vi.fn() } }));
+vi.mock("./api", () => ({ api: { checkpointAttempt: vi.fn(), checkpoint: vi.fn() } }));
 vi.mock("./ui", () => ({ useToast: () => toast }));
 vi.mock("./useResumeSession", () => ({ useResumeSession: (key: string) => ({ resuming: false, recoveryBlocked: useRecoveryResumeBlocked(key), resumeSession: vi.fn() }) }));
 vi.mock("./desktop", () => ({ desktop: () => ({ currentTarget: "local" }), destinationRequest: vi.fn() }));
@@ -19,7 +19,7 @@ it("checkpoint closes the menu immediately and reports an uncertain transport re
   render(<SessionActions session={s} anchor={{ key: s.key, x: 10, y: 10, trigger: document.body }} onClose={close} onFork={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} onNotes={vi.fn()} />);
   vi.mocked(api.checkpoint).mockRejectedValueOnce(new Error("offline"));
   await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "Checkpoint" })); });
-  expect(api.checkpoint).toHaveBeenCalledWith(s.key, "manual");
+  expect(api.checkpoint).toHaveBeenCalledWith(s.key, "manual", expect.any(String));
   expect(toast).toHaveBeenLastCalledWith("Checkpoint result not confirmed. Check the latest checkpoint before trying again.", "err");
   expect(close).toHaveBeenCalledOnce();
   vi.mocked(api.checkpoint).mockResolvedValueOnce({ id: "cp", label: "manual", created_at: 1, summary: "", saved: true, summary_state: "unavailable", export_reason: "markdown_unavailable", record: { prompts: [], files: [], tools: [], event_count: 0 } });

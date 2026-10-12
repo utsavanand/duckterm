@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, forkMergeHistory, TimelinePage } from "./api";
 import { TimelineView, TIMELINE_MILESTONES } from "./TimelineView";
 import type { SessionView } from "./types";
-vi.mock("./api", () => ({ api: { timeline: vi.fn(), checkpoints: vi.fn(), checkpoint: vi.fn() }, forkMergeHistory: vi.fn(), forkMergeService: vi.fn() }));
+vi.mock("./api", () => ({ api: { timeline: vi.fn(), checkpoints: vi.fn(), checkpointAttempt: vi.fn(), checkpoint: vi.fn() }, forkMergeHistory: vi.fn(), forkMergeService: vi.fn() }));
 vi.mock("./HistoryView", () => ({ HistoryView: () => <p>Earlier digest history</p> }));
 const session = { key: "one", label: "Test", startedAt: 1 } as SessionView;
 const page = (text = "Saved work", cursor: string | null = null): TimelinePage => ({ summary: { text: "", updated_at: null, total: 1, counts: {} }, entries: [{ id: text, ts: 1791300000000, kind: "delivered", one_line: text, detail: { text }, refs: [] }], next_cursor: cursor });
@@ -135,7 +135,7 @@ it("retries for the selected host/session once and refreshes after an overlappin
   await renderRetry(key);
   fireEvent.click(screen.getByRole("button", { name: "Retry summary update" }));
   fireEvent.click(screen.getByRole("button", { name: "Updating summary…" }));
-  await waitFor(() => expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(key, "manual"));
+  await waitFor(() => expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(key, "manual", expect.any(String)));
   expect(screen.getByRole("button", { name: "Updating summary…" })).toBeDisabled();
   const initialLoads = vi.mocked(api.timeline).mock.calls.length;
   let finishPoll!: (p: TimelinePage) => void;

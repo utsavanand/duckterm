@@ -152,6 +152,8 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         let recoveryRoute = components.query == nil && (
             (method == "GET" && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/conversation-(recovery|candidates)$"#, options: .regularExpression) != nil)
             || (method == "POST" && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/conversation-(adopt|hooks|detach)$"#, options: .regularExpression) != nil))
+        let checkpointAttemptRoute = method == "GET" && components.query == nil
+            && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/checkpoint-attempts/[A-Za-z0-9._-]{1,128}$"#, options: .regularExpression) != nil
         let timelineRoute = method == "GET"
             && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/timeline$"#, options: .regularExpression) != nil
         let agentMergeRoot = #"^/sessions/[A-Za-z0-9._-]{1,128}/"#
@@ -160,7 +162,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             || (method == "POST" && route.range(of: agentMergeRoot + "agent-merge/preview$", options: .regularExpression) != nil)
             || (method == "GET" && route.range(of: agentMergeRoot + "agent-merges$", options: .regularExpression) != nil))
         let memoryRoute = Self.memoryRestartRoute(components: components, method: method)
-        guard agentMergeRoute || memoryRoute || timelineRoute || recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
+        guard checkpointAttemptRoute || agentMergeRoute || memoryRoute || timelineRoute || recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
             throw LaunchDestination.Failure.message("Unsupported session operation")
         }
         var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!
