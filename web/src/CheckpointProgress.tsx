@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useCheckpointAttempt } from "./checkpointRequests";
-import { checkpointFailure } from "./checkpointState";
+import { checkpointAttemptFailed, checkpointFailure } from "./checkpointState";
 import "./checkpointProgress.css";
 
 function Elapsed({ startedAt }: { startedAt: number }) {
@@ -22,16 +22,18 @@ export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
   if (!attempt) return null;
   const running = attempt.state === "running";
   const result = attempt.state === "complete" ? attempt.result : null;
-  const failed = attempt.state === "unknown" || result?.saved === false || result?.summary_update?.state === "failed";
-  const label = running ? "Updating summary…" : result ? (result.saved !== false && result.summary_update?.state === "partial" ? "Partial summary saved" : result.label) : "Result not confirmed";
+  const failed = attempt.state === "unknown" || !!result && checkpointAttemptFailed(result);
+  const label = running ? "Updating summary…" : result ? result.label : "Result not confirmed";
   let detail = "The request is running. You can continue using this session.";
-  if (attempt.state === "unknown") detail = "The connection ended before a result arrived. Check the latest checkpoint before trying again.";
+  if (attempt.state === "unknown") detail = attempt.recovering
+    ? "The connection ended before a result arrived. Checking this checkpoint’s saved result."
+    : "The connection ended before a result arrived. Check the latest checkpoint before trying again.";
   else if (result) {
     if (result.saved === false) detail = "The checkpoint was not saved. Any previously saved summary is unchanged.";
     else switch (result.summary_update?.state) {
       case "updated": detail = "A new summary revision was saved. This does not mean all conversation history was summarized."; break;
       case "reused": detail = "The existing summary revision was reused."; break;
-      case "partial": detail = "Some history remains unsummarized. The saved summary is partial."; break;
+      case "partial": detail = "Some history remains unsummarized. This checkpoint is incomplete and not ready for handoff. The saved text is available for inspection."; break;
       case "failed": detail = `${checkpointFailure(result)}. Any previously saved summary is unchanged.`; break;
       default: detail = "The request returned. See the latest checkpoint for its saved summary and coverage.";
     }

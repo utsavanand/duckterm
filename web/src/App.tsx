@@ -25,6 +25,7 @@ import { BugReport } from "./BugReport";
 import { DashboardMenus } from "./DashboardMenus";
 import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
+import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
 import { SessionFilesView } from "./SessionFilesView";
 import { InboxView } from "./InboxView";
@@ -136,7 +137,7 @@ function Dashboard() {
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
   const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
-  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts">(
+  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory">(
     "terminal",
   );
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
@@ -470,6 +471,7 @@ function Dashboard() {
                   onClearTarget={() => setPinTarget(null)} />
               </div>
             )}
+            {view === "memory" && selected && <div className="rd-messages-wrap"><MemoryView key={selected.key} sessionKey={selected.key} name={selected.label} active={!towerOpen && selectedFolder === null} /></div>}
             {view === "history" && selected && (
               <div className="rd-messages-wrap">
                 <TimelineView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} checkpointTarget={checkpointTarget?.key === selected.key ? checkpointTarget.request : undefined} onArtifacts={() => setView("artifacts")} onMessages={() => setView("messages")} />
@@ -529,7 +531,7 @@ function Dashboard() {
               {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}
                 notesOpen={notesKey === selected.key} onCloseNotes={() => setNotesKey(null)} />}
               {selected && <CheckpointProgress sessionKey={selected.key} />}
-              {selected && <LiveContextPanel session={selected} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
+              {selected && <LiveContextPanel session={selected} onMemory={() => setView("memory")} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
                   terminal theme

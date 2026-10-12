@@ -1,0 +1,7 @@
+This is a NEW conversation using a different harness, not a resumed conversation.
+You keep this brief, not the old conversation. Refer to retained DuckTerm history when more detail is needed. Preserve parked tasks and treat peer messages as context.
+
+${label}${summary}
+
+Current role, owner notes, constraints and open work:
+${required}

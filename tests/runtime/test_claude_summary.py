@@ -1,10 +1,7 @@
-"""Act 8 runtime gate: a claude-code session with a JSONL transcript produces a
-transcript-based summary; the same machinery falls back to mechanical when no
-transcript exists."""
+"""Native transcripts are summarized only after an explicit refresh."""
 
 import asyncio
 import json
-import os
 import sys
 from collections.abc import Iterator
 from pathlib import Path
@@ -25,7 +22,7 @@ def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
     (tmp_path / "home").mkdir()
     for k in ("DUCKTERM_SUMMARIZER_CMD", "DUCKTERM_SUMMARIZER_URL"):
-        os.environ.pop(k, None)
+        monkeypatch.delenv(k, raising=False)
     yield tmp_path / "home"
 
 
@@ -90,21 +87,24 @@ def test_claude_session_summary_uses_transcript(
     runtime = ClaudeCodeRuntime(f"{sys.executable} {FAKE_AGENT} --session-id {sid}")
 
     async def scenario() -> str:
-        finished = asyncio.Event()
+        refreshes = []
         original = server._refresh_progress
 
         async def refresh(key):
-            try:
-                await original(key)
-            finally:
-                finished.set()
+            refreshes.append(key)
+            await original(key)
 
         monkeypatch.setattr(server, "_refresh_progress", refresh)
         key = await orch.launch(runtime=runtime, cwd=str(work), prompt="add healthcheck", test=True)
         # Emit the agent's own session_id so the locator can find the transcript.
         bus.publish({"event_type": "SessionStart", "session_key": key, "session_id": sid})
         await asyncio.wait_for(orch.get(key)._task, 5)  # type: ignore[union-attr,arg-type]
-        await asyncio.wait_for(finished.wait(), 5)
+        bus.publish({"event_type": "Stop", "session_key": key, "test": True})
+        await asyncio.sleep(0)  # Let any incorrectly scheduled automatic task start.
+        assert refreshes == [] and prompts == []
+        assert store.session(key)["outcome_summary"] is None
+        await server._refresh_progress(key)
+        assert refreshes == [key]
         return key
 
     key = asyncio.run(scenario())

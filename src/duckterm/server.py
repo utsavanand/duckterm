@@ -430,9 +430,11 @@ class Server:
         self._relay_watching: set[str] = set()
         self._relay_logged: set[str] = set()  # requests whose screen was logged
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
-        self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore(conn=self.history._conn)
+        from duckterm.checkpoint_requests import CheckpointRequests
+
+        self.checkpoint_requests = CheckpointRequests(self)
         self.progress_coordinator = ProgressCoordinator(self)
         self.memory = Memory(self)
         self.memory_preparation = MemoryPreparation(self)
@@ -595,7 +597,38 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
+        lifecycle_route = re.fullmatch(r"/sessions/([A-Za-z0-9._-]{1,128})/memory-claim", path)
+        if lifecycle_route:
+            try:
+                if method != "POST" or len(body) > 32768:
+                    raise APIError(400, "Use POST with an explicit claim transition")
+                result = await self.memory.link(
+                    lifecycle_route[1], json.loads(body), headers, lifecycle=True, owner=True
+                )
+                await _write_json(writer, 200, result)
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+            except (ValueError, UnicodeError):
+                await _write_json(writer, 400, {"error": "Invalid claim transition JSON"})
+            return
+
         memory_url = urllib.parse.urlsplit(path)
+        memory_view_route = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/memory(?:/(read|related))?", memory_url.path
+        )
+        if memory_view_route:
+            from duckterm.memory_view_http import handle as memory_view_handle
+
+            await memory_view_handle(
+                self,
+                writer,
+                headers,
+                memory_view_route[1],
+                memory_view_route[2],
+                method,
+                urllib.parse.parse_qs(memory_url.query, keep_blank_values=True),
+            )
+            return
         memory_route = re.fullmatch(
             r"/sessions/([A-Za-z0-9._-]{1,128})/restart-preparation(?:/([a-f0-9]{32}))?",
             memory_url.path,
@@ -613,6 +646,20 @@ class Server:
                 body,
                 urllib.parse.parse_qs(memory_url.query, keep_blank_values=True),
             )
+            return
+        checkpoint_status = re.fullmatch(
+            r"/sessions/([A-Za-z0-9._-]{1,128})/checkpoint-attempts/([A-Za-z0-9._-]{1,128})",
+            path,
+        )
+        if checkpoint_status and method == "GET":
+            try:
+                result = self.checkpoint_requests.receipt(
+                    checkpoint_status[1], checkpoint_status[2]
+                )
+                status = 200
+            except APIError as exc:
+                status, result = exc.status, {"error": str(exc)}
+            await _write_json(writer, status, result)
             return
         restart_query = re.fullmatch(r"/sessions/([A-Za-z0-9._-]{1,128})/restart", memory_url.path)
         if restart_query and memory_url.query:
@@ -2812,46 +2859,12 @@ class Server:
     _FLEET_STATES_DONE = AT_REST_STATES  # sessions past this state aren't "running"
 
     # ── running progress digest (deliverables / learnings / next actions) ──
-    # Regenerated on turn ends (Stop), debounced so a chatty session costs at
-    # most one summary update per window; stored on the session row so it
-    # survives restarts and rides along in /sessions.
-    _PROGRESS_MIN_INTERVAL_MS = 15 * 60_000
-    _PROGRESS_MIN_NEW_EVENTS = 1
+    # Explicit checkpoints and handoff preparation share the writer.
 
     def _maybe_refresh_progress(self, session_key: str) -> None:
-        row = self.history.session(session_key)
-        if row is None:
-            return
-        now = int(time.time() * 1000)
-        control = self.history.restart_control(session_key)
-        attempt = control.get("progress_attempt", {})
-        last_ts, last_count = self._progress_marks.get(
-            session_key, (int(attempt.get("at", 0)), int(attempt.get("events", 0)))
-        )
-        last_ts = max(last_ts, int(row.get("progress_at") or 0))
-        count = int(row.get("event_count") or 0)
-        if now - last_ts < self._PROGRESS_MIN_INTERVAL_MS:
-            return
-        if count - last_count < self._PROGRESS_MIN_NEW_EVENTS:
-            return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return  # no loop (sync test context) — the next Stop will retry
-        self._progress_marks[session_key] = (now, count)
-        # Persist the attempt, including failures, so a server restart cannot
-        # repeatedly spend on the same stopped conversation.
-        self.history.set_restart_control(
-            session_key, {**control, "progress_attempt": {"at": now, "events": count}}
-        )
-        identity = conversation(self.history, session_key, row)
-
-        async def refresh() -> None:
-            current = self.history.session(session_key)
-            if current and conversation(self.history, session_key, current) == identity:
-                await self._refresh_progress(session_key)
-
-        loop.create_task(refresh())
+        # Checkpoints are owner-triggered. A Stop/exit or an ageing clock must
+        # not spend summarizer tokens; the staleness view reads saved metadata.
+        return
 
     def _progress_on_exit(self, session_key: str) -> None:
         self._maybe_refresh_progress(session_key)
@@ -4722,19 +4735,26 @@ class Server:
     async def _checkpoint(
         self, writer: asyncio.StreamWriter, session_key: str, body: bytes
     ) -> None:
-        row = self.history.session(session_key)
-        if row is None:
-            # The row is gone — almost always because the session was deleted
-            # while its (watched) row still lingered in a stale dashboard tab.
-            msg = f"session {session_key} no longer exists (it may have been deleted)"
-            await _write_json(writer, 404, {"error": msg})
-            return
-        label = json.loads(body or b"{}").get("label", "checkpoint")
-        result = await self._create_checkpoint(session_key, row, label)
-        await _write_json(writer, 200, result)
+        try:
+            try:
+                payload = json.loads(body or b"{}")
+            except ValueError as exc:
+                raise APIError(400, "Invalid checkpoint request JSON") from exc
+            if not isinstance(payload, dict):
+                raise APIError(400, "Checkpoint request must be an object")
+            status, result = await self.checkpoint_requests.request(session_key, payload)
+        except APIError as exc:
+            status, result = exc.status, {"error": str(exc)}
+        await _write_json(writer, status, result)
 
     async def _create_checkpoint(
-        self, session_key: str, row: dict[str, Any], label: str
+        self,
+        session_key: str,
+        row: dict[str, Any],
+        label: str,
+        *,
+        identity: str | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         from duckterm import memory_continuity
 
@@ -4768,10 +4788,14 @@ class Server:
         cwd = Path(str(row.get("worktree_path") or row.get("cwd") or "."))
         git = await asyncio.to_thread(_git_state, cwd)
         now = int(time.time() * 1000)
-        identity = uuid.uuid4().hex
+        identity = identity or uuid.uuid4().hex
         source = captured["source"]
         record = checkpoint_marker(captured, revision["id"] if revision else prior, git, now)
         record["summary_update"] = update.metadata(now)
+        if revision and revision.get("span") == "incremental":
+            record["summary_span_verified"] = update.state in {"updated", "reused"}
+        if request_id is not None:
+            record["request_id"] = request_id
         try:
             original = await memory_continuity.capture(self, session_key, captured)
             if "memory_sources" in original:
@@ -4863,7 +4887,17 @@ class Server:
             return []
 
     async def _list_checkpoints(self, writer: asyncio.StreamWriter, session_key: str) -> None:
-        await _write_json(writer, 200, {"checkpoints": self.history.checkpoints(session_key)})
+        from duckterm import checkpoint_clock
+
+        checkpoints = self.history.checkpoints(session_key)
+        await _write_json(
+            writer,
+            200,
+            {
+                "checkpoints": checkpoints,
+                "checkpoint_clock": checkpoint_clock.project(checkpoints),
+            },
+        )
 
     async def _spotlight(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         row = self.history.session(session_key)
@@ -5356,13 +5390,6 @@ class Server:
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
-            # Backfill progress digests: sessions whose turns all happened
-            # before this server started would otherwise stay digest-less
-            # until their NEXT turn end (Stop events don't replay).
-            for row in self.history.sessions():
-                at_rest = row.get("state") in AT_REST_STATES
-                if not at_rest and not row.get("progress"):
-                    self._maybe_refresh_progress(str(row["session_key"]))
             server = await asyncio.start_server(self.handle, host, port)
             actual_port = server.sockets[0].getsockname()[1]
             self.history.session_api.set_url(f"http://127.0.0.1:{actual_port}")
@@ -5377,8 +5404,10 @@ class Server:
                     sweeper.cancel()
                     self.voice.stop()
                     await self.archives.close()
+                    await self.checkpoint_requests.close()
                     await self.memory_preparation.close()
                     await self.restarts.close()
+                    await self.progress_coordinator.close()
         finally:
             _release_home_lock(lock)
 

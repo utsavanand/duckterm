@@ -109,3 +109,18 @@ extension SessionTransportTests {
         }
     }
 }
+
+extension SessionTransportTests {
+    @MainActor func testCheckpointReceiptsAreExactReadOnlyRemoteRoutes() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        let path = "/sessions/same.id/checkpoint-attempts/attempt-123"
+        let request = try SessionTransport.request(base: base, params: ["path": path, "method": "GET"])
+        XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:14300" + path)
+        for method in ["POST", "PATCH", "DELETE"] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+        }
+        for invalid in [path + "?latest=true", path + "/extra", "/sessions/x/checkpoint-attempts/..", "/sessions/x/checkpoint-attempts/" + String(repeating: "a", count: 129)] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": invalid, "method": "GET"]))
+        }
+    }
+}

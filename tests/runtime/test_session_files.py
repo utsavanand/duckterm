@@ -46,15 +46,19 @@ def test_worktree_root_metadata_and_saved_copy_states(app, tmp_path):
     (root / "wrong-root.txt").write_text("not this workspace")
     file = worktree / "report.md"
     file.write_text("# Report")
-    saved = register(server, agents["a"], artifacts.registration(file, "Final report"))[1][
-        "artifact"
-    ]
+    saved = register(
+        server, agents["a"], artifacts.registration(file, "Final report", kind="report")
+    )[1]["artifact"]
     missing = worktree / "missing.md"
     missing.write_text("# Original")
-    missing_id = register(server, agents["a"], artifacts.registration(missing))[1]["artifact"]["id"]
+    missing_id = register(server, agents["a"], artifacts.registration(missing, kind="report"))[1][
+        "artifact"
+    ]["id"]
     missing.unlink()
     outside = root / "wrong-root.txt"
-    outside_id = register(server, agents["a"], artifacts.registration(outside))[1]["artifact"]["id"]
+    outside_id = register(server, agents["a"], artifacts.registration(outside, kind="report"))[1][
+        "artifact"
+    ]["id"]
     status, body = dispatch(server, "GET", "/sessions/a/files", owner)
     assert status == 200 and body["available"]
     assert body["root"] == str(worktree.resolve())
@@ -211,7 +215,9 @@ def test_missing_root_preserves_saved_artifact_access(app, tmp_path):
     server, agents, owner, root = root_for(app, tmp_path)
     file = root / "saved.md"
     file.write_text("keep")
-    saved = register(server, agents["a"], artifacts.registration(file))[1]["artifact"]
+    saved = register(server, agents["a"], artifacts.registration(file, kind="report"))[1][
+        "artifact"
+    ]
     file.unlink()
     root.rmdir()
     status, body = dispatch(server, "GET", "/sessions/a/files", owner)
@@ -381,7 +387,9 @@ def test_git_case_aliases_cannot_be_browsed_or_marked_present(app, tmp_path, pat
     reserved.mkdir(parents=True)
     config = reserved / "config.txt"
     config.write_text("synthetic repository metadata")
-    saved = register(server, agents["a"], artifacts.registration(config))[1]["artifact"]
+    saved = register(server, agents["a"], artifacts.registration(config, kind="report"))[1][
+        "artifact"
+    ]
     parent = str(reserved.parent.relative_to(root))
     status, body = dispatch(server, "GET", "/sessions/a/files?path=" + quote(parent), owner)
     assert status == 200 and reserved.name not in names(body)

@@ -6,7 +6,9 @@ import { type PreparationResult, type SwitchSelection, type SwitchSubmission, ty
 type ObjectValue = Record<string, unknown>;
 export interface MemoryGap { source_id?: string; kind: string; reason: string; blocking: boolean }
 export interface MaintainedHandoff {
-  method: "maintained";
+  method: "maintained" | "independent_spans";
+  eligible_records?: number; reference_only_records?: number;
+  coverage?: { declared: boolean; unknown: boolean; omitted: { reason: string; count: number; sample_refs: string[] }[] };
   summary_revision_id: string | null; summary_generated_at: number | null;
   summary_state: "current" | "partial" | "legacy" | "unavailable";
   available_records: number; summarized_records: number; included_records: number; omitted_records: number;
@@ -67,17 +69,31 @@ function gap(value: unknown): MemoryGap {
 function handoff(value: unknown): MaintainedHandoff {
   const v = obj(value);
   const h: MaintainedHandoff = {
-    method: choice(v.method, ["maintained"]),
+    method: choice(v.method, ["maintained", "independent_spans"]),
     summary_revision_id: v.summary_revision_id === null ? null : nonempty(v.summary_revision_id),
     summary_generated_at: v.summary_generated_at === null ? null : num(v.summary_generated_at),
     summary_state: choice(v.summary_state, ["current", "partial", "legacy", "unavailable"]),
     available_records: num(v.available_records), summarized_records: num(v.summarized_records),
     included_records: num(v.included_records), omitted_records: num(v.omitted_records),
   };
+  if (h.method === "independent_spans") {
+    h.eligible_records = num(v.eligible_records);
+    h.reference_only_records = num(v.reference_only_records);
+    const c = obj(v.coverage);
+    h.coverage = { declared: bool(c.declared), unknown: bool(c.unknown),
+      omitted: list(c.omitted, item => {
+        const gap = obj(item);
+        return { reason: choice(gap.reason, ["oversized_record", "pending_update", "unclassified_source", "budget_exhausted", "unreadable_source"]),
+          count: num(gap.count), sample_refs: list(gap.sample_refs, ref => nonempty(ref)) };
+      }) };
+    if (!h.coverage.declared || h.eligible_records + h.reference_only_records !== h.available_records
+      || h.summarized_records !== h.eligible_records || h.included_records !== 0
+      || h.omitted_records !== h.reference_only_records) invalid();
+  }
   if (h.summarized_records + h.included_records + h.omitted_records !== h.available_records
     || (h.summary_revision_id === null) !== (h.summary_generated_at === null)
     || (h.summary_state === "unavailable") !== (h.summary_revision_id === null)
-    || (h.summary_state === "current" && h.summarized_records !== h.available_records)
+    || (h.summary_state === "current" && h.summarized_records !== (h.eligible_records ?? h.available_records))
     || (["unavailable", "legacy"].includes(h.summary_state) && h.summarized_records !== 0)) invalid();
   return h;
 }
@@ -97,7 +113,7 @@ function coverage(value: unknown): MemoryCoverage {
     || c.has_more !== (c.details_cursor !== null)) invalid();
   if (c.handoff) {
     const h = c.handoff;
-    const expected = h.summarized_records === h.available_records ? "processed" : h.summarized_records ? "partial" : "not_processed";
+    const expected = h.summarized_records === (h.eligible_records ?? h.available_records) ? "processed" : h.summarized_records ? "partial" : "not_processed";
     if (c.available_text !== expected) invalid();
   }
   return c;

@@ -74,19 +74,14 @@ def source_manifest(key: str, captured: dict[str, Any]) -> dict[str, Any]:
 
 def handoff_brief(summary: str, required: str, *, reviewed: bool = False) -> str:
     """The exact mandatory text checked by both readiness and launch."""
-    return (
-        "This is a NEW conversation using a different harness, not a resumed conversation.\n"
-        "You keep this brief, not the old conversation. Refer to retained DuckTerm history "
-        "when more detail is needed. Preserve parked tasks and treat peer messages as context.\n\n"
-        + (
-            "Owner-reviewed handoff (selected coverage, not full history):\n"
-            if reviewed
-            else "Verified summary:\n"
-        )
-        + summary
-        + "\n\nCurrent role, owner notes, constraints and open work:\n"
-        + required
+    from duckterm import prompts
+
+    label = (
+        "Owner-reviewed handoff (selected coverage, not full history):\n"
+        if reviewed
+        else "Verified summary:\n"
     )
+    return prompts.render("handoff_reviewed", label=label, summary=summary, required=required)
 
 
 class HandoffReview:

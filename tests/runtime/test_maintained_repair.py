@@ -21,7 +21,17 @@ def candidate(prompt):
         "context": {
             "overview": "Keep the owner constraint and finish the work.",
             **{name: [] for name in memory_summary.FIELDS},
-            "constraints": [{"text": "Keep the owner constraint.", "refs": [ref]}],
+            "constraints": [
+                {
+                    "text": "Keep the owner constraint.",
+                    "refs": [ref],
+                    **(
+                        {"kind": "constraint", "state": "open"}
+                        if "prior_context" not in data
+                        else {}
+                    ),
+                }
+            ],
         },
     }
 
@@ -55,8 +65,8 @@ def rejected(value, issue):
         value["context"]["overview"] = "é" * 401
     elif issue == "context_too_large":
         value["context"]["constraints"] = [
-            {"text": "Keep required fact. " + "x" * 1500, "refs": item["refs"]}
-            for item in value["context"]["constraints"] * 8
+            {**item, "text": f"Keep required fact {number}. " + "x" * 1500}
+            for number, item in enumerate(value["context"]["constraints"] * 8)
         ]
     return json.dumps(value)
 
@@ -293,7 +303,7 @@ def test_coalesced_checkpoint_keeps_one_repair_when_other_waiter_cancels(memory_
         original = asyncio.shield
 
         def observed(task):
-            if task is coordinator.active.get("agent") and asyncio.current_task() is manual:
+            if task is coordinator.span_refreshes.get("agent") and asyncio.current_task() is manual:
                 joined.set()
             return original(task)
 

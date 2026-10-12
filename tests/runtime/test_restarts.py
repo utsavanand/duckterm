@@ -360,6 +360,23 @@ def test_real_isolated_terminal_restarts_under_same_key(
     import uuid
 
     repo = make_conversations.__wrapped__(tmp_path, monkeypatch)
+    source = next((tmp_path / "home" / ".codex").rglob("*" + A + ".jsonl"))
+    with source.open("a") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Keep the test task on the same card"}
+                        ],
+                    },
+                }
+            )
+            + "\n"
+        )
     binary_dir = tmp_path / "bin"
     binary_dir.mkdir()
     version_file = tmp_path / "cli-version"

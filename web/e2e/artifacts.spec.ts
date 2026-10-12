@@ -18,7 +18,7 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     const enrollment = await apiPost(`/sessions/${key}/collaboration`, { root: "Artifact probes" });
     expect(enrollment.status).toBe(200);
     const register = async (path: string, title: string, content: string) => {
-      const response = await fetch(`${base()}/api/v1/session/artifacts`, { method: "POST", headers: { Authorization: `Bearer ${enrollment.body.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ source_path: path, title, content_base64: Buffer.from(content).toString("base64") }) });
+      const response = await fetch(`${base()}/api/v1/session/artifacts`, { method: "POST", headers: { Authorization: `Bearer ${enrollment.body.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ source_path: path, title, kind: path.endsWith(".html") ? "preview" : "report", content_base64: Buffer.from(content).toString("base64") }) });
       expect(response.status).toBe(200);
       return response.json();
     };

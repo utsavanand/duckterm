@@ -29,6 +29,7 @@ def app(tmp_path):
             key,
             {
                 "title": key,
+                "kind": "other",
                 "source_path": f"/tmp/{key}.md",
                 "content_base64": base64.b64encode(b"report").decode(),
             },

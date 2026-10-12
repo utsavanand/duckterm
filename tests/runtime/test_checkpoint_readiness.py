@@ -28,14 +28,30 @@ def test_large_history_saves_usable_context_with_resolvable_evidence(memory_rig,
             }
         else:
             rows = json.loads(prompt.split("MEMORY UPDATE:\n", 1)[1])["records"]
-            row = next(r for r in rows if r["text"].startswith("Owner: build export"))
-            ref = row["ref"]
+            row = next((r for r in rows if r["text"].startswith("Owner: build export")), None)
+            ref = row["ref"] if row else None
             value = {
                 "summary": "Build the private JSON export; next run its checks.",
                 "context": {
                     "overview": "Continue the private JSON export.",
                     **{
-                        field: [{"text": text, "refs": [ref]}]
+                        field: (
+                            [
+                                {
+                                    "text": text,
+                                    "refs": [ref],
+                                    "kind": {
+                                        "goals": "goal",
+                                        "constraints": "constraint",
+                                        "decisions": "decision",
+                                        "unfinished": "unfinished",
+                                    }[field],
+                                    "state": "open",
+                                }
+                            ]
+                            if row
+                            else []
+                        )
                         for field, text in {
                             "goals": "Build export",
                             "constraints": "Keep files private",
@@ -56,7 +72,10 @@ def test_large_history_saves_usable_context_with_resolvable_evidence(memory_rig,
         assert cp["summary_update"]["state"] == "updated"
         revision = server.digests.revision("agent", cp["record"]["summary_ref"])
         continuity = revision["continuity"]
-        assert continuity["available_records"] > 5000 and continuity["remaining_records"] > 0
+        coverage = cp["summary_update"]["span_coverage"]
+        assert coverage["eligible_records"] > 5000
+        assert coverage["summarized_records"] == coverage["eligible_records"]
+        assert coverage["pending_records"] == 0
         assert continuity["verified"] and continuity["update_complete"]
         for field in ("goals", "constraints", "decisions", "unfinished"):
             assert continuity["context"][field]
@@ -80,25 +99,23 @@ def test_skipped_new_work_survives_advancing_observation_frontiers(memory_rig, m
 
     async def run():
         await server.progress_coordinator.refresh("agent")
-        append(path, "New owner constraint: " + "a" * 30000)
-        append(path, "New result: " + "b" * 30000)
+        append(path, "New owner constraint: " + "a" * 11000)
+        append(path, "New result: " + "b" * 11000)
         first = await server.progress_coordinator.refresh_result("agent")
-        assert first.state == "partial"
-        pending = first.revision["continuity"]["pending_updates"]
-        assert sum(map(len, pending.values())) == 1
-        append(path, "Another new result: " + "c" * 30000)
+        assert first.state == "updated"
+        assert not first.revision["continuity"]["pending_updates"]
+        append(path, "Another new result: " + "c" * 11000)
         second = await server.progress_coordinator.refresh_result("agent")
-        assert second.state == "partial"
-        assert second.revision["continuity"]["pending_updates"] == pending
+        assert second.state == "updated"
+        assert not second.revision["continuity"]["pending_updates"]
         third = await server.progress_coordinator.refresh_result("agent")
-        assert third.state == "updated"
-        assert not third.revision["continuity"]["pending_updates"]
-        assert third.revision["continuity"]["update_complete"]
+        assert third.state == "reused"
+        assert third.revision["id"] == second.revision["id"]
 
     asyncio.run(run())
 
 
-def test_oversized_latest_record_stays_partial(memory_rig, monkeypatch):
+def test_oversized_latest_record_fails_without_promoting_partial_coverage(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "A small retained fact")
     append(path, "Latest owner constraints " + "x" * 60000)
@@ -106,9 +123,8 @@ def test_oversized_latest_record_stays_partial(memory_rig, monkeypatch):
 
     async def run():
         result = await server.progress_coordinator.refresh_result("agent")
-        assert result.state == "partial"
-        assert result.revision["continuity"]["gaps"]
-        assert not result.revision["continuity"]["update_complete"]
+        assert result.state == "failed" and result.diagnostic == "oversized_record"
+        assert server.history.session("agent")["progress"] is None
 
     asyncio.run(run())
 

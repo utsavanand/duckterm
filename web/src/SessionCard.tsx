@@ -5,6 +5,7 @@ import { api } from "./api";
 import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
+import { CheckpointAge } from "./CheckpointAge";
 import { RestartControls } from "./RestartControls";
 import "./sessionCard.css";
 
@@ -45,6 +46,7 @@ export function SessionCard({ session: s, now, notesOpen = false, onCloseNotes }
       <div className="rd-session-controls-caption">Session</div>
       <div className="rd-session-controls-title"><strong>{s.label}</strong><span className={`rd-state st-${state}`}>{sessionStateLabel(state)}</span></div>
       <div className="rd-session-controls-folder"><span>{s.group || "Ungrouped"}</span></div>
+      <CheckpointAge sessionKey={s.key} showDuck />
     </div>
     {s.launched ? <RestartControls session={s} showActions={false}>{details}</RestartControls> : details()}
     {notesOpen && <div className="rd-row-notes-wrap">

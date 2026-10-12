@@ -1,4 +1,46 @@
+## 2026-10-12 — Read saved memory without creating another summary
+
+Use the existing publication pointer for current memory and exact revision IDs for historical views. Resolve evidence only on expansion and hide stale text when the source read fails. Share checkpoint-clock data from the existing session read; never start provider work on a display timer. Failed attempts must keep the last-success timestamp and their own failure message. Verify the web view, host-qualified reads and native GET admission together.
+
+## Native Memory reads need exact bridge routes
+Backend read routes also require native transport admission. Test GET-only query keys, encoded pagination and the same session key on distinct tunnel ports; retain native token injection.
+
+## 2026-10-12 — Read current memory across immutable spans
+
+A Memory view that shows only the newest span loses older constraints from sight. Assemble published spans for current memory and retain exact historical revision views separately. Search and read responses must expose current lifecycle state alongside immutable saved text, so retirement cannot look like an open constraint. Replay an authenticated identical lifecycle request before applying new-transition preconditions. Age checkpoints by successful outcomes, never the latest attempt. Explicitly retired claims remain retrievable but must stop consuming the open-claim handoff budget. Verify removed evidence, multi-span aggregation, long-running receipts, lifecycle replay and actual typed coverage together.
+
+## 2026-10-12 — Follow the operation, not a short HTTP timeout
+
+A cold start can require several bounded summary spans. Once an exact receipt confirms that the request is running, keep showing the existing running state and keep polling that request; apply the recovery deadline to loss of contact, not confirmed work. A canceled handoff stops before the next model batch unless another dialog or accepted checkpoint still needs the shared range. Server shutdown cancels both the range coordinator and its writer before closing storage. Verify cancellation/retry reuse and a confirmed operation lasting longer than the former three-minute recovery window.
+
+## 2026-10-12 — Integrate memory contracts before asking for another checkpoint trial
+
+A span writer alone does not implement span memory. The reader, handoff, coverage counters,
+claim lifecycle, cancellation and transport recovery must agree on the same contract.
+Keep generated spans immutable and retryable, publish success only after the captured
+range completes, and check native-file and scope fences again at publication. Tool-only
+hooks must not create an endless pending summary. Manual cadence must not secretly retain
+turn-end model calls. Test the combined path before an owner trial; foundation tests are
+not release acceptance.
+
+## Folded retrieval must use the canonical resolver
+
+
+Folded claims contain revision pointers, not inline text/refs. Retrieval must resolve only within the authorized catalog, withhold unresolved views, and test actual search-to-read typed claims. Keep derived records excluded from writer originals.
+
 # Retro — lessons from real breakage
+
+## 2026-10-11 — Independent summaries need independent boundaries and compatible readers
+
+A cumulative revision cannot become a span by changing its label or subtracting an earlier summary. Capture explicit original-record boundaries, verify their prefix hashes, and write only the new range. Bound complete provider prompts in UTF-8 bytes as well as record count; leave an oversized record pending instead of skipping it. A failed later range must not erase or repeat a successful earlier range. Appending to a source changes its version but does not make previously committed positions new work: reject overlapping leaf ranges both before provider calls and inside the write transaction.
+
+A span writer must not replace the current cumulative summary before the handoff reader assembles prior spans. Stage typed leaves through the existing generation, review and persistence path without changing the current-summary pointer. Keep original evidence readable, reject source rewrites, preserve the existing single-writer and cancellation protections, and distinguish a verified individual leaf from completion of the whole requested span. Test source advancement, retry reuse, retained reads and concurrent callers before activation.
+## 2026-10-12 — Size saved summaries for useful content
+
+The inherited 400-character overview cap rejected otherwise useful checkpoint summaries after silent clipping was removed. Allow 2,000 characters, with a 100–200 word prompt target when needed; keep writer, correction prompt and parser limits aligned. Test that 100+ words survive unchanged and over-limit text is rejected rather than sliced. This change does not resolve incomplete input coverage.
+## 2026-10-11 — Recover a checkpoint by its request, not the newest row
+
+A lost HTTP response does not say whether the summary was saved. Assign a request ID before work starts, keep a bounded durable receipt, and resolve only the checkpoint linked to that receipt. A duplicate request joins the original operation. Keep accepted work alive after its HTTP waiter disconnects; after a server restart, an exact saved checkpoint wins over an unfinished receipt, while an unfinished request without a checkpoint stays interrupted. A completed request may still contain a failed or partial summary. Test those outcomes separately and never infer success from a newer checkpoint or a timestamp.
 
 ## 2026-10-11 — Closing a terminal is not proof its native process stopped
 
@@ -100,6 +142,25 @@ Remove the total raw-file guard from the existing line-streaming reader. Keep pe
 The parser sliced summary text at 400 characters before validation. A complete provider response could therefore reach the reviewer as a sentence DuckTerm itself cut off. The live summary_truncated rejection identified the symptom; inspecting the parser exposed a deterministic corruption path. This does not prove every historical unverified summary had that cause.
 
 Reject overlong drafts with summary_too_long and use the existing single correction attempt to request complete, concise sentences. State the limit in generation and correction prompts. Review only the intact corrected candidate, retain strict semantic validation, and preserve the last good revision when correction fails. Regression tests must assert the exact text sent to the reviewer and saved in the checkpoint, and verify failures never advance coverage or turn a clipped prefix into a success.
+## Recover checkpoint outcomes by exact request, on the same host (2026-10-11)
+
+A disconnected checkpoint request can finish on the server after the UI loses
+its response. Give each attempt a caller-generated ID and reconcile with bounded,
+read-only receipt queries. Never infer completion from a newer timestamp, retry
+the POST automatically, or query the local server for a remote attempt. Native
+remote routing must allow the exact GET endpoint. Test delayed completion,
+unknown receipts, host isolation, duplicate clicks and bounded hung lookups.
+
+
+## Incomplete checkpoints must not look successful (2026-10-11)
+
+A saved, reviewer-accepted draft can still omit required history. The checkpoint
+progress panel and toast called this a partial save with success styling, masking
+the incomplete outcome. Use the approved incomplete-failure label across progress,
+history and notifications; preserve the saved text for inspection and keep this
+separate from provider/reviewer failure and an unknown transport outcome. Tested
+with a retained, reviewed partial revision and remote connection-loss regressions.
+
 
 ## 2026-10-11 — Preserve the reason a checkpoint review failed
 
@@ -107,6 +168,24 @@ A missing or malformed reviewer response is not a negative review. Preserve the 
 
 Do not remove a validation gate merely because its error reporting was inadequate. Capture the actual reviewer outcome first. Historical attempts without those diagnostics cannot establish whether the writer or reviewer was wrong. Regression tests must cover both maintained-memory and stored-revision paths, including contradictory ready states and malformed envelopes carrying valid rejection codes.
 
+## 2026-10-11 — Compaction failure must not invalidate a usable checkpoint
+
+
+Generate and validate optional folds outside the SQLite transaction. Recheck the source after model work and compare the exact selected revision history again inside the write transaction. Commit parent references with the incoming revision and checkpoint; use a savepoint so an optional parent insertion failure preserves the checkpoint and every child. Parent links change the active read set only after commit. Never infer independent spans from cumulative summaries.
+
+The corrected reader contract refuses a resolved view over 10 KB with explicit budget-exhausted coverage; it does not trim protected facts. Originals remain individually readable. Test complete reference resolution, a second-parent insertion failure, checkpoint rollback, stale source changes, cancellation, retry cooldown and upward tier cascades. These checks do not enable the new span writer or certify the installed runtime.
+
+## 2026-10-11 — Typed memory parsing must not silently change writer authority
+
+Adding claim metadata to the reader does not upgrade existing revision writers. Require an explicit context version, retain legacy claim bytes, and reject unknown keys in both versions. Compute content IDs in code, not by asking a model to invent hashes. A cited source proves reference membership, not authorization to retire a claim; new-claim drafts cannot apply lifecycle transitions.
+
+Stage the policy switch with span-only writes, revision version metadata and reader integration. Whole-history preparation and maintained checkpoint updates have separate reuse policies; changing only one does not migrate the other. Keep the provider's new-claim budget separate from a read view resolving accumulated protected facts. Test mixed legacy/typed reads, oversized new claims, forged IDs, rejected retirement drafts, and the existing checkpoint path before enabling the new writer.
+
+## 2026-10-11 — Validate relationships after combining memory claims
+
+Two individually valid summary contexts can create a supersession cycle when combined: each context may reference a claim held only by the other. Per-child checks therefore cannot certify a compacted parent. Validate the complete protected-claim union before calling either provider. On failure preserve the children and report a pending compaction; do not edit their relationships to make the fold pass.
+
+QA caught this in the isolated compactor foundation before runtime integration. The regression starts with ten valid children, creates a cycle across two of them, and verifies rejection without provider calls or input mutation. A generated parent must obey the same reader contract as its inputs.
 ## 2026-10-09 — Interactive panes must not inherit automation's no-color flag
 
 The terminal palettes were intact, but the agent and the persistent tmux server had inherited `NO_COLOR=1`; captured output contained only bold/dim styling. A theme cannot recolor ANSI foreground values that the process never emits. Unset inherited `NO_COLOR` in each interactive pane's launch command, while preserving an explicitly supplied launch override. Sanitizing the current server process alone cannot repair environment already retained by tmux. Existing running agents retain their environment until restarted; do not interrupt live work merely to restore color.
@@ -208,6 +287,11 @@ Test the outcome through an actual checkpoint with more than 5,000 originals and
 ## Checkpoint progress must outlive its menu (2026-10-10)
 
 Checkpoint requests previously kept their busy state inside the context menu, so closing it hid a potentially long summary update. Keep the request and its result outside the mounted menu, keyed by the full host-qualified session reference. Show immediate indeterminate progress and elapsed time in the Session panel; suppress duplicate requests across entry points. A lost connection cannot prove a save failed: report an unconfirmed result and retain the previous summary. Verify menu dismissal, session/host changes, late responses and real returned outcomes.
+## 2026-10-10 — A readable Memory view must use the same evidence checks as agent tools
+
+Session memory existed as saved revisions and linked originals, but the owner could not inspect it in the dashboard. Expose a read-only view of those same records rather than creating another summary store or generating a summary when the panel opens. Keep processed-history counts at save time distinct from source availability now and from the amount of knowledge a summary preserves. Show the last checkpoint outcome separately so a failed update does not hide the previous good revision.
+
+Use the existing memory projection and exact-version reader for evidence. Returning raw revision JSON would bypass the removal and sharing-scope checks that withhold inaccessible claims; the dashboard must not leak those claims from a convenient cached summary. Regression checks cover owner authentication, session isolation, original paging and relationships, historical revisions, partial coverage, failed updates, revoked evidence and a sharing-scope change during projection. Visible UI remains separately preview-reviewed.
 
 ## 2026-10-10 — A native message's transport role is not always its author
 

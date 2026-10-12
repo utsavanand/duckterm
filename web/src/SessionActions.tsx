@@ -10,7 +10,7 @@ import { splitSessionRef } from "./hostTransport";
 import { effectiveState } from "./sessions";
 import { identityBlocksResume } from "./conversationRecoveryState";
 import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
-import { checkpointNotice } from "./checkpointState";
+import { checkpointAttemptFailed, checkpointNotice } from "./checkpointState";
 import { recoveryBlocksResume } from "./resumeReadiness";
 import { SessionView } from "./types";
 import { useResumeSession } from "./useResumeSession";
@@ -54,7 +54,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
     onClose();
     try {
       const cp = await request;
-      toast(checkpointNotice(cp), cp.summary_update?.state === "failed" || cp.saved === false ? "err" : "ok");
+      toast(checkpointNotice(cp), checkpointAttemptFailed(cp) ? "err" : "ok");
     } catch { toast("Checkpoint result not confirmed. Check the latest checkpoint before trying again.", "err"); }
   }
 

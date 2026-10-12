@@ -59,7 +59,18 @@ def add_parser(sub: Any) -> None:
     artifact.add_argument("artifact_id", nargs="?", help="saved artifact ID after 'get'")
     artifact.add_argument("--title")
     artifact.add_argument(
-        "--kind", choices=("kdd", "spec", "research", "preview", "evidence", "report", "other")
+        "--kind",
+        choices=(
+            "kdd",
+            "spec",
+            "research",
+            "preview",
+            "evidence",
+            "report",
+            "binary",
+            "unclassified",
+            "other",
+        ),
     )
     artifact.add_argument("--output", type=Path, help="download destination; must not exist")
     task = actions.add_parser("task", help="report work explicitly, update it or hand it off")
@@ -100,6 +111,8 @@ def add_memory_parser(sub: Any) -> None:
     related.add_argument("--cursor")
     link = actions.add_parser("link", help="record a typed relationship with original evidence")
     link.add_argument("--file", required=True, type=Path)
+    claim = actions.add_parser("claim", help="explicitly retire or supersede your own claim")
+    claim.add_argument("--file", required=True, type=Path)
 
 
 def _save_artifact(result: dict[str, Any], destination: Path | None) -> dict[str, Any]:
@@ -153,7 +166,7 @@ def main(args: argparse.Namespace) -> int:
                     query["record"] = args.record
                 if args.cursor is not None:
                     query["cursor"] = args.cursor
-            elif args.memory_action == "link":
+            elif args.memory_action in {"link", "claim"}:
                 with args.file.expanduser().open("rb") as stream:
                     raw = stream.read(32769)
                 if len(raw) > 32768:

@@ -76,17 +76,26 @@ def test_build_prompt_carries_prior_and_goal() -> None:
 def test_overlong_summary_is_rejected_instead_of_sliced_mid_sentence() -> None:
     summary = (
         "The deployment remains blocked until "
-        + "the owner reviews the change, " * 14
+        + "the owner reviews the change, " * 75
         + "then we can proceed."
     )
-    assert len(summary) > 400 and summary[399] != "."
+    assert len(summary) > 2000 and summary[1999] != "."
     reply = json.dumps({"summary": summary})
     assert progress.parse(reply) is None
     assert progress.parse_diagnostic(reply) == "summary_too_long"
 
 
 def test_summary_limit_preserves_exact_text_and_counts_characters() -> None:
-    for summary in ("a" * 399 + ".", "é" * 399 + "."):
+    for summary in ("a" * 1999 + ".", "é" * 1999 + "."):
         assert progress.parse(json.dumps({"summary": summary}))["summary"] == summary
         assert progress.parse(json.dumps({"summary": summary + "x"})) is None
-    assert "at most 400 characters" in progress.build_prompt([], None, "")
+    assert "at most 2000 characters" in progress.build_prompt([], None, "")
+
+
+def test_hundred_word_summary_is_preserved_without_clipping() -> None:
+    summary = " ".join(
+        ["This checkpoint preserves the current decision and its supporting context."] * 12
+    )
+    assert len(summary.split()) >= 100
+    assert 400 < len(summary) < 2000
+    assert progress.parse(json.dumps({"summary": summary}))["summary"] == summary

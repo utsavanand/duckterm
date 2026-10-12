@@ -17,7 +17,7 @@ def app(tmp_path):
 def test_categories_keep_registration_and_removed_provenance(app):
     store = app.history.artifacts
     original = store.list("one")[0]
-    assert original["kind"] == "other" and original["kind_source"] == "inferred"
+    assert original["kind"] == "other" and original["kind_source"] == "declared"
     artifact = original["id"]
     path = f"/sessions/one/artifacts/{artifact}"
     assert req(app, "PATCH", path, {"kind": "spec", "kept": True}, headers={})[0] == 401
@@ -145,8 +145,17 @@ def test_metadata_validation_and_inferred_kinds(app):
     ]:
         row = store.register(
             "one",
-            {"title": title, "source_path": f"/tmp/{title}.{extension}", "content_base64": "eA=="},
+            {
+                "title": title,
+                "source_path": f"/tmp/{title}.{extension}",
+                "content_base64": "eA==",
+                "kind": kind,
+            },
         )
+        # Legacy inference remains covered: old rows lack classification metadata.
+        with store.conn:
+            store.conn.execute("DELETE FROM artifact_metadata WHERE id=?", (row["id"],))
+        row = store.get("one", row["id"])
         assert row["kind"] == kind and row["kind_source"] == "inferred"
         for patch in [{}, [], {"kind": "unknown"}, {"kept": 1}, {"remove": True}]:
             assert req(app, "PATCH", f'/sessions/one/artifacts/{row["id"]}', patch)[0] == 400

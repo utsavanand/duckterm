@@ -31,6 +31,7 @@ def save(server, headers, content=b"# Review", source="/gone/report.md"):
         {
             "source_path": source,
             "title": "Review",
+            "kind": "report",
             "content_base64": base64.b64encode(content).decode(),
         },
     )

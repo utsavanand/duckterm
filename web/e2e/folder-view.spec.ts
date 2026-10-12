@@ -18,7 +18,7 @@ test("folder chat and artifacts preserve terminals and follow folder renames", a
     key = String(launched.body.session_key);
     await apiPatch(`/sessions/${key}`, { group: folder });
     const enrollment = await apiPost(`/sessions/${key}/collaboration`, { root: folder });
-    const response = await fetch(`${base()}/api/v1/session/artifacts`, { method: "POST", headers: { Authorization: `Bearer ${enrollment.body.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ source_path: join(cwd, "review.md"), title: "Navigation review", content_base64: Buffer.from("# Navigation review\n\nReady for review.").toString("base64") }) });
+    const response = await fetch(`${base()}/api/v1/session/artifacts`, { method: "POST", headers: { Authorization: `Bearer ${enrollment.body.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ source_path: join(cwd, "review.md"), title: "Navigation review", kind: "report", content_base64: Buffer.from("# Navigation review\n\nReady for review.").toString("base64") }) });
     expect(response.status).toBe(200);
     await page.goto(base());
     const header = page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `View interactions in ${folder}`, exact: true }) });

@@ -7,8 +7,49 @@ from typing import Any
 
 from duckterm import memory_handoff
 
-POLICY = "conversation-session-and-failures-v2"
+POLICY = "conversation-session-and-failures-v3"
 CONVERSATION_EVENTS = {"UserPromptSubmit", "Stop", "SubagentStop", "PostToolUseFailure"}
+
+
+def event_text(value: dict[str, Any]) -> str:
+    """Summarize actual statements, not the hook envelope recording their arrival."""
+    event = value.get("event_type")
+    if event == "UserPromptSubmit":
+        return str(value.get("prompt") or "")
+    if event in {"Stop", "SubagentStop"}:
+        return next(
+            (
+                value[k]
+                for k in ("last_assistant_message", "response", "text", "message")
+                if isinstance(value.get(k), str) and value[k].strip()
+            ),
+            "",
+        )
+    if event == "PostToolUseFailure":
+        return json.dumps(
+            {
+                k: value[k]
+                for k in ("event_type", "tool_name", "error", "message", "failure_reason")
+                if k in value
+            },
+            ensure_ascii=False,
+        )
+    if event == "PermissionRequest":
+        decision = value.get("decision", value.get("permission_decision"))
+        if isinstance(decision, str) and decision in {
+            "allow",
+            "deny",
+            "approved",
+            "denied",
+            "reject",
+        }:
+            return json.dumps(
+                {"event_type": event, "decision": decision, "reason": value.get("reason", "")},
+                ensure_ascii=False,
+            )
+    if event == "Notification" and value.get("sender_kind") == "owner":
+        return str(value.get("message") or value.get("text") or "")
+    return ""
 
 
 def records(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
@@ -33,8 +74,7 @@ def records(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
             if not isinstance(value, dict):
                 raise ValueError("Event summary source must be an object")
             event_id = value.get("_id", value.get("id"))
-            if value.get("event_type") not in CONVERSATION_EVENTS:
-                text = ""
+            text = event_text(value)
         elif row["kind"] != "session":
             text = ""
         eligible_bytes += len(text.encode())

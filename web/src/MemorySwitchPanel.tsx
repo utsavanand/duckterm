@@ -160,7 +160,8 @@ export function MemorySwitchPanel(props: {
     : state.phase === "stale_source" ? "Work changed during preparation" : state.phase === "failed" || state.phase === "canceled" ? "Could not prepare the handoff"
       : state.phase === "submission_unknown" ? "Checking switch status" : state.phase === "submitting" ? "Scheduling switch…" : "Preparing the handoff…";
   const handoff = prepared?.coverage.handoff;
-  const readyMessage = handoff?.summary_state === "unavailable"
+  const spans = handoff?.method === "independent_spans";
+  const readyMessage = spans ? "The brief uses recent summaries, open decisions and constraints, and current work. Earlier history stays searchable." : handoff?.summary_state === "unavailable"
     ? "No saved summary yet. The brief uses current work and recent messages; earlier history stays searchable."
     : handoff ? "The brief uses saved memory and recent messages. Earlier history stays searchable."
       : "Handoff prepared · required context available. Current work and sources are checked again before the switch.";
@@ -179,9 +180,9 @@ export function MemorySwitchPanel(props: {
       <p>The brief is a starting point. Use the read tools for earlier decisions or missing details.</p>
       <dl>{handoff ? <>
         <dt>Saved summary</dt><dd>{handoff.summary_generated_at === null ? "No saved summary" : `Updated ${new Date(handoff.summary_generated_at).toLocaleString()}`}</dd>
-        <dt>History summarized</dt><dd>{handoff.summarized_records.toLocaleString()} of {handoff.available_records.toLocaleString()} records</dd>
-        <dt>Recent originals in brief</dt><dd>{handoff.included_records.toLocaleString()} {handoff.included_records === 1 ? "record" : "records"}</dd>
-        <dt>Additional history</dt><dd>{handoff.omitted_records.toLocaleString()} {handoff.omitted_records === 1 ? "record" : "records"} available through read tools</dd>
+        <dt>{spans ? "Conversation summarized" : "History summarized"}</dt><dd>{handoff.summarized_records.toLocaleString()} of {(handoff.eligible_records ?? handoff.available_records).toLocaleString()} {spans ? "eligible records" : "records"}</dd>
+        {!spans && <><dt>Recent originals in brief</dt><dd>{handoff.included_records.toLocaleString()} {handoff.included_records === 1 ? "record" : "records"}</dd></>}
+        <dt>{spans ? "Reference-only history" : "Additional history"}</dt><dd>{handoff.omitted_records.toLocaleString()} {handoff.omitted_records === 1 ? "record" : "records"} available through read tools</dd>
         <dt>Originals for retrieval</dt><dd>Retained and searchable</dd>
       </> : <>
         <dt>Available text processed</dt><dd>{prepared.coverage.covered_source_count} of {prepared.coverage.source_count} sources</dd>
@@ -189,7 +190,7 @@ export function MemorySwitchPanel(props: {
         <dt>Retention</dt><dd>{prepared.coverage.retention === "retained_snapshot" ? "Retained source snapshots" : prepared.coverage.retention === "native_conditional" ? "While native originals remain available" : prepared.coverage.retention}</dd>
       </>}
         <dt>Exact target model</dt><dd>{prepared.resolvedModel || "Harness default · not reported"}</dd></dl>
-      {handoff && <p>Summarized records were supplied to a summary update. Every detail is not necessarily included in the brief.</p>}
+      {handoff && <p>{spans ? "Tool results and routine metadata stay available for retrieval. They are not counted as missing conversation summaries." : "Summarized records were supplied to a summary update. Every detail is not necessarily included in the brief."}</p>}
       {(details?.gaps ?? prepared.coverage.gaps).map((g, i) => <p key={`${g.source_id}-${i}`} className="rd-memory-gap">{g.reason}</p>)}
       {prepared.coverage.gap_count > 0 && <p>{prepared.coverage.gap_count} source {prepared.coverage.gap_count === 1 ? "gap" : "gaps"}. Processing available text does not mean every fact is in the brief.</p>}
       {details && <><h3>Automatically prepared brief</h3><div className="rd-memory-brief" role="region" aria-label="Automatically prepared brief" tabIndex={0}>{details.brief.text}</div>

@@ -90,7 +90,7 @@ def test_bounded_pointers_keep_assignment_counts_and_originals(memory_rig, monke
                 },
             )
             assert term in original["text"]
-        assert revision["continuity"]["summary_input"]["remaining_eligible_records"] == 0
+        assert outcome.span_coverage["pending_records"] == 0
         assert coverage["summary_state"] == "partial"  # Raw bodies were not summarized.
 
     asyncio.run(run())

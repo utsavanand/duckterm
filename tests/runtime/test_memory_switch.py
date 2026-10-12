@@ -9,7 +9,6 @@ from tests.runtime import test_restart_harness_switch as switch_fixtures
 from tests.runtime.test_restarts import drain, hook
 from tests.runtime.test_session_api import Writer, dispatch
 
-from duckterm import memory_summary
 from duckterm.core.session_api import APIError
 from duckterm.memory_preparation import generation
 
@@ -35,28 +34,9 @@ def ready_switch(rig, monkeypatch):
             + "\n"
         )
 
-    async def provider(harness, model, prompt, schema=None):
-        if prompt.startswith("Review the proposed"):
-            return '{"ready":true,"reason_codes":[]}'
-        data = json.loads(prompt[prompt.index('{"prior_context"') :])
-        source = next(
-            (p for p in data["historical_data"] if "Keep glacier" in p["text"]),
-            data["historical_data"][0],
-        )
-        return json.dumps(
-            {
-                "overview": "Retain glacier originals.",
-                **{k: [] for k in memory_summary.FIELDS},
-                "constraints": [
-                    {
-                        "text": "Keep glacier originals",
-                        "refs": [source["source_id"] + ":" + source["record_id"]],
-                    }
-                ],
-            }
-        )
+    from tests.runtime.test_memory_preparation import typed_provider
 
-    monkeypatch.setattr("duckterm.memory_provider.generate", provider)
+    typed_provider(monkeypatch, "Keep glacier originals")
     return server, sup, screen, calls, native
 
 

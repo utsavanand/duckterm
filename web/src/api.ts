@@ -1,3 +1,4 @@
+import type { CheckpointClock } from "./CheckpointAge";
 import type { AgentMergeService, AgentMergePreview, AgentMergeRecord, MergeTarget } from "./AgentMergeDialog";
 import type { OpenCodeLaunchOptions } from "./OpenCodeOptions";
 import type { ConversationRecoveryService, ConversationIdentity, ConversationCandidates } from "./conversationRecoveryState";
@@ -645,15 +646,21 @@ export const api = {
     })),
   clearTerminated: () =>
     post<{ cleared: number }>("/sessions/clear-terminated"),
-  checkpoint: (key: string, label: string) =>
+  checkpoint: (key: string, label: string, requestId?: string) =>
     post<CheckpointRecord>(
       `/sessions/${key}/checkpoint`,
-      { label },
+      { label, ...(requestId ? { request_id: requestId } : {}) },
     ),
+  checkpointAttempt: async (key: string, requestId: string, signal?: AbortSignal): Promise<CheckpointAttemptReceipt | null> => {
+    const response = await fetch(`/sessions/${key}/checkpoint-attempts/${encodeURIComponent(requestId)}`, { headers: authHeaders(), signal });
+    if ([401, 403, 404, 405, 410, 501].includes(response.status)) return null;
+    if (!response.ok) throw new Error("Checkpoint result lookup failed");
+    return response.json();
+  },
   timeline: (key: string, kinds = "", before = "") =>
     get<TimelinePage>(`/sessions/${key}/timeline?${new URLSearchParams({ kinds, before, limit: "50" })}`, undefined, { authed: true }),
   checkpoints: (key: string) =>
-    get<{ checkpoints: CheckpointRecord[] }>(`/sessions/${key}/checkpoints`),
+    get<{ checkpoints: CheckpointRecord[]; checkpoint_clock?: CheckpointClock }>(`/sessions/${key}/checkpoints`),
   spotlight: (key: string) =>
     post<{ synced_files: string[] }>(`/sessions/${key}/spotlight`),
   sessionEvents: (key: string) =>
@@ -680,7 +687,14 @@ export interface TimelinePage {
   summary: { text: string; updated_at: number | null; total: number; counts: Record<string, number> };
   entries: TimelineEntry[]; next_cursor: string | null;
 }
+export interface CheckpointAttemptReceipt {
+  request_id: string;
+  state: "running" | "complete" | "failed" | "interrupted";
+  result?: CheckpointRecord;
+  error?: string;
+}
 export interface CheckpointRecord {
+  request_id?: string;
   summary_update?: { state: "updated" | "reused" | "partial" | "failed"; reason?: string | null; attempted_at?: number; revision_id?: string | null };
   format?: string;
   saved?: boolean;
@@ -700,7 +714,7 @@ export interface CheckpointRecord {
     memory_source?: unknown;
     memory_sources?: unknown[];
     memory_retention?: string;
-    handoff?: { method?: string; packet_hash?: string; summary_revision_id?: string | null; included_records?: number; omitted_records?: number };
+    handoff?: { method?: string; packet_hash?: string; summary_revision_id?: string | null; eligible_records?: number; summarized_records?: number; reference_only_records?: number; included_records?: number; omitted_records?: number };
     intention?: string;
     prompts: string[];
     files: { path: string; edits: number }[];

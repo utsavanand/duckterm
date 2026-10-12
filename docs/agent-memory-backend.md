@@ -1,17 +1,40 @@
 # Agent memory backend
 
-Implementation candidate on `feat/agent-memory`. This is not a release claim.
-The owner-facing design remains “Agent memory — architecture, implementation plan and tests” in DuckTerm Artifacts.
+Implementation candidate on `feat/memory-complete`. This document describes the integrated code, not an installed-release or live-provider acceptance claim.
 
-## Continuity and storage
+## Records and ownership
 
-The DuckTerm card owns the conversation chain. Exact Claude and Codex identities come from current binding, prior restart metadata and checkpoint markers. There is no newest-conversation fallback. Checkpoints retain immutable native JSONL snapshots in the session's existing private checkpoint directory. Native cleanup can remove the original file without removing the saved snapshot. Deleting the session removes its snapshots and index. Removing a checkpoint reference revokes reads of that retained version; unreferenced bytes are currently reclaimed when the session is deleted. These new memory snapshots and indexes are local-only and excluded from existing backups. The existing native-provider transcript backup selection is unchanged.
+A DuckTerm session owns a chain of native conversations. Changing harnesses keeps the named session, tasks, inbox and artifacts; the new harness receives a new native conversation. Exact native IDs come from recorded bindings, restart metadata and checkpoint markers. There is no “pick the newest conversation” fallback.
 
-A saved older prefix remains searchable if the live transcript disappears, but coverage is incomplete and automatic preparation refuses to treat that prefix as current history. Unknown native identities, ambiguous locators, malformed sources and permission changes are explicit failures. Non-text attachments are listed as unprocessed; text/tool coverage does not assert that every fact survives summarization.
+Original conversation messages and event records are evidence. Session cards, tasks, inbox messages and artifacts retain their own canonical stores. Immutable summary revisions describe work over specific source ranges. A checkpoint is an explicit attempt and a reference to the published revision, source boundary and repository state; it is not another copy of the transcript. Timeline reads those records. Messages remains the conversation view.
 
-The database schema is unchanged. Canonical summaries use existing immutable digest revisions. Checkpoints reference a revision and sources. The session card reads the short overview; ordinary progress can publish a newer overview while referencing the last whole-history baseline. It cannot certify that baseline's coverage for newer work. Timeline remains a read view.
+The database schema is unchanged. Summary revisions and folds use existing digest storage. Typed relationships and explicit claim lifecycle changes use existing links. The retrieval index is a disposable SQLite FTS5 index, not a second source of truth. There is no vector database or separate property-graph service.
 
-## Retrieval
+Checkpoints retain native JSONL snapshots in the session's private checkpoint directory. A retained prefix remains readable after native cleanup, but cannot certify newer unavailable history. These memory snapshots and indexes are local-only and excluded from the existing backup selection. Project-file backup and native transcript backup are separate features. Session deletion removes its snapshots and index; removing a checkpoint reference revokes access to that retained version. No automatic destructive retention or bulk artifact relabelling is enabled by this candidate.
+
+## Manual checkpoints and independent summaries
+
+History recording continues as work happens. Summary generation has no periodic or turn-end timer. Clicking Checkpoint explicitly requests an update. Change harness can prepare the required range through the same coordinator before offering the final switch.
+
+The coordinator captures an upper source boundary and resolves already accepted ranges. Each new summary uses only a contiguous unsummarized span of original conversation/event input, never the previous summary. Successful tool output and routine metadata stay reference-only; owner messages, assistant conclusions, failures and relevant decisions remain eligible. Task, inbox and artifact bodies are retrieved separately rather than repeatedly inserted into summary prompts.
+
+Each batch has at most 50 records and a 16,000-byte generation-prompt budget, leaving 32,000 bytes of the overall 48,000-byte allowance for generation/review overhead. An indivisible record that cannot fit fails explicitly. The summary allows up to 2,000 characters and asks for about 100–200 words; structured claims have a separate budget. Local validation and a content review must both accept a draft. Rejected or truncated drafts never advance processed coverage.
+
+A cold start can require many sequential bounded batches. Accepted immutable leaves survive a later batch failure and can be reused on retry when source hashes and boundaries still match. The current published revision advances only when the captured eligible range completes. Changes or deletions invalidate affected source coverage; a failed attempt leaves the previously published memory available. Legacy cumulative summaries remain readable but are not automatically converted into independent spans.
+
+Canceling a preparation releases its lease. Work stops before the next provider batch when no other dialog or accepted manual checkpoint needs that range. A provider call has its own timeout. Source, permission and native-file fences are checked again before publication and switching.
+
+## Claims, folding and handoff budgets
+
+Version 2 claims carry stable identity, original evidence and a kind: decision, constraint, learning, callout, question, unfinished work, goal or risk. Older untyped claims are shown as unclassified. Retirement or supersession requires an explicit authenticated transition with supporting evidence; a narrative summarizer cannot silently close a claim. Search exposes effective lifecycle state alongside saved state, and exact reads preserve the original text.
+
+Before writing the 51st active summary at a tier, folding combines the oldest ten narratives into one higher-tier narrative. Claims and source references survive unchanged, and child revisions remain readable. The same rule applies at higher tiers. A failed optional fold does not prevent a valid new leaf from being saved.
+
+A handoff assembles recent narratives, all open protected claims, current work, session expectations and the exact retrieval-tool instructions. Explicitly retired claims remain retrievable without consuming the active handoff budget. The active context is bounded at 10,000 bytes and the full launch brief at 32,000 UTF-8 bytes. If protected context cannot fit, preparation refuses before stopping the source agent. It does not silently trim claims, select a cheaper model or switch because a quota was reached.
+
+The counters distinguish eligible records summarized from reference-only history. “92 of 92 eligible records” means those original records were supplied to accepted summaries; it does not mean every fact appears in the brief. Reference-only tool records are not missing conversation summaries. Older narratives omitted from the launch packet remain retrievable and their omission is declared.
+
+## Retrieval and readable Memory
 
 Commands use the calling session's existing credential:
 
@@ -19,26 +42,21 @@ Commands use the calling session's existing credential:
 duckterm memory sources
 duckterm memory search "why did we choose GCP?"
 duckterm memory read <source-handle> --record <record-id>
-duckterm memory read <source-handle> --offset <next-offset>
+duckterm memory read <source-handle> --record <record-id> --offset <next-offset>
+duckterm memory related <source-handle> --record <record-id>
+duckterm memory link --file relationship.json
+duckterm memory claim --file lifecycle-change.json
 ```
 
-Initial retrieval is restricted to the owning session. A handle contains a source ID and content version, never an arbitrary file path. Search results include a record ID and excerpt. Read pages return `next_offset`; offsets count Unicode characters. The SQLite FTS5 index is derived and rebuilt if corrupted. Reads recheck source versions, current grants and credentials before returning.
+A source handle includes its version, never an arbitrary filesystem path. Search results identify an exact record; reads return a character-based pagination offset. Related reads follow evidenced links. Write tools validate the caller, relation, evidence, current versions and session scope. They do not replace original history.
 
-Native reads accept at most 512 MiB per raw file, 8 MiB per JSONL line and 64 MiB normalized text per source. Limits are reported as unavailable coverage, not silently truncated success. Native reads and indexing run outside the event loop. A small normalized source can be cached in RAM; the index is the durable cache.
+Retrieval remains scoped to the calling session and currently permitted work records. Source versions, grants and credentials are rechecked before returning. Native reads stream the captured file prefix rather than imposing the former 512 MiB whole-file ceiling. Each JSONL line is limited to 16 MiB, and normalized text is limited to 64 MiB per source. Exceeding a bound reports unavailable coverage. Native reads/indexing run outside the event loop; a corrupt derived index can be rebuilt.
 
-## Automatic preparation
+The owner opens Memory through **Read saved memory** in the right panel. Current memory assembles published spans, including earlier claims; selecting a revision reads that historical span separately. Expanding evidence performs an exact original-record read. Opening Memory never calls a summary provider. Missing or revoked evidence is withheld instead of returning cached text.
 
-The selected target harness prepares a brief from available text and tool records in bounded chunks. Codex preparation does not require a Claude response. Provider calls are isolated from project instructions and DuckTerm session credentials; commands use a read-only/tool-disabled configuration and a bounded output/timeout. No fallback to another provider is automatic. A synthetic live Codex probe and an isolated handoff to a real Codex session have passed; live Claude preparation remains unverified.
+The session card and right panel show the last **successful** checkpoint age from saved outcomes. Failed or incomplete attempts do not reset it. No successful result reads “Never successfully checkpointed”; older records lacking enough outcome metadata read “Checkpoint age unknown.” The UI uses existing checkpoint reads and a display-only clock. It starts no generation timer.
 
-A later preparation reuses exact unchanged source prefixes. Rewrites, deleted sources, changed permissions and policy changes invalidate reuse. Each generated continuation is checked against its preceding context and new source chunk. This model validation is not a guarantee that no fact was omitted: originals remain retrievable. The full launch brief has a 32,000 UTF-8 byte budget; required context is never silently clipped to fit.
-
-Codex receives JSON schemas for both summary and review responses. Local parsing still enforces source references and UTF-8 byte limits. A malformed or rejected draft can receive at most two corrections against the same sources, each followed by a new content review; failed drafts never count as processed coverage. Source freshness is checked after every model response. Status includes `progress: {completed_batches, total_batches, step}` while summarizing; `step` is `summarizing`, `reviewing`, `repairing`, or `complete`. These counters describe work performed, not readiness. A per-call timeout has its own error and terminates only the preparation subprocess.
-
-A large batch that times out is split in order and retried, at most two split levels and only while at least 16,000 input bytes remain. Both halves must pass generation and review before the original batch counts as complete. Login, quota and semantic errors do not trigger this timeout retry. Reviewed batches remain private in the expiring job so an explicit retry can resume when the session, sources, current work, policy, target and CLI still match. Active cancellation, expiry or server restart discards this intermediate state; closing a failed dialog preserves it for a retry. It is never a saved revision, checkpoint, or ready proof. Passing a whole batch refreshes the 30-minute inactivity deadline; provider calls retain their own timeout.
-
-A changed file stat triggers an off-loop re-read during preparation and ready-status/proof verification. Only exactly identical content hashes can refresh the file fence without repeating preparation. This handles timestamp touches and identical atomic replacements; changed bytes, missing files, corrupt snapshots and changed permissions still block. The final synchronous stop check retains the refreshed stat fence so a subsequent rewrite cannot slip through.
-
-Preparation saves one revision and checkpoint through `ProgressCoordinator.persist`. Intermediate model outputs are temporary. Up to two jobs perform preparation concurrently; equivalent dialogs share a job with separate cancellation leases. A source/settings change refuses readiness. Provider failure leaves the current agent untouched.
+Owner-only GET routes are `/sessions/:key/memory`, `/memory/read` and `/memory/related`; the latter two are under the same session prefix. An optional `revision` selects a saved revision. Mac routing admits only these exact read routes and validated query keys, preserving the selected host and native credential handling.
 
 ## Version 1 HTTP contract
 
@@ -56,18 +74,16 @@ An explicit Switch revalidates the exact prepared target/model, CLI version, nat
 
 Preparation jobs are ephemeral; server restart requires preparation again, while saved revisions/checkpoints remain. Restart receipts are durable (latest 100 per card). A repeated request with different contents conflicts. A failed target launch reports `source_stopped`, preserves old native recovery metadata and does not automatically restart the old provider. An ambiguous interrupted process transition reports `unknown`.
 
-## Verification and remaining integration
+## Checkpoint request recovery
 
-Deterministic tests cover three conversation generations, retained versions, provider cleanup, malformed records, session/grant isolation, credential revocation during an asynchronous read, rewritten sources, incremental reuse, independent dialog leases, provider failures, stop-boundary changes, lost-response retries and launch recovery. Independent QA supplied six additional retrieval regressions; both diagnosed defects have been corrected in the candidate.
+Checkpoint requests carry stable request IDs. Their bounded durable receipts survive a lost HTTP response; polling the exact receipt does not issue another checkpoint. A confirmed running receipt keeps the operation visible even when processing exceeds three minutes. Loss-of-contact timeout is separate from confirmed work. A crash after saving can reconcile from the persisted checkpoint. The UI distinguishes failure, incomplete coverage, running work and an unconfirmed connection result.
 
-Independent QA passed 48 focused backend checks at `0f6baec`. A separate check at `06911e1` captured real private-server HTTP envelopes and fed them through the frontend transport: two backend scenarios and 34 frontend checks passed. This verifies the response contract; it does not by itself verify a TCP connection or the native bridge.
+## Verification and limits
 
-A later status-projection regression was also corrected: invalidated or canceled preparations no longer return their former proof or full brief. Independent QA passed 23 focused checks, including actual HTTP status/detail transitions; its two additional regressions are integrated.
+Candidate tests cover complete and failed multi-span ranges, retry reuse, source mutation, filtering, typed claims, folding, lifecycle replay, retired-claim budgets, current versus historical memory, lost responses, cancellation and native host isolation. Browser checks cover the approved Memory screen, original evidence expansion and the checkpoint clock. Model prompts are package resources and must be verified in both wheel and Mac bundles.
 
-The owner approved both Switch and Timeline previews on 2026-10-07. The views are now integrated with the session action menu merged in PR #243. The preparation dialog, exact-operation cancellation and milestone-only Timeline passed the integrated browser check. A development-mode effect replay cancellation defect reported by QA is fixed; its regression, late-close cleanup and lost-response tests pass together (23 focused UI checks).
+Deterministic tests do not prove that a generated handoff is useful. Real-history retrieval and a bounded real-provider handoff review remain separate acceptance steps. The earlier synthetic Claude-to-Codex probe established the launch/read-tool mechanism, not the quality or reliability of this complete candidate on a long production session.
 
-An isolated acceptance run used a synthetic Claude transcript and idle source process, then launched the installed Codex CLI through the real stop/launch path. Codex preparation processed the available history and saved a retained checkpoint. The target agent then used `duckterm memory search` and `duckterm memory read` to retrieve an exact archival value absent from its launch brief. The named card survived the switch, and the flagged test session, owned terminal and native test transcripts were removed afterwards. This proves live Codex retrieval after the switch, not a live Claude generation or migration of an existing production agent.
+The handoff-budget-refusal spec is only partly implemented: the shared final check and named budget exist, but an over-budget selected narrative/source map still refuses instead of shortening optional content with declared gaps. Protected claims must remain intact. Live acceptance on the product session remains outstanding.
 
-The run also exposed realistic failure boundaries: one model response failed summary validation and kept the source process; a subsequent explicit preparation succeeded. The target initially found the older installed CLI, so the test supplied the candidate CLI's absolute path. Local installation must update the CLI as well as the dashboard. Codex's sandbox required the usual local-network approval for retrieval; no sandbox setting was changed.
-
-The fresh committed full gate passed at `e5c588a`: Python and static checks, 397 frontend checks and 115 browser workflows. The subsequent merge from main changes only the release version and README links. Real-size native verification and local v0.4.120 installation remain in progress. Product and release-dev have not been migrated. Public Mac signing/distribution remains deferred by the owner.
+Bulk artifact backfill, automatic legacy-summary conversion, automatic checkpoint cadence, automatic context trimming and an independent folder-retirement synthesis service are not implemented here. Folder tasks and other permitted records continue using their existing stores and access rules. Shipping or owner migration must not be inferred from an implementation commit or this document.

@@ -35,21 +35,26 @@ def register(server, agent, req):
     return dispatch(server, "POST", "/api/v1/session/artifacts", agent, json.dumps(req).encode())
 
 
-def test_register_replace_restart_and_remove_source(app, tmp_path):
+def test_register_replace_restart_and_remove_source(app, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    clock = [1_000_000_000]
+    monkeypatch.setattr(artifacts, "time", SimpleNamespace(time_ns=lambda: clock[0]))
     server, agents, owner = app
     file = tmp_path / "mockup.html"
     file.write_text("<h1>Original</h1>")
-    req = artifacts.registration(file, "Mockup")
+    req = artifacts.registration(file, "Mockup", kind="preview")
     status, body = register(server, agents["a"], req)
     assert status == 200
     saved = body["artifact"]
     endpoint = f"/sessions/a/artifacts/{saved['id']}"
     assert "content_base64" not in saved
+    clock[0] += 1_000_000_000
     assert register(server, agents["a"], req) == (status, body)
     file.write_text("<h1>Revised</h1>")
-    replacement = register(server, agents["a"], artifacts.registration(file, "Final mockup"))[1][
-        "artifact"
-    ]
+    replacement = register(
+        server, agents["a"], artifacts.registration(file, "Final mockup", kind="preview")
+    )[1]["artifact"]
     assert replacement["id"] == saved["id"]
     assert replacement["created_at"] == saved["created_at"]
     assert replacement["sha256"] != saved["sha256"]
@@ -70,7 +75,7 @@ def test_auth_provenance_and_session_cleanup(app, tmp_path):
     server, agents, owner = app
     file = tmp_path / "report.md"
     file.write_text("# Private output")
-    req = artifacts.registration(file)
+    req = artifacts.registration(file, kind="report")
     saved = register(server, agents["a"], req)[1]["artifact"]
     assert register(server, agents["b"], {**req, "session_key": "a"})[0] == 400
     assert dispatch(server, "GET", "/api/v1/session/artifacts", agents["b"])[1] == {"artifacts": []}
@@ -92,7 +97,7 @@ def test_invalid_content_limits_and_no_server_file_read(app, tmp_path, monkeypat
     server, agents, _ = app
     file = tmp_path / "report.md"
     file.write_text("# Content")
-    req = artifacts.registration(file)
+    req = artifacts.registration(file, kind="report")
     for patch in [
         {"content_base64": "!"},
         {"source_path": "../private"},
@@ -129,12 +134,15 @@ def test_invalid_content_limits_and_no_server_file_read(app, tmp_path, monkeypat
 def test_cli_parser_and_automatic_registration_instructions():
     from duckterm.helpers.session_instructions import GUIDE
 
-    args = build_parser().parse_args(["session", "artifact", "/tmp/chart.png", "--title", "Chart"])
+    args = build_parser().parse_args(
+        ["session", "artifact", "/tmp/chart.png", "--title", "Chart", "--kind", "evidence"]
+    )
     assert (args.session_action, args.file, args.title) == (
         "artifact",
         Path("/tmp/chart.png"),
         "Chart",
     )
+    assert args.kind == "evidence"
     assert build_parser().parse_args(["session", "artifacts"]).session_action == "artifacts"
     assert "automatically register" in GUIDE
     assert "duckterm session artifact" in GUIDE
@@ -171,6 +179,8 @@ def test_real_cli_upload_and_backup_restore(app, tmp_path, monkeypatch):
                     "session",
                     "artifact",
                     str(file),
+                    "--kind",
+                    "report",
                 ],
                 env=env,
                 capture_output=True,
@@ -204,7 +214,9 @@ def test_artifact_feedback_checks_revision_scope_and_actual_delivery(app, tmp_pa
     server, agents, owner = app
     file = tmp_path / "report.md"
     file.write_text("# Report")
-    artifact = register(server, agents["a"], artifacts.registration(file))[1]["artifact"]
+    artifact = register(server, agents["a"], artifacts.registration(file, kind="report"))[1][
+        "artifact"
+    ]
     data = {
         "artifact_id": artifact["id"],
         "artifact_sha256": artifact["sha256"],

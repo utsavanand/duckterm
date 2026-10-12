@@ -50,7 +50,7 @@ def test_immediate_switch_preserves_work_after_database_reopen(rig, monkeypatch,
     call(history, owner, "POST", f"/questions/{questions[1]}/accept")
     report = tmp_path / "saved-report.md"
     report.write_text("# Synthetic saved evidence\n")
-    artifact = history.artifacts.register("a", registration(report, "Evidence"))
+    artifact = history.artifacts.register("a", registration(report, "Evidence", kind="evidence"))
     report.unlink()
     table_names = ("folder_tasks", "session_questions")
 
