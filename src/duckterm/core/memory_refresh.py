@@ -57,8 +57,13 @@ async def refresh(
         active.add_done_callback(finished)
     try:
         result = await asyncio.shield(active)
-        if not current(coordinator, key, captured):
-            return SummaryUpdate.failed("source_changed")
+        # Keep the original failure stage instead of masking it with a later fence.
+        if result.state != "failed" and not current(coordinator, key, captured):
+            return SummaryUpdate.failed(
+                "source_changed",
+                diagnostic="refresh_result:"
+                + (change_reason(coordinator, key, captured) or "source_changed"),
+            )
         return result
     finally:
         waiters.pop(token, None)
@@ -75,19 +80,30 @@ def wanted(coordinator: ProgressCoordinator, key: str) -> bool:
 def current(
     coordinator: ProgressCoordinator, key: str, captured: dict[str, Any], *, catalog: bool = False
 ) -> bool:
+    return change_reason(coordinator, key, captured, catalog=catalog) is None
+
+
+def change_reason(
+    coordinator: ProgressCoordinator, key: str, captured: dict[str, Any], *, catalog: bool = False
+) -> str | None:
+    """Fixed diagnostics only; never persist paths, source contents or credentials."""
     from duckterm.core.saved_progress import file_version, policy_key
 
-    if coordinator.facts(key) != captured["facts"] or policy_key() != captured["policy"]:
-        return False
+    if coordinator.facts(key) != captured["facts"]:
+        return "facts_changed"
+    if policy_key() != captured["policy"]:
+        return "policy_changed"
     fence = captured.get("fence")
     if fence and file_version(fence["path"]) != fence["version"]:
-        return False
+        return "native_file_changed"
     for source in captured.get("memory_sources", []):
         if source.get("fence") and file_version(source["path"]) != source["fence"]:
-            return False
-    return not (
-        catalog and captured.get("memory_catalog") != coordinator.server.memory.catalog(key)
-    )
+            return "memory_file_changed"
+    if catalog and captured.get("memory_catalog") != memory_continuity.original_catalog(
+        coordinator.server.memory.catalog(key)
+    ):
+        return "original_catalog_changed"
+    return None
 
 
 async def _run(
@@ -145,18 +161,32 @@ async def _run(
     try:
         final = await coordinator.capture(key)
         if final is None:
-            return SummaryUpdate.failed("source_changed")
+            return SummaryUpdate.failed("source_changed", diagnostic="publication:capture_unstable")
         final = await memory_continuity.capture(coordinator.server, key, final)
     except APIError as exc:
-        return SummaryUpdate.failed("source_changed" if exc.status == 409 else "source_unavailable")
-    if any(final[name] != captured[name] for name in ("source", "conversation", "policy")):
-        return SummaryUpdate.failed("source_changed")
+        return SummaryUpdate.failed(
+            "source_changed" if exc.status == 409 else "source_unavailable",
+            diagnostic=(
+                "publication:memory_capture_conflict"
+                if exc.status == 409
+                else "publication:memory_capture_unavailable"
+            ),
+        )
+    for name in ("source", "conversation", "policy"):
+        if final[name] != captured[name]:
+            return SummaryUpdate.failed(
+                "source_changed", diagnostic="publication:" + name + "_changed"
+            )
     # Publish only after the entire captured range completes. Every accepted leaf
     # already exists and survives a later batch's failure for an exact retry.
     conn = coordinator.server.history._conn
     with transaction(conn):
         if not current(coordinator, key, final, catalog=True):
-            return SummaryUpdate.failed("source_changed")
+            return SummaryUpdate.failed(
+                "source_changed",
+                diagnostic="publication:"
+                + (change_reason(coordinator, key, final, catalog=True) or "source_changed"),
+            )
         conn.execute(
             "UPDATE sessions SET progress=?,progress_at=?,outcome_summary=? WHERE session_key=?",
             (

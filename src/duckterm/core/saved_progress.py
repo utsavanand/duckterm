@@ -270,22 +270,25 @@ class ProgressCoordinator:
 
         captured = captured or await self.capture(key)
         if captured is None:
-            return SummaryUpdate.failed("source_changed")
+            return SummaryUpdate.failed("source_changed", diagnostic="capture:unstable")
         try:
             captured = await memory_continuity.capture(self.server, key, captured)
         except APIError as exc:
             return SummaryUpdate.failed(
-                "source_changed" if exc.status == 409 else "source_unavailable"
+                "source_changed" if exc.status == 409 else "source_unavailable",
+                diagnostic=(
+                    "capture:memory_conflict" if exc.status == 409 else "capture:memory_unavailable"
+                ),
             )
         if self.facts(key) != captured["facts"]:
-            return SummaryUpdate.failed("source_changed")
+            return SummaryUpdate.failed("source_changed", diagnostic="capture:facts_changed")
         if "memory_sources" in captured:
             from duckterm.core import memory_refresh
 
             return await memory_refresh.refresh(self, key, captured, continue_if=continue_if)
         row = self.server.history.session(key)
         if row is None:
-            return SummaryUpdate.failed("source_changed")
+            return SummaryUpdate.failed("source_changed", diagnostic="capture:session_removed")
         prior_id = current_revision(row)
         prior = self.server.digests.revision(key, prior_id)
         identity = {k: captured[k] for k in ("source", "conversation", "policy")}
@@ -351,7 +354,7 @@ class ProgressCoordinator:
                 planned,
             )
         if self.facts(key) != captured["facts"]:
-            return SummaryUpdate.failed("source_changed"), planned
+            return SummaryUpdate.failed("source_changed", diagnostic="span:facts_changed"), planned
         input_key = planned["input_key"]
         existing = self.server.digests.find_revision(key, input_key)
         if existing is not None:
@@ -372,6 +375,16 @@ class ProgressCoordinator:
         self.active[key] = task
         try:
             return await asyncio.shield(task), planned
+        except APIError as exc:
+            return (
+                SummaryUpdate.failed(
+                    "source_changed" if exc.status == 409 else "source_unavailable",
+                    diagnostic=(
+                        "span:memory_conflict" if exc.status == 409 else "span:memory_unavailable"
+                    ),
+                ),
+                planned,
+            )
         finally:
 
             def finished(done: asyncio.Task[SummaryUpdate]) -> None:
@@ -418,13 +431,19 @@ class ProgressCoordinator:
             # Quota/auth/deadline errors return above without another provider call.
             current = await self.capture(key)
             if current is None:
-                return SummaryUpdate.failed("source_changed")
+                return SummaryUpdate.failed(
+                    "source_changed", diagnostic="draft_retry:capture_unstable"
+                )
             try:
                 current = await memory_continuity.capture(self.server, key, current)
             except APIError:
-                return SummaryUpdate.failed("source_changed")
+                return SummaryUpdate.failed(
+                    "source_changed", diagnostic="draft_retry:memory_conflict"
+                )
             if any(current[k] != captured[k] for k in ("source", "conversation", "policy")):
-                return SummaryUpdate.failed("source_changed")
+                return SummaryUpdate.failed(
+                    "source_changed", diagnostic="draft_retry:source_changed"
+                )
             prompt = memory_continuity.repair_prompt(original, reply.text, diagnostic)
             if maintained and maintained.get("span") == "incremental":
                 from duckterm import memory_spans
@@ -452,7 +471,7 @@ class ProgressCoordinator:
             return SummaryUpdate.failed("no_transcript")
         row = self.server.history.session(key)
         if row is None:
-            return SummaryUpdate.failed("source_changed")
+            return SummaryUpdate.failed("source_changed", diagnostic="generation:session_removed")
         prior_cache = {}
         if (
             prior
@@ -513,7 +532,9 @@ class ProgressCoordinator:
         digest, context = drafted
         policy_check = await self.capture(key)
         if policy_check is None or policy_check["policy"] != captured["policy"]:
-            return SummaryUpdate.failed("source_changed")
+            return SummaryUpdate.failed(
+                "source_changed", diagnostic="review:policy_or_capture_changed"
+            )
         validation_prompt = progress.validate_prompt(
             (
                 {
@@ -561,10 +582,12 @@ class ProgressCoordinator:
         # Re-read actual bytes, not mtime/size, after both provider calls.
         refreshed = await self.capture(key)
         if refreshed is None or refreshed["conversation"] != captured["conversation"]:
-            return SummaryUpdate.failed("source_changed")
+            return SummaryUpdate.failed(
+                "source_changed", diagnostic="validation:conversation_or_capture_changed"
+            )
         refreshed = await memory_continuity.capture(self.server, key, refreshed)
         if refreshed["policy"] != captured["policy"]:
-            return SummaryUpdate.failed("source_changed")
+            return SummaryUpdate.failed("source_changed", diagnostic="validation:policy_changed")
         if refreshed["source"] != captured["source"]:
             reasons.append("source_changed")
         continuity = None
@@ -577,7 +600,7 @@ class ProgressCoordinator:
                     diagnostic=(
                         progress.review_diagnostic(review)
                         if "summary_unverified" in reasons
-                        else None
+                        else "validation:source_changed"
                     ),
                     review=review,
                 )
@@ -589,10 +612,12 @@ class ProgressCoordinator:
             retained = await memory_continuity.retain(key, captured, maintained)
             final = await self.capture(key)
             if final is None:
-                return SummaryUpdate.failed("source_changed")
+                return SummaryUpdate.failed(
+                    "source_changed", diagnostic="retention:capture_unstable"
+                )
             final = await memory_continuity.capture(self.server, key, final)
             if any(final[k] != captured[k] for k in ("source", "conversation", "policy")):
-                return SummaryUpdate.failed("source_changed")
+                return SummaryUpdate.failed("source_changed", diagnostic="retention:source_changed")
             if not continuity["update_complete"]:
                 reasons.append("summary_coverage_partial")
         accepted = verdicts["accept"] if verdicts else []
@@ -616,10 +641,10 @@ class ProgressCoordinator:
             # before any parent links or the incoming summary can be committed.
             current = await self.capture(key)
             if current is None:
-                return SummaryUpdate.failed("source_changed")
+                return SummaryUpdate.failed("source_changed", diagnostic="fold:capture_unstable")
             current = await memory_continuity.capture(self.server, key, current)
             if any(current[k] != captured[k] for k in ("source", "conversation", "policy")):
-                return SummaryUpdate.failed("source_changed")
+                return SummaryUpdate.failed("source_changed", diagnostic="fold:source_changed")
         result = self.persist(
             key,
             captured,
@@ -632,6 +657,8 @@ class ProgressCoordinator:
             stage_only=span_plan is not None,
             require_current=span_plan is not None,
         )
+        if result is None:
+            return SummaryUpdate.failed("source_changed", diagnostic="span:persistence_conflict")
         return SummaryUpdate.from_revision(result)
 
     def persist(
