@@ -109,12 +109,8 @@ def test_summary_excludes_noise_without_claiming_originals_were_summarized(memor
                 "event_type": event_type,
                 "session_key": "agent",
                 "test": True,
-                (
-                    "error"
-                    if event_type == "PostToolUseFailure"
-                    else "last_assistant_message"
-                    if event_type == "Stop"
-                    else "prompt"
+                {"PostToolUseFailure": "error", "Stop": "last_assistant_message"}.get(
+                    event_type, "prompt"
                 ): text,
             }
         )

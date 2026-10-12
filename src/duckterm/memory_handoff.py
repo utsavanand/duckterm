@@ -104,17 +104,14 @@ def assemble(
         field: [c for c in context.get(field, []) if c.get("state", "open") == "open"]
         for field in memory_summary.FIELDS
     }
-    state = (
-        "unavailable"
-        if not prior
-        else (
-            "legacy"
-            if not continuity
-            else "current"
-            if count == len(rows) and continuity.get("verified")
-            else "partial"
-        )
-    )
+    if not prior:
+        state = "unavailable"
+    elif not continuity:
+        state = "legacy"
+    elif count == len(rows) and continuity.get("verified"):
+        state = "current"
+    else:
+        state = "partial"
     handoff = {
         "method": "maintained",
         "summary_revision_id": (prior or {}).get("id"),
