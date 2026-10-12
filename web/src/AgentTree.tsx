@@ -1,3 +1,4 @@
+import { sessionStateLabel } from "./sessions";
 import { sidebarFolders } from "./sidebarFolders";
 import { openSessionActions } from "./SessionActionMenu";
 import { SidebarFilters } from "./SidebarFilters";
@@ -582,7 +583,7 @@ function TreeRow({
   const s = node.session;
   const effState = effectiveState(s, now);
   const live = !["terminated", "stopped", "interrupted", "archived"].includes(effState);
-  const stateLabel = effState;
+  const stateLabel = sessionStateLabel(effState);
   const ctxLevel = contextLevel(s.contextTokens, s.model);
   const hasChildren = node.children.length > 0;
   const [collapsed, setCollapsed] = useState(false);

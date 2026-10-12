@@ -29,6 +29,8 @@ export function poseFor(state: string, raised = false): DuckPose {
 export function duckPhrase(s: SessionView, state: string): string {
   const ago = agoShort(s.updatedAt);
   switch (state) {
+    case "unknown":
+      return "Status unavailable. Check the terminal while DuckTerm reconnects.";
     case "busy":
       return s.lastTool
         ? `Right now: working — running ${s.lastTool}.`

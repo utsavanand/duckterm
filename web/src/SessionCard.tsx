@@ -1,3 +1,4 @@
+import { sessionStateLabel } from "./sessions";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { SessionConversationRecovery } from "./ConversationRecovery";
 import { api } from "./api";
@@ -43,7 +44,7 @@ export function SessionCard({ session: s, now, notesOpen = false, onCloseNotes }
   return <section className="rd-session-controls" aria-label="Session controls">
     <div className="rd-session-controls-identity">
       <div className="rd-session-controls-caption">Session</div>
-      <div className="rd-session-controls-title"><strong>{s.label}</strong><span className={`rd-state st-${state}`}>{state}</span></div>
+      <div className="rd-session-controls-title"><strong>{s.label}</strong><span className={`rd-state st-${state}`}>{sessionStateLabel(state)}</span></div>
       <div className="rd-session-controls-folder"><span>{s.group || "Ungrouped"}</span></div>
       <CheckpointAge sessionKey={s.key} showDuck />
     </div>

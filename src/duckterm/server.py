@@ -90,7 +90,7 @@ from duckterm.llm.suggest import Correction, suggest_rules
 from duckterm.llm.summarizer import summarize as summarize
 from duckterm.memory import Memory
 from duckterm.memory_preparation import MemoryPreparation
-from duckterm.persistence import backup_sync, mail_analytics
+from duckterm.persistence import backup_sync, mail_analytics, opencode_launch
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
 from duckterm.persistence.artifacts import ArtifactError
 from duckterm.persistence.checkpoints import _git_state, _render_markdown, write_markdown
@@ -106,7 +106,9 @@ from duckterm.persistence.saved_state import (
     transaction,
 )
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
+from duckterm.runtimes import native_history, opencode_options
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
+from duckterm.runtimes.native_history import MessageSource, NativeSnapshot
 from duckterm.transport.httpio import (
     KEEPALIVE_SECONDS,
     MAX_REQUEST_BYTES,
@@ -268,6 +270,8 @@ _ROUTES: list[Route] = [
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_digest(w, seg),
           **_mid("/sessions/", "/digest")),
     # ── control ──
+    Route("GET", "/runtimes/opencode/launch-options",
+          lambda s, r, w, h, b, seg: s._opencode_options(w)),
     Route("POST", "/sessions/launch", lambda s, r, w, h, b, seg: s._launch(w, b)),
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
@@ -1068,11 +1072,39 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
-    def _message_source(self, session_key: str) -> tuple[str, str, str | None] | None:
+    def _message_source(self, session_key: str) -> MessageSource:
         """Copy DB identity on the owner thread before dispatching file work."""
         row = self.history.session(session_key)
         if row is None:
             return None
+        if row.get("runtime") == "opencode":
+            control = self.history.restart_control(session_key)
+            try:
+                state = opencode_launch.Launch(**control["opencode_launch"])
+                binding = control.get("native_binding") or {}
+                if (
+                    state.session_id is None
+                    or binding.get("native_id") != state.session_id
+                    or binding.get("generation") != state.generation
+                    or binding.get("store") != state.store
+                    or binding.get("destination") != state.destination
+                ):
+                    return None
+                return NativeSnapshot(
+                    str(
+                        native_history.snapshot_path(
+                            self.history.session_api.credential_dir.parent,
+                            session_key,
+                            state.generation,
+                        )
+                    ),
+                    state.generation,
+                    state.destination,
+                    state.store,
+                    state.session_id,
+                )
+            except (KeyError, TypeError, ValueError):
+                return None
         return (
             str(row.get("runtime") or "generic"),
             str(row.get("worktree_path") or row.get("cwd") or ""),
@@ -1080,9 +1112,12 @@ class Server:
         )
 
     @staticmethod
-    def _read_messages(source: tuple[str, str, str | None] | None) -> list[dict[str, object]]:
+    def _read_messages(source: MessageSource) -> list[dict[str, object]]:
         if source is None:
             return []
+        if isinstance(source, NativeSnapshot):
+            rows: list[dict[str, object]] = native_history.read(source)["messages"]
+            return rows
         runtime_name, cwd, session_id = source
         runtime = _build_runtime(runtime_name, "")
         messages = runtime.messages(cwd=Path(cwd), session_id=session_id) if cwd else []
@@ -1094,9 +1129,11 @@ class Server:
         return messages
 
     @staticmethod
-    def _read_messages_response(source: tuple[str, str, str | None] | None) -> bytes:
+    def _read_messages_response(source: MessageSource) -> bytes:
         if source is None:
             return b'{"messages": []}'
+        if isinstance(source, NativeSnapshot):
+            return json.dumps(native_history.read(source)).encode()
         runtime_name, cwd, session_id = source
         if cwd:
             runtime = _build_runtime(runtime_name, "")
@@ -1117,9 +1154,37 @@ class Server:
         if self.history.session(session_key) is None:
             await _write_json(writer, 404, {"error": "no such session"})
             return
-        response = await asyncio.to_thread(
-            self._read_messages_response, self._message_source(session_key)
-        )
+        source = self._message_source(session_key)
+        response = await asyncio.to_thread(self._read_messages_response, source)
+        if isinstance(source, NativeSnapshot) and source != self._message_source(session_key):
+            await _write_json(writer, 409, {"error": "Conversation changed while reading Messages"})
+            return
+        if isinstance(source, NativeSnapshot):
+            payload = json.loads(response)
+            row = self.history.session(session_key) or {}
+            observation = self.history.restart_control(session_key).get("opencode_observation", {})
+            same_content = isinstance(payload.get("content_hash"), str) and payload[
+                "content_hash"
+            ] == observation.get("content_hash")
+            if not isinstance(payload.get("content_hash"), str):
+                same_content = (
+                    type(payload.get("revision")) is int
+                    and payload["revision"] == observation.get("revision")
+                    and payload.get("observed_at") == observation.get("observed_at")
+                )
+            checked = observation.get("observed_at") if same_content else payload.get("observed_at")
+            current = (
+                same_content
+                and row.get("state") in ("busy", "idle", "waiting")
+                and observation.get("state") in ("busy", "idle", "waiting")
+                and type(checked) is int
+                and 0 <= int(time.time() * 1000) - checked < 45_000
+            )
+            status = "native_current" if current else "native_cached"
+            if payload.get("history_status") == "unavailable":
+                status = "native_unavailable"
+            payload["transcript"] = {"status": status, "checked_at": checked}
+            response = json.dumps(payload).encode()
         await _write_json_bytes(writer, 200, response)
 
     async def _layout(
@@ -1709,6 +1774,10 @@ class Server:
     def _transcript_stats_for(self, row: dict[str, Any]) -> dict[str, Any]:
         """Live transcript-tail stats for a claude-code session: current
         context size (the checkpoint/compact signal) and the model in use."""
+        if row.get("runtime") == "opencode":
+            control = self.history.restart_control(str(row["session_key"]))
+            observation = control.get("opencode_observation") or {}
+            return {"model": observation.get("model"), "context_tokens": None}
         if (row.get("runtime") or "") != "claude-code":
             return {}
         sid = self.history.session_id_for(str(row.get("session_key") or ""))
@@ -1748,6 +1817,9 @@ class Server:
             elif suite.detect.startswith(".claude/") and (Path.home() / suite.detect).exists():
                 out.append(f"{suite.name} (global)")
         return out
+
+    async def _opencode_options(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, await opencode_options.launch_options())
 
     async def _launch(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         try:
@@ -2916,9 +2988,18 @@ class Server:
 
     @staticmethod
     def _progress_transcript(
-        source: tuple[str, str, str | None] | None, sup: SessionSupervisor | None
+        source: MessageSource, sup: SessionSupervisor | None
     ) -> list[dict[str, str]]:
         """Read files or terminal output using inputs captured on the owner thread."""
+        if isinstance(source, NativeSnapshot):
+            from duckterm.memory_sources import flatten
+
+            return [
+                {"role": str(row["role"]), "text": flatten(row)}
+                for row in native_history.read(source)["messages"]
+            ]
+        if sup is not None and sup.runtime.name == "opencode":
+            return []  # A missing native snapshot never falls back to a terminal scrape.
         if source is not None:
             runtime_name, cwd, session_id = source
             if cwd and session_id:

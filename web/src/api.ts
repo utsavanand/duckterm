@@ -1,5 +1,6 @@
 import type { CheckpointClock } from "./CheckpointAge";
 import type { AgentMergeService, AgentMergePreview, AgentMergeRecord, MergeTarget } from "./AgentMergeDialog";
+import type { OpenCodeLaunchOptions } from "./OpenCodeOptions";
 import type { ConversationRecoveryService, ConversationIdentity, ConversationCandidates } from "./conversationRecoveryState";
 import type { ForkMergePreview, ForkMergeRecord, ForkMergeService } from "./ForkMergeDialog";
 import { routedFetch as fetch, sessionFetch, splitSessionRef, setRemoteGroup, changeRemoteFolders } from "./hostTransport";
@@ -392,6 +393,7 @@ export const api = {
     if (!res.ok) throw new Error(data.error ?? "Could not load folder interactions");
     return data as InboxPage;
   },
+  openCodeOptions: () => get<OpenCodeLaunchOptions>("/runtimes/opencode/launch-options"),
   launch: (req: LaunchRequest) =>
     post<{ session_key: string; opened_in_terminal?: boolean }>(
       "/sessions/launch",

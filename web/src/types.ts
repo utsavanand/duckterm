@@ -13,6 +13,7 @@ export interface DucktermEvent {
   session_name?: string;
   name?: string;
   lifecycle?: string;
+  native_state?: string;
   branch?: string;
   repo_path?: string;
   worktree_path?: string;
@@ -40,6 +41,7 @@ export function waitingCauseOf(eventType?: string, notificationType?: string, to
 }
 
 export type SessionState =
+  | "unknown"
   | "idle"
   | "busy"
   | "waiting"

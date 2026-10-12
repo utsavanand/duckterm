@@ -65,7 +65,8 @@ def test_interactive_launch_ignores_inherited_no_color(tmp_path, piped, explicit
 
 
 @pytest.mark.skipif(shutil.which("tmux") is None, reason="tmux not installed")
-def test_piped_launch_preserves_large_literal_handoff(tmp_path):
+@pytest.mark.parametrize("private_environment", [False, True])
+def test_piped_launch_preserves_large_literal_handoff(tmp_path, private_environment):
     cwd = tmp_path / "project with spaces"
     cwd.mkdir()
     received = cwd / "received.json"
@@ -79,18 +80,24 @@ def test_piped_launch_preserves_large_literal_handoff(tmp_path):
         "print('HANDOFF_RECEIVED',flush=True); time.sleep(30)"
     )
     command = shlex.join([sys.executable, "-c", script, payload])
+    environment_value = f"fixture-only '\n$(touch {marker})"
     pane = tmp_path / "pane.log"
     target = tmux.target_for("test-large-handoff")
     try:
         tmux.spawn_piped(
-            "test-large-handoff", command, str(cwd), str(pane), {"HANDOFF_TEST": "unchanged"}
+            "test-large-handoff",
+            command,
+            str(cwd),
+            str(pane),
+            {"HANDOFF_TEST": environment_value},
+            private_env=private_environment,
         )
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             if received.exists() and pane.exists() and b"HANDOFF_RECEIVED" in pane.read_bytes():
                 break
             time.sleep(0.01)
-        assert json.loads(received.read_text()) == [payload, str(cwd), "unchanged"]
+        assert json.loads(received.read_text()) == [payload, str(cwd), environment_value]
         assert b"HANDOFF_RECEIVED" in pane.read_bytes()
         assert not marker.exists()
         assert not list(tmp_path.glob(".launch-*.sh"))
@@ -120,3 +127,26 @@ def test_failed_launch_removes_private_command_and_never_runs_it(tmp_path, monke
         tmux.spawn_piped("private-launch", command, str(tmp_path), str(tmp_path / "pane.log"))
     assert not list(tmp_path.glob(".launch-*.sh"))
     assert killed == ([] if failure == "spawn" else ["rd_private-launch"])
+
+
+def test_native_endpoint_credential_never_enters_tmux_command_arguments(tmp_path, monkeypatch):
+    credential = "synthetic-native-credential"
+
+    def spawn(session_id, guarded, cwd, env):
+        assert env is None and credential not in guarded
+        script = next(tmp_path.glob(".launch-*.sh"))
+        assert script.stat().st_mode & 0o777 == 0o600
+        assert "export OPENCODE_SERVER_PASSWORD=" + credential in script.read_text()
+        raise ValueError("fixture stopped before creating terminal")
+
+    monkeypatch.setattr(tmux, "spawn", spawn)
+    with pytest.raises(ValueError, match="fixture stopped"):
+        tmux.spawn_piped(
+            "native-fixture",
+            "exec /bin/cat",
+            str(tmp_path),
+            str(tmp_path / "pane.log"),
+            {"OPENCODE_SERVER_PASSWORD": credential},
+            private_env=True,
+        )
+    assert not list(tmp_path.glob(".launch-*.sh"))

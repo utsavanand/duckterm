@@ -3,7 +3,7 @@ import { routedFetch } from "./hostTransport";
 
 // Memory-only, keyed by the qualified session URL (including its remote host).
 // Retain recent replies between tab mounts without retaining unbounded transcripts.
-export interface TranscriptStatus { status?: string; reason?: string; }
+export interface TranscriptStatus { status?: string; reason?: string; checked_at?: number; }
 interface Snapshot { data: unknown[]; transcript?: TranscriptStatus; signature: string; bytes: number; }
 const snapshots = new Map<string, Snapshot>();
 const pending = new Map<string, Promise<Snapshot>>();
@@ -36,6 +36,7 @@ function read(path: string, field: string): Promise<Snapshot> {
     const transcript: TranscriptStatus | undefined = metadata && typeof metadata === "object" ? {
       status: typeof metadata.status === "string" ? metadata.status : undefined,
       reason: typeof metadata.reason === "string" ? metadata.reason : undefined,
+      checked_at: typeof metadata.checked_at === "number" && Number.isFinite(metadata.checked_at) && metadata.checked_at > 0 ? metadata.checked_at : undefined,
     } : undefined;
     // Metadata-only changes (including disappearance after recovery) must refresh
     // an empty transcript too. Store the list and its explanation atomically.

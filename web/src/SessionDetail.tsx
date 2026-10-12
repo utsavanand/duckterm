@@ -1,3 +1,4 @@
+import { sessionStateLabel } from "./sessions";
 import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
 import { checkpointAttemptFailed, checkpointNotice } from "./checkpointState";
 import { CheckpointDetails } from "./CheckpointStatus";
@@ -122,7 +123,7 @@ export function SessionDetail({
             </button>
           </div>
           <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-            {session.state} · {session.runtime ?? "—"} · {session.eventCount}{" "}
+            {sessionStateLabel(session.state)} · {session.runtime ?? "—"} · {session.eventCount}{" "}
             events
             {session.branch ? ` · ${session.branch}` : ""} · started{" "}
             {new Date(session.startedAt).toLocaleString()}
