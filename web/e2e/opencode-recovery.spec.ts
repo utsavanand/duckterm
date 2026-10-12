@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
 import { expect, test } from "@playwright/test";
 import { apiDelete, base } from "./helpers";
 import { readOwnedState } from "./run-state";
@@ -39,7 +38,7 @@ finally:
 test("OpenCode recovery retains verified Messages, labels uncertainty, and clears on recovery", async ({ page, request }) => {
   const key = `opencode-recovery-${Date.now()}`;
   const { home } = readOwnedState();
-  const seed = (action: string) => execFileSync(resolve("../.venv/bin/python"), ["-c", fixture, home, key, action], {
+  const seed = (action: string) => execFileSync("python", ["-c", fixture, home, key, action], {
     env: { ...process.env, DUCKTERM_HOME: home },
   });
   seed("seed");
