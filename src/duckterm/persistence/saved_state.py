@@ -271,12 +271,27 @@ def resolve_checkpoint(
             "ready" if summary.get("summary_validation", {}).get("ready") is True else "unverified"
         )
         summary_source = summary.get("source", {})
+        span_verified = (
+            record.get("summary_span_verified") is True
+            and summary.get("span") == "incremental"
+            and isinstance(update, dict)
+            and update.get("state") in {"updated", "reused"}
+            and update.get("revision_id") == record.get("summary_ref")
+        )
         if (
             summary.get("policy") != record.get("policy")
-            or summary_source.get("events") != captured
-            or summary_source.get("required_hash") != record.get("required_hash")
             or summary.get("conversation") != record.get("conversation")
-            or any(summary_source.get(k) != v for k, v in (record.get("transcript") or {}).items())
+            or (
+                not span_verified
+                and (
+                    summary_source.get("events") != captured
+                    or summary_source.get("required_hash") != record.get("required_hash")
+                    or any(
+                        summary_source.get(k) != v
+                        for k, v in (record.get("transcript") or {}).items()
+                    )
+                )
+            )
         ):
             state = "stale"
             if result["summary_origin"] == "owner-reviewed":

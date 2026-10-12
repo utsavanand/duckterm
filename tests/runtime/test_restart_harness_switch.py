@@ -38,6 +38,25 @@ async def ready_checkpoint(server, key="a", summary="Checkpoint summary"):
 def rig(tmp_path, monkeypatch):
     for value in restart_rig.__wrapped__(tmp_path, monkeypatch):
 
+        # The span reader reads originals, not the presentation transcript stub.
+        source = next((tmp_path / "home" / ".codex").rglob("*" + A + ".jsonl"))
+        with source.open("a") as stream:
+            stream.write(
+                json.dumps(
+                    {
+                        "type": "response_item",
+                        "payload": {
+                            "type": "message",
+                            "role": "user",
+                            "content": [
+                                {"type": "input_text", "text": "Review the work before release."}
+                            ],
+                        },
+                    }
+                )
+                + "\n"
+            )
+
         async def version(binary):
             return "codex 0.155.1" if binary == "codex" else binary + " 1.0.0"
 

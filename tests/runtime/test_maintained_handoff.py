@@ -5,88 +5,55 @@ import json
 
 from tests.runtime import test_memory_preparation as fixtures
 
-from duckterm.core.session_api import APIError
-
 memory_rig = fixtures.memory_rig
 preparation = fixtures.preparation
 
 
-def test_prepare_without_summary_or_provider_keeps_explicit_coverage(preparation, monkeypatch):
-    server, calls, _ = preparation
-
-    async def exhausted(*args, **kwargs):
-        raise APIError(503, "Quota exhausted")
-
-    def unavailable(*args, **kwargs):
-        raise AssertionError("Switch preparation must not invoke a summarizer")
-
-    monkeypatch.setattr("duckterm.memory_provider.generate", exhausted)
-    monkeypatch.setattr("duckterm.server.summarize", unavailable)
-    result = asyncio.run(fixtures.prepare(server))
-    assert result["state"] == "ready", result
-    assert result["coverage"]["available_text"] == "not_processed"
-    assert result["coverage"]["handoff"]["summary_state"] == "unavailable"
-    assert result["proof"]["revision_id"] is None
-    assert calls == []
-    detail = server.memory_preparation.details("agent", result["preparation_id"])
-    assert "retain glacier originals" in detail["brief"]["text"]
-    assert "duckterm memory read" in detail["brief"]["text"]
-    assert "duckterm session task update" in detail["brief"]["text"]
-    assert "No generated summary" in detail["brief"]["text"]
-    assert len(detail["brief"]["text"].encode()) <= 32000
-    assert not server.history.session("agent").get("progress")
-    cp = server.history.checkpoints("agent")[0]
-    assert cp["record"]["summary_ref"] is None
-    assert cp["record"]["memory_sources"]
-    assert cp["record"]["handoff"]["method"] == "maintained"
-
-
-def test_long_history_preparation_includes_whole_recent_records_without_model(
+def test_first_handoff_requires_a_summary_and_retains_source_when_provider_unavailable(
     preparation, monkeypatch
 ):
-    server, _, tmp = preparation
-    native = fixtures.transcript(tmp, "agent-claude", "old secret archive detail")
-    with native.open("a") as stream:
-        for n in range(250):
-            stream.write(
-                json.dumps(
-                    {
-                        "type": "assistant",
-                        "message": {
-                            "role": "assistant",
-                            "content": f"record-{n}: " + "x" * 8000,
-                        },
-                    }
-                )
-                + "\n"
-            )
-        stream.write(
-            json.dumps(
-                {
-                    "type": "user",
-                    "message": {
-                        "role": "user",
-                        "content": "Continue with startup only; leave Product unchanged.",
-                    },
-                }
-            )
-            + "\n"
-        )
+    from duckterm.llm.summarizer import Summary
 
-    async def forbidden(*args, **kwargs):
-        raise AssertionError("No full-history model pass at handoff")
-
-    monkeypatch.setattr("duckterm.memory_provider.generate", forbidden)
+    server, calls, _ = preparation
+    monkeypatch.setattr(
+        "duckterm.server.summarize", lambda _: Summary("", "none", "provider_timeout")
+    )
     result = asyncio.run(fixtures.prepare(server))
-    assert result["state"] == "ready", result
-    coverage = result["coverage"]["handoff"]
-    assert coverage["omitted_records"] > 200
-    detail = server.memory_preparation.details("agent", result["preparation_id"])
-    text = detail["brief"]["text"]
-    assert "leave Product unchanged" in text
-    assert "old secret archive detail" not in text
-    assert "not all included" in text
-    assert len(text.encode()) <= 32000
+    assert result["state"] == "failed"
+    assert "provider_timeout" in result["reason"]
+    assert "proof" not in result
+    assert not server.history.session("agent").get("progress")
+    assert not server.history.checkpoints("agent")
+    assert server.history.session("agent")["runtime"] == "claude-code"
+
+
+def test_existing_complete_spans_prepare_without_model_or_raw_tail(preparation, monkeypatch):
+    from test_maintained_progress import append
+
+    server, _, tmp = preparation
+    from test_maintained_progress import provider
+
+    calls = provider(monkeypatch)
+    path = fixtures.transcript(tmp, "agent-claude", "older original " + "x" * 22000)
+    append(path, "recent original " + "y" * 22000)
+
+    async def run():
+        await server.progress_coordinator.refresh("agent")
+        assert len(calls) == 4
+
+        def forbidden(*args):
+            raise AssertionError("Complete summaries must be reused")
+
+        monkeypatch.setattr("duckterm.server.summarize", forbidden)
+        result = await fixtures.prepare(server)
+        assert result["state"] == "ready", result
+        detail = server.memory_preparation.details("agent", result["preparation_id"])
+        text = detail["brief"]["text"]
+        assert "duckterm memory read" in text and "x" * 100 not in text
+        assert result["coverage"]["handoff"]["protected_kinds"]["constraints"] == 2
+        assert len(text.encode()) <= 32000
+
+    asyncio.run(run())
 
 
 def test_prepare_reuses_verified_revision_and_refuses_rewritten_evidence(preparation, monkeypatch):
@@ -102,16 +69,13 @@ def test_prepare_reuses_verified_revision_and_refuses_rewritten_evidence(prepara
         assert len(calls) == 2  # Opening the switch never generates another revision.
         assert ready["proof"]["revision_id"] == revision["id"]
         # Reference-only originals are still not summarized; keep that coverage honest.
-        assert ready["coverage"]["handoff"]["summary_state"] == "partial"
-        assert revision["continuity"]["summary_input"]["remaining_eligible_records"] == 0
+        assert ready["coverage"]["handoff"]["summary_state"] == "current"
+        assert revision["continuity"]["remaining_records"] == 0
         assert ready["coverage"]["covered_source_count"] > 0
         fixtures.transcript(tmp, "agent-claude", "Owner replaced the prior instructions")
         next_ready = await fixtures.prepare(server, "new-dialog")
-        assert next_ready["state"] == "ready"
-        assert next_ready["proof"]["revision_id"] is None
-        detail = server.memory_preparation.details("agent", next_ready["preparation_id"])
-        assert "Retain the current owner constraints" not in detail["brief"]["text"]
-        assert "Owner replaced the prior instructions" in detail["brief"]["text"]
+        assert next_ready["state"] == "stale_source"
+        assert "proof" not in next_ready
         assert len(calls) == 2
 
     asyncio.run(run())
@@ -124,7 +88,7 @@ def test_onboarding_identifies_named_session_directory_and_selected_target(prepa
     assert view["state"] == "ready"
     detail = server.memory_preparation.details("agent", view["preparation_id"])
     text = detail["brief"]["text"]
-    launch = json.loads(text.split("Launch context (", 1)[1].split("\n", 1)[1].split("\n", 1)[0])
+    launch = json.loads(text.split("Launch context:\n", 1)[1].split("\n", 1)[0])
     assert launch == {
         "session_key": "agent",
         "session_name": "Startup · video",
@@ -132,4 +96,4 @@ def test_onboarding_identifies_named_session_directory_and_selected_target(prepa
         "source_harness": "claude-code",
         "target": {"harness": "codex", "model": {"mode": "explicit", "id": "selected-model"}},
     }
-    assert calls == [] and len(text.encode()) <= 32000
+    assert len(calls) == 2 and len(text.encode()) <= 32000

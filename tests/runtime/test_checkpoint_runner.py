@@ -31,7 +31,8 @@ else:
     ref=row['source']+':'+row['version']+':'+row['record']
     result={'summary':'Keep the owner constraint.',
         'context':{'overview':'Keep the owner constraint.',
-            'goals':[], 'constraints':[{'text':'Keep the owner constraint.','refs':[ref]}],
+            'goals':[], 'constraints':[{'text':'Keep the owner constraint.',
+                'refs':[ref],'kind':'constraint','state':'open'}],
             'decisions':[], 'unfinished':[], 'questions':[], 'risks':[]}}
 print(json.dumps(result))
 """

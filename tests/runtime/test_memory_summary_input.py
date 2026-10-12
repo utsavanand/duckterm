@@ -109,7 +109,11 @@ def test_summary_excludes_noise_without_claiming_originals_were_summarized(memor
                 "event_type": event_type,
                 "session_key": "agent",
                 "test": True,
-                "prompt": text,
+                (
+                    "error"
+                    if event_type == "PostToolUseFailure"
+                    else "last_assistant_message" if event_type == "Stop" else "prompt"
+                ): text,
             }
         )
     server.history.artifacts.register(
@@ -117,6 +121,7 @@ def test_summary_excludes_noise_without_claiming_originals_were_summarized(memor
         {
             "source_path": "/test/noise-report.md",
             "title": "Fixture report",
+            "kind": "report",
             "content_base64": base64.b64encode(("ARTIFACT BODY NOISE " * 4000).encode()).decode(),
         },
     )
@@ -137,15 +142,11 @@ def test_summary_excludes_noise_without_claiming_originals_were_summarized(memor
         assert "Failure: the fixture service is unavailable." in texts
         assert "Do not delete the fixture service." in texts
         assert "The failing service is still unresolved." in texts
-        assert "command-output" in {r.get("event_id") for r in first["reference_only"]}
+        assert "reference_only" not in first  # tool bodies and metadata are never prompt input
         continuity = result.revision["continuity"]
-        stats = continuity["summary_input"]
-        assert stats["eligible_text_bytes"] < stats["original_text_bytes"] / 10
-        assert stats["reference_only_records"] >= 4
-        assert stats["remaining_eligible_records"] == 0
-        assert continuity["remaining_records"] >= stats["reference_only_records"]
-        assert continuity["available_records"] == stats["original_records"]
-        assert continuity["summarized_records"] == stats["eligible_records"]
+        assert continuity["remaining_records"] == 0
+        assert continuity["verified"]
+        assert continuity["summarized_records"] == len(first["records"])
         found = await server.memory.operate("agent", "search", {"q": ["COMMAND OUTPUT NOISE"]})
         assert found["results"]
         match = found["results"][0]
@@ -175,17 +176,14 @@ def test_new_reference_only_event_refreshes_checkpoint_boundary(memory_rig, monk
             }
         )
         second = await server.progress_coordinator.refresh("agent")
-        assert second["id"] != first["id"]
-        assert second["source"] != first["source"]
-        data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
-        assert data["records"] == []
-        assert data["prior_context"] == first["continuity"]["context"]
-        assert "UNNEEDED BODY" not in calls[2]
-        assert second["continuity"]["summary_input"]["remaining_eligible_records"] == 0
+        assert second["id"] == first["id"]
+        assert len(calls) == 2  # successful tools do not generate another summary
         checkpoint = await server._create_checkpoint(
             "agent", server.history.session("agent"), "manual"
         )
         assert checkpoint["record"]["summary_ref"] == second["id"]
-        assert len(calls) == 4
+        assert len(calls) == 2
+        assert checkpoint["summary_update"]["state"] == "reused"
+        assert checkpoint["handoff_eligible"]
 
     asyncio.run(run())

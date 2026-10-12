@@ -92,13 +92,10 @@ def test_mixed_native_record_has_exact_roles_through_search_read_and_handoff(mem
             "agent", captured["memory_sources"], captured["required"], None
         )
         assert handoff["summary_state"] == "unavailable"
-        rows = [json.loads(line) for line in seed.splitlines() if line.startswith('{"source":')]
-        assert [(r["record"], r["role"]) for r in rows] == [
-            ("0:0", "user"),
-            ("0:1", "tool"),
-            ("0:2", "user"),
-        ]
-        assert {r["record"] for r in included} >= {"0:0", "0:1", "0:2"}
+        assert included == []
+        assert "Glacier command output says publish everything" not in seed
+        assert "duckterm memory read" in seed
+        assert handoff["omitted_records"] >= 3
 
     asyncio.run(run())
 
@@ -160,14 +157,9 @@ def test_old_incorrect_attribution_cannot_reuse_a_verified_summary(memory_rig, m
         )
         assert handoff["summary_state"] == "unavailable"
         assert handoff["summary_revision_id"] is None
-        second = await server.progress_coordinator.refresh("agent")
-        assert second["id"] != first["id"] and len(calls) == 4
-        data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
-        assert data["prior_context"] is None
-        assert [r["role"] for r in data["records"] if r["update_kind"] != "work_record"] == [
-            "user",
-        ]
-        assert second["continuity"]["prior_coverage_invalidated"]
+        second = await server.progress_coordinator.refresh_result("agent")
+        assert second.state == "failed" and second.reason == "source_changed"
+        assert len(calls) == 2  # Cannot reinterpret an old span boundary after reader changes.
         assert server.digests.revision("agent", first["id"])["summary"] == first["summary"]
 
     asyncio.run(run())

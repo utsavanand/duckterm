@@ -14,7 +14,17 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-KINDS = ("kdd", "spec", "research", "preview", "evidence", "report", "other")
+KINDS = (
+    "kdd",
+    "spec",
+    "research",
+    "preview",
+    "evidence",
+    "report",
+    "binary",
+    "unclassified",
+    "other",
+)
 
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_REQUEST_BYTES = 8 * 1024 * 1024
@@ -107,6 +117,10 @@ def registration(path: Path, title: str | None = None, kind: str | None = None) 
 
 
 def inferred_kind(row: dict[str, Any]) -> str:
+    if row["media_type"] == "application/octet-stream":
+        return "binary"
+    if row["media_type"].startswith("image/"):
+        return "evidence"
     words = set(re.findall(r"[a-z]+", str(row["title"]).lower()))
     for kind, hints in [
         ("kdd", {"decision", "kdd"}),
@@ -122,13 +136,41 @@ def inferred_kind(row: dict[str, Any]) -> str:
         return "preview"
     if row["media_type"].startswith("image/"):
         return "evidence"
-    return "other"
+    return "unclassified"
 
 
 class ArtifactStore:
     def __init__(self, conn: sqlite3.Connection) -> None:
         self.conn = conn
         conn.executescript(SCHEMA)
+
+    def classification_plan(self) -> list[dict[str, str]]:
+        """Inspect the legacy backlog without changing declared or owner kinds."""
+        return [
+            {
+                "id": row["id"],
+                "session_key": row["session_key"],
+                "kind": inferred_kind(dict(row)),
+                "kind_source": "inferred",
+            }
+            for row in self.conn.execute(
+                "SELECT a.id,a.session_key,a.title,a.media_type FROM artifacts a "
+                "LEFT JOIN artifact_metadata m ON m.id=a.id WHERE m.id IS NULL"
+            )
+        ]
+
+    def classify_existing(self) -> int:
+        """Apply deterministic inferred metadata; preserve explicit classifications."""
+        plan = self.classification_plan()
+        if not plan:
+            return 0
+        with self.conn:
+            self.conn.executemany(
+                "INSERT OR IGNORE INTO artifact_metadata (id,session_key,kind,kind_source) "
+                "VALUES (:id,:session_key,:kind,:kind_source)",
+                plan,
+            )
+        return len(plan)
 
     def list(self, session_key: str) -> list[dict[str, Any]]:
         return [
@@ -290,6 +332,10 @@ class ArtifactStore:
             )
 
     def register(self, session_key: str, req: dict[str, Any]) -> dict[str, Any]:
+        if isinstance(req, dict) and "kind" not in req:
+            raise ArtifactError(
+                400, "Artifact kind is required; allowed kinds: " + ", ".join(KINDS)
+            )
         if set(req) - {"title", "source_path", "content_base64", "kind"} or not {
             "title",
             "source_path",
@@ -333,8 +379,12 @@ class ArtifactStore:
                 f"SELECT {FIELDS} FROM artifacts WHERE session_key = ? AND source_path = ?",
                 (session_key, source),
             ).fetchone()
-            if old and old["sha256"] == digest and old["title"] == title and "kind" not in req:
-                return self.describe(dict(old))
+            if old and old["sha256"] == digest and old["title"] == title:
+                existing = self.describe(dict(old))
+                if existing["kind_source"] == "owner" or (
+                    existing["kind_source"] == "declared" and existing["kind"] == req["kind"]
+                ):
+                    return existing
             count, used = self.conn.execute(
                 "SELECT COUNT(*), COALESCE(SUM(size), 0) FROM artifacts WHERE session_key = ?",
                 (session_key,),

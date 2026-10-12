@@ -180,6 +180,17 @@ def _render_markdown(label: str, record: dict[str, Any], summary: str) -> str:
     """Render the checkpoint as markdown TEXT. Pure — no file I/O; the caller
     writes it (via write_markdown) only after the DB row is committed."""
 
+    if record.get("summary_ref"):
+        # A marker export is a readable summary and pointers, not a growing copy
+        # of all prompts, commands and tools. Original records remain retained.
+        return (
+            f"# Checkpoint: {label}\n\n{summary}\n\n"
+            f"Summary revision: {record['summary_ref']}\n\n"
+            "Original history is recorded separately. Use `duckterm memory sources`, "
+            '`duckterm memory search "query"`, and `duckterm memory read` to retrieve '
+            "the exact conversation, summaries, checkpoints and artifacts.\n"
+        )
+
     def bullets(items: list[str]) -> list[str]:
         return items if items else ["(none)"]
 

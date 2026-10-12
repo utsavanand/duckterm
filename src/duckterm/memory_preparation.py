@@ -257,6 +257,28 @@ class MemoryPreparation:
             captured = await coordinator.capture(key)
             if captured is None:
                 raise PreparationError(409, "stale_source", "Conversation changed during capture")
+            self.cheap_validate(job)
+            if captured["conversation"].get("native_id") and captured.get("fence") is None:
+                raise PreparationError(
+                    409, "incomplete_source", "Conversation source is unavailable"
+                )
+            self.update(job, phase="summarizing")
+            summary_update = await coordinator.refresh_result(key, captured)
+            if summary_update.state not in {"updated", "reused"}:
+                raise PreparationError(
+                    409,
+                    (
+                        "incomplete_source"
+                        if summary_update.reason == "source_unavailable"
+                        else (
+                            "stale_source"
+                            if summary_update.reason == "source_changed"
+                            else "summary_unavailable"
+                        )
+                    ),
+                    "The conversation span could not be summarized: "
+                    + str(summary_update.diagnostic or summary_update.reason or "update_failed"),
+                )
             job["captured"] = captured
             job["catalog"] = catalog = self.server.memory.catalog(key)
             self.update(job, phase="reading")
@@ -301,12 +323,27 @@ class MemoryPreparation:
             await self.validate_sources(job)
             row = self.server.history.session(key) or {}
             prior = self.server.digests.revision(key, current_revision(row))
+            from duckterm.core import memory_folding
+
+            revisions = memory_folding.rows(
+                self.server.digests, key, captured["source"]["scope_hash"]
+            )
+            from duckterm import memory_records
+
+            evidence_sources, evidence_gaps = await asyncio.to_thread(
+                memory_records.retained, catalog, sources
+            )
+            if evidence_gaps:
+                raise PreparationError(409, "incomplete_source", "Saved evidence is unavailable")
             self.update(job, phase="assembling")
             seed, handoff, included = memory_handoff.assemble(
                 key,
                 sources,
                 captured["required"],
                 prior,
+                revisions=revisions,
+                links=catalog["lifecycle"],
+                evidence_sources=evidence_sources,
                 launch={
                     "session_key": key,
                     "session_name": row.get("name"),
@@ -352,8 +389,12 @@ class MemoryPreparation:
                 raise PreparationError(409, "stale_source", "Sources changed during preparation")
             checkpoint_id = uuid.uuid4().hex
             count = handoff["summarized_records"]
-            available = handoff["available_records"]
-            usable = memory_handoff.usable_prior(sources, captured["required"], prior)
+            available = handoff.get("eligible_records", handoff["available_records"])
+            usable = (
+                prior
+                if handoff.get("method") == "independent_spans"
+                else memory_handoff.usable_prior(sources, captured["required"], prior)
+            )
             rows = memory_handoff.records(sources)
             processed, _ = memory_handoff.coverage(rows, usable)
             coverage.update(
@@ -381,6 +422,8 @@ class MemoryPreparation:
                 captured, usable["id"] if usable else None, git, int(time.time() * 1000)
             )
             record.update(
+                summary_span_verified=handoff.get("method") == "independent_spans",
+                summary_update=summary_update.metadata(int(time.time() * 1000)),
                 memory_sources=retained,
                 retained_sources=text_refs,
                 handoff={**handoff, "packet_hash": packet_id, "included": included},

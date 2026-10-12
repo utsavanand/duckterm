@@ -426,7 +426,6 @@ class Server:
         self._relay_watching: set[str] = set()
         self._relay_logged: set[str] = set()  # requests whose screen was logged
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
-        self._progress_marks: dict[str, tuple[int, int]] = {}
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore(conn=self.history._conn)
         self.progress_coordinator = ProgressCoordinator(self)
@@ -589,6 +588,21 @@ class Server:
             headers, self.token
         ):
             await _write_json(writer, 401, {"error": "missing or invalid token"})
+            return
+
+        lifecycle_route = re.fullmatch(r"/sessions/([A-Za-z0-9._-]{1,128})/memory-claim", path)
+        if lifecycle_route:
+            try:
+                if method != "POST" or len(body) > 32768:
+                    raise APIError(400, "Use POST with an explicit claim transition")
+                result = await self.memory.link(
+                    lifecycle_route[1], json.loads(body), headers, lifecycle=True, owner=True
+                )
+                await _write_json(writer, 200, result)
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+            except (ValueError, UnicodeError):
+                await _write_json(writer, 400, {"error": "Invalid claim transition JSON"})
             return
 
         memory_url = urllib.parse.urlsplit(path)
@@ -2740,46 +2754,12 @@ class Server:
     _FLEET_STATES_DONE = AT_REST_STATES  # sessions past this state aren't "running"
 
     # ── running progress digest (deliverables / learnings / next actions) ──
-    # Regenerated on turn ends (Stop), debounced so a chatty session costs at
-    # most one summary update per window; stored on the session row so it
-    # survives restarts and rides along in /sessions.
-    _PROGRESS_MIN_INTERVAL_MS = 15 * 60_000
-    _PROGRESS_MIN_NEW_EVENTS = 1
+    # Explicit checkpoints and handoff preparation share the writer.
 
     def _maybe_refresh_progress(self, session_key: str) -> None:
-        row = self.history.session(session_key)
-        if row is None:
-            return
-        now = int(time.time() * 1000)
-        control = self.history.restart_control(session_key)
-        attempt = control.get("progress_attempt", {})
-        last_ts, last_count = self._progress_marks.get(
-            session_key, (int(attempt.get("at", 0)), int(attempt.get("events", 0)))
-        )
-        last_ts = max(last_ts, int(row.get("progress_at") or 0))
-        count = int(row.get("event_count") or 0)
-        if now - last_ts < self._PROGRESS_MIN_INTERVAL_MS:
-            return
-        if count - last_count < self._PROGRESS_MIN_NEW_EVENTS:
-            return
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return  # no loop (sync test context) — the next Stop will retry
-        self._progress_marks[session_key] = (now, count)
-        # Persist the attempt, including failures, so a server restart cannot
-        # repeatedly spend on the same stopped conversation.
-        self.history.set_restart_control(
-            session_key, {**control, "progress_attempt": {"at": now, "events": count}}
-        )
-        identity = conversation(self.history, session_key, row)
-
-        async def refresh() -> None:
-            current = self.history.session(session_key)
-            if current and conversation(self.history, session_key, current) == identity:
-                await self._refresh_progress(session_key)
-
-        loop.create_task(refresh())
+        # Checkpoints are owner-triggered. A Stop/exit or an ageing clock must
+        # not spend summarizer tokens; the staleness view reads saved metadata.
+        return
 
     def _progress_on_exit(self, session_key: str) -> None:
         self._maybe_refresh_progress(session_key)
@@ -4691,6 +4671,8 @@ class Server:
         source = captured["source"]
         record = checkpoint_marker(captured, revision["id"] if revision else prior, git, now)
         record["summary_update"] = update.metadata(now)
+        if revision and revision.get("span") == "incremental":
+            record["summary_span_verified"] = update.state in {"updated", "reused"}
         try:
             original = await memory_continuity.capture(self, session_key, captured)
             if "memory_sources" in original:

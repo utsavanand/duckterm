@@ -12,7 +12,14 @@ import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from duckterm import memory_graph, memory_index, memory_records, memory_sources, memory_versions
+from duckterm import (
+    memory_graph,
+    memory_index,
+    memory_lifecycle,
+    memory_records,
+    memory_sources,
+    memory_versions,
+)
 from duckterm.core.saved_progress import file_version, required_context
 from duckterm.core.session_api import APIError
 from duckterm.persistence.saved_state import fingerprint, is_status_observation, transaction
@@ -200,6 +207,7 @@ class Memory:
             "missing_identity": missing_identity,
             "retained": retained_sources,
             "text_retained": text_retained,
+            "lifecycle": [r for r in canonical["links"] if r.get("lifecycle_version") == 1],
             **({"canonical": canonical, "retrieval": True} if retrieval else {}),
         }
 
@@ -385,7 +393,7 @@ class Memory:
 
                 matches = await asyncio.to_thread(search)
                 identities = {(m["source_id"], m["version"], m["record_id"]) for m in matches}
-                records = {
+                records_by_ref = {
                     (s["id"], s["version"], r["id"]): r
                     for s in sources
                     for r in s["records"]
@@ -393,7 +401,7 @@ class Memory:
                 }
                 for found in matches:
                     found["source"] = found["source_id"] + ":" + found["version"]
-                    record = records[
+                    record = records_by_ref[
                         (found["source_id"], found["version"], found["record_id"])
                     ]
                     found["role"] = record["role"]
@@ -482,12 +490,25 @@ class Memory:
             raise APIError(400, "Invalid " + key)
         return value
 
-    async def link(self, key: str, body: Any, headers: dict[str, str]) -> dict[str, Any]:
+    async def link(
+        self,
+        key: str,
+        body: Any,
+        headers: dict[str, str],
+        *,
+        lifecycle: bool = False,
+        owner: bool = False,
+    ) -> dict[str, Any]:
         async with self.locks.setdefault(key, asyncio.Lock()):
             catalog = self.catalog(key, retrieval=True)
             sources, _ = await asyncio.to_thread(self.materialize, catalog)
-            request = memory_graph.request(body, sources)
-            identity = fingerprint([key, "memory_link_v1", request["request_key"]])
+            request = (
+                memory_lifecycle.request(body, sources, catalog)
+                if lifecycle
+                else memory_graph.request(body, sources)
+            )
+            namespace = "memory_lifecycle_v1" if lifecycle else "memory_link_v1"
+            identity = fingerprint([key, namespace, request["request_key"]])
             content_hash = fingerprint(request)
             old = next((r for r in catalog["canonical"]["links"] if r["id"] == identity), None)
             if old and old["content_hash"] != content_hash:
@@ -521,23 +542,30 @@ class Memory:
                 "content_hash": content_hash,
                 "root": catalog["root"],
                 "provenance": {
-                    "kind": "agent_assertion",
-                    "author": key,
+                    "kind": "explicit_claim_transition" if lifecycle else "agent_assertion",
+                    "author": "owner" if owner else key,
                     "created_at": now,
-                    "authority": "none",
+                    "authority": ("owner" if owner else "owning_session") if lifecycle else "none",
                 },
                 "retained_sources": list(text_refs.values()),
                 "memory_sources": list(native_refs.values()),
             }
             conn = self.server.history._conn
             with transaction(conn):
-                if self.server.history.session_api.authenticate(headers) != key:
+                if owner:
+                    from duckterm.helpers import security
+
+                    if not security.token_valid(headers, self.server.token):
+                        raise APIError(403, "Owner access changed")
+                elif self.server.history.session_api.authenticate(headers) != key:
                     raise APIError(403, "Session access changed")
                 if fingerprint(catalog) != fingerprint(self.catalog(key, retrieval=True)):
                     raise APIError(409, "Memory permissions or sources changed; retry")
                 for source in sources:
                     if source.get("fence") and file_version(source["path"]) != source["fence"]:
                         raise APIError(409, "Conversation changed before saving link")
+                if lifecycle:
+                    memory_lifecycle.validate_new(value, catalog["canonical"]["links"])
                 if old:
                     return {
                         "relation": {
@@ -570,15 +598,15 @@ class Memory:
         key = api.authenticate(headers)
         parsed = urllib.parse.urlsplit(path)
         action = parsed.path.removeprefix("/api/v1/session/memory/")
-        if method == "POST" and action == "link":
+        if method == "POST" and action in {"link", "claim"}:
             if parsed.query or len(body) > 32768:
                 raise APIError(400, "Invalid memory link request")
             try:
                 request = json.loads(body)
             except (ValueError, UnicodeError) as exc:
                 raise APIError(400, "Invalid memory link JSON") from exc
-            result = await self.link(key, request, headers)
-        elif method == "GET" and action != "link":
+            result = await self.link(key, request, headers, lifecycle=action == "claim")
+        elif method == "GET" and action not in {"link", "claim"}:
             result = await self.operate(
                 key, action, urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
             )

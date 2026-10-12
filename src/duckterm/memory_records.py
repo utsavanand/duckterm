@@ -117,7 +117,7 @@ def project(catalog: dict[str, Any], originals: list[dict[str, Any]]) -> list[di
                     "omitted": [{"reason": "unreadable_source", "count": 1, "sample_refs": []}],
                 }
             )
-        records = [
+        records: list[dict[str, Any]] = [
             {
                 "id": "0",
                 "role": "summary_metadata",

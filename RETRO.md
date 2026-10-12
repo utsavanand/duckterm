@@ -1,4 +1,16 @@
+## 2026-10-12 — Integrate memory contracts before asking for another checkpoint trial
+
+A span writer alone does not implement span memory. The reader, handoff, coverage counters,
+claim lifecycle, cancellation and transport recovery must agree on the same contract.
+Keep generated spans immutable and retryable, publish success only after the captured
+range completes, and check native-file and scope fences again at publication. Tool-only
+hooks must not create an endless pending summary. Manual cadence must not secretly retain
+turn-end model calls. Test the combined path before an owner trial; foundation tests are
+not release acceptance.
+
 ## Folded retrieval must use the canonical resolver
+
+
 Folded claims contain revision pointers, not inline text/refs. Retrieval must resolve only within the authorized catalog, withhold unresolved views, and test actual search-to-read typed claims. Keep derived records excluded from writer originals.
 
 # Retro — lessons from real breakage

@@ -1,4 +1,4 @@
-"""The sole progress-summary writer for turn end, exit and checkpoints.
+"""The sole progress-summary writer for explicit checkpoints and handoff preparation.
 
 Capture on the DB owner thread, do provider/file I/O off it, then compare-and-swap
 under one write lock. A canceled HTTP waiter cannot cancel a shared refresh.
@@ -100,6 +100,7 @@ class SummaryUpdate:
     reason: str | None = None
     diagnostic: str | None = None
     review: dict[str, Any] | None = None
+    span_coverage: dict[str, Any] | None = None
 
     def metadata(self, attempted_at: int) -> dict[str, Any]:
         return {
@@ -107,6 +108,7 @@ class SummaryUpdate:
             "reason": self.reason,
             **({"diagnostic": self.diagnostic} if self.diagnostic else {}),
             **({"review": self.review} if self.review is not None else {}),
+            **({"span_coverage": self.span_coverage} if self.span_coverage else {}),
             "attempted_at": attempted_at,
             "revision_id": (
                 self.revision["id"] if self.revision and self.state != "failed" else None
@@ -172,6 +174,9 @@ class ProgressCoordinator:
         self.server = server
         self.pending: dict[str, asyncio.Task[SummaryUpdate]] = {}
         self.active: dict[str, asyncio.Task[SummaryUpdate]] = {}
+        self.span_refreshes: dict[str, asyncio.Task[SummaryUpdate]] = {}
+        self.span_refresh_inputs: dict[str, str] = {}
+        self.span_status: dict[str, dict[str, int]] = {}
 
     def facts(self, key: str) -> dict[str, Any] | None:
         row = self.server.history.session(key)
@@ -242,9 +247,18 @@ class ProgressCoordinator:
         captured = captured or await self.capture(key)
         if captured is None:
             return SummaryUpdate.failed("source_changed")
-        captured = await memory_continuity.capture(self.server, key, captured)
+        try:
+            captured = await memory_continuity.capture(self.server, key, captured)
+        except APIError as exc:
+            return SummaryUpdate.failed(
+                "source_changed" if exc.status == 409 else "source_unavailable"
+            )
         if self.facts(key) != captured["facts"]:
             return SummaryUpdate.failed("source_changed")
+        if "memory_sources" in captured:
+            from duckterm.core import memory_refresh
+
+            return await memory_refresh.refresh(self, key, captured)
         row = self.server.history.session(key)
         if row is None:
             return SummaryUpdate.failed("source_changed")
@@ -295,7 +309,7 @@ class ProgressCoordinator:
 
         The caller supplies an explicit original-record boundary and frozen capture.
         Reuse committed subranges on retry; no current-summary pointer is changed.
-        Reader integration must land before checkpoint entry points call this path.
+        The range coordinator publishes only after every required span completes.
         """
         from duckterm import memory_spans
 

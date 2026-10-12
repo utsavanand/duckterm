@@ -37,6 +37,7 @@ class BudgetExceeded(ValueError):
     def __init__(self, value: dict[str, Any]) -> None:
         super().__init__("budget_exhausted")
         refs = sorted({ref for field in FIELDS for item in value[field] for ref in item["refs"]})
+        self.kinds = sorted({claim_kind(item) for field in FIELDS for item in value[field]})
         self.coverage = {
             "declared": True,
             "unknown": False,

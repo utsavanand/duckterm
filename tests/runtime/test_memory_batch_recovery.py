@@ -94,7 +94,7 @@ def test_adaptive_retry_is_bounded_and_never_retries_quota_errors(monkeypatch, t
     "change",
     ["none", "notes", "source", "model", "cli", "policy", "expired", "canceled", "restart"],
 )
-def test_failed_capture_retries_with_fresh_fences_without_provider(
+def test_failed_retention_retries_without_rewriting_completed_spans(
     preparation, monkeypatch, change
 ):
     from duckterm import memory_versions
@@ -117,8 +117,9 @@ def test_failed_capture_retries_with_fresh_fences_without_provider(
         first = await prepare(server)
         assert first["state"] == "failed" and first["retryable"]
         assert not server.history.checkpoints("agent")
-        assert "proof" not in first and calls == []
-        assert not server.history.session("agent")["progress"]
+        assert "proof" not in first and len(calls) == 2
+        assert server.history.session("agent")["progress"]
+        completed_progress = server.history.session("agent")["progress"]
         job = manager.jobs[first["preparation_id"]]
         if change == "canceled":
             manager.cancel("agent", first["preparation_id"], "dialog-1")
@@ -142,11 +143,17 @@ def test_failed_capture_retries_with_fresh_fences_without_provider(
         started = await manager.start("agent", body)
         await manager.tasks[started["preparation_id"]]
         result = manager.status("agent", started["preparation_id"])
+        if change in {"source", "policy"}:
+            assert result["state"] == "stale_source", result
+            assert not server.history.checkpoints("agent")
+            assert server.history.session("agent")["progress"] == completed_progress
+            assert len(calls) == 2
+            return
         assert result["state"] == "ready", result
         assert result["preparation_id"] != first["preparation_id"]
         assert len(server.history.checkpoints("agent")) == 1
         assert server.history.session("agent")["runtime"] == "claude-code"
-        assert calls == []
+        assert len(calls) == 2
         brief = manager.details("agent", result["preparation_id"])["brief"]["text"]
         if change == "source":
             assert "Changed owner instructions" in brief

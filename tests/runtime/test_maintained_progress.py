@@ -8,7 +8,8 @@ from types import SimpleNamespace
 import pytest
 from test_memory import memory_rig, transcript
 
-from duckterm import memory_continuity, memory_summary
+from duckterm import memory_continuity, memory_spans, memory_summary
+from duckterm.core import memory_folding
 from duckterm.llm.summarizer import Summary
 
 __all__ = ["memory_rig"]
@@ -28,13 +29,21 @@ def provider(monkeypatch):
         else:
             data = json.loads(prompt.split("MEMORY UPDATE:\n", 1)[1])
             refs = [r["source"] + ":" + r["version"] + ":" + r["record"] for r in data["records"]]
-            context = data["prior_context"] or {
+            context = data.get("prior_context") or {
                 "overview": "Continue the test work.",
                 **{k: [] for k in memory_summary.FIELDS},
             }
             if refs:
                 context["constraints"] = [
-                    {"text": "Retain the current owner constraints.", "refs": refs}
+                    {
+                        "text": "Retain the current owner constraints.",
+                        "refs": refs,
+                        **(
+                            {"kind": "constraint", "state": "open"}
+                            if "prior_context" not in data
+                            else {}
+                        ),
+                    }
                 ]
             value = {"summary": "Continue the test work.", "context": context}
         return SimpleNamespace(text=json.dumps(value))
@@ -57,19 +66,18 @@ def test_new_revision_processes_only_new_records_and_checkpoint_reuses(memory_ri
 
     async def run():
         first = await server.progress_coordinator.refresh("agent")
-        assert first["continuity"]["summary_input"]["remaining_eligible_records"] == 0
-        assert first["memory_sources"] and first["retained_sources"]
+        assert first["continuity"]["remaining_records"] == 0
+        assert first[
+            "memory_sources"
+        ]  # native originals retained; no duplicate session-card snapshot
         again = await server.progress_coordinator.refresh("agent")
         assert again["id"] == first["id"] and len(calls) == 2
         append(path, "New owner constraint")
         second = await server.progress_coordinator.refresh("agent")
         assert second["id"] != first["id"]
         data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
-        assert [r["text"] for r in data["records"] if r["update_kind"] != "work_record"] == [
-            "New owner constraint"
-        ]
-        assert any(r["update_kind"] == "work_record" for r in data["records"])
-        assert data["prior_context"]
+        assert [r["text"] for r in data["records"]] == ["New owner constraint"]
+        assert "prior_context" not in data
         cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
         assert cp["record"]["summary_ref"] == second["id"]
         assert len(calls) == 4
@@ -78,7 +86,9 @@ def test_new_revision_processes_only_new_records_and_checkpoint_reuses(memory_ri
     asyncio.run(run())
 
 
-def test_backlog_is_one_bounded_update_and_failure_never_advances_coverage(memory_rig, monkeypatch):
+def test_backlog_completes_bounded_spans_and_failure_preserves_completed_summary(
+    memory_rig, monkeypatch
+):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Older original")
     for n in range(100):
@@ -87,76 +97,63 @@ def test_backlog_is_one_bounded_update_and_failure_never_advances_coverage(memor
 
     async def run():
         first = await server.progress_coordinator.refresh("agent")
-        assert len(calls) == 2
-        assert (
-            0 < first["continuity"]["summarized_records"] < first["continuity"]["available_records"]
+        assert len(calls) > 2
+        assert first["continuity"]["remaining_records"] == 0
+        assert all(
+            len(prompt.encode()) <= memory_spans.MAX_GENERATION_BYTES for prompt in calls[::2]
         )
-        assert first["summary_validation"] == {"ready": True, "reason_codes": []}
-        data = json.loads(calls[0].split("MEMORY UPDATE:\n", 1)[1])
-        assert len(json.dumps(data["records"]).encode()) < memory_continuity.MAX_UPDATE_BYTES
+        count = len(calls)
         second = await server.progress_coordinator.refresh("agent")
-        assert (
-            second["continuity"]["summarized_records"] > first["continuity"]["summarized_records"]
-        )
+        assert second["id"] == first["id"] and len(calls) == count
         cached = server.history.session("agent")["progress"]
+        append(path, "Next owner instruction")
         monkeypatch.setattr(
-            "duckterm.server.summarize", lambda _: SimpleNamespace(text="quota exhausted")
+            "duckterm.server.summarize", lambda _: Summary("", "none", "provider_timeout")
         )
-        assert await server.progress_coordinator.refresh("agent") is None
+        failed = await server.progress_coordinator.refresh_result("agent")
+        assert failed.state == "failed"
         assert server.history.session("agent")["progress"] == cached
 
     asyncio.run(run())
 
 
-def test_rewritten_record_invalidates_prior_context_instead_of_reciting_removed_claim(
-    memory_rig, monkeypatch
-):
+def test_rewritten_record_refuses_reuse_without_reciting_removed_claim(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Prior owner direction")
     calls = provider(monkeypatch)
 
     async def run():
-        await server.progress_coordinator.refresh("agent")
+        first = await server.progress_coordinator.refresh("agent")
         transcript(tmp, "agent-claude", "Corrected direction")
-        revision = await server.progress_coordinator.refresh("agent")
-        data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
-        assert data["prior_context"] is None
-        assert revision["continuity"]["prior_coverage_invalidated"]
+        update = await server.progress_coordinator.refresh_result("agent")
+        assert update.state == "failed" and update.reason == "source_changed"
+        assert len(calls) == 2
+        assert server.digests.revision("agent", first["id"]) is not None
 
     asyncio.run(run())
 
 
-def test_automatic_cadence_persists_attempt_even_when_provider_failed(memory_rig, monkeypatch):
+def test_turn_end_and_exit_never_spend_summary_tokens(memory_rig, monkeypatch):
     server, _, _, _ = memory_rig
     calls = []
 
-    async def failed(key):
+    async def unexpected(key):
         calls.append(key)
 
-    monkeypatch.setattr(server, "_refresh_progress", failed)
-    now = [2_000_000.0]
-    monkeypatch.setattr("duckterm.server.time.time", lambda: now[0])
+    monkeypatch.setattr(server, "_refresh_progress", unexpected)
 
     async def run():
-        server._maybe_refresh_progress("agent")
-        await asyncio.sleep(0)
-        assert calls == ["agent"]
-        server._progress_marks.clear()  # simulate server restart
-        server.bus.publish({"event_type": "UserPromptSubmit", "session_key": "agent", "test": True})
-        now[0] += 899
-        server._maybe_refresh_progress("agent")
-        server._progress_on_exit("agent")
-        await asyncio.sleep(0)
-        assert calls == ["agent"]
-        now[0] += 1
-        server._maybe_refresh_progress("agent")
-        await asyncio.sleep(0)
-        assert calls == ["agent", "agent"]
+        for now in (2000000.0, 2000900.0, 3000000.0):
+            monkeypatch.setattr("duckterm.server.time.time", lambda now=now: now)
+            server._maybe_refresh_progress("agent")
+            server._progress_on_exit("agent")
+            await asyncio.sleep(0)
+        assert calls == []
 
     asyncio.run(run())
 
 
-def test_manual_checkpoint_joins_running_automatic_summary(memory_rig, monkeypatch):
+def test_manual_checkpoint_joins_running_explicit_summary(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Preserve this owner constraint")
     calls = provider(monkeypatch)
@@ -182,7 +179,7 @@ def test_manual_checkpoint_joins_running_automatic_summary(memory_rig, monkeypat
         try:
             # Both requests use the same source identity; no second provider work.
             await asyncio.sleep(0.02)
-            assert len(server.progress_coordinator.pending) == 1
+            assert len(server.progress_coordinator.span_refreshes) == 1
         finally:
             released.set()
         revision, cp = await asyncio.gather(automatic, manual)
@@ -217,32 +214,26 @@ def test_scheduled_exit_update_does_not_summarize_a_replacement_conversation(
     asyncio.run(run())
 
 
-def test_backfill_is_labeled_older_than_prior_summary_and_new_append(memory_rig, monkeypatch):
+def test_cold_start_preserves_chronology_then_processes_only_new_append(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Earlier direction: " + "x" * 30000)
     append(path, "Later correction: " + "y" * 30000)
     calls = provider(monkeypatch)
 
     async def run():
-        first = await server.progress_coordinator.refresh("agent")
-        assert first["continuity"]["summary_input"]["remaining_eligible_records"] == 1
+        await server.progress_coordinator.refresh("agent")
+        assert len(calls) == 4
+        assert "Earlier direction" in calls[0] and "Later correction" in calls[2]
         append(path, "New owner message after the first summary")
         await server.progress_coordinator.refresh("agent")
-        data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
-        older = next(r for r in data["records"] if r["text"].startswith("Earlier direction"))
-        new = next(r for r in data["records"] if r["text"].startswith("New owner message"))
-        assert older["update_kind"] == "historical_backfill" and older["position"] == 0
-        assert new["update_kind"] == "new_since_previous_update" and new["position"] == 2
-        assert not any(r["text"].startswith("Later correction") for r in data["records"])
-        assert data["prior_context"] == first["continuity"]["context"]
-        assert "NOT conversation chronology" in calls[2]
+        data = json.loads(calls[4].split("MEMORY UPDATE:\n", 1)[1])
+        assert [r["text"] for r in data["records"]] == ["New owner message after the first summary"]
+        assert "prior_context" not in data
 
     asyncio.run(run())
 
 
-def test_bounded_checkpoint_reports_updated_without_claiming_complete_history(
-    memory_rig, monkeypatch
-):
+def test_checkpoint_reports_updated_only_after_all_bounded_spans(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Original constraint")
     for n in range(100):
@@ -251,20 +242,18 @@ def test_bounded_checkpoint_reports_updated_without_claiming_complete_history(
 
     async def run():
         cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
-        assert len(calls) == 2  # One bounded update, not an unbounded backlog loop.
+        assert len(calls) > 2
         assert cp["summary_update"]["state"] == "updated"
-        assert cp["summary_update"]["reason"] is None
-        revision = server.digests.revision("agent", cp["summary_update"]["revision_id"])
-        assert revision["id"] == cp["record"]["summary_ref"]
-        assert revision["continuity"]["remaining_records"] > 0
-        assert revision["continuity"]["verified"]
-        assert revision["continuity"]["update_complete"]
-        assert cp["handoff_eligible"]  # Still rechecked against current work before any switch.
+        revision = server.digests.revision("agent", cp["record"]["summary_ref"])
+        rows = memory_folding.rows(server.digests, "agent", revision["source"]["scope_hash"])
+        assert sum(r["continuity"]["summarized_records"] for r in rows) == 101
+        assert all(r["continuity"]["verified"] for r in rows)
+        assert cp["handoff_eligible"]
 
     asyncio.run(run())
 
 
-def test_manual_checkpoint_shares_automatic_failure_without_a_second_attempt(
+def test_manual_checkpoint_shares_explicit_failure_without_a_second_attempt(
     memory_rig, monkeypatch
 ):
     server, _, _, tmp = memory_rig
@@ -288,7 +277,7 @@ def test_manual_checkpoint_shares_automatic_failure_without_a_second_attempt(
         original = asyncio.shield
 
         def observed(task):
-            if task is coordinator.active.get("agent") and asyncio.current_task() is manual:
+            if task is coordinator.span_refreshes.get("agent") and asyncio.current_task() is manual:
                 manual_joined.set()
             return original(task)
 
@@ -309,7 +298,7 @@ def test_manual_checkpoint_shares_automatic_failure_without_a_second_attempt(
     asyncio.run(run())
 
 
-def test_large_notes_are_processed_once_instead_of_rejected_by_duplicate_budget(
+def test_large_notes_remain_current_work_instead_of_reentering_summary_input(
     memory_rig, monkeypatch
 ):
     server, _, _, tmp = memory_rig
@@ -320,9 +309,9 @@ def test_large_notes_are_processed_once_instead_of_rejected_by_duplicate_budget(
         first = await server.progress_coordinator.refresh("agent")
         server.history.set_meta("agent", notes="🔒" * 6500)
         outcome = await server.progress_coordinator.refresh_result("agent")
-        assert outcome.state == "updated"
-        assert len(calls) == 4
-        assert calls[2].count("🔒" * 6500) == 1
+        assert outcome.state == "reused"
+        assert len(calls) == 2
+        assert "🔒" * 6500 not in "".join(calls)
         assert server.digests.revision("agent", first["id"])["continuity"] == first["continuity"]
 
     asyncio.run(run())
@@ -333,7 +322,9 @@ def test_checkpoint_with_large_task_and_mail_inputs(memory_rig, monkeypatch, tas
     from test_session_api import call
 
     server, _, peer, tmp = memory_rig
-    transcript(tmp, "agent-claude", "Continue assigned work without losing owner decisions")
+    transcript_path = transcript(
+        tmp, "agent-claude", "Continue assigned work without losing owner decisions"
+    )
     calls = provider(monkeypatch)
     for n in range(task_count):
         server.history.folder_tasks.start("Tests", "agent", f"Task {n}: " + "t" * 230)
@@ -363,10 +354,8 @@ def test_checkpoint_with_large_task_and_mail_inputs(memory_rig, monkeypatch, tas
             cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
             revision = server.digests.revision("agent", cp["record"]["summary_ref"])
         assert cp["summary_update"]["state"] == "updated"
-        stats = revision["continuity"]["required_work"]["kinds"]
-        assert stats["task"]["available"] == 0
-        assert stats["inbox"]["available"] == 0
-        assert all(stat["pending"] == 0 for stat in stats.values())
+        assert revision["span"] == "incremental"
+        assert not revision["continuity"]["pending_updates"]
         for prompt in calls[::2]:
             data = json.loads(prompt.split("MEMORY UPDATE:\n", 1)[1])
             assert len(json.dumps(data["records"]).encode()) < memory_continuity.MAX_UPDATE_BYTES
@@ -374,7 +363,7 @@ def test_checkpoint_with_large_task_and_mail_inputs(memory_rig, monkeypatch, tas
                 assert "m" * mail_size not in prompt
         assert len(server.history.folder_tasks.list_tasks()) == task_count
         cached = server.history.session("agent")["progress"]
-        server.history.set_meta("agent", notes="A new owner note")
+        append(transcript_path, "New instruction")
         monkeypatch.setattr(
             "duckterm.server.summarize", lambda _: Summary("", "none", "provider_timeout")
         )
@@ -409,10 +398,10 @@ def test_new_oversized_mail_refreshes_boundary_without_summarizing_body(memory_r
             },
         )
         second = await server.progress_coordinator.refresh_result("agent")
-        assert second.state == "updated"
-        assert second.revision["id"] != first.revision["id"]
+        assert second.state == "reused"
+        assert second.revision["id"] == first.revision["id"]
         assert not second.revision["continuity"]["pending_updates"]
         assert not second.revision["continuity"]["gaps"]
-        assert second.revision["continuity"]["summary_input"]["reference_only_records"] >= 2
+        assert second.revision["span"] == "incremental"
 
     asyncio.run(run())

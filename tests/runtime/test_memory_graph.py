@@ -392,7 +392,7 @@ def test_legacy_summary_cited_artifact_remains_readable_then_removed_claims_leav
     calls = provider(monkeypatch)
     # Simulate an existing revision from before artifacts became reference-only.
     # New summaries must not consume artifact bodies; legacy citations still work.
-    from duckterm import memory_summary_input
+    from duckterm import memory_continuity, memory_summary_input
 
     project = memory_summary_input.records
 
@@ -414,7 +414,14 @@ def test_legacy_summary_cited_artifact_remains_readable_then_removed_claims_leav
 
     with monkeypatch.context() as legacy:
         legacy.setattr(memory_summary_input, "records", legacy_projection)
-        revision = asyncio.run(server.progress_coordinator.refresh("agent"))
+
+        async def old_writer():
+            coordinator = server.progress_coordinator
+            captured = await coordinator.capture("agent")
+            captured = await memory_continuity.capture(server, "agent", captured)
+            return (await coordinator._generate("agent", captured, None, "legacy-fixture")).revision
+
+        revision = asyncio.run(old_writer())
     assert len(calls) == 2
     catalog = sources(server)
     summary = next(s for s in catalog if s.get("revision_id") == revision["id"])

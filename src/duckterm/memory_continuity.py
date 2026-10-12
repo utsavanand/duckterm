@@ -65,6 +65,7 @@ async def capture(server: Any, key: str, captured: dict[str, Any]) -> dict[str, 
         "memory_sources": sources,
         "memory_gaps": gaps,
         "memory_root": catalog["root"],
+        "memory_catalog": catalog,
     }
 
 
@@ -276,6 +277,13 @@ def context(reply: str, plan: dict[str, Any]) -> dict[str, Any]:
                     if isinstance(reference, str) and reference in refs:
                         item["refs"] = [reference]
                     if plan.get("context_version", 1) == 2:
+                        if "refs" in item and (
+                            not isinstance(item["refs"], list)
+                            or any(not isinstance(ref, str) for ref in item["refs"])
+                        ):
+                            raise memory_summary.InvalidContext("invalid_references")
+                        if plan.get("span") == "incremental" and "kind" not in item:
+                            raise memory_summary.InvalidContext("unclassified_span_claim")
                         # A model cannot authorize a lifecycle transition by
                         # naming a valid reference. This path writes new claims;
                         # verified retirement is a separate writer operation.
