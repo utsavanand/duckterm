@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Preserve the reason a checkpoint review failed
+
+A missing or malformed reviewer response is not a negative review. Preserve the distinction between malformed responses, missing or invalid verdicts, reviewer rejection, and a contradictory ready verdict with non-empty reason codes. Carry bounded structured codes into the checkpoint attempt; never store arbitrary rejected provider prose as a diagnostic. Failed attempts must still retain the last good revision without presenting it as a new success.
+
+Do not remove a validation gate merely because its error reporting was inadequate. Capture the actual reviewer outcome first. Historical attempts without those diagnostics cannot establish whether the writer or reviewer was wrong. Regression tests must cover both maintained-memory and stored-revision paths, including contradictory ready states and malformed envelopes carrying valid rejection codes.
+
 ## 2026-10-11 — Rename a badge selector with its rendered class
 
 Terminology changes can affect styling when a retired term is also a CSS
