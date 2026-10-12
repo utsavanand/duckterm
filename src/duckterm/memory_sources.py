@@ -17,10 +17,9 @@ from duckterm.harnesses import runtime_for
 from duckterm.helpers import paths
 from duckterm.persistence.saved_state import fingerprint
 
-MAX_SOURCE_BYTES = 512 * 1024 * 1024
 MAX_TEXT_BYTES = 64 * 1024 * 1024
 # Codex compaction metadata can exceed 8 MiB even with little parsed text.
-# Bound each JSON allocation independently of total raw/text budgets.
+# Bound each JSON allocation independently of the accumulated text budget.
 MAX_LINE_BYTES = 16 * 1024 * 1024
 NORMALIZATION = "native-blocks-v2"
 
@@ -106,8 +105,6 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
     before = file_version(str(path))
     if before is None:
         raise APIError(409, "Native conversation is unavailable")
-    if before[2] > MAX_SOURCE_BYTES:
-        raise APIError(413, "Conversation exceeds the current read bound")
     if source["runtime"] == "claude-code":
         from duckterm.runtimes.claude_code import _parse_message_lines as parser
     elif source["runtime"] == "codex":
@@ -131,10 +128,17 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
                 raise APIError(409, "Conversation must be a regular file")
             index = 0
-            while raw := stream.readline(MAX_LINE_BYTES + 1):
+            # Raw history can be large while its parsed conversation is small:
+            # Codex stores repeated compaction metadata in the same JSONL file.
+            # Bound allocations by line and accumulated text, not total file size.
+            # Read only the captured extent so an appending writer cannot keep
+            # this scan alive indefinitely; the fence below still rejects changes.
+            while size < before[2] and (
+                raw := stream.readline(min(MAX_LINE_BYTES + 1, before[2] - size))
+            ):
                 size += len(raw)
-                if len(raw) > MAX_LINE_BYTES or size > MAX_SOURCE_BYTES:
-                    raise APIError(413, "Conversation exceeds the current read bound")
+                if len(raw) > MAX_LINE_BYTES:
+                    raise APIError(413, "Conversation record exceeds the current read bound")
                 digest.update(raw)
                 if output is not None:
                     output.write(raw)
