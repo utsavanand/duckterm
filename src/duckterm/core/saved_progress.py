@@ -300,7 +300,7 @@ class ProgressCoordinator:
             if failure := getattr(reply, "failure_reason", None):
                 return SummaryUpdate.failed(failure)
             digest = progress.parse(reply.text)
-            reason, diagnostic = "invalid_summary", "invalid_digest"
+            reason, diagnostic = "invalid_summary", progress.parse_diagnostic(reply.text)
             if digest and digest["summary"]:
                 try:
                     context = (

@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Do not clip generated summaries before reviewing them
+
+The parser sliced summary text at 400 characters before validation. A complete provider response could therefore reach the reviewer as a sentence DuckTerm itself cut off. The live summary_truncated rejection identified the symptom; inspecting the parser exposed a deterministic corruption path. This does not prove every historical unverified summary had that cause.
+
+Reject overlong drafts with summary_too_long and use the existing single correction attempt to request complete, concise sentences. State the limit in generation and correction prompts. Review only the intact corrected candidate, retain strict semantic validation, and preserve the last good revision when correction fails. Regression tests must assert the exact text sent to the reviewer and saved in the checkpoint, and verify failures never advance coverage or turn a clipped prefix into a success.
+
 ## 2026-10-11 — Preserve the reason a checkpoint review failed
 
 A missing or malformed reviewer response is not a negative review. Preserve the distinction between malformed responses, missing or invalid verdicts, reviewer rejection, and a contradictory ready verdict with non-empty reason codes. Carry bounded structured codes into the checkpoint attempt; never store arbitrary rejected provider prose as a diagnostic. Failed attempts must still retain the last good revision without presenting it as a new success.
