@@ -147,7 +147,7 @@ export interface PersistedSession {
   subagents?: SubAgent[];
   context_tokens?: number | null; // server-computed from the transcript tail
   model?: string | null; // model id of the last assistant call
-  suites?: string[]; // meta-harnesses detected for this session (e.g. uv-suite)
+  suites?: string[]; // skill kits detected for this session (e.g. uv-suite)
 }
 
 /** A sub-agent the session spawned via the Task tool (GET /sessions embeds these). */

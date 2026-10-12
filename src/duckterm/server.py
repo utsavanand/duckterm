@@ -659,6 +659,21 @@ class Server:
                 writer, headers, urllib.parse.unquote(folder_view[1]), folder_view[2]
             )
             return
+        file_url = urllib.parse.urlsplit(path)
+        file_match = re.fullmatch(r"/sessions/([^/]+)/(files|file-content)", file_url.path)
+        if file_match:
+            from duckterm.session_files import handle as files_handle
+
+            await files_handle(
+                self,
+                writer,
+                headers,
+                urllib.parse.unquote(file_match[1]),
+                method,
+                file_match[2],
+                urllib.parse.parse_qs(file_url.query, keep_blank_values=True),
+            )
+            return
         artifact_match = re.fullmatch(
             r"/sessions/([A-Za-z0-9._-]+)/artifacts(?:/([a-f0-9]{32}))?", path
         )
@@ -1670,8 +1685,8 @@ class Server:
         return stats
 
     def _suites_for(self, directory: object) -> list[str]:
-        """Which installed harness suites (meta-harnesses, e.g. uv-suite) a
-        session runs under: each registered suite with a `detect` marker is
+        """Which installed skill kits (e.g. uv-suite) a
+        session loads: each registered skill kit with a `detect` marker is
         checked in the session's own folder, then globally (~/.claude)."""
         out: list[str] = []
         for row in self.history.harnesses():

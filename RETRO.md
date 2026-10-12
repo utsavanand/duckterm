@@ -5,6 +5,17 @@
 A cumulative revision cannot become a span by changing its label or subtracting an earlier summary. Capture explicit original-record boundaries, verify their prefix hashes, and write only the new range. Bound complete provider prompts in UTF-8 bytes as well as record count; leave an oversized record pending instead of skipping it. A failed later range must not erase or repeat a successful earlier range. Appending to a source changes its version but does not make previously committed positions new work: reject overlapping leaf ranges both before provider calls and inside the write transaction.
 
 A span writer must not replace the current cumulative summary before the handoff reader assembles prior spans. Stage typed leaves through the existing generation, review and persistence path without changing the current-summary pointer. Keep original evidence readable, reject source rewrites, preserve the existing single-writer and cancellation protections, and distinguish a verified individual leaf from completion of the whole requested span. Test source advancement, retry reuse, retained reads and concurrent callers before activation.
+## 2026-10-11 — Bound reader allocations, not raw transcript age
+
+UI-dev's checkpoint retained an accepted summary but failed completeness because its native Codex file exceeded the reader's 512 MiB whole-file ceiling. The 778 MB file contained repeated compaction metadata; streaming it produced only about 696 KB of searchable text and 392 KB of summary-eligible text in a 3.9-second read-only replay. Filtering tools after materialization cannot help when an earlier raw-file guard refuses the source. Inspect the specific saved source gap before attributing a partial checkpoint to the summarizer or the entire historical backlog.
+
+Remove the total raw-file guard from the existing line-streaming reader. Keep per-record and accumulated-text allocation bounds, exact checksums, identity validation, source-change fences and capture cleanup. Stop at the initially captured byte extent so a concurrent append cannot prolong a scan indefinitely. Regressions must include a real file larger than the old ceiling, first/last conversation records around metadata, exact retained-byte roundtrip and concurrent growth. This fixes raw-size admission; it does not implement incremental indexing, eliminate retention copies or prove a complete checkpoint/handoff.
+
+## 2026-10-11 — Do not clip generated summaries before reviewing them
+
+The parser sliced summary text at 400 characters before validation. A complete provider response could therefore reach the reviewer as a sentence DuckTerm itself cut off. The live summary_truncated rejection identified the symptom; inspecting the parser exposed a deterministic corruption path. This does not prove every historical unverified summary had that cause.
+
+Reject overlong drafts with summary_too_long and use the existing single correction attempt to request complete, concise sentences. State the limit in generation and correction prompts. Review only the intact corrected candidate, retain strict semantic validation, and preserve the last good revision when correction fails. Regression tests must assert the exact text sent to the reviewer and saved in the checkpoint, and verify failures never advance coverage or turn a clipped prefix into a success.
 
 ## 2026-10-11 — Preserve the reason a checkpoint review failed
 
@@ -30,6 +41,11 @@ Stage the policy switch with span-only writes, revision version metadata and rea
 Two individually valid summary contexts can create a supersession cycle when combined: each context may reference a claim held only by the other. Per-child checks therefore cannot certify a compacted parent. Validate the complete protected-claim union before calling either provider. On failure preserve the children and report a pending compaction; do not edit their relationships to make the fold pass.
 
 QA caught this in the isolated compactor foundation before runtime integration. The regression starts with ten valid children, creates a cycle across two of them, and verifies rejection without provider calls or input mutation. A generated parent must obey the same reader contract as its inputs.
+## 2026-10-11 — Rename a badge selector with its rendered class
+
+Terminology changes can affect styling when a retired term is also a CSS
+selector. Change JSX className and both base/pseudo-element selectors together;
+preserve wire fields and verify the style declarations remain identical.
 
 ## 2026-10-11 — Prompt pointers are not a checkpoint retention boundary
 
@@ -74,6 +90,18 @@ Checkpoint requests previously kept their busy state inside the context menu, so
 ## 2026-10-10 — A native message's transport role is not always its author
 
 Claude stores tool results inside user-role records, including records that mix owner text and tool output. Flattening the blocks and copying that role made handoffs attribute command output to the owner; Codex outputs similarly inherited an assistant role. Normalize ordered blocks by provenance for memory only: tool outputs keep a tool role and mixed records have exact group locators. Keep native snapshot bytes/checksums unchanged and let old whole-line reads return the typed groups. Salt the existing disposable search cache and maintained-summary input with the reader version; otherwise a correct reader can still return old flattened search results or reuse a summary with wrong attribution. Verify search, reads, retained snapshots, handoff context and summary invalidation with synthetic native records and no live model calls.
+
+## File browsing must preserve session origin and snapshot identity (2026-10-10)
+
+A file explorer cannot infer locality from a session key after host routing has stripped its origin. Reject remote keys and remote host identities before issuing any filesystem request. Keep registered snapshots separate from current bytes, and do not turn an outside-root source into a claim that the file is missing. Empty post-ignore pages may still have cursors; stale cursors must discard their old listing. Tests now exercise these boundaries, cancellation on root/session switches, and preserved expanded previews alongside actual filesystem browsing.
+
+## 2026-10-10 — Reserved paths need the filesystem's case aliases covered
+
+On the default Mac filesystem, `.GIT/config` can open `.git/config`. Excluding only the exact lowercase spelling therefore left Git internals browseable. Reject `.git` case-insensitively in requests, directory entries and saved-source existence checks. Verify both direct and nested aliases, and retain separately registered snapshot access without claiming the excluded original is a browseable file.
+
+## 2026-10-10 — A saved artifact path does not prove a file exists
+
+The file explorer must distinguish registered snapshot bytes from the current filesystem. Use only the selected local session's recorded worktree/cwd, never the server's current directory. Read one directory page in a worker; use Git for ignore semantics, and keep the registration list independent of directory traversal. Pin every component from the filesystem root, then the relative components, without following symlinks; guarding only the final root component allows an ancestor-replacement race after resolve(). Recheck the root after the read, and refuse changed files rather than returning partial downloads. Missing and outside-root sources remain readable as saved artifact copies, with explicit source states. Remote desktop references must not fall back to a same-named local session.
 
 ## 2026-10-10 — A successful summary sample does not cover malformed next drafts
 

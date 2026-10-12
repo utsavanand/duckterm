@@ -71,3 +71,22 @@ def test_build_prompt_carries_prior_and_goal() -> None:
     assert '"a fix"' in prompt  # prior digest rides along
     assert "ship v1" in prompt
     assert "user: fix the bug" in prompt
+
+
+def test_overlong_summary_is_rejected_instead_of_sliced_mid_sentence() -> None:
+    summary = (
+        "The deployment remains blocked until "
+        + "the owner reviews the change, " * 14
+        + "then we can proceed."
+    )
+    assert len(summary) > 400 and summary[399] != "."
+    reply = json.dumps({"summary": summary})
+    assert progress.parse(reply) is None
+    assert progress.parse_diagnostic(reply) == "summary_too_long"
+
+
+def test_summary_limit_preserves_exact_text_and_counts_characters() -> None:
+    for summary in ("a" * 399 + ".", "é" * 399 + "."):
+        assert progress.parse(json.dumps({"summary": summary}))["summary"] == summary
+        assert progress.parse(json.dumps({"summary": summary + "x"})) is None
+    assert "at most 400 characters" in progress.build_prompt([], None, "")
