@@ -56,7 +56,7 @@ def register(server, headers, path, text):
         "POST",
         "/api/v1/session/artifacts",
         headers,
-        json.dumps(registration(path)).encode(),
+        json.dumps(registration(path, kind="report")).encode(),
     )
     assert status == 200, result
     return result["artifact"]
