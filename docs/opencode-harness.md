@@ -17,7 +17,15 @@ Remote acceptance and final release checks remain.
 - QA found a Messages freshness race after awaited reads. The correction binds
   the last-check time to a matching content fingerprint, while preserving stable
   snapshot files when polling finds no changes. Fifteen focused history, race
-  and process-ownership tests pass. Final integrated checks are being repeated.
+  and process-ownership tests pass. Independent QA cleared the correction with
+  26 focused checks, including actual-file content/mtime and generation coverage.
+- Committed candidate `b2a667b` passed the full gate: Python/static checks,
+  475 frontend tests and 123 browser tests. The pinned native Mac
+  `--prepare --supervisor --http` acceptance also passed. Its committed archive
+  imports and compiles. Log: `/tmp/duckterm-opencode-b2a667b-gate.log`.
+- The isolated remote QA bundle is prepared locally at
+  `/tmp/duckterm-opencode-qa-b2a667b.tar.gz`. Upload approval is pending;
+  remote acceptance and production release have not occurred.
 
 - The pinned native `--prepare --supervisor` probe passes on the candidate:
   early terminal input is blocked; the first completed assistant message uses
