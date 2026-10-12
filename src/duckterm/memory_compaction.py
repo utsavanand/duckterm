@@ -82,6 +82,9 @@ def prepare(children: list[dict[str, Any]]) -> dict[str, Any]:
                     continue
                 seen[identity] = digest
                 context[name].append(deepcopy(claim))
+    # Relations valid within individual children may cycle across their union.
+    # A successful parent must satisfy its own canonical reader contract.
+    memory_contract.read_context({"overview": "Compaction validation", **context}, 2)
     payload = {"narratives": narratives, "protected_claims": context}
     encoded = json.dumps(payload, ensure_ascii=False)
     if len(encoded.encode()) > MAX_INPUT_BYTES:

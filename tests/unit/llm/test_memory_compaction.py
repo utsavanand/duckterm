@@ -167,6 +167,25 @@ def test_compaction_cannot_choose_between_conflicting_claim_lifecycle_states():
     assert result["reason"] == "conflicting_claim_identity" and calls == []
 
 
+def test_cross_child_supersession_cycle_cannot_produce_an_unreadable_parent():
+    children = [node(n) for n in range(10)]
+    first = children[0]["context"]["goals"][0]
+    second = children[1]["context"]["goals"][0]
+    first["supersedes"] = second["id"]
+    second["supersedes"] = first["id"]
+    for child in children:
+        memory_contract.read_context(child["context"], 2)
+    original = deepcopy(children)
+    calls, generate, validate = providers()
+    result = asyncio.run(compaction.compact(children, generate, validate))
+    assert result == {
+        "state": "pending",
+        "reason": "supersession_cycle",
+        "children_preserved": True,
+    }
+    assert calls == [] and children == original
+
+
 @pytest.mark.parametrize(
     "failure", ["generation", "validation", "timeout", "claim_edit", "malformed"]
 )
@@ -219,15 +238,23 @@ def test_malformed_child_tiers_cannot_fold_as_tier_zero(bad_tier):
     assert calls == []
 
 
-def test_cancelled_validation_propagates_without_producing_parent():
+@pytest.mark.parametrize("stage", ["generation", "validation"])
+def test_cancelled_provider_propagates_without_producing_parent(stage):
     children = [node(n) for n in range(10)]
     original = deepcopy(children)
 
     async def scenario():
         entered = asyncio.Event()
-        _, generate, _ = providers()
+        _, good_generate, _ = providers()
+
+        async def generate(prompt):
+            if stage == "generation":
+                entered.set()
+                await asyncio.Future()
+            return await good_generate(prompt)
 
         async def validate(prompt):
+            assert stage == "validation"
             entered.set()
             await asyncio.Future()
 

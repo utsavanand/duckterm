@@ -172,3 +172,12 @@ def test_reference_cycles_fail_explicitly_without_dropping_claims():
     }
     with pytest.raises(ValueError, match="claim_reference_cycle"):
         contract.resolve_revision(rows["first"], rows.get)
+
+
+def test_deep_revision_chain_fails_explicitly_before_recursion_overflow():
+    value = version_two()
+    rows = {"0": revision("0", value)}
+    for n in range(1, 130):
+        rows[str(n)] = revision(str(n), referenced(value, str(n - 1)))
+    with pytest.raises(ValueError, match="claim_reference_depth"):
+        contract.resolve_revision(rows["129"], rows.get)

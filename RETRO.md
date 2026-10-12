@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Validate relationships after combining memory claims
+
+Two individually valid summary contexts can create a supersession cycle when combined: each context may reference a claim held only by the other. Per-child checks therefore cannot certify a compacted parent. Validate the complete protected-claim union before calling either provider. On failure preserve the children and report a pending compaction; do not edit their relationships to make the fold pass.
+
+QA caught this in the isolated compactor foundation before runtime integration. The regression starts with ten valid children, creates a cycle across two of them, and verifies rejection without provider calls or input mutation. A generated parent must obey the same reader contract as its inputs.
+
 ## 2026-10-11 — Prompt pointers are not a checkpoint retention boundary
 
 Bounding the inbox pointers in required context accidentally shortened the checkpoint's mail ID list and changed its hash input from canonical messages to metadata. The checkpoint resolver still hashes full messages; this would report false source changes and leave omitted messages outside the retention boundary. Capture complete authorized IDs and the canonical hash separately from prompt context. Persist only those IDs and the hash, never another copy of message bodies. Changes beyond the pointer limit must still change the source fence.
