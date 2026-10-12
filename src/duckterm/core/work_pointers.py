@@ -6,8 +6,35 @@ import shlex
 import sqlite3
 from typing import Any
 
+from duckterm.persistence.saved_state import fingerprint
+
 LIMIT = 8
 TITLE_CHARS = 160
+
+MAIL_WHERE = (
+    "WHERE q.recipient=? AND q.root=? AND ((q.status IN ('queued','accepted')) "
+    "OR (q.sender='owner' AND q.status='answered')) AND (q.sender='owner' OR "
+    "EXISTS (SELECT 1 FROM session_api_members m JOIN sessions s "
+    "ON s.session_key=m.session_key WHERE m.session_key=q.sender "
+    "AND m.root=? AND m.folder=coalesce(s.grp,''))) "
+)
+
+
+def mail_boundary(conn: sqlite3.Connection, key: str, required: dict[str, Any]) -> dict[str, Any]:
+    """Keep full retention IDs and canonical hash separate from bounded prompt pointers."""
+    mail = []
+    if required["work_references"].get("available") is not False:
+        root = required["scope"]["root"]
+        mail = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT q.id,q.sender,q.question,q.answer,q.status FROM session_questions q "
+                + MAIL_WHERE
+                + "ORDER BY q.rowid",
+                (key, root, root),
+            )
+        ]
+    return {"ids": [r["id"] for r in mail], "hash": fingerprint(mail)}
 
 
 def capture(conn: sqlite3.Connection, key: str, scope: dict[str, Any]) -> dict[str, Any]:
@@ -26,12 +53,8 @@ def capture(conn: sqlite3.Connection, key: str, scope: dict[str, Any]) -> dict[s
         dict(r)
         for r in conn.execute(
             "SELECT q.id,q.sender,q.status,count(*) OVER () AS total FROM session_questions q "
-            "WHERE q.recipient=? AND q.root=? AND ((q.status IN ('queued','accepted')) "
-            "OR (q.sender='owner' AND q.status='answered')) AND (q.sender='owner' OR "
-            "EXISTS (SELECT 1 FROM session_api_members m JOIN sessions s "
-            "ON s.session_key=m.session_key WHERE m.session_key=q.sender "
-            "AND m.root=? AND m.folder=coalesce(s.grp,''))) "
-            "ORDER BY CASE q.status WHEN 'answered' THEN 1 ELSE 0 END,q.rowid LIMIT ?",
+            + MAIL_WHERE
+            + "ORDER BY CASE q.status WHEN 'answered' THEN 1 ELSE 0 END,q.rowid LIMIT ?",
             (key, root, root, LIMIT),
         )
     ]

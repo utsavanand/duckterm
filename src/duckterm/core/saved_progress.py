@@ -155,10 +155,12 @@ class ProgressCoordinator:
         row = self.server.history.session(key)
         if row is None:
             return None
+        required = required_context(self.server, key, row)
         return {
             "conversation": conversation(self.server.history, key, row),
             "events": event_source(self.server.history._conn, key, work_only=True),
-            "required": required_context(self.server, key, row),
+            "required": required,
+            "mail_boundary": work_pointers.mail_boundary(self.server.history._conn, key, required),
         }
 
     async def capture(self, key: str) -> dict[str, Any] | None:
@@ -184,6 +186,7 @@ class ProgressCoordinator:
         source = {
             "events": facts["events"],
             "required_hash": fingerprint(facts["required"]),
+            "mail_hash": facts["mail_boundary"]["hash"],
             "scope_hash": fingerprint(facts["required"]["scope"]),
             "transcript_hash": fingerprint(transcript),
             "transcript_chars": len(full),

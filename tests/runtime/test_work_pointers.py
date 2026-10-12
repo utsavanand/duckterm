@@ -51,6 +51,18 @@ def test_bounded_pointers_keep_assignment_counts_and_originals(memory_rig, monke
         outcome = await server.progress_coordinator.refresh_result("agent")
         assert outcome.state == "updated"
         revision = outcome.revision
+        checkpoint = await server._create_checkpoint(
+            "agent", server.history.session("agent"), "manual"
+        )
+        assert len(checkpoint["record"]["mail_ids"]) == 12
+        assert "source_changed" not in checkpoint["reason_codes"]
+        assert "source_missing" not in checkpoint["reason_codes"]
+        from duckterm.persistence.saved_state import retention_predicate
+
+        expirable = server.history._conn.execute(
+            "SELECT count(*) FROM session_questions q WHERE " + retention_predicate("mail")
+        ).fetchone()[0]
+        assert expirable == 0  # Even pointers omitted from the prompt remain pinned.
         captured = await server.progress_coordinator.capture("agent")
         captured = await memory_continuity.capture(server, "agent", captured)
         brief, coverage, _ = memory_handoff.assemble(
@@ -102,3 +114,48 @@ def test_pointers_disappear_when_membership_is_stale(memory_rig):
     value = required_context(server, "agent", server.history.session("agent"))
     assert value["tasks"] == [] and value["mail"] == []
     assert value["work_references"] == {"available": False}
+
+
+def test_change_to_mail_beyond_pointer_limit_invalidates_checkpoint_hash(memory_rig, monkeypatch):
+    server, _, peer, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Keep owner rules.")
+    for n in range(9):
+        call(
+            server.history,
+            {**peer, "idempotency-key": f"boundary-{n}"},
+            "POST",
+            "/questions",
+            {
+                "target_session_id": "agent",
+                "question": f"Assignment {n}",
+            },
+        )
+    provider(monkeypatch)
+    from duckterm.persistence.saved_state import resolve_checkpoint
+
+    async def run():
+        saved = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
+        before = await server.progress_coordinator.capture("agent")
+        omitted = saved["record"]["mail_ids"][-1]
+        assert omitted not in {r["id"] for r in before["facts"]["required"]["mail"]}
+        with server.history._conn:
+            server.history._conn.execute(
+                "UPDATE session_questions SET question='Changed content' WHERE id=?", (omitted,)
+            )
+        after = await server.progress_coordinator.capture("agent")
+        assert before["required"] == after["required"]
+        assert before["facts"] != after["facts"]
+        assert before["source"]["mail_hash"] != after["source"]["mail_hash"]
+        raw = json.loads(
+            server.history._conn.execute(
+                "SELECT record_json FROM checkpoints WHERE id=?", (saved["id"],)
+            ).fetchone()[0]
+        )
+        assert (
+            "source_changed"
+            in resolve_checkpoint(server.history._conn, "agent", {**saved, "record": raw})[
+                "reason_codes"
+            ]
+        )
+
+    asyncio.run(run())
