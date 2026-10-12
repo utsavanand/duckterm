@@ -68,7 +68,12 @@ export function requestCheckpoint(key: string): Promise<CheckpointRecord> {
 // Recovery reads never create another checkpoint. Keep the original promise in
 // `pending` throughout recovery so repeated clicks cannot issue a duplicate POST.
 async function recoverCheckpoint(key: string, requestId: string): Promise<CheckpointRecord | null> {
-  const deadline = Date.now() + 120_000;
+  const deadline = Date.now() + 180_000;
+  let interval = 1000;
+  const pause = async () => {
+    await new Promise(resolve => setTimeout(resolve, Math.min(interval, Math.max(0, deadline - Date.now()))));
+    interval = Math.min(interval * 2, 5000);
+  };
   while (Date.now() < deadline) {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -82,7 +87,7 @@ async function recoverCheckpoint(key: string, requestId: string): Promise<Checkp
       ]);
     } catch (error) {
       if (error instanceof Error && error.message.includes("Unsupported session operation")) return null;
-      await new Promise(resolve => setTimeout(resolve, Math.min(5000, Math.max(0, deadline - Date.now()))));
+      await pause();
       continue;
     } finally {
       clearTimeout(timer); controller.abort();
@@ -95,7 +100,7 @@ async function recoverCheckpoint(key: string, requestId: string): Promise<Checkp
     // A failed/interrupted receipt without its exact result cannot establish
     // whether a checkpoint was saved. Preserve the existing unknown status.
     if (receipt.state !== "running") return null;
-    await new Promise(resolve => setTimeout(resolve, Math.min(5000, Math.max(0, deadline - Date.now()))));
+    await pause();
   }
   return null;
 }

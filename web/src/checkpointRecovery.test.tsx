@@ -53,9 +53,9 @@ it("bounds running receipt polling and allows a new attempt only after recovery 
   render(<CheckpointProgress sessionKey={key} />);
   let work!: Promise<unknown>;
   await act(async () => { work = requestCheckpoint(key).catch(() => null); });
-  await act(async () => { await vi.advanceTimersByTimeAsync(120_001); await work; });
+  await act(async () => { await vi.advanceTimersByTimeAsync(180_001); await work; });
   const count = vi.mocked(api.checkpointAttempt).mock.calls.length;
-  expect(count).toBeGreaterThan(1); expect(count).toBeLessThanOrEqual(24);
+  expect(count).toBeGreaterThan(1); expect(count).toBeLessThanOrEqual(40);
   await vi.advanceTimersByTimeAsync(60_000);
   expect(api.checkpointAttempt).toHaveBeenCalledTimes(count);
   expect(screen.getByRole("status")).toHaveTextContent("Result not confirmed");
