@@ -99,12 +99,14 @@ class SummaryUpdate:
     state: str
     reason: str | None = None
     diagnostic: str | None = None
+    review: dict[str, Any] | None = None
 
     def metadata(self, attempted_at: int) -> dict[str, Any]:
         return {
             "state": self.state,
             "reason": self.reason,
             **({"diagnostic": self.diagnostic} if self.diagnostic else {}),
+            **({"review": self.review} if self.review is not None else {}),
             "attempted_at": attempted_at,
             "revision_id": (
                 self.revision["id"] if self.revision and self.state != "failed" else None
@@ -112,7 +114,13 @@ class SummaryUpdate:
         }
 
     @classmethod
-    def failed(cls, reason: str | None, *, diagnostic: str | None = None) -> SummaryUpdate:
+    def failed(
+        cls,
+        reason: str | None,
+        *,
+        diagnostic: str | None = None,
+        review: dict[str, Any] | None = None,
+    ) -> SummaryUpdate:
         allowed = {
             "disabled",
             "no_provider",
@@ -126,13 +134,15 @@ class SummaryUpdate:
             "no_transcript",
             "update_failed",
         }
-        return cls(None, "failed", reason if reason in allowed else "update_failed", diagnostic)
+        return cls(
+            None, "failed", reason if reason in allowed else "update_failed", diagnostic, review
+        )
 
     @classmethod
     def from_revision(cls, value: dict[str, Any] | None, *, reused: bool = False) -> SummaryUpdate:
         if value is None:
             return cls.failed("source_changed")
-        validation = value.get("summary_validation", {})
+        validation = value.get("summary_validation")
         continuity = value.get("continuity", {})
         if continuity.get("verified") and (
             continuity.get("gaps")
@@ -140,9 +150,12 @@ class SummaryUpdate:
             or ("update_complete" not in continuity and continuity.get("remaining_records"))
         ):
             return cls(value, "partial", "summary_coverage_partial")
-        if validation.get("ready") is True:
+        review = value.get("summary_review") or progress.summary_review(validation)
+        if progress.summary_review(validation)["state"] == "accepted":
             return cls(value, "reused" if reused else "updated")
-        return cls(value, "failed", "summary_unverified")
+        return cls(
+            value, "failed", "summary_unverified", progress.review_diagnostic(review), review
+        )
 
 
 class ProgressCoordinator:
@@ -395,9 +408,9 @@ class ProgressCoordinator:
         if failure_reason := getattr(verdict_reply, "failure_reason", None):
             return SummaryUpdate.failed(failure_reason)
         verdicts = progress.parse_verdicts(verdict_reply.text)
-        validation = (verdicts or {}).get("summary_validation") or {}
+        review = progress.review_outcome(verdict_reply.text, verdicts)
         reasons = []
-        if validation.get("ready") is not True or validation.get("reason_codes") != []:
+        if review["state"] != "accepted":
             reasons.append("summary_unverified")
         if too_large and maintained is None:
             reasons.append("required_context_too_large")
@@ -435,7 +448,13 @@ class ProgressCoordinator:
             # Failures do not advance coverage or replace the last good revision.
             if reasons:
                 return SummaryUpdate.failed(
-                    "source_changed" if "source_changed" in reasons else "summary_unverified"
+                    "source_changed" if "source_changed" in reasons else "summary_unverified",
+                    diagnostic=(
+                        progress.review_diagnostic(review)
+                        if "summary_unverified" in reasons
+                        else None
+                    ),
+                    review=review,
                 )
             continuity = memory_continuity.result(maintained, context, captured["memory_gaps"])
             retained = await memory_continuity.retain(key, captured, maintained)
@@ -459,6 +478,7 @@ class ProgressCoordinator:
             **({"continuity": continuity, **retained} if continuity is not None else {}),
             **({"memory_baseline_ref": baseline} if baseline else {}),
             "summary_validation": {"ready": not reasons, "reason_codes": reasons},
+            "summary_review": review,
         }
         result = self.persist(
             key,
