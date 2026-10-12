@@ -10,7 +10,7 @@ offering launch. The owner approved the recovery badge and Messages notice on
 October 11; both are implemented and verified with stored fixture data at desktop
 and narrow widths in light/dark themes. Native HTTP launch now succeeds through
 the real dashboard endpoint alongside a sibling session, with Messages visible.
-Remote acceptance and final release checks remain.
+Isolated Linux acceptance passed; final integration and release checks remain.
 
 ## Current validation
 
@@ -23,9 +23,17 @@ Remote acceptance and final release checks remain.
   475 frontend tests and 123 browser tests. The pinned native Mac
   `--prepare --supervisor --http` acceptance also passed. Its committed archive
   imports and compiles. Log: `/tmp/duckterm-opencode-b2a667b-gate.log`.
-- The isolated remote QA bundle is prepared locally at
-  `/tmp/duckterm-opencode-qa-b2a667b.tar.gz`. Upload approval is pending;
-  remote acceptance and production release have not occurred.
+- Owner-approved `b2a667b` remote QA passed on duckterm-dev with pinned Linux
+  OpenCode: preparation, same-process recovery, prompt non-replay, model choices,
+  sibling preservation and real HTTP launch/Messages. Existing agent processes
+  were preserved; no fixture process remained. The remote bundle was removed.
+- Release-dev reported three orphaned Mac fixture processes from earlier runs.
+  Their exact fixture identity was verified, they were terminated, and `c490ec9`
+  fixes native Stop by signalling the owned pane before removing its terminal.
+  Fourteen focused checks and real Mac native supervisor/HTTP acceptance pass;
+  the probe now asserts process exit. Independent QA cleared the boundary with
+  24 checks. The full gate on `c490ec9` passed: Python/static checks, 475 frontend
+  tests and 123 browser tests. Log: `/tmp/duckterm-opencode-stop-gate.log`.
 
 - The pinned native `--prepare --supervisor` probe passes on the candidate:
   early terminal input is blocked; the first completed assistant message uses
@@ -49,8 +57,8 @@ Remote acceptance and final release checks remain.
 The probes use synthetic providers and fake keys, with no paid inference or
 inherited provider credentials. All created DuckTerm cards are `test:true` and
 are deleted. Native fixture conversations, owned tmux servers and isolated homes
-are removed. No production installation, remote upload or public release has
-occurred.
+are removed. Only the approved isolated QA bundle was uploaded. No production
+installation or public release has occurred.
 
 ## Launch and recovery
 
