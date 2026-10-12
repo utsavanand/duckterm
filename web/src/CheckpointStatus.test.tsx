@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CheckpointRecord } from "./api";
 import { CheckpointDetails } from "./CheckpointStatus";
-import { checkpointNotice, checkpointStatus } from "./checkpointState";
+import { checkpointAttemptFailed, checkpointNotice, checkpointStatus } from "./checkpointState";
 
 // Owner-reported saved metadata, with identities replaced for this fixture.
 export function checkpoint(prepared = false): CheckpointRecord {
@@ -51,7 +51,7 @@ it("preserves the prior summary age when an update failed and uses a fixed error
   expect(checkpointNotice(cp)).toBe("Summary update failed · The summary provider timed out");
   expect(checkpointNotice({ ...cp, summary_update: { state: "failed", reason: "secret /private/path" } })).not.toContain("private");
 });
-it.each([["updated", "Summary updated"], ["reused", "Summary already current"], ["partial", "Partial summary"]] as const)("labels %s independently of stop permission", (state, label) => {
+it.each([["updated", "Summary updated"], ["reused", "Summary already current"], ["partial", "Checkpoint failed · summary incomplete"]] as const)("labels %s independently of stop permission", (state, label) => {
   const cp = checkpoint(); cp.summary_update = { state }; cp.summary = "Summary text";
   render(<CheckpointDetails checkpoint={cp} open />);
   expect(screen.getByText(label)).toBeVisible();
@@ -80,4 +80,21 @@ it("does not turn a missing saved revision into a successful update or an invent
   expect(screen.queryByText("No summary generated")).toBeNull();
   expect(screen.queryByText("Summary updated")).toBeNull();
   expect(checkpointStatus(cp).ready).toBe(false);
+});
+
+it("keeps a reviewed but incomplete revision inspectable without treating it as successful", () => {
+  const cp = checkpoint();
+  cp.summary = "Reviewed draft with incomplete source coverage";
+  cp.summary_state = "ready";
+  cp.record.summary_ref = "partial-reviewed-revision";
+  cp.summary_update = { state: "partial", reason: "summary_coverage_partial" };
+  cp.reason_codes = ["summary_coverage_partial"];
+  cp.handoff_eligible = true;
+  render(<CheckpointDetails checkpoint={cp} open />);
+  expect(screen.getByText(cp.summary)).toBeVisible();
+  expect(screen.getByText(/incomplete and not ready for handoff/)).toBeVisible();
+  expect(checkpointStatus(cp).ready).toBe(false);
+  expect(checkpointAttemptFailed(cp)).toBe(true);
+  expect(checkpointNotice(cp)).toBe("Checkpoint failed · summary incomplete");
+  expect(screen.queryByText(/provider timed out|did not pass validation/)).toBeNull();
 });

@@ -17,6 +17,9 @@ export function checkpointCanRetry(cp: Partial<CheckpointRecord>) {
   return !checkpointHandoff(cp) && cp.saved !== false
     && (cp.summary_update?.state === "failed" || checkpointHasNoSummary(cp));
 }
+export function checkpointAttemptFailed(cp: Partial<CheckpointRecord>) {
+  return cp.saved === false || cp.summary_update?.state === "failed" || cp.summary_update?.state === "partial";
+}
 // These describe the captured summary, never permission to stop a running agent.
 export function checkpointStatus(cp: Partial<CheckpointRecord>) {
   const ready = cp.saved === true && cp.format === "checkpoint_marker_v2" && cp.summary_state === "ready" && cp.handoff_eligible === true
@@ -29,7 +32,7 @@ export function checkpointStatus(cp: Partial<CheckpointRecord>) {
   else if (checkpointSummaryMissing(cp)) label = "Summary unavailable";
   else if (checkpointHandoff(cp)) label = "Brief assembled";
   else if (cp.summary_update?.state === "failed") label = "Summary update failed";
-  else if (cp.summary_update?.state === "partial") label = "Partial summary";
+  else if (cp.summary_update?.state === "partial") label = "Checkpoint failed · summary incomplete";
   else if (cp.summary_update?.state === "updated") label = "Summary updated";
   else if (cp.summary_update?.state === "reused") label = "Summary already current";
   else if (checkpointHasNoSummary(cp)) label = "No summary generated";

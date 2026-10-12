@@ -30,7 +30,7 @@ it("retains pending work across unmount, isolates equal keys on different hosts,
   expect(screen.getByLabelText("Elapsed time")).toHaveTextContent("5s");
   await act(async () => { finish(result("partial")); await work; });
   expect(screen.queryByRole("progressbar")).toBeNull();
-  expect(screen.getByRole("status")).toHaveTextContent("Partial summary");
+  expect(screen.getByRole("status")).toHaveTextContent("Checkpoint failed · summary incomplete");
   expect(screen.getByText(/Some history remains unsummarized/)).toBeVisible();
   expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(local, "manual");
 });
@@ -38,10 +38,11 @@ it.each(["updated", "reused", "partial", "failed"] as const)("renders the return
   vi.mocked(api.checkpoint).mockResolvedValue(result(state));
   render(<CheckpointProgress sessionKey={state} />);
   await act(async () => { await requestCheckpoint(state); });
-  const expected = { updated: "Summary updated", reused: "Summary already current", partial: "Partial summary", failed: "Summary update failed" };
+  const expected = { updated: "Summary updated", reused: "Summary already current", partial: "Checkpoint failed · summary incomplete", failed: "Summary update failed" };
   expect(screen.getByRole("status")).toHaveTextContent(expected[state]);
   expect(screen.queryByRole("progressbar")).toBeNull();
   expect(screen.queryByText(/100%|All history summarized/)).toBeNull();
+  if (state === "failed" || state === "partial") expect(screen.getByRole("region")).toHaveClass("rd-checkpoint-progress-failure");
   if (state === "failed") expect(screen.getByText(/Any previously saved summary is unchanged/)).toBeVisible();
 });
 it("keeps a remote failure uncertain and does not fall back locally or alter the saved summary", async () => {

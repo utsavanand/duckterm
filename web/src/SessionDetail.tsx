@@ -1,5 +1,5 @@
 import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
-import { checkpointNotice } from "./checkpointState";
+import { checkpointAttemptFailed, checkpointNotice } from "./checkpointState";
 import { CheckpointDetails } from "./CheckpointStatus";
 import { routedFetch as fetch } from "./hostTransport";
 import { useCallback, useEffect, useState } from "react";
@@ -63,7 +63,7 @@ export function SessionDetail({
     // takes a few seconds — show a loader so the click doesn't feel dead.
     try {
       const cp = await requestCheckpoint(session.key);
-      toast(checkpointNotice(cp), cp.summary_update?.state === "failed" || cp.saved === false ? "err" : "ok");
+      toast(checkpointNotice(cp), checkpointAttemptFailed(cp) ? "err" : "ok");
       loadCheckpoints();
     } catch {
       toast("Checkpoint result not confirmed. Check the latest checkpoint before trying again.", "err");

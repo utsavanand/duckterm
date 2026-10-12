@@ -13,7 +13,7 @@ export function CheckpointFacts({ checkpoint: cp, compact = false }: { checkpoin
   const summary = checkpointSummaryMissing(cp) ? "The referenced summary is unavailable" : handoff ? handoff.summary_revision_id ? "Saved revision included" : "No saved summary used"
     : update === "failed" ? "No new validated summary" : missing ? "Not generated"
     : update === "updated" ? "New revision saved" : update === "reused" ? "Existing revision reused"
-    : update === "partial" ? "New revision saved; some history remains unsummarized" : state.label;
+    : update === "partial" ? "Incomplete summary saved for inspection" : state.label;
   return <>
     <dl className="rd-checkpoint-facts">
       {compact && <><dt>Attempt</dt><dd>{checkpointDate(cp.created_at)}</dd></>}
@@ -33,7 +33,7 @@ export function CheckpointFacts({ checkpoint: cp, compact = false }: { checkpoin
         {handoff ? <><p>The brief uses saved work and recent original records. No new summary was generated during preparation.</p><p>This is a preparation record. Restart checks current work before switching; this entry does not mean a switch occurred.</p></>
           : update === "failed" ? <p>No new validated summary was saved. Recorded history and any previous validated summary are unchanged.</p>
           : missing ? <p>History was already being recorded automatically. This attempt did not produce a summary.</p>
-          : update === "partial" ? <p>This update processed one batch. It does not claim to summarize the whole conversation.</p>
+          : update === "partial" ? <p>Some history remains unsummarized. This checkpoint is incomplete and not ready for handoff. The saved text is available for inspection.</p>
           : update === "reused" ? <p>No relevant source changed. The checkpoint points to the existing summary without another model call.</p>
           : update === "updated" ? <p>This checkpoint points to the updated summary revision; it does not create a second copy.</p> : null}
         {checkpointReasons(cp).map(reason => <p key={reason}>{reason}</p>)}
