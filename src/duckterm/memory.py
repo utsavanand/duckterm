@@ -385,17 +385,21 @@ class Memory:
 
                 matches = await asyncio.to_thread(search)
                 identities = {(m["source_id"], m["version"], m["record_id"]) for m in matches}
-                roles = {
-                    (s["id"], s["version"], r["id"]): r["role"]
+                records = {
+                    (s["id"], s["version"], r["id"]): r
                     for s in sources
                     for r in s["records"]
                     if (s["id"], s["version"], r["id"]) in identities
                 }
                 for found in matches:
                     found["source"] = found["source_id"] + ":" + found["version"]
-                    found["role"] = roles[
+                    record = records[
                         (found["source_id"], found["version"], found["record_id"])
                     ]
+                    found["role"] = record["role"]
+                    if record["role"] == "derived_claim":
+                        for name in ("kind", "state", "preview", "preview_truncated"):
+                            found[name] = record[name]
                 result["results"] = matches
             elif action == "related":
                 handle = query.get("source", [""])[0]

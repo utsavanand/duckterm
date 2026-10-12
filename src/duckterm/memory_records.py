@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from duckterm import memory_sources, memory_summary, memory_versions
+from duckterm import memory_contract, memory_sources, memory_summary, memory_versions
 from duckterm.core.session_api import APIError
 from duckterm.persistence.saved_state import REVISION_BUCKET, fingerprint
 
@@ -98,9 +98,25 @@ def project(catalog: dict[str, Any], originals: list[dict[str, Any]]) -> list[di
     identities = {s["id"] for s in originals}
     result = []
     key = catalog["session"]
+    revisions = {row["id"]: row for row in catalog["canonical"]["revisions"]}
     for order, revision in enumerate(catalog["canonical"]["revisions"]):
-        continuity = revision.get("continuity", {})
-        context = continuity.get("context", {})
+        continuity = revision.get("continuity") or revision.get("memory") or {}
+        resolution_error = None
+        coverage = None
+        try:
+            context, origins = memory_contract.resolve_revision(revision, revisions.get)
+        except ValueError as exc:
+            context, origins = {}, {}
+            resolution_error = str(exc)
+            coverage = (
+                exc.coverage
+                if isinstance(exc, memory_contract.BudgetExceeded)
+                else {
+                    "declared": True,
+                    "unknown": False,
+                    "omitted": [{"reason": "unreadable_source", "count": 1, "sample_refs": []}],
+                }
+            )
         records = [
             {
                 "id": "0",
@@ -111,6 +127,8 @@ def project(catalog: dict[str, Any], originals: list[dict[str, Any]]) -> list[di
                         "created_at": revision["created_at"],
                         "provenance": "derived_summary",
                         "prior_revision": revision.get("prior_revision"),
+                        "retrieval_error": resolution_error,
+                        "retrieval_coverage": coverage,
                         "coverage": {
                             k: continuity.get(k)
                             for k in (
@@ -133,10 +151,16 @@ def project(catalog: dict[str, Any], originals: list[dict[str, Any]]) -> list[di
                     {
                         "id": identity,
                         "role": "derived_claim",
+                        "kind": memory_contract.claim_kind(claim),
+                        "state": memory_contract.claim_state(claim),
+                        "preview": claim["text"][:240],
+                        "preview_truncated": len(claim["text"]) > 240,
                         "text": json.dumps(
                             {
-                                "text": claim["text"],
-                                "refs": claim["refs"],
+                                **claim,
+                                "kind": memory_contract.claim_kind(claim),
+                                "state": memory_contract.claim_state(claim),
+                                "origin_revision": origins.get(claim.get("id"), revision["id"]),
                                 "provenance": "derived_summary",
                             },
                             ensure_ascii=False,
@@ -165,7 +189,8 @@ def project(catalog: dict[str, Any], originals: list[dict[str, Any]]) -> list[di
             if evidence and all(ref in available for ref in evidence)
         }
         summary_allowed = bool(
-            continuity.get("verified")
+            resolution_error is None
+            and continuity.get("verified")
             and set(continuity.get("processed", {})) <= identities
             and len(visible) == len(refs)
         )

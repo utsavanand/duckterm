@@ -1,3 +1,6 @@
+## Folded retrieval must use the canonical resolver
+Folded claims contain revision pointers, not inline text/refs. Retrieval must resolve only within the authorized catalog, withhold unresolved views, and test actual search-to-read typed claims. Keep derived records excluded from writer originals.
+
 # Retro — lessons from real breakage
 
 ## 2026-10-11 — Independent summaries need independent boundaries and compatible readers
