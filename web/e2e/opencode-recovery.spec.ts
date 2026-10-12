@@ -28,7 +28,8 @@ try:
   h.set_state(key,'unknown',now=int(time.time()*1000))
  else:
   control=h.restart_control(key)
-  control['opencode_observation']=dict(state='idle',observed_at=int(time.time()*1000),revision=2)
+  source=Server._message_source(SimpleNamespace(history=h),key)
+  control['opencode_observation']=dict(state='idle',observed_at=int(time.time()*1000),revision=2,content_hash=native_history.read(source)['content_hash'])
   h.set_restart_control(key,control)
   h.set_state(key,'idle',now=int(time.time()*1000))
 finally:

@@ -2,7 +2,7 @@
 
 The owner resumed implementation on October 11. The isolated branch is
 `feature/opencode-harness` in `/tmp/duckterm-opencode-harness`. The implementation
-candidate is `e67d3e3`, including main through `b7356fa`.
+includes main through `b7356fa`; the approved recovery UI is implemented.
 
 **Candidate activated, not released.** OpenCode is registered in this branch.
 New Session checks the selected computer for the pinned supported version before
@@ -13,6 +13,11 @@ the real dashboard endpoint alongside a sibling session, with Messages visible.
 Remote acceptance and final release checks remain.
 
 ## Current validation
+
+- QA found a Messages freshness race after awaited reads. The correction binds
+  the last-check time to a matching content fingerprint, while preserving stable
+  snapshot files when polling finds no changes. Fifteen focused history, race
+  and process-ownership tests pass. Final integrated checks are being repeated.
 
 - The pinned native `--prepare --supervisor` probe passes on the candidate:
   early terminal input is blocked; the first completed assistant message uses

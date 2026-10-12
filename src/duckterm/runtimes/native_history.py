@@ -44,26 +44,34 @@ def snapshot_path(directory: Path, key: str, generation: str) -> Path:
     )
 
 
-def encode(
+def _encoded(
     source: NativeSnapshot, messages: list[dict[str, Any]], observed_at: int, revision: int
-) -> str:
+) -> tuple[str, str]:
     rows = []
     for message in messages:
         message = dict(message)
         raw = json.dumps([source.scope(), message], sort_keys=True, ensure_ascii=True).encode()
         message["message_key"] = hashlib.sha256(raw).hexdigest()
         rows.append(message)
+    content_hash = hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
     result = json.dumps(
         {
             "scope": source.scope(),
             "messages": rows,
             "observed_at": observed_at,
             "revision": revision,
+            "content_hash": content_hash,
         }
     )
     if len(result.encode()) > MAX_HISTORY:
         raise OpenCodeError("Native history exceeds the snapshot bound")
-    return result
+    return result, content_hash
+
+
+def encode(
+    source: NativeSnapshot, messages: list[dict[str, Any]], observed_at: int, revision: int
+) -> str:
+    return _encoded(source, messages, observed_at, revision)[0]
 
 
 def save(source: NativeSnapshot, text: str) -> bool:
@@ -104,7 +112,11 @@ def save(source: NativeSnapshot, text: str) -> bool:
             return False
         # A polling timestamp is not a new transcript revision. Keeping the
         # content file stable lets checkpoint readers fence actual changes.
-        if previous.get("messages") != candidate["messages"] or "revision" not in previous:
+        if (
+            previous.get("messages") != candidate["messages"]
+            or "revision" not in previous
+            or previous.get("content_hash") != candidate.get("content_hash")
+        ):
             private_write(target, text)
         private_write(watermark, str(candidate["revision"]))
         return True
@@ -116,6 +128,13 @@ def persist(
     source: NativeSnapshot, messages: list[dict[str, Any]], stamp: int, revision: int
 ) -> bool:
     return save(source, encode(source, messages, stamp, revision))
+
+
+def persist_observed(
+    source: NativeSnapshot, messages: list[dict[str, Any]], stamp: int, revision: int
+) -> tuple[bool, str]:
+    text, content_hash = _encoded(source, messages, stamp, revision)
+    return save(source, text), content_hash
 
 
 def read(source: NativeSnapshot) -> dict[str, Any]:
@@ -153,4 +172,5 @@ def read(source: NativeSnapshot) -> dict[str, Any]:
         "history_status": "cached",
         "observed_at": result["observed_at"],
         "revision": result["revision"],
+        "content_hash": result.get("content_hash"),
     }

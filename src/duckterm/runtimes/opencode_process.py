@@ -365,8 +365,8 @@ class OpenCodeProcess:
                 )
                 stamp = int(time.time() * 1000)
 
-                saved = await asyncio.to_thread(
-                    native_history.persist, source, records, stamp, revision
+                saved, content_hash = await asyncio.to_thread(
+                    native_history.persist_observed, source, records, stamp, revision
                 )
                 if not owns_process():
                     raise OpenCodeError("Native process exited during observation")
@@ -389,6 +389,7 @@ class OpenCodeProcess:
                         "observed_at": stamp,
                         "model": model,
                         "revision": revision,
+                        "content_hash": content_hash,
                     }
                     self.history.set_restart_control(self.key, control)
                 self._report_status(status)

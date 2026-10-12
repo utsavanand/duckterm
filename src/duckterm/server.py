@@ -1116,9 +1116,19 @@ class Server:
             payload = json.loads(response)
             row = self.history.session(session_key) or {}
             observation = self.history.restart_control(session_key).get("opencode_observation", {})
-            checked = observation.get("observed_at", payload.get("observed_at"))
+            same_content = isinstance(payload.get("content_hash"), str) and payload[
+                "content_hash"
+            ] == observation.get("content_hash")
+            if not isinstance(payload.get("content_hash"), str):
+                same_content = (
+                    type(payload.get("revision")) is int
+                    and payload["revision"] == observation.get("revision")
+                    and payload.get("observed_at") == observation.get("observed_at")
+                )
+            checked = observation.get("observed_at") if same_content else payload.get("observed_at")
             current = (
-                row.get("state") in ("busy", "idle", "waiting")
+                same_content
+                and row.get("state") in ("busy", "idle", "waiting")
                 and observation.get("state") in ("busy", "idle", "waiting")
                 and type(checked) is int
                 and 0 <= int(time.time() * 1000) - checked < 45_000

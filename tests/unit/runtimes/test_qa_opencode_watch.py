@@ -50,10 +50,10 @@ def test_dead_owned_process_cannot_publish_idle_after_worker_returns(
             if lost_during == "snapshot":
                 alive = False
             return [], "idle"
-        assert fn is module.native_history.persist
+        assert fn is module.native_history.persist_observed
         if lost_during == "persist":
             alive = False
-        return True
+        return True, "fixture-content-hash"
 
     async def pause(_):
         pass

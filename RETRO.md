@@ -1,5 +1,13 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Bind freshness to the displayed native content
+
+An awaited Messages read can finish after a newer observation. Comparing only
+session liveness labelled an older response with the newer check time. Match a
+content fingerprint before borrowing an observation timestamp; unchanged polling
+must still leave the snapshot file stable for checkpoint fences. Regression
+checks cover changed content, unchanged content and legacy revision matching.
+
 ## 2026-10-11 — Exercise native launch through the dashboard sink
 
 A supervisor-only fixture persisted directly to HistoryStore and missed the
