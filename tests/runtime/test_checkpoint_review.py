@@ -137,3 +137,16 @@ def test_malformed_envelope_keeps_valid_rejection_codes_without_accepting_summar
         "state": "malformed_reply",
         "reason_codes": ["contradiction"],
     }
+
+
+def test_accepted_review_with_failed_source_fence_is_not_called_a_reviewer_rejection():
+    result = SummaryUpdate.from_revision(
+        {
+            "id": "test",
+            "summary_review": {"state": "accepted", "reason_codes": []},
+            "summary_validation": {"ready": False, "reason_codes": ["legacy_baseline_unreviewed"]},
+        }
+    )
+    assert result.state == "failed"
+    assert result.diagnostic == "summary_not_ready:legacy_baseline_unreviewed"
+    assert result.review["state"] == "accepted"
