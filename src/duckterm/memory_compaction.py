@@ -49,6 +49,14 @@ def prepare(children: list[dict[str, Any]]) -> dict[str, Any]:
         or any(type(c["tier"]) is not int or c["tier"] != tier for c in children)
     ):
         raise ValueError("mixed_tiers")
+    spans = {c.get("span", "cumulative") for c in children}
+    if len(spans) != 1 or spans - {"cumulative", "incremental"}:
+        raise ValueError("mixed_spans")
+    span = next(iter(spans))
+    if span == "cumulative":
+        # Legacy cumulative blocks require separate coverage review; ten arbitrary
+        # cumulative revisions cannot be claimed to form disjoint history spans.
+        raise ValueError("legacy_coverage")
     fields = memory_summary.FIELDS
     context: dict[str, Any] = {name: [] for name in fields}
     seen: dict[str, str] = {}
@@ -82,6 +90,7 @@ def prepare(children: list[dict[str, Any]]) -> dict[str, Any]:
         "children": [c["id"] for c in children],
         "input_hash": fingerprint(children),
         "tier": tier + 1,
+        "span": span,
         "protected": context,
         "payload": encoded,
     }
@@ -150,6 +159,7 @@ async def compact(
         "children": plan["children"],
         "input_hash": plan["input_hash"],
         "tier": plan["tier"],
+        "span": plan["span"],
         "context": {"overview": draft["overview"], **plan["protected"]},
         "context_version": 2,
         "coverage": {"declared": True, "unknown": False, "omitted": []},

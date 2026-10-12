@@ -14,6 +14,7 @@ def node(identity, tier=0, **changes):
     return {
         "id": str(identity),
         "tier": tier,
+        "span": "incremental",
         "context_version": 2,
         "coverage": {"declared": True, "unknown": False, "omitted": []},
         "context": {
@@ -143,6 +144,17 @@ def test_legacy_context_cannot_be_relabelled_as_a_complete_span():
     calls, generate, validate = providers()
     result = asyncio.run(compaction.compact(children, generate, validate))
     assert result["reason"] == "unclassified_context" and calls == []
+
+
+def test_mixed_or_legacy_spans_do_not_silently_acquire_incremental_coverage():
+    for all_legacy in (False, True):
+        children = [node(n) for n in range(10)]
+        for child in children if all_legacy else children[:1]:
+            child.pop("span")
+        calls, generate, validate = providers()
+        result = asyncio.run(compaction.compact(children, generate, validate))
+        assert result["reason"] == ("legacy_coverage" if all_legacy else "mixed_spans")
+        assert calls == []
 
 
 def test_compaction_cannot_choose_between_conflicting_claim_lifecycle_states():

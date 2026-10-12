@@ -7,6 +7,7 @@ authorization belong to the existing writer, not this structural reader.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
@@ -27,6 +28,80 @@ OMISSION_REASONS = {
     "budget_exhausted",
     "unreadable_source",
 }
+
+
+def resolve_revision(
+    revision: dict[str, Any],
+    lookup: Callable[[str], dict[str, Any] | None],
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Resolve claim pointers as a read view; lookup MUST enforce session/scope access.
+
+    Returns resolved context and each v2 claim's originating revision. No original
+    or referenced revision is rewritten. Missing, cyclic or conflicting references
+    are failures rather than permission to return only the resolvable subset.
+    """
+    cache: dict[str, tuple[dict[str, Any], dict[str, str]]] = {}
+    visiting: set[str] = set()
+
+    def resolve(row: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+        identity = row.get("id")
+        if not isinstance(identity, str) or not identity:
+            raise ValueError("invalid_revision_identity")
+        if identity in visiting:
+            raise ValueError("claim_reference_cycle")
+        if identity in cache:
+            return cache[identity]
+        if len(visiting) >= 128:
+            raise ValueError("claim_reference_depth")
+        visiting.add(identity)
+        version = row.get("context_version", 1)
+        if type(version) is not int or version not in (1, 2):
+            raise ValueError("unsupported_context_version")
+        container = row.get("continuity") or row.get("memory") or {}
+        if not isinstance(container, dict):
+            raise ValueError("unsupported_context")
+        raw = container.get("context")
+        result: tuple[dict[str, Any], dict[str, str]]
+        if version == 1:
+            result = read_context(raw), {}
+        else:
+            if not isinstance(raw, dict) or set(raw) != {"overview", *FIELDS}:
+                raise ValueError("unsupported_context")
+            value = deepcopy(raw)
+            origins: dict[str, str] = {}
+            for field in FIELDS:
+                if not isinstance(value[field], list):
+                    raise ValueError("invalid_claims")
+                for index, item in enumerate(value[field]):
+                    if not isinstance(item, dict):
+                        raise ValueError("invalid_claim")
+                    origin = identity
+                    if "ref_revision" in item:
+                        if (
+                            set(item) != {"id", "ref_revision"}
+                            or not isinstance(item["ref_revision"], str)
+                            or not item["ref_revision"]
+                        ):
+                            raise ValueError("invalid_claim_reference")
+                        target = lookup(item["ref_revision"])
+                        if not target or target.get("id") != item["ref_revision"]:
+                            raise ValueError("unreadable_claim_reference")
+                        context, locations = resolve(target)
+                        matches = [c for c in context[field] if c.get("id") == item.get("id")]
+                        if len(matches) != 1:
+                            raise ValueError("unreadable_claim_reference")
+                        item = value[field][index] = deepcopy(matches[0])
+                        origin = locations[item["id"]]
+                    if isinstance(item.get("id"), str):
+                        previous = origins.setdefault(item["id"], origin)
+                        if previous != origin:
+                            raise ValueError("conflicting_claim_origin")
+            result = read_context(value, version), origins
+        visiting.remove(identity)
+        cache[identity] = result
+        return result
+
+    return resolve(revision)
 
 
 def claim_id(field: str, text: str, refs: list[str]) -> str:

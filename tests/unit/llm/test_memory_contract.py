@@ -119,3 +119,56 @@ def test_absent_unknown_and_declared_coverage_remain_distinct():
 def test_malformed_omissions_are_not_treated_as_complete(omission):
     with pytest.raises(ValueError, match="invalid_coverage"):
         contract.read_coverage({"declared": True, "unknown": False, "omitted": [omission]})
+
+
+def revision(identity, value):
+    return {"id": identity, "context_version": 2, "continuity": {"context": value}}
+
+
+def referenced(value, target):
+    return {
+        "overview": value["overview"],
+        **{name: [{"id": c["id"], "ref_revision": target} for c in value[name]] for name in FIELDS},
+    }
+
+
+def test_reference_assembly_reads_original_claims_without_storing_another_copy():
+    value = version_two()
+    rows = {
+        "first": revision("first", value),
+        "parent": revision("parent", referenced(value, "first")),
+        "grandparent": revision("grandparent", referenced(value, "parent")),
+    }
+    original = deepcopy(rows)
+    read, origins = contract.resolve_revision(rows["grandparent"], rows.get)
+    assert read == value
+    assert set(origins.values()) == {"first"}
+    assert rows == original
+    read["goals"][0]["text"] = "Changed view"
+    assert rows == original
+
+
+def test_missing_or_unauthorized_referenced_revision_never_returns_partial_context():
+    value = version_two()
+    with pytest.raises(ValueError, match="unreadable_claim_reference"):
+        contract.resolve_revision(
+            revision("parent", referenced(value, "outside-scope")), lambda _: None
+        )
+
+
+def test_reference_cannot_change_claim_kind_or_point_to_a_different_identity():
+    value = version_two()
+    parent = revision("parent", referenced(value, "first"))
+    parent["continuity"]["context"]["goals"][0]["id"] = value["decisions"][0]["id"]
+    with pytest.raises(ValueError, match="unreadable_claim_reference"):
+        contract.resolve_revision(parent, {"first": revision("first", value)}.get)
+
+
+def test_reference_cycles_fail_explicitly_without_dropping_claims():
+    value = version_two()
+    rows = {
+        "first": revision("first", referenced(value, "second")),
+        "second": revision("second", referenced(value, "first")),
+    }
+    with pytest.raises(ValueError, match="claim_reference_cycle"):
+        contract.resolve_revision(rows["first"], rows.get)
