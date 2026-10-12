@@ -97,3 +97,49 @@ def test_explicitly_retired_history_does_not_consume_open_handoff_budget(monkeyp
         result["context"]["constraints"][0] == values[-1]["continuity"]["context"]["constraints"][0]
     )
     assert values == before
+
+
+def test_active_handoff_uses_final_budget_instead_of_single_revision_budget():
+    import json
+
+    from duckterm import memory_budget, memory_handoff
+
+    values = rows(100)
+    result = memory_assembly.assemble(values, active_only=True)
+    context = result["context"]
+    assert len(json.dumps(context).encode()) > memory_summary.MAX_SUMMARY_BYTES
+    metadata = {"coverage": result["coverage"]}
+    text = memory_budget.render(
+        introduction="Continue the same session",
+        launch={},
+        required="{}",
+        protected={field: context[field] for field in memory_summary.FIELDS},
+        narratives=result["narratives"],
+        metadata=metadata,
+        source_map=[],
+        tools=memory_handoff.TOOLS,
+    )
+    assert len(text.encode()) <= memory_budget.MAX_BRIEF_BYTES
+    for row in values:
+        assert json.dumps(row["continuity"]["context"]["constraints"][0]) in text
+    assert memory_handoff.TOOLS in text
+
+
+def test_large_required_notes_do_not_discard_recent_narrative_when_room_reopens():
+    import json
+
+    from duckterm import memory_budget, memory_handoff
+
+    metadata = {}
+    text = memory_budget.render(
+        introduction="Continue the same session",
+        launch={},
+        required=json.dumps({"name": "product", "notes": "x" * 40000}),
+        protected={},
+        narratives=[{"revision": "last", "text": "The latest useful work."}],
+        metadata=metadata,
+        source_map=[],
+        tools=memory_handoff.TOOLS,
+    )
+    assert "The latest useful work." in text
+    assert metadata["handoff_omissions"] == {"current_work_fields": ["notes"]}

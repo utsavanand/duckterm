@@ -83,7 +83,12 @@ def assemble(
         if sources is not None
         else None
     )
-    context = memory_contract.read_context(context, 2, valid_refs=refs)
+    # Each saved revision was size-checked by resolve_revision above. The
+    # active handoff union has its own final budget, including tools/coverage;
+    # applying the per-revision cap here would refuse before optional omissions.
+    context = memory_contract.read_context(
+        context, 2, valid_refs=refs, check_budget=not active_only
+    )
     return {
         "context": context,
         "context_version": 2,
