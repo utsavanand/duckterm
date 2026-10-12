@@ -1,7 +1,8 @@
 """Owned native process setup and authenticated TUI observations.
 
 All generated configuration is private to this DuckTerm launch. User config
-and provider credentials are neither rewritten nor copied. Native selection and lifecycle observations remain bound to the owned process.
+and provider credentials are neither rewritten nor copied. Native selection
+and lifecycle observations remain bound to the owned process.
 """
 
 from __future__ import annotations
