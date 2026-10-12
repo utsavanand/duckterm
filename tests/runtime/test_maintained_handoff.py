@@ -101,7 +101,9 @@ def test_prepare_reuses_verified_revision_and_refuses_rewritten_evidence(prepara
         ready = await fixtures.prepare(server)
         assert len(calls) == 2  # Opening the switch never generates another revision.
         assert ready["proof"]["revision_id"] == revision["id"]
-        assert ready["coverage"]["handoff"]["summary_state"] == "current"
+        # Reference-only originals are still not summarized; keep that coverage honest.
+        assert ready["coverage"]["handoff"]["summary_state"] == "partial"
+        assert revision["continuity"]["summary_input"]["remaining_eligible_records"] == 0
         assert ready["coverage"]["covered_source_count"] > 0
         fixtures.transcript(tmp, "agent-claude", "Owner replaced the prior instructions")
         next_ready = await fixtures.prepare(server, "new-dialog")

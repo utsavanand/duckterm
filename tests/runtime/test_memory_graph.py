@@ -383,14 +383,38 @@ def test_support_and_supersession_keep_claim_versions_and_never_promote_authorit
     assert any(r["id"] == saved["relation"]["id"] for r in related(server, body["to"])["relations"])
 
 
-def test_summary_cited_artifact_version_is_readable_then_removed_claims_leave_index(
+def test_legacy_summary_cited_artifact_remains_readable_then_removed_claims_leave_index(
     memory_rig, monkeypatch
 ):
     server, headers, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Owner requires preserving archive")
     artifact = register(server, headers, tmp / "report.md", "Glacier ancient cited artifact")
     calls = provider(monkeypatch)
-    revision = asyncio.run(server.progress_coordinator.refresh("agent"))
+    # Simulate an existing revision from before artifacts became reference-only.
+    # New summaries must not consume artifact bodies; legacy citations still work.
+    from duckterm import memory_summary_input
+
+    project = memory_summary_input.records
+
+    def legacy_projection(inputs):
+        rows, stats = project(inputs)
+        originals = {s["id"]: s for s in inputs}
+        for row in rows:
+            if row["kind"] == "artifact":
+                row["text"] = next(
+                    r["text"]
+                    for r in originals[row["source"]]["records"]
+                    if r["id"] == row["record"]
+                )
+                row["reference_only"] = False
+                stats["eligible_records"] += 1
+                stats["reference_only_records"] -= 1
+                stats["eligible_text_bytes"] += len(row["text"].encode())
+        return rows, stats
+
+    with monkeypatch.context() as legacy:
+        legacy.setattr(memory_summary_input, "records", legacy_projection)
+        revision = asyncio.run(server.progress_coordinator.refresh("agent"))
     assert len(calls) == 2
     catalog = sources(server)
     summary = next(s for s in catalog if s.get("revision_id") == revision["id"])

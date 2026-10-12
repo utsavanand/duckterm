@@ -57,7 +57,7 @@ def test_new_revision_processes_only_new_records_and_checkpoint_reuses(memory_ri
 
     async def run():
         first = await server.progress_coordinator.refresh("agent")
-        assert first["continuity"]["remaining_records"] == 0
+        assert first["continuity"]["summary_input"]["remaining_eligible_records"] == 0
         assert first["memory_sources"] and first["retained_sources"]
         again = await server.progress_coordinator.refresh("agent")
         assert again["id"] == first["id"] and len(calls) == 2
@@ -225,7 +225,7 @@ def test_backfill_is_labeled_older_than_prior_summary_and_new_append(memory_rig,
 
     async def run():
         first = await server.progress_coordinator.refresh("agent")
-        assert first["continuity"]["remaining_records"] == 1
+        assert first["continuity"]["summary_input"]["remaining_eligible_records"] == 1
         append(path, "New owner message after the first summary")
         await server.progress_coordinator.refresh("agent")
         data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
@@ -350,7 +350,10 @@ def test_checkpoint_with_large_task_and_mail_inputs(memory_rig, monkeypatch, tas
 
     async def run():
         captured = await server.progress_coordinator.capture("agent")
-        assert len(captured["required"]) > 12000
+        assert len(captured["required"].encode()) < 6000
+        pointers = json.loads(captured["required"])
+        assert pointers["work_references"]["assigned_open_tasks"] == task_count
+        assert pointers["work_references"]["incoming_messages"] == 1
         cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
         assert cp["summary_update"]["state"] in {"updated", "partial"}
         revision = server.digests.revision("agent", cp["record"]["summary_ref"])
@@ -361,14 +364,14 @@ def test_checkpoint_with_large_task_and_mail_inputs(memory_rig, monkeypatch, tas
             revision = server.digests.revision("agent", cp["record"]["summary_ref"])
         assert cp["summary_update"]["state"] == "updated"
         stats = revision["continuity"]["required_work"]["kinds"]
-        assert stats["task"]["available"] == task_count
-        assert stats["inbox"]["available"] == 1
+        assert stats["task"]["available"] == 0
+        assert stats["inbox"]["available"] == 0
         assert all(stat["pending"] == 0 for stat in stats.values())
         for prompt in calls[::2]:
             data = json.loads(prompt.split("MEMORY UPDATE:\n", 1)[1])
             assert len(json.dumps(data["records"]).encode()) < memory_continuity.MAX_UPDATE_BYTES
             if mail_size:
-                assert prompt.count("m" * mail_size) <= 1
+                assert "m" * mail_size not in prompt
         assert len(server.history.folder_tasks.list_tasks()) == task_count
         cached = server.history.session("agent")["progress"]
         server.history.set_meta("agent", notes="A new owner note")
@@ -384,7 +387,7 @@ def test_checkpoint_with_large_task_and_mail_inputs(memory_rig, monkeypatch, tas
     asyncio.run(run())
 
 
-def test_new_oversized_mail_cannot_reuse_a_previously_ready_revision(memory_rig, monkeypatch):
+def test_new_oversized_mail_refreshes_boundary_without_summarizing_body(memory_rig, monkeypatch):
     from test_session_api import call
 
     server, _, peer, tmp = memory_rig
@@ -406,10 +409,10 @@ def test_new_oversized_mail_cannot_reuse_a_previously_ready_revision(memory_rig,
             },
         )
         second = await server.progress_coordinator.refresh_result("agent")
-        assert second.state == "partial"
+        assert second.state == "updated"
         assert second.revision["id"] != first.revision["id"]
-        assert second.revision["continuity"]["pending_updates"]
-        assert second.revision["continuity"]["gaps"]
-        assert not second.revision["summary_validation"]["ready"]
+        assert not second.revision["continuity"]["pending_updates"]
+        assert not second.revision["continuity"]["gaps"]
+        assert second.revision["continuity"]["summary_input"]["reference_only_records"] >= 2
 
     asyncio.run(run())
