@@ -173,7 +173,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
 
 
 provider = None
-if any(flag in sys.argv[2:] for flag in ("--models", "--prepare", "--supervisor")):
+if any(flag in sys.argv[2:] for flag in ("--models", "--prepare", "--supervisor", "--http")):
     provider = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     threading.Thread(target=provider.serve_forever, daemon=True).start()
     env["OPENCODE_CONFIG_CONTENT"] = json.dumps(
@@ -326,7 +326,7 @@ def verify_preparation(client):
 
 
 def verify_supervisor():
-    """Exercise the actual owned terminal and early-input gate, no registry activation."""
+    """Exercise the registered adapter, owned terminal and early-input gate."""
     overrides = {
         "DUCKTERM_HOME": str(root / "duckterm"),
         "DUCKTERM_TMUX_SOCKET": name + "-supervisor",
@@ -342,10 +342,7 @@ def verify_supervisor():
         nonlocal owner
         from duckterm.harnesses import REGISTRY
 
-        # Registry injection is confined to this disposable QA process; the
-        # product registry deliberately stays unchanged in source.
-        previous_runtime = REGISTRY.get("opencode")
-        REGISTRY["opencode"] = OpenCodeRuntime
+        assert REGISTRY.get("opencode") is OpenCodeRuntime
         await owner.launch(
             runtime=GenericRuntime("/bin/cat"),
             cwd=str(root / "project"),
@@ -482,10 +479,6 @@ def verify_supervisor():
                 native.append(control["session_id"])
             await owner.stop(key)
             await owner.stop("native-sibling-fixture")
-            if previous_runtime is None:
-                REGISTRY.pop("opencode", None)
-            else:
-                REGISTRY["opencode"] = previous_runtime
 
     try:
         return asyncio.run(run())
@@ -562,6 +555,11 @@ try:
         verify_models(client)
     preparation = verify_preparation(client) if "--prepare" in sys.argv[2:] else None
     supervisor = verify_supervisor() if "--supervisor" in sys.argv[2:] else None
+    http_result = None
+    if "--http" in sys.argv[2:]:
+        from qa_opencode_http import verify
+
+        http_result = verify(root, binary, env, name + "-http", native)
     assert all(x["generation"] == env["DUCKTERM_HARNESS_GENERATION"] for x in observed)
     assert all(x["directory"] == str(root / "project") for x in observed)
     assert len({x["pid"] for x in observed}) == 1
@@ -575,6 +573,7 @@ try:
                 "fixture_models_passed": provider_calls,
                 "preparation": preparation,
                 "supervisor": supervisor,
+                "http": http_result,
                 "observed": [
                     {k: v for k, v in item.items() if k != "generation"} for item in observed
                 ],

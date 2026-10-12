@@ -4,12 +4,13 @@ The owner resumed implementation on October 11. The isolated branch is
 `feature/opencode-harness` in `/tmp/duckterm-opencode-harness`. The implementation
 candidate is `e67d3e3`, including main through `b7356fa`.
 
-**Not activated or released.** OpenCode remains outside the product runtime
-registry, so New Session reports launch unavailable. Backend preparation,
-recovery, native Messages, destination readiness and the previously approved
-New Session/model form are implemented. The additional recovery display still
-needs owner preview approval, followed by activation and complete launch
-acceptance locally and remotely.
+**Candidate activated, not released.** OpenCode is registered in this branch.
+New Session checks the selected computer for the pinned supported version before
+offering launch. The owner approved the recovery badge and Messages notice on
+October 11; both are implemented and verified with stored fixture data at desktop
+and narrow widths in light/dark themes. Native HTTP launch now succeeds through
+the real dashboard endpoint alongside a sibling session, with Messages visible.
+Remote acceptance and final release checks remain.
 
 ## Current validation
 
@@ -85,7 +86,7 @@ Requested model and observed assistant model remain separate.
 The proposed visible recovery treatment uses a “Status unavailable” badge and a
 notice above the last verified Messages. Preview:
 `/tmp/duckterm-opencode-status-preview.html`, artifact
-`becf866299cc43d9b77c4cd6e1683a46`. This additional display is not implemented yet.
+`becf866299cc43d9b77c4cd6e1683a46`. The approved display is implemented.
 
 ## UI and capability boundaries
 
@@ -132,9 +133,9 @@ Archive SHA-256:
 `8522b70f545184b3a8d97c5ca4f814093b2476d72aebfda8c48bcd072ec31d1b`.
 Source commit: `e9f8a210b9e2b1e13d375b84906069886eb3b767`.
 
-The native probe temporarily injects the adapter into its isolated process's
-registry. That is acceptance scaffolding, not product activation or proof of
-complete HTTP/UI/remote launch flow.
+The native probe uses the registered adapter. Add `--http` to exercise the real
+dashboard launch endpoint and native Messages in a separate isolated child
+server. No remote acceptance or production release is implied.
 
 Upstream references: [pinned release](https://github.com/anomalyco/opencode/releases/tag/v1.18.34),
 [TUI plugin contract](https://github.com/anomalyco/opencode/blob/v1.18.34/packages/opencode/specs/tui-plugins.md).

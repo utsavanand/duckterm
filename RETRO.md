@@ -1,5 +1,21 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Exercise native launch through the dashboard sink
+
+A supervisor-only fixture persisted directly to HistoryStore and missed the
+dashboard sink rebuilding an adapter from its saved command. OpenCode saved
+temporary port/directory arguments that its user-command parser rightly
+rejected, preventing HTTP launch. Persist the original adapter command while
+keeping temporary process arguments in preparation. Native acceptance now
+launches through the real authenticated HTTP endpoint and reads Messages.
+
+## 2026-10-11 — Unknown native state must remain unknown in the browser
+
+Mirror native lifecycle events in the browser and exclude unknown status from
+the idle grace timer. Keep cached Messages with an explicit last-check notice;
+remove it after verified recovery, and never call a missing first snapshot a
+previously verified conversation. Test real stored history and both themes.
+
 ## 2026-10-11 — Native launch support does not imply terminal-paste support
 
 OpenCode needs its session/inbox guide in the verified initial prompt, but

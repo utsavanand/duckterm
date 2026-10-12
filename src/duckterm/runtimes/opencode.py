@@ -1,4 +1,4 @@
-"""OpenCode adapter under native acceptance; deliberately not registered yet."""
+"""OpenCode adapter with verified native preparation and explicit unsupported actions."""
 
 from __future__ import annotations
 
@@ -31,6 +31,11 @@ class OpenCodeRuntime(GenericRuntime):
 
     def launch_command(self, *, cwd: Path, session_key: str, initial_prompt: str) -> list[str]:
         raise OpenCodeError("OpenCode requires controlled native preparation")
+
+    def command_for_history(self, argv: list[str]) -> str:
+        # Ephemeral native ports and project routing belong to preparation,
+        # not the user command reconstructed by session listing and relay.
+        return shlex.join(self._argv)
 
     def restore_command(self, *, cwd: Path, session_key: str) -> list[str]:
         raise OpenCodeError("OpenCode restart has not passed native acceptance yet")

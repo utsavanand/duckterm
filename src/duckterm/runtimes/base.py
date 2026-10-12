@@ -11,6 +11,7 @@ kept so existing drive-only callers don't need to change.
 """
 
 import re
+import shlex
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -147,6 +148,9 @@ class Harness(ABC):
 
     @abstractmethod
     def launch_command(self, *, cwd: Path, session_key: str, initial_prompt: str) -> list[str]: ...
+
+    def command_for_history(self, argv: list[str]) -> str:
+        return shlex.join(argv)
 
     async def prepare_launch(
         self,

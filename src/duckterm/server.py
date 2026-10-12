@@ -1112,6 +1112,26 @@ class Server:
         if isinstance(source, NativeSnapshot) and source != self._message_source(session_key):
             await _write_json(writer, 409, {"error": "Conversation changed while reading Messages"})
             return
+        if isinstance(source, NativeSnapshot):
+            payload = json.loads(response)
+            row = self.history.session(session_key) or {}
+            observation = self.history.restart_control(session_key).get("opencode_observation", {})
+            checked = observation.get("observed_at", payload.get("observed_at"))
+            current = (
+                row.get("state") in ("busy", "idle", "waiting")
+                and observation.get("state") in ("busy", "idle", "waiting")
+                and type(checked) is int
+                and 0 <= int(time.time() * 1000) - checked < 45_000
+            )
+            payload["transcript"] = {
+                "status": (
+                    "native_unavailable"
+                    if payload.get("history_status") == "unavailable"
+                    else "native_current" if current else "native_cached"
+                ),
+                "checked_at": checked,
+            }
+            response = json.dumps(payload).encode()
         await _write_json_bytes(writer, 200, response)
 
     async def _layout(

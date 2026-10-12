@@ -183,7 +183,7 @@ class SessionSupervisor:
         # Register and enroll synchronously before the child can use its inbox.
         self._emit(
             events.SESSION_START,
-            command=shlex.join(argv),
+            command=self.runtime.command_for_history(argv),
             **identity,
         )
         try:
