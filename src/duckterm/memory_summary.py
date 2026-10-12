@@ -14,6 +14,8 @@ from duckterm.core.session_api import APIError
 from duckterm.persistence.saved_state import fingerprint
 
 POLICY = "memory-whole-source-v1"
+# Activated together with typed revision writes, not merely reader support.
+TYPED_POLICY = "memory-typed-claims-v2"
 CHUNK_BYTES = 96000
 MAX_BRIEF_BYTES = 32000
 MAX_SUMMARY_BYTES = 10000
@@ -120,7 +122,10 @@ class InvalidContext(APIError):
         super().__init__(503, "Preparation returned an invalid or oversized continuation summary")
 
 
-def parse(text: str, valid_refs: set[str]) -> dict[str, Any]:
+def parse(text: str, valid_refs: set[str], *, context_version: int = 1) -> dict[str, Any]:
+    """Validate provider output; lifecycle fields do not authorize retirement."""
+    if type(context_version) is not int or context_version not in (1, 2):
+        raise InvalidContext("unsupported_context_version")
     try:
         value = json.loads(text)
     except (ValueError, TypeError) as exc:
@@ -139,9 +144,13 @@ def parse(text: str, valid_refs: set[str]) -> dict[str, Any]:
         if not isinstance(value[name], list) or len(value[name]) > 60:
             raise InvalidContext("invalid_claims")
         for item in value[name]:
+            allowed = [{"text", "refs"}]
+            if context_version == 2:
+                typed = {"text", "refs", "kind", "id", "state"}
+                allowed += [typed, typed | {"supersedes"}]
             if (
                 not isinstance(item, dict)
-                or set(item) != {"text", "refs"}
+                or set(item) not in allowed
                 or not isinstance(item["text"], str)
                 or not item["text"].strip()
             ):
@@ -155,6 +164,13 @@ def parse(text: str, valid_refs: set[str]) -> dict[str, Any]:
                 raise InvalidContext("unknown_reference")
     if context_bytes > MAX_SUMMARY_BYTES:
         raise InvalidContext("context_too_large")
+    if context_version == 2:
+        from duckterm import memory_contract
+
+        try:
+            memory_contract.read_context(value, 2, valid_refs=valid_refs)
+        except ValueError as exc:
+            raise InvalidContext(str(exc)) from exc
     return cast(dict[str, Any], value)
 
 

@@ -110,6 +110,15 @@ def claim_id(field: str, text: str, refs: list[str]) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
+def claim_kind(item: dict[str, Any]) -> str:
+    """Display legacy claims without manufacturing a stored classification."""
+    return str(item.get("kind", "unclassified"))
+
+
+def claim_state(item: dict[str, Any]) -> str:
+    return str(item.get("state", "open"))
+
+
 def read_context(
     value: Any, version: int = 1, *, valid_refs: set[str] | None = None
 ) -> dict[str, Any]:
@@ -133,17 +142,22 @@ def read_context(
             if not isinstance(item, dict):
                 raise ValueError("invalid_claim")
             keys = set(item)
+            legacy = keys == {"text", "refs"}
             if version == 1:
-                if keys != {"text", "refs"}:
+                if not legacy:
                     raise ValueError("invalid_legacy_claim")
-            elif not {"text", "refs", "kind", "id"} <= keys or keys - {
-                "text",
-                "refs",
-                "kind",
-                "id",
-                "state",
-                "supersedes",
-            }:
+            elif not legacy and (
+                not {"text", "refs", "kind", "id"} <= keys
+                or keys
+                - {
+                    "text",
+                    "refs",
+                    "kind",
+                    "id",
+                    "state",
+                    "supersedes",
+                }
+            ):
                 raise ValueError("invalid_claim_fields")
             if not isinstance(item["text"], str) or not item["text"].strip():
                 raise ValueError("invalid_claim")
@@ -156,9 +170,11 @@ def read_context(
                 raise ValueError("invalid_references")
             if valid_refs is not None and any(ref not in valid_refs for ref in refs):
                 raise ValueError("unknown_reference")
-            if version == 1:
+            if legacy:
                 continue
-            if not isinstance(item["kind"], str) or item["kind"] not in KINDS[field]:
+            if not isinstance(item["kind"], str) or item["kind"] not in KINDS[field] | {
+                "unclassified"
+            }:
                 raise ValueError("invalid_claim_kind")
             if not isinstance(item.get("state", "open"), str) or item.get("state", "open") not in {
                 "open",

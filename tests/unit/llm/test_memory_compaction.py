@@ -146,6 +146,20 @@ def test_legacy_context_cannot_be_relabelled_as_a_complete_span():
     assert result["reason"] == "unclassified_context" and calls == []
 
 
+@pytest.mark.parametrize("legacy", [True, False])
+def test_unclassified_claims_still_block_compaction_inside_a_v2_revision(legacy):
+    children = [node(n) for n in range(10)]
+    claim = children[0]["context"]["goals"][0]
+    if legacy:
+        claim.pop("id")
+        claim.pop("kind")
+    else:
+        claim["kind"] = "unclassified"
+    calls, generate, validate = providers()
+    result = asyncio.run(compaction.compact(children, generate, validate))
+    assert result["reason"] == "unclassified_context" and calls == []
+
+
 def test_mixed_or_legacy_spans_do_not_silently_acquire_incremental_coverage():
     for all_legacy in (False, True):
         children = [node(n) for n in range(10)]

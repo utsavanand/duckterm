@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Typed memory parsing must not silently change writer authority
+
+Adding claim metadata to the reader does not upgrade existing revision writers. Require an explicit context version, retain legacy claim bytes, and reject unknown keys in both versions. Compute content IDs in code, not by asking a model to invent hashes. A cited source proves reference membership, not authorization to retire a claim; new-claim drafts cannot apply lifecycle transitions.
+
+Stage the policy switch with span-only writes, revision version metadata and reader integration. Whole-history preparation and maintained checkpoint updates have separate reuse policies; changing only one does not migrate the other. Keep the provider's new-claim budget separate from a read view resolving accumulated protected facts. Test mixed legacy/typed reads, oversized new claims, forged IDs, rejected retirement drafts, and the existing checkpoint path before enabling the new writer.
+
 ## 2026-10-11 — Validate relationships after combining memory claims
 
 Two individually valid summary contexts can create a supersession cycle when combined: each context may reference a claim held only by the other. Per-child checks therefore cannot certify a compacted parent. Validate the complete protected-claim union before calling either provider. On failure preserve the children and report a pending compaction; do not edit their relationships to make the fold pass.

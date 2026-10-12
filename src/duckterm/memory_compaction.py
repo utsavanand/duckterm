@@ -68,6 +68,12 @@ def prepare(children: list[dict[str, Any]]) -> dict[str, Any]:
         if not coverage["declared"] or coverage["unknown"] or coverage["omitted"]:
             raise ValueError("incomplete_input")
         value = memory_contract.read_context(child["context"], child["context_version"])
+        if any(
+            memory_contract.claim_kind(claim) == "unclassified"
+            for field in fields
+            for claim in value[field]
+        ):
+            raise ValueError("unclassified_context")
         overview = value["overview"]
         narratives.append({"revision": child["id"], "narrative": overview})
         for name in fields:

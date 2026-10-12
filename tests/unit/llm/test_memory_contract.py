@@ -5,6 +5,7 @@ from copy import deepcopy
 import pytest
 
 from duckterm import memory_contract as contract
+from duckterm import memory_summary
 from duckterm.memory_summary import FIELDS
 
 
@@ -35,6 +36,8 @@ def test_legacy_read_does_not_rewrite_or_classify_original():
     read = contract.read_context(value, valid_refs={"source:version:record"})
     assert read == original and value == original
     assert read is not value and "kind" not in read["goals"][0]
+    assert contract.claim_kind(read["goals"][0]) == "unclassified"
+    assert contract.claim_state(read["goals"][0]) == "open"
 
 
 def test_identity_is_independent_of_reference_order_but_not_claim_or_field():
@@ -181,3 +184,116 @@ def test_deep_revision_chain_fails_explicitly_before_recursion_overflow():
         rows[str(n)] = revision(str(n), referenced(value, str(n - 1)))
     with pytest.raises(ValueError, match="claim_reference_depth"):
         contract.resolve_revision(rows["129"], rows.get)
+
+
+def provider_context():
+    value = version_two()
+    for field in FIELDS:
+        for item in value[field]:
+            item["state"] = "open"
+    return value
+
+
+def test_existing_parser_accepts_typed_and_legacy_claims_only_under_explicit_v2():
+    import json
+
+    value = provider_context()
+    value["goals"].append({"text": "Old goal", "refs": ["source:version:record"]})
+    text = json.dumps(value)
+    with pytest.raises(memory_summary.InvalidContext):
+        memory_summary.parse(text, {"source:version:record"})
+    result = memory_summary.parse(text, {"source:version:record"}, context_version=2)
+    assert result == value
+    assert contract.claim_kind(result["goals"][-1]) == "unclassified"
+    assert "kind" not in result["goals"][-1]
+
+
+@pytest.mark.parametrize("mutation", ["extra", "missing_state", "bad_id", "kind", "reference"])
+def test_typed_parser_keeps_strict_keys_identity_and_citation_checks(mutation):
+    import json
+
+    value = provider_context()
+    claim = value["constraints"][0]
+    if mutation == "extra":
+        claim["owner_approved"] = True
+    elif mutation == "missing_state":
+        claim.pop("state")
+    elif mutation == "bad_id":
+        claim["id"] = "f" * 16
+    elif mutation == "kind":
+        claim["kind"] = "risk"
+    else:
+        claim["refs"] = ["not:a:source"]
+    with pytest.raises(memory_summary.InvalidContext):
+        memory_summary.parse(json.dumps(value), {"source:version:record"}, context_version=2)
+
+
+def test_new_provider_claims_keep_byte_limits_while_saved_aggregate_reader_does_not_trim():
+    import json
+
+    value = provider_context()
+    for n in range(10):
+        text = f"Constraint {n}:" + "x" * 1500
+        refs = ["source:version:record"]
+        value["constraints"].append(
+            {
+                "text": text,
+                "refs": refs,
+                "kind": "constraint",
+                "state": "open",
+                "id": contract.claim_id("constraints", text, refs),
+            }
+        )
+    assert contract.read_context(value, 2) == value
+    with pytest.raises(memory_summary.InvalidContext) as exc:
+        memory_summary.parse(json.dumps(value), {"source:version:record"}, context_version=2)
+    assert exc.value.reason == "context_too_large"
+
+
+def typed_plan():
+    return {
+        "context_version": 2,
+        "selected": [{"source": "source", "version": "version", "record": "record"}],
+        "prior_context": None,
+    }
+
+
+def test_maintained_draft_assigns_claim_ids_in_code_without_requiring_model_hashes():
+    import json
+
+    from duckterm import memory_continuity
+
+    value = provider_context()
+    expected = deepcopy(value)
+    for field in FIELDS:
+        for item in value[field]:
+            item.pop("id")
+    value["goals"][0]["refs"] = "source:version:record"
+    assert memory_continuity.context(json.dumps({"context": value}), typed_plan()) == expected
+
+
+@pytest.mark.parametrize("transition", ["retired", "superseded", "replacement"])
+def test_provider_cannot_retire_claims_merely_by_citing_an_available_source(transition):
+    import json
+
+    from duckterm import memory_continuity
+
+    value = provider_context()
+    if transition == "replacement":
+        value["decisions"][0]["supersedes"] = "old-claim"
+    else:
+        value["decisions"][0]["state"] = transition
+    with pytest.raises(memory_summary.InvalidContext) as exc:
+        memory_continuity.context(json.dumps({"context": value}), typed_plan())
+    assert exc.value.reason == "lifecycle_requires_authorization"
+
+
+def test_typed_write_does_not_accept_prior_summary_context_as_new_span_evidence():
+    import json
+
+    from duckterm import memory_continuity
+
+    plan = {**typed_plan(), "prior_context": context()}
+    with pytest.raises(memory_summary.InvalidContext) as exc:
+        memory_continuity.context(json.dumps({"context": provider_context()}), plan)
+    assert exc.value.reason == "typed_write_requires_span"

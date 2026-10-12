@@ -251,8 +251,11 @@ def prompt(plan: dict[str, Any]) -> str:
 
 def context(reply: str, plan: dict[str, Any]) -> dict[str, Any]:
     # Do not silently discard a malformed richer context and certify a tiny overview.
+    from duckterm import memory_contract
     from duckterm.core import progress
 
+    if plan.get("context_version", 1) == 2 and plan.get("prior_context"):
+        raise memory_summary.InvalidContext("typed_write_requires_span")
     raw = progress.json_object(reply)
     if raw is None or not isinstance(raw.get("context"), dict):
         raise memory_summary.InvalidContext("invalid_context_object")
@@ -271,7 +274,26 @@ def context(reply: str, plan: dict[str, Any]) -> dict[str, Any]:
                     reference = item.get("refs")
                     if isinstance(reference, str) and reference in refs:
                         item["refs"] = [reference]
-    return memory_summary.parse(json.dumps(raw["context"], ensure_ascii=False), refs)
+                    if plan.get("context_version", 1) == 2:
+                        # A model cannot authorize a lifecycle transition by
+                        # naming a valid reference. This path writes new claims;
+                        # verified retirement is a separate writer operation.
+                        if item.get("state", "open") != "open" or "supersedes" in item:
+                            raise memory_summary.InvalidContext("lifecycle_requires_authorization")
+                        if (
+                            "kind" in item
+                            and "id" not in item
+                            and isinstance(item.get("text"), str)
+                            and isinstance(item.get("refs"), list)
+                            and all(isinstance(ref, str) for ref in item["refs"])
+                        ):
+                            # Providers should classify facts, not guess SHA256.
+                            item["id"] = memory_contract.claim_id(name, item["text"], item["refs"])
+    return memory_summary.parse(
+        json.dumps(raw["context"], ensure_ascii=False),
+        refs,
+        context_version=plan.get("context_version", 1),
+    )
 
 
 def repair_prompt(original: str, rejected: str, diagnostic: str) -> str:
