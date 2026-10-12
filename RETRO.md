@@ -18,6 +18,12 @@ A missing or malformed reviewer response is not a negative review. Preserve the 
 
 Do not remove a validation gate merely because its error reporting was inadequate. Capture the actual reviewer outcome first. Historical attempts without those diagnostics cannot establish whether the writer or reviewer was wrong. Regression tests must cover both maintained-memory and stored-revision paths, including contradictory ready states and malformed envelopes carrying valid rejection codes.
 
+## 2026-10-09 — Interactive panes must not inherit automation's no-color flag
+
+The terminal palettes were intact, but the agent and the persistent tmux server had inherited `NO_COLOR=1`; captured output contained only bold/dim styling. A theme cannot recolor ANSI foreground values that the process never emits. Unset inherited `NO_COLOR` in each interactive pane's launch command, while preserving an explicitly supplied launch override. Sanitizing the current server process alone cannot repair environment already retained by tmux. Existing running agents retain their environment until restarted; do not interrupt live work merely to restore color.
+
+The isolated tmux regression failed before the fix on both direct and piped launches. It checks the child environment, actual green ANSI output, explicit opt-out preservation, and that the shared tmux environment is left untouched. Test panes are removed in cleanup.
+
 ## 2026-10-11 — Rename a badge selector with its rendered class
 
 Terminology changes can affect styling when a retired term is also a CSS
