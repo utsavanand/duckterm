@@ -1,4 +1,4 @@
-"""Preparation never needs the source provider and never controls its process."""
+"""Preparation completes typed spans before proof and never controls the process."""
 
 import asyncio
 import json
@@ -16,11 +16,55 @@ from duckterm.memory_preparation import MemoryPreparation, generation
 memory_rig = memory_fixtures.memory_rig
 
 
+def typed_provider(monkeypatch, claim_text):
+    from duckterm.llm.summarizer import Summary
+
+    calls = []
+
+    def generate(prompt):
+        calls.append(prompt)
+        if prompt.startswith("You are validating"):
+            return Summary(
+                json.dumps(
+                    {
+                        "accept": [],
+                        "done_next_action_ids": [],
+                        "summary_validation": {"ready": True, "reason_codes": []},
+                    }
+                ),
+                "fixture",
+            )
+        data = json.loads(prompt.split("MEMORY UPDATE:\n", 1)[1])
+        assert "prior_context" not in data
+        context = {
+            "overview": "Continue glacier work.",
+            **{field: [] for field in memory_summary.FIELDS},
+        }
+        evidence = [r for r in data["records"] if claim_text.lower() in r["text"].lower()]
+        if evidence:
+            context["constraints"] = [
+                {
+                    "text": claim_text,
+                    "refs": [
+                        r["source"] + ":" + r["version"] + ":" + r["record"] for r in evidence
+                    ],
+                    "kind": "constraint",
+                    "state": "open",
+                }
+            ]
+        return Summary(
+            json.dumps({"summary": "Continue glacier work.", "context": context}), "fixture"
+        )
+
+    monkeypatch.setattr("duckterm.server.summarize", generate)
+    return calls
+
+
 @pytest.fixture
 def preparation(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Owner: retain glacier originals. Later work completed.")
-    calls = []
+    calls = typed_provider(monkeypatch, "retain glacier originals")
 
     async def live(*args):
         return server.history.session("agent"), None, None, "codex"
@@ -28,29 +72,8 @@ def preparation(memory_rig, monkeypatch):
     async def version(*args):
         return "codex 0.155.1"
 
-    async def provider(harness, model, prompt, schema=None):
-        calls.append((harness, model, prompt))
-        assert harness == "codex"
-        if prompt.startswith("Review the proposed"):
-            return '{"ready":true,"reason_codes":[]}'
-        data = json.loads(prompt[prompt.index('{"prior_context"') :])
-        value = data["prior_context"] or {
-            "overview": "Continue glacier work.",
-            **{k: [] for k in memory_summary.FIELDS},
-        }
-        for piece in data["historical_data"]:
-            if "Owner: retain glacier originals" in piece["text"]:
-                value["constraints"] = [
-                    {
-                        "text": "Retain glacier originals.",
-                        "refs": [piece["source_id"] + ":" + piece["record_id"]],
-                    }
-                ]
-        return json.dumps(value)
-
     monkeypatch.setattr(server.restarts, "live_plan", live)
     monkeypatch.setattr(server.restarts, "switch_version", version)
-    monkeypatch.setattr("duckterm.memory_provider.generate", provider)
     return server, calls, tmp
 
 
@@ -74,20 +97,20 @@ async def prepare(server, identity="dialog-1"):
     return manager.status("agent", view["preparation_id"])
 
 
-def test_preparation_references_existing_records_without_creating_a_summary(preparation):
+def test_preparation_completes_spans_before_creating_proof(preparation):
     server, calls, _ = preparation
     view = asyncio.run(prepare(server))
     assert view["state"] == "ready", view
-    assert view["coverage"]["available_text"] == "not_processed"
+    assert view["coverage"]["available_text"] == "processed"
     detail = server.memory_preparation.details("agent", view["preparation_id"])
     assert "retain glacier originals" in detail["brief"]["text"]
     assert "duckterm memory search" in detail["brief"]["text"]
-    assert not server.history.session("agent")["progress"]
-    assert view["proof"]["revision_id"] is None
+    assert server.history.session("agent")["progress"]
+    assert view["proof"]["revision_id"]
     cp = server.history.checkpoints("agent")[0]
-    assert cp["record"]["summary_ref"] is None
+    assert cp["record"]["summary_ref"] == view["proof"]["revision_id"]
     assert cp["record"]["memory_sources"] and cp["record"]["retained_sources"]
-    assert calls == []
+    assert len(calls) == 2
     assert server.history.session("agent")["runtime"] == "claude-code"
 
 
@@ -191,7 +214,10 @@ def test_reconstruction_requires_new_preparation_and_preserves_canonical_revisio
     with pytest.raises(APIError, match="expired"):
         server.memory_preparation.get("agent", view["preparation_id"])
     assert server.history.checkpoints("agent")[0]["record"]["memory_sources"]
-    assert server.history.checkpoints("agent")[0]["record"]["summary_ref"] is None
+    assert (
+        server.history.checkpoints("agent")[0]["record"]["summary_ref"]
+        == view["proof"]["revision_id"]
+    )
 
 
 def test_source_failure_does_not_call_any_provider(preparation):
@@ -199,8 +225,10 @@ def test_source_failure_does_not_call_any_provider(preparation):
     native = transcript(tmp, "agent-claude", "glacier")
     native.unlink()
     view = asyncio.run(prepare(server))
-    assert view["state"] == "incomplete_source", view
     assert calls == []
+    assert not server.history.checkpoints("agent")
+    assert "proof" not in view
+    assert view["state"] == "incomplete_source", json.dumps(view)
 
 
 @pytest.mark.parametrize("change", ["touch", "identical_replace", "content", "missing"])
@@ -290,7 +318,7 @@ def test_ready_status_revalidates_exact_bytes_without_blocking_the_event_loop(
     asyncio.run(run())
 
 
-def test_turn_progress_creates_revision_after_preparation_marker(preparation, monkeypatch):
+def test_turn_progress_reuses_preparation_revision_without_new_generation(preparation, monkeypatch):
     from test_maintained_progress import provider
 
     server, _, tmp = preparation
@@ -298,14 +326,19 @@ def test_turn_progress_creates_revision_after_preparation_marker(preparation, mo
 
     async def run():
         view = await prepare(server)
-        assert view["state"] == "ready" and calls == []
+        assert view["state"] == "ready" and len(calls) == 2
         checkpoint = server.history.checkpoints("agent")[0]
-        assert checkpoint["record"]["summary_ref"] is None
+        assert checkpoint["record"]["summary_ref"] == view["proof"]["revision_id"]
         value = await server.progress_coordinator.refresh("agent")
+        assert len(calls) == 2
+        assert value["id"] == view["proof"]["revision_id"]
         assert value["continuity"]["verified"]
         assert value["summary_validation"]["ready"]
         assert json.loads(server.history.session("agent")["progress"])["revision_id"] == value["id"]
-        assert server.history.checkpoints("agent")[0]["record"]["summary_ref"] is None
+        assert (
+            server.history.checkpoints("agent")[0]["record"]["summary_ref"]
+            == view["proof"]["revision_id"]
+        )
 
     asyncio.run(run())
 
@@ -340,9 +373,7 @@ def test_observing_idle_session_during_and_after_preparation_keeps_proof(
     preparation, monkeypatch, event
 ):
     server, calls, _ = preparation
-    from duckterm import memory_provider
-
-    original = memory_provider.generate
+    original = server.memory_preparation.validate_sources
 
     def observe(identity):
         server.history.record(
@@ -357,12 +388,18 @@ def test_observing_idle_session_during_and_after_preparation_keeps_proof(
 
     async def observed(*args):
         result = await original(*args)
-        observe("observation-" + str(len(calls)))
+        observe("observation-during-preparation")
         return result
 
-    monkeypatch.setattr(memory_provider, "generate", observed)
+    monkeypatch.setattr(server.memory_preparation, "validate_sources", observed)
     view = asyncio.run(prepare(server))
     assert view["state"] == "ready", view
+    assert (
+        server.history._conn.execute(
+            "SELECT count(*) FROM events WHERE id='observation-during-preparation'"
+        ).fetchone()[0]
+        == 1
+    )
     proof = {
         "version": 1,
         "preparation_id": view["preparation_id"],

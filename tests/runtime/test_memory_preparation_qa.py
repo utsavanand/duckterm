@@ -63,6 +63,12 @@ def test_cancel_last_lease_during_capture_cannot_write_marker(preparation, monke
         task = server.memory_preparation.tasks[view["preparation_id"]]
         try:
             await asyncio.wait_for(entered.wait(), 2)
+            # Span work completed before this proof-validation boundary.
+            before = [
+                tuple(row)
+                for row in server.history._conn.execute("SELECT * FROM digest_items ORDER BY id")
+            ]
+            assert before
             server.memory_preparation.cancel("agent", view["preparation_id"], "dialog-1")
             released.set()
             await task
@@ -71,9 +77,11 @@ def test_cancel_last_lease_during_capture_cannot_write_marker(preparation, monke
                 == "canceled"
             )
             assert server.history.checkpoints("agent") == []
-            assert (
-                server.history._conn.execute("SELECT count(*) FROM digest_items").fetchone()[0] == 0
-            )
+            assert [
+                tuple(row)
+                for row in server.history._conn.execute("SELECT * FROM digest_items ORDER BY id")
+            ] == before
+            assert "proof" not in server.memory_preparation.status("agent", view["preparation_id"])
         finally:
             released.set()
             await server.memory_preparation.close()
