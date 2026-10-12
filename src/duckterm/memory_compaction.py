@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from typing import Any
 
-from duckterm import memory_summary
+from duckterm import memory_contract, memory_summary
 from duckterm.persistence.saved_state import fingerprint
 
 THRESHOLD = 50
@@ -34,7 +34,7 @@ def select(nodes: list[dict[str, Any]], incoming_tier: int) -> list[dict[str, An
     return level[:WIDTH] if len(level) >= THRESHOLD else []
 
 
-def prepare(children: list[dict[str, Any]], fields: tuple[str, ...]) -> dict[str, Any]:
+def prepare(children: list[dict[str, Any]]) -> dict[str, Any]:
     """Refuse unknown coverage or inconsistent claim identities rather than omit them."""
     if (
         len(children) != WIDTH
@@ -49,46 +49,25 @@ def prepare(children: list[dict[str, Any]], fields: tuple[str, ...]) -> dict[str
         or any(type(c["tier"]) is not int or c["tier"] != tier for c in children)
     ):
         raise ValueError("mixed_tiers")
-    if (
-        not fields
-        or any(not isinstance(name, str) or not name or name == "overview" for name in fields)
-        or len(set(fields)) != len(fields)
-    ):
-        raise ValueError("invalid_fields")
+    fields = memory_summary.FIELDS
     context: dict[str, Any] = {name: [] for name in fields}
     seen: dict[str, str] = {}
     narratives = []
     for child in children:
-        if child.get("complete") is not True:
+        if child.get("context_version", 1) != 2:
+            raise ValueError("unclassified_context")
+        coverage = memory_contract.read_coverage(child.get("coverage"))
+        if not coverage["declared"] or coverage["unknown"] or coverage["omitted"]:
             raise ValueError("incomplete_input")
-        if any(child.get(name) != [] for name in ("gaps", "pending_updates", "unclassified")):
-            raise ValueError("incomplete_input")
-        value = child["context"]
-        if not isinstance(value, dict) or set(value) != {"overview", *fields}:
-            raise ValueError("unsupported_context")
+        value = memory_contract.read_context(child["context"], child["context_version"])
         overview = value["overview"]
-        if not isinstance(overview, str) or not overview.strip():
-            raise ValueError("invalid_narrative")
         narratives.append({"revision": child["id"], "narrative": overview})
         for name in fields:
-            if not isinstance(value[name], list):
-                raise ValueError("invalid_claims")
             for claim in value[name]:
-                if (
-                    not isinstance(claim, dict)
-                    or not isinstance(claim.get("text"), str)
-                    or not claim["text"].strip()
-                    or not isinstance(claim.get("refs"), list)
-                    or not claim["refs"]
-                    or any(not isinstance(ref, str) or not ref for ref in claim["refs"])
-                ):
-                    raise ValueError("invalid_claim")
-                # Explicit IDs preserve the canonical reader's identity. Legacy
-                # claims deduplicate only on exact kind/text/refs, never paraphrase.
+                # Never infer supersession from differing wording or lifecycle
+                # state. The writer must resolve transitions before compaction.
                 digest = fingerprint([name, claim])
-                identity = claim.get("id", digest)
-                if not isinstance(identity, str) or not identity:
-                    raise ValueError("invalid_claim_identity")
+                identity = claim["id"]
                 if identity in seen:
                     if seen[identity] != digest:
                         raise ValueError("conflicting_claim_identity")
@@ -113,7 +92,6 @@ async def compact(
     generate: Provider,
     validate: Provider,
     *,
-    fields: tuple[str, ...] = memory_summary.FIELDS,
     timeout: float = 30,
 ) -> dict[str, Any]:
     """Produce a candidate parent or a fixed failure; never mutate child records.
@@ -122,7 +100,7 @@ async def compact(
     one parent atomically. This function grants no authority to delete originals.
     """
     try:
-        plan = prepare(children, fields)
+        plan = prepare(children)
     except (ValueError, KeyError, TypeError, UnicodeError) as exc:
         reason = str(exc) if isinstance(exc, ValueError) else "invalid_input"
         return {"state": "pending", "reason": reason, "children_preserved": True}
@@ -173,8 +151,6 @@ async def compact(
         "input_hash": plan["input_hash"],
         "tier": plan["tier"],
         "context": {"overview": draft["overview"], **plan["protected"]},
-        "complete": True,
-        "gaps": [],
-        "pending_updates": [],
-        "unclassified": [],
+        "context_version": 2,
+        "coverage": {"declared": True, "unknown": False, "omitted": []},
     }
