@@ -250,3 +250,15 @@ def test_orphaned_running_receipts_cannot_fill_capacity_forever(rig, monkeypatch
     status, result = asyncio.run(request(server))
     assert status == 200 and result["saved"]
     assert len(server.checkpoint_requests._receipts("test-save")) == MAX_RECEIPTS
+
+
+def test_recovered_receipt_preserves_markdown_export_warning(rig, monkeypatch):
+    server, _, _ = rig
+    monkeypatch.setattr("duckterm.server.write_markdown", lambda *args: None)
+    status, result = asyncio.run(request(server))
+    assert status == 200 and result["export_reason"] == "markdown_unavailable"
+    server.checkpoint_requests = CheckpointRequests(server)
+    assert (
+        server.checkpoint_requests.receipt("test-save", "request-one")["result"]["export_reason"]
+        == "markdown_unavailable"
+    )

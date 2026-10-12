@@ -70,6 +70,8 @@ class CheckpointRequests:
                 receipt["state"] = "complete"
                 receipt.pop("error", None)
                 self._save(key, receipt)
+            if receipt.get("export_reason"):
+                result["export_reason"] = receipt["export_reason"]
             return {**receipt, "result": {**result, "request_id": request_id}}
         if receipt["state"] == "running" and (key, request_id) not in self.tasks:
             receipt.update(state="interrupted", error="checkpoint_interrupted")
@@ -116,7 +118,7 @@ class CheckpointRequests:
 
     async def _run(self, key: str, row: dict[str, Any], receipt: dict[str, Any]) -> None:
         try:
-            await self.server._create_checkpoint(
+            result = await self.server._create_checkpoint(
                 key,
                 row,
                 receipt["label"],
@@ -124,6 +126,8 @@ class CheckpointRequests:
                 request_id=receipt["request_id"],
             )
             receipt = {**receipt, "state": "complete"}
+            if result.get("export_reason"):
+                receipt["export_reason"] = "markdown_unavailable"
         except asyncio.CancelledError:
             self._save(key, {**receipt, "state": "interrupted", "error": "checkpoint_interrupted"})
             raise
