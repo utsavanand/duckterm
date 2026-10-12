@@ -18,7 +18,7 @@ from typing import Any
 KEYS = ("deliverables", "learnings", "user_learnings", "next_actions")
 _MAX_ITEMS = 8
 _MAX_ITEM_CHARS = 160
-_MAX_SUMMARY_CHARS = 400
+_MAX_SUMMARY_CHARS = 2000
 _MAX_TRANSCRIPT_CHARS = 8_000
 
 _PROMPT = """You maintain a running progress digest for an AI coding-agent session.
@@ -27,8 +27,9 @@ no markdown fences, exactly this shape:
 {"summary": "...", "deliverables": ["..."], "learnings": ["..."],
  "user_learnings": ["..."], "next_actions": ["..."]}
 
-- summary: 2-3 complete plain sentences, at most 400 characters total: where the session
-  stands right now. Rewrite concisely to fit; never cut off a sentence.
+- summary: roughly 100-200 words when needed, at most 2000 characters total: where the
+  session stands right now. Shorter summaries are fine for simple updates.
+  Rewrite concisely to fit; never cut off a sentence.
 - deliverables: concrete things produced or changed (features, fixes, files, releases)
 - learnings: decisions made and constraints discovered about the WORK itself.
   Record the CURRENT decision, not the history of rejected alternatives. Skip
