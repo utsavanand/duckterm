@@ -7,11 +7,12 @@ authorization belong to the existing writer, not this structural reader.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
-from duckterm.memory_summary import FIELDS
+from duckterm.memory_summary import FIELDS, MAX_SUMMARY_BYTES
 
 KINDS = {
     "goals": {"goal"},
@@ -28,6 +29,21 @@ OMISSION_REASONS = {
     "budget_exhausted",
     "unreadable_source",
 }
+
+
+class BudgetExceeded(ValueError):
+    """The complete view cannot be returned; originals remain independently readable."""
+
+    def __init__(self, value: dict[str, Any]) -> None:
+        super().__init__("budget_exhausted")
+        refs = sorted({ref for field in FIELDS for item in value[field] for ref in item["refs"]})
+        self.coverage = {
+            "declared": True,
+            "unknown": False,
+            "omitted": [
+                {"reason": "budget_exhausted", "count": max(1, len(refs)), "sample_refs": refs[:8]}
+            ],
+        }
 
 
 def resolve_revision(
@@ -124,8 +140,8 @@ def read_context(
 ) -> dict[str, Any]:
     """Keep v1 bytes/shape; callers display its claims as unclassified.
 
-    No size truncation applies on read: aggregate protected claims may outgrow a
-    single provider budget. When valid_refs is omitted this verifies shape only;
+    Oversized aggregates fail with declared coverage; no subset is returned.
+    When valid_refs is omitted this verifies shape only;
     it does not attest source availability or the caller's authorization.
     """
     if type(version) is not int or version not in (1, 2):
@@ -205,6 +221,8 @@ def read_context(
                 raise ValueError("supersession_cycle")
             seen.add(current)
             current = identities[current][1].get("supersedes")
+    if len(json.dumps(value, ensure_ascii=False).encode()) > MAX_SUMMARY_BYTES:
+        raise BudgetExceeded(value)
     return deepcopy(value)
 
 

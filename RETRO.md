@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Compaction failure must not invalidate a usable checkpoint
+
+Generate and validate optional folds outside the SQLite transaction. Recheck the source after model work and compare the exact selected revision history again inside the write transaction. Commit parent references with the incoming revision and checkpoint; use a savepoint so an optional parent insertion failure preserves the checkpoint and every child. Parent links change the active read set only after commit. Never infer independent spans from cumulative summaries.
+
+The corrected reader contract refuses a resolved view over 10 KB with explicit budget-exhausted coverage; it does not trim protected facts. Originals remain individually readable. Test complete reference resolution, a second-parent insertion failure, checkpoint rollback, stale source changes, cancellation, retry cooldown and upward tier cascades. These checks do not enable the new span writer or certify the installed runtime.
+
 ## 2026-10-11 — Typed memory parsing must not silently change writer authority
 
 Adding claim metadata to the reader does not upgrade existing revision writers. Require an explicit context version, retain legacy claim bytes, and reject unknown keys in both versions. Compute content IDs in code, not by asking a model to invent hashes. A cited source proves reference membership, not authorization to retire a claim; new-claim drafts cannot apply lifecycle transitions.

@@ -238,7 +238,8 @@ def test_over_budget_input_remains_intact_and_costs_no_provider_call():
         claim["id"] = memory_contract.claim_id("goals", claim["text"], claim["refs"])
     calls, generate, validate = providers()
     result = asyncio.run(compaction.compact(children, generate, validate))
-    assert result["reason"] == "input_too_large" and result["children_preserved"]
+    assert result["reason"] == "budget_exhausted" and result["children_preserved"]
+    assert result["coverage"]["omitted"][0]["reason"] == "budget_exhausted"
     assert calls == []
 
 

@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from duckterm.core import progress, work_pointers
+from duckterm.core import memory_folding, progress, work_pointers
 from duckterm.core.session_api import APIError
 from duckterm.persistence.saved_state import (
     checkpoint_marker,
@@ -460,6 +460,16 @@ class ProgressCoordinator:
             **({"memory_baseline_ref": baseline} if baseline else {}),
             "summary_validation": {"ready": not reasons, "reason_codes": reasons},
         }
+        folding = await memory_folding.prepare(self, key, captured, value)
+        if folding is not None:
+            # Optional model work ran after the summary's fence. Revalidate it
+            # before any parent links or the incoming summary can be committed.
+            current = await self.capture(key)
+            if current is None:
+                return SummaryUpdate.failed("source_changed")
+            current = await memory_continuity.capture(self.server, key, current)
+            if any(current[k] != captured[k] for k in ("source", "conversation", "policy")):
+                return SummaryUpdate.failed("source_changed")
         result = self.persist(
             key,
             captured,
@@ -468,6 +478,7 @@ class ProgressCoordinator:
             digest,
             accepted,
             verdicts["done_next_action_ids"] if verdicts else [],
+            folding=folding,
         )
         return SummaryUpdate.from_revision(result)
 
@@ -483,6 +494,7 @@ class ProgressCoordinator:
         *,
         require_current: bool = False,
         checkpoint: dict[str, Any] | None = None,
+        folding: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Single atomic write path, including explicitly owner-reviewed baselines."""
         now = int(time.time() * 1000)
@@ -510,6 +522,13 @@ class ProgressCoordinator:
                 return None
             if promote:
                 self.server.digests.merge(key, accepted, done, now, commit=False)
+            if folding is not None:
+                status = (
+                    memory_folding.apply(self.server.digests, key, folding, now)
+                    if promote
+                    else {"state": "pending", "reason": "source_changed"}
+                )
+                value = {**value, "compaction": status}
             refs = [{"id": r["id"], "status": r["status"]} for r in self.server.digests.items(key)]
             revision_id = self.server.digests.add_revision(key, {**value, "item_refs": refs}, now)
             if checkpoint is not None:

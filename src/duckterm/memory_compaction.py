@@ -54,8 +54,8 @@ def prepare(children: list[dict[str, Any]]) -> dict[str, Any]:
         raise ValueError("mixed_spans")
     span = next(iter(spans))
     if span == "cumulative":
-        # Legacy cumulative blocks require separate coverage review; ten arbitrary
-        # cumulative revisions cannot be claimed to form disjoint history spans.
+        # Cumulative revisions never form independent history spans. No adapter
+        # or inferred subtraction may make them eligible for compaction.
         raise ValueError("legacy_coverage")
     fields = memory_summary.FIELDS
     context: dict[str, Any] = {name: [] for name in fields}
@@ -119,6 +119,13 @@ async def compact(
     """
     try:
         plan = prepare(children)
+    except memory_contract.BudgetExceeded as exc:
+        return {
+            "state": "pending",
+            "reason": "budget_exhausted",
+            "coverage": exc.coverage,
+            "children_preserved": True,
+        }
     except (ValueError, KeyError, TypeError, UnicodeError) as exc:
         reason = str(exc) if isinstance(exc, ValueError) else "invalid_input"
         return {"state": "pending", "reason": reason, "children_preserved": True}
@@ -163,13 +170,23 @@ async def compact(
         return {"state": "pending", "reason": "invalid_reply", "children_preserved": True}
     except Exception:
         return {"state": "pending", "reason": "provider_failed", "children_preserved": True}
+    result_context = {"overview": draft["overview"], **plan["protected"]}
+    try:
+        memory_contract.read_context(result_context, 2)
+    except memory_contract.BudgetExceeded as exc:
+        return {
+            "state": "pending",
+            "reason": "budget_exhausted",
+            "coverage": exc.coverage,
+            "children_preserved": True,
+        }
     return {
         "state": "compacted",
         "children": plan["children"],
         "input_hash": plan["input_hash"],
         "tier": plan["tier"],
         "span": plan["span"],
-        "context": {"overview": draft["overview"], **plan["protected"]},
+        "context": result_context,
         "context_version": 2,
         "coverage": {"declared": True, "unknown": False, "omitted": []},
     }

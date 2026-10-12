@@ -47,11 +47,12 @@ def test_identity_is_independent_of_reference_order_but_not_claim_or_field():
     assert original != contract.claim_id("decisions", "Change", ["source:v:a", "source:v:b"])
 
 
-def test_v2_read_preserves_subtypes_state_and_large_protected_set():
+def test_v2_read_preserves_subtypes_and_refuses_oversized_view():
     value = version_two()
     value["constraints"][0]["kind"] = "callout"
     value["decisions"][0]["kind"] = "learning"
-    # Reading saved facts must not silently apply a single provider budget.
+    assert contract.read_context(value, 2) == value
+    # The complete oversized view is refused; no shortened memory is returned.
     for n in range(100):
         text = f"Standing constraint {n}: " + "x" * 150
         refs = ["source:version:record"]
@@ -64,7 +65,11 @@ def test_v2_read_preserves_subtypes_state_and_large_protected_set():
                 "state": "open",
             }
         )
-    assert contract.read_context(value, 2) == value
+    original = deepcopy(value)
+    with pytest.raises(contract.BudgetExceeded) as exc:
+        contract.read_context(value, 2)
+    assert value == original
+    assert contract.read_coverage(exc.value.coverage)["omitted"][0]["reason"] == "budget_exhausted"
 
 
 @pytest.mark.parametrize("version", [0, 3, True, "2", None])
@@ -228,7 +233,7 @@ def test_typed_parser_keeps_strict_keys_identity_and_citation_checks(mutation):
         memory_summary.parse(json.dumps(value), {"source:version:record"}, context_version=2)
 
 
-def test_new_provider_claims_keep_byte_limits_while_saved_aggregate_reader_does_not_trim():
+def test_provider_and_saved_reader_refuse_oversized_context_without_trimming():
     import json
 
     value = provider_context()
@@ -244,7 +249,8 @@ def test_new_provider_claims_keep_byte_limits_while_saved_aggregate_reader_does_
                 "id": contract.claim_id("constraints", text, refs),
             }
         )
-    assert contract.read_context(value, 2) == value
+    with pytest.raises(contract.BudgetExceeded):
+        contract.read_context(value, 2)
     with pytest.raises(memory_summary.InvalidContext) as exc:
         memory_summary.parse(json.dumps(value), {"source:version:record"}, context_version=2)
     assert exc.value.reason == "context_too_large"
@@ -297,3 +303,35 @@ def test_typed_write_does_not_accept_prior_summary_context_as_new_span_evidence(
     with pytest.raises(memory_summary.InvalidContext) as exc:
         memory_continuity.context(json.dumps({"context": provider_context()}), plan)
     assert exc.value.reason == "typed_write_requires_span"
+
+
+def test_pointer_union_over_budget_declares_gap_without_changing_any_revision():
+    rows = {}
+    parent = {"overview": "All work", **{field: [] for field in FIELDS}}
+    for n in range(12):
+        text, refs = f"Constraint {n}: " + "🔒" * 300, [f"source:version:{n}"]
+        claim = {
+            "id": contract.claim_id("constraints", text, refs),
+            "kind": "constraint",
+            "state": "open",
+            "text": text,
+            "refs": refs,
+        }
+        value = {"overview": "One span", **{field: [] for field in FIELDS}}
+        value["constraints"] = [claim]
+        rows[str(n)] = revision(str(n), value)
+        parent["constraints"].append({"id": claim["id"], "ref_revision": str(n)})
+    rows["parent"] = revision("parent", parent)
+    original = deepcopy(rows)
+    with pytest.raises(contract.BudgetExceeded) as exc:
+        contract.resolve_revision(rows["parent"], rows.get)
+    gap = contract.read_coverage(exc.value.coverage)["omitted"][0]
+    assert gap["reason"] == "budget_exhausted" and gap["count"] == 12
+    assert len(gap["sample_refs"]) == 8
+    assert rows == original
+    # A refused aggregate does not make any original inaccessible.
+    for n in range(12):
+        assert (
+            contract.resolve_revision(rows[str(n)], rows.get)[0]
+            == rows[str(n)]["continuity"]["context"]
+        )
