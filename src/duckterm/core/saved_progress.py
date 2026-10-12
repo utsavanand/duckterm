@@ -288,6 +288,62 @@ class ProgressCoordinator:
             task.add_done_callback(finished)
         return await asyncio.shield(task)
 
+    async def write_span(
+        self, key: str, captured: dict[str, Any], lower: dict[str, Any]
+    ) -> tuple[SummaryUpdate, dict[str, Any]]:
+        """Stage a leaf through the sole writer, without activating it for handoff.
+
+        The caller supplies an explicit original-record boundary and frozen capture.
+        Reuse committed subranges on retry; no current-summary pointer is changed.
+        Reader integration must land before checkpoint entry points call this path.
+        """
+        from duckterm import memory_spans
+
+        planned = memory_spans.plan(captured, lower)
+        if captured.get("memory_gaps"):
+            return SummaryUpdate.failed("source_unavailable"), planned
+        if not planned["selected"]:
+            return (
+                SummaryUpdate.failed(
+                    "invalid_context" if planned["oversized"] else "no_transcript",
+                    diagnostic=(
+                        "oversized_record" if planned["oversized"] else "no_new_span_records"
+                    ),
+                ),
+                planned,
+            )
+        if self.facts(key) != captured["facts"]:
+            return SummaryUpdate.failed("source_changed"), planned
+        input_key = planned["input_key"]
+        existing = self.server.digests.find_revision(key, input_key)
+        if existing is not None:
+            return SummaryUpdate.from_revision(existing, reused=True), planned
+        # Join the existing single-writer guard rather than introducing a queue.
+        active = self.active.get(key)
+        if active and not active.done():
+            await asyncio.shield(active)
+            return await self.write_span(key, captured, lower)
+        row = self.server.history.session(key)
+        prior = self.server.digests.revision(key, current_revision(row)) if row else None
+        task = asyncio.create_task(
+            self._generate(key, captured, prior, input_key, span_plan=planned)
+        )
+        self.active[key] = task
+        try:
+            return await asyncio.shield(task), planned
+        finally:
+
+            def finished(done: asyncio.Task[SummaryUpdate]) -> None:
+                if self.active.get(key) is done:
+                    self.active.pop(key, None)
+                if not done.cancelled():
+                    done.exception()
+
+            if task.done():
+                finished(task)
+            else:
+                task.add_done_callback(finished)
+
     async def _draft(
         self, key: str, captured: dict[str, Any], maintained: dict[str, Any] | None, prompt: str
     ) -> tuple[dict[str, Any], dict[str, Any] | None] | SummaryUpdate:
@@ -329,6 +385,13 @@ class ProgressCoordinator:
             if any(current[k] != captured[k] for k in ("source", "conversation", "policy")):
                 return SummaryUpdate.failed("source_changed")
             prompt = memory_continuity.repair_prompt(original, reply.text, diagnostic)
+            if maintained and maintained.get("span") == "incremental":
+                from duckterm import memory_spans
+
+                if len(prompt.encode()) > memory_spans.MAX_INPUT_BYTES:
+                    prompt = memory_continuity.repair_prompt(original, "", diagnostic)
+                if len(prompt.encode()) > memory_spans.MAX_INPUT_BYTES:
+                    return SummaryUpdate.failed("invalid_context", diagnostic=diagnostic)
         raise AssertionError("draft loop exhausted without a result")
 
     async def _generate(
@@ -337,9 +400,11 @@ class ProgressCoordinator:
         captured: dict[str, Any],
         prior: dict[str, Any] | None,
         input_key: str,
+        *,
+        span_plan: dict[str, Any] | None = None,
     ) -> SummaryUpdate:
         # Resolve on the server module to retain one injectable provider boundary.
-        from duckterm import memory_continuity
+        from duckterm import memory_continuity, memory_spans
         from duckterm.server import summarize
 
         if not captured["transcript"]:
@@ -354,7 +419,7 @@ class ProgressCoordinator:
             and prior.get("source", {}).get("scope_hash") == captured["source"]["scope_hash"]
         ):
             prior_cache = json.loads(row.get("progress") or "{}")
-        existing = self.server.digests.items(key)[-200:]
+        existing = [] if span_plan is not None else self.server.digests.items(key)[-200:]
         required = captured["required"]
         too_large = (
             len(required) > MAX_REQUIRED_CHARS or len(required.encode()) > MAX_REQUIRED_BYTES
@@ -364,7 +429,13 @@ class ProgressCoordinator:
         )
         try:
             maintained = (
-                memory_continuity.plan(captured, prior) if "memory_sources" in captured else None
+                span_plan
+                if span_plan is not None
+                else (
+                    memory_continuity.plan(captured, prior)
+                    if "memory_sources" in captured
+                    else None
+                )
             )
         except (ValueError, APIError):
             return SummaryUpdate.failed("invalid_context", diagnostic="invalid_required_records")
@@ -387,9 +458,13 @@ class ProgressCoordinator:
             # Do not copy their full JSON into a second, smaller input budget.
             bounded_required = json.dumps(maintained["required_work"], ensure_ascii=False)
         prompt = (
-            memory_continuity.prompt(maintained)
-            if maintained is not None
-            else progress.build_prompt(captured["transcript"], prior_cache, bounded_required)
+            memory_spans.prompt(span_plan)
+            if span_plan is not None
+            else (
+                memory_continuity.prompt(maintained)
+                if maintained is not None
+                else progress.build_prompt(captured["transcript"], prior_cache, bounded_required)
+            )
         )
         drafted = await self._draft(key, captured, maintained, prompt)
         if isinstance(drafted, SummaryUpdate):
@@ -398,22 +473,22 @@ class ProgressCoordinator:
         policy_check = await self.capture(key)
         if policy_check is None or policy_check["policy"] != captured["policy"]:
             return SummaryUpdate.failed("source_changed")
-        verdict_reply = await asyncio.to_thread(
-            summarize,
-            progress.validate_prompt(
-                (
-                    {
-                        **digest,
-                        "summary": json.dumps({"summary": digest["summary"], "context": context}),
-                    }
-                    if context is not None
-                    else digest
-                ),
-                existing,
-                source=prompt,
-                required=bounded_required,
+        validation_prompt = progress.validate_prompt(
+            (
+                {
+                    **digest,
+                    "summary": json.dumps({"summary": digest["summary"], "context": context}),
+                }
+                if context is not None
+                else digest
             ),
+            existing,
+            source=prompt,
+            required=bounded_required,
         )
+        if span_plan is not None and len(validation_prompt.encode()) > memory_spans.MAX_INPUT_BYTES:
+            return SummaryUpdate.failed("invalid_context", diagnostic="review_input_too_large")
+        verdict_reply = await asyncio.to_thread(summarize, validation_prompt)
         if failure_reason := getattr(verdict_reply, "failure_reason", None):
             return SummaryUpdate.failed(failure_reason)
         verdicts = progress.parse_verdicts(verdict_reply.text)
@@ -465,7 +540,11 @@ class ProgressCoordinator:
                     ),
                     review=review,
                 )
-            continuity = memory_continuity.result(maintained, context, captured["memory_gaps"])
+            continuity = (
+                memory_spans.continuity(span_plan, context)
+                if span_plan is not None
+                else memory_continuity.result(maintained, context, captured["memory_gaps"])
+            )
             retained = await memory_continuity.retain(key, captured, maintained)
             final = await self.capture(key)
             if final is None:
@@ -488,6 +567,7 @@ class ProgressCoordinator:
             **({"memory_baseline_ref": baseline} if baseline else {}),
             "summary_validation": {"ready": not reasons, "reason_codes": reasons},
             "summary_review": review,
+            **(memory_spans.metadata(span_plan) if span_plan is not None else {}),
         }
         folding = await memory_folding.prepare(self, key, captured, value)
         if folding is not None:
@@ -508,6 +588,8 @@ class ProgressCoordinator:
             accepted,
             verdicts["done_next_action_ids"] if verdicts else [],
             folding=folding,
+            stage_only=span_plan is not None,
+            require_current=span_plan is not None,
         )
         return SummaryUpdate.from_revision(result)
 
@@ -524,6 +606,7 @@ class ProgressCoordinator:
         require_current: bool = False,
         checkpoint: dict[str, Any] | None = None,
         folding: dict[str, Any] | None = None,
+        stage_only: bool = False,
     ) -> dict[str, Any] | None:
         """Single atomic write path, including explicitly owner-reviewed baselines."""
         now = int(time.time() * 1000)
@@ -549,7 +632,7 @@ class ProgressCoordinator:
             )
             if require_current and not promote:
                 return None
-            if promote:
+            if promote and not stage_only:
                 self.server.digests.merge(key, accepted, done, now, commit=False)
             if folding is not None:
                 status = (
@@ -572,12 +655,16 @@ class ProgressCoordinator:
                 )
             # Keep a last good summary on failure. First unverified progress may
             # be displayed, but can never certify a handoff.
-            if promote and (
-                value["summary_validation"]["ready"]
-                or value.get("continuity", {}).get("verified")
-                or value.get("memory_baseline_ref")
-                or prior is None
-                or not prior["summary_validation"]["ready"]
+            if (
+                promote
+                and not stage_only
+                and (
+                    value["summary_validation"]["ready"]
+                    or value.get("continuity", {}).get("verified")
+                    or value.get("memory_baseline_ref")
+                    or prior is None
+                    or not prior["summary_validation"]["ready"]
+                )
             ):
                 cache = {**digest, "revision_id": revision_id}
                 conn.execute(

@@ -1,5 +1,11 @@
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Independent summaries need independent boundaries and compatible readers
+
+A cumulative revision cannot become a span by changing its label or subtracting an earlier summary. Capture explicit original-record boundaries, verify their prefix hashes, and write only the new range. Bound complete provider prompts in UTF-8 bytes as well as record count; leave an oversized record pending instead of skipping it. A failed later range must not erase or repeat a successful earlier range.
+
+A span writer must not replace the current cumulative summary before the handoff reader assembles prior spans. Stage typed leaves through the existing generation, review and persistence path without changing the current-summary pointer. Keep original evidence readable, reject source rewrites, preserve the existing single-writer and cancellation protections, and distinguish a verified individual leaf from completion of the whole requested span. Test source advancement, retry reuse, retained reads and concurrent callers before activation.
+
 ## 2026-10-11 — Preserve the reason a checkpoint review failed
 
 A missing or malformed reviewer response is not a negative review. Preserve the distinction between malformed responses, missing or invalid verdicts, reviewer rejection, and a contradictory ready verdict with non-empty reason codes. Carry bounded structured codes into the checkpoint attempt; never store arbitrary rejected provider prose as a diagnostic. Failed attempts must still retain the last good revision without presenting it as a new success.
