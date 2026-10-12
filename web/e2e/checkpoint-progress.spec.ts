@@ -80,6 +80,8 @@ test("a saved partial checkpoint reports incomplete failure instead of success",
     await page.addInitScript(() => localStorage.setItem("rd.collapsedGroups", "[]"));
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto("/");
+    const folder = page.locator(".rd-group-head", { hasText: "Checkpoint QA" });
+    if (await folder.locator(".rd-group-caret").textContent() === "▸") await folder.locator(".rd-group-caret").click();
     const row = page.locator(".rd-row", { hasText: "Incomplete checkpoint" });
     await row.locator(".rd-row-click").click();
     await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
