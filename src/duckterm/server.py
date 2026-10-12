@@ -1123,14 +1123,10 @@ class Server:
                 and type(checked) is int
                 and 0 <= int(time.time() * 1000) - checked < 45_000
             )
-            payload["transcript"] = {
-                "status": (
-                    "native_unavailable"
-                    if payload.get("history_status") == "unavailable"
-                    else "native_current" if current else "native_cached"
-                ),
-                "checked_at": checked,
-            }
+            status = "native_current" if current else "native_cached"
+            if payload.get("history_status") == "unavailable":
+                status = "native_unavailable"
+            payload["transcript"] = {"status": status, "checked_at": checked}
             response = json.dumps(payload).encode()
         await _write_json_bytes(writer, 200, response)
 
