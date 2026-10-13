@@ -1,3 +1,7 @@
+## 2026-10-13 — A free port does not mean the old server has closed SQLite
+
+`duckterm restart` waited for HTTP to stop answering, then opened the same DB while the old server was still shutting down. SQLite already had a five-second busy timeout, so adding another PRAGMA was not the fix. Wait for the exact former listener PIDs to exit before touching tombstones or starting a new server. If a Mac app instance takes the port meanwhile, report it and leave the new listener alone. Close the restart command's short-lived HistoryStore explicitly.
+
 ## 2026-10-12 — Pin capacity must agree across storage and every control
 
 Raising a pin limit requires changing both the atomic server write and the floating picker guard. Keep server-side enforcement for concurrent requests, retain existing pins, and verify the tenth pin persists while the eleventh is refused without swapping. A multi-host Focus count must not display a misleading single-host denominator. Exercise short-window scrolling and the existing Focus dock so extra pins remain reachable.
