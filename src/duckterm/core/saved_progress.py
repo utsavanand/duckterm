@@ -496,9 +496,9 @@ class ProgressCoordinator:
             if maintained and maintained.get("span") == "incremental":
                 from duckterm import memory_spans
 
-                if len(prompt.encode()) > memory_spans.MAX_INPUT_BYTES:
+                if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
                     prompt = memory_continuity.repair_prompt(original, "", diagnostic)
-                if len(prompt.encode()) > memory_spans.MAX_INPUT_BYTES:
+                if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
                     return SummaryUpdate.failed("invalid_context", diagnostic=diagnostic)
         raise AssertionError("draft loop exhausted without a result")
 
@@ -574,49 +574,94 @@ class ProgressCoordinator:
                 else progress.build_prompt(captured["transcript"], prior_cache, bounded_required)
             )
         )
-        draft_started = time.monotonic()
-        drafted = await self._draft(key, captured, maintained, prompt)
-        draft_ms = round((time.monotonic() - draft_started) * 1000)
-        if isinstance(drafted, SummaryUpdate):
-            return drafted
-        digest, context = drafted
-        policy_check = await self._validation_capture(key, captured)
-        if policy_check is None or policy_check["policy"] != captured["policy"]:
-            return SummaryUpdate.failed(
-                "source_changed", diagnostic="review:policy_or_capture_changed"
+        original_prompt = prompt
+        draft_ms = review_ms = 0
+        # One semantic correction, against the same fixed evidence. Never publish
+        # the rejected attempt or advance its coverage; provider errors still stop.
+        for review_attempt in range(2):
+            draft_started = time.monotonic()
+            drafted = await self._draft(key, captured, maintained, prompt)
+            draft_ms += round((time.monotonic() - draft_started) * 1000)
+            if isinstance(drafted, SummaryUpdate):
+                return drafted
+            digest, context = drafted
+            policy_check = await self._validation_capture(key, captured)
+            if policy_check is None or policy_check["policy"] != captured["policy"]:
+                return SummaryUpdate.failed(
+                    "source_changed", diagnostic="review:policy_or_capture_changed"
+                )
+            validation_prompt = progress.validate_prompt(
+                (
+                    {
+                        **digest,
+                        "summary": json.dumps({"summary": digest["summary"], "context": context}),
+                    }
+                    if context is not None
+                    else digest
+                ),
+                existing,
+                source=original_prompt,
+                required=bounded_required,
             )
-        validation_prompt = progress.validate_prompt(
-            (
-                {
-                    **digest,
-                    "summary": json.dumps({"summary": digest["summary"], "context": context}),
-                }
-                if context is not None
-                else digest
-            ),
-            existing,
-            source=prompt,
-            required=bounded_required,
-        )
-        if span_plan is not None and len(validation_prompt.encode()) > memory_spans.MAX_INPUT_BYTES:
-            return SummaryUpdate.failed("invalid_context", diagnostic="review_input_too_large")
-        if span_plan is not None:
-            self.report_span_progress(key, stage="reviewing")
-        review_started = time.monotonic()
-        verdict_reply = await asyncio.to_thread(
-            summarize,
-            validation_prompt,
-            **(
-                {"claude_model": captured["checkpoint_settings"]["reviewer_model"]}
-                if "checkpoint_settings" in captured
-                else {}
-            ),
-        )
-        review_ms = round((time.monotonic() - review_started) * 1000)
-        if failure_reason := getattr(verdict_reply, "failure_reason", None):
-            return SummaryUpdate.failed(failure_reason)
-        verdicts = progress.parse_verdicts(verdict_reply.text)
-        review = progress.review_outcome(verdict_reply.text, verdicts)
+            if (
+                span_plan is not None
+                and len(validation_prompt.encode()) > memory_spans.MAX_INPUT_BYTES
+            ):
+                return SummaryUpdate.failed("invalid_context", diagnostic="review_input_too_large")
+            if span_plan is not None:
+                self.report_span_progress(key, stage="reviewing")
+            review_started = time.monotonic()
+            verdict_reply = await asyncio.to_thread(
+                summarize,
+                validation_prompt,
+                **(
+                    {"claude_model": captured["checkpoint_settings"]["reviewer_model"]}
+                    if "checkpoint_settings" in captured
+                    else {}
+                ),
+            )
+            review_ms += round((time.monotonic() - review_started) * 1000)
+            if failure_reason := getattr(verdict_reply, "failure_reason", None):
+                return SummaryUpdate.failed(failure_reason)
+            verdicts = progress.parse_verdicts(verdict_reply.text)
+            review = progress.review_outcome(verdict_reply.text, verdicts)
+            if review["state"] == "accepted":
+                break
+            repairable = {
+                "stale_open_item",
+                "wrong_session_identity",
+                "routine_notice_noise",
+                "unsupported_current_status",
+            }
+            if review_attempt or not repairable.intersection(review.get("reason_codes", [])):
+                break
+            feedback = (progress.json_object(verdict_reply.text) or {}).get(
+                "summary_corrections", []
+            )
+            prompt = memory_continuity.repair_prompt(
+                original_prompt,
+                json.dumps(
+                    {
+                        "summary": digest["summary"],
+                        "context": context,
+                        "review_feedback": feedback,
+                    }
+                ),
+                ",".join(review["reason_codes"]),
+            )
+            if feedback and len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+                # Prefer actionable reviewer feedback over copying the rejected draft.
+                prompt = memory_continuity.repair_prompt(
+                    original_prompt,
+                    json.dumps({"review_feedback": feedback}),
+                    ",".join(review["reason_codes"]),
+                )
+            if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+                prompt = memory_continuity.repair_prompt(
+                    original_prompt, "", ",".join(review["reason_codes"])
+                )
+            if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+                return SummaryUpdate.failed("invalid_context", diagnostic="repair_input_too_large")
         reasons = []
         if review["state"] != "accepted":
             reasons.append("summary_unverified")

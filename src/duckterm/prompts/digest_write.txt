@@ -4,7 +4,7 @@ no markdown fences, exactly this shape:
 {"summary": "...", "deliverables": ["..."], "learnings": ["..."],
  "user_learnings": ["..."], "next_actions": ["..."]}
 
-- summary: roughly 100-200 words when needed, at most 2000 characters total: where the
+- summary: roughly 400-800 words when needed, at most 6000 characters total: where the
   session stands right now. Shorter summaries are fine for simple updates.
   Rewrite concisely to fit; never cut off a sentence.
 - deliverables: concrete things produced or changed (features, fixes, files, releases)

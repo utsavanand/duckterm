@@ -50,7 +50,14 @@ def assemble(
         ):
             raise ValueError("incomplete_span_input")
         value, _ = memory_contract.resolve_revision(row, index.get)
-        narratives.append({"revision": row["id"], "text": value["overview"]})
+        narratives.append(
+            {
+                "revision": row["id"],
+                "saved_at": row.get("created_at"),
+                "text": (row.get("summary") if row.get("fold", {}).get("tier") == 0 else None)
+                or value["overview"],
+            }
+        )
         for field in memory_summary.FIELDS:
             for claim in value[field]:
                 identity = claim.get("id")
@@ -63,7 +70,7 @@ def assemble(
                     context[field].append(deepcopy(claim))
     # The structural reader checks cross-head cycles and aggregate size. Do not
     # silently slice a protected union to make a handoff look complete.
-    context["overview"] = narratives[-1]["text"] if narratives else "No span summary available."
+    context["overview"] = value["overview"] if heads else "No span summary available."
     if links:
         from duckterm import memory_lifecycle
 

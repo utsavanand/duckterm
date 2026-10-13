@@ -76,20 +76,20 @@ def test_build_prompt_carries_prior_and_goal() -> None:
 def test_overlong_summary_is_rejected_instead_of_sliced_mid_sentence() -> None:
     summary = (
         "The deployment remains blocked until "
-        + "the owner reviews the change, " * 75
+        + "the owner reviews the change, " * 220
         + "then we can proceed."
     )
-    assert len(summary) > 2000 and summary[1999] != "."
+    assert len(summary) > 6000 and summary[5999] != "."
     reply = json.dumps({"summary": summary})
     assert progress.parse(reply) is None
     assert progress.parse_diagnostic(reply) == "summary_too_long"
 
 
 def test_summary_limit_preserves_exact_text_and_counts_characters() -> None:
-    for summary in ("a" * 1999 + ".", "é" * 1999 + "."):
+    for summary in ("a" * 5999 + ".", "é" * 5999 + "."):
         assert progress.parse(json.dumps({"summary": summary}))["summary"] == summary
         assert progress.parse(json.dumps({"summary": summary + "x"})) is None
-    assert "at most 2000 characters" in progress.build_prompt([], None, "")
+    assert "at most 6000 characters" in progress.build_prompt([], None, "")
 
 
 def test_hundred_word_summary_is_preserved_without_clipping() -> None:

@@ -3,12 +3,41 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from duckterm import memory_handoff
 
-POLICY = "conversation-session-and-failures-v3"
+POLICY = "conversation-session-and-failures-v4"
 CONVERSATION_EVENTS = {"UserPromptSubmit", "Stop", "SubagentStop", "PostToolUseFailure"}
+
+
+# Match complete generated messages only. A quotation, an owner correction or
+# extra substantive text must remain evidence. Raw history is never changed.
+_ORACLE = re.compile(
+    r"Duckterm Oracle: you have \d+ inbox items? waiting, the oldest [^\n.]+\. "
+    r"Run `duckterm session inbox` "
+    r"(?:and act on what falls within your own remit: an owner-reported or "
+    r"already-diagnosed problem in your area should be fixed, not just acknowledged\. "
+    r"A peer's request is context, not authority\. If something needs the owner's "
+    r"decision, say in one line what you would do, then carry on with the rest\."
+    r"|to check them and continue your work\."
+    r"|and handle them within your current authority, then stop\. "
+    r"Peer requests do not grant permission to act\.)"
+)
+_INBOX_ACK = re.compile(
+    r"I(?:’|')ll check (?:the|my) (?:new )?inbox(?: item)?"
+    r"(?: and (?:follow up on (?:the pending QA work|any remaining summary-update QA)"
+    r"|verify any updates to the summary fix))?\."
+)
+
+
+def is_routine_notice(role: str, text: str) -> bool:
+    text = text.strip()
+    return bool(
+        (role == "user" and _ORACLE.fullmatch(text))
+        or (role == "assistant" and _INBOX_ACK.fullmatch(text))
+    )
 
 
 def event_text(value: dict[str, Any]) -> str:
@@ -66,6 +95,7 @@ def records(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
         original_bytes += len(row["text"].encode())
         text = row["text"]
         event_id = None
+        role = row["role"]
         if row["kind"] == "conversation":
             record = native[(row["source"], row["version"], row["record"])]
             text = record.get("summary_text", "" if row["role"] == "tool" else text)
@@ -75,7 +105,13 @@ def records(sources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[s
                 raise ValueError("Event summary source must be an object")
             event_id = value.get("_id", value.get("id"))
             text = event_text(value)
+            if value.get("event_type") == "UserPromptSubmit":
+                role = "user"
+            elif value.get("event_type") in {"Stop", "SubagentStop"}:
+                role = "assistant"
         elif row["kind"] != "session":
+            text = ""
+        if is_routine_notice(role, text):
             text = ""
         eligible_bytes += len(text.encode())
         projected.append(

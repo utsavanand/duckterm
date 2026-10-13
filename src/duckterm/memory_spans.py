@@ -211,6 +211,7 @@ def plan(captured: dict[str, Any], lower: dict[str, Any]) -> dict[str, Any]:
         {
             "policy": POLICY,
             "summary_policy": captured["policy"],
+            "writer_instructions": fingerprint(prompts.load("span_write")),
             "checkpoint_models": captured.get("checkpoint_settings", {}),
             "scope": lower["scope"],
             "ranges": result["ranges"],
