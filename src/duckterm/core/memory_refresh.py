@@ -251,7 +251,16 @@ async def _run(
             "reference_only_records": available - eligible,
             **(
                 {
-                    "scope": "recent_window",
+                    "scope": (
+                        "unprocessed_selection"
+                        if captured.get("checkpoint_order")
+                        else "recent_window"
+                    ),
+                    **(
+                        {"order": captured["checkpoint_order"]}
+                        if captured.get("checkpoint_order")
+                        else {}
+                    ),
                     "lookback_records": captured["checkpoint_settings"]["lookback_records"],
                     "history_eligible_records": captured["checkpoint_available"],
                     "outside_window_records": captured["checkpoint_available"] - eligible,

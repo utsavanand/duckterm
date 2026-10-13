@@ -111,6 +111,19 @@ extension SessionTransportTests {
 }
 
 extension SessionTransportTests {
+    @MainActor func testCheckpointPlanIsAnExactReadOnlySelectedHostRoute() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        let path = "/sessions/same.id/checkpoint-plan"
+        let request = try SessionTransport.request(base: base, params: ["path": path, "method": "GET"])
+        XCTAssertEqual(request.url?.absoluteString, base.absoluteString + path)
+        for method in ["POST", "PATCH", "DELETE"] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+        }
+        for invalid in [path + "?all=true", path + "/extra", "/sessions/../checkpoint-plan"] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": invalid, "method": "GET"]))
+        }
+    }
+
     @MainActor func testCheckpointReceiptsAreExactReadOnlyRemoteRoutes() throws {
         let base = URL(string: "http://127.0.0.1:14300")!
         let path = "/sessions/same.id/checkpoint-attempts/attempt-123"

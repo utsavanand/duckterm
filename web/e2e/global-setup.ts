@@ -63,7 +63,7 @@ export default async function globalSetup() {
 
   const proc = spawn(
     "python",
-    ["-m", "duckterm.cli", "serve", "--port", PORT],
+    [join(REPO, "web", "e2e", "fixture-server.py"), "serve", "--port", PORT],
     {
       cwd: REPO,
       env: {

@@ -11,7 +11,7 @@ it("loads settings, explains batches, and saves only editable preferences", asyn
   vi.mocked(api.checkpointSettings).mockResolvedValue(defaults);
   vi.mocked(api.saveCheckpointSettings).mockResolvedValue({ ...defaults, lookback_records: 60, writer_model: "sonnet" });
   render(<CheckpointSettingsModal onClose={() => {}} />);
-  const input = await screen.findByLabelText("Recent records to include");
+  const input = await screen.findByLabelText("Default records per checkpoint");
   expect(input).toHaveValue(20);
   expect(api.saveCheckpointSettings).not.toHaveBeenCalled();
   fireEvent.change(input, { target: { value: "60" } });
@@ -30,7 +30,7 @@ it("rejects invalid limits and does not claim success after a lost response", as
   vi.mocked(api.checkpointSettings).mockResolvedValue(defaults);
   vi.mocked(api.saveCheckpointSettings).mockRejectedValue(new Error("Connection lost"));
   render(<CheckpointSettingsModal onClose={() => {}} />);
-  const input = await screen.findByLabelText("Recent records to include");
+  const input = await screen.findByLabelText("Default records per checkpoint");
   const save = screen.getByRole("button", { name: "Save settings" });
   for (const value of ["", "0", "20.5", "1001"]) {
     fireEvent.change(input, { target: { value } });
@@ -42,6 +42,6 @@ it("rejects invalid limits and does not claim success after a lost response", as
   expect(screen.queryByText("Settings saved")).toBeNull();
   vi.mocked(api.checkpointSettings).mockResolvedValue({ ...defaults, lookback_records: 40 });
   fireEvent.click(screen.getByRole("button", { name: "Reload settings" }));
-  expect(await screen.findByLabelText("Recent records to include")).toHaveValue(40);
+  expect(await screen.findByLabelText("Default records per checkpoint")).toHaveValue(40);
   expect(api.saveCheckpointSettings).toHaveBeenCalledTimes(1);
 });

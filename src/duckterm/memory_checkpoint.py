@@ -11,9 +11,16 @@ from duckterm.persistence.saved_state import conversation
 
 
 async def freeze(
-    server: Any, key: str, captured: dict[str, Any], settings: dict[str, Any]
+    server: Any,
+    key: str,
+    captured: dict[str, Any],
+    settings: dict[str, Any],
+    *,
+    selection: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     captured = await memory_continuity.capture(server, key, captured)
+    if selection is not None and (captured.get("memory_gaps") or "memory_sources" not in captured):
+        raise APIError(409, "Selected history is unavailable; refresh the checkpoint dialog")
     if "memory_sources" not in captured:
         return captured
     sources = []
@@ -31,8 +38,14 @@ async def freeze(
     eligible = [r for r in rows if r["kind"] == "conversation" and not r["reference_only"]]
     eligible.sort(key=lambda r: bool(r["current"]))  # old generations before the current one
     chosen = eligible[-settings["lookback_records"] :]
+    available = len(eligible)
+    if selection is not None:
+        from duckterm import checkpoint_plan
+
+        chosen, available = checkpoint_plan.selected(server, key, captured, settings, selection)
+        captured["checkpoint_order"] = "oldest_unprocessed_first"
     captured["checkpoint_selection"] = {(r["source"], r["record"]): r["hash"] for r in chosen}
-    captured["checkpoint_available"] = len(eligible)
+    captured["checkpoint_available"] = available
     return captured
 
 

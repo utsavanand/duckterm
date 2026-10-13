@@ -1,9 +1,10 @@
+import { seedCheckpointSession, confirmCheckpoint } from "./checkpoint-fixture";
 import { expect, test } from "@playwright/test";
-import { apiDelete, apiPost, checkpoints, seedSession, sessionMenu } from "./helpers";
+import { apiDelete, apiPost, checkpoints, sessionMenu } from "./helpers";
 
 test("recovers the exact saved checkpoint after its POST response is lost", async ({ page }) => {
   const key = `e2e-checkpoint-recovery-${Date.now()}`;
-  await seedSession(key, { name: "Checkpoint recovery", group: "Recovery QA" });
+  await seedCheckpointSession(key, { name: "Checkpoint recovery", group: "Recovery QA" });
   try {
     await apiPost(`/sessions/${key}/checkpoint`, { label: "Unrelated earlier attempt" });
     const earlier = (await checkpoints(key))[0];
@@ -26,6 +27,7 @@ test("recovers the exact saved checkpoint after its POST response is lost", asyn
     await page.locator(".rd-row", { hasText: "Checkpoint recovery" }).locator(".rd-row-click").click();
     const receiptResponse = page.waitForResponse(response => response.url().includes(`/sessions/${key}/checkpoint-attempts/`) && response.status() === 200);
     await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
+    await confirmCheckpoint(page);
     const receipt = await (await receiptResponse).json();
     expect(receipt.request_id).toBe(requestId);
     expect(receipt.state).toBe("complete");
