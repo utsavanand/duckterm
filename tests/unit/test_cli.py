@@ -116,3 +116,73 @@ def test_run_missing_agent_returns_127(monkeypatch) -> None:  # type: ignore[no-
 
     monkeypatch.setattr(cli.shutil, "which", lambda a: None)  # not on PATH
     assert main(["run", "nope"]) == 127
+
+
+def test_restart_waits_for_old_process_exit_after_http_stops(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import duckterm.cli as cli
+    import duckterm.persistence.history as history
+
+    steps: list[str] = []
+    alive = True
+    listeners = iter([{42}, set()])
+    monkeypatch.setattr(cli, "_duckterm_responds", lambda h, p: True)
+    monkeypatch.setattr(cli, "_listening_pids", lambda p: next(listeners))
+
+    def kill(pid: int, signal: int) -> None:
+        assert pid == 42
+        steps.append("signal")
+
+    def sleep(seconds: float) -> None:
+        nonlocal alive
+        steps.append("wait")
+        alive = False
+
+    class Store:
+        def __init__(self) -> None:
+            assert not alive  # HTTP could stop before shutdown released SQLite.
+            steps.append("open_db")
+
+        def clear_tombstones(self) -> int:
+            steps.append("clear")
+            return 0
+
+        def close(self) -> None:
+            steps.append("close_db")
+
+    monkeypatch.setattr(cli.os, "kill", kill)
+    monkeypatch.setattr(cli, "_pid_alive", lambda p: alive)
+    monkeypatch.setattr("time.sleep", sleep)
+    monkeypatch.setattr(history, "HistoryStore", Store)
+    monkeypatch.setattr(cli, "_serve", lambda h, p: steps.append("serve") or 0)
+    assert cli._restart("127.0.0.1", 4300) == 0
+    assert steps == ["signal", "wait", "open_db", "clear", "close_db", "serve"]
+
+
+def test_restart_refuses_to_open_db_while_old_process_is_alive(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import duckterm.cli as cli
+    import duckterm.persistence.history as history
+
+    monkeypatch.setattr(cli, "_duckterm_responds", lambda h, p: True)
+    monkeypatch.setattr(cli, "_listening_pids", lambda p: {42})
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(cli, "_pid_alive", lambda pid: True)
+    waits: list[float] = []
+    monkeypatch.setattr("time.sleep", waits.append)
+    monkeypatch.setattr(history, "HistoryStore", lambda: pytest.fail("DB opened too early"))
+    monkeypatch.setattr(cli, "_serve", lambda h, p: pytest.fail("server started too early"))
+    assert cli._restart("127.0.0.1", 4300) == 1
+    assert len(waits) == 50
+
+
+def test_restart_refuses_second_listener_before_opening_db(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    import duckterm.cli as cli
+    import duckterm.persistence.history as history
+
+    listeners = iter([{42}, {88}])
+    monkeypatch.setattr(cli, "_duckterm_responds", lambda h, p: True)
+    monkeypatch.setattr(cli, "_listening_pids", lambda p: next(listeners))
+    monkeypatch.setattr(cli.os, "kill", lambda pid, sig: None)
+    monkeypatch.setattr(cli, "_pid_alive", lambda pid: False)
+    monkeypatch.setattr(history, "HistoryStore", lambda: pytest.fail("DB opened beside new server"))
+    monkeypatch.setattr(cli, "_serve", lambda h, p: pytest.fail("server started beside new server"))
+    assert cli._restart("127.0.0.1", 4300) == 1
