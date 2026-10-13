@@ -6,6 +6,8 @@ import { useNow } from "./useNow";
 import type { SessionView } from "./types";
 import "./floatingSessionShortcuts.css";
 
+const SESSION_PIN_LIMIT = 10;
+
 const pinIcon = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-4 1-3 5 1 3-3-1-5 3-1 4-5-5 4-1 3-5-1-3 3 1z" transform="translate(1 -1) scale(.9)" /></svg>;
 const initials = (label: string) => label.trim().split(/[\s_-]+/).slice(0, 2).map(part => Array.from(part)[0] || "").join("").toLocaleUpperCase() || "•";
 const hostOf = (session: SessionView) => splitSessionRef(session.key).host;
@@ -56,7 +58,7 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
   const id = useId();
   const [position, setPosition] = useState({ left: 8, top: 8, width: 310, maxHeight: 400 });
   const pins = sessions.filter(s => s.pinned);
-  const atCapacity = (s: SessionView) => pins.filter(p => hostOf(p) === hostOf(s)).length >= 3;
+  const atCapacity = (s: SessionView) => pins.filter(p => hostOf(p) === hostOf(s)).length >= SESSION_PIN_LIMIT;
   const visible = sessions.filter(s => s.pinned || !["archived", "merged"].includes(s.state))
     .filter(s => `${s.label} ${locationOf(s)}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
 
@@ -114,7 +116,7 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
     const offline = !!session.hostOffline;
     return <button className="rd-shortcut-pin" aria-label={`${session.pinned ? "Unpin" : "Pin"} ${session.label} ${place}`}
       aria-pressed={!!session.pinned} disabled={!!pending || capped || offline}
-      title={offline ? "Reconnect this host to change its pins" : capped ? "Unpin a session on this host first (3 pinned)" : `${session.pinned ? "Unpin" : "Pin"} ${session.label}`}
+      title={offline ? "Reconnect this host to change its pins" : capped ? `Unpin a session on this host first (${SESSION_PIN_LIMIT} pinned)` : `${session.pinned ? "Unpin" : "Pin"} ${session.label}`}
       onClick={() => void toggle(session)}>{pinIcon}</button>;
   }
   return <nav ref={root} className={`rd-floating-shortcuts${hovered ? " is-hovered" : ""}${open ? " picker-open" : ""}`} aria-label="Pinned session shortcuts">
@@ -128,14 +130,14 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
       </button>{pinButton(s, "from shortcuts")}
     </div>)}</div>
     {!selected.pinned && <button className="rd-shortcut-current" disabled={!!pending || atCapacity(selected) || !!selected.hostOffline}
-      title={selected.hostOffline ? "Reconnect this host to pin its session" : atCapacity(selected) ? "Unpin a session on this host first (3 pinned)" : `Pin ${selected.label}`}
+      title={selected.hostOffline ? "Reconnect this host to pin its session" : atCapacity(selected) ? `Unpin a session on this host first (${SESSION_PIN_LIMIT} pinned)` : `Pin ${selected.label}`}
       aria-label={`Pin current session ${selected.label}`} onClick={() => void toggle(selected)}><span>Pin {selected.label}</span>{pinIcon}</button>}
     {!pins.length && <p className="rd-shortcut-empty">Pin a session to keep it here.</p>}
     {error && <p role="alert" className="rd-shortcut-error">{error}</p>}
     {open && createPortal(<div ref={picker} id={id} className="rd-shortcut-picker" role="dialog" aria-label="Pin sessions" style={position}
       onBlur={e => { if (e.relatedTarget instanceof Node && !e.currentTarget.contains(e.relatedTarget) && !add.current?.contains(e.relatedTarget)) setOpen(false); }}>
       <header><span>Pin sessions</span><button aria-label="Close pin picker" onClick={closePicker}>×</button></header>
-      <p>Up to 3 sessions per host. Shared with the sidebar and Focus.</p>
+      <p>Up to {SESSION_PIN_LIMIT} sessions per host. Shared with the sidebar and Focus.</p>
       <input ref={search} type="search" aria-label="Find a session" placeholder="Find a session…" value={query} onChange={e => setQuery(e.target.value)} />
       <div className="rd-shortcut-choices">{visible.map(s => <div className="rd-shortcut-choice" key={s.key}>
         <div><span>{s.label}</span><small>{locationOf(s)}{s.key === selected.key ? " · Current session" : ""}{s.hostOffline ? " · Offline" : ""}</small></div>

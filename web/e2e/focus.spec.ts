@@ -22,7 +22,9 @@ test("Focus pins: cap, live input, saved layout, stopped sessions and unpin", as
     }
     await page.locator(".rd-row-name", {hasText: "focus-d"}).click();
     await page.locator(".rd-agents").getByRole("button", {name:"Pin focus-d",exact:true}).click();
-    await expect(page.getByText("Unpin one first", {exact:true})).toBeVisible();
+    await expect(page.locator(".rd-agents").getByRole("button", {name:"Unpin focus-d",exact:true})).toBeVisible();
+    await expect(page.getByRole("button", {name:"Focus · 4",exact:true})).toBeEnabled();
+    await page.locator(".rd-agents").getByRole("button", {name:"Unpin focus-d",exact:true}).click();
     await expect(page.getByRole("button", {name:"Focus · 3",exact:true})).toBeEnabled();
     await page.locator(".rd-row-name",{hasText:"focus-a"}).click();
     await expect(page.locator(".rd-agents").getByRole("button",{name:"Unpin focus-a",exact:true})).toBeVisible();

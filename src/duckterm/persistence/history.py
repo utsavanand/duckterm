@@ -30,6 +30,8 @@ from duckterm.runtimes.base import AT_REST_STATES, SessionState
 
 Event = dict[str, Any]
 
+SESSION_PIN_LIMIT = 10
+
 # Bump when the schema shape changes (a new column, a table rebuild). Stamped
 # into the DB's PRAGMA user_version after migrating. A server refuses to open a
 # DB whose user_version is NEWER than this — the old-binary-on-new-DB case, e.g.
@@ -758,8 +760,8 @@ class HistoryStore:
         cur = self._conn.execute(
             "UPDATE sessions SET pinned = ? WHERE session_key = ? "
             "AND (? = 0 OR pinned = 1 OR "
-            "(SELECT COUNT(*) FROM sessions WHERE pinned = 1) < 3)",
-            (int(pinned), key, int(pinned)),
+            "(SELECT COUNT(*) FROM sessions WHERE pinned = 1) < ?)",
+            (int(pinned), key, int(pinned), SESSION_PIN_LIMIT),
         )
         self._conn.commit()
         if cur.rowcount:

@@ -55,7 +55,7 @@ The question was server vs browser. **Server.** Reasons, in order:
 Shape: a `pinned INTEGER` (or `pinned_at`) column on `sessions`, an
 owner-token route to toggle it, and the value rides the existing session
 payload the dashboard already receives — no new polling. Cap enforced
-**server-side** at 3: the 4th toggle returns 409 with "Unpin one first",
+**server-side** at 10 per host: the 11th toggle returns 409 with "Unpin one first",
 and the UI shows that rather than guessing. Never auto-swap; the owner was
 explicit.
 
@@ -70,7 +70,8 @@ and losing it costs nothing.
 - **Focus button** in the header beside Ask Oracle; disabled with a tooltip
   when nothing is pinned.
 - Opens `GridView` with the pinned set, title "Focus", up to 3 columns by
-  default via `evenRow`, drag to stack/rearrange as the folder grid allows.
+  default via `evenRow`; additional pins start in the dock and can be expanded.
+  Drag to stack/rearrange as the folder grid allows.
 - Terminals are live and typeable — free, since it is the same component and
   the same mounted PTY terminals.
 
@@ -85,7 +86,7 @@ and losing it costs nothing.
 
 ## Tests
 
-Pin survives reload and server restart; the 4th pin is refused with the
+Pin survives reload and server restart; the 11th pin is refused with the
 exact message and no auto-swap; Focus is disabled with zero pins; deleting a
 pinned session removes the pin; layout arrangement survives reload;
 terminals in Focus accept input.
