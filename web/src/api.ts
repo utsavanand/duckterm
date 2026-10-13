@@ -687,7 +687,13 @@ export interface TimelinePage {
   summary: { text: string; updated_at: number | null; total: number; counts: Record<string, number> };
   entries: TimelineEntry[]; next_cursor: string | null;
 }
+export interface CheckpointWorkProgress {
+  stage: "checking" | "writing" | "reviewing" | "repairing" | "saving";
+  completed?: number;
+  total?: number;
+}
 export interface CheckpointAttemptReceipt {
+  progress?: CheckpointWorkProgress;
   request_id: string;
   state: "running" | "complete" | "failed" | "interrupted";
   result?: CheckpointRecord;

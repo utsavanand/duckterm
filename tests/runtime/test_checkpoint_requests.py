@@ -262,3 +262,46 @@ def test_recovered_receipt_preserves_markdown_export_warning(rig, monkeypatch):
         server.checkpoint_requests.receipt("test-save", "request-one")["result"]["export_reason"]
         == "markdown_unavailable"
     )
+
+
+def test_exact_receipt_exposes_progress_before_post_returns(rig, monkeypatch):
+    server, _, _ = rig
+    original = server._create_checkpoint
+
+    async def run():
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def create(*args, **kwargs):
+            kwargs["on_progress"]({"stage": "reviewing", "completed": 2, "total": 7})
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(server, "_create_checkpoint", create)
+        task = asyncio.create_task(request(server))
+        await entered.wait()
+        receipt = server.checkpoint_requests.receipt("test-save", "request-one")
+        assert receipt["state"] == "running"
+        assert receipt["progress"] == {"stage": "reviewing", "completed": 2, "total": 7}
+        assert not task.done()
+        release.set()
+        await task
+        # A new request cannot inherit the older operation's progress.
+        entered.clear()
+        release.clear()
+
+        async def initial(*args, **kwargs):
+            entered.set()
+            await release.wait()
+            return await original(*args, **kwargs)
+
+        monkeypatch.setattr(server, "_create_checkpoint", initial)
+        task = asyncio.create_task(request(server, "new-request"))
+        await entered.wait()
+        assert server.checkpoint_requests.receipt("test-save", "new-request")["progress"] == {
+            "stage": "checking"
+        }
+        release.set()
+        await task
+
+    asyncio.run(run())

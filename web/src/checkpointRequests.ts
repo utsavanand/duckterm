@@ -1,11 +1,11 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { api, type CheckpointAttemptReceipt, type CheckpointRecord } from "./api";
+import { api, type CheckpointAttemptReceipt, type CheckpointRecord, type CheckpointWorkProgress } from "./api";
 import { checkpointStatus } from "./checkpointState";
 
 type CheckpointOutcome = Pick<CheckpointRecord, "saved" | "summary_update" | "export_reason"> & { label: string };
 
 export type CheckpointAttempt =
-  | { state: "running"; startedAt: number }
+  | { state: "running"; startedAt: number; progress?: CheckpointWorkProgress }
   | { state: "complete"; startedAt: number; result: CheckpointOutcome }
   | { state: "unknown"; startedAt: number; recovering?: boolean };
 
@@ -33,6 +33,7 @@ export function requestCheckpoint(key: string): Promise<CheckpointRecord> {
   const requestId = crypto.randomUUID();
   // Defer dispatch until the promise is registered, even for synchronous callers.
   const request = Promise.resolve().then(async () => {
+    const stopProgress = watchProgress(key, requestId, startedAt);
     try {
       const result = await api.checkpoint(key, "manual", requestId);
       // Older servers may omit the ID on the direct response. A conflicting ID
@@ -40,11 +41,12 @@ export function requestCheckpoint(key: string): Promise<CheckpointRecord> {
       if (result.request_id && result.request_id !== requestId) throw new Error("Checkpoint response identity mismatch");
       return result;
     } catch (error) {
+      stopProgress();
       publish(key, { state: "unknown", startedAt, recovering: true });
       const result = await recoverCheckpoint(key, requestId, startedAt);
       if (!result) throw error;
       return result;
-    }
+    } finally { stopProgress(); }
   }).then(result => {
     // Retain only status metadata, not another cached copy of conversation text.
     const outcome = { saved: result.saved, summary_update: result.summary_update, export_reason: result.export_reason, label: checkpointStatus(result).label };
@@ -104,8 +106,44 @@ async function recoverCheckpoint(key: string, requestId: string, startedAt: numb
     // work is still running, not an unknown result. Bound loss of contact, not
     // the duration of confirmed work; duplicate clicks still join this request.
     deadline = Date.now() + 180_000;
-    publish(key, { state: "running", startedAt });
+    publish(key, { state: "running", startedAt, progress: validProgress(receipt.progress) });
     await pause();
   }
   return null;
+}
+
+// Progress is advisory: a failed read never retries or cancels the checkpoint.
+// Poll while the POST is outstanding, not only after its response is lost.
+function watchProgress(key: string, requestId: string, startedAt: number): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout>;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let controller: AbortController | undefined;
+  let cancelRead: (() => void) | undefined;
+  const poll = async () => {
+    controller = new AbortController();
+    try {
+      const receipt = await Promise.race([
+        api.checkpointAttempt(key, requestId, controller.signal),
+        new Promise<null>(resolve => { cancelRead = () => resolve(null); timeout = setTimeout(cancelRead, 10_000); }),
+      ]);
+      if (!stopped && receipt?.request_id === requestId && receipt.state === "running") {
+        publish(key, { state: "running", startedAt, progress: validProgress(receipt.progress) });
+      }
+    } catch { /* The POST still owns the result; recovery handles a lost response. */ }
+    finally {
+      clearTimeout(timeout); controller?.abort();
+      if (!stopped) timer = setTimeout(poll, 2000);
+    }
+  };
+  timer = setTimeout(poll, 1000);
+  return () => { stopped = true; clearTimeout(timer); clearTimeout(timeout); controller?.abort(); cancelRead?.(); };
+}
+
+function validProgress(value: CheckpointWorkProgress | undefined): CheckpointWorkProgress | undefined {
+  if (!value || !["checking", "writing", "reviewing", "repairing", "saving"].includes(value.stage)) return undefined;
+  const { completed, total } = value;
+  if (typeof completed === "number" && Number.isSafeInteger(completed) && completed >= 0
+    && typeof total === "number" && Number.isSafeInteger(total) && total >= completed) return { stage: value.stage, completed, total };
+  return { stage: value.stage };
 }

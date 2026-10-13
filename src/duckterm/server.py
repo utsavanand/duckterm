@@ -4755,6 +4755,7 @@ class Server:
         *,
         identity: str | None = None,
         request_id: str | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         from duckterm import memory_continuity
 
@@ -4764,7 +4765,9 @@ class Server:
         prior = current_revision(self.history.session(session_key) or {})
         update = SummaryUpdate.failed("update_failed")
         try:
-            update = await self.progress_coordinator.refresh_result(session_key, captured)
+            update = await self.progress_coordinator.refresh_result(
+                session_key, captured, on_progress=on_progress
+            )
         except APIError:
             update = SummaryUpdate.failed("source_unavailable")
         except Exception as exc:
@@ -4772,6 +4775,8 @@ class Server:
             print(
                 f"[duckterm] checkpoint summary unavailable: {type(exc).__name__}", file=sys.stderr
             )
+        if on_progress:
+            on_progress({"stage": "saving"})
         revision = update.revision
         previous = self.digests.revision(session_key, prior) if prior else None
         if (

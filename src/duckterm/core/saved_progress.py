@@ -187,6 +187,14 @@ class ProgressCoordinator:
         self.span_refresh_inputs: dict[str, str] = {}
         self.span_waiters: dict[str, dict[object, Callable[[], bool] | None]] = {}
         self.span_status: dict[str, dict[str, int]] = {}
+        self.span_progress: dict[str, dict[str, Any]] = {}
+        self.span_observers: dict[str, dict[object, Callable[[dict[str, Any]], None]]] = {}
+
+    def report_span_progress(self, key: str, **fields: Any) -> None:
+        value = {**self.span_progress.get(key, {}), **fields}
+        self.span_progress[key] = value
+        for observer in tuple(self.span_observers.get(key, {}).values()):
+            observer(dict(value))
 
     async def close(self) -> None:
         tasks = (
@@ -265,6 +273,7 @@ class ProgressCoordinator:
         captured: dict[str, Any] | None = None,
         *,
         continue_if: Callable[[], bool] | None = None,
+        on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> SummaryUpdate:
         from duckterm import memory_continuity
 
@@ -285,7 +294,9 @@ class ProgressCoordinator:
         if "memory_sources" in captured:
             from duckterm.core import memory_refresh
 
-            return await memory_refresh.refresh(self, key, captured, continue_if=continue_if)
+            return await memory_refresh.refresh(
+                self, key, captured, continue_if=continue_if, on_progress=on_progress
+            )
         row = self.server.history.session(key)
         if row is None:
             return SummaryUpdate.failed("source_changed", diagnostic="capture:session_removed")
@@ -406,6 +417,8 @@ class ProgressCoordinator:
 
         original = prompt
         for attempt in range(2 if maintained is not None else 1):
+            if maintained and maintained.get("span") == "incremental":
+                self.report_span_progress(key, stage="repairing" if attempt else "writing")
             reply = await asyncio.to_thread(summarize, prompt)
             if failure := getattr(reply, "failure_reason", None):
                 return SummaryUpdate.failed(failure)
@@ -550,6 +563,8 @@ class ProgressCoordinator:
         )
         if span_plan is not None and len(validation_prompt.encode()) > memory_spans.MAX_INPUT_BYTES:
             return SummaryUpdate.failed("invalid_context", diagnostic="review_input_too_large")
+        if span_plan is not None:
+            self.report_span_progress(key, stage="reviewing")
         verdict_reply = await asyncio.to_thread(summarize, validation_prompt)
         if failure_reason := getattr(verdict_reply, "failure_reason", None):
             return SummaryUpdate.failed(failure_reason)
@@ -635,6 +650,8 @@ class ProgressCoordinator:
             "summary_review": review,
             **(memory_spans.metadata(span_plan) if span_plan is not None else {}),
         }
+        if span_plan is not None:
+            self.report_span_progress(key, stage="checking")
         folding = await memory_folding.prepare(self, key, captured, value)
         if folding is not None:
             # Optional model work ran after the summary's fence. Revalidate it

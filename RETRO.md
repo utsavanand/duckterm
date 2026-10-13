@@ -4,6 +4,11 @@ Checkpoint capture excluded generated progress notes, but publication compared t
 
 ## 2026-10-12 — Retrieval must close resources and avoid rereading unrelated history
 
+## Checkpoint activity is not measured progress (2026-10-12)
+
+A looping strip and elapsed seconds made long checkpoints look active without saying how much work had finished. Expose exact-request counts from accepted span writes, poll while the original POST is pending, and show writing/reviewing/saving separately. Count only checked entries in the current captured range; reuse prior summaries without counting them as new work. A full summary bar still needs the final saved result, and connection recovery must never start another checkpoint. Test shared writers, failed spans, stale request IDs, panel navigation and stop-polling behavior.
+
+
 A SQLite connection context commits or rolls back; it does not close the connection. Repeated artifact reads exhausted the live server's file handles and closed requests without responses. Close each temporary connection explicitly and test closure while retaining references so garbage collection cannot hide the leak. Read exact original handles without loading every conversation generation; reuse retained native parsing under file fences and the existing bounded cache. Ignore unrelated new sources during an as-of read, but still reject edited/deleted sources, changed grants, and changed native files.
 
 ## 2026-10-12 — A bounded handoff needs declared optional omissions
