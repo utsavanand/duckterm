@@ -11,7 +11,7 @@ test("checkpoint settings save and reopen through the real API", async ({ page }
     await page.getByRole("button", { name: "Settings", exact: false }).click();
     await page.getByRole("button", { name: "Checkpointing", exact: false }).click();
     await expect(page.locator("#header-settings-panel")).toHaveCount(0);
-    const field = page.getByLabel("Recent records to include");
+    const field = page.getByLabel("Default records per checkpoint");
     await expect(field).toHaveValue("20");
     await field.fill("60");
     await page.getByLabel("Summary writer").selectOption("sonnet");
