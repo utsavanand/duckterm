@@ -49,7 +49,7 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     await picker.getByRole("button", { name: "Pin shortcut-api in picker" }).click();
     await expect(picker.getByRole("button", { name: "Unpin shortcut-api in picker" })).toBeEnabled();
     await picker.getByRole("button", { name: "Pin shortcut-qa in picker" }).click();
-    await expect(picker.getByRole("button", { name: "Pin shortcut-extra in picker" })).toBeDisabled();
+    await expect(picker.getByRole("button", { name: "Pin shortcut-extra in picker" })).toBeEnabled();
     await page.screenshot({ path: "/tmp/floating-shortcuts-picker.png" });
     await page.keyboard.press("Escape");
     await expect(picker).toBeHidden();

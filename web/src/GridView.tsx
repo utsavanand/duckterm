@@ -227,7 +227,7 @@ export function GridView({
     <div className="rd-grid">
       <div className="rd-grid-bar">
         <span className="rd-grid-title">
-          {focus ? `Focus · ${agents.length} / 3 pinned` : `${shown + dockedList.length} running`}
+          {focus ? `Focus · ${agents.length} pinned` : `${shown + dockedList.length} running`}
         </span>
         {!focus && <select
           className="rd-grid-folder"

@@ -12,14 +12,14 @@ it("keeps same-named remote sessions distinct and applies pin limits per host", 
   const remote = session(sessionRef("cloud", "same"), { label: "Agent", pinned: true, hostLabel: "Cloud" });
   const next = session(sessionRef("cloud", "next"), { label: "Remote next" });
   const unavailable = session(sessionRef("offline", "one"), { label: "Offline", hostOffline: true });
-  const sessions = [local, session("two", { pinned: true }), session("three", { pinned: true }), remote, next, unavailable, session("four")];
+  const sessions = [local, ...Array.from({ length: 9 }, (_, i) => session(`local-${i}`, { pinned: true })), remote, next, unavailable, session("eleventh")];
   const onOpen = vi.fn(), onToggle = vi.fn().mockResolvedValue(undefined);
   render(<FloatingSessionShortcuts sessions={sessions} selected={local} onOpen={onOpen} onToggle={onToggle} />);
   fireEvent.click(screen.getAllByRole("button", { name: "Open pinned Agent" })[1]);
   expect(onOpen).toHaveBeenCalledWith(remote.key);
   fireEvent.click(screen.getByRole("button", { name: "Choose sessions to pin" }));
   const picker = within(screen.getByRole("dialog"));
-  expect(picker.getByRole("button", { name: "Pin four in picker" })).toBeDisabled();
+  expect(picker.getByRole("button", { name: "Pin eleventh in picker" })).toBeDisabled();
   expect(picker.getByRole("button", { name: "Pin Remote next in picker" })).toBeEnabled();
   expect(picker.getByRole("button", { name: "Pin Offline in picker" })).toBeDisabled();
   fireEvent.click(picker.getByRole("button", { name: "Pin Remote next in picker" }));
