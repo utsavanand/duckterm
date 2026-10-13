@@ -139,6 +139,7 @@ function Dashboard() {
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
   const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
+  const [memoryTarget, setMemoryTarget] = useState<{ key: string; revision: string } | null>(null);
   const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory">(
     "terminal",
   );
@@ -473,10 +474,12 @@ function Dashboard() {
                   onClearTarget={() => setPinTarget(null)} />
               </div>
             )}
-            {view === "memory" && selected && <div className="rd-messages-wrap"><MemoryView key={selected.key} sessionKey={selected.key} name={selected.label} active={!towerOpen && selectedFolder === null} /></div>}
+            {view === "memory" && selected && <div className="rd-messages-wrap"><MemoryView key={`${selected.key}:${memoryTarget?.key === selected.key ? memoryTarget.revision : ""}`} sessionKey={selected.key} name={selected.label} active={!towerOpen && selectedFolder === null}
+              initialRevision={memoryTarget?.key === selected.key ? memoryTarget.revision : ""} onBack={memoryTarget?.key === selected.key ? () => setView("history") : undefined} /></div>}
             {view === "history" && selected && (
               <div className="rd-messages-wrap">
-                <TimelineView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} checkpointTarget={checkpointTarget?.key === selected.key ? checkpointTarget.request : undefined} onArtifacts={() => setView("artifacts")} onMessages={() => setView("messages")} />
+                <TimelineView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} checkpointTarget={checkpointTarget?.key === selected.key ? checkpointTarget.request : undefined} onArtifacts={() => setView("artifacts")} onMessages={() => setView("messages")}
+                  onMemory={(key, revision) => { setMemoryTarget({ key, revision }); setView("memory"); }} />
               </div>
             )}
             {view === "inbox" && (
@@ -533,7 +536,7 @@ function Dashboard() {
               {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}
                 notesOpen={notesKey === selected.key} onCloseNotes={() => setNotesKey(null)} />}
               {selected && <CheckpointProgress sessionKey={selected.key} />}
-              {selected && <LiveContextPanel session={selected} onMemory={() => setView("memory")} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
+              {selected && <LiveContextPanel session={selected} onMemory={() => { setMemoryTarget(null); setView("memory"); }} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && (
                 <label className="rd-session-theme">
                   terminal theme

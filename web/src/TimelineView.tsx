@@ -18,8 +18,8 @@ const FILTERS = [
 ] as const;
 const LABELS: Record<string, string> = { prompt: "Owner message", delivered: "Delivered", learned: "Task learning", next_action: "Next action", completed: "Completed", decision: "Owner decision", restart: "Restart", model: "Model changed", harness: "Harness switched", "needs-you": "Needs you", artifact: "Artifact" };
 
-export function TimelineView({ session, active = true, checkpointTarget, onArtifacts, onMessages }: {
-  session: SessionView; active?: boolean; checkpointTarget?: number; onArtifacts?: () => void; onMessages?: () => void;
+export function TimelineView({ session, active = true, checkpointTarget, onArtifacts, onMessages, onMemory }: {
+  session: SessionView; active?: boolean; checkpointTarget?: number; onArtifacts?: () => void; onMessages?: () => void; onMemory?: (sessionKey: string, revision: string) => void;
 }) {
   const [filter, setFilter] = useState("all");
   const [data, setData] = useState<TimelinePage | null>(null);
@@ -137,7 +137,7 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
           <time dateTime={new Date(entry.ts).toISOString()}>{new Date(entry.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
           <span aria-hidden="true" className="rd-timeline-mark">{entry.kind === "checkpoint" ? "⚑" : entry.kind === "artifact" ? "▤" : "·"}</span>
           <div ref={i === 0 ? latest : undefined}>{entry.kind === "checkpoint"
-            ? <CheckpointDetails checkpoint={cp ?? { id: cpId ?? entry.id, label: entry.detail.text ?? "Checkpoint", created_at: entry.ts, summary: entry.detail.summary ?? "", summary_state: entry.detail.summary_state, record: { prompts: [], files: [], tools: [], event_count: 0 } }} open={!!checkpointTarget && i === 0} onRetry={cp && !["archived", "merged", "terminated"].includes(session.state) ? () => void retrySummary() : undefined} retrying={retryBusy} />
+            ? <CheckpointDetails checkpoint={cp ?? { id: cpId ?? entry.id, label: entry.detail.text ?? "Checkpoint", created_at: entry.ts, summary: entry.detail.summary ?? "", summary_state: entry.detail.summary_state, record: { prompts: [], files: [], tools: [], event_count: 0 } }} open={!!checkpointTarget && i === 0} onRetry={cp && !["archived", "merged", "terminated"].includes(session.state) ? () => void retrySummary() : undefined} retrying={retryBusy} onMemory={onMemory ? revision => onMemory(session.key, revision) : undefined} />
             : <EventContent entry={entry} onArtifacts={onArtifacts} />}</div>
         </article>
       </Fragment>;

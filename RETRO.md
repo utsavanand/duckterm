@@ -1,3 +1,7 @@
+## 2026-10-12 — Timeline memory links must retain the saved revision
+
+A checkpoint is a historical reference, so its Memory link must carry summary_ref and the host-qualified session key. Initialize the read at that exact revision; never fetch current memory first or silently replace an unavailable revision. Keep older linked revisions selectable even outside the recent-20 dropdown, and load their original evidence without generating a checkpoint. Verify panel navigation still explicitly opens current memory.
+
 ## 2026-10-12 — A checkpoint count must describe the work the request will actually do
 
 - Checkpoint confirmation must be separate from execution: fetching counts and Cancel save nothing; keep the dialog outside the dismissing session menu, carry the exact counted boundary into confirmation, and distinguish a rejected stale selection from an unknown network result. Verify the actual modal bounds in a browser, not only DOM presence.

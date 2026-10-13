@@ -175,3 +175,22 @@ it("does not show a previous view's completion after navigating away and back", 
   expect(screen.queryByText("Summary update failed · The summary provider timed out")).toBeNull();
   expect(screen.getByRole("button", { name: "Retry summary update" })).toBeEnabled();
 });
+
+it("opens the checkpoint's exact summary reference with its host-qualified session", async () => {
+  const { sessionRef } = await import("./hostTransport");
+  const key = sessionRef("remote-mac", "one"), onMemory = vi.fn();
+  vi.mocked(api.timeline).mockResolvedValue(checkpointPage("saved"));
+  vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [{ ...failedCheckpoint(), id: "saved", summary: "Earlier saved work", record: { ...failedCheckpoint().record, summary_ref: "older-exact" } }] });
+  render(<TimelineView session={{ ...session, key }} checkpointTarget={1} onMemory={onMemory} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Read saved summary and evidence ↗" }));
+  expect(onMemory).toHaveBeenCalledExactlyOnceWith(key, "older-exact");
+  expect(api.checkpoint).not.toHaveBeenCalled();
+});
+
+it("does not offer current memory as a substitute when a checkpoint has no reference", async () => {
+  vi.mocked(api.timeline).mockResolvedValue(checkpointPage());
+  vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [failedCheckpoint()] });
+  render(<TimelineView session={session} checkpointTarget={1} onMemory={vi.fn()} />);
+  await screen.findByRole("button", { name: "Retry summary update" });
+  expect(screen.queryByRole("button", { name: "Read saved summary and evidence ↗" })).toBeNull();
+});
