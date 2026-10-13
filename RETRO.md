@@ -9,6 +9,9 @@ Raising a pin limit requires changing both the atomic server write and the float
 ## 2026-10-12 — Preparation status requests need their own deadline
 
 A background job can outlive a lost HTTP response. Unbounded local fetch or body reads leave the Change harness controller waiting forever and prevent its next poll. Bound metadata exchanges independently from model generation, preserve the original request key after an ambiguous start, and let status polling recover. Regression tests must include never-settling promises and late replies, not only rejected network requests. A request timeout does not prove that generation failed.
+## 2026-10-12 — Show generation work, not just a preparing label
+
+Harness preparation already used the shared summarizer but omitted its progress observer. Forward the existing checked-record counts and writing/reviewing stages to the preparation response; keep later evidence and brief checks separate from summarization. A successful status poll is evidence of connectivity, not evidence that work advanced, so polling must not refresh the last-progress timestamp or invent completion percentages.
 
 ## 2026-10-12 — Empty-state copy must not displace a hovered action
 
