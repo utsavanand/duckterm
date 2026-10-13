@@ -1,3 +1,15 @@
+## 2026-10-12 — Empty-state copy must not displace a hovered action
+
+A hover-only helper above Pin current moved the button after the pointer arrived, swallowing the first click. Keep helper text after the action so expansion preserves both its horizontal and vertical hit target. Browser regressions must capture the collapsed coordinates, expand, and click the same point; locator clicks can hide this defect by chasing moving elements.
+
+## 2026-10-12 — Expanding shortcuts must preserve the action under the pointer
+
+Keep the compact session button anchored at the terminal edge while its label expands to the left. Revealing an unpin control under the original pointer turns an intended session switch into an accidental unpin. Verify the hit target before and after hover, keep the picker and keyboard focus expanded, and delay collapse across click-through gaps without changing terminal geometry.
+
+## 2026-10-12 — Floating terminal controls must not resize the terminal
+
+Session shortcuts belong in an absolutely positioned layer over the existing terminal slot. Do not reserve a grid column or add terminal padding: either changes PTY columns and can reflow output. Reuse saved session pins and host-qualified selection; verify widths, terminal connections, unsent drafts, and right-panel collapse with real terminal sessions.
+
 ## 2026-10-12 — Bound the whole checkpoint request, not just each provider call
 
 A 50-record batch ceiling still allowed one manual checkpoint to process thousands of historical records and then fail when live activity changed. Capture immutable evidence once, choose an explicit recent window (20 records by default), and use at most 20 records per batch. Keep model roles explicit, persist exact coverage, and distinguish older history outside the request from unfinished work inside it. Expanding a window must fill holes without repeating accepted batches or dropping protected claims. Preserve conversation/scope checks and verify native Settings routes as well as the HTTP API.
