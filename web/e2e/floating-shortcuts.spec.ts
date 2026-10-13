@@ -29,7 +29,18 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     const originalWidth = await width(), initialResizes = sizes.length, initialConnections = connections;
     await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
     await page.keyboard.type("UNSENT_SHORTCUT_DRAFT");
-    await rail.getByRole("button", { name: "Pin current session shortcut-ui" }).click();
+    // Use the collapsed target, not locator.click() which may chase layout shifts.
+    await page.mouse.move(500, 700);
+    await expect.poll(async () => (await rail.boundingBox())!.width).toBe(38);
+    const firstPin = rail.getByRole("button", { name: "Pin current session shortcut-ui" });
+    const beforeHover = (await firstPin.boundingBox())!;
+    const firstPoint = { x: beforeHover.x + beforeHover.width / 2, y: beforeHover.y + beforeHover.height / 2 };
+    await page.mouse.move(firstPoint.x, firstPoint.y);
+    await expect.poll(async () => (await rail.boundingBox())!.width).toBe(176);
+    expect((await firstPin.boundingBox())!.y).toBe(beforeHover.y);
+    expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("button")?.getAttribute("aria-label"), firstPoint)).toBe("Pin current session shortcut-ui");
+    await page.screenshot({ path: "/tmp/floating-shortcuts-first-pin.png" });
+    await page.mouse.click(firstPoint.x, firstPoint.y);
     await expect(rail.getByRole("button", { name: "Open pinned shortcut-ui" })).toBeVisible();
     await expect(page.locator(".rd-agents").getByRole("button", { name: "Unpin shortcut-ui", exact: true })).toBeVisible();
     await rail.getByRole("button", { name: "Choose sessions to pin" }).click();
