@@ -127,10 +127,10 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
         <span className="rd-shortcut-badge" aria-hidden="true">{initials(s.label)}<ShortcutState session={s} /></span>
       </button>{pinButton(s, "from shortcuts")}
     </div>)}</div>
-    {!pins.length && <p className="rd-shortcut-empty">Pin a session to keep it here.</p>}
     {!selected.pinned && <button className="rd-shortcut-current" disabled={!!pending || atCapacity(selected) || !!selected.hostOffline}
       title={selected.hostOffline ? "Reconnect this host to pin its session" : atCapacity(selected) ? "Unpin a session on this host first (3 pinned)" : `Pin ${selected.label}`}
       aria-label={`Pin current session ${selected.label}`} onClick={() => void toggle(selected)}><span>Pin {selected.label}</span>{pinIcon}</button>}
+    {!pins.length && <p className="rd-shortcut-empty">Pin a session to keep it here.</p>}
     {error && <p role="alert" className="rd-shortcut-error">{error}</p>}
     {open && createPortal(<div ref={picker} id={id} className="rd-shortcut-picker" role="dialog" aria-label="Pin sessions" style={position}
       onBlur={e => { if (e.relatedTarget instanceof Node && !e.currentTarget.contains(e.relatedTarget) && !add.current?.contains(e.relatedTarget)) setOpen(false); }}>
