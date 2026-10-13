@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemorySwitchPanel } from "./MemorySwitchPanel";
 import type { SwitchSelection } from "./memorySwitchState";
@@ -31,7 +31,7 @@ function serve(value = packet()) {
 }
 function switches() { return fetchMock.mock.calls.filter(([path, init]) => path.endsWith("/restart") && init.method === "POST"); }
 beforeEach(() => { vi.stubGlobal("fetch", fetchMock); serve(); });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); vi.useRealTimers(); });
 
 it.each([true, false])("accepts maintained readiness through HTTP with saved summary=%s without automatically switching", async saved => {
   serve(packet(saved)); const p = props(); render(<MemorySwitchPanel {...p} />);
@@ -71,4 +71,55 @@ it("reports a real source change before any switch POST", async () => {
   render(<MemorySwitchPanel {...props()} />);
   await screen.findByText("Work changed during preparation");
   expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled(); expect(switches()).toHaveLength(0);
+});
+
+
+it("recovers an unanswered prepare with the same key and ignores its late response", async () => {
+  vi.useFakeTimers();
+  let finish!: (value: Response) => void;
+  fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
+  await act(async () => { render(<MemorySwitchPanel {...props()} />); });
+  expect(screen.getByText("Preparing the handoff…")).toBeVisible();
+  await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
+  expect(screen.getByText("Preparation could not be checked.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
+  expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Prepare again" })); });
+  expect(screen.getByText("Ready to switch")).toBeVisible();
+  const posts = fetchMock.mock.calls.filter(([, init]) => init.method === "POST");
+  expect(posts).toHaveLength(2);
+  expect(JSON.parse(posts[0][1].body).request_key).toBe(JSON.parse(posts[1][1].body).request_key);
+  await act(async () => { finish(respond({ ...packet(), state: "failed", reason: "Late obsolete response" })); });
+  expect(screen.getByText("Ready to switch")).toBeVisible();
+  expect(screen.queryByText("Late obsolete response")).not.toBeInTheDocument();
+  expect(switches()).toHaveLength(0);
+});
+
+it("recovers polling after a never-ending body read without starting a new preparation", async () => {
+  vi.useFakeTimers();
+  fetchMock.mockImplementationOnce(async () => respond({ ...packet(), state: "preparing", sequence: 0 }));
+  fetchMock.mockImplementationOnce(async () => ({ ok: true, json: () => new Promise(() => {}) }));
+  await act(async () => { render(<MemorySwitchPanel {...props()} />); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(17000); });
+  expect(screen.getByText("Preparation could not be checked.")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(screen.getByText("Ready to switch")).toBeVisible();
+  expect(screen.queryByText("Preparation could not be checked.")).not.toBeInTheDocument();
+  expect(fetchMock.mock.calls.filter(([, init]) => init.method === "POST")).toHaveLength(1);
+  expect(switches()).toHaveLength(0);
+});
+
+it("shows an expired job after a server restart and requires explicit prepare again", async () => {
+  vi.useFakeTimers();
+  fetchMock.mockImplementationOnce(async () => respond({ ...packet(), state: "preparing", sequence: 0 }));
+  fetchMock.mockImplementationOnce(async () => respond({ error: "Preparation expired; prepare again", code: "preparation_expired" }, 409));
+  await act(async () => { render(<MemorySwitchPanel {...props()} />); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(screen.getByRole("alert")).toHaveTextContent("Preparation expired; prepare again");
+  expect(screen.getByRole("button", { name: "Prepare again" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(fetchMock.mock.calls).toHaveLength(2);
+  expect(switches()).toHaveLength(0);
 });

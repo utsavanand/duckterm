@@ -191,6 +191,34 @@ async function request(path: string, method = "GET", body?: unknown, signal?: Ab
   }
   return data;
 }
+// These endpoints enqueue work or read its status; they do not wait for the
+// model. Bound the HTTP exchange (including body reads), not generation itself.
+const PREPARATION_REQUEST_MS = 15000;
+async function preparationRequest(path: string, method = "GET", body?: unknown, signal?: AbortSignal): Promise<unknown> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: () => void = () => undefined;
+  const stopped = new Promise<never>((_, reject) => {
+    abort = () => {
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+      controller.abort();
+    };
+    if (signal?.aborted) { abort(); return; }
+    signal?.addEventListener("abort", abort, { once: true });
+    timer = setTimeout(() => {
+      // A missing response says nothing about whether the server is working.
+      // Preserve the lease key so explicit retry recovers the same job.
+      reject(new MemoryTransportError("Preparation could not be checked.", 0, "request_timeout"));
+      controller.abort();
+    }, PREPARATION_REQUEST_MS);
+  });
+  try {
+    return await Promise.race([stopped, request(path, method, body, controller.signal)]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
+}
 export function memorySwitchService(input: SwitchSelection) {
   const selection = structuredClone(input);
   const { host, key } = splitSessionRef(selection.sessionRef);
@@ -208,13 +236,13 @@ export function memorySwitchService(input: SwitchSelection) {
   return {
     async prepare(requestKey: string) {
       identity(requestKey);
-      const value = await request(`${path()}/restart-preparation`, "POST", { request_key: requestKey,
+      const value = await preparationRequest(`${path()}/restart-preparation`, "POST", { request_key: requestKey,
         binding: { session_key: key, source_generation: selection.sourceGeneration,
           target: { harness: selection.harness, model: selection.model } } });
       return preparation(value, selection);
     },
     async preparation(id: string, signal?: AbortSignal) {
-      return preparation(await request(`${path()}/restart-preparation/${identity(id)}`, "GET", undefined, signal), selection, id);
+      return preparation(await preparationRequest(`${path()}/restart-preparation/${identity(id)}`, "GET", undefined, signal), selection, id);
     },
     async details(id: string, snapshotId: string, nextCursor?: string): Promise<MemoryDetails> {
       const query = new URLSearchParams({ detail: "full" });
