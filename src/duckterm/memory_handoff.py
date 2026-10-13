@@ -132,7 +132,17 @@ def assemble(
         launch=launch or {"session_key": key},
         required=required,
         protected=protected,
-        narratives=[{"revision": (prior or {}).get("id"), "text": narrative}] if narrative else [],
+        narratives=(
+            [
+                {
+                    "revision": (prior or {}).get("id"),
+                    "saved_at": (prior or {}).get("created_at"),
+                    "text": narrative,
+                }
+            ]
+            if narrative
+            else []
+        ),
         metadata=handoff,
         source_map=[
             {"kind": source["kind"], "source": source["id"] + ":" + source["version"]}

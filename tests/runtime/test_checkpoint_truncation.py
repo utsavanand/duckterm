@@ -13,7 +13,7 @@ __all__ = ["memory_rig"]
 
 LONG = (
     "The implementation is staged and has passed local tests. "
-    + "The owner must approve deployment before anything is released. " * 35
+    + "The owner must approve deployment before anything is released. " * 105
     + "Until that approval arrives, keep production unchanged."
 )
 SHORT = (
@@ -42,7 +42,7 @@ def test_checkpoint_rewrites_overlong_summary_before_review_and_saves_it_intact(
         value["summary"] = LONG if len(calls) == 1 else SHORT
         if len(calls) == 2:
             assert "summary_too_long" in prompt
-            assert "within 2000 characters" in prompt
+            assert "within 6000 characters" in prompt
         return Summary(json.dumps(value), "fixture")
 
     monkeypatch.setattr("duckterm.server.summarize", generate)

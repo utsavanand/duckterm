@@ -10,6 +10,10 @@ Keep the compact session button anchored at the terminal edge while its label ex
 
 Session shortcuts belong in an absolutely positioned layer over the existing terminal slot. Do not reserve a grid column or add terminal padding: either changes PTY columns and can reflow output. Reuse saved session pins and host-qualified selection; verify widths, terminal connections, unsent drafts, and right-panel collapse with real terminal sessions.
 
+## 2026-10-12 — Valid citations do not prove that a memory claim is still current
+
+A checkpoint retained early uncertainty after later records diagnosed and verified the fix. Filter exact routine notices from the summary projection without deleting originals, reconcile claims against the end of the same span, and have the independent reviewer check every field rather than only the narrative. Give a rejected semantic draft one bounded correction using the same evidence; never advance coverage on rejection. Validate that summary is text rather than coercing arrays into Python-looking strings. Allow a useful-length narrative without expanding the compact overview or slicing saved text. Label historical memory and preserve current work pointers so lack of verification in an old conversation is not asserted as today's release status.
+
 ## 2026-10-12 — Bound the whole checkpoint request, not just each provider call
 
 A 50-record batch ceiling still allowed one manual checkpoint to process thousands of historical records and then fail when live activity changed. Capture immutable evidence once, choose an explicit recent window (20 records by default), and use at most 20 records per batch. Keep model roles explicit, persist exact coverage, and distinguish older history outside the request from unfinished work inside it. Expanding a window must fill holes without repeating accepted batches or dropping protected claims. Preserve conversation/scope checks and verify native Settings routes as well as the HTTP API.
@@ -68,9 +72,11 @@ Folded claims contain revision pointers, not inline text/refs. Retrieval must re
 A cumulative revision cannot become a span by changing its label or subtracting an earlier summary. Capture explicit original-record boundaries, verify their prefix hashes, and write only the new range. Bound complete provider prompts in UTF-8 bytes as well as record count; leave an oversized record pending instead of skipping it. A failed later range must not erase or repeat a successful earlier range. Appending to a source changes its version but does not make previously committed positions new work: reject overlapping leaf ranges both before provider calls and inside the write transaction.
 
 A span writer must not replace the current cumulative summary before the handoff reader assembles prior spans. Stage typed leaves through the existing generation, review and persistence path without changing the current-summary pointer. Keep original evidence readable, reject source rewrites, preserve the existing single-writer and cancellation protections, and distinguish a verified individual leaf from completion of the whole requested span. Test source advancement, retry reuse, retained reads and concurrent callers before activation.
+
 ## 2026-10-12 — Size saved summaries for useful content
 
 The inherited 400-character overview cap rejected otherwise useful checkpoint summaries after silent clipping was removed. Allow 2,000 characters, with a 100–200 word prompt target when needed; keep writer, correction prompt and parser limits aligned. Test that 100+ words survive unchanged and over-limit text is rejected rather than sliced. This change does not resolve incomplete input coverage.
+
 ## 2026-10-11 — Recover a checkpoint by its request, not the newest row
 
 A lost HTTP response does not say whether the summary was saved. Assign a request ID before work starts, keep a bounded durable receipt, and resolve only the checkpoint linked to that receipt. A duplicate request joins the original operation. Keep accepted work alive after its HTTP waiter disconnects; after a server restart, an exact saved checkpoint wins over an unfinished receipt, while an unfinished request without a checkpoint stays interrupted. A completed request may still contain a failed or partial summary. Test those outcomes separately and never infer success from a newer checkpoint or a timestamp.
@@ -164,6 +170,7 @@ The isolated pinned-native fixture drops the real prompt acknowledgment, reopens
 DuckTerm's test database, and verifies one user message with no repeated write.
 Fault tests cover every persisted boundary, competing claims, wrong selection,
 changed generation, failed persistence and foreign conversation receipts.
+
 ## 2026-10-11 — Bound reader allocations, not raw transcript age
 
 UI-dev's checkpoint retained an accepted summary but failed completeness because its native Codex file exceeded the reader's 512 MiB whole-file ceiling. The 778 MB file contained repeated compaction metadata; streaming it produced only about 696 KB of searchable text and 392 KB of summary-eligible text in a 3.9-second read-only replay. Filtering tools after materialization cannot help when an earlier raw-file guard refuses the source. Inspect the specific saved source gap before attributing a partial checkpoint to the summarizer or the entire historical backlog.
@@ -175,6 +182,7 @@ Remove the total raw-file guard from the existing line-streaming reader. Keep pe
 The parser sliced summary text at 400 characters before validation. A complete provider response could therefore reach the reviewer as a sentence DuckTerm itself cut off. The live summary_truncated rejection identified the symptom; inspecting the parser exposed a deterministic corruption path. This does not prove every historical unverified summary had that cause.
 
 Reject overlong drafts with summary_too_long and use the existing single correction attempt to request complete, concise sentences. State the limit in generation and correction prompts. Review only the intact corrected candidate, retain strict semantic validation, and preserve the last good revision when correction fails. Regression tests must assert the exact text sent to the reviewer and saved in the checkpoint, and verify failures never advance coverage or turn a clipped prefix into a success.
+
 ## Recover checkpoint outcomes by exact request, on the same host (2026-10-11)
 
 A disconnected checkpoint request can finish on the server after the UI loses
@@ -184,7 +192,6 @@ the POST automatically, or query the local server for a remote attempt. Native
 remote routing must allow the exact GET endpoint. Test delayed completion,
 unknown receipts, host isolation, duplicate clicks and bounded hung lookups.
 
-
 ## Incomplete checkpoints must not look successful (2026-10-11)
 
 A saved, reviewer-accepted draft can still omit required history. The checkpoint
@@ -193,7 +200,6 @@ the incomplete outcome. Use the approved incomplete-failure label across progres
 history and notifications; preserve the saved text for inspection and keep this
 separate from provider/reviewer failure and an unknown transport outcome. Tested
 with a retained, reviewed partial revision and remote connection-loss regressions.
-
 
 ## 2026-10-11 — Preserve the reason a checkpoint review failed
 
@@ -219,6 +225,7 @@ Stage the policy switch with span-only writes, revision version metadata and rea
 Two individually valid summary contexts can create a supersession cycle when combined: each context may reference a claim held only by the other. Per-child checks therefore cannot certify a compacted parent. Validate the complete protected-claim union before calling either provider. On failure preserve the children and report a pending compaction; do not edit their relationships to make the fold pass.
 
 QA caught this in the isolated compactor foundation before runtime integration. The regression starts with ten valid children, creates a cycle across two of them, and verifies rejection without provider calls or input mutation. A generated parent must obey the same reader contract as its inputs.
+
 ## 2026-10-09 — Interactive panes must not inherit automation's no-color flag
 
 The terminal palettes were intact, but the agent and the persistent tmux server had inherited `NO_COLOR=1`; captured output contained only bold/dim styling. A theme cannot recolor ANSI foreground values that the process never emits. Unset inherited `NO_COLOR` in each interactive pane's launch command, while preserving an explicitly supplied launch override. Sanitizing the current server process alone cannot repair environment already retained by tmux. Existing running agents retain their environment until restarted; do not interrupt live work merely to restore color.
@@ -281,6 +288,7 @@ The full gate also exposed a pre-existing Codex relay test that assumed two
 executor calls completed within 50 ms; wait for its actual confirmation event
 before asserting stale-answer rejection. This is foundation evidence, not
 complete harness acceptance.
+
 ## 2026-10-11 — Prompt pointers are not a checkpoint retention boundary
 
 Bounding the inbox pointers in required context accidentally shortened the checkpoint's mail ID list and changed its hash input from canonical messages to metadata. The checkpoint resolver still hashes full messages; this would report false source changes and leave omitted messages outside the retention boundary. Capture complete authorized IDs and the canonical hash separately from prompt context. Persist only those IDs and the hash, never another copy of message bodies. Changes beyond the pointer limit must still change the source fence.
@@ -320,6 +328,7 @@ Test the outcome through an actual checkpoint with more than 5,000 originals and
 ## Checkpoint progress must outlive its menu (2026-10-10)
 
 Checkpoint requests previously kept their busy state inside the context menu, so closing it hid a potentially long summary update. Keep the request and its result outside the mounted menu, keyed by the full host-qualified session reference. Show immediate indeterminate progress and elapsed time in the Session panel; suppress duplicate requests across entry points. A lost connection cannot prove a save failed: report an unconfirmed result and retain the previous summary. Verify menu dismissal, session/host changes, late responses and real returned outcomes.
+
 ## 2026-10-10 — A readable Memory view must use the same evidence checks as agent tools
 
 Session memory existed as saved revisions and linked originals, but the owner could not inspect it in the dashboard. Expose a read-only view of those same records rather than creating another summary store or generating a summary when the panel opens. Keep processed-history counts at save time distinct from source availability now and from the amount of knowledge a summary preserves. Show the last checkpoint outcome separately so a failed update does not hide the previous good revision.

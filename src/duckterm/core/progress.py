@@ -20,7 +20,7 @@ from duckterm import prompts
 KEYS = ("deliverables", "learnings", "user_learnings", "next_actions")
 _MAX_ITEMS = 8
 _MAX_ITEM_CHARS = 160
-_MAX_SUMMARY_CHARS = 2000
+_MAX_SUMMARY_CHARS = 6000
 _MAX_TRANSCRIPT_CHARS = 8_000
 
 _PROMPT = prompts.load("digest_write")
@@ -45,7 +45,9 @@ def parse(text: str) -> dict[str, Any] | None:
     raw = json_object(text)
     if raw is None:
         return None
-    summary = str(raw.get("summary") or "").strip()
+    if "summary" in raw and not isinstance(raw["summary"], str):
+        return None
+    summary = (raw.get("summary") or "").strip()
     if len(summary) > _MAX_SUMMARY_CHARS:
         # This text is reviewed and saved, not a display preview. Slicing it can
         # cut off a sentence or qualification and manufacture a rejected draft.
@@ -67,6 +69,8 @@ def parse(text: str) -> dict[str, Any] | None:
 def parse_diagnostic(text: str) -> str:
     """Fixed failure codes for the existing bounded draft-correction path."""
     raw = json_object(text)
+    if raw is not None and "summary" in raw and not isinstance(raw["summary"], str):
+        return "summary_must_be_text"
     if raw is not None and len(str(raw.get("summary") or "").strip()) > _MAX_SUMMARY_CHARS:
         return "summary_too_long"
     return "invalid_digest"
