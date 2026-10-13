@@ -1,3 +1,7 @@
+## 2026-10-12 — Valid citations do not prove that a memory claim is still current
+
+A checkpoint retained early uncertainty after later records diagnosed and verified the fix. Filter exact routine notices from the summary projection without deleting originals, reconcile claims against the end of the same span, and have the independent reviewer check every field rather than only the narrative. Give a rejected semantic draft one bounded correction using the same evidence; never advance coverage on rejection. Validate that summary is text rather than coercing arrays into Python-looking strings. Allow a useful-length narrative without expanding the compact overview or slicing saved text. Label historical memory and preserve current work pointers so lack of verification in an old conversation is not asserted as today's release status.
+
 ## 2026-10-12 — Bound the whole checkpoint request, not just each provider call
 
 A 50-record batch ceiling still allowed one manual checkpoint to process thousands of historical records and then fail when live activity changed. Capture immutable evidence once, choose an explicit recent window (20 records by default), and use at most 20 records per batch. Keep model roles explicit, persist exact coverage, and distinguish older history outside the request from unfinished work inside it. Expanding a window must fill holes without repeating accepted batches or dropping protected claims. Preserve conversation/scope checks and verify native Settings routes as well as the HTTP API.

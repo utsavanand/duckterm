@@ -143,3 +143,15 @@ def test_large_required_notes_do_not_discard_recent_narrative_when_room_reopens(
     )
     assert "The latest useful work." in text
     assert metadata["handoff_omissions"] == {"current_work_fields": ["notes"]}
+
+
+def test_handoff_keeps_full_narrative_with_save_time_and_compact_overview():
+    values = rows(1)
+    summary = "The original diagnosis and later verification are distinct. " * 50
+    values[0].update(summary=summary, created_at=123456)
+    overview = values[0]["continuity"]["context"]["overview"]
+    result = memory_assembly.assemble(values)
+    assert result["narratives"] == [
+        {"revision": values[0]["id"], "saved_at": 123456, "text": summary}
+    ]
+    assert result["context"]["overview"] == overview

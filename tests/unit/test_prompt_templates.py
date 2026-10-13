@@ -12,8 +12,8 @@ from duckterm.handoff_review import handoff_brief
 @pytest.mark.parametrize(
     "name,digest",
     [
-        ("digest_write", "eb5e709fb1cd3ebb959d8954e4b3e6adffc2913b835ec39f7369082a2c2fbf2b"),
-        ("digest_validate", "ccf52e5bb18e5ddddeb1266ed778d86514a1fe216072f2325f71d6138b94853c"),
+        ("digest_write", "62f5b3ce360f57d118861c7abd9c4acca467fbc6cc4253ea5c879b665b383b79"),
+        ("digest_validate", "3dc1411f93bc9f8b60aa9da62012620e149cb57fdd17465c48de45bf50a3d32f"),
     ],
 )
 def test_extracted_digest_prose_is_byte_identical(name, digest):
