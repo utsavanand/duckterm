@@ -52,10 +52,35 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
       return { overlap: term.right - a.left, gapPasses: !!gap?.closest(".xterm") };
     });
     expect(overlap.overlap).toBeGreaterThan(100); expect(overlap.gapPasses).toBe(true);
+    // Compact buttons expand leftward, leaving the original click target intact.
+    const railWidth = async () => (await rail.boundingBox())!.width;
+    await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
+    await page.mouse.move(500, 700);
+    await expect.poll(railWidth).toBe(38);
+    await page.screenshot({ path: "/tmp/floating-shortcuts-compact.png" });
+    const compact = (await rail.getByRole("button", { name: "Open pinned shortcut-ui" }).boundingBox())!;
+    const point = { x: compact.x + compact.width / 2, y: compact.y + compact.height / 2 };
+    await page.mouse.move(point.x, point.y);
+    await expect.poll(railWidth).toBe(176);
+    expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("button")?.getAttribute("aria-label"), point)).toBe("Open pinned shortcut-ui");
+    await page.mouse.click(point.x, point.y);
+    await expect(rail.locator(".rd-shortcut-tab")).toHaveCount(3);
+    expect(await width()).toBe(originalWidth); expect(sizes.length).toBe(initialResizes);
+    await page.mouse.move(500, 700);
+    await expect.poll(railWidth).toBe(38);
+    await page.keyboard.press("Tab");
+    await rail.getByRole("button", { name: "Choose sessions to pin" }).focus();
+    await expect.poll(railWidth).toBe(176);
+    await page.keyboard.press("Enter");
+    await expect(picker).toBeVisible();
+    await page.mouse.move(500, 700);
+    await expect.poll(railWidth).toBe(176);
+    await page.keyboard.press("Escape");
     await rail.getByRole("button", { name: "Open pinned shortcut-api" }).click();
     await expect(rows).toContainText("READY_shortcut-api");
     await rail.getByRole("button", { name: "Open pinned shortcut-ui" }).click();
     await expect(rows).toContainText("UNSENT_SHORTCUT_DRAFT"); expect(connections).toBe(initialConnections + 1);
+    await rail.getByRole("button", { name: "Open pinned shortcut-ui" }).hover();
     await rail.getByRole("button", { name: "Unpin shortcut-ui from shortcuts" }).click();
     await expect(rail.getByRole("button", { name: "Pin current session shortcut-ui" })).toBeEnabled();
     await expect(page.locator(".rd-row.selected .rd-row-name")).toHaveText("shortcut-ui");
@@ -85,6 +110,8 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     expect(box.x).toBeGreaterThanOrEqual(0); expect(box.x + box.width).toBeLessThanOrEqual(600);
     expect(box.y + box.height).toBeLessThanOrEqual(900);
     await page.screenshot({ path: "/tmp/floating-shortcuts-narrow.png" });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    expect(await rail.evaluate(element => getComputedStyle(element).transitionDuration)).toBe("0s");
   } finally {
     for (const key of keys) { await apiPost(`/sessions/${key}/stop`); await apiDelete(`/sessions/${key}`); }
   }

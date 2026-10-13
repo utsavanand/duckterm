@@ -7,6 +7,7 @@ import type { SessionView } from "./types";
 import "./floatingSessionShortcuts.css";
 
 const pinIcon = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-4 1-3 5 1 3-3-1-5 3-1 4-5-5 4-1 3-5-1-3 3 1z" transform="translate(1 -1) scale(.9)" /></svg>;
+const initials = (label: string) => label.trim().split(/[\s_-]+/).slice(0, 2).map(part => Array.from(part)[0] || "").join("").toLocaleUpperCase() || "•";
 const hostOf = (session: SessionView) => splitSessionRef(session.key).host;
 const locationOf = (session: SessionView) => [session.group || "Ungrouped", session.hostLabel || hostName(session.key)].join(" · ");
 
@@ -20,6 +21,32 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
   onToggle: (session: SessionView) => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  const root = useRef<HTMLElement>(null);
+  useEffect(() => {
+    let inside = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const leave = () => {
+      if (!inside || timer !== undefined) return;
+      // Cross transparent gaps without flicker; their clicks still reach the terminal.
+      timer = setTimeout(() => { inside = false; timer = undefined; setHovered(false); }, 180);
+    };
+    const move = (event: PointerEvent) => {
+      if (event.target instanceof Node && root.current?.contains(event.target)) {
+        clearTimeout(timer); timer = undefined; inside = true; setHovered(true);
+      } else leave();
+    };
+    // Observe actual DOM targets: the picker is portaled outside this floating rail.
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerleave", leave);
+    window.addEventListener("blur", leave);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerleave", leave);
+      window.removeEventListener("blur", leave);
+    };
+  }, []);
   const [query, setQuery] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -90,20 +117,20 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
       title={offline ? "Reconnect this host to change its pins" : capped ? "Unpin a session on this host first (3 pinned)" : `${session.pinned ? "Unpin" : "Pin"} ${session.label}`}
       onClick={() => void toggle(session)}>{pinIcon}</button>;
   }
-  return <nav className="rd-floating-shortcuts" aria-label="Pinned session shortcuts">
+  return <nav ref={root} className={`rd-floating-shortcuts${hovered ? " is-hovered" : ""}${open ? " picker-open" : ""}`} aria-label="Pinned session shortcuts">
     <div className="rd-shortcut-heading"><span>Pinned</span><button ref={add} aria-label="Choose sessions to pin" aria-expanded={open} aria-controls={id}
       title="Choose sessions to pin" onClick={() => { setQuery(""); setOpen(!open); }}>+</button></div>
     <div className="rd-shortcut-list">{pins.map(s => <div className={`rd-shortcut-tab${s.key === selected.key ? " active" : ""}`} key={s.key}>
       <button className="rd-shortcut-open" aria-label={`Open pinned ${s.label}`} aria-current={s.key === selected.key ? "true" : undefined}
         title={`${s.label} · ${locationOf(s)}${s.hostOffline ? " · Offline" : ""}`} onClick={() => onOpen(s.key)}>
-        <ShortcutState session={s} />
         <span className="rd-shortcut-name">{s.label}</span>
+        <span className="rd-shortcut-badge" aria-hidden="true">{initials(s.label)}<ShortcutState session={s} /></span>
       </button>{pinButton(s, "from shortcuts")}
     </div>)}</div>
     {!pins.length && <p className="rd-shortcut-empty">Pin a session to keep it here.</p>}
     {!selected.pinned && <button className="rd-shortcut-current" disabled={!!pending || atCapacity(selected) || !!selected.hostOffline}
       title={selected.hostOffline ? "Reconnect this host to pin its session" : atCapacity(selected) ? "Unpin a session on this host first (3 pinned)" : `Pin ${selected.label}`}
-      aria-label={`Pin current session ${selected.label}`} onClick={() => void toggle(selected)}>{pinIcon}<span>Pin {selected.label}</span></button>}
+      aria-label={`Pin current session ${selected.label}`} onClick={() => void toggle(selected)}><span>Pin {selected.label}</span>{pinIcon}</button>}
     {error && <p role="alert" className="rd-shortcut-error">{error}</p>}
     {open && createPortal(<div ref={picker} id={id} className="rd-shortcut-picker" role="dialog" aria-label="Pin sessions" style={position}
       onBlur={e => { if (e.relatedTarget instanceof Node && !e.currentTarget.contains(e.relatedTarget) && !add.current?.contains(e.relatedTarget)) setOpen(false); }}>

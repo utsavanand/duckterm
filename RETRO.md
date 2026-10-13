@@ -1,3 +1,7 @@
+## 2026-10-12 — Expanding shortcuts must preserve the action under the pointer
+
+Keep the compact session button anchored at the terminal edge while its label expands to the left. Revealing an unpin control under the original pointer turns an intended session switch into an accidental unpin. Verify the hit target before and after hover, keep the picker and keyboard focus expanded, and delay collapse across click-through gaps without changing terminal geometry.
+
 ## 2026-10-12 — Floating terminal controls must not resize the terminal
 
 Session shortcuts belong in an absolutely positioned layer over the existing terminal slot. Do not reserve a grid column or add terminal padding: either changes PTY columns and can reflow output. Reuse saved session pins and host-qualified selection; verify widths, terminal connections, unsent drafts, and right-panel collapse with real terminal sessions.
