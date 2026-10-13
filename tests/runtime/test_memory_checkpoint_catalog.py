@@ -47,7 +47,7 @@ def test_checkpoint_outcome_saves_success_with_existing_progress(memory_rig, mon
     asyncio.run(run())
 
 
-def test_original_edit_still_refuses_with_persisted_diagnostic(memory_rig, monkeypatch):
+def test_live_edit_does_not_rewrite_the_captured_checkpoint(memory_rig, monkeypatch):
     from duckterm import server as server_module
 
     server, _, _, tmp = memory_rig
@@ -56,8 +56,8 @@ def test_original_edit_still_refuses_with_persisted_diagnostic(memory_rig, monke
     provider(monkeypatch)
     generate = server_module.summarize
 
-    def changed(prompt):
-        result = generate(prompt)
+    def changed(prompt, **kwargs):
+        result = generate(prompt, **kwargs)
         if prompt.startswith("You are validating"):
             path.write_text(
                 path.read_text().replace("Original owner constraint.", "Replaced owner constraint.")
@@ -69,9 +69,11 @@ def test_original_edit_still_refuses_with_persisted_diagnostic(memory_rig, monke
     async def run():
         cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
         outcome = cp["record"]["summary_update"]
-        assert outcome["state"] == "failed"
-        assert outcome["reason"] == "source_changed"
-        assert outcome["diagnostic"] == "validation:source_changed"
-        assert current_revision(server.history.session("agent")) is None
+        assert outcome["state"] == "updated", outcome
+        assert current_revision(server.history.session("agent")) == outcome["revision_id"]
+        from duckterm.memory_sources import read_native
+
+        saved = read_native("agent", cp["record"]["memory_sources"][0])
+        assert saved["records"][0]["text"] == "Original owner constraint."
 
     asyncio.run(run())

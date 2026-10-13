@@ -163,7 +163,8 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             || (method == "GET" && route.range(of: agentMergeRoot + "agent-merges$", options: .regularExpression) != nil))
         let memoryRoute = Self.memoryRestartRoute(components: components, method: method)
             || Self.memoryReadRoute(components: components, method: method)
-        guard checkpointAttemptRoute || agentMergeRoute || memoryRoute || timelineRoute || recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
+        let checkpointSettingsRoute = path == "/checkpoint-settings" && ["GET", "POST"].contains(method)
+        guard checkpointSettingsRoute || checkpointAttemptRoute || agentMergeRoute || memoryRoute || timelineRoute || recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
             throw LaunchDestination.Failure.message("Unsupported session operation")
         }
         var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!

@@ -13,6 +13,13 @@ from duckterm.llm.summarizer import Summary
 __all__ = ["memory_rig"]
 
 
+async def manual_capture(server):
+    from duckterm import checkpoint_settings, memory_checkpoint
+
+    captured = await server.progress_coordinator.capture("agent")
+    return await memory_checkpoint.freeze(server, "agent", captured, checkpoint_settings.load())
+
+
 def candidate(prompt):
     data, _ = json.JSONDecoder().raw_decode(prompt.split("MEMORY UPDATE:\n", 1)[1])
     ref = next(r["ref"] for r in data["records"] if r["role"] == "user")
@@ -87,7 +94,7 @@ def test_rejected_draft_is_corrected_reviewed_and_checkpoint_reuses(memory_rig, 
     transcript(tmp, "agent-claude", "Keep the owner constraint.")
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         if prompt.startswith("You are validating"):
             assert "invented:reference" not in prompt
@@ -120,7 +127,7 @@ def test_repeated_invalid_output_stops_and_saves_only_safe_diagnostic(memory_rig
     transcript(tmp, "agent-claude", "Keep the owner constraint.")
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         value = candidate(prompt)
         value["context"]["constraints"][0]["refs"] = ["PRIVATE-INVALID-REFERENCE"]
@@ -145,7 +152,7 @@ def test_provider_failure_has_no_correction_call(memory_rig, monkeypatch, failur
     transcript(tmp, "agent-claude", "Keep the owner constraint.")
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         return Summary("", "none", failure)
 
@@ -175,7 +182,7 @@ def test_source_change_during_bad_draft_prevents_correction(memory_rig, monkeypa
                 monkeypatch.setenv("DUCKTERM_SUMMARIZER_CMD", "changed-configuration")
         return await original(key)
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         return Summary("not JSON", "fixture")
 
@@ -193,7 +200,7 @@ def test_corrected_draft_still_requires_review_and_preserves_last_good(memory_ri
     phase = ["initial"]
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         if prompt.startswith("You are validating"):
             return review(phase[0] == "initial")
@@ -245,7 +252,7 @@ def test_exhausted_correction_keeps_prior_revision_and_coverage(memory_rig, monk
     broken = [False]
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         if prompt.startswith("You are validating"):
             return review()
@@ -284,7 +291,7 @@ def test_coalesced_checkpoint_keeps_one_repair_when_other_waiter_cancels(memory_
     started, release = threading.Event(), threading.Event()
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         if prompt.startswith("You are validating"):
             return review()
@@ -298,7 +305,9 @@ def test_coalesced_checkpoint_keeps_one_repair_when_other_waiter_cancels(memory_
 
     async def run():
         coordinator = server.progress_coordinator
-        automatic = asyncio.create_task(coordinator.refresh_result("agent"))
+        automatic = asyncio.create_task(
+            coordinator.refresh_result("agent", await manual_capture(server))
+        )
         joined = asyncio.Event()
         original = asyncio.shield
 

@@ -19,7 +19,7 @@ def test_large_history_saves_usable_context_with_resolvable_evidence(memory_rig,
         append(path, f"Historical record {number}: " + "x" * 100)
     append(path, "Owner: build export; keep files private; use JSON; next run export checks.")
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         if prompt.startswith("You are validating"):
             value = {
                 "accept": [],
@@ -73,7 +73,9 @@ def test_large_history_saves_usable_context_with_resolvable_evidence(memory_rig,
         revision = server.digests.revision("agent", cp["record"]["summary_ref"])
         continuity = revision["continuity"]
         coverage = cp["summary_update"]["span_coverage"]
-        assert coverage["eligible_records"] > 5000
+        assert coverage["eligible_records"] == 20
+        assert coverage["history_eligible_records"] > 5000
+        assert coverage["outside_window_records"] == coverage["history_eligible_records"] - 20
         assert coverage["summarized_records"] == coverage["eligible_records"]
         assert coverage["pending_records"] == 0
         assert continuity["verified"] and continuity["update_complete"]

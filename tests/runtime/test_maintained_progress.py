@@ -15,10 +15,17 @@ from duckterm.llm.summarizer import Summary
 __all__ = ["memory_rig"]
 
 
+async def manual_capture(server):
+    from duckterm import checkpoint_settings, memory_checkpoint
+
+    captured = await server.progress_coordinator.capture("agent")
+    return await memory_checkpoint.freeze(server, "agent", captured, checkpoint_settings.load())
+
+
 def provider(monkeypatch):
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         if prompt.startswith("You are validating"):
             value = {
@@ -108,7 +115,7 @@ def test_backlog_completes_bounded_spans_and_failure_preserves_completed_summary
         cached = server.history.session("agent")["progress"]
         append(path, "Next owner instruction")
         monkeypatch.setattr(
-            "duckterm.server.summarize", lambda _: Summary("", "none", "provider_timeout")
+            "duckterm.server.summarize", lambda _, **kwargs: Summary("", "none", "provider_timeout")
         )
         failed = await server.progress_coordinator.refresh_result("agent")
         assert failed.state == "failed"
@@ -162,16 +169,18 @@ def test_manual_checkpoint_joins_running_explicit_summary(memory_rig, monkeypatc
     original = server_module.summarize
     entered, released = threading.Event(), threading.Event()
 
-    def paused(prompt):
+    def paused(prompt, **kwargs):
         if not entered.is_set():
             entered.set()
             assert released.wait(3)
-        return original(prompt)
+        return original(prompt, **kwargs)
 
     monkeypatch.setattr(server_module, "summarize", paused)
 
     async def run():
-        automatic = asyncio.create_task(server.progress_coordinator.refresh("agent"))
+        automatic = asyncio.create_task(
+            server.progress_coordinator.refresh("agent", await manual_capture(server))
+        )
         assert await asyncio.to_thread(entered.wait, 3)
         manual = asyncio.create_task(
             server._create_checkpoint("agent", server.history.session("agent"), "manual")
@@ -246,7 +255,8 @@ def test_checkpoint_reports_updated_only_after_all_bounded_spans(memory_rig, mon
         assert cp["summary_update"]["state"] == "updated"
         revision = server.digests.revision("agent", cp["record"]["summary_ref"])
         rows = memory_folding.rows(server.digests, "agent", revision["source"]["scope_hash"])
-        assert sum(r["continuity"]["summarized_records"] for r in rows) == 101
+        assert sum(r["continuity"]["summarized_records"] for r in rows) == 20
+        assert cp["summary_update"]["span_coverage"]["outside_window_records"] == 81
         assert all(r["continuity"]["verified"] for r in rows)
         assert cp["handoff_eligible"]
 
@@ -261,7 +271,7 @@ def test_manual_checkpoint_shares_explicit_failure_without_a_second_attempt(
     entered, released = threading.Event(), threading.Event()
     calls = []
 
-    def failed(prompt):
+    def failed(prompt, **kwargs):
         calls.append(prompt)
         entered.set()
         assert released.wait(3)
@@ -271,7 +281,9 @@ def test_manual_checkpoint_shares_explicit_failure_without_a_second_attempt(
 
     async def run():
         coordinator = server.progress_coordinator
-        automatic = asyncio.create_task(coordinator.refresh_result("agent"))
+        automatic = asyncio.create_task(
+            coordinator.refresh_result("agent", await manual_capture(server))
+        )
         assert await asyncio.to_thread(entered.wait, 3)
         manual_joined = asyncio.Event()
         original = asyncio.shield
@@ -365,7 +377,7 @@ def test_checkpoint_with_large_task_and_mail_inputs(memory_rig, monkeypatch, tas
         cached = server.history.session("agent")["progress"]
         append(transcript_path, "New instruction")
         monkeypatch.setattr(
-            "duckterm.server.summarize", lambda _: Summary("", "none", "provider_timeout")
+            "duckterm.server.summarize", lambda _, **kwargs: Summary("", "none", "provider_timeout")
         )
         failed = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
         assert failed["summary_update"]["state"] == "failed"

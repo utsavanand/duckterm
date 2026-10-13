@@ -1,3 +1,7 @@
+## 2026-10-12 — Bound the whole checkpoint request, not just each provider call
+
+A 50-record batch ceiling still allowed one manual checkpoint to process thousands of historical records and then fail when live activity changed. Capture immutable evidence once, choose an explicit recent window (20 records by default), and use at most 20 records per batch. Keep model roles explicit, persist exact coverage, and distinguish older history outside the request from unfinished work inside it. Expanding a window must fill holes without repeating accepted batches or dropping protected claims. Preserve conversation/scope checks and verify native Settings routes as well as the HTTP API.
+
 ## 2026-10-12 — Compare the same evidence projection at checkpoint publication
 
 Checkpoint capture excluded generated progress notes, but publication compared that original-only catalog against an unfiltered catalog. An unchanged session with any ordinary progress item therefore failed as `source_changed` after completing its summary. Use one projection at both boundaries, test with pre-existing derived progress, and attach fixed stage diagnostics to source refusals. Keep permission, native-file, original-record and publication-race checks intact; do not weaken them to hide a projection mismatch.

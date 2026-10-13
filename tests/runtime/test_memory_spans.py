@@ -129,7 +129,7 @@ def provider(monkeypatch):
     calls = []
     fail = [False]
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         assert len(prompt.encode()) <= memory_spans.MAX_INPUT_BYTES
         if fail[0]:

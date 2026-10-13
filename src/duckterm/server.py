@@ -208,11 +208,13 @@ def _mid(prefix: str, suffix: str) -> dict[str, str]:
 # GETs that require the owner token despite the open-read policy. /connectors
 # reports which providers the owner connected, under which identity, and when
 # each was last used — a description of the owner, not of the UI's own state.
-_OWNER_READS = frozenset({"/connectors"})
+_OWNER_READS = frozenset({"/connectors", "/checkpoint-settings"})
 
 
 # fmt: off
 _ROUTES: list[Route] = [
+    Route("GET", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w)),
+    Route("POST", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w, b)),
     Route("POST", "", lambda s, r, w, h, b, seg: s._transfer(w, seg, b), prefix="/transfers/"),
     Route("POST", "", lambda s, r, w, h, b, seg: s._introduce_collaboration(w, seg, send=False),
           **_mid("/sessions/", "/collaboration/instructions")),
@@ -4747,6 +4749,24 @@ class Server:
             status, result = exc.status, {"error": str(exc)}
         await _write_json(writer, status, result)
 
+    async def _checkpoint_settings(
+        self, writer: asyncio.StreamWriter, body: bytes | None = None
+    ) -> None:
+        from duckterm import checkpoint_settings
+
+        try:
+            if body is None:
+                result = await asyncio.to_thread(checkpoint_settings.load)
+            else:
+                try:
+                    payload = json.loads(body)
+                except ValueError as exc:
+                    raise APIError(400, "Invalid checkpoint settings JSON") from exc
+                result = await asyncio.to_thread(checkpoint_settings.save, payload)
+            await _write_json(writer, 200, result)
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+
     async def _create_checkpoint(
         self,
         session_key: str,
@@ -4757,7 +4777,7 @@ class Server:
         request_id: str | None = None,
         on_progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        from duckterm import memory_continuity
+        from duckterm import checkpoint_settings, memory_checkpoint, memory_continuity
 
         captured = await self.progress_coordinator.capture(session_key)
         if captured is None:
@@ -4765,6 +4785,10 @@ class Server:
         prior = current_revision(self.history.session(session_key) or {})
         update = SummaryUpdate.failed("update_failed")
         try:
+            if label != "Before harness switch":
+                captured = await memory_checkpoint.freeze(
+                    self, session_key, captured, checkpoint_settings.load()
+                )
             update = await self.progress_coordinator.refresh_result(
                 session_key, captured, on_progress=on_progress
             )
@@ -4802,7 +4826,11 @@ class Server:
         if request_id is not None:
             record["request_id"] = request_id
         try:
-            original = await memory_continuity.capture(self, session_key, captured)
+            original = (
+                captured
+                if "checkpoint_selection" in captured
+                else await memory_continuity.capture(self, session_key, captured)
+            )
             if "memory_sources" in original:
                 plan = memory_continuity.plan(original, None)
                 plan["selected"] = plan["rows"]
@@ -4810,7 +4838,17 @@ class Server:
         except APIError:
             record["memory_retention"] = "unavailable"
         try:
-            retained = await self.memory.retain_current(session_key, captured)
+            if "checkpoint_selection" in captured:
+                retained = next(
+                    (
+                        source
+                        for source in record.get("memory_sources", [])
+                        if source.get("native_id") == captured["conversation"].get("native_id")
+                    ),
+                    None,
+                )
+            else:
+                retained = await self.memory.retain_current(session_key, captured)
         except APIError:
             retained = None
             record["memory_retention"] = "unavailable"

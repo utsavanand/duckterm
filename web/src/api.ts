@@ -28,6 +28,13 @@ export type LocalVoiceStatus =
   | { state: "failed"; reason: string; size: string };
 
 // One Ask Oracle exchange, as stored server-side (at = epoch ms).
+export interface CheckpointSettings {
+  lookback_records: number;
+  batch_records: 20;
+  writer_model: "haiku" | "sonnet" | "opus";
+  reviewer_model: "haiku" | "sonnet" | "opus";
+}
+
 export interface ModelChoice { id: string; label: string; }
 
 export interface RestartStatus {
@@ -356,6 +363,8 @@ export const api = {
   artifact: (key: string, id: string) => artifactRequest<{ artifact: ArtifactContent }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`),
   removeArtifact: (key: string, id: string) => artifactRequest<{ removed: boolean }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, "DELETE"),
 
+  checkpointSettings: () => get<CheckpointSettings>("/checkpoint-settings", undefined, { authed: true }),
+  saveCheckpointSettings: (value: Omit<CheckpointSettings, "batch_records">) => post<CheckpointSettings>("/checkpoint-settings", value),
   backupStatus: async (): Promise<BackupState> => {
     const res = await fetch("/backup", { cache: "no-store", headers: authHeaders() });
     const data = await res.json();
