@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { CheckpointAge, publishCheckpointClock } from "./CheckpointAge";
 import { memoryGet, type MemoryEvidence, type MemoryRead, type SavedMemory } from "./memoryViewApi";
 import { CheckpointProgress } from "./CheckpointProgress";
-import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
+import { checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
+import { chooseCheckpoint } from "./checkpointSelection";
 import { useToast } from "./ui";
 import { checkpointFailure } from "./checkpointState";
 import "./memoryView.css";
@@ -66,7 +67,7 @@ export function MemoryView({ sessionKey, name, active = true }: { sessionKey: st
         {choices.map(row => <option key={row.id} value={row.id}>{new Date(row.created_at).toLocaleString()} · {row.id.slice(0, 8)}</option>)}
       </select></label>
     </header>
-    <div className="rd-memory-actions"><button className="rd-btn rd-btn-primary" disabled={attempt?.state === "running" || (attempt?.state === "unknown" && attempt.recovering)} onClick={() => { void requestCheckpoint(sessionKey).catch(cause => toast((cause as Error).message, "err")); }}>Checkpoint</button>
+    <div className="rd-memory-actions"><button className="rd-btn rd-btn-primary" disabled={attempt?.state === "running" || (attempt?.state === "unknown" && attempt.recovering)} onClick={() => { void chooseCheckpoint(sessionKey, name).catch(cause => toast(checkpointRequestError(cause), "err")); }}>Checkpoint</button>
       <span className="hint">History is recorded automatically. Checkpoint updates the summary when you choose.</span></div>
     <CheckpointProgress sessionKey={sessionKey} />
     {!attempt && (latestUpdate?.state === "failed" || latestUpdate?.state === "partial") && <div className="rd-memory-failure" role="status">

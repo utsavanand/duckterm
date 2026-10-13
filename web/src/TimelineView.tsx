@@ -4,7 +4,8 @@ import { splitSessionRef } from "./hostTransport";
 import { SessionView } from "./types";
 import { HistoryView } from "./HistoryView";
 import { CheckpointDetails } from "./CheckpointStatus";
-import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
+import { checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
+import { chooseCheckpoint } from "./checkpointSelection";
 import { checkpointNotice } from "./checkpointState";
 import "./timeline.css";
 
@@ -48,10 +49,11 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
     if (retryBusy || retryPending.current.has(key)) return;
     retryPending.current.add(key); setRetryNotice("");
     try {
-      const cp = await requestCheckpoint(key);
+      const cp = await chooseCheckpoint(key, session.label);
+      if (!cp) return;
       if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice(checkpointNotice(cp));
-    } catch {
-      if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice("Checkpoint result not confirmed. Check the latest checkpoint before trying again.");
+    } catch (error) {
+      if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice(checkpointRequestError(error));
     } finally {
       retryPending.current.delete(key);
     }

@@ -1,5 +1,5 @@
 import { useCallback, useSyncExternalStore } from "react";
-import { api, type CheckpointAttemptReceipt, type CheckpointRecord, type CheckpointWorkProgress } from "./api";
+import { api, type CheckpointAttemptReceipt, type CheckpointRecord, type CheckpointSelection, type CheckpointWorkProgress } from "./api";
 import { checkpointStatus } from "./checkpointState";
 
 type CheckpointOutcome = Pick<CheckpointRecord, "saved" | "summary_update" | "export_reason"> & { label: string };
@@ -26,7 +26,13 @@ export function useCheckpointAttempt(key: string) {
   }, [key]);
   return useSyncExternalStore(subscribe, () => attempts.get(key));
 }
-export function requestCheckpoint(key: string): Promise<CheckpointRecord> {
+class CheckpointSelectionChanged extends Error {
+  constructor() { super("Checkpoint selection changed. Open Checkpoint again to refresh the count; no checkpoint was saved."); }
+}
+export function checkpointRequestError(error: unknown): string {
+  return error instanceof CheckpointSelectionChanged ? error.message : "Checkpoint result not confirmed. Check the latest checkpoint before trying again.";
+}
+export function requestCheckpoint(key: string, selection?: CheckpointSelection): Promise<CheckpointRecord> {
   const existing = pending.get(key);
   if (existing) return existing;
   const startedAt = Date.now();
@@ -35,7 +41,7 @@ export function requestCheckpoint(key: string): Promise<CheckpointRecord> {
   const request = Promise.resolve().then(async () => {
     const stopProgress = watchProgress(key, requestId, startedAt);
     try {
-      const result = await api.checkpoint(key, "manual", requestId);
+      const result = await api.checkpoint(key, "manual", requestId, ...(selection ? [selection] as const : []));
       // Older servers may omit the ID on the direct response. A conflicting ID
       // is never safe to use, even when it arrived on this request's connection.
       if (result.request_id && result.request_id !== requestId) throw new Error("Checkpoint response identity mismatch");
@@ -43,7 +49,7 @@ export function requestCheckpoint(key: string): Promise<CheckpointRecord> {
     } catch (error) {
       stopProgress();
       publish(key, { state: "unknown", startedAt, recovering: true });
-      const result = await recoverCheckpoint(key, requestId, startedAt);
+      const result = await recoverCheckpoint(key, requestId, startedAt, !!selection);
       if (!result) throw error;
       return result;
     } finally { stopProgress(); }
@@ -53,6 +59,10 @@ export function requestCheckpoint(key: string): Promise<CheckpointRecord> {
     publish(key, { state: "complete", startedAt, result: outcome });
     return result;
   }, error => {
+    if (error instanceof CheckpointSelectionChanged) {
+      publish(key, { state: "complete", startedAt, result: { saved: false, summary_update: { state: "failed", reason: "source_changed" }, label: "Checkpoint not saved" } });
+      throw error;
+    }
     // Transport failures cannot prove whether the server saved a checkpoint.
     publish(key, { state: "unknown", startedAt });
     throw error;
@@ -69,7 +79,7 @@ export function requestCheckpoint(key: string): Promise<CheckpointRecord> {
 
 // Recovery reads never create another checkpoint. Keep the original promise in
 // `pending` throughout recovery so repeated clicks cannot issue a duplicate POST.
-async function recoverCheckpoint(key: string, requestId: string, startedAt: number): Promise<CheckpointRecord | null> {
+async function recoverCheckpoint(key: string, requestId: string, startedAt: number, selected = false): Promise<CheckpointRecord | null> {
   let deadline = Date.now() + 180_000;
   let interval = 1000;
   const pause = async () => {
@@ -99,6 +109,7 @@ async function recoverCheckpoint(key: string, requestId: string, startedAt: numb
       const result = receipt.result;
       return result?.request_id === requestId && typeof result.id === "string" && result.id ? result : null;
     }
+    if (selected && receipt.state === "failed" && receipt.error === "checkpoint_source_changed") throw new CheckpointSelectionChanged();
     // A failed/interrupted receipt without its exact result cannot establish
     // whether a checkpoint was saved. Preserve the existing unknown status.
     if (receipt.state !== "running") return null;

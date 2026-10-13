@@ -6,6 +6,7 @@ import { memoryGet, type SavedMemory } from "./memoryViewApi";
 import { requestCheckpoint } from "./checkpointRequests";
 
 vi.mock("./memoryViewApi", () => ({ memoryGet: vi.fn() }));
+vi.mock("./checkpointSelection", () => ({ chooseCheckpoint: (key: string) => requestCheckpoint(key) }));
 vi.mock("./checkpointRequests", () => ({ requestCheckpoint: vi.fn(), useCheckpointAttempt: () => undefined }));
 const get = vi.mocked(memoryGet);
 const fixture = (): SavedMemory => ({

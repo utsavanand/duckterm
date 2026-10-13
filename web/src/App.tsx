@@ -21,6 +21,7 @@ import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { CheckpointSettingsModal } from "./CheckpointSettingsModal";
+import { CheckpointDialogHost } from "./CheckpointDialog";
 import { BackupModal } from "./BackupModal";
 import { BugReport } from "./BugReport";
 import { DashboardMenus } from "./DashboardMenus";
@@ -558,6 +559,7 @@ function Dashboard() {
       </div>
       </div>
 
+      <CheckpointDialogHost />
       {messageFolder !== null && <MessageFolderModal key={messageFolder} folder={messageFolder} onClose={() => setMessageFolder(null)} />}
       {inboxFolder !== null && messageFolder === null && (
         <Modal title={`${inboxFolder} · Interactions${desktop() ? " · This Mac" : ""}`} onClose={() => setInboxFolder(null)}>

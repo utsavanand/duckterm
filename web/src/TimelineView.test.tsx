@@ -1,8 +1,10 @@
+import { requestCheckpoint } from "./checkpointRequests";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, forkMergeHistory, TimelinePage } from "./api";
 import { TimelineView, TIMELINE_MILESTONES } from "./TimelineView";
 import type { SessionView } from "./types";
+vi.mock("./checkpointSelection", () => ({ chooseCheckpoint: (key: string) => requestCheckpoint(key) }));
 vi.mock("./api", () => ({ api: { timeline: vi.fn(), checkpoints: vi.fn(), checkpointAttempt: vi.fn(), checkpoint: vi.fn() }, forkMergeHistory: vi.fn(), forkMergeService: vi.fn() }));
 vi.mock("./HistoryView", () => ({ HistoryView: () => <p>Earlier digest history</p> }));
 const session = { key: "one", label: "Test", startedAt: 1 } as SessionView;

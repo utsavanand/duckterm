@@ -1,3 +1,4 @@
+import { requestCheckpoint } from "./checkpointRequests";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "./api";
@@ -6,6 +7,7 @@ import type { SessionView } from "./types";
 import { beginRecoveryUndo, finishRecoveryUndo, setRecoveryResumeAllowed, useRecoveryResumeBlocked } from "./resumeReadiness";
 import { destinationRequest } from "./desktop";
 const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
+vi.mock("./checkpointSelection", () => ({ chooseCheckpoint: (key: string) => requestCheckpoint(key) }));
 vi.mock("./api", () => ({ api: { checkpointAttempt: vi.fn(), checkpoint: vi.fn() } }));
 vi.mock("./ui", () => ({ useToast: () => toast }));
 vi.mock("./useResumeSession", () => ({ useResumeSession: (key: string) => ({ resuming: false, recoveryBlocked: useRecoveryResumeBlocked(key), resumeSession: vi.fn() }) }));

@@ -1,5 +1,7 @@
 ## 2026-10-12 — A checkpoint count must describe the work the request will actually do
 
+- Checkpoint confirmation must be separate from execution: fetching counts and Cancel save nothing; keep the dialog outside the dismissing session menu, carry the exact counted boundary into confirmation, and distinguish a rejected stale selection from an unknown network result. Verify the actual modal bounds in a browser, not only DOM presence.
+
 A configured recent window hid older unprocessed records and gave users no way to choose the next checkpoint's size. Count meaningful conversation records against exact accepted leaf coverage, expose a read-only selection plan, and bind submission to the displayed history boundary. Append-only activity must stay outside that selection; changed history, scope, settings or accepted coverage requires a refreshed count. Keep request identity stable through response recovery and reject different options on the same identity. Failed generation cannot advance coverage. Test old holes, retries, authorization and the Mac transport rather than treating a successful dialog render as proof of checkpoint behavior.
 
 ## 2026-10-12 — Valid citations do not prove that a memory claim is still current
