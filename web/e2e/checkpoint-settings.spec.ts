@@ -19,7 +19,7 @@ test("checkpoint settings save and reopen through the real API", async ({ page }
     await page.getByRole("button", { name: "Save settings", exact: true }).click();
     await expect(page.getByText("Settings saved", { exact: true })).toBeVisible();
     await page.screenshot({ path: "/tmp/checkpoint-settings-implemented-dark.png" });
-    await page.getByRole("button", { name: "✕", exact: true }).click();
+    await page.getByRole("heading", { name: "Checkpointing", exact: true }).locator("..").getByRole("button", { name: "✕", exact: true }).click();
     await page.getByRole("button", { name: "Settings", exact: false }).click();
     await page.getByRole("button", { name: "Checkpointing", exact: false }).click();
     await expect(field).toHaveValue("60");
