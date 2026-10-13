@@ -20,6 +20,7 @@ import { AnalyticsTab } from "./analyticsData";
 import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
+import { FloatingSessionShortcuts } from "./FloatingSessionShortcuts";
 import { CheckpointSettingsModal } from "./CheckpointSettingsModal";
 import { BackupModal } from "./BackupModal";
 import { BugReport } from "./BugReport";
@@ -508,6 +509,9 @@ function Dashboard() {
                 }}
               >
                 <Terminal sessionKey={s.key} active={selectedFolder === null && view === "terminal" && s.key === selectedKey} focusRequest={terminalFocus.key === s.key ? terminalFocus.revision : 0} theme={themeFor(s)} />
+                {view === "terminal" && s.key === selectedKey && <FloatingSessionShortcuts sessions={sessions} selected={s}
+                  onOpen={key => { setSelectedKey(key); setTerminalFocus(previous => ({ key, revision: previous.revision + 1 })); }}
+                  onToggle={toggleSessionPin} />}
               </div>
             ))}
             {view === "terminal" && selected && !selected.ptyOwned && !selected.worktreePath && (
