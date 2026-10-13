@@ -1,3 +1,7 @@
+## 2026-10-12 — Pin capacity must agree across storage and every control
+
+Raising a pin limit requires changing both the atomic server write and the floating picker guard. Keep server-side enforcement for concurrent requests, retain existing pins, and verify the tenth pin persists while the eleventh is refused without swapping. A multi-host Focus count must not display a misleading single-host denominator. Exercise short-window scrolling and the existing Focus dock so extra pins remain reachable.
+
 ## 2026-10-12 — Empty-state copy must not displace a hovered action
 
 A hover-only helper above Pin current moved the button after the pointer arrived, swallowing the first click. Keep helper text after the action so expansion preserves both its horizontal and vertical hit target. Browser regressions must capture the collapsed coordinates, expand, and click the same point; locator clicks can hide this defect by chasing moving elements.

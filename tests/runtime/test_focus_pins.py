@@ -1,4 +1,4 @@
-"""Owner Focus pins persist, retain stopped sessions, and never exceed three."""
+"""Owner Focus pins persist, retain stopped sessions, and never exceed ten."""
 
 import json
 import sqlite3
@@ -16,7 +16,7 @@ from duckterm.server import Server
 def scenario(tmp_path, monkeypatch):
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path))
     history = HistoryStore(tmp_path / "db.sqlite")
-    for key in ("a", "b", "c", "d"):
+    for key in "abcdefghijk":
         history.record(
             {"_id": key, "_ts": 1, "event_type": "SessionStart", "session_key": key, "test": True}
         )
@@ -43,17 +43,18 @@ def pinned_keys(history):
 
 def test_cap_no_swap_idempotency_and_delete_frees_slot(scenario):
     server, owner = scenario
-    for key in "abc":
+    first_ten = set("abcdefghij")
+    for key in sorted(first_ten):
         assert pin(server, owner, key) == (200, {"pinned": True})
     assert pin(server, owner, "a")[0] == 200
-    assert pin(server, owner, "d") == (409, {"error": "Unpin one first"})
-    assert pinned_keys(server.history) == set("abc")
+    assert pin(server, owner, "k") == (409, {"error": "Unpin one first"})
+    assert pinned_keys(server.history) == first_ten
     assert server.history.delete_session("b")
-    assert pin(server, owner, "d")[0] == 200
-    assert pinned_keys(server.history) == set("acd")
+    assert pin(server, owner, "k")[0] == 200
+    assert pinned_keys(server.history) == first_ten - {"b"} | {"k"}
     assert pin(server, owner, "a", False) == (200, {"pinned": False})
     assert pin(server, owner, "a", False)[0] == 200
-    assert pinned_keys(server.history) == set("cd")
+    assert pinned_keys(server.history) == first_ten - {"a", "b"} | {"k"}
 
 
 def test_persistence_lifecycle_and_existing_session_payload(scenario, tmp_path):
@@ -95,7 +96,7 @@ def test_owner_auth_validation_and_missing_session(scenario):
 
 def test_concurrent_connections_cannot_take_the_same_last_slot(scenario, tmp_path):
     server, owner = scenario
-    for key in "ab":
+    for key in "abcdefghi":
         pin(server, owner, key)
     # Initialize serially on dedicated owner threads BEFORE starting the race.
     # Constructors run repair/retention writes; racing those against a short
@@ -105,7 +106,7 @@ def test_concurrent_connections_cannot_take_the_same_last_slot(scenario, tmp_pat
     def race(store, index):
         ready.wait()
         try:
-            return store.set_pinned("cd"[index], True)
+            return store.set_pinned("jk"[index], True)
         except ValueError as exc:
             assert str(exc) == "Unpin one first"
             return False
@@ -124,8 +125,8 @@ def test_concurrent_connections_cannot_take_the_same_last_slot(scenario, tmp_pat
         finally:
             for pool, store in zip(owners, stores, strict=False):
                 pool.submit(store.close).result(timeout=30)
-    assert len(pinned_keys(server.history)) == 3
-    assert set("ab") <= pinned_keys(server.history)
+    assert len(pinned_keys(server.history)) == 10
+    assert set("abcdefghi") <= pinned_keys(server.history)
 
 
 def test_older_database_migrates_with_no_pins(tmp_path):
