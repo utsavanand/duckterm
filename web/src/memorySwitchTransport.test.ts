@@ -139,9 +139,13 @@ it("does not issue remote memory requests or malformed paths", async () => {
   expect(fetchMock).not.toHaveBeenCalled();
 });
 it("passes abort signals to local reads and treats absent or unknown capability as unavailable", async () => {
-  const controller = new AbortController(); response(prepared);
-  await memorySwitchService(selection).preparation(prepId, controller.signal);
-  expect(fetchMock.mock.calls[0][1].signal).toBe(controller.signal);
+  const controller = new AbortController();
+  fetchMock.mockImplementationOnce(() => new Promise(() => {}));
+  const pending = memorySwitchService(selection).preparation(prepId, controller.signal);
+  const assertion = expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  controller.abort();
+  await assertion;
+  expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
   const options = { current: { harness: "claude-code", model: "", conversation_generation: "gen" },
     memory_switch: { version: 1, available: true }, resume_restart: { available: true }, harnesses: [] } satisfies RestartOptions;
   expect(memorySwitchAvailable(options)).toBe(true);
