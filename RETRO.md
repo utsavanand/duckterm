@@ -2,6 +2,10 @@
 
 Raising a pin limit requires changing both the atomic server write and the floating picker guard. Keep server-side enforcement for concurrent requests, retain existing pins, and verify the tenth pin persists while the eleventh is refused without swapping. A multi-host Focus count must not display a misleading single-host denominator. Exercise short-window scrolling and the existing Focus dock so extra pins remain reachable.
 
+## 2026-10-12 — Preparation status requests need their own deadline
+
+A background job can outlive a lost HTTP response. Unbounded local fetch or body reads leave the Change harness controller waiting forever and prevent its next poll. Bound metadata exchanges independently from model generation, preserve the original request key after an ambiguous start, and let status polling recover. Regression tests must include never-settling promises and late replies, not only rejected network requests. A request timeout does not prove that generation failed.
+
 ## 2026-10-12 — Empty-state copy must not displace a hovered action
 
 A hover-only helper above Pin current moved the button after the pointer arrived, swallowing the first click. Keep helper text after the action so expansion preserves both its horizontal and vertical hit target. Browser regressions must capture the collapsed coordinates, expand, and click the same point; locator clicks can hide this defect by chasing moving elements.
