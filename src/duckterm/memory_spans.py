@@ -137,9 +137,19 @@ def plan(captured: dict[str, Any], lower: dict[str, Any]) -> dict[str, Any]:
         "required_work": {"kinds": {}},
     }
     pending = []
+    consumed = []
+    selection = captured.get("checkpoint_selection")
+    covered = captured.get("span_covered", {})
     stopped = False
     for row in rows:
         if row["position"] < counts.get(row["source"], 0):
+            continue
+        identity = (row["source"], row["record"])
+        if (selection is not None and identity not in selection) or covered.get(identity) == row[
+            "hash"
+        ]:
+            if not stopped:
+                next_counts[row["source"]] = row["position"] + 1
             continue
         if stopped:
             if not row["reference_only"]:
@@ -148,13 +158,15 @@ def plan(captured: dict[str, Any], lower: dict[str, Any]) -> dict[str, Any]:
         if not row["reference_only"]:
             candidate = {**result, "selected": [*result["selected"], row]}
             if (
-                len(candidate["selected"]) > MAX_RECORDS
+                len(candidate["selected"])
+                > captured.get("checkpoint_settings", {}).get("batch_records", MAX_RECORDS)
                 or len(prompt(candidate).encode()) > MAX_GENERATION_BYTES
             ):
                 stopped = True
                 pending.append(row)
                 continue
             result["selected"].append(row)
+        consumed.append(row)
         next_counts[row["source"]] = row["position"] + 1
     result.update(
         lower=deepcopy(lower),
@@ -174,10 +186,32 @@ def plan(captured: dict[str, Any], lower: dict[str, Any]) -> dict[str, Any]:
         for source, value in result["next_boundary"]["sources"].items()
         if value["count"] > counts.get(source, 0)
     ]
+    if selection is not None or covered:
+        # A skipped window is not processed coverage. Record only consumed ranges,
+        # so a larger later checkpoint can fill holes without overlapping leaves.
+        result["ranges"] = []
+        for row in consumed:
+            ranges = result["ranges"]
+            if (
+                ranges
+                and ranges[-1]["source"] == row["source"]
+                and ranges[-1]["end"] == row["position"]
+            ):
+                ranges[-1]["end"] += 1
+            else:
+                ranges.append(
+                    {
+                        "source": row["source"],
+                        "version": row["version"],
+                        "first": row["position"],
+                        "end": row["position"] + 1,
+                    }
+                )
     result["input_key"] = "span:" + fingerprint(
         {
             "policy": POLICY,
             "summary_policy": captured["policy"],
+            "checkpoint_models": captured.get("checkpoint_settings", {}),
             "scope": lower["scope"],
             "ranges": result["ranges"],
             "records": [

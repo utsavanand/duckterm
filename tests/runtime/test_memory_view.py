@@ -125,7 +125,7 @@ def test_failed_checkpoint_keeps_last_good_summary_visible(memory_rig, monkeypat
     append(path, "New work")
     monkeypatch.setattr(
         "duckterm.server.summarize",
-        lambda _: SimpleNamespace(text="", failure_reason="provider_timeout"),
+        lambda _, **kwargs: SimpleNamespace(text="", failure_reason="provider_timeout"),
     )
     cp = asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
     code, value = get(server)

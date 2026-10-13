@@ -2,6 +2,26 @@ import XCTest
 @testable import Duckterm
 
 final class MemoryTransportTests: XCTestCase {
+    @MainActor func testCheckpointSettingsUseExactHostBoundRoutes() throws {
+        for port in [4300, 14300] {
+            let base = URL(string: "http://127.0.0.1:\(port)")!
+            for method in ["GET", "POST"] {
+                let request = try SessionTransport.request(base: base, params: [
+                    "path": "/checkpoint-settings", "method": method,
+                ])
+                XCTAssertEqual(request.url?.absoluteString, base.absoluteString + "/checkpoint-settings")
+                XCTAssertEqual(request.httpMethod, method)
+            }
+            for (path, method) in [
+                ("/checkpoint-settings", "DELETE"), ("/checkpoint-settings", "PATCH"),
+                ("/checkpoint-settings?x=1", "GET"), ("/checkpoint-settings?x=1", "POST"),
+                ("/checkpoint-settings/extra", "GET"),
+            ] {
+                XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+            }
+        }
+    }
+
     @MainActor func testExactMemoryAndRestartRoutes() throws {
         let base = URL(string: "http://127.0.0.1:14300")!
         let root = "/sessions/same.id"

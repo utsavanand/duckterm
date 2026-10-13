@@ -29,7 +29,7 @@ def test_checkpoint_rewrites_overlong_summary_before_review_and_saves_it_intact(
     transcript(tmp, "agent-claude", SHORT)
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         if prompt.startswith("You are validating"):
             summary_block = prompt.split("\nSUMMARY:\n", 1)[1].split("\nSOURCE:\n", 1)[0].strip()
@@ -68,7 +68,7 @@ def test_repeated_overlong_drafts_fail_explicitly_and_keep_last_good_checkpoint(
     overlong = [False]
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         if prompt.startswith("You are validating"):
             assert not overlong[0], "An overlong candidate must never reach review"
@@ -105,7 +105,7 @@ def test_short_but_incomplete_summary_still_requires_semantic_review(memory_rig,
     transcript(tmp, "agent-claude", SHORT)
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **kwargs):
         calls.append(prompt)
         if prompt.startswith("You are validating"):
             return Summary(

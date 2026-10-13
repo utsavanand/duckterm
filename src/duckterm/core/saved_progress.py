@@ -281,7 +281,8 @@ class ProgressCoordinator:
         if captured is None:
             return SummaryUpdate.failed("source_changed", diagnostic="capture:unstable")
         try:
-            captured = await memory_continuity.capture(self.server, key, captured)
+            if "checkpoint_selection" not in captured:
+                captured = await memory_continuity.capture(self.server, key, captured)
         except APIError as exc:
             return SummaryUpdate.failed(
                 "source_changed" if exc.status == 409 else "source_unavailable",
@@ -289,7 +290,7 @@ class ProgressCoordinator:
                     "capture:memory_conflict" if exc.status == 409 else "capture:memory_unavailable"
                 ),
             )
-        if self.facts(key) != captured["facts"]:
+        if "checkpoint_selection" not in captured and self.facts(key) != captured["facts"]:
             return SummaryUpdate.failed("source_changed", diagnostic="capture:facts_changed")
         if "memory_sources" in captured:
             from duckterm.core import memory_refresh
@@ -364,7 +365,15 @@ class ProgressCoordinator:
                 ),
                 planned,
             )
-        if self.facts(key) != captured["facts"]:
+        if "checkpoint_selection" in captured:
+            from duckterm import memory_checkpoint
+
+            if reason := memory_checkpoint.changed(self.server, key, captured):
+                return (
+                    SummaryUpdate.failed("source_changed", diagnostic="snapshot:" + reason),
+                    planned,
+                )
+        elif self.facts(key) != captured["facts"]:
             return SummaryUpdate.failed("source_changed", diagnostic="span:facts_changed"), planned
         input_key = planned["input_key"]
         existing = self.server.digests.find_revision(key, input_key)
@@ -409,6 +418,24 @@ class ProgressCoordinator:
             else:
                 task.add_done_callback(finished)
 
+    async def _validation_capture(
+        self, key: str, captured: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        if "checkpoint_selection" in captured:
+            from duckterm import memory_checkpoint
+
+            if memory_checkpoint.changed(self.server, key, captured):
+                return None
+            return captured
+        return await self.capture(key)
+
+    async def _validation_memory(self, key: str, captured: dict[str, Any]) -> dict[str, Any]:
+        if "checkpoint_selection" in captured:
+            return captured
+        from duckterm import memory_continuity
+
+        return await memory_continuity.capture(self.server, key, captured)
+
     async def _draft(
         self, key: str, captured: dict[str, Any], maintained: dict[str, Any] | None, prompt: str
     ) -> tuple[dict[str, Any], dict[str, Any] | None] | SummaryUpdate:
@@ -419,7 +446,15 @@ class ProgressCoordinator:
         for attempt in range(2 if maintained is not None else 1):
             if maintained and maintained.get("span") == "incremental":
                 self.report_span_progress(key, stage="repairing" if attempt else "writing")
-            reply = await asyncio.to_thread(summarize, prompt)
+            reply = await asyncio.to_thread(
+                summarize,
+                prompt,
+                **(
+                    {"claude_model": captured["checkpoint_settings"]["writer_model"]}
+                    if "checkpoint_settings" in captured
+                    else {}
+                ),
+            )
             if failure := getattr(reply, "failure_reason", None):
                 return SummaryUpdate.failed(failure)
             digest = progress.parse(reply.text)
@@ -442,13 +477,13 @@ class ProgressCoordinator:
                 )
             # Retry only a rejected draft, once, against exactly the same work.
             # Quota/auth/deadline errors return above without another provider call.
-            current = await self.capture(key)
+            current = await self._validation_capture(key, captured)
             if current is None:
                 return SummaryUpdate.failed(
                     "source_changed", diagnostic="draft_retry:capture_unstable"
                 )
             try:
-                current = await memory_continuity.capture(self.server, key, current)
+                current = await self._validation_memory(key, current)
             except APIError:
                 return SummaryUpdate.failed(
                     "source_changed", diagnostic="draft_retry:memory_conflict"
@@ -539,11 +574,13 @@ class ProgressCoordinator:
                 else progress.build_prompt(captured["transcript"], prior_cache, bounded_required)
             )
         )
+        draft_started = time.monotonic()
         drafted = await self._draft(key, captured, maintained, prompt)
+        draft_ms = round((time.monotonic() - draft_started) * 1000)
         if isinstance(drafted, SummaryUpdate):
             return drafted
         digest, context = drafted
-        policy_check = await self.capture(key)
+        policy_check = await self._validation_capture(key, captured)
         if policy_check is None or policy_check["policy"] != captured["policy"]:
             return SummaryUpdate.failed(
                 "source_changed", diagnostic="review:policy_or_capture_changed"
@@ -565,7 +602,17 @@ class ProgressCoordinator:
             return SummaryUpdate.failed("invalid_context", diagnostic="review_input_too_large")
         if span_plan is not None:
             self.report_span_progress(key, stage="reviewing")
-        verdict_reply = await asyncio.to_thread(summarize, validation_prompt)
+        review_started = time.monotonic()
+        verdict_reply = await asyncio.to_thread(
+            summarize,
+            validation_prompt,
+            **(
+                {"claude_model": captured["checkpoint_settings"]["reviewer_model"]}
+                if "checkpoint_settings" in captured
+                else {}
+            ),
+        )
+        review_ms = round((time.monotonic() - review_started) * 1000)
         if failure_reason := getattr(verdict_reply, "failure_reason", None):
             return SummaryUpdate.failed(failure_reason)
         verdicts = progress.parse_verdicts(verdict_reply.text)
@@ -595,12 +642,12 @@ class ProgressCoordinator:
         if baseline and maintained is None:
             reasons.append("whole_history_preparation_required")
         # Re-read actual bytes, not mtime/size, after both provider calls.
-        refreshed = await self.capture(key)
+        refreshed = await self._validation_capture(key, captured)
         if refreshed is None or refreshed["conversation"] != captured["conversation"]:
             return SummaryUpdate.failed(
                 "source_changed", diagnostic="validation:conversation_or_capture_changed"
             )
-        refreshed = await memory_continuity.capture(self.server, key, refreshed)
+        refreshed = await self._validation_memory(key, refreshed)
         if refreshed["policy"] != captured["policy"]:
             return SummaryUpdate.failed("source_changed", diagnostic="validation:policy_changed")
         if refreshed["source"] != captured["source"]:
@@ -625,12 +672,12 @@ class ProgressCoordinator:
                 else memory_continuity.result(maintained, context, captured["memory_gaps"])
             )
             retained = await memory_continuity.retain(key, captured, maintained)
-            final = await self.capture(key)
+            final = await self._validation_capture(key, captured)
             if final is None:
                 return SummaryUpdate.failed(
                     "source_changed", diagnostic="retention:capture_unstable"
                 )
-            final = await memory_continuity.capture(self.server, key, final)
+            final = await self._validation_memory(key, final)
             if any(final[k] != captured[k] for k in ("source", "conversation", "policy")):
                 return SummaryUpdate.failed("source_changed", diagnostic="retention:source_changed")
             if not continuity["update_complete"]:
@@ -641,6 +688,11 @@ class ProgressCoordinator:
         value = {
             **{k: captured[k] for k in ("source", "conversation", "policy")},
             "source_at": captured["captured_at"],
+            **(
+                {"checkpoint_settings": captured["checkpoint_settings"]}
+                if "checkpoint_settings" in captured
+                else {}
+            ),
             "input_key": input_key,
             "prior_revision": prior["id"] if prior else None,
             "summary": digest["summary"],
@@ -648,6 +700,7 @@ class ProgressCoordinator:
             **({"memory_baseline_ref": baseline} if baseline else {}),
             "summary_validation": {"ready": not reasons, "reason_codes": reasons},
             "summary_review": review,
+            "generation_timing_ms": {"draft_including_repairs": draft_ms, "review": review_ms},
             **(memory_spans.metadata(span_plan) if span_plan is not None else {}),
         }
         if span_plan is not None:
@@ -656,10 +709,10 @@ class ProgressCoordinator:
         if folding is not None:
             # Optional model work ran after the summary's fence. Revalidate it
             # before any parent links or the incoming summary can be committed.
-            current = await self.capture(key)
+            current = await self._validation_capture(key, captured)
             if current is None:
                 return SummaryUpdate.failed("source_changed", diagnostic="fold:capture_unstable")
-            current = await memory_continuity.capture(self.server, key, current)
+            current = await self._validation_memory(key, current)
             if any(current[k] != captured[k] for k in ("source", "conversation", "policy")):
                 return SummaryUpdate.failed("source_changed", diagnostic="fold:source_changed")
         result = self.persist(
@@ -694,6 +747,8 @@ class ProgressCoordinator:
         stage_only: bool = False,
     ) -> dict[str, Any] | None:
         """Single atomic write path, including explicitly owner-reviewed baselines."""
+        from duckterm import memory_checkpoint
+
         now = int(time.time() * 1000)
         conn = self.server.history._conn
         with transaction(conn):
@@ -712,7 +767,11 @@ class ProgressCoordinator:
             # A same-generation late result never overwrites a newer revision.
             promote = (
                 current_revision(latest) == (prior["id"] if prior else None)
-                and self.facts(key) == captured["facts"]
+                and (
+                    not memory_checkpoint.changed(self.server, key, captured)
+                    if "checkpoint_selection" in captured
+                    else self.facts(key) == captured["facts"]
+                )
                 and "source_changed" not in value["summary_validation"]["reason_codes"]
             )
             if require_current and not promote:

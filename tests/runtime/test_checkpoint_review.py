@@ -106,10 +106,10 @@ def test_checkpoint_attempt_keeps_review_diagnostic_and_last_good_revision(
         assert first["summary_update"]["state"] == "updated"
         append(path, "Keep an additional owner constraint")
 
-        def rejected(prompt):
+        def rejected(prompt, **kwargs):
             if prompt.startswith("You are validating"):
                 return SimpleNamespace(text=reply if isinstance(reply, str) else json.dumps(reply))
-            return generate(prompt)
+            return generate(prompt, **kwargs)
 
         monkeypatch.setattr(server_module, "summarize", rejected)
         failed = await checkpoint()

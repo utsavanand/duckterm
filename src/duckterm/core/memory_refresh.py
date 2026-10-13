@@ -35,6 +35,7 @@ async def refresh(
             captured["conversation"],
             captured["policy"],
             memory_spans.boundary(captured),
+            captured.get("checkpoint_settings"),
         ]
     )
     active = coordinator.span_refreshes.get(key)
@@ -100,6 +101,10 @@ def change_reason(
     """Fixed diagnostics only; never persist paths, source contents or credentials."""
     from duckterm.core.saved_progress import file_version, policy_key
 
+    if "checkpoint_selection" in captured:
+        from duckterm import memory_checkpoint
+
+        return memory_checkpoint.changed(coordinator.server, key, captured)
     if coordinator.facts(key) != captured["facts"]:
         return "facts_changed"
     if policy_key() != captured["policy"]:
@@ -132,12 +137,24 @@ async def _run(
     ]
     # A legacy cumulative paragraph cannot establish coverage of an original
     # prefix. Without an actual leaf boundary, begin with the original records.
+    selection = captured.get("checkpoint_selection")
+    covered = {}
+    # Window checkpoints can leave older holes deliberately. Never mistake their
+    # upper boundary for a claim that the entire preceding history was processed.
+    for leaf in leaves:
+        if selection is not None or "checkpoint_settings" in leaf:
+            for source, records in leaf.get("continuity", {}).get("processed", {}).items():
+                covered.update({(source, record): digest for record, digest in records.items()})
+    if covered:
+        captured = {**captured, "span_covered": covered}
+    sequential = [leaf for leaf in leaves if "checkpoint_settings" not in leaf]
     latest = leaves[-1] if leaves else None
+    predecessor = sequential[-1] if sequential and selection is None else None
     if latest and latest.get("policy") != captured["policy"]:
         return SummaryUpdate.failed("source_changed", diagnostic="summary_policy_changed")
     lower = (
-        latest["span_input"]["next_boundary"]
-        if latest is not None
+        predecessor["span_input"]["next_boundary"]
+        if predecessor is not None
         else memory_spans.boundary(captured, empty=True)
     )
     changed = False
@@ -178,10 +195,10 @@ async def _run(
         return SummaryUpdate.failed("no_transcript")
     coordinator.report_span_progress(key, stage="checking")
     try:
-        final = await coordinator.capture(key)
+        final = await coordinator._validation_capture(key, captured)
         if final is None:
             return SummaryUpdate.failed("source_changed", diagnostic="publication:capture_unstable")
-        final = await memory_continuity.capture(coordinator.server, key, final)
+        final = await coordinator._validation_memory(key, final)
     except APIError as exc:
         return SummaryUpdate.failed(
             "source_changed" if exc.status == 409 else "source_unavailable",
@@ -217,16 +234,32 @@ async def _run(
         )
     coordinator.span_status[key] = {"completed_spans": len(leaves), "pending_records": 0}
     originals = memory_spans.original_rows(captured)
-    eligible = sum(not row["reference_only"] for row in originals)
+    eligible = (
+        len(selection)
+        if selection is not None
+        else sum(not row["reference_only"] for row in originals)
+    )
+    available = len(selection) if selection is not None else len(originals)
     return replace(
         SummaryUpdate.from_revision(latest, reused=not changed),
         span_coverage={
             "state": "complete",
             "revision_ids": [row["id"] for row in leaves],
-            "available_records": len(originals),
+            "available_records": available,
             "eligible_records": eligible,
             "summarized_records": eligible,
-            "reference_only_records": len(originals) - eligible,
+            "reference_only_records": available - eligible,
+            **(
+                {
+                    "scope": "recent_window",
+                    "lookback_records": captured["checkpoint_settings"]["lookback_records"],
+                    "history_eligible_records": captured["checkpoint_available"],
+                    "outside_window_records": captured["checkpoint_available"] - eligible,
+                    "captured_at": captured["captured_at"],
+                }
+                if selection is not None
+                else {}
+            ),
             "pending_records": 0,
         },
     )
