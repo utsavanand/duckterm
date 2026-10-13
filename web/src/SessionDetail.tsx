@@ -1,5 +1,6 @@
 import { sessionStateLabel } from "./sessions";
-import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
+import { checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
+import { chooseCheckpoint } from "./checkpointSelection";
 import { checkpointAttemptFailed, checkpointNotice } from "./checkpointState";
 import { CheckpointDetails } from "./CheckpointStatus";
 import { routedFetch as fetch } from "./hostTransport";
@@ -63,11 +64,12 @@ export function SessionDetail({
     // Capturing runs a summarizer agent (claude -p / codex / copilot), which
     // takes a few seconds — show a loader so the click doesn't feel dead.
     try {
-      const cp = await requestCheckpoint(session.key);
+      const cp = await chooseCheckpoint(session.key, session.label);
+      if (!cp) return;
       toast(checkpointNotice(cp), checkpointAttemptFailed(cp) ? "err" : "ok");
       loadCheckpoints();
-    } catch {
-      toast("Checkpoint result not confirmed. Check the latest checkpoint before trying again.", "err");
+    } catch (error) {
+      toast(checkpointRequestError(error), "err");
     }
   }
 

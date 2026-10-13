@@ -1,10 +1,11 @@
+import { seedCheckpointSession, confirmCheckpoint } from "./checkpoint-fixture";
 import { expect, test } from "@playwright/test";
-import { apiDelete, apiPost, checkpoints, seedSession, sessionMenu } from "./helpers";
+import { apiDelete, apiPost, checkpoints, sessionMenu } from "./helpers";
 
 test("checkpoint progress opens the Session panel immediately and survives navigation", async ({ page }) => {
   const key = `e2e-progress-${Date.now()}`, other = key + "-other";
-  await seedSession(key, { name: "Checkpoint review", group: "Checkpoint QA" });
-  await seedSession(other, { name: "Other checkpoint session", group: "Checkpoint QA" });
+  await seedCheckpointSession(key, { name: "Checkpoint review", group: "Checkpoint QA" });
+  await seedCheckpointSession(other, { name: "Other checkpoint session", group: "Checkpoint QA" });
   try {
     await apiPost(`/sessions/${key}/checkpoint`, { label: "Earlier attempt" });
     const earlier = (await checkpoints(key))[0];
@@ -30,6 +31,7 @@ test("checkpoint progress opens the Session panel immediately and survives navig
     const row = page.locator(".rd-row", { hasText: "Checkpoint review" });
     await row.locator(".rd-row-click").click();
     await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
+    await confirmCheckpoint(page);
     const progress = page.getByRole("region", { name: "Checkpoint progress" });
     await expect(progress.getByRole("progressbar")).toBeVisible();
     await expect(page.getByRole("menu")).toHaveCount(0);
@@ -65,7 +67,7 @@ test("checkpoint progress opens the Session panel immediately and survives navig
 
 test("a saved partial checkpoint reports incomplete failure instead of success", async ({ page }) => {
   const key = `e2e-partial-${Date.now()}`;
-  await seedSession(key, { name: "Incomplete checkpoint", group: "Checkpoint QA" });
+  await seedCheckpointSession(key, { name: "Incomplete checkpoint", group: "Checkpoint QA" });
   try {
     // The observed attempt saved a reviewed draft but had incomplete coverage.
     // This response fixture exercises display only; it does not claim a backend repair.
@@ -85,6 +87,7 @@ test("a saved partial checkpoint reports incomplete failure instead of success",
     const row = page.locator(".rd-row", { hasText: "Incomplete checkpoint" });
     await row.locator(".rd-row-click").click();
     await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
+    await confirmCheckpoint(page);
     const progress = page.getByRole("region", { name: "Checkpoint progress" });
     await expect(progress.getByRole("status")).toHaveText("Checkpoint failed · summary incomplete");
     await expect(progress).toHaveClass(/rd-checkpoint-progress-failure/);
@@ -103,7 +106,7 @@ test("a saved partial checkpoint reports incomplete failure instead of success",
 
 test("checkpoint displays checked work instead of elapsed time at real panel sizes", async ({ page }) => {
   const key = `e2e-measured-${Date.now()}`;
-  await seedSession(key, { name: "Progress review", group: "Checkpoint QA" });
+  await seedCheckpointSession(key, { name: "Progress review", group: "Checkpoint QA" });
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   let completed = 12, stage = "reviewing";
@@ -127,6 +130,7 @@ test("checkpoint displays checked work instead of elapsed time at real panel siz
     if (await folder.locator(".rd-group-caret").textContent() === "▸") await folder.locator(".rd-group-caret").click();
     await page.locator(".rd-row", { hasText: "Progress review" }).locator(".rd-row-click").click();
     await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
+    await confirmCheckpoint(page);
     const progress = page.getByRole("region", { name: "Checkpoint progress" });
     const bar = progress.getByRole("progressbar");
     await expect(bar).toHaveAttribute("aria-valuenow", "12");

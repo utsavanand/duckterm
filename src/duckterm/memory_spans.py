@@ -100,6 +100,21 @@ def _lower_counts(
     return counts
 
 
+def covered_records(saved: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
+    covered = {}
+    for leaf in saved:
+        if leaf.get("span") == "incremental" and leaf.get("fold", {}).get("tier") == 0:
+            for source, records in leaf.get("continuity", {}).get("processed", {}).items():
+                covered.update({(source, record): digest for record, digest in records.items()})
+    return covered
+
+
+def rows_through(captured: dict[str, Any], upper: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = original_rows(captured)
+    counts = _lower_counts(captured, rows, upper)
+    return [r for r in rows if r["position"] < counts.get(r["source"], 0)]
+
+
 def prompt(plan: dict[str, Any]) -> str:
     """The entire generation prompt, including metadata, fits the byte budget."""
     records = [

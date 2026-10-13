@@ -4,7 +4,8 @@ import { splitSessionRef } from "./hostTransport";
 import { SessionView } from "./types";
 import { HistoryView } from "./HistoryView";
 import { CheckpointDetails } from "./CheckpointStatus";
-import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
+import { checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
+import { chooseCheckpoint } from "./checkpointSelection";
 import { checkpointNotice } from "./checkpointState";
 import "./timeline.css";
 
@@ -17,8 +18,8 @@ const FILTERS = [
 ] as const;
 const LABELS: Record<string, string> = { prompt: "Owner message", delivered: "Delivered", learned: "Task learning", next_action: "Next action", completed: "Completed", decision: "Owner decision", restart: "Restart", model: "Model changed", harness: "Harness switched", "needs-you": "Needs you", artifact: "Artifact" };
 
-export function TimelineView({ session, active = true, checkpointTarget, onArtifacts, onMessages }: {
-  session: SessionView; active?: boolean; checkpointTarget?: number; onArtifacts?: () => void; onMessages?: () => void;
+export function TimelineView({ session, active = true, checkpointTarget, onArtifacts, onMessages, onMemory }: {
+  session: SessionView; active?: boolean; checkpointTarget?: number; onArtifacts?: () => void; onMessages?: () => void; onMemory?: (sessionKey: string, revision: string) => void;
 }) {
   const [filter, setFilter] = useState("all");
   const [data, setData] = useState<TimelinePage | null>(null);
@@ -48,10 +49,11 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
     if (retryBusy || retryPending.current.has(key)) return;
     retryPending.current.add(key); setRetryNotice("");
     try {
-      const cp = await requestCheckpoint(key);
+      const cp = await chooseCheckpoint(key, session.label);
+      if (!cp) return;
       if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice(checkpointNotice(cp));
-    } catch {
-      if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice("Checkpoint result not confirmed. Check the latest checkpoint before trying again.");
+    } catch (error) {
+      if (keyRef.current === key && retryGeneration.current === generation) setRetryNotice(checkpointRequestError(error));
     } finally {
       retryPending.current.delete(key);
     }
@@ -135,7 +137,7 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
           <time dateTime={new Date(entry.ts).toISOString()}>{new Date(entry.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</time>
           <span aria-hidden="true" className="rd-timeline-mark">{entry.kind === "checkpoint" ? "⚑" : entry.kind === "artifact" ? "▤" : "·"}</span>
           <div ref={i === 0 ? latest : undefined}>{entry.kind === "checkpoint"
-            ? <CheckpointDetails checkpoint={cp ?? { id: cpId ?? entry.id, label: entry.detail.text ?? "Checkpoint", created_at: entry.ts, summary: entry.detail.summary ?? "", summary_state: entry.detail.summary_state, record: { prompts: [], files: [], tools: [], event_count: 0 } }} open={!!checkpointTarget && i === 0} onRetry={cp && !["archived", "merged", "terminated"].includes(session.state) ? () => void retrySummary() : undefined} retrying={retryBusy} />
+            ? <CheckpointDetails checkpoint={cp ?? { id: cpId ?? entry.id, label: entry.detail.text ?? "Checkpoint", created_at: entry.ts, summary: entry.detail.summary ?? "", summary_state: entry.detail.summary_state, record: { prompts: [], files: [], tools: [], event_count: 0 } }} open={!!checkpointTarget && i === 0} onRetry={cp && !["archived", "merged", "terminated"].includes(session.state) ? () => void retrySummary() : undefined} retrying={retryBusy} onMemory={onMemory ? revision => onMemory(session.key, revision) : undefined} />
             : <EventContent entry={entry} onArtifacts={onArtifacts} />}</div>
         </article>
       </Fragment>;

@@ -267,6 +267,8 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/merge")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._fork_merge(w, h, seg, "LIST", b),
           **_mid("/sessions/", "/merges")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._checkpoint_plan(w, seg),
+          **_mid("/sessions/", "/checkpoint-plan")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._list_checkpoints(w, seg),
           **_mid("/sessions/", "/checkpoints")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_digest(w, seg),
@@ -4749,6 +4751,15 @@ class Server:
             status, result = exc.status, {"error": str(exc)}
         await _write_json(writer, status, result)
 
+    async def _checkpoint_plan(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        from duckterm import checkpoint_plan
+
+        try:
+            result = await checkpoint_plan.preview(self, session_key)
+            await _write_json(writer, 200, result)
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+
     async def _checkpoint_settings(
         self, writer: asyncio.StreamWriter, body: bytes | None = None
     ) -> None:
@@ -4776,6 +4787,7 @@ class Server:
         identity: str | None = None,
         request_id: str | None = None,
         on_progress: Callable[[dict[str, Any]], None] | None = None,
+        selection: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         from duckterm import checkpoint_settings, memory_checkpoint, memory_continuity
 
@@ -4784,8 +4796,12 @@ class Server:
             raise APIError(409, "Session changed while capturing checkpoint; try again")
         prior = current_revision(self.history.session(session_key) or {})
         update = SummaryUpdate.failed("update_failed")
+        if selection is not None:
+            captured = await memory_checkpoint.freeze(
+                self, session_key, captured, checkpoint_settings.load(), selection=selection
+            )
         try:
-            if label != "Before harness switch":
+            if label != "Before harness switch" and selection is None:
                 captured = await memory_checkpoint.freeze(
                     self, session_key, captured, checkpoint_settings.load()
                 )

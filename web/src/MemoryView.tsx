@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { CheckpointAge, publishCheckpointClock } from "./CheckpointAge";
 import { memoryGet, type MemoryEvidence, type MemoryRead, type SavedMemory } from "./memoryViewApi";
 import { CheckpointProgress } from "./CheckpointProgress";
-import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
+import { checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
+import { chooseCheckpoint } from "./checkpointSelection";
 import { useToast } from "./ui";
 import { checkpointFailure } from "./checkpointState";
 import "./memoryView.css";
@@ -32,8 +33,8 @@ function Evidence({ sessionKey, evidence }: { sessionKey: string; evidence: Memo
     {read?.next_offset != null && <button className="rd-btn rd-btn-sm" disabled={busy} onClick={() => void load(true)}>Read more</button>}
   </details>;
 }
-export function MemoryView({ sessionKey, name, active = true }: { sessionKey: string; name: string; active?: boolean }) {
-  const [revision, setRevision] = useState("");
+export function MemoryView({ sessionKey, name, active = true, initialRevision = "", onBack }: { sessionKey: string; name: string; active?: boolean; initialRevision?: string; onBack?: () => void }) {
+  const [revision, setRevision] = useState(initialRevision);
   const [choices, setChoices] = useState<SavedMemory["revisions"]>([]);
   const [saved, setSaved] = useState<SavedMemory | null>(null);
   const [error, setError] = useState("");
@@ -46,6 +47,7 @@ export function MemoryView({ sessionKey, name, active = true }: { sessionKey: st
     setSaved(null); setError("");
     void memoryGet<SavedMemory>(sessionKey, "", revision ? { revision } : {}).then(value => {
       if (!value || !Array.isArray(value.revisions) || !["available", "unavailable", "empty"].includes(value.state)) throw new Error("Invalid memory response");
+      if (revision && value.revision && value.revision.id !== revision) throw new Error("The requested saved summary was not returned. Try reading it again.");
       if (live) { setSaved(value); setChoices(value.revisions); publishCheckpointClock(sessionKey, value.checkpoint_clock); }
     }).catch(cause => { if (live) setError((cause as Error).message); });
     return () => { live = false; };
@@ -56,17 +58,19 @@ export function MemoryView({ sessionKey, name, active = true }: { sessionKey: st
     return () => window.removeEventListener("duckterm-checkpoint", changed);
   }, [sessionKey]);
   const current = saved?.revision;
-  const aggregate = saved?.memory;
+  const aggregate = revision ? undefined : saved?.memory;
   const latestUpdate = saved?.latest_checkpoint?.summary_update;
   const groups = aggregate?.state === "available" ? aggregate.groups : aggregate ? [] : current?.groups ?? [];
   return <section className="rd-memory-view" aria-label="Session memory">
+    {onBack && <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={onBack}>← Timeline</button>}
     <header><div><span className="hint">{name} · Memory</span><h1>Saved summary and evidence</h1><CheckpointAge sessionKey={sessionKey} /></div>
       <label>Summary revision<select aria-label="Summary revision" value={revision} onChange={event => setRevision(event.target.value)}>
         <option value="">Current memory</option>
+        {revision && !choices.some(row => row.id === revision) && <option value={revision}>{current?.id === revision ? `${new Date(current.created_at).toLocaleString()} · ${revision.slice(0, 8)}` : `Selected summary · ${revision.slice(0, 8)}`}</option>}
         {choices.map(row => <option key={row.id} value={row.id}>{new Date(row.created_at).toLocaleString()} · {row.id.slice(0, 8)}</option>)}
       </select></label>
     </header>
-    <div className="rd-memory-actions"><button className="rd-btn rd-btn-primary" disabled={attempt?.state === "running" || (attempt?.state === "unknown" && attempt.recovering)} onClick={() => { void requestCheckpoint(sessionKey).catch(cause => toast((cause as Error).message, "err")); }}>Checkpoint</button>
+    <div className="rd-memory-actions"><button className="rd-btn rd-btn-primary" disabled={attempt?.state === "running" || (attempt?.state === "unknown" && attempt.recovering)} onClick={() => { void chooseCheckpoint(sessionKey, name).catch(cause => toast(checkpointRequestError(cause), "err")); }}>Checkpoint</button>
       <span className="hint">History is recorded automatically. Checkpoint updates the summary when you choose.</span></div>
     <CheckpointProgress sessionKey={sessionKey} />
     {!attempt && (latestUpdate?.state === "failed" || latestUpdate?.state === "partial") && <div className="rd-memory-failure" role="status">

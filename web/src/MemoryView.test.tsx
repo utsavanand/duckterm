@@ -6,6 +6,7 @@ import { memoryGet, type SavedMemory } from "./memoryViewApi";
 import { requestCheckpoint } from "./checkpointRequests";
 
 vi.mock("./memoryViewApi", () => ({ memoryGet: vi.fn() }));
+vi.mock("./checkpointSelection", () => ({ chooseCheckpoint: (key: string) => requestCheckpoint(key) }));
 vi.mock("./checkpointRequests", () => ({ requestCheckpoint: vi.fn(), useCheckpointAttempt: () => undefined }));
 const get = vi.mocked(memoryGet);
 const fixture = (): SavedMemory => ({
@@ -87,5 +88,43 @@ it("withholds aggregate claims when combined evidence cannot be verified", async
   await screen.findByText(/Combined memory is unavailable/);
   expect(screen.queryByText("Keep the earlier decision")).toBeNull();
   expect(screen.getByText("Latest span narrative")).toBeVisible();
+  expect(requestCheckpoint).not.toHaveBeenCalled();
+});
+
+it("opens a linked revision outside the recent list and reads its own evidence on the same host", async () => {
+  const saved = fixture();
+  saved.revisions = [{ id: "latest", created_at: 2000 }]; saved.revisions_truncated = true;
+  saved.revision = { ...saved.revision!, id: "older-exact", created_at: 500, is_current: false, summary: "Historical linked summary", groups: saved.memory!.groups };
+  const onBack = vi.fn();
+  get.mockResolvedValueOnce(saved);
+  render(<MemoryView sessionKey="remote::same" name="Remote memory" initialRevision="older-exact" onBack={onBack} />);
+  await screen.findByText("Historical linked summary");
+  expect(get).toHaveBeenCalledExactlyOnceWith("remote::same", "", { revision: "older-exact" });
+  expect(screen.getByRole("combobox")).toHaveValue("older-exact");
+  const evidence = screen.getByText("Original conversation · conversation").parentElement!;
+  get.mockResolvedValueOnce({ text: "Original older evidence", next_offset: null });
+  evidence.setAttribute("open", ""); fireEvent(evidence, new Event("toggle"));
+  await screen.findByText("Original older evidence");
+  expect(get).toHaveBeenLastCalledWith("remote::same", "read", { source: "conversation:version", record: "turn-1" });
+  fireEvent.click(screen.getByRole("button", { name: "← Timeline" }));
+  expect(onBack).toHaveBeenCalledOnce();
+  expect(requestCheckpoint).not.toHaveBeenCalled();
+});
+
+it("rejects an unexpected latest revision instead of substituting it for the linked revision", async () => {
+  render(<MemoryView sessionKey="same" name="Memory" initialRevision="older-exact" />);
+  await screen.findByRole("alert");
+  expect(screen.queryByText("Latest span narrative")).toBeNull();
+  expect(screen.queryByText("Keep the earlier decision")).toBeNull();
+  expect(get).toHaveBeenCalledExactlyOnceWith("same", "", { revision: "older-exact" });
+  expect(requestCheckpoint).not.toHaveBeenCalled();
+});
+
+it("keeps a missing historical revision selected without fetching current memory", async () => {
+  get.mockRejectedValueOnce(new Error("Summary revision is unavailable in this session"));
+  render(<MemoryView sessionKey="remote::same" name="Memory" initialRevision="missing" />);
+  await screen.findByRole("alert");
+  expect(screen.getByRole("combobox")).toHaveValue("missing");
+  expect(get).toHaveBeenCalledExactlyOnceWith("remote::same", "", { revision: "missing" });
   expect(requestCheckpoint).not.toHaveBeenCalled();
 });

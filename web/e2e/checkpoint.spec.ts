@@ -1,6 +1,7 @@
+import { seedCheckpointSession, confirmCheckpoint } from "./checkpoint-fixture";
 import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
-import { apiDelete, checkpoints, postEvent, seedSession } from "./helpers";
+import { apiDelete, checkpoints, postEvent } from "./helpers";
 
 // Record a checkpoint from the UI and verify the backend captured the session's
 // activity. We seed a prompt + a Bash command via the events API (the same path
@@ -11,7 +12,7 @@ test("checkpoint captures the session's prompts and commands", async ({
   page,
 }) => {
   const key = `e2e-checkpoint-${Date.now()}`;
-  await seedSession(key, { name: key });
+  await seedCheckpointSession(key, { name: key });
   try {
   await postEvent({
     event_type: "UserPromptSubmit",
@@ -37,6 +38,7 @@ test("checkpoint captures the session's prompts and commands", async ({
 
   await row.locator(".rd-row-click").click();
   await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
+    await confirmCheckpoint(page);
 
   // UI: the row saved, but the fake provider did not generate a usable summary.
   await expect(page.getByRole("region", { name: "Checkpoint progress" }).getByText("Summary update failed", { exact: true })).toBeVisible();
@@ -75,6 +77,7 @@ test("checkpoint captures the session's prompts and commands", async ({
   await page.getByRole("button", { name: "Latest checkpoint ↗", exact: true }).click();
   await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveAttribute("open", "");
   await timeline.getByRole("button", { name: "Retry summary update", exact: true }).click();
+    await confirmCheckpoint(page);
   await expect.poll(async () => (await checkpoints(key)).length).toBe(2);
   await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveCount(2);
   const retried = await checkpoints(key);

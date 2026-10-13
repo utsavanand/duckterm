@@ -9,7 +9,8 @@ import { desktop, destinationRequest, selectLaunchTarget } from "./desktop";
 import { splitSessionRef } from "./hostTransport";
 import { effectiveState } from "./sessions";
 import { identityBlocksResume } from "./conversationRecoveryState";
-import { requestCheckpoint, useCheckpointAttempt } from "./checkpointRequests";
+import { checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
+import { chooseCheckpoint } from "./checkpointSelection";
 import { checkpointAttemptFailed, checkpointNotice } from "./checkpointState";
 import { recoveryBlocksResume } from "./resumeReadiness";
 import { SessionView } from "./types";
@@ -50,12 +51,13 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
   }
   async function checkpoint() {
     if (disabled || checkpointPending) return;
-    const request = requestCheckpoint(s.key);
+    const request = chooseCheckpoint(s.key, s.label);
     onClose();
     try {
       const cp = await request;
+      if (!cp) return;
       toast(checkpointNotice(cp), checkpointAttemptFailed(cp) ? "err" : "ok");
-    } catch { toast("Checkpoint result not confirmed. Check the latest checkpoint before trying again.", "err"); }
+    } catch (error) { toast(checkpointRequestError(error), "err"); }
   }
 
   const item = (label: string, action: () => void, danger = false, blocked = false) => <button role="menuitem" className={danger ? "rd-btn-danger" : ""} disabled={disabled || blocked} onClick={action}>{label}</button>;

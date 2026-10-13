@@ -34,16 +34,16 @@ export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
   }
   return <Modal title="Checkpointing" onClose={onClose} width={680}>
     <div className="rd-checkpoint-settings">
-      <p>Choose how much recent conversation a checkpoint summarizes.</p>
+      <p>Choose the default count offered when you create a checkpoint.</p>
       {!settings && !error && <p role="status">Loading checkpoint settings…</p>}
       {settings && <form onSubmit={e => { e.preventDefault(); void save(); }}>
         <fieldset disabled={saving}>
-          <label htmlFor="checkpoint-lookback">Recent records to include</label>
+          <label htmlFor="checkpoint-lookback">Default records per checkpoint</label>
           <input id="checkpoint-lookback" style={inputStyle} type="number" min="1" max="1000" step="1" required value={lookback} onChange={e => { setLookback(e.target.value); setSaved(false); }} aria-describedby="checkpoint-record-help" />
           <small id="checkpoint-record-help">Default: 20 records. A record is a message or message segment. A conversational turn can contain several records.</small>
           <div className="rd-checkpoint-batch-note" aria-live="polite">{valid ? <>
-            <strong>{count} recent records, in batches of up to 20.</strong><br />
-            At least {Math.ceil(count / 20)} {count > 20 ? "batches" : "batch"} if all selected records need summarizing. Large records may require smaller batches; saved work is reused.
+            <strong>Up to {count} unprocessed records, in batches of up to 20.</strong><br />
+            At least {Math.ceil(count / 20)} {count > 20 ? "batches" : "batch"} if this many records are selected. Large records may require smaller batches; saved work is reused.
           </> : "Enter a whole number from 1 to 1,000."}</div>
           <div className="rd-checkpoint-models">
             {(["writer_model", "reviewer_model"] as const).map(role => <div key={role}>
@@ -54,7 +54,7 @@ export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
               <small>{role === "writer_model" ? "Writes the summary and extracts decisions, constraints, and open items." : "Checks the result against the captured source records."}</small>
             </div>)}
           </div>
-          <p className="rd-checkpoint-settings-note">Older history stays searchable. Previously saved decisions and open items remain in memory. New messages arriving during a checkpoint are handled by a later checkpoint.</p>
+          <p className="rd-checkpoint-settings-note">The checkpoint dialog shows how many records remain and lets you change the count once. It processes oldest unprocessed records first. Previously saved decisions and open items remain in memory.</p>
           <small>Model choices use your installed Claude Code model aliases. A custom summary provider takes precedence.</small>
           <footer><span role="status">{saved ? "Settings saved" : saving ? "Saving…" : ""}</span>
             <button type="button" className="rd-btn rd-btn-ghost" onClick={() => { setSettings(defaults); setLookback("20"); setSaved(false); }}>Reset defaults</button>

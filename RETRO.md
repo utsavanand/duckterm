@@ -18,6 +18,16 @@ Keep the compact session button anchored at the terminal edge while its label ex
 
 Session shortcuts belong in an absolutely positioned layer over the existing terminal slot. Do not reserve a grid column or add terminal padding: either changes PTY columns and can reflow output. Reuse saved session pins and host-qualified selection; verify widths, terminal connections, unsent drafts, and right-panel collapse with real terminal sessions.
 
+## 2026-10-12 — Timeline memory links must retain the saved revision
+
+A checkpoint is a historical reference, so its Memory link must carry summary_ref and the host-qualified session key. Initialize the read at that exact revision; never fetch current memory first or silently replace an unavailable revision. Keep older linked revisions selectable even outside the recent-20 dropdown, and load their original evidence without generating a checkpoint. Verify panel navigation still explicitly opens current memory.
+
+## 2026-10-12 — A checkpoint count must describe the work the request will actually do
+
+- Checkpoint confirmation must be separate from execution: fetching counts and Cancel save nothing; keep the dialog outside the dismissing session menu, carry the exact counted boundary into confirmation, and distinguish a rejected stale selection from an unknown network result. Verify the actual modal bounds in a browser, not only DOM presence.
+
+A configured recent window hid older unprocessed records and gave users no way to choose the next checkpoint's size. Count meaningful conversation records against exact accepted leaf coverage, expose a read-only selection plan, and bind submission to the displayed history boundary. Append-only activity must stay outside that selection; changed history, scope, settings or accepted coverage requires a refreshed count. Keep request identity stable through response recovery and reject different options on the same identity. Failed generation cannot advance coverage. Test old holes, retries, authorization and the Mac transport rather than treating a successful dialog render as proof of checkpoint behavior.
+
 ## 2026-10-12 — Valid citations do not prove that a memory claim is still current
 
 A checkpoint retained early uncertainty after later records diagnosed and verified the fix. Filter exact routine notices from the summary projection without deleting originals, reconcile claims against the end of the same span, and have the independent reviewer check every field rather than only the narrative. Give a rejected semantic draft one bounded correction using the same evidence; never advance coverage on rejection. Validate that summary is text rather than coercing arrays into Python-looking strings. Allow a useful-length narrative without expanding the compact overview or slicing saved text. Label historical memory and preserve current work pointers so lack of verification in an old conversation is not asserted as today's release status.

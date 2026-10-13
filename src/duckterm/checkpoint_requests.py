@@ -83,6 +83,14 @@ class CheckpointRequests:
         label = payload.get("label", "checkpoint")
         if not isinstance(label, str) or not label.strip() or len(label) > 200:
             raise APIError(400, "Invalid checkpoint label")
+        selection = payload.get("selection")
+        if selection is not None:
+            from duckterm import checkpoint_plan
+
+            if not isinstance(selection, dict) or set(selection) != {"plan", "records"}:
+                raise APIError(400, "Invalid checkpoint selection")
+            checkpoint_plan.choice(selection["records"])
+            checkpoint_plan.validate_plan(selection["plan"])
         row = self.server.history.session(key)
         if row is None:
             raise APIError(404, "Session not found")
@@ -90,6 +98,10 @@ class CheckpointRequests:
         if previous:
             if previous["label"] != label:
                 raise APIError(409, "Checkpoint request_id already used with a different label")
+            if previous.get("selection") != selection:
+                raise APIError(
+                    409, "Checkpoint request_id already used with different checkpoint options"
+                )
         else:
             if any(session == key for session, _ in self.tasks):
                 raise APIError(409, "A checkpoint request is already running for this session")
@@ -102,6 +114,7 @@ class CheckpointRequests:
                 "label": label,
                 "state": "running",
                 "created_at": int(time.time() * 1000),
+                **({"selection": selection} if selection is not None else {}),
             }
             self._save(key, receipt)
             started = asyncio.create_task(self._run(key, row, receipt))
@@ -114,7 +127,10 @@ class CheckpointRequests:
         receipt = self.receipt(key, request_id)
         if receipt["state"] == "complete":
             return 200, receipt["result"]
-        return 409 if receipt["state"] == "interrupted" else 500, receipt
+        conflict = (
+            receipt["state"] == "interrupted" or receipt.get("error") == "checkpoint_source_changed"
+        )
+        return 409 if conflict else 500, receipt
 
     async def _run(self, key: str, row: dict[str, Any], receipt: dict[str, Any]) -> None:
         def report(value: dict[str, Any]) -> None:
@@ -130,6 +146,7 @@ class CheckpointRequests:
                 identity=receipt["checkpoint_id"],
                 request_id=receipt["request_id"],
                 on_progress=report,
+                **({"selection": receipt["selection"]} if "selection" in receipt else {}),
             )
             receipt = {**receipt, "state": "complete"}
             if result.get("export_reason"):

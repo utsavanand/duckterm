@@ -35,6 +35,22 @@ export interface CheckpointSettings {
   reviewer_model: "haiku" | "sonnet" | "opus";
 }
 
+export interface CheckpointPlan {
+  available_records: number;
+  processed_records: number;
+  pending_records: number;
+  default_records: number;
+  selected_records: number;
+  remaining_records: number;
+  batch_records: 20;
+  order: "oldest_unprocessed_first";
+  selection_plan: Record<string, unknown>;
+}
+export interface CheckpointSelection {
+  plan: CheckpointPlan["selection_plan"];
+  records: number | "all";
+}
+
 export interface ModelChoice { id: string; label: string; }
 
 export interface RestartStatus {
@@ -655,10 +671,11 @@ export const api = {
     })),
   clearTerminated: () =>
     post<{ cleared: number }>("/sessions/clear-terminated"),
-  checkpoint: (key: string, label: string, requestId?: string) =>
+  checkpointPlan: (key: string) => get<CheckpointPlan>(`/sessions/${key}/checkpoint-plan`, undefined, { authed: true }),
+  checkpoint: (key: string, label: string, requestId?: string, selection?: CheckpointSelection) =>
     post<CheckpointRecord>(
       `/sessions/${key}/checkpoint`,
-      { label, ...(requestId ? { request_id: requestId } : {}) },
+      { label, ...(requestId ? { request_id: requestId } : {}), ...(selection ? { selection } : {}) },
     ),
   checkpointAttempt: async (key: string, requestId: string, signal?: AbortSignal): Promise<CheckpointAttemptReceipt | null> => {
     const response = await fetch(`/sessions/${key}/checkpoint-attempts/${encodeURIComponent(requestId)}`, { headers: authHeaders(), signal });
