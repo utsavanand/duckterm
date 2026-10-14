@@ -21,10 +21,16 @@ export interface MemoryCoverage {
   source_count: number; covered_source_count: number; gap_count: number;
   gaps: MemoryGap[]; has_more: boolean; details_cursor: string | null; handoff?: MaintainedHandoff;
 }
+export const preparationStages = ["queued", "capturing", "summarizing", "writing", "reviewing", "repairing", "checking",
+  "reading", "assembling", "checking_sources", "ready", "failed", "stale_source", "incomplete_source", "canceled"] as const;
+export interface PreparationProgress {
+  stage: typeof preparationStages[number]; startedAt: number; updatedAt: number;
+  completed?: number; total?: number;
+}
 export interface MemoryPreparation {
   preparationId: string; sequence: number; result: PreparationResult;
   coverage: MemoryCoverage; overview?: string; resolvedModel?: string | null;
-  revisionId?: string | null; preparedAt?: number; retryable?: boolean;
+  revisionId?: string | null; preparedAt?: number; retryable?: boolean; progress?: PreparationProgress;
 }
 export interface MemoryDetails {
   preparationId: string; snapshotId: string;
@@ -118,6 +124,17 @@ function coverage(value: unknown): MemoryCoverage {
   }
   return c;
 }
+function preparationProgress(value: unknown): PreparationProgress {
+  const v = obj(value);
+  const progress: PreparationProgress = { stage: choice(v.stage, preparationStages),
+    startedAt: num(v.started_at), updatedAt: num(v.updated_at) };
+  if (progress.updatedAt < progress.startedAt) invalid();
+  if (v.completed !== undefined || v.total !== undefined) {
+    progress.completed = num(v.completed); progress.total = num(v.total);
+    if (progress.completed > progress.total) invalid();
+  }
+  return progress;
+}
 const processStates = ["source_running", "source_stopped", "target_running", "unknown"] as const;
 function checkBinding(value: unknown, selection: SwitchSelection): void {
   const b = obj(value), t = obj(b.target), m = obj(t.model);
@@ -131,7 +148,8 @@ function preparation(value: unknown, selection: SwitchSelection, expectedId?: st
   checkBinding(v.binding, selection);
   const preparationId = nonempty(v.preparation_id, 128);
   if (expectedId !== undefined && preparationId !== expectedId) invalid();
-  const base = { preparationId, sequence: num(v.sequence), coverage: coverage(v.coverage) };
+  const base = { preparationId, sequence: num(v.sequence), coverage: coverage(v.coverage),
+    ...(v.progress === undefined ? {} : { progress: preparationProgress(v.progress) }) };
   // request_key on a shared job's GET can identify another lease. It is not
   // evidence that this response belongs to a different target or preparation.
   switch (v.state) {

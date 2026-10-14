@@ -85,7 +85,7 @@ it("disables Switch for missing sources and retries with a fresh lease", async (
 it("replays the same preparation key when its initial response is lost", async () => {
   service.prepare.mockRejectedValueOnce(new TypeError("Network lost"));
   render(<MemorySwitchPanel {...props()} />); await screen.findByText("Network lost");
-  fireEvent.click(screen.getByRole("button", { name: "Prepare again" })); await screen.findByText("Ready to switch");
+  fireEvent.click(screen.getByRole("button", { name: "Check connection" })); await screen.findByText("Ready to switch");
   expect(service.prepare.mock.calls[0][0]).toBe(service.prepare.mock.calls[1][0]);
 });
 it("loads the optional complete brief only on expansion", async () => {
@@ -125,4 +125,55 @@ it("explicitly checks an unrecorded switch by replaying the original immutable r
   expect(service.switch).toHaveBeenCalledOnce(); fireEvent.click(screen.getByRole("button", { name: "Check switch status" }));
   await waitFor(() => expect(p.onAccepted).toHaveBeenCalledOnce());
   expect(service.switch.mock.calls[1][0]).toBe(service.switch.mock.calls[0][0]);
+});
+
+it("separates unchanged progress from successful polls and never switches at 20/20", async () => {
+  vi.useFakeTimers();
+  const startedAt = Date.now();
+  const preparing: MemoryPreparation = { ...ready(), sequence: 2, result: { phase: "preparing" },
+    progress: { stage: "reviewing", startedAt, updatedAt: startedAt, completed: 12, total: 20 } };
+  service.prepare.mockResolvedValue(preparing); service.preparation.mockResolvedValue(preparing);
+  await act(async () => { render(<MemorySwitchPanel {...props()} />); });
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "12");
+  await act(async () => { await vi.advanceTimersByTimeAsync(120000); });
+  expect(screen.getByText(/No progress update for 2 minutes/)).toHaveTextContent("server is responding");
+  expect(screen.getByText("Last server response: Just now")).toBeVisible();
+  expect(screen.getByText("Last progress: 2 minutes ago")).toBeVisible();
+  service.preparation.mockResolvedValue({ ...preparing, sequence: 3,
+    progress: { ...preparing.progress!, stage: "assembling", completed: 20, updatedAt: Date.now() } });
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(screen.getByText("Assembling the handoff")).toBeVisible();
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "20");
+  expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
+  service.preparation.mockResolvedValue(preparing); // An older response must not roll back the stage/count.
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(screen.getByText("Assembling the handoff")).toBeVisible();
+  expect(service.switch).not.toHaveBeenCalled();
+});
+it("keeps last known progress on disconnect and checks the same job without another POST", async () => {
+  vi.useFakeTimers();
+  const preparing: MemoryPreparation = { ...ready(), result: { phase: "preparing" }, progress: {
+    stage: "checking", startedAt: Date.now(), updatedAt: Date.now(), completed: 4, total: 20 } };
+  service.prepare.mockResolvedValue(preparing);
+  service.preparation.mockRejectedValueOnce(new MemoryTransportError("Preparation could not be checked.", 0, "request_timeout"));
+  await act(async () => { render(<MemorySwitchPanel {...props()} />); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(screen.getByText("Connection interrupted")).toBeVisible();
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "4");
+  expect(screen.getByText(/Last known stage: Checking conversation records/)).toBeVisible();
+  service.preparation.mockResolvedValue({ ...ready(), sequence: 2 });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Check connection" })); });
+  expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeEnabled();
+  expect(service.prepare).toHaveBeenCalledOnce();
+  expect(service.preparation).toHaveBeenLastCalledWith("p1");
+  expect(service.switch).not.toHaveBeenCalled();
+});
+it("shows unknown counts without inventing a percentage", async () => {
+  service.prepare.mockResolvedValue({ ...ready(), result: { phase: "preparing" }, progress: {
+    stage: "capturing", startedAt: Date.now(), updatedAt: Date.now() } });
+  render(<MemorySwitchPanel {...props()} />);
+  await screen.findByText("Reading the conversation");
+  expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+  expect(screen.getByText("Count not available yet")).toBeVisible();
+  expect(service.switch).not.toHaveBeenCalled();
 });
