@@ -1,3 +1,7 @@
+## 2026-10-16 — A vague reviewer rejection must not be attributed to the writer
+
+A checkpoint could fail with only `summary_unverified` even though the reviewer named no offending claim. The last good summary remained intact, but the failure was impossible to diagnose and skipped the existing writer repair. Require a specific rejection reason or bounded correction, retry a malformed reviewer verdict once against the same draft, and retain actionable corrections on failed checkpoint metadata. Inspect failed attempts rather than only saved revisions when measuring rejection rates.
+
 ## 2026-10-16 — Bound the whole harness preparation, and disclose partial memory
 
 Batching each writer call did not bound Change harness: it still drained every unprocessed record before allowing a switch. Reuse the checkpoint count and exact selection fence, default to the newest 20 records for a handoff, and let the owner choose more or All. The handoff must report older eligible records as pending and keep originals searchable; a selected-span success is not full-history coverage. Include the selection in the refresh and request identities so different counts cannot share work accidentally. When replacing the count step with progress, move keyboard focus into the progress panel so Escape still closes the dialog.

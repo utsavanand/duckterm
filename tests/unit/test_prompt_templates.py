@@ -13,7 +13,7 @@ from duckterm.handoff_review import handoff_brief
     "name,digest",
     [
         ("digest_write", "62f5b3ce360f57d118861c7abd9c4acca467fbc6cc4253ea5c879b665b383b79"),
-        ("digest_validate", "3dc1411f93bc9f8b60aa9da62012620e149cb57fdd17465c48de45bf50a3d32f"),
+        ("digest_validate", "e1195f415855714ca3f62b4fcc4e6196df5456cc7bf420a1979318b4b9a61698"),
     ],
 )
 def test_extracted_digest_prose_is_byte_identical(name, digest):

@@ -26,7 +26,12 @@ __all__ = ["memory_rig"]
             "rejected",
             ["required_context_missing"],
         ),
-        ({"ready": False, "reason_codes": []}, "rejected", []),
+        ({"ready": False, "reason_codes": []}, "invalid_reason_codes", []),
+        (
+            {"ready": False, "reason_codes": ["summary_unverified"]},
+            "invalid_reason_codes",
+            ["summary_unverified"],
+        ),
         (
             {"ready": True, "reason_codes": ["contradiction"]},
             "inconsistent_verdict",
@@ -150,3 +155,93 @@ def test_accepted_review_with_failed_source_fence_is_not_called_a_reviewer_rejec
     assert result.state == "failed"
     assert result.diagnostic == "summary_not_ready:legacy_baseline_unreviewed"
     assert result.review["state"] == "accepted"
+
+
+def test_vague_rejection_retries_reviewer_without_rewriting_summary(memory_rig, monkeypatch):
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Keep the owner constraint")
+    provider(monkeypatch)
+    import duckterm.server as server_module
+
+    generate = server_module.summarize
+    reviews = []
+    drafts = []
+
+    def review_once_more(prompt, **kwargs):
+        if prompt.startswith("You are validating"):
+            reviews.append(prompt)
+            if len(reviews) == 1:
+                return SimpleNamespace(
+                    text=json.dumps(
+                        {
+                            "accept": [],
+                            "summary_validation": {
+                                "ready": False,
+                                "reason_codes": ["summary_unverified"],
+                            },
+                        }
+                    )
+                )
+            return generate(prompt, **kwargs)
+        drafts.append(prompt)
+        return generate(prompt, **kwargs)
+
+    monkeypatch.setattr(server_module, "summarize", review_once_more)
+    saved = asyncio.run(
+        server._create_checkpoint("agent", server.history.session("agent"), "manual")
+    )
+    assert saved["summary_update"]["state"] == "updated"
+    assert len(reviews) == 2 and reviews[0] == reviews[1]
+    assert len(drafts) == 1
+
+
+def test_specific_rejection_persists_bounded_corrections(memory_rig, monkeypatch):
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "Initial owner constraint")
+    provider(monkeypatch)
+    import duckterm.server as server_module
+
+    generate = server_module.summarize
+
+    async def checkpoint():
+        return await server._create_checkpoint("agent", server.history.session("agent"), "manual")
+
+    async def run():
+        first = await checkpoint()
+        append(path, "Keep an additional owner constraint")
+
+        def rejected(prompt, **kwargs):
+            if prompt.startswith("You are validating"):
+                return SimpleNamespace(
+                    text=json.dumps(
+                        {
+                            "accept": [],
+                            "summary_corrections": [
+                                {
+                                    "field": "summary",
+                                    "correction": "The new constraint is absent.",
+                                    "source": "record-2",
+                                }
+                            ],
+                            "summary_validation": {
+                                "ready": False,
+                                "reason_codes": ["required_context_missing"],
+                            },
+                        }
+                    )
+                )
+            return generate(prompt, **kwargs)
+
+        monkeypatch.setattr(server_module, "summarize", rejected)
+        failed = await checkpoint()
+        assert failed["summary_update"]["state"] == "failed"
+        assert failed["summary_update"]["summary_corrections"] == [
+            {
+                "field": "summary",
+                "correction": "The new constraint is absent.",
+                "source": "record-2",
+            }
+        ]
+        assert failed["record"]["summary_ref"] == first["record"]["summary_ref"]
+
+    asyncio.run(run())
