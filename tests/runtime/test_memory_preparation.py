@@ -455,3 +455,44 @@ def test_content_notifications_and_unknown_payloads_still_invalidate(preparation
     stale = server.memory_preparation.status("agent", view["preparation_id"])
     assert stale["state"] == "stale_source"
     assert "proof" not in stale
+
+
+def test_preparation_reports_real_summary_work_before_readiness(preparation, monkeypatch):
+    server, _, _ = preparation
+    manager = server.memory_preparation
+    original = manager.update
+    observed = []
+
+    def record(job, **value):
+        original(job, **value)
+        observed.append(manager.view(job))
+
+    monkeypatch.setattr(manager, "update", record)
+    view = asyncio.run(prepare(server))
+    assert view["state"] == "ready", view
+    progress = [item["progress"] for item in observed]
+    stages = [item["stage"] for item in progress]
+    assert stages.index("capturing") < stages.index("writing") < stages.index("reviewing")
+    assert stages.index("reviewing") < stages.index("reading") < stages.index("assembling")
+    assert stages.index("assembling") < stages.index("checking_sources") < stages.index("ready")
+    reviewing = next(item for item in progress if item["stage"] == "reviewing")
+    assert reviewing["completed"] == 0
+    assert reviewing["total"] > 0
+    assert view["progress"]["completed"] == reviewing["total"]
+    assert all("proof" not in item for item in observed if item["state"] == "preparing")
+    assert all(item["updated_at"] >= item["started_at"] for item in progress)
+    assert server.history.session("agent")["runtime"] == "claude-code"
+
+
+def test_preparation_polling_does_not_invent_progress(preparation, monkeypatch):
+    server, _, _ = preparation
+    manager = server.memory_preparation
+    view = asyncio.run(prepare(server))
+    identity = view["preparation_id"]
+    before = view["progress"]
+    monkeypatch.setattr(
+        "duckterm.memory_preparation.time.time", lambda: before["updated_at"] / 1000 + 10
+    )
+    assert manager.status("agent", identity)["progress"] == before
+    manager.update(manager.get("agent", identity), progress={"stage": before["stage"]})
+    assert manager.status("agent", identity)["progress"] == before

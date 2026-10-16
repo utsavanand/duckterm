@@ -1,6 +1,9 @@
 ## 2026-10-13 — A free port does not mean the old server has closed SQLite
 
 `duckterm restart` waited for HTTP to stop answering, then opened the same DB while the old server was still shutting down. SQLite already had a five-second busy timeout, so adding another PRAGMA was not the fix. Wait for the exact former listener PIDs to exit before touching tombstones or starting a new server. If a Mac app instance takes the port meanwhile, report it and leave the new listener alone. Close the restart command's short-lived HistoryStore explicitly.
+## 2026-10-13 — Preparation activity is not connection health or switch readiness
+
+Show record counts only when supplied by the backend, keep stage progress separate from successful poll timestamps, and retain last-known progress during a connection failure. A completed record bar does not prove a handoff is ready. Recover status against the same preparation lease; never create another job just to check connectivity. Test unchanged progress across successful polls, out-of-order responses, transport timeouts, and all-records-checked before proof readiness.
 
 ## 2026-10-12 — Pin capacity must agree across storage and every control
 
@@ -9,6 +12,10 @@ Raising a pin limit requires changing both the atomic server write and the float
 ## 2026-10-12 — Preparation status requests need their own deadline
 
 A background job can outlive a lost HTTP response. Unbounded local fetch or body reads leave the Change harness controller waiting forever and prevent its next poll. Bound metadata exchanges independently from model generation, preserve the original request key after an ambiguous start, and let status polling recover. Regression tests must include never-settling promises and late replies, not only rejected network requests. A request timeout does not prove that generation failed.
+
+## 2026-10-12 — Show generation work, not just a preparing label
+
+Harness preparation already used the shared summarizer but omitted its progress observer. Forward the existing checked-record counts and writing/reviewing stages to the preparation response; keep later evidence and brief checks separate from summarization. A successful status poll is evidence of connectivity, not evidence that work advanced, so polling must not refresh the last-progress timestamp or invent completion percentages.
 
 ## 2026-10-12 — Empty-state copy must not displace a hovered action
 

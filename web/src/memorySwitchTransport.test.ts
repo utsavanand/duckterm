@@ -231,3 +231,23 @@ it("preserves unknown coverage separately from an empty omitted list", async () 
   const value = await memorySwitchService(selection).prepare("unknown-span-coverage");
   expect(value.coverage.handoff?.coverage).toEqual({ declared: true, unknown: true, omitted: [] });
 });
+
+it("decodes preparation counts and timestamps without inferring readiness", async () => {
+  const progress = { stage: "assembling", started_at: 1000, updated_at: 1200, completed: 20, total: 20 };
+  response({ ...prepared, state: "preparing", progress });
+  const value = await memorySwitchService(selection).preparation(prepId);
+  expect(value.progress).toEqual({ stage: "assembling", startedAt: 1000, updatedAt: 1200, completed: 20, total: 20 });
+  expect(value.result.phase).toBe("preparing");
+  response({ ...prepared, state: "preparing", progress: { stage: "capturing", started_at: 1000, updated_at: 1000 } });
+  expect((await memorySwitchService(selection).preparation(prepId)).progress?.total).toBeUndefined();
+  response(prepared);
+  expect((await memorySwitchService(selection).preparation(prepId)).progress).toBeUndefined();
+});
+it.each([
+  { stage: "invented" }, { started_at: -1 }, { updated_at: 999 }, { total: 10 },
+  { completed: -1, total: 20 }, { completed: 21, total: 20 }, { completed: 1.5, total: 20 },
+  { completed: 1, total: "20" }, { completed: 1 },
+])("rejects malformed progress %j", async patch => {
+  response({ ...prepared, progress: { stage: "checking", started_at: 1000, updated_at: 1000, ...patch } });
+  await expect(memorySwitchService(selection).preparation(prepId)).rejects.toMatchObject({ code: "invalid_response" });
+});
