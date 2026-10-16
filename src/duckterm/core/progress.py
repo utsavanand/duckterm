@@ -148,7 +148,28 @@ def parse_verdicts(text: str) -> dict[str, Any] | None:
     return {"accept": accept, "done_next_action_ids": done, "summary_validation": validation}
 
 
-def summary_review(validation: Any) -> dict[str, Any]:
+def summary_corrections(text: str) -> list[str | dict[str, str]]:
+    """Keep useful reviewer feedback bounded before it enters a checkpoint."""
+    raw = json_object(text)
+    values = raw.get("summary_corrections") if raw is not None else None
+    if not isinstance(values, list):
+        return []
+    result: list[str | dict[str, str]] = []
+    for value in values[:8]:
+        if isinstance(value, str) and value.strip():
+            result.append(value.strip()[:500])
+        elif isinstance(value, dict):
+            fields = {
+                key: value[key].strip()[:500]
+                for key in ("field", "claim", "correction", "source")
+                if isinstance(value.get(key), str) and value[key].strip()
+            }
+            if fields:
+                result.append(fields)
+    return result
+
+
+def summary_review(validation: Any, corrections: list[Any] | None = None) -> dict[str, Any]:
     """Keep review outcomes distinct, without retaining arbitrary provider prose."""
     if validation is None:
         return {"state": "missing_verdict", "reason_codes": []}
@@ -163,6 +184,12 @@ def summary_review(validation: Any) -> dict[str, Any]:
         )
     ):
         return {"state": "invalid_reason_codes", "reason_codes": []}
+    if (
+        validation["ready"] is False
+        and (not codes or codes == ["summary_unverified"])
+        and not corrections
+    ):
+        return {"state": "invalid_reason_codes", "reason_codes": list(codes)}
     if validation["ready"] is False:
         return {"state": "rejected", "reason_codes": list(codes)}
     if codes:
@@ -179,12 +206,13 @@ def review_diagnostic(review: dict[str, Any]) -> str:
 
 
 def review_outcome(text: str, verdicts: dict[str, Any] | None) -> dict[str, Any]:
+    corrections = summary_corrections(text)
     if verdicts is not None:
-        return summary_review(verdicts.get("summary_validation"))
+        return summary_review(verdicts.get("summary_validation"), corrections)
     # A malformed digest envelope can still contain a readable rejection.
     # Preserve its valid reason codes without accepting the broken response.
     raw = json_object(text)
-    review = summary_review(raw.get("summary_validation") if raw is not None else None)
+    review = summary_review(raw.get("summary_validation") if raw is not None else None, corrections)
     return {"state": "malformed_reply", "reason_codes": review["reason_codes"]}
 
 

@@ -8,6 +8,9 @@ vi.mock("./api", () => ({ authHeaders: (extra = {}) => ({ "X-Duckterm-Token": "t
 const selection: SwitchSelection = { sessionRef: "test", sourceHarness: "claude-code", sourceGeneration: "a", harness: "codex", model: { mode: "explicit", id: "gpt-6-astra" } };
 const binding = { session_key: "test", source_generation: "a", target: { harness: "codex", model: selection.model } };
 const fetchMock = vi.fn();
+const emptyPlan = { available_records: 0, processed_records: 0, pending_records: 0,
+  default_records: 20, selected_records: 0, remaining_records: 0, batch_records: 20,
+  order: "oldest_unprocessed_first", selection_plan: {} };
 const props = () => ({ selection, targetName: "Codex", allowed: true, afterTurn: false, canInterrupt: false, close: vi.fn(), onBusy: vi.fn(), onAccepted: vi.fn() });
 function packet(saved = true) {
   return { version: 1, preparation_id: "p1", sequence: 1, binding, state: "ready",
@@ -21,6 +24,7 @@ function respond(value: unknown, status = 200) { return new Response(JSON.string
 function serve(value = packet()) {
   fetchMock.mockImplementation(async (path: string, init: RequestInit) => {
     if (init.method === "DELETE") return respond({ released: true });
+    if (path.endsWith("/checkpoint-plan")) return respond(emptyPlan);
     if (path.includes("detail=full")) return respond({ preparation_id: "p1", snapshot_id: "s1", brief: { text: "Exact saved brief", utf8_bytes: 17, budget_bytes: 32000 }, sources: [], gaps: [], next_cursor: null });
     if (path.endsWith("/restart")) {
       const body = JSON.parse(init.body as string);
@@ -64,7 +68,7 @@ it("rejects a no-summary proof when exact originals are unavailable", async () =
   render(<MemorySwitchPanel {...props()} />);
   await screen.findByRole("alert");
   expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Prepare again" })).toBeEnabled(); expect(switches()).toHaveLength(0);
+  expect(screen.getByRole("button", { name: "Choose again" })).toBeEnabled(); expect(switches()).toHaveLength(0);
 });
 it("reports a real source change before any switch POST", async () => {
   const value = { ...packet(false), state: "stale_source", reason: "Current work changed; prepare again" }; serve(value);
@@ -77,13 +81,14 @@ it("reports a real source change before any switch POST", async () => {
 it("recovers an unanswered prepare with the same key and ignores its late response", async () => {
   vi.useFakeTimers();
   let finish!: (value: Response) => void;
+  fetchMock.mockImplementationOnce(async () => respond(emptyPlan));
   fetchMock.mockImplementationOnce(() => new Promise<Response>(resolve => { finish = resolve; }));
   await act(async () => { render(<MemorySwitchPanel {...props()} />); });
   expect(screen.getByText("Preparing the handoff…")).toBeVisible();
   await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
   expect(screen.getByText("Preparation could not be checked.")).toBeVisible();
   expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
-  expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+  expect(fetchMock.mock.calls[1][1].signal.aborted).toBe(true);
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Check connection" })); });
   expect(screen.getByText("Ready to switch")).toBeVisible();
   const posts = fetchMock.mock.calls.filter(([, init]) => init.method === "POST");
@@ -97,6 +102,7 @@ it("recovers an unanswered prepare with the same key and ignores its late respon
 
 it("recovers polling after a never-ending body read without starting a new preparation", async () => {
   vi.useFakeTimers();
+  fetchMock.mockImplementationOnce(async () => respond(emptyPlan));
   fetchMock.mockImplementationOnce(async () => respond({ ...packet(), state: "preparing", sequence: 0 }));
   fetchMock.mockImplementationOnce(async () => ({ ok: true, json: () => new Promise(() => {}) }));
   await act(async () => { render(<MemorySwitchPanel {...props()} />); });
@@ -112,14 +118,15 @@ it("recovers polling after a never-ending body read without starting a new prepa
 
 it("shows an expired job after a server restart and requires explicit prepare again", async () => {
   vi.useFakeTimers();
+  fetchMock.mockImplementationOnce(async () => respond(emptyPlan));
   fetchMock.mockImplementationOnce(async () => respond({ ...packet(), state: "preparing", sequence: 0 }));
   fetchMock.mockImplementationOnce(async () => respond({ error: "Preparation expired; prepare again", code: "preparation_expired" }, 409));
   await act(async () => { render(<MemorySwitchPanel {...props()} />); });
   await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
   expect(screen.getByRole("alert")).toHaveTextContent("Preparation expired; prepare again");
-  expect(screen.getByRole("button", { name: "Prepare again" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Choose again" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
   await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
-  expect(fetchMock.mock.calls).toHaveLength(2);
+  expect(fetchMock.mock.calls).toHaveLength(3);
   expect(switches()).toHaveLength(0);
 });

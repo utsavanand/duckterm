@@ -16,7 +16,9 @@ Return STRICT JSON only, exactly this shape:
 Also validate the SUMMARY against the supplied SOURCE and REQUIRED CONTEXT.
 Set ready=true only when the summary is supported, describes the current work and
 open loops, and contradicts or omits no essential constraint. Otherwise set
-ready=false with reason_codes such as summary_unverified or required_context_missing.
+ready=false with a specific reason_code such as required_context_missing and
+identify the offending claim and source in summary_corrections. Do not use
+summary_unverified by itself: it gives the writer no actionable feedback.
 Check BOTH narrative and structured context against the final state supported by the
 whole supplied span. Reject stale_open_item when an open question/task/unknown is
 explicitly resolved by a later record in this same input. Reject wrong_session_identity

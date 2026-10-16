@@ -110,6 +110,7 @@ class SummaryUpdate:
     diagnostic: str | None = None
     review: dict[str, Any] | None = None
     span_coverage: dict[str, Any] | None = None
+    summary_corrections: list[str | dict[str, str]] | None = None
 
     def metadata(self, attempted_at: int) -> dict[str, Any]:
         return {
@@ -117,6 +118,11 @@ class SummaryUpdate:
             "reason": self.reason,
             **({"diagnostic": self.diagnostic} if self.diagnostic else {}),
             **({"review": self.review} if self.review is not None else {}),
+            **(
+                {"summary_corrections": self.summary_corrections}
+                if self.summary_corrections
+                else {}
+            ),
             **({"span_coverage": self.span_coverage} if self.span_coverage else {}),
             "attempted_at": attempted_at,
             "revision_id": (
@@ -131,6 +137,7 @@ class SummaryUpdate:
         *,
         diagnostic: str | None = None,
         review: dict[str, Any] | None = None,
+        summary_corrections: list[str | dict[str, str]] | None = None,
     ) -> SummaryUpdate:
         allowed = {
             "disabled",
@@ -146,7 +153,12 @@ class SummaryUpdate:
             "update_failed",
         }
         return cls(
-            None, "failed", reason if reason in allowed else "update_failed", diagnostic, review
+            None,
+            "failed",
+            reason if reason in allowed else "update_failed",
+            diagnostic,
+            review,
+            summary_corrections=summary_corrections,
         )
 
     @classmethod
@@ -610,21 +622,25 @@ class ProgressCoordinator:
                 return SummaryUpdate.failed("invalid_context", diagnostic="review_input_too_large")
             if span_plan is not None:
                 self.report_span_progress(key, stage="reviewing")
-            review_started = time.monotonic()
-            verdict_reply = await asyncio.to_thread(
-                summarize,
-                validation_prompt,
-                **(
-                    {"claude_model": captured["checkpoint_settings"]["reviewer_model"]}
-                    if "checkpoint_settings" in captured
-                    else {}
-                ),
-            )
-            review_ms += round((time.monotonic() - review_started) * 1000)
-            if failure_reason := getattr(verdict_reply, "failure_reason", None):
-                return SummaryUpdate.failed(failure_reason)
-            verdicts = progress.parse_verdicts(verdict_reply.text)
-            review = progress.review_outcome(verdict_reply.text, verdicts)
+            for reviewer_attempt in range(2):
+                review_started = time.monotonic()
+                verdict_reply = await asyncio.to_thread(
+                    summarize,
+                    validation_prompt,
+                    **(
+                        {"claude_model": captured["checkpoint_settings"]["reviewer_model"]}
+                        if "checkpoint_settings" in captured
+                        else {}
+                    ),
+                )
+                review_ms += round((time.monotonic() - review_started) * 1000)
+                if failure_reason := getattr(verdict_reply, "failure_reason", None):
+                    return SummaryUpdate.failed(failure_reason)
+                verdicts = progress.parse_verdicts(verdict_reply.text)
+                review = progress.review_outcome(verdict_reply.text, verdicts)
+                if review["state"] != "invalid_reason_codes" or reviewer_attempt:
+                    break
+            corrections = progress.summary_corrections(verdict_reply.text)
             if review["state"] == "accepted":
                 break
             repairable = {
@@ -633,11 +649,13 @@ class ProgressCoordinator:
                 "routine_notice_noise",
                 "unsupported_current_status",
             }
-            if review_attempt or not repairable.intersection(review.get("reason_codes", [])):
-                break
-            feedback = (progress.json_object(verdict_reply.text) or {}).get(
-                "summary_corrections", []
+            repairable_rejection = review["state"] == "rejected" and (
+                bool(repairable.intersection(review.get("reason_codes", [])))
+                or (review.get("reason_codes") == ["summary_unverified"] and bool(corrections))
             )
+            if review_attempt or not repairable_rejection:
+                break
+            feedback = corrections
             prompt = memory_continuity.repair_prompt(
                 original_prompt,
                 json.dumps(
@@ -710,6 +728,7 @@ class ProgressCoordinator:
                         else "validation:source_changed"
                     ),
                     review=review,
+                    summary_corrections=corrections,
                 )
             continuity = (
                 memory_spans.continuity(span_plan, context)

@@ -46,6 +46,13 @@ it("starts preparation with exact binding and auth, without starting a restart",
   expect(JSON.parse(init.body)).toEqual({ request_key: "dialog:1", binding });
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
+it("passes the chosen bounded count to preparation without changing the target binding", async () => {
+  response({ ...prepared, state: "preparing", phase: "reading", sequence: 0 }, 202);
+  await memorySwitchService(selection).prepare("dialog:bounded", { plan: { version: 1 }, records: 20 });
+  const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+  expect(body).toEqual({ request_key: "dialog:bounded", binding,
+    selection: { plan: { version: 1 }, records: 20 } });
+});
 it("accepts a shared-job poll with a different lease and maps readiness into state", async () => {
   response(prepared);
   const value = await memorySwitchService(selection).preparation(prepId);

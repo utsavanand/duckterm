@@ -11,6 +11,11 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
     await postEvent({ event_type: "UserPromptSubmit", session_key: key, prompt: "Ordinary prompt belongs only in Messages" });
     await postEvent({ event_type: "PreToolUse", session_key: key, tool_name: "Bash" });
     await apiPost(`/sessions/${key}/checkpoint`, { label: "Before keyboard review" });
+    await page.route(`**/sessions/${key}/checkpoint-plan`, route => route.fulfill({ json: {
+      available_records: 171, processed_records: 28, pending_records: 143, default_records: 20,
+      selected_records: 20, remaining_records: 123, batch_records: 20,
+      order: "oldest_unprocessed_first", selection_plan: { version: 1 },
+    } }));
     await page.route(`**/sessions/${key}/restart**`, async route => {
       const request = route.request(), url = new URL(request.url());
       const json = (value: unknown) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(value) });
@@ -22,6 +27,7 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
         ] });
       if (url.pathname.endsWith("restart-preparation") && request.method() === "POST") {
         const body = request.postDataJSON(), id = String(preparations.size + 1).padStart(32, "a");
+        expect(body.selection).toEqual({ plan: { version: 1 }, records: 20 });
         const value = { version: 1, preparation_id: id, request_key: body.request_key, binding: body.binding, sequence: 1, state: "ready",
           coverage: { state: "partial", available_text: "partial", retrieval: "available", retention: "retained_snapshot", source_count: 3, covered_source_count: 3,
             handoff: { method: "maintained", summary_revision_id: "revision-a", summary_generated_at: Date.now() - 900000,
@@ -67,6 +73,15 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
     await panelAction.click();
     await expect(page.getByRole("dialog", { name: "Change harness", exact: true })).toBeVisible();
     await expect(page.getByRole("combobox", { name: "New harness", exact: true })).toHaveValue("codex");
+    await expect(page.getByText("123", { exact: true })).toBeVisible();
+    await page.screenshot({ path: "/tmp/harness-count-implemented-dark.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: "/tmp/harness-count-implemented-narrow.png" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.getByRole("button", { name: "Prepare handoff", exact: true }).scrollIntoViewIfNeeded();
+    await expect(page.getByRole("button", { name: "Prepare handoff", exact: true })).toBeInViewport();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.getByRole("button", { name: "Prepare handoff", exact: true }).click();
     await expect(page.getByText("Ready to switch", { exact: true })).toBeVisible();
     expect(switchCount).toBe(0);
     await page.keyboard.press("Escape");
@@ -77,11 +92,13 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
     await menu.getByRole("menuitem", { name: "Change harness", exact: true }).click();
     await page.getByRole("dialog").getByRole("combobox", { name: "New harness", exact: true }).selectOption("codex");
     await page.getByRole("dialog").getByRole("combobox", { name: "Model", exact: true }).selectOption("gpt-6-astra");
+    await page.getByRole("button", { name: "Prepare handoff", exact: true }).click();
     await expect(page.getByText("History batch timed out", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Switch to Codex", exact: true })).toBeDisabled();
     expect(switchCount).toBe(0);
     await page.evaluate(() => Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" }));
-    await page.getByRole("button", { name: "Prepare again", exact: true }).click();
+    await page.getByRole("button", { name: "Choose again", exact: true }).click();
+    await page.getByRole("button", { name: "Prepare handoff", exact: true }).click();
     await expect(page.getByText("Ready to switch", { exact: true })).toBeVisible(); expect(switchCount).toBe(0);
     await expect(page.getByText("The brief uses saved memory and recent messages. Earlier history stays searchable.", { exact: true })).toBeVisible();
     await page.screenshot({ path: "/tmp/memory-switch-implemented-dark.png" });

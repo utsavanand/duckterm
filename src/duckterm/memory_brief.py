@@ -42,10 +42,10 @@ def assemble(
         if not r["reference_only"]
         and assembled["processed"].get(r["source"], {}).get(r["record"]) != r["hash"]
     ]
-    if missing:
-        raise APIError(
-            409, f"{len(missing)} conversation records still need a summary; source agent kept"
-        )
+    summarized_count = eligible_count - len(missing)
+    # An explicit bounded handoff can summarize current work while older
+    # originals remain available through the read tools. Declare that gap;
+    # never present selected coverage as complete history coverage.
     context = assembled["context"]
     # Lifecycle changes must be explicit persisted claims, never an inference by
     # the handoff writer. No narrative provider gets to retire protected claims.
@@ -56,7 +56,19 @@ def assemble(
     coverage: dict[str, Any] = {
         "declared": True,
         "unknown": False,
-        "omitted": [],
+        "omitted": (
+            [
+                {
+                    "reason": "pending_update",
+                    "count": len(missing),
+                    "sample_refs": [
+                        r["source"] + ":" + r["version"] + ":" + r["record"] for r in missing[:8]
+                    ],
+                }
+            ]
+            if missing
+            else []
+        ),
     }
     leaves = [
         r
@@ -65,15 +77,15 @@ def assemble(
     ]
     handoff: dict[str, Any] = {
         "method": "independent_spans",
-        "summary_state": "current",
+        "summary_state": "partial" if missing else "current",
         "summary_revision_id": leaves[-1]["id"] if leaves else None,
         "summary_generated_at": leaves[-1].get("created_at") if leaves else None,
         "available_records": len(rows),
         "eligible_records": eligible_count,
         "reference_only_records": len(rows) - eligible_count,
-        "summarized_records": eligible_count,
+        "summarized_records": summarized_count,
         "included_records": 0,
-        "omitted_records": len(rows) - eligible_count,
+        "omitted_records": len(rows) - summarized_count,
         "protected_kinds": {
             kind: sum(c["kind"] == kind for items in protected.values() for c in items)
             for kind in sorted(set().union(*memory_contract.KINDS.values()))
@@ -84,13 +96,13 @@ def assemble(
     from duckterm import memory_budget
 
     if assembled["omitted_narratives"]:
-        coverage["omitted"] = [
+        coverage["omitted"].append(
             {
                 "reason": "budget_exhausted",
                 "count": assembled["omitted_narratives"],
                 "sample_refs": [],
             }
-        ]
+        )
     text = memory_budget.render(
         introduction=(
             f"Continue the same named DuckTerm session ({key}) " "in this new native conversation."

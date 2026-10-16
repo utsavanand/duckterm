@@ -36,6 +36,11 @@ async def refresh(
             captured["policy"],
             memory_spans.boundary(captured),
             captured.get("checkpoint_settings"),
+            sorted(
+                (source, record, digest)
+                for (source, record), digest in captured.get("checkpoint_selection", {}).items()
+            ),
+            captured.get("checkpoint_order"),
         ]
     )
     active = coordinator.span_refreshes.get(key)

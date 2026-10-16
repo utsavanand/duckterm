@@ -2,8 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { canConfirmSwitch, initialMemorySwitch, memorySwitchReducer, type MemorySwitchAction,
   type OperationResult, type SwitchSelection, type SwitchSubmission } from "./memorySwitchState";
 import { memorySwitchService, MemoryTransportError, type MemoryDetails, type MemoryPreparation } from "./memorySwitchTransport";
+import type { CheckpointPlan, CheckpointSelection } from "./api";
 
 import { PreparationProgressView } from "./PreparationProgressView";
+import "./checkpointDialog.css";
 
 export function MemorySwitchPanel(props: {
   selection: SwitchSelection; targetName: string; allowed: boolean; reason?: string;
@@ -19,6 +21,12 @@ export function MemorySwitchPanel(props: {
   const callbacks = useRef(props); callbacks.current = props;
   const mounted = useRef(true);
   const [attempt, retry] = useState(0);
+  const [plan, setPlan] = useState<CheckpointPlan | null>(null);
+  const [planError, setPlanError] = useState("");
+  const [planReload, reloadPlan] = useState(0);
+  const [recordChoice, setRecordChoice] = useState<CheckpointSelection | null | undefined>(undefined);
+  const [countChoice, setCountChoice] = useState<"default" | "custom" | "all">("default");
+  const [customCount, setCustomCount] = useState("");
   const [prepared, setPrepared] = useState<MemoryPreparation | null>(null);
   const [details, setDetails] = useState<MemoryDetails | null>(null);
   const [detailsBusy, setDetailsBusy] = useState(false);
@@ -32,11 +40,25 @@ export function MemorySwitchPanel(props: {
   const lease = useRef({ key: crypto.randomUUID(), id: "", used: false });
   const reconciling = useRef(false);
   const detailsEpoch = useRef(0);
+  const preparationFocus = useRef<HTMLDivElement>(null);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; callbacks.current.onBusy(false); };
   }, []);
   useEffect(() => {
+    if (recordChoice !== undefined) preparationFocus.current?.focus();
+  }, [recordChoice]);
+  useEffect(() => {
+    let live = true;
+    void service.plan().then(value => {
+      if (!live) return;
+      setPlan(value); setPlanError(""); setCustomCount(String(value.default_records));
+      if (value.pending_records === 0) setRecordChoice(null);
+    }).catch(cause => { if (live) setPlanError((cause as Error).message); });
+    return () => { live = false; };
+  }, [service, planReload]);
+  useEffect(() => {
+    if (recordChoice === undefined) return;
     let live = true, reading = false;
     let timer: ReturnType<typeof setTimeout>;
     // Each effect lifetime owns its lease. StrictMode can dispose and replay
@@ -76,7 +98,7 @@ export function MemorySwitchPanel(props: {
       // on a visibilitychange event to restart a permanently stopped timer.
       finally { reading = false; if (live) timer = setTimeout(poll, document.visibilityState === "hidden" ? 10000 : 2000); }
     }
-    void service.prepare(ownLease.key).then(value => {
+    void service.prepare(ownLease.key, recordChoice).then(value => {
       ownLease.id = value.preparationId;
       if (!live) { void service.release(ownLease.id, ownLease.key).catch(() => undefined); return; }
       accept(value); timer = setTimeout(poll, 2000);
@@ -88,11 +110,26 @@ export function MemorySwitchPanel(props: {
       live = false; checkConnection.current = () => undefined; clearTimeout(timer); document.removeEventListener("visibilitychange", visible);
       if (ownLease.id) void service.release(ownLease.id, ownLease.key).catch(() => undefined);
     };
-  }, [service, attempt, send]);
+  }, [service, attempt, recordChoice, send]);
   function prepareAgain() {
     // If POST was lost, recover that lease instead of duplicating provider work.
     lease.current = { key: lease.current.id ? crypto.randomUUID() : lease.current.key, id: "", used: false };
     retry(value => value + 1);
+  }
+  function chooseAgain() {
+    setRecordChoice(undefined); setPlan(null); setPlanError("");
+    setCountChoice("default"); reloadPlan(value => value + 1);
+  }
+  const customNumber = Number(customCount);
+  const validCount = countChoice !== "custom" || (customCount.trim() !== "" && Number.isInteger(customNumber) && customNumber >= 1 && customNumber <= 1000);
+  const selectedCount = plan && validCount ? Math.min(plan.pending_records,
+    countChoice === "all" ? plan.pending_records : countChoice === "custom" ? customNumber : plan.default_records) : 0;
+  function startChosenPreparation() {
+    if (!plan || !validCount) return;
+    setRecordChoice(plan.pending_records === 0 ? null : {
+      plan: plan.selection_plan,
+      records: countChoice === "all" ? "all" : countChoice === "custom" ? customNumber : plan.default_records,
+    });
   }
   const eligibility = { now, draftClear: props.allowed, targetAvailable: props.allowed,
     memoryAvailable: true, pendingOperation: false, canInterrupt: props.canInterrupt };
@@ -179,7 +216,28 @@ export function MemorySwitchPanel(props: {
   return <>
     <section className="rd-restart-summary"><strong>Continue with {props.targetName}</strong>
       <p>Keep the same session, project folder, tasks, inbox and artifacts. DuckTerm prepares the handoff automatically from your current work and available prior context.</p></section>
-    <div className="rd-restart-notice" role={blocked || error ? "alert" : "status"}>
+    {recordChoice === undefined && <section className="rd-checkpoint-dialog" aria-label="Handoff record count">
+      <h3>Choose how much history to summarize</h3>
+      {!plan && !planError && <p role="status">Counting unprocessed conversation records…</p>}
+      {planError && <p role="alert">Couldn’t count the available history. {planError} <button className="rd-btn rd-btn-sm" onClick={chooseAgain}>Refresh count</button></p>}
+      {plan && <>
+        <p><strong>{plan.pending_records.toLocaleString()}</strong> conversation records haven’t been summarized.</p>
+        <p className="hint">Records are individual user or assistant messages, not whole turns. Tool activity and routine inbox reminders are excluded.</p>
+        {plan.pending_records > 0 && <fieldset><legend>How many should this handoff summarize?</legend>
+          <label><input type="radio" name="handoff-record-choice" checked={countChoice === "default"} onChange={() => setCountChoice("default")} /> Recent {Math.min(plan.default_records, plan.pending_records).toLocaleString()} · your configured default</label>
+          <label><input type="radio" name="handoff-record-choice" checked={countChoice === "custom"} onChange={() => setCountChoice("custom")} /> Choose a count <input aria-label="Number of handoff records" type="number" min="1" max="1000" step="1" value={customCount} onChange={event => { setCountChoice("custom"); setCustomCount(event.target.value); }} /></label>
+          <label><input type="radio" name="handoff-record-choice" checked={countChoice === "all"} onChange={() => setCountChoice("all")} /> All {plan.pending_records.toLocaleString()} unprocessed records</label>
+        </fieldset>}
+        <div className="rd-checkpoint-selection" aria-live="polite"><strong>{selectedCount.toLocaleString()}</strong> records selected · <strong>{(plan.pending_records - selectedCount).toLocaleString()}</strong> left for later
+          <p className="hint">{selectedCount ? "Newest unprocessed first for this handoff. Older history remains searchable. Batches contain at most 20 records." : "No new conversation records need a summary."}</p></div>
+        <p className="hint">This choice applies once. Your Checkpoint default in Settings stays at {plan.default_records.toLocaleString()}.</p>
+        {!validCount && <p role="alert">Enter a whole number from 1 to 1,000.</p>}
+      </>}
+      <div className="rd-restart-footer"><button className="rd-btn rd-btn-ghost" onClick={props.close}>Cancel</button>
+        <button className="rd-btn rd-btn-primary" disabled={!plan || !validCount} onClick={startChosenPreparation}>Prepare handoff</button></div>
+    </section>}
+    {recordChoice !== undefined && <>
+    <div className="rd-restart-notice" role={blocked || error ? "alert" : "status"} ref={preparationFocus} tabIndex={-1}>
       {!pending && (prepared?.progress || connectionError) ? <PreparationProgressView progress={prepared?.progress}
         preparing={state.phase === "preparing"} title={title} disconnected={connectionError}
         lastResponseAt={lastResponseAt} message={state.reason || (state.phase === "ready" ? readyMessage : "Your current harness keeps running during preparation.")} />
@@ -187,7 +245,7 @@ export function MemorySwitchPanel(props: {
       {error && <p>{error}</p>}
       {!pending && connectionError && !blocked
         ? <button className="rd-btn rd-btn-sm" onClick={() => checkConnection.current()}>Check connection</button>
-        : !pending && (blocked || error) && <button className="rd-btn rd-btn-sm" onClick={prepareAgain}>Prepare again</button>}
+        : !pending && (blocked || error) && <button className="rd-btn rd-btn-sm" onClick={chooseAgain}>Choose again</button>}
       {state.phase === "submission_unknown" && <button className="rd-btn rd-btn-sm" onClick={() => void reconcile(true)}>Check switch status</button>}
     </div>
     {state.phase === "ready" && prepared && <details className="rd-memory-evidence" onToggle={e => { if (e.currentTarget.open && !details) void loadDetails(); }}>
@@ -223,5 +281,6 @@ export function MemorySwitchPanel(props: {
     <p className="rd-restart-help">Reaching a usage limit does not trigger a switch. You choose when to change harnesses.</p>
     <div className="rd-restart-footer"><button className="rd-btn rd-btn-ghost" disabled={pending} onClick={props.close}>Cancel</button>
       <button className="rd-btn rd-btn-primary" disabled={!ready || pending} onClick={() => void confirm()}>{pending ? "Checking switch…" : state.interrupt ? "Stop and switch now" : `Switch to ${props.targetName}`}</button></div>
+    </>}
   </>;
 }

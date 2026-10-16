@@ -136,6 +136,11 @@ test("working session offers an explicit immediate switch with truthful pending 
   let requested = false;
   const preparationId = "b".repeat(32);
   let binding: Record<string, unknown> = {};
+  await page.route(`**/sessions/${key}/checkpoint-plan`, route => route.fulfill({ json: {
+    available_records: 0, processed_records: 0, pending_records: 0, default_records: 20,
+    selected_records: 0, remaining_records: 0, batch_records: 20,
+    order: "oldest_unprocessed_first", selection_plan: {},
+  } }));
   await page.route(`**/sessions/${key}/restart-preparation**`, async route => {
     if (route.request().method() === "DELETE") return route.fulfill({ json: { released: true } });
     if (route.request().method() === "POST") binding = route.request().postDataJSON().binding;
