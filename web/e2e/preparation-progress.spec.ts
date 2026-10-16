@@ -12,6 +12,11 @@ test("harness preparation shows measured progress and recovers status without re
     ...(ready ? { proof: { snapshot_id: "snapshot1", revision_id: "rev1", prepared_at: Date.now(), expires_at: Date.now() + 60000,
       overview: "Continue the keyboard navigation work.", resolved_model: "gpt-6-astra" } } : {}) });
   try {
+    await page.route(`**/sessions/${key}/checkpoint-plan`, route => route.fulfill({ json: {
+      available_records: 143, processed_records: 0, pending_records: 143, default_records: 20,
+      selected_records: 20, remaining_records: 123, batch_records: 20,
+      order: "oldest_unprocessed_first", selection_plan: { version: 1 },
+    } }));
     await page.route(`**/sessions/${key}/restart**`, async route => {
       const request = route.request(), path = new URL(request.url()).pathname;
       const json = (value: unknown) => route.fulfill({ json: value });
@@ -36,6 +41,7 @@ test("harness preparation shows measured progress and recovers status without re
     await page.goto(base()); await page.locator(".rd-row-name", { hasText: "Progress review" }).click();
     await page.getByRole("region", { name: "Session controls" }).getByRole("button", { name: "Change harness", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Change harness", exact: true });
+    await dialog.getByRole("button", { name: "Prepare handoff" }).click();
     await expect(dialog.getByText("Reading the conversation", { exact: true })).toBeVisible();
     await expect(dialog.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
     progress = { ...progress, stage: "checking", completed: 12, total: 20, updated_at: Date.now() };
@@ -63,6 +69,7 @@ test("harness preparation shows measured progress and recovers status without re
     await page.setViewportSize({ width: 1320, height: 1000 }); await page.reload();
     await page.locator(".rd-row-name", { hasText: "Progress review" }).click();
     await page.getByRole("region", { name: "Session controls" }).getByRole("button", { name: "Change harness", exact: true }).click();
+    await dialog.getByRole("button", { name: "Prepare handoff" }).click();
     await expect(dialog.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "12");
     await page.screenshot({ path: "/tmp/harness-progress-implemented-light.png" });
   } finally { await apiDelete(`/sessions/${key}`); }

@@ -9,6 +9,11 @@ test("dismissing a session dialog also dismisses its originating context menu", 
     version: 1, preparation_id: "d".repeat(32), sequence: 1, state: "preparing", binding,
     coverage: { state: "unknown", available_text: "not_processed", retrieval: "unavailable", retention: "unknown", source_count: 0, covered_source_count: 0, gap_count: 0, gaps: [], has_more: false, details_cursor: null },
   });
+  await page.route(`**/sessions/${key}/checkpoint-plan`, route => route.fulfill({ json: {
+    available_records: 0, processed_records: 0, pending_records: 0, default_records: 20,
+    selected_records: 0, remaining_records: 0, batch_records: 20,
+    order: "oldest_unprocessed_first", selection_plan: {},
+  } }));
   await page.route(`**/sessions/${key}/restart**`, async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path.endsWith("restart-options")) return route.fulfill({ json: {

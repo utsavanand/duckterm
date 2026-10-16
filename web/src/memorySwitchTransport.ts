@@ -1,5 +1,5 @@
 // Preparation and explicit switching remain separate. Never retry mutations here.
-import { authHeaders, type RestartOptions } from "./api";
+import { authHeaders, type CheckpointPlan, type CheckpointSelection, type RestartOptions } from "./api";
 import { routedFetch, splitSessionRef } from "./hostTransport";
 import { type PreparationResult, type SwitchSelection, type SwitchSubmission, type OperationResult } from "./memorySwitchState";
 
@@ -93,8 +93,9 @@ function handoff(value: unknown): MaintainedHandoff {
           count: num(gap.count), sample_refs: list(gap.sample_refs, ref => nonempty(ref)) };
       }) };
     if (!h.coverage.declared || h.eligible_records + h.reference_only_records !== h.available_records
-      || h.summarized_records !== h.eligible_records || h.included_records !== 0
-      || h.omitted_records !== h.reference_only_records) invalid();
+      || h.summarized_records > h.eligible_records || h.included_records !== 0
+      || h.omitted_records !== h.available_records - h.summarized_records
+      || (h.summary_state === "partial") !== (h.summarized_records < h.eligible_records)) invalid();
   }
   if (h.summarized_records + h.included_records + h.omitted_records !== h.available_records
     || (h.summary_revision_id === null) !== (h.summary_generated_at === null)
@@ -252,11 +253,27 @@ export function memorySwitchService(input: SwitchSelection) {
       target: { harness: s.proof.selection.harness, model: s.proof.selection.model } }, selection);
   }
   return {
-    async prepare(requestKey: string) {
+    async plan(): Promise<CheckpointPlan> {
+      const v = obj(await request(`${path()}/checkpoint-plan`));
+      const plan: CheckpointPlan = {
+        available_records: num(v.available_records), processed_records: num(v.processed_records),
+        pending_records: num(v.pending_records), default_records: num(v.default_records),
+        selected_records: num(v.selected_records), remaining_records: num(v.remaining_records),
+        batch_records: num(v.batch_records) as 20, order: choice(v.order, ["oldest_unprocessed_first"]),
+        selection_plan: obj(v.selection_plan),
+      };
+      if (plan.batch_records !== 20 || plan.default_records < 1 || plan.default_records > 1000
+        || plan.available_records !== plan.processed_records + plan.pending_records
+        || plan.selected_records !== Math.min(plan.default_records, plan.pending_records)
+        || plan.remaining_records !== plan.pending_records - plan.selected_records) invalid();
+      return plan;
+    },
+    async prepare(requestKey: string, recordSelection?: CheckpointSelection | null) {
       identity(requestKey);
       const value = await preparationRequest(`${path()}/restart-preparation`, "POST", { request_key: requestKey,
         binding: { session_key: key, source_generation: selection.sourceGeneration,
-          target: { harness: selection.harness, model: selection.model } } });
+          target: { harness: selection.harness, model: selection.model } },
+        ...(recordSelection ? { selection: recordSelection } : {}) });
       return preparation(value, selection);
     },
     async preparation(id: string, signal?: AbortSignal) {

@@ -133,8 +133,16 @@ class MemoryPreparation:
             self.cheap_validate(job)
 
     async def start(self, key: str, body: dict[str, Any]) -> dict[str, Any]:
-        if set(body) != {"request_key", "binding"}:
-            raise APIError(400, "Supply request_key and binding")
+        if set(body) not in ({"request_key", "binding"}, {"request_key", "binding", "selection"}):
+            raise APIError(400, "Supply request_key and binding, with an optional record selection")
+        selection = body.get("selection")
+        if selection is not None:
+            from duckterm import checkpoint_plan
+
+            if not isinstance(selection, dict) or set(selection) != {"plan", "records"}:
+                raise APIError(400, "Invalid record selection")
+            checkpoint_plan.validate_plan(selection["plan"])
+            checkpoint_plan.choice(selection["records"])
         request_key = identifier(body["request_key"])
         binding = body["binding"]
         if not isinstance(binding, dict) or set(binding) != {
@@ -148,7 +156,7 @@ class MemoryPreparation:
         existing_id = self.requests.get((key, request_key))
         if existing_id:
             job = self.get(key, existing_id)
-            if job["binding"] != binding:
+            if job["binding"] != binding or job.get("selection") != selection:
                 raise PreparationError(
                     409, "operation_conflict", "Request key was used for another target"
                 )
@@ -185,7 +193,7 @@ class MemoryPreparation:
             existing_id = self.requests.get((key, request_key))
             if existing_id:
                 job = self.get(key, existing_id)
-                if job["binding"] != binding:
+                if job["binding"] != binding or job.get("selection") != selection:
                     raise PreparationError(
                         409, "operation_conflict", "Request key was used for another target"
                     )
@@ -198,6 +206,7 @@ class MemoryPreparation:
                 if (
                     job["key"] == key
                     and job["binding"] == binding
+                    and job.get("selection") == selection
                     and job["cli_version"] == cli_version
                     and job["view"]["state"] in {"preparing", "ready"}
                 ):
@@ -220,6 +229,7 @@ class MemoryPreparation:
                 "id": identity,
                 "key": key,
                 "binding": copy.deepcopy(binding),
+                "selection": copy.deepcopy(selection),
                 "expires": time.time() * 1000 + LIFETIME_MS,
                 "canceled": False,
                 "cli_version": cli_version,
@@ -280,6 +290,17 @@ class MemoryPreparation:
             if captured["conversation"].get("native_id") and captured.get("fence") is None:
                 raise PreparationError(
                     409, "incomplete_source", "Conversation source is unavailable"
+                )
+            if job["selection"] is not None:
+                from duckterm import checkpoint_settings, memory_checkpoint
+
+                captured = await memory_checkpoint.freeze(
+                    self.server,
+                    key,
+                    captured,
+                    checkpoint_settings.load(),
+                    selection=job["selection"],
+                    order="newest_unprocessed_first",
                 )
             self.update(job, phase="summarizing")
             summary_update = await coordinator.refresh_result(
@@ -409,9 +430,18 @@ class MemoryPreparation:
             self.update(job, phase="checking_sources")
             current = await coordinator.capture(key)
             await self.validate_sources(job)
-            if current is None or any(
-                current[k] != captured[k] for k in ("source", "conversation", "policy")
-            ):
+            from duckterm import memory_checkpoint
+
+            source_changed = current is None
+            if current is not None:
+                source_changed = (
+                    memory_checkpoint.changed(self.server, key, captured) is not None
+                    if job["selection"] is not None
+                    else any(
+                        current[k] != captured[k] for k in ("source", "conversation", "policy")
+                    )
+                )
+            if source_changed:
                 raise PreparationError(409, "stale_source", "Sources changed during preparation")
             checkpoint_id = uuid.uuid4().hex
             count = handoff["summarized_records"]
@@ -426,6 +456,9 @@ class MemoryPreparation:
             coverage.update(
                 available_text=(
                     "processed" if count == available else "partial" if count else "not_processed"
+                ),
+                state=(
+                    "partial" if handoff.get("summary_state") == "partial" or gaps else "complete"
                 ),
                 covered_source_count=sum(
                     bool(s["records"])

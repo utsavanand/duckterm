@@ -100,6 +100,8 @@ def selected(
     captured: dict[str, Any],
     settings: dict[str, Any],
     selection: dict[str, Any],
+    *,
+    order: str = "oldest_unprocessed_first",
 ) -> tuple[list[dict[str, Any]], int]:
     plan = validate_plan(selection.get("plan"))
     count = choice(selection.get("records"))
@@ -117,5 +119,13 @@ def selected(
     pending = _pending(rows, covered)
     if not pending:
         raise APIError(409, "No unprocessed records remain in this selection")
-    chosen = pending if count == "all" else pending[: int(count)]
+    if order not in {"oldest_unprocessed_first", "newest_unprocessed_first"}:
+        raise APIError(400, "Invalid record selection order")
+    chosen = (
+        pending
+        if count == "all"
+        else (
+            pending[-int(count) :] if order == "newest_unprocessed_first" else pending[: int(count)]
+        )
+    )
     return chosen, sum(r["kind"] == "conversation" and not r["reference_only"] for r in rows)

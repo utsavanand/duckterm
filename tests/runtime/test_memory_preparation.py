@@ -6,10 +6,11 @@ import os
 from pathlib import Path
 
 import pytest
+from test_maintained_progress import append
 from test_memory import transcript
 from tests.runtime import test_memory as memory_fixtures
 
-from duckterm import memory_summary
+from duckterm import checkpoint_plan, memory_summary
 from duckterm.core.session_api import APIError
 from duckterm.memory_preparation import MemoryPreparation, generation
 
@@ -21,7 +22,7 @@ def typed_provider(monkeypatch, claim_text):
 
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **_kwargs):
         calls.append(prompt)
         if prompt.startswith("You are validating"):
             return Summary(
@@ -112,6 +113,51 @@ def test_preparation_completes_spans_before_creating_proof(preparation):
     assert cp["record"]["memory_sources"] and cp["record"]["retained_sources"]
     assert len(calls) == 2
     assert server.history.session("agent")["runtime"] == "claude-code"
+
+
+@pytest.mark.parametrize("count,expected_batches", [(20, 1), (35, 2), ("all", 3)])
+def test_selected_recent_history_prepares_partial_handoff_without_processing_backlog(
+    preparation, count, expected_batches
+):
+    server, calls, tmp = preparation
+    path = next(tmp.rglob("agent-claude.jsonl"))
+    for number in range(1, 41):
+        append(path, f"Message {number}")
+
+    async def run():
+        plan = await checkpoint_plan.preview(server, "agent")
+        assert plan["pending_records"] >= 41
+        body = request(server)
+        body["selection"] = {"plan": plan["selection_plan"], "records": count}
+        view = await server.memory_preparation.start("agent", body)
+        await server.memory_preparation.tasks[view["preparation_id"]]
+        view = server.memory_preparation.status("agent", view["preparation_id"])
+        assert view["state"] == "ready", (view.get("reason"), view.get("progress"))
+        handoff = view["coverage"]["handoff"]
+        expected = min(
+            count if count != "all" else plan["pending_records"], plan["pending_records"]
+        )
+        assert handoff["summary_state"] == ("current" if count == "all" else "partial")
+        assert handoff["summarized_records"] == expected
+        assert handoff["eligible_records"] >= 41
+        assert view["coverage"]["available_text"] == ("processed" if count == "all" else "partial")
+        if count != "all":
+            assert handoff["coverage"]["omitted"][0]["reason"] == "pending_update"
+        detail = server.memory_preparation.details("agent", view["preparation_id"])
+        assert "duckterm memory search" in detail["brief"]["text"]
+        written = [
+            json.loads(prompt.split("MEMORY UPDATE:\n", 1)[1])["records"]
+            for prompt in calls
+            if not prompt.startswith("You are validating")
+        ]
+        assert sum(map(len, written)) == expected
+        assert len(written) == expected_batches
+        assert "Message 40" in [row["text"] for batch in written for row in batch]
+        assert ("Message 1" in [row["text"] for batch in written for row in batch]) == (
+            count == "all"
+        )
+
+    asyncio.run(run())
 
 
 def test_equivalent_dialogs_share_generation_but_have_independent_cancel_leases(preparation):
