@@ -3,6 +3,8 @@ import { canConfirmSwitch, initialMemorySwitch, memorySwitchReducer, type Memory
   type OperationResult, type SwitchSelection, type SwitchSubmission } from "./memorySwitchState";
 import { memorySwitchService, MemoryTransportError, type MemoryDetails, type MemoryPreparation } from "./memorySwitchTransport";
 
+import { PreparationProgressView } from "./PreparationProgressView";
+
 export function MemorySwitchPanel(props: {
   selection: SwitchSelection; targetName: string; allowed: boolean; reason?: string;
   afterTurn: boolean; canInterrupt: boolean; close: () => void;
@@ -23,6 +25,9 @@ export function MemorySwitchPanel(props: {
   const detailsPending = useRef(false);
   const [detailsError, setDetailsError] = useState("");
   const [error, setError] = useState("");
+  const [connectionError, setConnectionError] = useState(false);
+  const [lastResponseAt, setLastResponseAt] = useState<number | null>(null);
+  const checkConnection = useRef<() => void>(() => undefined);
   const [now, setNow] = useState(Date.now);
   const lease = useRef({ key: crypto.randomUUID(), id: "", used: false });
   const reconciling = useRef(false);
@@ -42,17 +47,21 @@ export function MemorySwitchPanel(props: {
     const ownLease = lease.current;
     ownLease.used = true;
     send({ type: "prepare" }); setPrepared(null); setDetails(null); setError(""); setDetailsError("");
-    detailsEpoch.current++;
+    detailsEpoch.current++; setLastResponseAt(null); setConnectionError(false);
     const scope = stateRef.current.scope;
     function accept(value: MemoryPreparation) {
       if (!live) return;
+      setLastResponseAt(Date.now()); setConnectionError(false); setError("");
+      if (value.sequence < stateRef.current.preparationSequence) return;
       send({ type: "prepared", scope, sequence: value.sequence, result: value.result });
-      setPrepared(value); setError(""); setNow(Date.now());
+      setPrepared(value); setNow(Date.now());
       if (value.result.phase !== "ready") { setDetails(null); detailsEpoch.current++; }
     }
     function failed(cause: unknown) {
       if (!live) return;
       setError((cause as Error).message || "Preparation could not be checked.");
+      setConnectionError(!(cause instanceof MemoryTransportError) || cause.code === "request_timeout"
+        || (cause.status === 0 && cause.code !== "invalid_response"));
       if (cause instanceof MemoryTransportError && ["stale_source", "preparation_expired", "forbidden", "invalid_response"].includes(cause.code)) {
         send({ type: "invalidate", reason: cause.message }); setDetails(null); detailsEpoch.current++;
       }
@@ -73,9 +82,10 @@ export function MemorySwitchPanel(props: {
       accept(value); timer = setTimeout(poll, 2000);
     }).catch(failed);
     const visible = () => { clearTimeout(timer); void poll(); };
+    checkConnection.current = () => { if (ownLease.id) visible(); else prepareAgain(); };
     document.addEventListener("visibilitychange", visible);
     return () => {
-      live = false; clearTimeout(timer); document.removeEventListener("visibilitychange", visible);
+      live = false; checkConnection.current = () => undefined; clearTimeout(timer); document.removeEventListener("visibilitychange", visible);
       if (ownLease.id) void service.release(ownLease.id, ownLease.key).catch(() => undefined);
     };
   }, [service, attempt, send]);
@@ -169,10 +179,15 @@ export function MemorySwitchPanel(props: {
   return <>
     <section className="rd-restart-summary"><strong>Continue with {props.targetName}</strong>
       <p>Keep the same session, project folder, tasks, inbox and artifacts. DuckTerm prepares the handoff automatically from your current work and available prior context.</p></section>
-    <div className="rd-restart-notice" role={blocked || error ? "alert" : "status"}><strong>{title}</strong>
-      <p>{state.reason || (state.phase === "ready" ? readyMessage : pending ? "Waiting for the recorded switch outcome." : "Your current harness keeps running during preparation.")}</p>
+    <div className="rd-restart-notice" role={blocked || error ? "alert" : "status"}>
+      {!pending && (prepared?.progress || connectionError) ? <PreparationProgressView progress={prepared?.progress}
+        preparing={state.phase === "preparing"} title={title} disconnected={connectionError}
+        lastResponseAt={lastResponseAt} message={state.reason || (state.phase === "ready" ? readyMessage : "Your current harness keeps running during preparation.")} />
+        : <><strong>{title}</strong><p>{state.reason || (state.phase === "ready" ? readyMessage : pending ? "Waiting for the recorded switch outcome." : "Your current harness keeps running during preparation.")}</p></>}
       {error && <p>{error}</p>}
-      {!pending && (blocked || error) && <button className="rd-btn rd-btn-sm" onClick={prepareAgain}>Prepare again</button>}
+      {!pending && connectionError && !blocked
+        ? <button className="rd-btn rd-btn-sm" onClick={() => checkConnection.current()}>Check connection</button>
+        : !pending && (blocked || error) && <button className="rd-btn rd-btn-sm" onClick={prepareAgain}>Prepare again</button>}
       {state.phase === "submission_unknown" && <button className="rd-btn rd-btn-sm" onClick={() => void reconcile(true)}>Check switch status</button>}
     </div>
     {state.phase === "ready" && prepared && <details className="rd-memory-evidence" onToggle={e => { if (e.currentTarget.open && !details) void loadDetails(); }}>

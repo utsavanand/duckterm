@@ -80,6 +80,13 @@ class MemoryPreparation:
 
     def update(self, job: dict[str, Any], **value: Any) -> None:
         view = job["view"]
+        progress = {**view.get("progress", {}), **value.get("progress", {})}
+        stage = value.get("state") or value.get("phase")
+        if stage is not None:
+            progress["stage"] = stage
+        if progress != view.get("progress"):
+            progress["updated_at"] = int(time.time() * 1000)
+        value["progress"] = progress
         view.update(value, sequence=view["sequence"] + 1)
 
     def cheap_validate(self, job: dict[str, Any], *, files: bool = True) -> None:
@@ -208,6 +215,7 @@ class MemoryPreparation:
             if len(self.jobs) >= MAX_JOBS:
                 raise APIError(429, "Too many preparations; cancel unused dialogs and retry")
             identity = uuid.uuid4().hex
+            started_at = int(time.time() * 1000)
             job = {
                 "id": identity,
                 "key": key,
@@ -223,6 +231,11 @@ class MemoryPreparation:
                     "binding": copy.deepcopy(binding),
                     "state": "preparing",
                     "phase": "resolving",
+                    "progress": {
+                        "stage": "queued",
+                        "started_at": started_at,
+                        "updated_at": started_at,
+                    },
                     "coverage": {
                         "state": "unknown",
                         "available_text": "not_processed",
@@ -253,7 +266,13 @@ class MemoryPreparation:
     async def run(self, job: dict[str, Any]) -> None:
         key = job["key"]
         coordinator = self.server.progress_coordinator
+
+        def report(value: dict[str, Any]) -> None:
+            if not job["canceled"]:
+                self.update(job, progress=value)
+
         try:
+            self.update(job, phase="capturing")
             captured = await coordinator.capture(key)
             if captured is None:
                 raise PreparationError(409, "stale_source", "Conversation changed during capture")
@@ -264,7 +283,10 @@ class MemoryPreparation:
                 )
             self.update(job, phase="summarizing")
             summary_update = await coordinator.refresh_result(
-                key, captured, continue_if=lambda: not job["canceled"]
+                key,
+                captured,
+                continue_if=lambda: not job["canceled"],
+                on_progress=report,
             )
             self.cheap_validate(job)
             if summary_update.state not in {"updated", "reused"}:
@@ -384,6 +406,7 @@ class MemoryPreparation:
             git = await asyncio.to_thread(
                 _git_state, Path(str(row.get("worktree_path") or row.get("cwd") or "."))
             )
+            self.update(job, phase="checking_sources")
             current = await coordinator.capture(key)
             await self.validate_sources(job)
             if current is None or any(

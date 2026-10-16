@@ -84,7 +84,7 @@ it("recovers an unanswered prepare with the same key and ignores its late respon
   expect(screen.getByText("Preparation could not be checked.")).toBeVisible();
   expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
   expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Prepare again" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Check connection" })); });
   expect(screen.getByText("Ready to switch")).toBeVisible();
   const posts = fetchMock.mock.calls.filter(([, init]) => init.method === "POST");
   expect(posts).toHaveLength(2);
