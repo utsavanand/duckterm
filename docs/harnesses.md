@@ -25,6 +25,44 @@ generic runtime — driven in a PTY, just without hook-powered smarts.
 
 Shipped adapters: `claude-code`, `codex`, `copilot`, `generic`.
 
+**Hook identity.** The hook names its session from `DUCKTERM_SESSION_KEY`,
+which DuckTerm puts in each agent's environment at launch. Codex 0.159 broke
+that assumption. It runs every session's hooks in one shared daemon (`codex
+app-server --managed-daemon`, one per `CODEX_HOME`), which inherits the
+environment of whichever session started it. When the hook's parent is that
+daemon, it sends no `session_key` and no `agent_pid` (the daemon's pid), and
+marks the event `hook_host: "daemon"`. The agent's own `session_id` (its
+thread id, stable across daemon restarts, checked on 0.159.3) identifies the
+session; the server resolves it (`core/native_identity.py`) and parks what it can't.
+An id resolves through one DuckTerm recorded itself on the session: a
+`NativeBound` event, or a server-published event that carries it. Ids from
+hook events never count, because before this fix a daemon hook could carry
+another session's. Only ids recorded since the session's last launch count, so a relaunch
+(including a switch to another harness) clears the previous agent's id until
+the new one binds; early events park and replay on the bind. An id two
+sessions both recorded is ambiguous and parks. An id bound before the last launch can't
+re-bind; resuming a thread on purpose records its id on the relaunch's
+server `SessionStart`. A prompt naming several live sessions parks and is
+counted as `contested` at `GET /hooks/parked`. The instruction path is
+correlation evidence, never authentication (architect's ruling, 2026-10-04):
+it only attributes events already accepted from a local hook.
+A new id binds once per launch, when a `UserPromptSubmit` carries exactly one
+live Codex session's launch prompt and that session has no bind since its
+last launch (a server-published `SessionStart`). A prompt naming two
+sessions, or a second id claiming an already-bound session, parks: every launch prompt names the session's
+instruction file, under `sha256(session key)`, so no prompt or schema change
+was needed. Anything else is parked: kept 10 minutes and replayed if its id
+binds, counted at `GET /hooks/parked`, and never filed under a default
+session. The daemon's pid is dropped. Every other `DUCKTERM_*`
+variable the daemon holds belongs to another launch too: `DUCKTERM_URL`
+(on 2026-10-01 a dead port), `DUCKTERM_HOME` and `DUCKTERM_INTERNAL`. So
+under the daemon the hook ignores all of them and reports to the default
+instance: `~/.duckterm/instance-url` (else port 4300) and the token in
+`~/.duckterm`. A per-process agent still uses `DUCKTERM_URL` first.
+Daemon-hosted Codex on a second instance is unsupported.
+Probe P2 (0.159.3): the launch prompt comes back with the session's id in
+its first `UserPromptSubmit`, and is also written to the rollout file. Design: "Design — Shared-daemon identity (Codex 0.159)", 2026-10-01.
+
 ## 2. Installable harnesses — suites of skills, hooks, and sub-agents
 
 A suite like [uv-suite](https://github.com/utsavanand/uv-suite) bundles
