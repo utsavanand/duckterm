@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from duckterm.core.session_api import APIError
 from duckterm.helpers import security
 from duckterm.memory_preparation import PreparationError
-from duckterm.transport.httpio import write_json
+from duckterm.transport.httpio import MAX_REQUEST_BYTES, write_json
 
 if TYPE_CHECKING:
     import asyncio
@@ -36,7 +36,10 @@ async def handle(
         result: dict[str, Any]
         status = 200
         if method == "POST" and identity is None and not query:
-            if len(body) > 8192:
+            # Selection plans include one boundary per original source, even when
+            # only 20 conversation records are selected. Match checkpoint POSTs
+            # and the transport limit rather than capping this metadata at 8 KiB.
+            if len(body) > MAX_REQUEST_BYTES:
                 raise APIError(413, "Preparation request is too large")
             request = json.loads(body or b"{}")
             if not isinstance(request, dict):
