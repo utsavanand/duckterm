@@ -79,6 +79,11 @@ def should_nudge(
     result = []
     for m in picked:
         key = str(m["id"])
+        if m["kind"] == "broadcast" and not m.get("priority"):
+            # An FYI (no reply needed) waits for the agent's next turn end or
+            # inbox check: waking a long-context agent costs its whole context
+            # in tokens (token-saver spec section 2, owner-approved).
+            continue
         if not settled and not m.get("priority"):
             continue
         read_queued = m["kind"] == "question" and m["status"] == "queued" and m.get("last_read_at")
