@@ -1,3 +1,11 @@
+## 2026-10-16 — Terminal restart states must clear both error fields
+
+Cancel and completion cleared the human-readable error but retained its machine-readable code, leaving a canceled operation labeled launch_failed. Clear both fields on these transitions, retain process-state evidence, and test persisted stale diagnostics across completion and cancellation. Do not rewrite historical failed-operation evidence to hide the earlier bug.
+
+## 2026-10-16 — Test selection plans through their HTTP boundary
+
+Change harness accepted selected records in manager tests but rejected real requests before preparation: the old 8 KiB endpoint cap could not fit the per-source selection boundary. Reuse the existing 8 MiB transport ceiling used by checkpoint requests, keeping selection validation and the chosen record budget intact. Exercise a real generated many-source plan through the HTTP handler and verify that only the newest selected 20 records reach the writer; retain an over-limit rejection test.
+
 ## 2026-10-16 — A vague reviewer rejection must not be attributed to the writer
 
 A checkpoint could fail with only `summary_unverified` even though the reviewer named no offending claim. The last good summary remained intact, but the failure was impossible to diagnose and skipped the existing writer repair. Require a specific rejection reason or bounded correction, retry a malformed reviewer verdict once against the same draft, and retain actionable corrections on failed checkpoint metadata. Inspect failed attempts rather than only saved revisions when measuring rejection rates.
@@ -9,6 +17,7 @@ Batching each writer call did not bound Change harness: it still drained every u
 ## 2026-10-13 — A free port does not mean the old server has closed SQLite
 
 `duckterm restart` waited for HTTP to stop answering, then opened the same DB while the old server was still shutting down. SQLite already had a five-second busy timeout, so adding another PRAGMA was not the fix. Wait for the exact former listener PIDs to exit before touching tombstones or starting a new server. If a Mac app instance takes the port meanwhile, report it and leave the new listener alone. Close the restart command's short-lived HistoryStore explicitly.
+
 ## 2026-10-13 — Preparation activity is not connection health or switch readiness
 
 Show record counts only when supplied by the backend, keep stage progress separate from successful poll timestamps, and retain last-known progress during a connection failure. A completed record bar does not prove a handoff is ready. Recover status against the same preparation lease; never create another job just to check connectivity. Test unchanged progress across successful polls, out-of-order responses, transport timeouts, and all-records-checked before proof readiness.

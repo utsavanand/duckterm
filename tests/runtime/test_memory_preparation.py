@@ -542,3 +542,90 @@ def test_preparation_polling_does_not_invent_progress(preparation, monkeypatch):
     assert manager.status("agent", identity)["progress"] == before
     manager.update(manager.get("agent", identity), progress={"stage": before["stage"]})
     assert manager.status("agent", identity)["progress"] == before
+
+
+def test_http_preparation_accepts_large_source_plan_without_expanding_selection(
+    preparation, monkeypatch
+):
+    from duckterm import memory_http
+    from duckterm.helpers.security import TOKEN_HEADER
+
+    server, calls, tmp = preparation
+    server.token = "test-owner-token"
+    path = next(tmp.rglob("agent-claude.jsonl"))
+    for number in range(1, 41):
+        append(path, f"Message {number}")
+    for number in range(100):
+        server.history.record(
+            {
+                "_id": f"tool-{number}",
+                "_ts": number + 2,
+                "event_type": "PostToolUse",
+                "session_key": "agent",
+                "runtime": "claude-code",
+                "session_id": "agent-claude",
+                "tool_name": "Bash",
+                "test": True,
+            }
+        )
+    responses = []
+
+    async def respond(writer, status, payload):
+        responses.append((status, payload))
+
+    monkeypatch.setattr(memory_http, "write_json", respond)
+
+    async def run():
+        plan = await checkpoint_plan.preview(server, "agent")
+        body = request(server)
+        body["selection"] = {"plan": plan["selection_plan"], "records": 20}
+        encoded = json.dumps(body).encode()
+        assert 8192 < len(encoded) < memory_http.MAX_REQUEST_BYTES
+        await memory_http.handle(
+            server, None, {TOKEN_HEADER: server.token}, "agent", None, "POST", encoded, {}
+        )
+        status, view = responses.pop()
+        assert status == 202, view
+        await server.memory_preparation.tasks[view["preparation_id"]]
+        view = server.memory_preparation.status("agent", view["preparation_id"])
+        assert view["state"] == "ready", view
+        assert view["coverage"]["handoff"]["summarized_records"] == 20
+        written = [
+            json.loads(prompt.split("MEMORY UPDATE:\n", 1)[1])["records"]
+            for prompt in calls
+            if not prompt.startswith("You are validating")
+        ]
+        assert sum(map(len, written)) == 20
+        assert "Message 40" in [r["text"] for batch in written for r in batch]
+        assert "Message 1" not in [r["text"] for batch in written for r in batch]
+
+    asyncio.run(run())
+
+
+def test_http_preparation_retains_transport_size_limit(preparation, monkeypatch):
+    from duckterm import memory_http
+    from duckterm.helpers.security import TOKEN_HEADER
+
+    server, calls, _ = preparation
+    server.token = "test-owner-token"
+    responses = []
+
+    async def respond(writer, status, payload):
+        responses.append((status, payload))
+
+    monkeypatch.setattr(memory_http, "write_json", respond)
+    asyncio.run(
+        memory_http.handle(
+            server,
+            None,
+            {TOKEN_HEADER: server.token},
+            "agent",
+            None,
+            "POST",
+            b" " * (memory_http.MAX_REQUEST_BYTES + 1),
+            {},
+        )
+    )
+    assert responses[0][0] == 413
+    assert not calls
+    assert not server.memory_preparation.tasks

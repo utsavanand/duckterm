@@ -1,3 +1,3 @@
 """Duckterm: local-first orchestrator for AI coding agents."""
 
-__version__ = "0.4.157"
+__version__ = "0.4.158"

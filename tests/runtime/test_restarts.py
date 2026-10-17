@@ -96,6 +96,8 @@ def test_busy_waits_for_real_hook_then_same_key_model_version_and_resume(rig):
         server.restarts.save("a", cli_version="codex 0.9")
         result = await server.restarts.request("a", "new-model")
         assert result["status"] == "queued" and not calls
+        # A resumed operation may carry diagnostics saved by an older build.
+        server.restarts.save("a", code="launch_failed", error="Previous launch failed")
         # Output-derived idle is not a turn end, including after a server restart.
         server.bus.publish({"event_type": "Stop", "session_key": "a"})
         server.restarts = Restarts(server)
@@ -109,6 +111,7 @@ def test_busy_waits_for_real_hook_then_same_key_model_version_and_resume(rig):
         ]
         state = server.restarts.read("a")
         assert state["status"] == "completed", state
+        assert state["code"] is None and state["error"] is None
         assert state["cli_version"] == "codex 2.0"
         assert state["previous_cli_version"] == "codex 0.9"
         assert server._resume_argv("a", "codex", server.history.session("a"))[0] == calls[1][2]
@@ -128,6 +131,22 @@ def test_canceled_queue_cannot_restart_and_model_is_not_changed(rig):
         assert not server.restarts.read("a").get("configured_model")
 
     asyncio.run(run())
+
+
+def test_cancel_failed_restart_clears_diagnostics_but_preserves_process_evidence(rig):
+    server, _, _, calls = rig
+    server.restarts.save(
+        "a",
+        status="failed",
+        code="launch_failed",
+        error="Previous launch failed",
+        process_state="source_stopped",
+    )
+    state = server.restarts.cancel("a")
+    assert state["status"] == "canceled"
+    assert state["code"] is None and state["error"] is None
+    assert state["process_state"] == "source_stopped"
+    assert not calls
 
 
 def test_draft_at_request_or_execution_never_stops(rig, monkeypatch):

@@ -513,7 +513,7 @@ class Restarts:
         task = self.tasks.pop(key, None)
         if task:
             task.cancel()
-        return self.save(key, status="canceled", error=None)
+        return self.save(key, status="canceled", error=None, code=None)
 
     def observe(self, event: dict[str, Any]) -> None:
         key = str(event.get("session_key") or "")
@@ -698,6 +698,7 @@ class Restarts:
                 status="completed",
                 cli_version=new_version,
                 error=None,
+                code=None,
                 process_state="target_running",
                 target_generation=generation(self.server, key),
             )
