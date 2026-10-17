@@ -1,3 +1,7 @@
+## 2026-10-16 — Terminal restart states must clear both error fields
+
+Cancel and completion cleared the human-readable error but retained its machine-readable code, leaving a canceled operation labeled launch_failed. Clear both fields on these transitions, retain process-state evidence, and test persisted stale diagnostics across completion and cancellation. Do not rewrite historical failed-operation evidence to hide the earlier bug.
+
 ## 2026-10-16 — A vague reviewer rejection must not be attributed to the writer
 
 A checkpoint could fail with only `summary_unverified` even though the reviewer named no offending claim. The last good summary remained intact, but the failure was impossible to diagnose and skipped the existing writer repair. Require a specific rejection reason or bounded correction, retry a malformed reviewer verdict once against the same draft, and retain actionable corrections on failed checkpoint metadata. Inspect failed attempts rather than only saved revisions when measuring rejection rates.
