@@ -367,7 +367,12 @@ CODEX_APPROVAL = (
     "  2. Yes, and don't ask again for commands that start with `touch` (p)\n"
     "  3. No, and tell Codex what to do differently (esc)\n"
 )
-CODEX_WORKING = "• Running touch probe-file.txt\n\n› Ask Codex to do anything\n"
+# A real busy Codex screen carries its status line with a timer; the command
+# line alone ("• Running ...") reads like prose and no longer counts as busy.
+CODEX_WORKING = (
+    "• Running touch probe-file.txt\n\n• Working (8s • esc to interrupt)\n\n"
+    "› Ask Codex to do anything\n"
+)
 
 
 @pytest.fixture

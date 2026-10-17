@@ -286,6 +286,17 @@ reads as empty. The correction is recorded as an idle notice with
 before the hook forwarded its type stayed "waiting" for days: on 2026-09-26,
 5 of 6 "waiting" sessions weren't waiting on anything.
 
+
+**Screen evidence is the live status line only** (2026-10-04). For a Codex
+session, the screen watcher used to read "busy" or "waiting" from any line of
+a repaint, and a repaint carries the conversation. A word like "running", or
+the agent's own "Would you like to…", flipped a session that had already
+stopped (by hook) to busy. On 2026-10-04 that held ui-dev busy at an empty
+prompt for two hours, so Oracle never nudged it and its inbox sat. Now only
+Codex's status line with its elapsed timer ("Working (12s • esc to
+interrupt)") reads busy, and only the real approval prompt ("Would you like to
+run the following command?") or a prompt line reads waiting.
+
 ## Later rules, with triggers
 
 - **Needs-you queue:** sessions waiting on the owner for 30+ minutes, as one
