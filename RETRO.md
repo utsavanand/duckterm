@@ -1,3 +1,7 @@
+## 2026-10-16 — Test selection plans through their HTTP boundary
+
+Change harness accepted selected records in manager tests but rejected real requests before preparation: the old 8 KiB endpoint cap could not fit the per-source selection boundary. Reuse the existing 8 MiB transport ceiling used by checkpoint requests, keeping selection validation and the chosen record budget intact. Exercise a real generated many-source plan through the HTTP handler and verify that only the newest selected 20 records reach the writer; retain an over-limit rejection test.
+
 ## 2026-10-16 — A vague reviewer rejection must not be attributed to the writer
 
 A checkpoint could fail with only `summary_unverified` even though the reviewer named no offending claim. The last good summary remained intact, but the failure was impossible to diagnose and skipped the existing writer repair. Require a specific rejection reason or bounded correction, retry a malformed reviewer verdict once against the same draft, and retain actionable corrections on failed checkpoint metadata. Inspect failed attempts rather than only saved revisions when measuring rejection rates.
