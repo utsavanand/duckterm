@@ -274,3 +274,40 @@ def test_stalled_viewer_closes_client_without_waiting_for_consumer(tmp_path, mon
             await orch.stop(key)
 
     asyncio.run(scenario())
+
+
+def test_snapshot_preserves_logical_wraps_and_captured_grid(tmp_path):
+    from duckterm.agents.tmux_stream import Snapshot
+
+    paragraph = "wrapped words \u4e2d\u6587 \U0001f986 " * 15
+    script = tmp_path / "wraps.py"
+    script.write_text("import time\n" + f"print({paragraph!r}, flush=True)\n" + "time.sleep(30)\n")
+
+    async def scenario():
+        orch = Orchestrator(EventBus())
+        key = await orch.launch(
+            runtime=GenericRuntime(shlex.join([sys.executable, str(script)])),
+            cwd=str(tmp_path),
+            test=True,
+        )
+        sup = orch.get(key)
+        feed = None
+        try:
+            assert sup and sup._tmux_target
+            await asyncio.to_thread(sup.resize, 40, 20)
+            async with asyncio.timeout(5):
+                while "wrapped words" not in await asyncio.to_thread(
+                    tmux.capture_pane, sup._tmux_target
+                ):
+                    await asyncio.sleep(0.01)
+            feed = sup.subscribe_bytes()
+            snapshot = await asyncio.wait_for(anext(feed), 5)
+            assert isinstance(snapshot, Snapshot)
+            assert (snapshot.cols, snapshot.rows) == (40, 20)
+            assert paragraph.encode() in snapshot
+        finally:
+            if feed:
+                await feed.aclose()
+            await orch.stop(key)
+
+    asyncio.run(scenario())

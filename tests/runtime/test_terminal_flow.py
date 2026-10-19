@@ -164,3 +164,43 @@ def test_terminal_input_reaches_agent_and_keeps_connection(
 
     out = asyncio.run(scenario())
     assert b"PING-ME" in out, f"input did not echo back: {out!r}"
+
+
+def test_snapshot_dimensions_precede_binary_repaint_and_live_output():
+    import json
+    from types import SimpleNamespace
+
+    from duckterm.agents.tmux_stream import Snapshot
+    from duckterm.transport.websocket import encode_binary_frame, encode_text_frame
+
+    class Writer:
+        def __init__(self):
+            self.frames = []
+
+        def write(self, data):
+            self.frames.append(data)
+
+        async def drain(self):
+            pass
+
+    async def feed():
+        yield Snapshot(b"snapshot", 120, 40)
+        yield b"live"
+
+    async def scenario():
+        writer = Writer()
+        server = Server.__new__(Server)
+        await server._stream_terminal(
+            asyncio.StreamReader(),
+            writer,
+            {"sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ=="},
+            SimpleNamespace(subscribe_bytes=feed),
+        )
+        assert writer.frames[0].startswith(b"HTTP/1.1 101")
+        assert writer.frames[1:4] == [
+            encode_text_frame(json.dumps({"snapshot": {"cols": 120, "rows": 40}})),
+            encode_binary_frame(b"snapshot"),
+            encode_binary_frame(b"live"),
+        ]
+
+    asyncio.run(scenario())

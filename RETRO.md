@@ -1,3 +1,11 @@
+## 2026-10-19 — Preserve terminal wraps and replay at the captured grid size
+
+Physical capture rows are not logical lines. Joining every captured row with CRLF permanently broke paragraphs when the panel resized. Capture physical rows for bounded protocol framing and cursor accounting, plus tmux-joined logical lines for replay; validate the text agrees before exposing the snapshot. Send the captured dimensions before the binary repaint and defer browser fitting until it has parsed that repaint. Omit unused blank rows below the cursor so reconnecting does not push the first paragraph into scrollback. The regression must check actual prose, panel expansion/collapse, a small viewport shrink, reload and later input, not just terminal dimensions. Keep control-mode capture and live output in one ordered stream.
+
+## 2026-10-19 — Replay terminal snapshots at their captured dimensions
+
+Restoring terminal history at the current panel width can split text and misplace the cursor before the first resize. Preserve soft-wrap information in the backend snapshot and send its captured dimensions before the bytes. Hold frontend fitting until xterm finishes parsing, then reflow to the visible host. Carry metadata through the native remote bridge in order as well. Test paragraphs across resize and reconnect, not only dimensions and draft preservation; binary-only older streams must still work.
+
 ## 2026-10-16 — Terminal restart states must clear both error fields
 
 Cancel and completion cleared the human-readable error but retained its machine-readable code, leaving a canceled operation labeled launch_failed. Clear both fields on these transitions, retain process-state evidence, and test persisted stale diagnostics across completion and cancellation. Do not rewrite historical failed-operation evidence to hide the earlier bug.

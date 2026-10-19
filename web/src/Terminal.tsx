@@ -115,6 +115,7 @@ export const Terminal = memo(function Terminal({
     let disposed = false;
     let attachGeneration = 0;
     let replayReady = false;
+    let snapshotSizing = false;
     let pendingOpenScroll = false;
     let openGeneration = 0;
     let scrollFrame: number | undefined;
@@ -144,7 +145,7 @@ export const Terminal = memo(function Terminal({
     const settleOpening = () => {
       window.cancelAnimationFrame(fitFrame ?? 0);
       fitFrame = undefined;
-      if (disposed || !visible) return;
+      if (disposed || !visible || snapshotSizing) return;
       if (!host.clientWidth || !host.clientHeight) {
         // A panel transition can report zero before layout settles. There may
         // be no further observer notification: keep the pending fit alive.
@@ -193,6 +194,7 @@ export const Terminal = memo(function Terminal({
       const generation = ++attachGeneration;
       let firstFrame = true;
       replayReady = false;
+      snapshotSizing = false;
       cancelAttachScroll();
       pendingOpenScroll = visible;
       ws = terminalSocket(sessionKey, kind);
@@ -204,6 +206,25 @@ export const Terminal = memo(function Terminal({
         focusTerm();
       };
       ws.onmessage = (ev) => {
+        if (disposed || generation !== attachGeneration) return;
+        if (typeof ev.data === "string") {
+          // Control frames are never terminal output. Restore the snapshot at
+          // its captured geometry before xterm reflows it to the visible pane.
+          if (!firstFrame || snapshotSizing) return;
+          try {
+            const snapshot: unknown = JSON.parse(ev.data)?.snapshot;
+            if (!snapshot || typeof snapshot !== "object") return;
+            const { cols, rows } = snapshot as { cols?: unknown; rows?: unknown };
+            if (typeof cols !== "number" || typeof rows !== "number"
+              || !Number.isInteger(cols) || !Number.isInteger(rows)
+              || cols < 1 || rows < 1 || cols > 1000 || rows > 1000) return;
+            snapshotSizing = true;
+            window.cancelAnimationFrame(fitFrame ?? 0);
+            fitFrame = undefined;
+            term.resize(cols, rows);
+          } catch { /* Ignore malformed/unknown control frames. */ }
+          return;
+        }
         // Raw PTY bytes. xterm's write() takes a Uint8Array and decodes UTF-8
         // itself — passing bytes (not a decoded string) keeps multi-byte
         // sequences split across frames intact.
@@ -213,6 +234,7 @@ export const Terminal = memo(function Terminal({
           // frame. Wait for xterm's parser, not a timer or later live writes.
           term.write(new Uint8Array(ev.data as ArrayBuffer), () => {
             if (disposed || generation !== attachGeneration) return;
+            snapshotSizing = false;
             replayReady = true;
             settleOpening();
           });
