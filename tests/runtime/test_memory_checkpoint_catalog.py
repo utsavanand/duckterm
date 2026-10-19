@@ -28,6 +28,40 @@ def test_existing_progress_does_not_make_unchanged_checkpoint_source_changed(
     asyncio.run(run())
 
 
+def test_idle_does_not_start_writer_and_unchanged_checkpoint_reuses_revision(
+    memory_rig, monkeypatch
+):
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Existing work to checkpoint while idle.")
+    calls, _ = provider(monkeypatch)
+
+    async def run():
+        server._maybe_refresh_progress("agent")
+        server._progress_on_exit("agent")
+        await asyncio.sleep(0)
+        assert calls == []
+        first = await server._create_checkpoint(
+            "agent", server.history.session("agent"), "manual", request_id="request-one"
+        )
+        revision_id = first["record"]["summary_update"]["revision_id"]
+        saved = server.digests.revision("agent", revision_id)
+        assert saved["trigger"] == {
+            "kind": "checkpoint",
+            "label": "manual",
+            "request_id": "request-one",
+        }
+        count = len(calls)
+        assert count > 0
+        again = await server._create_checkpoint(
+            "agent", server.history.session("agent"), "manual", request_id="request-two"
+        )
+        assert len(calls) == count
+        assert again["record"]["summary_update"]["revision_id"] == revision_id
+        assert server.digests.revision("agent", revision_id)["trigger"] == saved["trigger"]
+
+    asyncio.run(run())
+
+
 def test_checkpoint_outcome_saves_success_with_existing_progress(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Keep evidence accessible after the checkpoint.")

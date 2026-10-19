@@ -759,6 +759,7 @@ class ProgressCoordinator:
             ),
             "input_key": input_key,
             "prior_revision": prior["id"] if prior else None,
+            "trigger": captured.get("trigger", {"kind": "internal_refresh"}),
             "summary": digest["summary"],
             **({"continuity": continuity, **retained} if continuity is not None else {}),
             **({"memory_baseline_ref": baseline} if baseline else {}),

@@ -69,13 +69,39 @@ class DigestStore:
         return revision(self._conn, session_key, identity)
 
     def find_revision(self, session_key: str, input_key: str) -> dict[str, Any] | None:
-        row = self._conn.execute(
-            "SELECT id FROM digest_items WHERE session_key=? AND bucket=? "
-            "AND CASE WHEN json_valid(text) THEN json_extract(text, '$.input_key') "
-            "END=? ORDER BY rowid DESC LIMIT 1",
-            (session_key, REVISION_BUCKET, input_key),
-        ).fetchone()
-        return self.revision(session_key, row[0]) if row else None
+        # Revisions are immutable. Inspect their small indexed headers on each
+        # lookup, but decode input keys only for newly visible rows. Never cache
+        # the multi-megabyte revision bodies. External writers invalidate this
+        # process-local index, including edits that did not update timestamps.
+        version = self._conn.execute("PRAGMA data_version").fetchone()[0]
+        if getattr(self, "_revision_data_version", None) != version:
+            self._revision_inputs: dict[str, dict[tuple[int, str], str | None]] = {}
+            self._revision_data_version = version
+        known = self._revision_inputs.get(session_key, {})
+        current = {}
+        rows = self._conn.execute(
+            "SELECT rowid,id FROM digest_items WHERE session_key=? AND bucket=? "
+            "ORDER BY rowid",
+            (session_key, REVISION_BUCKET),
+        ).fetchall()
+        for row in rows:
+            stamp = (row[0], row[1])
+            if stamp in known:
+                current[stamp] = known[stamp]
+                continue
+            value = self._conn.execute(
+                "SELECT CASE WHEN json_valid(text) THEN json_extract(text, '$.input_key') END "
+                "FROM digest_items WHERE id=? AND session_key=? AND bucket=?",
+                (row[1], session_key, REVISION_BUCKET),
+            ).fetchone()
+            current[stamp] = value[0] if value and isinstance(value[0], str) else None
+        # A rollback must not leave an index containing uncommitted rows.
+        if not self._conn.in_transaction:
+            self._revision_inputs[session_key] = current
+        identity = next(
+            (stamp[1] for stamp in reversed(current) if current[stamp] == input_key), None
+        )
+        return self.revision(session_key, identity)
 
     def add_revision(self, session_key: str, value: dict[str, Any], now: int) -> str:
         if not self._conn.in_transaction:
@@ -120,7 +146,8 @@ class DigestStore:
         existing = {
             (r["bucket"], _normalize(r["text"]))
             for r in self._conn.execute(
-                "SELECT bucket, text FROM digest_items WHERE session_key = ?",
+                "SELECT bucket, text FROM digest_items WHERE session_key = ? "
+                "AND bucket IN ('deliverables','learnings','user_learnings','next_actions')",
                 (session_key,),
             ).fetchall()
         }

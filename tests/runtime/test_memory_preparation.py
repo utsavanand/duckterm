@@ -108,6 +108,11 @@ def test_preparation_completes_spans_before_creating_proof(preparation):
     assert "duckterm memory search" in detail["brief"]["text"]
     assert server.history.session("agent")["progress"]
     assert view["proof"]["revision_id"]
+    saved = server.digests.revision("agent", view["proof"]["revision_id"])
+    assert saved["trigger"] == {
+        "kind": "harness_preparation",
+        "preparation_id": view["preparation_id"],
+    }
     cp = server.history.checkpoints("agent")[0]
     assert cp["record"]["summary_ref"] == view["proof"]["revision_id"]
     assert cp["record"]["memory_sources"] and cp["record"]["retained_sources"]

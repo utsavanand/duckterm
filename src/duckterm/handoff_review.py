@@ -232,6 +232,7 @@ class HandoffReview:
             **{k: captured[k] for k in ("source", "conversation", "policy")},
             "source_at": captured["captured_at"],
             "input_key": input_key,
+            "trigger": {"kind": "handoff_review", "checkpoint_id": checkpoint_id},
             "prior_revision": draft["prior_id"],
             "summary": draft["text"],
             "summary_validation": {"ready": True, "reason_codes": [], "method": "owner-review"},

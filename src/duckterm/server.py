@@ -4805,6 +4805,11 @@ class Server:
                 captured = await memory_checkpoint.freeze(
                     self, session_key, captured, checkpoint_settings.load()
                 )
+            captured["trigger"] = {
+                "kind": "checkpoint",
+                "label": label,
+                **({"request_id": request_id} if request_id else {}),
+            }
             update = await self.progress_coordinator.refresh_result(
                 session_key, captured, on_progress=on_progress
             )
