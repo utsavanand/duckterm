@@ -10,12 +10,13 @@ def frame(decoder, number, lines=()):
     return decoder.accept(f"%end 123 {number} 0".encode())
 
 
-def ready(screen=(b"draft",), metadata=b"%7 5 0 1 0", pending=()):
+def ready(screen=(b"draft",), metadata=b"%7 5 0 80 1 0", pending=()):
     decoder = Decoder()
     frame(decoder, 1)
     frame(decoder, 2, [metadata])
     frame(decoder, 3, screen)
-    snapshot = frame(decoder, 4, pending)
+    frame(decoder, 4, screen)
+    snapshot = frame(decoder, 5, pending)
     return decoder, snapshot
 
 
@@ -36,23 +37,24 @@ def test_ordered_snapshot_then_output_ignores_old_and_other_panes():
     decoder = Decoder()
     assert decoder.accept(b"%output %7 old") is None
     frame(decoder, 1)
-    frame(decoder, 2, [b"%7 5 0 1 0"])
+    frame(decoder, 2, [b"%7 5 0 80 1 0"])
     frame(decoder, 3, [b"draft"])
-    snap = frame(decoder, 4)
-    assert snap == b"\x1b[2J\x1b[Hdraft\r\x1b[5C"
+    frame(decoder, 4, [b"draft"])
+    snap = frame(decoder, 5)
+    assert snap == b"\x1b[0m\x1b[2J\x1b[Hdraft\r\x1b[5C"
     assert decoder.accept(rb"%output %8 wrong-pane") is None
     assert decoder.accept(rb"%output %7 _NEW\015\012") == b"_NEW\r\n"
     assert decoder.accept(rb"%extended-output %7 0 : twice twice\015\012") == b"twice twice\r\n"
 
 
 def test_cursor_blank_line_and_pending_escape_are_preserved():
-    decoder, snap = ready((b"line", b"", b""), b"%7 0 1 3 0", [rb"\033["])
-    assert snap == b"\x1b[2J\x1b[Hline\r\n\r\x1b["
+    decoder, snap = ready((b"line", b"", b""), b"%7 0 1 80 3 0", [rb"\033["])
+    assert snap == b"\x1b[0m\x1b[2J\x1b[Hline\r\n\r\x1b["
     assert decoder.accept(b"%output %7 31mred") == b"31mred"
 
 
 def test_protocol_looking_capture_text_is_data():
-    _, snap = ready((b"%output %7 text", b"%end 999 999 0"), b"%7 0 0 2 0")
+    _, snap = ready((b"%output %7 text", b"%end 999 999 0"), b"%7 0 0 80 2 0")
     assert b"%output %7 text\r\n%end 999 999 0" in snap
     assert snap.endswith(b"\x1b[1A\r")
 
@@ -72,7 +74,7 @@ def test_command_error_is_not_live_stream():
 
 
 def test_exact_guard_text_in_snapshot_cannot_end_the_frame():
-    _, snap = ready((b"%end 123 3 0",), b"%7 0 0 1 0")
+    _, snap = ready((b"%end 123 3 0",), b"%7 0 0 80 1 0")
     assert b"%end 123 3 0" in snap
 
 
@@ -90,7 +92,7 @@ def test_buffered_burst_does_not_evict_a_ready_consumer(monkeypatch):
     async def scenario():
         stdout = asyncio.StreamReader()
         frames = []
-        for number, rows in enumerate([[], [b"%7 0 0 1 0"], [b"READY"], []], 1):
+        for number, rows in enumerate([[], [b"%7 0 0 80 1 0"], [b"READY"], [b"READY"], []], 1):
             frames.extend(
                 [f"%begin 123 {number} 0".encode(), *rows, f"%end 123 {number} 0".encode()]
             )
@@ -114,3 +116,45 @@ def test_buffered_burst_does_not_evict_a_ready_consumer(monkeypatch):
         assert b"".join(chunks[1:]) == expected
 
     asyncio.run(scenario())
+
+
+def test_joined_prose_and_capture_dimensions_survive_snapshot():
+    decoder = Decoder()
+    frame(decoder, 1)
+    frame(decoder, 2, [b"%7 0 2 5 3 0"])
+    frame(decoder, 3, [b"abcde", b"fghi", b""])
+    frame(decoder, 4, [b"abcdefghi", b""])
+    snapshot = frame(decoder, 5)
+    assert snapshot.cols == 5 and snapshot.rows == 3
+    assert b"abcdefghi\r\n" in snapshot
+    assert b"abcde\r\nfghi" not in snapshot
+    assert snapshot.endswith(b"\r\n\r")
+
+
+def test_exact_guard_in_joined_capture_is_still_data():
+    decoder = Decoder()
+    frame(decoder, 1)
+    frame(decoder, 2, [b"%7 0 0 80 1 0"])
+    frame(decoder, 3, [b"%end 123 4 0"])
+    frame(decoder, 4, [b"%end 123 4 0"])
+    assert b"%end 123 4 0" in frame(decoder, 5)
+
+
+def test_changed_joined_capture_is_rejected_instead_of_replaying_wrong_cursor():
+    decoder = Decoder()
+    frame(decoder, 1)
+    frame(decoder, 2, [b"%7 0 0 80 1 0"])
+    frame(decoder, 3, [b"draft"])
+    with pytest.raises(ValueError, match="differs"):
+        frame(decoder, 4, [b"other"])
+
+
+def test_snapshot_at_right_margin_retains_pending_wrap():
+    decoder = Decoder()
+    frame(decoder, 1)
+    frame(decoder, 2, [b"%7 5 0 5 2 0"])
+    frame(decoder, 3, [b"12345", b""])
+    frame(decoder, 4, [b"12345", b""])
+    snapshot = frame(decoder, 5)
+    assert snapshot.endswith(b"12345")
+    assert decoder.accept(b"%output %7 6") == b"6"

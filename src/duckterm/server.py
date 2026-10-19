@@ -5173,7 +5173,16 @@ class Server:
                     await self._handle_terminal_frame(supervisor, frame)
                     incoming = asyncio.ensure_future(read_frame(reader))
                 if outgoing in done:
-                    writer.write(encode_binary_frame(outgoing.result()))
+                    from duckterm.agents.tmux_stream import Snapshot
+
+                    chunk = outgoing.result()
+                    if isinstance(chunk, Snapshot):
+                        writer.write(
+                            encode_text_frame(
+                                json.dumps({"snapshot": {"cols": chunk.cols, "rows": chunk.rows}})
+                            )
+                        )
+                    writer.write(encode_binary_frame(chunk))
                     await writer.drain()
                     outgoing = asyncio.ensure_future(feed.__anext__())
         except (StopAsyncIteration, OSError, ValueError, asyncio.IncompleteReadError):

@@ -17,6 +17,19 @@ _GUARD = re.compile(rb"%(begin|end|error) (\d+ \d+ \d+)\Z")
 _ESCAPE = re.compile(rb"\\(?:([0-3][0-7]{2})|(\\))")
 _MAX_SNAPSHOT = 8 * 1024 * 1024
 _MAX_QUEUED_CHUNKS = 32
+_SGR = re.compile(rb"\x1b\[[0-9;:]*m")
+
+
+class Snapshot(bytes):
+    """A byte-compatible repaint with the grid dimensions needed to replay it."""
+
+    cols: int
+    rows: int
+
+    def __new__(cls, data: bytes, cols: int, rows: int) -> "Snapshot":
+        value = super().__new__(cls, data)
+        value.cols, value.rows = cols, rows
+        return value
 
 
 def unescape(payload: bytes) -> bytes:
@@ -29,13 +42,17 @@ def unescape(payload: bytes) -> bytes:
 
 
 class Decoder:
-    """Consume attach, pane identity, screen, pending escapes, then live output."""
+    """Consume identity, physical/joined captures, pending escapes, then live output."""
 
     def __init__(self) -> None:
         self.guard: bytes | None = None
         self.completed = 0
         self.screen: list[bytes] = []
         self.pending: list[bytes] = []
+        self.logical: list[bytes] = []
+        self.physical_text = b""
+        self.logical_size = 0
+        self.width = 0
         self.size = 0
         self.pane: bytes | None = None
         self.cursor_x = 0
@@ -46,7 +63,9 @@ class Decoder:
     def accept(self, line: bytes) -> bytes | None:
         guard = _GUARD.fullmatch(line)
         if self.guard is not None:
-            screen_data = self.completed == 2 and len(self.screen) < self.screen_lines
+            screen_data = (self.completed == 2 and len(self.screen) < self.screen_lines) or (
+                self.completed == 3 and self.logical_size < len(self.physical_text)
+            )
             if (
                 not screen_data
                 and guard
@@ -55,37 +74,62 @@ class Decoder:
             ):
                 if guard[1] == b"error":
                     raise ValueError("tmux terminal attachment command failed")
+                if self.completed == 2:
+                    self.physical_text = b"".join(_SGR.sub(b"", row) for row in self.screen)
+                if (
+                    self.completed == 3
+                    and b"".join(_SGR.sub(b"", row) for row in self.logical) != self.physical_text
+                ):
+                    raise ValueError("tmux joined snapshot differs from physical capture")
                 self.guard = None
                 self.completed += 1
-                if self.completed == 4:
+                if self.completed == 5:
                     return self.snapshot()
                 return None
             if self.completed == 1:
-                match = re.fullmatch(rb"(%\d+) (\d+) (\d+) (\d+) (\d+)", line)
+                match = re.fullmatch(rb"(%\d+) (\d+) (\d+) (\d+) (\d+) (\d+)", line)
                 if match is None or self.pane is not None:
                     raise ValueError("invalid tmux pane identity")
                 self.pane = match[1]
-                self.cursor_x, self.cursor_y, self.height, history = map(int, match.groups()[1:])
+                self.cursor_x, self.cursor_y, self.width, self.height, history = map(
+                    int, match.groups()[1:]
+                )
                 self.screen_lines = self.height + min(history, 2000)
-                if self.height < 1 or self.cursor_y >= self.height:
+                if (
+                    self.width < 1
+                    or self.height < 1
+                    or self.cursor_y >= self.height
+                    or self.cursor_x > self.width
+                ):
                     raise ValueError("invalid tmux cursor position")
             if self.completed == 2 and len(self.screen) >= self.screen_lines:
                 raise ValueError("invalid tmux snapshot length")
-            if self.completed in (2, 3):
+            if self.completed in (2, 3, 4):
                 decoded = unescape(line)
                 self.size += len(decoded)
                 if self.size > _MAX_SNAPSHOT:
                     raise ValueError("tmux snapshot exceeds terminal buffer limit")
-                (self.screen if self.completed == 2 else self.pending).append(decoded)
+                if self.completed == 2:
+                    self.screen.append(decoded)
+                elif self.completed == 3:
+                    self.logical.append(decoded)
+                    self.logical_size += len(_SGR.sub(b"", decoded))
+                    if (
+                        self.logical_size > len(self.physical_text)
+                        or len(self.logical) > self.screen_lines
+                    ):
+                        raise ValueError("invalid tmux joined snapshot length")
+                else:
+                    self.pending.append(decoded)
             return None
         if guard and guard[1] == b"begin":
-            if self.completed >= 4:
+            if self.completed >= 5:
                 raise ValueError("unexpected tmux command reply")
             self.guard = guard[2]
             return None
         if line.startswith((b"%pause ", b"%exit")):
             raise EOFError("tmux control viewer disconnected or paused")
-        if self.completed == 4 and line.startswith((b"%output ", b"%extended-output ")):
+        if self.completed == 5 and line.startswith((b"%output ", b"%extended-output ")):
             if line.startswith(b"%extended-output "):
                 header, separator, payload = line.partition(b" : ")
                 fields = header.split(b" ")
@@ -100,18 +144,31 @@ class Decoder:
                 return unescape(payload)
         return None
 
-    def snapshot(self) -> bytes:
-        # Keep the cursor's blank line: stripping it would join the next live
-        # line onto the preceding snapshot line. Restore column/row for TUIs
-        # whose cursor is not at the end of the last visible text.
+    def snapshot(self) -> Snapshot:
+        # Replay at the captured grid width, then let the browser reflow. Keep
+        # the cursor's blank line, but omit unused rows below it: replaying those
+        # rows would push useful text into scrollback after a reconnect/resize.
         cursor_row = max(0, len(self.screen) - self.height) + self.cursor_y
-        while len(self.screen) > cursor_row + 1 and not self.screen[-1].strip():
-            self.screen.pop()
-        up = max(0, len(self.screen) - 1 - cursor_row)
-        position = (f"\x1b[{up}A".encode() if up else b"") + b"\r"
-        if self.cursor_x:
-            position += f"\x1b[{self.cursor_x}C".encode()
-        return b"\x1b[2J\x1b[H" + b"\r\n".join(self.screen) + position + b"".join(self.pending)
+        physical, logical = list(self.screen), list(self.logical)
+        while (
+            len(physical) > cursor_row + 1
+            and not physical[-1].strip()
+            and logical
+            and not logical[-1].strip()
+        ):
+            physical.pop()
+            logical.pop()
+        up = max(0, len(physical) - 1 - cursor_row)
+        # A cursor at width is tmux's pending autowrap position. When replay
+        # already ends there, moving it would discard that pending wrap.
+        if self.cursor_x == self.width and not up:
+            position = b""
+        else:
+            position = (f"\x1b[{up}A".encode() if up else b"") + b"\r"
+            if self.cursor_x:
+                position += f"\x1b[{self.cursor_x}C".encode()
+        data = b"\x1b[0m\x1b[2J\x1b[H" + b"\r\n".join(logical) + position + b"".join(self.pending)
+        return Snapshot(data, self.width, self.height)
 
 
 async def stream(target: str) -> AsyncGenerator[bytes, None]:
@@ -137,11 +194,23 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             "-p",
             "-t",
             pane_target,
-            "#{pane_id} #{cursor_x} #{cursor_y} #{pane_height} #{history_size}",
+            "#{pane_id} #{cursor_x} #{cursor_y} #{pane_width} #{pane_height} #{history_size}",
             ";",
             "capture-pane",
             "-p",
             "-e",
+            "-N",
+            "-T",
+            "-C",
+            "-t",
+            pane_target,
+            "-S",
+            "-2000",
+            ";",
+            "capture-pane",
+            "-p",
+            "-e",
+            "-J",
             "-C",
             "-t",
             pane_target,
@@ -158,7 +227,9 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
-        limit=256 * 1024,
+        # -J can put a whole wrapped paragraph on one control-protocol line.
+        # Allow its escaped representation; decoded captures remain bounded.
+        limit=4 * _MAX_SNAPSHOT,
     )
     queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=_MAX_QUEUED_CHUNKS)
 
@@ -169,7 +240,7 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
         decoder = Decoder()
         try:
             while True:
-                if decoder.completed < 4:
+                if decoder.completed < 5:
                     line = await asyncio.wait_for(proc.stdout.readline(), 10)
                 else:
                     line = await proc.stdout.readline()
