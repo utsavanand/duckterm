@@ -1,3 +1,7 @@
+## 2026-10-19 — Native scrollbar tracks need the resolved color scheme
+
+Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
+
 ## 2026-10-19 — Preserve terminal wraps and replay at the captured grid size
 
 Physical capture rows are not logical lines. Joining every captured row with CRLF permanently broke paragraphs when the panel resized. Capture physical rows for bounded protocol framing and cursor accounting, plus tmux-joined logical lines for replay; validate the text agrees before exposing the snapshot. Send the captured dimensions before the binary repaint and defer browser fitting until it has parsed that repaint. Omit unused blank rows below the cursor so reconnecting does not push the first paragraph into scrollback. The regression must check actual prose, panel expansion/collapse, a small viewport shrink, reload and later input, not just terminal dimensions. Keep control-mode capture and live output in one ordered stream.
