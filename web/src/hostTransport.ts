@@ -83,7 +83,7 @@ export interface TerminalSocket {
   binaryType: string;
   onopen: (() => void) | null;
   onclose: (() => void) | null;
-  onmessage: ((event: { data: ArrayBuffer }) => void) | null;
+  onmessage: ((event: { data: ArrayBuffer | string }) => void) | null;
   send(data: string | Uint8Array): void;
   close(): void;
 }
@@ -93,7 +93,7 @@ class NativeTerminal implements TerminalSocket {
   binaryType = "arraybuffer";
   onopen: (() => void) | null = null;
   onclose: (() => void) | null = null;
-  onmessage: ((event: { data: ArrayBuffer }) => void) | null = null;
+  onmessage: ((event: { data: ArrayBuffer | string }) => void) | null = null;
   private id = crypto.randomUUID();
   private outgoing = Promise.resolve();
   private opened: Promise<unknown>;
@@ -102,7 +102,10 @@ class NativeTerminal implements TerminalSocket {
     if (data.id !== this.id || this.readyState === 3) return;
     if (data.closed) { this.finish(); return; }
     if (data.opened && this.readyState === 0) { this.readyState = 1; this.onopen?.(); }
-    if (typeof data.data === "string") {
+    if (typeof data.text === "string") {
+      if (this.readyState === 0) { this.readyState = 1; this.onopen?.(); }
+      this.onmessage?.({ data: data.text });
+    } else if (typeof data.data === "string") {
       if (this.readyState === 0) { this.readyState = 1; this.onopen?.(); }
       const bytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
       this.onmessage?.({ data: bytes.buffer });

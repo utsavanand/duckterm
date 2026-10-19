@@ -90,3 +90,18 @@ it("routes shell lifecycle and its terminal to the remote owner without local cr
   await expect(routedFetch(`/sessions/${encodeURIComponent(key)}/shell`)).rejects.toThrow();
   expect(local).not.toHaveBeenCalled();
 });
+
+it("preserves remote text metadata before binary snapshot bytes", async () => {
+  const { terminalSocket } = await import("./hostTransport");
+  const request = vi.fn().mockResolvedValue({ opened: true });
+  window.webkit = { messageHandlers: { launchRequest: { postMessage: request } } };
+  const socket = terminalSocket(sessionRef("remote", "snapshot"));
+  const received = vi.fn(); socket.onmessage = received;
+  const id = request.mock.calls[0][0].params.id;
+  const metadata = '{"snapshot":{"cols":120,"rows":40}}';
+  window.dispatchEvent(new CustomEvent("remote-terminal", { detail: { id, text: metadata } }));
+  window.dispatchEvent(new CustomEvent("remote-terminal", { detail: { id, data: btoa("ABC") } }));
+  expect(received.mock.calls.map(call => call[0].data)).toEqual([metadata, new Uint8Array([65, 66, 67]).buffer]);
+  expect(socket.readyState).toBe(1);
+  socket.close();
+});
