@@ -294,10 +294,14 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
                     while self?.sockets[id]?.socket === socket {
                         let message = try await socket.receive()
                         guard self?.sockets[id]?.socket === socket else { break }
-                        if case .data(let bytes) = message {
-                            // One delivery at a time: WebKit must consume this
-                            // frame before another receive can enqueue output.
+                        // Keep metadata and snapshot bytes in one ordered
+                        // delivery path, including for remote terminals.
+                        switch message {
+                        case .data(let bytes):
                             await self?.onTerminalData?(["id": id, "data": bytes.base64EncodedString()])
+                        case .string(let text):
+                            await self?.onTerminalData?(["id": id, "text": text])
+                        @unknown default: break
                         }
                     }
                 } catch { failure = error.localizedDescription }
