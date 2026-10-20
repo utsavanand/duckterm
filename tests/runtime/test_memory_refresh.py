@@ -114,6 +114,10 @@ def test_final_publication_refuses_changed_sources_but_retains_finished_leaf(
     async def run():
         result = await coordinator.refresh_result("agent")
         assert result.state == "failed" and result.reason == "source_changed"
+        coverage = result.metadata(1)["span_coverage"]
+        assert coverage["state"] == "incomplete"
+        assert coverage["summarized_records"] == 1 and coverage["pending_records"] == 0
+        assert len(coverage["revision_ids"]) == 1
         assert current_revision(server.history.session("agent")) is None
         saved = server.history._conn.execute(
             "SELECT count(*) FROM digest_items WHERE session_key='agent' "
@@ -178,6 +182,9 @@ def test_failed_later_batch_keeps_boundary_and_retry_does_not_repeat_first(memor
         )
         assert progress[-1]["completed"] == 1 and progress[-1]["total"] == 2
         assert failed.state == "failed" and failed.reason == "provider_timeout"
+        assert failed.span_coverage["summarized_records"] == 1
+        assert failed.span_coverage["pending_records"] == 1
+        assert failed.metadata(1)["revision_id"] is None
         assert current_revision(server.history.session("agent")) is None
         assert len(calls) == 3
         fail[0] = False
@@ -211,6 +218,9 @@ def test_canceled_preparation_stops_before_next_batch_and_retry_reuses_leaf(
     async def run():
         canceled = await coordinator.refresh_result("agent", continue_if=lambda: keep[0])
         assert canceled.diagnostic == "update_canceled"
+        assert canceled.span_coverage["state"] == "incomplete"
+        assert canceled.span_coverage["summarized_records"] == 1
+        assert canceled.span_coverage["pending_records"] == 1
         assert len(calls) == 2 and current_revision(server.history.session("agent")) is None
         monkeypatch.setattr(coordinator, "write_span", real_write)
         result = await coordinator.refresh_result("agent")

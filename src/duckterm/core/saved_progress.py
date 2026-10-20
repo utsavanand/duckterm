@@ -109,8 +109,14 @@ class SummaryUpdate:
     reason: str | None = None
     diagnostic: str | None = None
     review: dict[str, Any] | None = None
+    # Incomplete refresh_attempt coverage describes accepted writes from that
+    # attempt only. Its revision_ids are evidence links, not handoff readiness
+    # or a replacement for revision_id / the last successful summary.
     span_coverage: dict[str, Any] | None = None
     summary_corrections: list[str | dict[str, str]] | None = None
+    # Transient bookkeeping for the waiter-side source fence. Not serialized
+    # on success: complete coverage can include leaves from earlier attempts.
+    attempt_coverage: dict[str, Any] | None = None
 
     def metadata(self, attempted_at: int) -> dict[str, Any]:
         return {
@@ -508,9 +514,9 @@ class ProgressCoordinator:
             if maintained and maintained.get("span") == "incremental":
                 from duckterm import memory_spans
 
-                if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+                if len(prompt.encode()) > memory_spans.repair_input_limit():
                     prompt = memory_continuity.repair_prompt(original, "", diagnostic)
-                if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+                if len(prompt.encode()) > memory_spans.repair_input_limit():
                     return SummaryUpdate.failed("invalid_context", diagnostic=diagnostic)
         raise AssertionError("draft loop exhausted without a result")
 
@@ -661,7 +667,7 @@ class ProgressCoordinator:
                 ",".join(review["reason_codes"]),
                 review_feedback=corrections,
             )
-            if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+            if len(prompt.encode()) > memory_spans.repair_input_limit():
                 # Drop only the draft copy, never the actionable review feedback.
                 prompt = memory_continuity.repair_prompt(
                     original_prompt,
@@ -669,7 +675,7 @@ class ProgressCoordinator:
                     ",".join(review["reason_codes"]),
                     review_feedback=corrections,
                 )
-            if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+            if len(prompt.encode()) > memory_spans.repair_input_limit():
                 return SummaryUpdate.failed("invalid_context", diagnostic="repair_input_too_large")
         reasons = []
         if review["state"] != "accepted":
