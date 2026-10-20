@@ -23,6 +23,42 @@ NOTICE = (
 )
 
 
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_overlong_digest_item_is_rewritten_before_review(memory_rig, monkeypatch, repair_succeeds):
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Rendering is underway. Do not publish before owner review.")
+    calls = []
+    long_item = "Render details. " * 12 + "Do not publish before owner review."
+    complete_item = "Inspect the rendered draft; do not publish before owner review."
+
+    def generate(prompt, **kwargs):
+        calls.append(prompt)
+        if prompt.startswith("You are validating"):
+            assert repair_succeeds
+            assert complete_item in prompt
+            assert long_item[:160] not in prompt
+            return review()
+        value = candidate(prompt)
+        if len(calls) > 1:
+            assert "digest_item_too_long" in prompt
+            assert "160 characters" in prompt
+            assert "Do not publish before owner review." in prompt
+        value["next_actions"] = [complete_item if repair_succeeds and len(calls) > 1 else long_item]
+        return Summary(json.dumps(value), "fixture")
+
+    monkeypatch.setattr("duckterm.server.summarize", generate)
+    cp = asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
+    if repair_succeeds:
+        assert cp["summary_update"]["state"] == "updated", cp["summary_update"]
+        assert len(calls) == 3
+    else:
+        assert len(calls) == 2
+        assert cp["summary_update"]["state"] == "failed"
+        assert cp["summary_update"]["diagnostic"] == "digest_item_too_long"
+        assert cp["record"]["summary_ref"] is None
+        assert server.history.session("agent")["progress"] is None
+
+
 def test_large_rejected_draft_does_not_discard_reviewer_corrections():
     original = "Original records with owner requirements and research findings."
     corrections = [

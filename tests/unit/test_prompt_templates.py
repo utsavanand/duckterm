@@ -13,8 +13,8 @@ from duckterm.handoff_review import handoff_brief
     "name,digest",
     [
         ("digest_write", "62f5b3ce360f57d118861c7abd9c4acca467fbc6cc4253ea5c879b665b383b79"),
-        ("digest_validate", "bad23181ff80b59890d65f6158ba30afb07164fc92c351c4d3a10c5e0f06fb94"),
-        ("span_write", "620e26c6df6dd2aff42ce2cc3997f6acf3037ccf12e125496f3730b72f339528"),
+        ("digest_validate", "e06fffb0b69efe7fd4206e2f7237a975898e9f03267963254ae326a3744352f7"),
+        ("span_write", "96816961ee70c1bd838f833aab274ee2cca518a5b7cdc10fc6973c4cf3db59e4"),
     ],
 )
 def test_reviewed_summary_prompts_are_byte_identical(name, digest):

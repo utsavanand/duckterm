@@ -58,9 +58,12 @@ def parse(text: str) -> dict[str, Any] | None:
         if not isinstance(items, list):
             digest[key] = []
             continue
-        digest[key] = [str(i).strip()[:_MAX_ITEM_CHARS] for i in items if str(i).strip()][
-            :_MAX_ITEMS
-        ]
+        cleaned = [str(i).strip() for i in items if str(i).strip()][:_MAX_ITEMS]
+        if any(len(item) > _MAX_ITEM_CHARS for item in cleaned):
+            # These are reviewed facts, not display previews. Truncation can
+            # remove a qualification or turn complete prose into broken text.
+            return None
+        digest[key] = cleaned
     if not digest["summary"] and not any(digest[k] for k in KEYS):
         return None
     return digest
@@ -73,6 +76,14 @@ def parse_diagnostic(text: str) -> str:
         return "summary_must_be_text"
     if raw is not None and len(str(raw.get("summary") or "").strip()) > _MAX_SUMMARY_CHARS:
         return "summary_too_long"
+    if raw is not None:
+        for key in KEYS:
+            items = raw.get(key)
+            if isinstance(items, list) and any(
+                len(str(item).strip()) > _MAX_ITEM_CHARS
+                for item in [i for i in items if str(i).strip()][:_MAX_ITEMS]
+            ):
+                return "digest_item_too_long"
     return "invalid_digest"
 
 

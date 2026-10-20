@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from duckterm.core import progress
 
 
@@ -99,3 +101,17 @@ def test_hundred_word_summary_is_preserved_without_clipping() -> None:
     assert len(summary.split()) >= 100
     assert 400 < len(summary) < 2000
     assert progress.parse(json.dumps({"summary": summary}))["summary"] == summary
+
+
+@pytest.mark.parametrize("bucket", progress.KEYS)
+@pytest.mark.parametrize("char", ["x", "é"])
+def test_list_items_keep_complete_text_or_request_rewrite(bucket, char) -> None:
+    item = char * 159 + "."
+    assert progress.parse(json.dumps({"summary": "Current work.", bucket: [item]}))[bucket] == [
+        item
+    ]
+    # The old parser silently removed the restriction after the display limit.
+    item += " Do not deploy without owner approval."
+    reply = json.dumps({"summary": "Current work.", bucket: [item]})
+    assert progress.parse(reply) is None
+    assert progress.parse_diagnostic(reply) == "digest_item_too_long"

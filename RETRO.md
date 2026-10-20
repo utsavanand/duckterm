@@ -1,6 +1,13 @@
+## 2026-10-20 — Review generated corrections against original evidence too
+
+A real checkpoint replay exposed three separate defects beyond its initial retry-label failure. The reviewer proposed an old preparation step as remaining work, then rejected the writer for following that advice. Both models also inferred nonimplementation from a missing artifact, although later records reported the build running. Separately, Python silently clipped digest-list strings at 160 characters before review, manufacturing incomplete sentences and potentially removing qualifications.
+
+Treat requirement, acknowledgment and fulfillment as different facts. Preserve a requirement when fulfillment is unknown; do not assert it remains undone or repeat implementation merely because selected records omit the result. Later stages do not prove completion or waiver of an explicit prerequisite. Review proposed corrections against the source chronology and inspect the corrected result across every field. Reject overlong list items for the existing bounded rewrite instead of clipping them; state the limit in the writer prompt. Parser boundary/Unicode and real checkpoint retry/failure tests cover the transport contract, while real-model source comparisons assess content. A reviewer ACCEPTED result is not independent proof of fidelity. A retained-draft diagnostic did not resolve the semantic defect, so it does not justify increasing the correction budget.
+
 ## 2026-10-20 — A pending POST must not hide a completed checkpoint receipt
 
 The progress poll consumed only running receipts, so a delayed native POST left the bar at zero even after the server stored a failed result. Let the exact completed receipt settle the original shared promise. Validate both request IDs and a nonempty checkpoint ID, retain the owning host, stop polling, and ignore late transport callbacks. Reproduce with the POST still unresolved, not merely rejected; verify failures stay failures and no second POST is sent.
+
 
 ## 2026-10-20 — A paused-state notification is not shutdown completion
 
