@@ -13,10 +13,11 @@ from duckterm.handoff_review import handoff_brief
     "name,digest",
     [
         ("digest_write", "62f5b3ce360f57d118861c7abd9c4acca467fbc6cc4253ea5c879b665b383b79"),
-        ("digest_validate", "e1195f415855714ca3f62b4fcc4e6196df5456cc7bf420a1979318b4b9a61698"),
+        ("digest_validate", "bad23181ff80b59890d65f6158ba30afb07164fc92c351c4d3a10c5e0f06fb94"),
+        ("span_write", "620e26c6df6dd2aff42ce2cc3997f6acf3037ccf12e125496f3730b72f339528"),
     ],
 )
-def test_extracted_digest_prose_is_byte_identical(name, digest):
+def test_reviewed_summary_prompts_are_byte_identical(name, digest):
     assert hashlib.sha256(prompts.load(name).encode()).hexdigest() == digest
 
 

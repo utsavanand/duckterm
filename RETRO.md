@@ -1,3 +1,7 @@
+## 2026-10-19 — Review the writer and reviewer as one content contract
+
+An exclusion list did not tell the writer which facts deserved memory, while the reviewer rejected routine setup after generation. State the same positive inclusion and consequence-based noise rules on both sides, across prose and structured fields. Review for contradictions, preserve material setup failures and owner restrictions, and require actionable field-specific corrections. Exercise the actual writer/reviewer on fictional useful examples and deliberately bad candidates; prompt hashes and JSON-shape tests cannot establish summary quality.
+
 ## 2026-10-19 — Preserve review corrections when dropping a large rejected draft
 
 The summary rewrite path put reviewer feedback inside the optional draft copy. Its encoded-size guard could discard both, leaving the writer only a reason code. Keep actionable corrections separate from disposable generated text, preserve them when the input budget drops the draft, and fail explicitly if sources plus feedback cannot fit. Review the rewritten summary and overview again before saving coverage. Match writer and reviewer rules for routine setup while preserving setup failures that materially affect the work.
