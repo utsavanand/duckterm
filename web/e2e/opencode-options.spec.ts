@@ -11,7 +11,7 @@ test("OpenCode form reflects actual destination support and refuses unverified l
   await expect(page.getByLabel("OpenCode model")).toHaveValue("");
   await page.getByLabel("OpenCode model").fill("local/org/model:quantized");
   if (!support.launch.available) {
-    await expect(page.getByRole("status")).toContainText(support.launch.reason);
+    await expect(page.getByRole("dialog").getByRole("status")).toContainText(support.launch.reason);
     await expect(page.getByRole("button", { name: "Launch", exact: true })).toBeDisabled();
   }
   await page.getByText("OpenCode support", { exact: true }).click();
