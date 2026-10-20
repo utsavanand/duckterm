@@ -2,8 +2,11 @@ import { seedCheckpointSession, confirmCheckpoint } from "./checkpoint-fixture";
 import { expect, test } from "@playwright/test";
 import { apiDelete, apiPost, checkpoints, sessionMenu } from "./helpers";
 
-test("recovers the exact saved checkpoint after its POST response is lost", async ({ page }) => {
-  const key = `e2e-checkpoint-recovery-${Date.now()}`;
+for (const transport of ["lost", "pending"] as const) test(`recovers the exact saved checkpoint when its POST response is ${transport}`, async ({ page }) => {
+  const key = `e2e-checkpoint-recovery-${transport}-${Date.now()}`;
+  let releasePost: (() => void) | undefined;
+  let postReleased = false;
+  const heldPost = new Promise<void>(resolve => { releasePost = resolve; });
   await seedCheckpointSession(key, { name: "Checkpoint recovery", group: "Recovery QA" });
   try {
     await apiPost(`/sessions/${key}/checkpoint`, { label: "Unrelated earlier attempt" });
@@ -17,7 +20,10 @@ test("recovers the exact saved checkpoint after its POST response is lost", asyn
       const cp = await response.json();
       checkpointId = cp.id;
       expect(cp.request_id).toBe(requestId);
-      // Backend really saved this attempt; only its browser response is lost.
+      // Backend really saved this attempt. Keep its response pending until the
+      // UI independently settles from the receipt, then deliver a late error.
+      if (transport === "pending") await heldPost;
+      postReleased = true;
       await route.abort("failed");
     });
     await page.setViewportSize({ width: 1440, height: 1000 });
@@ -38,7 +44,13 @@ test("recovers the exact saved checkpoint after its POST response is lost", asyn
     // result is a summary failure. Request recovery must preserve that outcome.
     await expect(progress.getByRole("status")).toHaveText("Summary update failed");
     await expect(progress.getByText("Result not confirmed")).toHaveCount(0);
+    if (transport === "pending") {
+      expect(postReleased).toBe(false);
+      releasePost!();
+      await expect.poll(() => postReleased).toBe(true);
+      await expect(progress.getByRole("status")).toHaveText("Summary update failed");
+    }
     expect(posts).toBe(1);
     expect(await checkpoints(key)).toHaveLength(2);
-  } finally { await apiDelete(`/sessions/${key}`); }
+  } finally { releasePost?.(); await apiDelete(`/sessions/${key}`); }
 });

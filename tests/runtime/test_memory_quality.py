@@ -92,6 +92,73 @@ def test_routine_setup_repair_keeps_feedback_and_reviews_both_fields(memory_rig,
     assert saved["continuity"]["context"]["overview"] == saved["summary"]
 
 
+@pytest.mark.parametrize(
+    "codes,feedback,outcome,expected_calls",
+    [
+        (["invented_question"], True, "accepted", 4),
+        (["required_context_missing"], True, "accepted", 4),
+        (["invented_question", "unsupported_task"], True, "accepted", 4),
+        (["invented_question"], True, "rejected", 4),
+        (["invented_question"], True, "provider_timeout", 3),
+        (["invented_question"], False, "accepted", 2),
+    ],
+)
+def test_actionable_corrections_do_not_depend_on_reason_label(
+    memory_rig, monkeypatch, codes, feedback, outcome, expected_calls
+):
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "The comparison is only an optional suggestion, not a request.")
+    calls = []
+    correction = {
+        "field": "context.unfinished",
+        "claim": "The owner requested a comparison.",
+        "correction": "Remove the comparison from unfinished work; it was only offered.",
+    }
+
+    def generate(prompt, **kwargs):
+        calls.append(prompt)
+        if len(calls) == 3:
+            assert correction["correction"] in prompt
+            assert "not a request" in prompt
+            if outcome == "provider_timeout":
+                return Summary("", "none", "provider_timeout")
+        if prompt.startswith("You are validating"):
+            if len(calls) == 4 and outcome == "accepted":
+                assert "Only an optional comparison was offered." in prompt
+                return review()
+            return Summary(
+                json.dumps(
+                    {
+                        "accept": [],
+                        "summary_validation": {"ready": False, "reason_codes": codes},
+                        "summary_corrections": (
+                            [correction] if feedback else [{"field": "context.unfinished"}]
+                        ),
+                    }
+                ),
+                "fixture",
+            )
+        value = candidate(prompt)
+        value["summary"] = (
+            "The owner requested a comparison."
+            if len(calls) == 1
+            else "Only an optional comparison was offered."
+        )
+        return Summary(json.dumps(value), "fixture")
+
+    monkeypatch.setattr("duckterm.server.summarize", generate)
+    cp = asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
+    assert len(calls) == expected_calls
+    if outcome == "accepted" and feedback:
+        assert cp["summary_update"]["state"] == "updated", cp["summary_update"]
+        saved = server.digests.revision("agent", cp["record"]["summary_ref"])
+        assert saved["summary"] == "Only an optional comparison was offered."
+    else:
+        assert cp["summary_update"]["state"] == "failed"
+        assert cp["record"]["summary_ref"] is None
+        assert server.history.session("agent")["progress"] is None
+
+
 @pytest.mark.parametrize("issue", ["semantic", "format"])
 def test_full_span_leaves_room_for_correction_and_preserves_pending_records(
     memory_rig, monkeypatch, issue
