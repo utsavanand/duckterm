@@ -756,9 +756,13 @@ export interface CheckpointAttemptReceipt {
   result?: CheckpointRecord;
   error?: string;
 }
+export interface CheckpointAttemptCoverage {
+  state: "incomplete"; scope: "refresh_attempt"; revision_ids: string[];
+  available_records: number; eligible_records: number; summarized_records: number; pending_records: number; reference_only_records: number;
+}
 export interface CheckpointRecord {
   request_id?: string;
-  summary_update?: { state: "updated" | "reused" | "partial" | "failed"; reason?: string | null; attempted_at?: number; revision_id?: string | null };
+  summary_update?: { state: "updated" | "reused" | "partial" | "failed"; reason?: string | null; diagnostic?: string | null; attempted_at?: number; revision_id?: string | null; span_coverage?: CheckpointAttemptCoverage };
   format?: string;
   saved?: boolean;
   summary_state?: string;

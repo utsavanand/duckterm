@@ -7,6 +7,7 @@ import { chooseCheckpoint } from "./checkpointSelection";
 import { useToast } from "./ui";
 import { checkpointFailure } from "./checkpointState";
 import "./memoryView.css";
+import { checkpointMemoryAfterFailure } from "./CheckpointFailureCoverage";
 
 const labels: Record<string, string> = { goals: "Goals", constraints: "Constraints, callouts and learnings", decisions: "Decisions and learnings", unfinished: "Unfinished work", questions: "Open questions", risks: "Risks" };
 function Evidence({ sessionKey, evidence }: { sessionKey: string; evidence: MemoryEvidence }) {
@@ -75,7 +76,7 @@ export function MemoryView({ sessionKey, name, active = true, initialRevision = 
     <CheckpointProgress sessionKey={sessionKey} />
     {!attempt && (latestUpdate?.state === "failed" || latestUpdate?.state === "partial") && <div className="rd-memory-failure" role="status">
       <strong>{latestUpdate.state === "partial" ? "Checkpoint failed · summary incomplete" : "Latest summary update failed"}</strong>
-      <p>{latestUpdate.state === "partial" ? "The latest attempt did not summarize its required range." : checkpointFailure({ summary_update: latestUpdate }) + "."} The last-success clock has not reset. {current?.summary ? "Previously published memory is shown below." : "No usable saved summary is displayed."}</p>
+      <p>{latestUpdate.state === "partial" ? "The latest attempt did not summarize its required range." : checkpointFailure({ summary_update: latestUpdate }) + "."} {checkpointMemoryAfterFailure({ summary_update: latestUpdate })} {current?.summary ? "Saved memory is shown below." : "No usable saved summary is displayed."}</p>
     </div>}
     {error ? <p role="alert">{error} <button className="rd-btn rd-btn-sm" onClick={() => refresh(n => n + 1)}>Retry memory read</button></p> : !saved ? <p role="status">Reading saved memory…</p> : saved.state === "empty" ? <p>No saved summary yet. Recorded conversations are separate; nothing has been deleted.</p> : <>
       {saved.state === "unavailable" && <p role="alert">Saved evidence is unavailable. Affected summary text and claims are withheld.</p>}

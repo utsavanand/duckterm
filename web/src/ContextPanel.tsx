@@ -8,7 +8,7 @@ import { SessionView } from "./types";
 import { useToast } from "./ui";
 import { CheckpointAgeValue, publishCheckpointClock } from "./CheckpointAge";
 import { CheckpointFacts } from "./CheckpointStatus";
-import { checkpointStatus } from "./checkpointState";
+import { checkpointStatus, checkpointCanRetry } from "./checkpointState";
 import { chooseCheckpoint } from "./checkpointSelection";
 import { checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
 import { SessionPanelSection } from "./SessionPanelSection";
@@ -16,7 +16,7 @@ import { SessionPanelSection } from "./SessionPanelSection";
 // Right pane: context about the selected agent's terminal. If the session is on
 // a git branch, show a git view (branch, repo, and the working-tree diff). If
 // not, show the folder it's running in. (Approvals render above this in App.)
-export function ContextPanel({ session, active = true, onCheckpointTimeline, onMemory }: { session: SessionView; active?: boolean; onCheckpointTimeline?: () => void; onMemory?: () => void }) {
+export function ContextPanel({ session, active = true, onCheckpointTimeline, onMemory }: { session: SessionView; active?: boolean; onCheckpointTimeline?: () => void; onMemory?: (revision?: string) => void }) {
   const toast = useToast();
   const [diff, setDiff] = useState<string>("");
   const [branches, setBranches] = useState<string[]>([]);
@@ -49,6 +49,10 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
   const capacity = evidenceReady && Number.isSafeInteger(contextEvidence?.context_window_tokens) && contextEvidence!.context_window_tokens! > 0 ? contextEvidence!.context_window_tokens : null;
   const compactedAt = evidenceReady && contextEvidence?.last_compaction_at && Number.isFinite(Date.parse(contextEvidence.last_compaction_at)) ? contextEvidence.last_compaction_at : null;
   const noEvidence = activityState === "loading" ? "Loading…" : activityState === "error" ? "Couldn’t load context" : !contextEvidence ? "Not provided by this server" : "Not reported";
+
+  function checkpoint() {
+    void chooseCheckpoint(session.key, session.label).catch(e => toast(checkpointRequestError(e), "err"));
+  }
 
   async function compact() {
     setActing("compact");
@@ -127,12 +131,13 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
           <div><span>Events since saved capture</span><strong className={eventCount === null ? "rd-value-unavailable" : undefined}>{activityLabel}</strong></div></div>
         {lastCheckpoint && <details className="rd-section-disclosure" aria-label="Latest checkpoint">
           <summary>Latest attempt · {checkpointStatus(lastCheckpoint).label}</summary>
-          <CheckpointFacts checkpoint={lastCheckpoint} compact />
-          {onCheckpointTimeline && <button className="rd-timeline-link" onClick={onCheckpointTimeline}>Latest checkpoint ↗</button>}
+          <CheckpointFacts checkpoint={lastCheckpoint} compact onMemory={onMemory} />
+          <div className="rd-section-actions">{checkpointCanRetry(lastCheckpoint) && <button className="rd-timeline-link" disabled={!!checkpointRunning || !!session.hostOffline} onClick={checkpoint}>Retry checkpoint</button>}
+          {onCheckpointTimeline && <button className="rd-timeline-link" onClick={onCheckpointTimeline}>Latest checkpoint ↗</button>}</div>
         </details>}
-        <div className="rd-section-actions">{onMemory && <button className="rd-timeline-link" onClick={onMemory}>Read saved memory ↗</button>}
-          <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!!checkpointRunning || !!session.hostOffline} onClick={() => { void chooseCheckpoint(session.key, session.label).catch(e => toast(checkpointRequestError(e), "err")); }}>Checkpoint</button></div>
-        <details className="rd-section-disclosure rd-section-help"><summary>About saved memory</summary><p>Checkpoint saves a durable summary. Later failed attempts do not reset the last successful save.</p><p>Counts use the last successful checkpoint’s captured history boundary, including events recorded while that save was running. Events are recorded activity, not conversation turns or unsummarized records; older summary gaps may still exist.</p>{activity?.event_filter && <p>{activity.event_filter === "work-v1" ? "Uses the saved work-event filter; attendance and status-only notifications are excluded." : "Uses the saved all-events filter, including status observations."}</p>}</details>
+        <div className="rd-section-actions">{onMemory && <button className="rd-timeline-link" onClick={() => onMemory()}>Read saved memory ↗</button>}
+          <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!!checkpointRunning || !!session.hostOffline} onClick={checkpoint}>Checkpoint</button></div>
+        <details className="rd-section-disclosure rd-section-help"><summary>About saved memory</summary><p>Checkpoint saves a durable summary. A failed result does not certify readiness; saved memory may have advanced before a final source check failed.</p><p>Counts use the last successful checkpoint’s captured history boundary, including events recorded while that save was running. Events are recorded activity, not conversation turns or unsummarized records; older summary gaps may still exist.</p>{activity?.event_filter && <p>{activity.event_filter === "work-v1" ? "Uses the saved work-event filter; attendance and status-only notifications are excluded." : "Uses the saved all-events filter, including status observations."}</p>}</details>
       </SessionPanelSection>
       <SessionPanelSection key={`context-${session.key}`} title="Active context" initiallyOpen status={tokens ? `${tokens} tokens` : "Unknown"}>
         <p className="rd-section-purpose">Conversation currently used by the agent.</p>

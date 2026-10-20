@@ -69,6 +69,16 @@ it("refreshes after its own checkpoint completion without resetting success age 
   expect(screen.getByText("Last checkpointed 1h ago")).toBeVisible();
 });
 
+it("uses the reported clock after late source failure without claiming a rollback", async () => {
+  const memory = fixture(); memory.checkpoint_clock.succeeded_at = Date.now() - 60_000;
+  memory.latest_checkpoint = { id: "late", created_at: Date.now(), label: "manual", summary_update: { state: "failed", reason: "source_changed", diagnostic: "refresh_result:native_file_changed" } };
+  get.mockResolvedValue(memory);
+  render(<MemoryView sessionKey="late-source-memory" name="Memory" />);
+  await screen.findByText(/Saved memory may have advanced/);
+  expect(screen.queryByText(/clock has not reset|summary is unchanged/)).toBeNull();
+  expect(screen.getByText("Last checkpointed 1m ago")).toBeVisible();
+});
+
 it("keeps clocks host-scoped and distinguishes never, unknown and invalid timestamps", () => {
   publishCheckpointClock("clock", { state: "never", succeeded_at: null, checkpoint_id: null });
   publishCheckpointClock("remote::clock", { state: "known", succeeded_at: Date.now() - 3 * 86400000, checkpoint_id: "old" });

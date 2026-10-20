@@ -550,7 +550,7 @@ function Dashboard() {
               <button className="rd-btn rd-btn-ghost" style={{ margin: "0 18px 18px" }} onClick={() => setAppearanceFolder(null)}>View session override →</button>
             </> : <ContextViews session={<>
               {selected && <CheckpointProgress sessionKey={selected.key} />}
-              {selected && <LiveContextPanel key={`context-${selected.key}`} session={selected} onMemory={() => { setMemoryTarget(null); setView("memory"); }} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
+              {selected && <LiveContextPanel key={`context-${selected.key}`} session={selected} onMemory={revision => { setMemoryTarget(revision ? { key: selected.key, revision } : null); setView("memory"); }} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && <SessionPanelSection key={`appearance-${selected.key}`} title="Terminal appearance" status={themeOverrides.sessions[selected.key] || "Folder default"}>
                 <TerminalAppearance scope="sessions" target={selected.key} mode={mode} theme={themeOverrides.sessions[selected.key]} effectiveTheme={themeFor(selected)} onTheme={pick => setSessionTheme(selected.key, pick)} />
               </SessionPanelSection>}

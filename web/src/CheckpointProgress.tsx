@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef } from "react";
 import { useCheckpointAttempt } from "./checkpointRequests";
 import { checkpointAttemptFailed, checkpointFailure } from "./checkpointState";
 import "./checkpointProgress.css";
+import { checkpointMemoryAfterFailure } from "./CheckpointFailureCoverage";
 
 export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
   const attempt = useCheckpointAttempt(sessionKey);
@@ -33,7 +34,7 @@ export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
       case "updated": detail = "A new summary revision was saved. This does not mean all conversation history was summarized."; break;
       case "reused": detail = "The existing summary revision was reused."; break;
       case "partial": detail = "Some history remains unsummarized. This checkpoint is incomplete and not ready for handoff. The saved text is available for inspection."; break;
-      case "failed": detail = `${checkpointFailure(result)}. Any previously saved summary is unchanged.`; break;
+      case "failed": detail = `${checkpointFailure(result)}. ${checkpointMemoryAfterFailure(result)}`; break;
       default: detail = "The request returned. See the latest checkpoint for its saved summary and coverage.";
     }
   }

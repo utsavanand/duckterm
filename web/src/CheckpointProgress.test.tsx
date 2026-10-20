@@ -11,6 +11,14 @@ const result = (state: "updated" | "reused" | "partial" | "failed"): CheckpointR
   summary_update: { state, reason: state === "failed" ? "provider_timeout" : null },
   record: { prompts: [], files: [], tools: [], event_count: 0 },
 });
+it("does not promise rollback when a late source check fails after publication", async () => {
+  const cp = result("failed"); cp.summary_update!.reason = "source_changed";
+  vi.mocked(api.checkpoint).mockResolvedValue(cp);
+  render(<CheckpointProgress sessionKey="late-source-progress" />);
+  await act(async () => { await requestCheckpoint("late-source-progress"); });
+  expect(screen.getByText(/Saved memory may have advanced/)).toBeVisible();
+  expect(screen.queryByText(/summary is unchanged/)).toBeNull();
+});
 it("retains pending work across unmount, isolates equal keys on different hosts, and suppresses duplicate requests", async () => {
   vi.useFakeTimers();
   const local = "same-progress", remote = sessionRef("host-2", local);
