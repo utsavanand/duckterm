@@ -1,3 +1,5 @@
+import { AppearanceSettings } from "./AppearanceSettings";
+import { useInterfaceAppearance } from "./appearance";
 import { sidebarFolders } from "./sidebarFolders";
 import { SessionActions } from "./SessionActions";
 import type { SessionActionAnchor } from "./SessionActionMenu";
@@ -47,6 +49,7 @@ import { SessionView } from "./types";
 import {
   TermMode,
   ThemeOverrides,
+  AUTO,
   loadTermThemes,
   loadThemeOverrides,
   resolveTermTheme,
@@ -76,10 +79,11 @@ function Dashboard() {
   );
   const toast = useToast();
   const { theme, resolved: mode, setTheme } = useTheme();
+  const appearance = useInterfaceAppearance();
   const { density, setDensity } = useSidebarDensity();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "checkpointing" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "checkpointing" | "appearance" | null
   >(desktop()?.draft ? "launch" : null);
   const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerOpen, setTowerOpen] = useState(false);
@@ -332,7 +336,7 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <DashboardMenus sessions={sessions} density={density} onDensity={setDensity} theme={theme} onTheme={setTheme} termMode={mode} termTheme={termTheme} onTermTheme={setTermTheme} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
+        <DashboardMenus sessions={sessions} density={density} onDensity={setDensity} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
           if (action === "bugreport") {
             try { if (openNativeBugReport()) return; }
             catch (e) { toast(`Could not open the bug reporter: ${(e as Error).message}`, "err"); return; }
@@ -596,6 +600,7 @@ function Dashboard() {
       )}
       {modal === "bugreport" && <BugReport session={bugSession} onClose={() => setModal(null)} />}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
+      {modal === "appearance" && <AppearanceSettings {...appearance} theme={theme} mode={mode} onTheme={setTheme} termTheme={termTheme} onTermTheme={setTermTheme} onResetColors={() => setTermThemes({ dark: AUTO, light: AUTO })} onClose={() => setModal(null)} />}
       {modal === "checkpointing" && <CheckpointSettingsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal

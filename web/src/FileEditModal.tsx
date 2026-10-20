@@ -96,7 +96,7 @@ export function FileEditModal({
           width: "100%",
           height: 280,
           fontFamily: "ui-monospace, Menlo, monospace",
-          fontSize: 13,
+          fontSize: "0.8125rem",
           lineHeight: 1.5,
           padding: 12,
           border: "1px solid var(--border)",

@@ -1,17 +1,17 @@
 .rd-folder-with-details { display:flex!important; flex-direction:row!important; min-width:0; min-height:0 }
 .rd-folder-main { display:flex; flex-direction:column; flex:1; min-width:0; min-height:0; overflow:hidden }
-.rd-folder-details-toggle { float:right; margin-top:10px; font-size:12px }
+.rd-folder-details-toggle { float:right; margin-top:10px; font-size:0.75rem }
 .rd-folder-with-details .rd-btn { transition:opacity .12s ease }
-.rd-folder-details { flex:0 0 306px; border-left:1px solid var(--border); padding:18px; overflow:auto; min-height:0; font-size:12px }
+.rd-folder-details { flex:0 0 306px; border-left:1px solid var(--border); padding:18px; overflow:auto; min-height:0; font-size:0.75rem }
 .rd-folder-details > header { display:flex; align-items:center; justify-content:space-between; gap:10px }
-.rd-folder-details h2 { font-size:14px; font-weight:550; margin:0 }
-.rd-folder-details > small { display:block; font-size:10px; color:var(--text-soft); margin:12px 0 24px }
+.rd-folder-details h2 { font-size:0.875rem; font-weight:550; margin:0 }
+.rd-folder-details > small { display:block; font-size:0.625rem; color:var(--text-soft); margin:12px 0 24px }
 .rd-folder-details .rd-widget-grid { grid-template-columns:minmax(0,1fr) }
-.rd-folder-details .rd-widgets-heading h2 { font-size:12px }
+.rd-folder-details .rd-widgets-heading h2 { font-size:0.75rem }
 .rd-folder-activity,.rd-folder-kind-counts { padding:14px 12px }
-.rd-folder-activity > strong { font-size:20px; font-weight:500 }
-.rd-folder-activity p,.rd-folder-kind-counts p { font-size:10px; color:var(--text-soft); line-height:1.6 }
-.rd-folder-activity h4 { font-size:12px; font-weight:500; margin:16px 0 8px }
+.rd-folder-activity > strong { font-size:1.25rem; font-weight:500 }
+.rd-folder-activity p,.rd-folder-kind-counts p { font-size:0.625rem; color:var(--text-soft); line-height:1.6 }
+.rd-folder-activity h4 { font-size:0.75rem; font-weight:500; margin:16px 0 8px }
 .rd-folder-activity section button { display:block; background:none; border:0; padding:5px 0; color:var(--brand-green-strong); font:inherit; cursor:pointer }
 .rd-folder-period { display:flex; gap:5px; align-items:center; padding-top:18px }
 .rd-folder-period button,.rd-folder-actions button { border:1px solid var(--border); border-radius:6px; background:var(--bg); color:var(--text-soft); font:inherit; padding:6px 8px; cursor:pointer }
@@ -24,13 +24,13 @@
 .rd-folder-kind-counts strong { font-weight:500 }
 .rd-folder-actions { display:flex; flex-wrap:wrap; gap:7px; padding-top:15px; border-top:1px solid var(--border) }
 .rd-folder-details footer { margin-top:20px }
-.rd-folder-details footer small { display:block; color:var(--text-soft); margin-top:8px; font-size:10px }
+.rd-folder-details footer small { display:block; color:var(--text-soft); margin-top:8px; font-size:0.625rem }
 .rd-artifact-kinds { display:flex; flex-wrap:wrap; gap:5px; padding:0 26px 12px }
-.rd-artifact-kinds button { color:var(--text-soft); background:transparent; border:1px solid transparent; border-radius:5px; padding:5px 8px; font:inherit; font-size:11px; cursor:pointer }
+.rd-artifact-kinds button { color:var(--text-soft); background:transparent; border:1px solid transparent; border-radius:5px; padding:5px 8px; font:inherit; font-size:0.6875rem; cursor:pointer }
 .rd-artifact-kinds button[aria-pressed=true] { color:var(--brand-green-strong); background:var(--bg-soft); border-color:var(--border) }
-.rd-artifact-filter-summary { display:flex; gap:12px; flex-wrap:wrap; justify-content:space-between; padding:0 26px 14px; color:var(--text-soft); font-size:11px }
+.rd-artifact-filter-summary { display:flex; gap:12px; flex-wrap:wrap; justify-content:space-between; padding:0 26px 14px; color:var(--text-soft); font-size:0.6875rem }
 .rd-folder-categorized select { background:var(--card); color:var(--text); border:1px solid var(--border-strong); border-radius:6px; padding:6px; font:inherit; max-width:115px }
-.rd-folder-categorized .rd-btn { font-size:11px; padding:6px 9px }
+.rd-folder-categorized .rd-btn { font-size:0.6875rem; padding:6px 9px }
 .rd-folder-categorized tr.removed { color:var(--text-soft) }
 .rd-folder-categorized td:first-child { width:65%; overflow-wrap:anywhere }
 .rd-folder-details :is(button,input,select):focus-visible,.rd-folder-categorized :is(button,select):focus-visible,.rd-artifact-kinds button:focus-visible { outline:2px solid var(--brand-green); outline-offset:2px }

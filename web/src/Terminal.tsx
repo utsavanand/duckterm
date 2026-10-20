@@ -1,4 +1,5 @@
 import { terminalSocket, TerminalSocket, sessionFetch } from "./hostTransport";
+import { useAppearance, TERMINAL_FONTS } from "./appearance";
 import { memo, useEffect, useRef } from "react";
 import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -32,6 +33,8 @@ export const Terminal = memo(function Terminal({
   onConnection?: (connected: boolean) => void;
   theme?: string;
 }) {
+  const { appearance } = useAppearance();
+  const refitRef = useRef<(() => void) | null>(null);
   const connectionRef = useRef(onConnection);
   connectionRef.current = onConnection;
   const toast = useToast();
@@ -53,6 +56,14 @@ export const Terminal = memo(function Terminal({
   }, [theme]);
 
   useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.fontSize = appearance.terminalSize;
+    term.options.fontFamily = TERMINAL_FONTS[appearance.terminalFont].css;
+    refitRef.current?.();
+  }, [appearance.terminalSize, appearance.terminalFont]);
+
+  useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
@@ -60,8 +71,8 @@ export const Terminal = memo(function Terminal({
       // Match the attach snapshot's history depth (tmux capture -S -2000):
       // xterm's 1000-line default silently ate half the replayed history.
       scrollback: 5000,
-      fontSize: 12,
-      fontFamily: "ui-monospace, Menlo, monospace",
+      fontSize: appearance.terminalSize,
+      fontFamily: TERMINAL_FONTS[appearance.terminalFont].css,
       theme: TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME],
       cursorBlink: true,
       convertEol: false,
@@ -178,6 +189,7 @@ export const Terminal = memo(function Terminal({
         });
       });
     };
+    refitRef.current = settleOpening;
     activateRef.current = (nextVisible) => {
       visible = nextVisible;
       cancelAttachScroll();
@@ -307,6 +319,7 @@ export const Terminal = memo(function Terminal({
 
     return () => {
       disposed = true;
+      refitRef.current = null;
       activateRef.current = null;
       focusRef.current = null;
       cancelAttachScroll();

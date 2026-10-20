@@ -114,7 +114,7 @@ export function SessionDetail({
               alignItems: "center",
             }}
           >
-            <strong style={{ fontSize: 16 }}>{session.label}</strong>
+            <strong style={{ fontSize: "1rem" }}>{session.label}</strong>
             <button
               onClick={onClose}
               aria-label="Close"
@@ -124,7 +124,7 @@ export function SessionDetail({
               ✕ Close
             </button>
           </div>
-          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
+          <div style={{ fontSize: "0.75rem", color: "#6b7280", marginTop: 4 }}>
             {sessionStateLabel(session.state)} · {session.runtime ?? "—"} · {session.eventCount}{" "}
             events
             {session.branch ? ` · ${session.branch}` : ""} · started{" "}
@@ -133,7 +133,7 @@ export function SessionDetail({
           {session.intention && (
             <div
               style={{
-                fontSize: 13,
+                fontSize: "0.8125rem",
                 marginTop: 8,
                 fontStyle: "italic",
                 color: "#374151",
@@ -143,7 +143,7 @@ export function SessionDetail({
             </div>
           )}
           {session.outcome && (
-            <div style={{ fontSize: 13, marginTop: 4, color: "#4b5563" }}>
+            <div style={{ fontSize: "0.8125rem", marginTop: 4, color: "#4b5563" }}>
               {session.outcome}
             </div>
           )}
@@ -185,7 +185,7 @@ export function SessionDetail({
                 color: tab === t ? "#2563eb" : "#6b7280",
                 padding: "6px 12px",
                 borderRadius: 6,
-                fontSize: 13,
+                fontSize: "0.8125rem",
                 cursor: "pointer",
                 fontWeight: tab === t ? 600 : 400,
               }}
@@ -221,7 +221,7 @@ function Timeline({ events }: { events: RawEvent[] }) {
       {events.map((e) => (
         <div
           key={e._id}
-          style={{ display: "flex", gap: 10, padding: "6px 0", fontSize: 13 }}
+          style={{ display: "flex", gap: 10, padding: "6px 0", fontSize: "0.8125rem" }}
         >
           <span
             style={{
@@ -245,7 +245,7 @@ function Timeline({ events }: { events: RawEvent[] }) {
 function DiffView({ diff }: { diff: string }) {
   if (!diff)
     return (
-      <div style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.6 }}>
+      <div style={{ color: "var(--muted)", fontSize: "0.8125rem", lineHeight: 1.6 }}>
         <p style={{ margin: "0 0 6px", fontWeight: 600, color: "var(--text)" }}>
           Diff — stay tuned.
         </p>
@@ -259,7 +259,7 @@ function DiffView({ diff }: { diff: string }) {
   return (
     <pre
       style={{
-        fontSize: 12,
+        fontSize: "0.75rem",
         lineHeight: 1.5,
         margin: 0,
         whiteSpace: "pre-wrap",
@@ -304,7 +304,7 @@ function Checkpoints({
           marginBottom: 12,
         }}
       >
-        <span style={{ fontSize: 13, color: "#565869" }}>
+        <span style={{ fontSize: "0.8125rem", color: "#565869" }}>
           A record of what was done — prompts, files, tools, git state.
         </span>
         <button
@@ -363,7 +363,7 @@ function CapturingCard() {
         alignItems: "center",
         gap: 10,
         color: "#565869",
-        fontSize: 13,
+        fontSize: "0.8125rem",
       }}
     >
       <Spinner />
@@ -437,18 +437,18 @@ function Notes({ sessionKey }: { sessionKey: string }) {
 
   if (loading)
     return (
-      <p style={{ fontSize: 13, color: "var(--muted)" }}>Loading notes…</p>
+      <p style={{ fontSize: "0.8125rem", color: "var(--muted)" }}>Loading notes…</p>
     );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <p style={{ margin: 0, fontSize: 13, color: "var(--text-soft)" }}>
+      <p style={{ margin: 0, fontSize: "0.8125rem", color: "var(--text-soft)" }}>
         Your private notes for this session — things to do, reminders, context.
         Local only, never sent anywhere.
       </p>
 
       {notes.length === 0 ? (
-        <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>
+        <p style={{ margin: 0, fontSize: "0.8125rem", color: "var(--muted)" }}>
           No notes yet. Add one below.
         </p>
       ) : (
@@ -473,7 +473,7 @@ function Notes({ sessionKey }: { sessionKey: string }) {
                 border: "1px solid var(--border)",
                 borderRadius: 8,
                 background: "var(--bg-soft)",
-                fontSize: 13,
+                fontSize: "0.8125rem",
               }}
             >
               <span
@@ -511,7 +511,7 @@ function Notes({ sessionKey }: { sessionKey: string }) {
             padding: "8px 10px",
             border: "1px solid var(--border-strong)",
             borderRadius: 8,
-            fontSize: 13,
+            fontSize: "0.8125rem",
             fontFamily: "inherit",
             background: "var(--bg)",
             color: "var(--text)",
@@ -530,5 +530,5 @@ function Notes({ sessionKey }: { sessionKey: string }) {
 }
 
 function Empty({ text }: { text: string }) {
-  return <p style={{ color: "#9ca3af", fontSize: 13 }}>{text}</p>;
+  return <p style={{ color: "#9ca3af", fontSize: "0.8125rem" }}>{text}</p>;
 }

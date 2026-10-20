@@ -1,0 +1,71 @@
+import { expect, test } from "@playwright/test";
+import { apiDelete, apiPost } from "./helpers";
+
+test("appearance persists, scales the interface independently, and refits the live terminal without reconnecting", async ({ page }) => {
+  const result = await apiPost("/sessions/launch", { command: "sh -c 'printf \"APPEARANCE_READY\\n\"; exec cat'", cwd: "/tmp", name: "Appearance live review", in_terminal: false, test: true });
+  expect(result.status).toBe(200);
+  const key = String(result.body.session_key);
+  let sockets = 0;
+  page.on("websocket", socket => { if (socket.url().includes(`/sessions/${key}/terminal`)) sockets++; });
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto("/");
+    await page.locator(".rd-row-name", { hasText: "Appearance live review" }).click();
+    const terminal = page.locator(".rd-terminal-slot:visible .xterm");
+    await expect(terminal).toContainText("APPEARANCE_READY");
+    await terminal.locator("textarea").focus();
+    await page.keyboard.type("draft-kept");
+    await expect(terminal).toContainText("draft-kept");
+    const connected = sockets;
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Appearance", exact: true });
+    await page.getByRole("combobox", { name: "Theme", exact: true }).selectOption("dark");
+    const rows = terminal.locator(".xterm-rows");
+    const initialSize = await rows.evaluate(e => getComputedStyle(e).fontSize);
+    const name = page.locator(".rd-row-name", { hasText: "Appearance live review" });
+    const oldNameSize = await name.evaluate(e => parseFloat(getComputedStyle(e).fontSize));
+    await page.getByLabel("Interface font", { exact: true }).selectOption("georgia");
+    for (let i = 0; i < 6; i++) await page.getByRole("button", { name: "Larger interface text", exact: true }).click();
+    await expect.poll(() => name.evaluate(e => parseFloat(getComputedStyle(e).fontSize))).toBeGreaterThan(oldNameSize);
+    await expect(name).toHaveCSS("font-family", /Georgia/);
+    await expect(rows).toHaveCSS("font-size", initialSize);
+    await page.getByLabel("Terminal font", { exact: true }).selectOption("courier");
+    for (let i = 0; i < 12; i++) await page.getByRole("button", { name: "Larger terminal text", exact: true }).click();
+    await expect(rows).toHaveCSS("font-size", "24px");
+    await expect(rows).toHaveCSS("font-family", /Courier New/);
+    await page.getByRole("combobox", { name: "Color theme", exact: true }).selectOption("dracula");
+    await expect(terminal).toContainText("draft-kept");
+    expect(sockets).toBe(connected);
+    await page.screenshot({ path: "/tmp/duckterm-appearance-dark-max.png" });
+    await page.getByRole("combobox", { name: "Theme", exact: true }).selectOption("light");
+    await page.getByRole("combobox", { name: "Color theme", exact: true }).selectOption("solarized-light");
+    await page.screenshot({ path: "/tmp/duckterm-appearance-light-max.png" });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const overflow = await dialog.evaluate(e => e.scrollWidth > e.clientWidth + 1);
+    expect(overflow).toBe(false);
+    await page.screenshot({ path: "/tmp/duckterm-appearance-narrow-max.png" });
+    await page.getByRole("button", { name: "Done", exact: true }).click();
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await terminal.locator("textarea").focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => terminal.innerText()).toMatch(/draft-kept[\s\S]*draft-kept/);
+    expect(sockets).toBe(connected);
+    await page.reload();
+    await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toHaveCSS("font-size", "24px");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Appearance", exact: true }).click();
+    await expect(page.getByLabel("Interface font", { exact: true })).toHaveValue("georgia");
+    await expect(page.getByLabel("Terminal font", { exact: true })).toHaveValue("courier");
+    await page.getByRole("button", { name: "Reset to defaults", exact: true }).click();
+    await expect(page.getByLabel("interface text size", { exact: true })).toHaveText("14 px");
+    await expect(page.getByLabel("terminal text size", { exact: true })).toHaveText("12 px");
+    for (const mode of ["dark", "light"]) {
+      await page.getByRole("combobox", { name: "Theme", exact: true }).selectOption(mode);
+      await expect(page.getByRole("combobox", { name: "Color theme", exact: true })).toHaveValue("auto");
+    }
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
+  } finally { await apiDelete(`/sessions/${key}`); }
+});
