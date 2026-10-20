@@ -75,7 +75,7 @@ it("keeps folder expansion and selection when filters flatten and clear the tree
   const props = { sessions: [session("active"), session("resting", { state: "idle", group: "Other" })], now: 0,
     folders: ["Project", "Other", "Empty"], selectedKey: "active", onOpen,
     onFoldersChanged: vi.fn(), onSessionMoved: vi.fn(), onOpenGrid: vi.fn(), onNewSessionIn: vi.fn(),
-    onOpenFolderInbox: vi.fn(), folderThemes: {}, onSetFolderTheme: vi.fn(), termMode: "dark" as const };
+    onOpenFolderInbox: vi.fn(), folderThemes: {}, onOpenFolderAppearance: vi.fn() };
   const view = render(<ControlledTree {...props} />);
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
   fireEvent.click(screen.getByRole("button", { name: "Expand Project" }));

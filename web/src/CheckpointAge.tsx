@@ -31,3 +31,15 @@ export function CheckpointAge({ sessionKey, showDuck = false }: { sessionKey: st
     {showDuck && <Duck pose={clock?.state === "never" || (elapsed !== null && elapsed >= 3 * 86400000) ? "waving" : "idle"} size={28} />}<span aria-hidden="true">◷</span> {label}
   </p>;
 }
+
+// A factual, neutral value for the session panel. Do not substitute digest age
+// or the newest attempt's time for this successful-checkpoint projection.
+export function CheckpointAgeValue({ sessionKey }: { sessionKey: string }) {
+  const clock = useSyncExternalStore(subscribe, () => clocks.get(sessionKey) ?? null);
+  const now = useNow(60_000);
+  if (!clock) return <span>Unavailable</span>;
+  if (clock.state !== "known" || clock.succeeded_at === null) return <span>{clock.state === "never" ? "Never" : "Unknown"}</span>;
+  const mins = Math.max(0, Math.floor((now - clock.succeeded_at) / 60_000));
+  const value = mins < 1 ? "just now" : mins < 60 ? `${mins}m ago` : mins < 1440 ? `${Math.floor(mins / 60)}h ${mins % 60}m ago` : `${Math.floor(mins / 1440)}d ${Math.floor(mins / 60) % 24}h ago`;
+  return <span title={`Last successful checkpoint: ${new Date(clock.succeeded_at).toLocaleString()}`}>{value}</span>;
+}

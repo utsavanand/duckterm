@@ -2504,14 +2504,18 @@ select {
   color: var(--text);
 }
 
-/* Folder theme picker: an invisible select over the 🎨 icon. */
+/* Folder color settings stay reachable by pointer and keyboard. */
 .rd-group-theme-wrap {
   position: relative;
   font-size: 0.75rem;
   opacity: 0.45;
   cursor: pointer;
   flex-shrink: 0;
-  display: none; /* hover-reveal with the other secondary folder actions */
+  display: inline-block;
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  padding: 3px 4px;
 }
 .rd-group-head:hover .rd-group-theme-wrap,
 .rd-group-theme-wrap.set {

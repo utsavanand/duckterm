@@ -1,0 +1,67 @@
+/* One hierarchy for the session pane: overview, memory, context, disclosures. */
+.rd-context-pane #context-view-session { padding: 0; background: var(--bg-soft); font-size: .8125rem; line-height: 1.5; }
+.rd-session-overview { padding: 16px 20px; }
+.rd-session-overview-title { display: flex; align-items: center; gap: 9px; }
+.rd-session-overview-title h2 { margin: 0; font-size: 1.125rem; font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.rd-session-overview-state { margin-left: auto; color: var(--text-soft); font-size: .75rem; }
+.rd-session-overview .rd-section-purpose { margin: 6px 0 0; overflow-wrap: anywhere; }
+.rd-session-work { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; margin: 12px 0; padding: 0; border: 0; border-radius: 0; background: none; color: var(--text); font: inherit; text-align: left; width: 100%; overflow-wrap: anywhere; }
+button.rd-session-work { cursor: pointer; }
+.rd-session-work.open { display: block; }
+.rd-session-overview-model { color: var(--text-soft); font-size: .75rem; overflow-wrap: anywhere; }
+.rd-session-overview-model > span { margin: 0 5px; }
+.rd-session-overview-model strong { color: var(--text); font-weight: 400; }
+.rd-session-section { border-top: 1px solid var(--border); }
+.rd-session-section > summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 13px 20px; min-height: 46px; cursor: pointer; }
+.rd-session-section > summary::-webkit-details-marker { display: none; }
+.rd-session-section > summary:after { content: '›'; font-size: 1.125rem; line-height: 16px; width: 8px; flex: none; color: var(--text-soft); }
+.rd-session-section[open] > summary:after { transform: rotate(90deg); }
+.rd-session-section > summary > span:first-child { font-weight: 600; }
+.rd-session-section > summary:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.rd-section-status { margin-left: auto; font-size: .75rem; color: var(--text-soft); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rd-session-section[open] > summary .rd-section-status { visibility: hidden; }
+.rd-session-section-body { padding: 0 20px 16px; overflow-wrap: anywhere; }
+.rd-section-purpose { font-size: .75rem; color: var(--text-soft); margin: 0 0 14px; }
+.rd-session-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 14px; }
+.rd-session-metrics > div { min-width: 0; }
+.rd-session-metrics > div + div { border-left: 1px solid var(--border); padding-left: 16px; }
+.rd-session-metrics > div > span { display: block; font-size: .75rem; color: var(--text-soft); margin-bottom: 4px; }
+.rd-session-metrics strong { display: block; font-size: 1.1875rem; line-height: 1.4; font-weight: 500; font-variant-numeric: tabular-nums; }
+.rd-session-metrics .rd-value-unavailable { font-size: .875rem; line-height: 1.9; color: var(--text-soft); }
+.rd-session-context-total { display: flex; gap: 9px; align-items: baseline; margin-bottom: 10px; flex-wrap: wrap; }
+.rd-session-context-total strong { font-size: 1.375rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+.rd-session-context-total > span { font-size: .75rem; color: var(--text-soft); }
+.rd-session-facts { margin: 0; }
+.rd-session-facts > div { display: flex; justify-content: space-between; gap: 16px; padding: 4px 0; align-items: baseline; }
+.rd-session-facts dt { color: var(--text-soft); flex-shrink: 0; }
+.rd-session-facts dd { margin: 0; text-align: right; overflow-wrap: anywhere; min-width: 0; font-variant-numeric: tabular-nums; }
+.rd-section-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
+.rd-section-actions > .rd-btn { font-size: .75rem; padding: 5px 10px; border-radius: 4px; flex: none; }
+.rd-section-actions > span { color: var(--text-soft); font-size: .75rem; }
+.rd-section-separated { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 12px; }
+.rd-session-section .rd-timeline-link { color: var(--text); font-size: .75rem; }
+.rd-section-disclosure { margin-top: 10px; font-size: .75rem; }
+.rd-section-disclosure > summary { cursor: pointer; }
+.rd-section-disclosure p { color: var(--text-soft); margin: 8px 0; }
+.rd-section-help { margin-top: 12px; color: var(--text-soft); }
+.rd-session-section .rd-checkpoint-facts { font-size: .75rem; }
+.rd-session-section .rd-checkpoint-facts .ready { color: var(--text); }
+.rd-panel-theme { display: flex; flex-direction: column; gap: 8px; color: var(--text-soft); }
+.rd-panel-theme select { width: 100%; min-width: 0; font-size: .8125rem; margin-bottom: 9px; }
+.rd-context .rd-context-git, .rd-context .rd-context-folder { margin: 0; }
+.rd-context-pane .rd-checkpoint-progress { margin: 12px 20px; }
+.rd-context-pane .rd-session-controls { margin: 0; border: 0; border-radius: 0; background: transparent; }
+.rd-session-controls .rd-session-controls-meta > div { padding: 4px 0; border: 0; display: flex; justify-content: space-between; gap: 12px; }
+.rd-session-controls .rd-session-controls-meta dt { font-size: .8125rem; color: var(--text-soft); }
+.rd-session-controls .rd-session-controls-meta dd { font-size: .8125rem; text-align: right; margin: 0; }
+.rd-session-controls .rd-conversation-health { border: 0; border-top: 1px solid var(--border); margin-top: 12px; padding: 12px 0 0; }
+.rd-session-controls .rd-conversation-health h3 { font-size: .8125rem; }
+.rd-session-controls .rd-conversation-health p, .rd-session-controls .rd-conversation-health summary { font-size: .75rem; }
+.rd-session-controls .rd-row-notes-wrap { padding: 12px 0 0; }
+.rd-session-section summary:focus-visible, .rd-session-work:focus-visible { outline: 2px solid var(--brand-green); outline-offset: -2px; }
+
+/* WKWebView does not clamp text on native button boxes; clamp a child span. */
+.rd-session-work { display: block; }
+.rd-session-work-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.rd-session-work.open .rd-session-work-text { display: block; }
+.rd-session-section .rd-section-actions > .rd-btn { background: var(--card); color: var(--text); border: 1px solid var(--border-strong); }

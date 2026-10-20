@@ -190,7 +190,7 @@ export function GridView({
               <p className="rd-focus-at-rest">{["stopped", "archived", "terminated", "interrupted"].includes(s.state)
                 ? `${s.label} is ${sessionStateLabel(s.state)}. Its pin is saved.`
                 : "This session has no terminal in DuckTerm."}</p>
-            ) : <Terminal sessionKey={node.key} theme={themeFor(s)} />}
+            ) : <Terminal sessionKey={node.key} folder={s.group} theme={themeFor(s)} />}
           </div>
         </div>
       );

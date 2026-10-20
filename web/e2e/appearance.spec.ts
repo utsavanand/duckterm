@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiDelete, apiPost } from "./helpers";
+import { apiDelete, apiPatch, apiPost } from "./helpers";
 
 test("appearance persists, scales the interface independently, and refits the live terminal without reconnecting", async ({ page }) => {
   const result = await apiPost("/sessions/launch", { command: "sh -c 'printf \"APPEARANCE_READY\\n\"; exec cat'", cwd: "/tmp", name: "Appearance live review", in_terminal: false, test: true });
@@ -18,29 +18,24 @@ test("appearance persists, scales the interface independently, and refits the li
     await expect(terminal).toContainText("draft-kept");
     const connected = sockets;
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Appearance", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Appearance", exact: true });
-    await page.getByRole("combobox", { name: "Theme", exact: true }).selectOption("dark");
+    await page.getByRole("button", { name: "Text sizes", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Text sizes", exact: true });
     const rows = terminal.locator(".xterm-rows");
     const initialSize = await rows.evaluate(e => getComputedStyle(e).fontSize);
     const name = page.locator(".rd-row-name", { hasText: "Appearance live review" });
     const oldNameSize = await name.evaluate(e => parseFloat(getComputedStyle(e).fontSize));
-    await page.getByLabel("Interface font", { exact: true }).selectOption("georgia");
+    const originalFont = await name.evaluate(e => getComputedStyle(e).fontFamily);
     for (let i = 0; i < 6; i++) await page.getByRole("button", { name: "Larger interface text", exact: true }).click();
     await expect.poll(() => name.evaluate(e => parseFloat(getComputedStyle(e).fontSize))).toBeGreaterThan(oldNameSize);
-    await expect(name).toHaveCSS("font-family", /Georgia/);
+    await expect(name).toHaveCSS("font-family", originalFont);
     await expect(rows).toHaveCSS("font-size", initialSize);
-    await page.getByLabel("Terminal font", { exact: true }).selectOption("courier");
+    const originalTerminalFont = await rows.evaluate(e => getComputedStyle(e).fontFamily);
     for (let i = 0; i < 12; i++) await page.getByRole("button", { name: "Larger terminal text", exact: true }).click();
     await expect(rows).toHaveCSS("font-size", "24px");
-    await expect(rows).toHaveCSS("font-family", /Courier New/);
-    await page.getByRole("combobox", { name: "Color theme", exact: true }).selectOption("dracula");
+    await expect(rows).toHaveCSS("font-family", originalTerminalFont);
     await expect(terminal).toContainText("draft-kept");
     expect(sockets).toBe(connected);
     await page.screenshot({ path: "/tmp/duckterm-appearance-dark-max.png" });
-    await page.getByRole("combobox", { name: "Theme", exact: true }).selectOption("light");
-    await page.getByRole("combobox", { name: "Color theme", exact: true }).selectOption("solarized-light");
-    await page.screenshot({ path: "/tmp/duckterm-appearance-light-max.png" });
     await page.setViewportSize({ width: 390, height: 844 });
     const overflow = await dialog.evaluate(e => e.scrollWidth > e.clientWidth + 1);
     expect(overflow).toBe(false);
@@ -54,18 +49,85 @@ test("appearance persists, scales the interface independently, and refits the li
     await page.reload();
     await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toHaveCSS("font-size", "24px");
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Appearance", exact: true }).click();
-    await expect(page.getByLabel("Interface font", { exact: true })).toHaveValue("georgia");
-    await expect(page.getByLabel("Terminal font", { exact: true })).toHaveValue("courier");
-    await page.getByRole("button", { name: "Reset to defaults", exact: true }).click();
+    await page.getByRole("button", { name: "Text sizes", exact: true }).click();
+    await expect(dialog.getByRole("combobox")).toHaveCount(0);
+    await expect(page.locator(".rd-appearance-preview")).toHaveCount(0);
+    await page.getByRole("button", { name: "Reset text sizes", exact: true }).click();
     await expect(page.getByLabel("interface text size", { exact: true })).toHaveText("14 px");
     await expect(page.getByLabel("terminal text size", { exact: true })).toHaveText("12 px");
-    for (const mode of ["dark", "light"]) {
-      await page.getByRole("combobox", { name: "Theme", exact: true }).selectOption(mode);
-      await expect(page.getByRole("combobox", { name: "Color theme", exact: true })).toHaveValue("auto");
-    }
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeFocused();
   } finally { await apiDelete(`/sessions/${key}`); }
+});
+
+test("folder colors inherit, session overrides persist, and explicit program colors gain contrast without reconnecting", async ({ page }) => {
+  const group = `Colors-${Date.now()}`;
+  await apiPost("/folders", { name: group });
+  const launched = await apiPost("/sessions/launch", { command: "sh -c 'printf \"\\033[38;5;231mFIXED_WHITE\\033[0m\\n\\033[38;5;77mINDEX_GREEN\\033[0m\\n\\033[31mANSI_RED\\033[0m\\n\\033[1mBOLD_TEXT\\033[0m\\n\\033[2mDIM_TEXT\\033[0m\\n\\033[1;31mBOLD_RED\\033[0m\\nDEFAULT_TEXT\\n\"; exec cat'", cwd: "/tmp", name: "Contrast review", group, in_terminal: false, test: true });
+  expect(launched.status).toBe(200);
+  const key = String(launched.body.session_key);
+  expect((await apiPatch(`/sessions/${key}`, { group })).status).toBe(200);
+  let connections = 0;
+  page.on("websocket", socket => { if (socket.url().includes(`/sessions/${key}/terminal`)) connections++; });
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto("/");
+    await page.getByRole("button", { name: `Expand ${group}`, exact: true }).click();
+    await page.locator(".rd-row-name", { hasText: "Contrast review" }).click();
+    const term = page.locator(".rd-terminal-slot:visible .xterm");
+    await expect(term).toContainText("FIXED_WHITE");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("combobox", { name: "App theme", exact: true }).selectOption("dark");
+    await page.keyboard.press("Escape");
+    const initialConnections = connections;
+    const color = (text: string) => term.locator(".xterm-rows > div").filter({ hasText: text }).first().locator("span").first().evaluate(e => getComputedStyle(e).color);
+    const originalWhite = await color("FIXED_WHITE");
+    const originalGreen = await color("INDEX_GREEN");
+    await page.getByRole("button", { name: `Terminal colors for ${group}`, exact: true }).click();
+    await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("gruvbox-dark");
+    await expect.poll(() => color("FIXED_WHITE")).toBe("rgb(235, 219, 178)");
+    expect(await color("FIXED_WHITE")).not.toBe(originalWhite);
+    await expect.poll(() => color("INDEX_GREEN")).not.toBe(originalGreen);
+    await expect.poll(() => color("DEFAULT_TEXT")).toBe("rgb(235, 219, 178)");
+    const bold = term.locator(".xterm-bold").filter({ hasText: "BOLD_TEXT" });
+    const dim = term.locator(".xterm-dim").filter({ hasText: "DIM_TEXT" });
+    await expect(bold).toHaveCSS("color", "rgb(131, 165, 152)");
+    await expect(dim).toHaveCSS("color", "rgba(235, 219, 178, 0.82)");
+    const explicitRed = await color("BOLD_RED");
+    await page.getByRole("combobox", { name: "Text styling", exact: true }).selectOption("program");
+    await expect(bold).toHaveCSS("color", "rgb(235, 219, 178)");
+    await expect(dim).not.toHaveCSS("color", "rgba(235, 219, 178, 0.82)");
+    await page.getByRole("combobox", { name: "Text styling", exact: true }).selectOption("enhanced");
+    await expect(bold).toHaveCSS("color", "rgb(131, 165, 152)");
+    await expect.poll(() => color("BOLD_RED")).toBe(explicitRed);
+    expect(explicitRed).not.toBe(await color("BOLD_TEXT"));
+    await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("nord");
+    await expect.poll(() => color("FIXED_WHITE")).toBe("rgb(216, 222, 233)");
+    expect(connections).toBe(initialConnections);
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("combobox", { name: "App theme", exact: true }).selectOption("light");
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: `Terminal colors for ${group}`, exact: true }).click();
+    await expect.poll(() => color("FIXED_WHITE")).not.toBe("rgb(255, 255, 255)");
+    await page.getByRole("combobox", { name: "Text contrast", exact: true }).selectOption("preserve");
+    await expect.poll(() => color("FIXED_WHITE")).toBe("rgb(255, 255, 255)");
+    await page.getByRole("combobox", { name: "Text contrast", exact: true }).selectOption("readable");
+    await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("solarized-light");
+    await page.getByRole("button", { name: "View session override →" }).click();
+    await page.getByRole("tab", { name: "Session", exact: true }).click();
+    await page.locator(".rd-session-section > summary").filter({ hasText: /^Terminal appearance/ }).click();
+    await page.getByRole("combobox", { name: "Theme for this session", exact: true }).selectOption("paper");
+    await expect(page.locator(".rd-terminal-appearance-effective")).toContainText("Paper");
+    await page.getByRole("combobox", { name: "Text styling", exact: true }).selectOption("program");
+    await page.reload();
+    await page.getByRole("tab", { name: "Session", exact: true }).click();
+    await page.locator(".rd-session-section > summary").filter({ hasText: /^Terminal appearance/ }).click();
+    await expect(page.getByRole("combobox", { name: "Text styling", exact: true })).toHaveValue("program");
+    await expect(page.getByRole("combobox", { name: "Theme for this session", exact: true })).toHaveValue("paper");
+    await page.getByRole("combobox", { name: "Theme for this session", exact: true }).selectOption("");
+    await expect(page.locator(".rd-terminal-appearance-effective")).toContainText("Solarized Light");
+    expect(connections).toBe(initialConnections + 1); // Only the deliberate reload reconnects.
+    await expect.poll(() => color("FIXED_WHITE")).not.toBe("rgb(255, 255, 255)");
+  } finally { await apiDelete(`/sessions/${key}`); await apiDelete(`/folders/${encodeURIComponent(group)}`); }
 });

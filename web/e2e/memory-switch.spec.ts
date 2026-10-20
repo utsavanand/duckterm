@@ -69,6 +69,7 @@ test("approved preparation dialog and milestone Timeline preserve existing contr
       Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
     });
     await page.goto(base()); await page.locator(".rd-row-name", { hasText: "Workspace developer" }).click();
+    await page.locator(".rd-session-controls .rd-session-section > summary").click();
     const panelAction = page.getByRole("region", { name: "Session controls" }).getByRole("button", { name: "Change harness", exact: true });
     await panelAction.click();
     await expect(page.getByRole("dialog", { name: "Change harness", exact: true })).toBeVisible();
