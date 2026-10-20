@@ -39,6 +39,7 @@ test("harness preparation shows measured progress and recovers status without re
     await page.setViewportSize({ width: 1320, height: 1000 });
     await page.addInitScript(() => { if (!localStorage.getItem("rd-theme")) localStorage.setItem("rd-theme", "dark"); });
     await page.goto(base()); await page.locator(".rd-row-name", { hasText: "Progress review" }).click();
+    if (await page.locator(".rd-session-controls .rd-session-section").getAttribute("open") === null) await page.locator(".rd-session-controls .rd-session-section > summary").click();
     await page.getByRole("region", { name: "Session controls" }).getByRole("button", { name: "Change harness", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Change harness", exact: true });
     await dialog.getByRole("button", { name: "Prepare handoff" }).click();
@@ -68,6 +69,7 @@ test("harness preparation shows measured progress and recovers status without re
     ready = false; progress = { ...progress, stage: "checking", completed: 12, updated_at: Date.now() };
     await page.setViewportSize({ width: 1320, height: 1000 }); await page.reload();
     await page.locator(".rd-row-name", { hasText: "Progress review" }).click();
+    if (await page.locator(".rd-session-controls .rd-session-section").getAttribute("open") === null) await page.locator(".rd-session-controls .rd-session-section > summary").click();
     await page.getByRole("region", { name: "Session controls" }).getByRole("button", { name: "Change harness", exact: true }).click();
     await dialog.getByRole("button", { name: "Prepare handoff" }).click();
     await expect(dialog.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "12");

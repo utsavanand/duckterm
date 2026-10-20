@@ -1,5 +1,7 @@
 # TODO
 
+- Appearance: removed the misleading live sample. Review colors in the actual terminal through folder defaults and session overrides; keep text sizes separate. Any future sample must exercise program-selected indexed and RGB colors.
+
 - **Re-home approvals.** The right-panel approvals box is removed (2026-09-20)
   — as a sticky expandable card it overlapped the panel content, and the user's
   real workflow is answering in the session's terminal anyway. Ideas for a

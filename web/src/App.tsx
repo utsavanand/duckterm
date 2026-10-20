@@ -1,3 +1,4 @@
+import { TerminalAppearance } from "./TerminalAppearance";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { useInterfaceAppearance } from "./appearance";
 import { sidebarFolders } from "./sidebarFolders";
@@ -15,6 +16,7 @@ import { FolderView } from "./FolderView";
 import { api } from "./api";
 import { desktop, openNativeBugReport } from "./desktop";
 import { Connectors } from "./Connectors";
+import { SessionPanelSection } from "./SessionPanelSection";
 import { CheckpointProgress } from "./CheckpointProgress";
 import { ContextViews } from "./ContextViews";
 import { Analytics } from "./Analytics";
@@ -49,13 +51,10 @@ import { SessionView } from "./types";
 import {
   TermMode,
   ThemeOverrides,
-  AUTO,
   loadTermThemes,
   loadThemeOverrides,
   resolveTermTheme,
-  saveTermThemes,
   saveThemeOverrides,
-  themesForMode,
 } from "./termThemes";
 import { Modal, ToastProvider, useToast } from "./ui";
 import { useEventStream } from "./useEventStream";
@@ -92,9 +91,11 @@ function Dashboard() {
   const defaultSelection = sessions.find(s => s.state !== "archived")?.key ?? null;
   const { selectedKey, selectSession } = useSessionSelection(sessions, defaultSelection, loadedHosts);
   const [terminalFocus, setTerminalFocus] = useState({ key: "", revision: 0 });
+  const [appearanceFolder, setAppearanceFolder] = useState<string | null>(null);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const setSelectedKey = useCallback((key: string | null) => {
     setSelectedFolder(null);
+    setAppearanceFolder(null);
     selectSession(key);
   }, [selectSession]);
   useEffect(() => {
@@ -167,14 +168,10 @@ function Dashboard() {
   }
   // Terminal color theme, per app mode: the terminal follows the light/dark
   // toggle, and each mode remembers its own pick ("auto" = the mode default).
-  const [termThemes, setTermThemes] =
-    useState<Record<TermMode, string>>(loadTermThemes);
-  useEffect(() => {
-    saveTermThemes(termThemes);
-  }, [termThemes]);
+  // Keep earlier global preferences as a fallback; new color choices belong
+  // to folders and sessions, never the text-size dialog.
+  const [termThemes] = useState<Record<TermMode, string>>(loadTermThemes);
   const termTheme = termThemes[mode];
-  const setTermTheme = (pick: string) =>
-    setTermThemes((p) => ({ ...p, [mode]: pick }));
   // Per-session / per-folder theme overrides (session > nearest folder > global).
   const [themeOverrides, setThemeOverrides] =
     useState<ThemeOverrides>(loadThemeOverrides);
@@ -336,7 +333,7 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <DashboardMenus sessions={sessions} density={density} onDensity={setDensity} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
+        <DashboardMenus theme={theme} onTheme={setTheme} sessions={sessions} density={density} onDensity={setDensity} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
           if (action === "bugreport") {
             try { if (openNativeBugReport()) return; }
             catch (e) { toast(`Could not open the bug reporter: ${(e as Error).message}`, "err"); return; }
@@ -424,8 +421,7 @@ function Dashboard() {
                   setModal("launch");
                 }}
                 folderThemes={themeOverrides.folders}
-                onSetFolderTheme={setFolderTheme}
-                termMode={mode}
+                onOpenFolderAppearance={folder => { setAppearanceFolder(folder); setSelectedFolder(null); sidePanels.show("right"); }}
               />
             )}
           </section>
@@ -516,7 +512,7 @@ function Dashboard() {
                       : "none",
                 }}
               >
-                <Terminal sessionKey={s.key} active={selectedFolder === null && view === "terminal" && s.key === selectedKey} focusRequest={terminalFocus.key === s.key ? terminalFocus.revision : 0} theme={themeFor(s)} />
+                <Terminal sessionKey={s.key} folder={s.group} active={selectedFolder === null && view === "terminal" && s.key === selectedKey} focusRequest={terminalFocus.key === s.key ? terminalFocus.revision : 0} theme={themeFor(s)} />
                 {view === "terminal" && s.key === selectedKey && <FloatingSessionShortcuts sessions={sessions} selected={s}
                   onOpen={key => { setSelectedKey(key); setTerminalFocus(previous => ({ key, revision: previous.revision + 1 })); }}
                   onToggle={toggleSessionPin} />}
@@ -537,33 +533,23 @@ function Dashboard() {
 
           <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`} style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-panel-head">
-              <span>{selected ? selected.label : "Context"}</span>
+              <span>{appearanceFolder ? `${appearanceFolder} · Folder` : selected ? selected.label : "Context"}</span>
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
-            <ContextViews session={<>
+            {appearanceFolder ? <>
+              <h2 className="rd-folder-colors-heading">{appearanceFolder.split("/").pop()}</h2>
+              <TerminalAppearance key={`folder-${appearanceFolder}`} scope="folders" target={appearanceFolder} mode={mode} theme={themeOverrides.folders[appearanceFolder]} effectiveTheme={resolveTermTheme(themeOverrides, termTheme, mode, "", appearanceFolder)} onTheme={pick => setFolderTheme(appearanceFolder, pick)} overrideCount={sessions.filter(s => (s.group === appearanceFolder || s.group?.startsWith(appearanceFolder + "/")) && themeOverrides.sessions[s.key]).length} />
+              <button className="rd-btn rd-btn-ghost" style={{ margin: "0 18px 18px" }} onClick={() => setAppearanceFolder(null)}>View session override →</button>
+            </> : <ContextViews session={<>
+              {selected && <CheckpointProgress sessionKey={selected.key} />}
+              {selected && <LiveContextPanel key={`context-${selected.key}`} session={selected} onMemory={() => { setMemoryTarget(null); setView("memory"); }} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
+              {selected && selected.ptyOwned && <SessionPanelSection key={`appearance-${selected.key}`} title="Terminal appearance" status={themeOverrides.sessions[selected.key] || "Folder default"}>
+                <TerminalAppearance scope="sessions" target={selected.key} mode={mode} theme={themeOverrides.sessions[selected.key]} effectiveTheme={themeFor(selected)} onTheme={pick => setSessionTheme(selected.key, pick)} />
+              </SessionPanelSection>}
               {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}
                 notesOpen={notesKey === selected.key} onCloseNotes={() => setNotesKey(null)} />}
-              {selected && <CheckpointProgress sessionKey={selected.key} />}
-              {selected && <LiveContextPanel session={selected} onMemory={() => { setMemoryTarget(null); setView("memory"); }} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
-              {selected && selected.ptyOwned && (
-                <label className="rd-session-theme">
-                  terminal theme
-                  <select
-                    value={themeOverrides.sessions[selected.key] ?? ""}
-                    onChange={(e) =>
-                      setSessionTheme(selected.key, e.target.value || null)
-                    }
-                  >
-                    <option value="">folder / {mode} default</option>
-                    {themesForMode(mode).map((t) => (
-                      <option key={t} value={t}>
-                        {t}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </>} connectors={<Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} />} />
+            </>} connectors={<Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} />} />}
+
           </section>
         </div>
       )}
@@ -600,7 +586,7 @@ function Dashboard() {
       )}
       {modal === "bugreport" && <BugReport session={bugSession} onClose={() => setModal(null)} />}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
-      {modal === "appearance" && <AppearanceSettings {...appearance} theme={theme} mode={mode} onTheme={setTheme} termTheme={termTheme} onTermTheme={setTermTheme} onResetColors={() => setTermThemes({ dark: AUTO, light: AUTO })} onClose={() => setModal(null)} />}
+      {modal === "appearance" && <AppearanceSettings {...appearance} onClose={() => setModal(null)} />}
       {modal === "checkpointing" && <CheckpointSettingsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal

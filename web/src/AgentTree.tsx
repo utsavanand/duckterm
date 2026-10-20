@@ -10,7 +10,6 @@ import { HelperAgents } from "./HelperAgents";
 import { ReactNode, useEffect, useState } from "react";
 import { api } from "./api";
 import { Duck, poseFor } from "./Duck";
-import { TermMode, themesForMode } from "./termThemes";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
@@ -37,8 +36,7 @@ export function AgentTree({
   onNewSessionIn,
   onOpenFolderInbox,
   folderThemes,
-  onSetFolderTheme,
-  termMode,
+  onOpenFolderAppearance,
 }: {
   filterControls: SidebarFilterControls;
   sessions: SessionView[];
@@ -59,8 +57,7 @@ export function AgentTree({
   onNewSessionIn: (folder: string) => void;
   onOpenFolderInbox: (folder: string) => void;
   folderThemes: Record<string, string>;
-  onSetFolderTheme: (folder: string, theme: string | null) => void;
-  termMode: TermMode;
+  onOpenFolderAppearance?: (folder: string) => void;
 }) {
   const { filters, toggle, clear, saveError, expanded } = filterControls;
   const visibleSessions = sidebarSessions(sessions);
@@ -251,8 +248,7 @@ export function AgentTree({
       onOpenGrid={() => onOpenGrid(path)}
       onOpenInbox={() => onOpenFolderInbox(path)}
       theme={folderThemes[path]}
-      onSetTheme={(t) => onSetFolderTheme(path, t)}
-      termMode={termMode}
+      onOpenAppearance={() => onOpenFolderAppearance?.(path)}
     >
       {(byFolder.get(path) ?? []).map((n) => renderNode(n, depth + 1))}
       {childrenOf(path).map((c) => renderFolder(c, depth + 1))}
@@ -318,8 +314,7 @@ function GroupHeader({
   onOpenGrid,
   onOpenInbox,
   theme,
-  onSetTheme,
-  termMode,
+  onOpenAppearance,
   children,
 }: {
   name: string;
@@ -339,8 +334,7 @@ function GroupHeader({
   onOpenGrid: () => void;
   onOpenInbox: () => void;
   theme: string | undefined;
-  onSetTheme: (theme: string | null) => void;
-  termMode: TermMode;
+  onOpenAppearance: () => void;
   children: ReactNode;
 }) {
   const [over, setOver] = useState(false);
@@ -401,25 +395,7 @@ function GroupHeader({
             <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .3 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.4 1.8.6 2.8.7a2 2 0 0 1 1.8 2.1z" />
           </svg>
         </button>
-        <span
-          className={`rd-group-theme-wrap${theme ? " set" : ""}`}
-          title={`Terminal theme for this folder: ${theme ?? "default"}`}
-          onClick={(e) => e.stopPropagation()}
-        >
-          🎨
-          <select
-            className="rd-group-theme"
-            value={theme ?? ""}
-            onChange={(e) => onSetTheme(e.target.value || null)}
-          >
-            <option value="">default ({termMode})</option>
-            {themesForMode(termMode).map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </span>
+        <button className={`rd-group-theme-wrap${theme ? " set" : ""}`} aria-label={`Terminal colors for ${name}`} title={`Terminal colors for ${name}`} onClick={onOpenAppearance}>🎨</button>
         <button
           className="rd-group-grid"
           title="Open this folder's terminals in a grid"
