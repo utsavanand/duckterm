@@ -7,7 +7,7 @@ import { desktop } from "./desktop";
 import { SessionPin } from "./SessionPin";
 import { SessionLocationDuck } from "./SessionLocationDuck";
 import { HelperAgents } from "./HelperAgents";
-import { ReactNode, useEffect, useState } from "react";
+import { ReactNode, useEffect, useState, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
 import { api } from "./api";
 import { Duck, poseFor } from "./Duck";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
@@ -17,6 +17,7 @@ import { useToast } from "./ui";
 // The left panel: every session as a row, with forks nested under their parent
 // via parentKey. Keep Focus pins beside sessions; session actions live in the right-click menu.
 export function AgentTree({
+  expansion,
   filterControls,
   sessions,
   now,
@@ -38,6 +39,7 @@ export function AgentTree({
   folderThemes,
   onOpenFolderAppearance,
 }: {
+  expansion?: { folders: [Set<string>, Dispatch<SetStateAction<Set<string>>>]; archives: [boolean, Dispatch<SetStateAction<boolean>>]; scroll: MutableRefObject<{ tree: number; content: number }> };
   filterControls: SidebarFilterControls;
   sessions: SessionView[];
   now: number;
@@ -62,9 +64,11 @@ export function AgentTree({
   const { filters, toggle, clear, saveError, expanded } = filterControls;
   const visibleSessions = sidebarSessions(sessions);
   const archivedSessions = sessions.filter(s => ["archived", "merged"].includes(s.state));
-  const [archivesOpen, setArchivesOpen] = useState(false);
+  const localArchives = useState(false);
+  const [archivesOpen, setArchivesOpen] = expansion?.archives ?? localArchives;
   const filtering = hasFilters(filters);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
+  const localFolders = useState<Set<string>>(() => new Set());
+  const [expandedFolders, setExpandedFolders] = expansion?.folders ?? localFolders;
   useEffect(() => {
     const reveal = (event: Event) => {
       const path = (event as CustomEvent<string>).detail;
@@ -73,7 +77,7 @@ export function AgentTree({
     };
     window.addEventListener("reveal-sidebar-folder", reveal);
     return () => window.removeEventListener("reveal-sidebar-folder", reveal);
-  }, []);
+  }, [setExpandedFolders]);
   const folders = sidebarFolders(savedFolders, sessions);
   const toast = useToast();
   const roots = buildForest(visibleSessions);
@@ -256,7 +260,8 @@ export function AgentTree({
   );
 
   return (
-    <div className="rd-sidebar-content" onKeyDown={event => {
+    <div className="rd-sidebar-content" ref={node => { if (node && expansion) node.scrollTop = expansion.scroll.current.content; }}
+      onScroll={event => { if (expansion) expansion.scroll.current.content = event.currentTarget.scrollTop; }} onKeyDown={event => {
       if (event.key === "Escape" && filtering) {
         event.preventDefault();
         event.stopPropagation();
@@ -266,7 +271,8 @@ export function AgentTree({
       }
     }}>
     <SidebarFilters sessions={visibleSessions} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} expanded={expanded} />
-    <div className="rd-tree">
+    <div className="rd-tree" ref={node => { if (node && expansion) node.scrollTop = expansion.scroll.current.tree; }}
+      onScroll={event => { if (expansion) expansion.scroll.current.tree = event.currentTarget.scrollTop; }}>
       {filtering ? <>
         {visibleSessions.filter(s => matchesFilters(s, filters, now)).map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} contextKey={contextKey} onOpen={onOpen} onOpenInbox={onOpenInbox} onPin={onPin} showFolder />)}
         {!visibleSessions.some(s => matchesFilters(s, filters, now)) && <div className="rd-filter-empty">No sessions match these filters.<button onClick={clear}>Clear filters</button></div>}

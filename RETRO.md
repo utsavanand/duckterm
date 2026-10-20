@@ -1,3 +1,7 @@
+## 2026-10-19 — Focus entry defaults and folder expansion have different lifetimes
+
+Focus should start with the first three pins in the owner's shortcut order, even when an old persisted grid contains more panes. Keep the remaining pins docked. Sidebar expansion belongs to the dashboard lifetime, not the conditionally mounted tree; preserve it when entering/exiting Focus without persisting it across a fresh app launch.
+
 ## 2026-10-19 — Floating shortcut preferences must preserve the terminal and session identity
 
 Store personal colors/order by host-qualified session key, not display names or folder paths. Keep the rightmost open-session target stable during hover expansion; new color or reorder controls must never replace it under the pointer. Verify reorder/display changes without PTY resizes, reconnects, draft loss or pin writes, and preserve those choices across reload and renamed sessions.
