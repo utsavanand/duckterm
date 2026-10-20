@@ -1,3 +1,7 @@
+## 2026-10-20 — A shared inbox must reach the folder history too
+
+Federated session inboxes worked while the owner’s folder interaction history still queried only local questions. Combine both durable sources at the existing owner-only boundary, scope either participant by current local subtree membership, retain independent cursors, and never mark agent messages read from an owner view. Test equal timestamps across more than one page, answered/pending filters, stopped participants, unrelated folders and unavailable coordinators. Integrating the feature must also preserve newer memory/recovery routes and appearance controls from main.
+
 ## 2026-10-19 — Remote acceptance must cover both installed host versions and native routes
 
 A current Mac dashboard could not archive through the new undo flow because its native transport omitted those endpoints. The remote service was still 0.4.64, so shell requests returned plain-text 404s that surfaced as WebKit JSON errors. Check the actual owning host version, preserve HTTP errors, and test exact native route/method pairs. macOS xterm also needs Option-forced selection explicitly enabled; verify a wrapped synthetic login URL with agent mouse tracking active, through the dashboard copy bridge.

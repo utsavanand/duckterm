@@ -2,7 +2,7 @@
 
 Owner-approved design · 2026-10-05 · remote-session-dev
 
-**Owner decisions:** sessions in the same canonical sidebar folder collaborate by default, whether local or remote; no separate per-folder or per-session sharing switch. Use `duckterm-dev` as the always-on coordinator. Remote agents must continue collaborating with one another while the Mac sleeps. Messages for Mac sessions wait until the Mac can receive them. Owner approved the revised design with “lgtm”. Architectural review and implementation remain outstanding; no deployment or implementation is claimed.
+**Owner decisions:** sessions in the same canonical sidebar folder collaborate by default, whether local or remote; no separate per-folder or per-session sharing switch. Use `duckterm-dev` as the always-on coordinator. Remote agents must continue collaborating with one another while the Mac sleeps. Messages for Mac sessions wait until the Mac can receive them. Owner approved the revised design with “lgtm”. Implementation exists on the feature branch; production pairing and release acceptance remain outstanding.
 
 ## Experience and acceptance target
 
@@ -181,7 +181,7 @@ Design completion is not feature completion. Only demonstrated installed behavio
 
 ## Implementation status
 
-Status: implementation in progress; not approved for merge, release, installation or production pairing.
+Status: implementation integrated with main e246069; not yet released, installed or paired in production.
 
 The owner approved duckterm-dev as the always-on coordinator and automatic collaboration for sessions in the same canonical sidebar folder. This branch adds a zero-dependency SQLite coordinator, computer capabilities, stable references, a durable local outbox, scoped discovery, versioned request transitions, offline replies, delivery/read receipts, and server-owned SSH transport. The existing session commands and inbox carry cross-computer messages. Local discovery remains available during coordinator outage.
 
@@ -208,7 +208,7 @@ Remaining implementation/acceptance work before release:
 
 - Wire every ordinary folder create/rename/reparent/delete entry point to canonical policy, including nested and concurrent changes. The coordinator rename protocol now freezes each delivered plan, preflights nested prefix moves, and journals exact membership for recovery after a process exit. Lost acknowledgments and later coordinator renames preserve folder IDs; local collisions fail before any move. The ordinary Mac sidebar now routes these operations through the native owner broker. Name swaps use journaled temporary moves, and the approved keep-separate control preserves unrelated local sessions before registering their new shared folder. Verify this in the packaged Mac/remote acceptance run.
 - Computer status/disconnect/conflict recovery controls are implemented with synthetic backend/native/browser regression coverage. Complete retry after interruption at every setup phase and packaged acceptance. Establish that pairing and restart preserve real running processes and drafts.
-- Verify owner folder-interaction history, reminder delivery and pagination with mixed local/remote traffic and large histories.
+- Owner folder history now combines both directions of federated exchanges with local history. A 120-message regression verifies independent pagination, equal timestamps, filtering, stopped participants, unrelated-folder exclusion and offline behavior. Reminder metadata regressions remain green; packaged acceptance remains outstanding.
 - Prove actual server-owned SSH pairing and Mac sleep/wake behavior with isolated Linux services; current transport acceptance uses real local HTTP with synthetic computers.
 - Complete exact-head review with release-dev, fresh committed-tree verification and the release gate. Do not infer installed acceptance from a simulated native bridge.
 
