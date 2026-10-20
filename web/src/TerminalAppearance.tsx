@@ -26,8 +26,8 @@ export function TerminalAppearance({ scope, target, mode, theme, effectiveTheme,
     </select></label>
     {error && <p role="alert">{error}</p>}
     <div className="rd-terminal-appearance-effective">Using <strong>{names[effectiveTheme] ?? effectiveTheme}</strong> · {pick ? folder ? "Folder default" : "Session override" : "Inherited default"}</div>
-    {folder ? <><p>Improved readability adjusts low-contrast text, including colors chosen by the agent. Keep program colors preserves them exactly.</p><p>{overrideCount} {overrideCount === 1 ? "session has" : "sessions have"} a theme override.</p><p>Saved on this device. Existing terminals update without restarting agents.</p></>
+    {folder ? <><p>Improved readability applies the theme to all 256 terminal colors and adjusts low-contrast text. Keep program colors preserves the extended palette.</p><p>{overrideCount} {overrideCount === 1 ? "session has" : "sessions have"} a theme override.</p><p>Saved on this device. Existing terminals update without restarting agents.</p></>
       : <p>A session override stays in place when its folder theme changes. Choose “Use folder setting” to inherit again.</p>}
-    <details><summary>How program colors behave</summary><p>The theme changes default text and standard terminal colors. Programs can choose their own colors; “Improve readability” adjusts text only when contrast is too low. Inherited contrast defaults to improved readability.</p></details>
+    <details><summary>How program colors behave</summary><p>The theme changes default text and all 256 terminal colors, including the extended colors used by agents. Explicit RGB colors remain program-controlled, with low-contrast text adjusted for readability. “Keep program colors” preserves extended and RGB colors. Inherited contrast defaults to improved readability.</p></details>
   </div>;
 }

@@ -1,3 +1,7 @@
+## 2026-10-19 — Contrast adjustment is not theme application
+
+Native acceptance showed that improving contrast still left agent text unchanged across dark palettes. A 16-color theme does not cover the indexed256 colors agents actually emit. Supply the extended palette to xterm so existing text and scrollback follow the chosen theme without replaying output, reconnecting or editing terminal bytes. Test default, indexed white, indexed accent and background cells across themes; document explicit RGB as a separate program-controlled case.
+
 ## 2026-10-19 — Replace panel placeholders with the matching evidence contract
 
 Keep checkpoint age, captured-event activity and native conversation context separate. Wire activity to the successful capture projection, preserve zero versus absent evidence, and clear stale counts on refresh failure or session changes. A large lifetime event total cannot fill a missing boundary. Reuse the approved panel and backend work rather than preparing competing previews.
@@ -5,6 +9,7 @@ Keep checkpoint age, captured-event activity and native conversation context sep
 ## 2026-10-19 — Count activity from the captured checkpoint boundary
 
 A successful checkpoint is saved after its source capture, so counting events after the save time misses work that arrived during summarization. Subtracting lifetime counts also fails after deletion or with filtered markers. Reuse the successful-checkpoint selector, validate its saved rowid and event ID in the same session, then count later events with the original filter. A missing anchor is unknown, not zero; an explicitly empty capture is a valid zero boundary. Label this event activity, not turns or unsummarized conversation. Read existing records only; a status panel must never trigger a checkpoint to obtain its values.
+
 
 ## 2026-10-19 — Verify the colors the agent actually emits
 

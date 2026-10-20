@@ -64,7 +64,7 @@ test("appearance persists, scales the interface independently, and refits the li
 test("folder colors inherit, session overrides persist, and explicit program colors gain contrast without reconnecting", async ({ page }) => {
   const group = `Colors-${Date.now()}`;
   await apiPost("/folders", { name: group });
-  const launched = await apiPost("/sessions/launch", { command: "sh -c 'printf \"\\033[38;5;231mFIXED_WHITE\\033[0m\\n\\033[31mANSI_RED\\033[0m\\nDEFAULT_TEXT\\n\"; exec cat'", cwd: "/tmp", name: "Contrast review", group, in_terminal: false, test: true });
+  const launched = await apiPost("/sessions/launch", { command: "sh -c 'printf \"\\033[38;5;231mFIXED_WHITE\\033[0m\\n\\033[38;5;77mINDEX_GREEN\\033[0m\\n\\033[31mANSI_RED\\033[0m\\nDEFAULT_TEXT\\n\"; exec cat'", cwd: "/tmp", name: "Contrast review", group, in_terminal: false, test: true });
   expect(launched.status).toBe(200);
   const key = String(launched.body.session_key);
   expect((await apiPatch(`/sessions/${key}`, { group })).status).toBe(200);
@@ -77,8 +77,22 @@ test("folder colors inherit, session overrides persist, and explicit program col
     await page.locator(".rd-row-name", { hasText: "Contrast review" }).click();
     const term = page.locator(".rd-terminal-slot:visible .xterm");
     await expect(term).toContainText("FIXED_WHITE");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("combobox", { name: "App theme", exact: true }).selectOption("dark");
+    await page.keyboard.press("Escape");
     const initialConnections = connections;
     const color = (text: string) => term.locator(".xterm-rows > div").filter({ hasText: text }).first().locator("span").first().evaluate(e => getComputedStyle(e).color);
+    const originalWhite = await color("FIXED_WHITE");
+    const originalGreen = await color("INDEX_GREEN");
+    await page.getByRole("button", { name: `Terminal colors for ${group}`, exact: true }).click();
+    await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("gruvbox-dark");
+    await expect.poll(() => color("FIXED_WHITE")).toBe("rgb(235, 219, 178)");
+    expect(await color("FIXED_WHITE")).not.toBe(originalWhite);
+    await expect.poll(() => color("INDEX_GREEN")).not.toBe(originalGreen);
+    await expect.poll(() => color("DEFAULT_TEXT")).toBe("rgb(235, 219, 178)");
+    await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("nord");
+    await expect.poll(() => color("FIXED_WHITE")).toBe("rgb(216, 222, 233)");
+    expect(connections).toBe(initialConnections);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("combobox", { name: "App theme", exact: true }).selectOption("light");
     await page.keyboard.press("Escape");

@@ -1,3 +1,4 @@
+import { terminalPalette } from "./terminalPalette";
 import { useTerminalContrast, resolveContrast } from "./terminalContrast";
 import { terminalSocket, TerminalSocket, sessionFetch } from "./hostTransport";
 import { useAppearance, TERMINAL_FONTS } from "./appearance";
@@ -57,7 +58,7 @@ export const Terminal = memo(function Terminal({
     const term = termRef.current;
     if (!term) return;
     term.options.minimumContrastRatio = contrast === "readable" ? 4.5 : 1;
-    term.options.theme = TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME];
+    term.options.theme = terminalPalette(theme, contrast === "preserve");
     term.refresh(0, term.rows - 1);
   }, [theme, contrast]);
 
@@ -79,7 +80,7 @@ export const Terminal = memo(function Terminal({
       scrollback: 5000,
       fontSize: appearance.terminalSize,
       fontFamily: TERMINAL_FONTS[appearance.terminalFont].css,
-      theme: TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME],
+      theme: terminalPalette(theme, contrast === "preserve"),
       minimumContrastRatio: contrast === "readable" ? 4.5 : 1,
       cursorBlink: true,
       convertEol: false,
