@@ -15,6 +15,9 @@ exact attempt batches and keep failure status separate from saved evidence.
 Tests must exercise actual selection order, a proposal/approval split, multi-batch
 results and memory larger than one generated summary. Synthetic shape checks
 alone cannot establish summary usefulness or resolve stale claims across batches.
+Independent review also caught a legacy truncation flag hardcoded to 20 after
+pagination became configurable. Derive metadata from the actual returned slice
+and test both smaller and larger page limits.
 
 ## 2026-10-20 — Saved batch evidence is not checkpoint success
 

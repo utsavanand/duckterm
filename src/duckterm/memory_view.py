@@ -154,7 +154,7 @@ def project(
         "revision": None,
         "revisions": history,
         "revisions_pagination": history_page,
-        "revisions_truncated": len(revisions) > 20,
+        "revisions_truncated": len(history) < len(revisions),
         "latest_checkpoint": (
             {
                 "id": latest["id"],

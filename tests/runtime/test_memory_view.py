@@ -100,6 +100,15 @@ def test_revision_pages_and_exact_old_revision_are_independent():
         memory_view.project(catalog, sources, None, revisions_cursor=cursor)
 
 
+@pytest.mark.parametrize("count,limit,truncated", [(15, 10, True), (30, 100, False)])
+def test_revision_truncation_matches_the_requested_page_size(count, limit, truncated):
+    catalog, sources = paginated_fixture(count)
+    value = memory_view.project(catalog, sources, None, revisions_limit=limit)
+    assert value["revisions_truncated"] is truncated
+    assert len(value["revisions"]) == min(count, limit)
+    assert bool(value["revisions_pagination"]["next_cursor"]) is truncated
+
+
 @pytest.mark.parametrize("state,pending", [("updated", 0), ("failed", 4), ("failed", 0)])
 def test_exact_checkpoint_result_is_attempt_scoped_even_when_failed(state, pending):
     catalog, sources = paginated_fixture(5)
