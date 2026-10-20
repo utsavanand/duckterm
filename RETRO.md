@@ -1,5 +1,9 @@
 ## 2026-10-19 — Contrast adjustment is not theme application
 
+## Terminal theme acceptance must include text hierarchy (2026-10-19)
+
+Changing indexed colors proved the palette worked but did not satisfy the owner’s readability need: most agent prose shares one foreground. Compare actual bold/dim/default text at native size, not just color swatches. The approved enhancement accents only neutral bold text and lifts dim opacity, preserving explicit colored text and offering original formatting; it never infers semantics or rewrites terminal output.
+
 Native acceptance showed that improving contrast still left agent text unchanged across dark palettes. A 16-color theme does not cover the indexed256 colors agents actually emit. Supply the extended palette to xterm so existing text and scrollback follow the chosen theme without replaying output, reconnecting or editing terminal bytes. Test default, indexed white, indexed accent and background cells across themes; document explicit RGB as a separate program-controlled case.
 
 ## 2026-10-19 — Replace panel placeholders with the matching evidence contract

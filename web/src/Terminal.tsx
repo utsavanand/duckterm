@@ -1,8 +1,10 @@
+import { useTerminalStyling, resolveStyling } from "./terminalStyling";
+import "./terminalStyling.css";
 import { terminalPalette } from "./terminalPalette";
 import { useTerminalContrast, resolveContrast } from "./terminalContrast";
 import { terminalSocket, TerminalSocket, sessionFetch } from "./hostTransport";
 import { useAppearance, TERMINAL_FONTS } from "./appearance";
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useRef, type CSSProperties } from "react";
 import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -40,6 +42,9 @@ export const Terminal = memo(function Terminal({
   const { appearance } = useAppearance();
   const { preferences } = useTerminalContrast();
   const contrast = resolveContrast(preferences, sessionKey, folder);
+  const { preferences: stylingPreferences } = useTerminalStyling();
+  const enhanced = contrast === "readable" && resolveStyling(stylingPreferences, sessionKey, folder) === "enhanced";
+  const minimumContrast = contrast === "preserve" ? 1 : enhanced ? 7 : 4.5;
   const refitRef = useRef<(() => void) | null>(null);
   const connectionRef = useRef(onConnection);
   connectionRef.current = onConnection;
@@ -57,10 +62,10 @@ export const Terminal = memo(function Terminal({
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.minimumContrastRatio = contrast === "readable" ? 4.5 : 1;
+    term.options.minimumContrastRatio = minimumContrast;
     term.options.theme = terminalPalette(theme, contrast === "preserve");
     term.refresh(0, term.rows - 1);
-  }, [theme, contrast]);
+  }, [theme, contrast, minimumContrast]);
 
   useEffect(() => {
     const term = termRef.current;
@@ -81,7 +86,7 @@ export const Terminal = memo(function Terminal({
       fontSize: appearance.terminalSize,
       fontFamily: TERMINAL_FONTS[appearance.terminalFont].css,
       theme: terminalPalette(theme, contrast === "preserve"),
-      minimumContrastRatio: contrast === "readable" ? 4.5 : 1,
+      minimumContrastRatio: minimumContrast,
       cursorBlink: true,
       convertEol: false,
     });
@@ -363,11 +368,12 @@ export const Terminal = memo(function Terminal({
   // height:0 + flex:1 makes the host fill the pane with a DEFINITE height, so
   // xterm scrolls its buffer internally instead of growing the page. (A
   // min-height here would let it expand and scroll the whole dashboard.)
-  const bg = (TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME]).background;
+  const palette = TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME];
   return (
     <div
       ref={hostRef}
-      style={{ flex: 1, height: 0, minHeight: 0, background: bg }}
+      className={enhanced ? "rd-terminal-enhanced" : undefined}
+      style={{ flex: 1, height: 0, minHeight: 0, background: palette.background, "--terminal-emphasis": palette.mode === "light" ? palette.blue : palette.brightBlue } as CSSProperties}
     />
   );
 });

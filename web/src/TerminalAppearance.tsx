@@ -1,3 +1,4 @@
+import { useTerminalStyling, type TextStyling } from "./terminalStyling";
 import { useState } from "react";
 import { TERM_THEMES, themesForMode, type TermMode } from "./termThemes";
 import { useTerminalContrast, type TextContrast } from "./terminalContrast";
@@ -8,6 +9,7 @@ export function TerminalAppearance({ scope, target, mode, theme, effectiveTheme,
   scope: "sessions" | "folders"; target: string; mode: TermMode; theme?: string; effectiveTheme: string; onTheme: (theme: string | null) => void; overrideCount?: number;
 }) {
   const { preferences, update } = useTerminalContrast();
+  const { preferences: styling, update: updateStyling } = useTerminalStyling();
   const [error, setError] = useState("");
   const folder = scope === "folders";
   const pick = theme && TERM_THEMES[theme]?.mode === mode ? theme : "";
@@ -24,10 +26,16 @@ export function TerminalAppearance({ scope, target, mode, theme, effectiveTheme,
     }}>
       <option value="">{folder ? "Use inherited setting" : "Use folder setting"}</option><option value="readable">Improve readability</option><option value="preserve">Keep program colors</option>
     </select></label>
+    <label>Text styling<select value={styling[scope][target] ?? ""} onChange={e => {
+      try { updateStyling(scope, target, (e.target.value || null) as TextStyling | null); setError(""); }
+      catch { setError("Could not save text styling on this device. Try again."); }
+    }}>
+      <option value="">{folder ? "Use inherited setting" : "Use folder setting"}</option><option value="enhanced">Enhanced text</option><option value="program">Follow program formatting</option>
+    </select></label>
     {error && <p role="alert">{error}</p>}
     <div className="rd-terminal-appearance-effective">Using <strong>{names[effectiveTheme] ?? effectiveTheme}</strong> · {pick ? folder ? "Folder default" : "Session override" : "Inherited default"}</div>
     {folder ? <><p>Improved readability applies the theme to all 256 terminal colors and adjusts low-contrast text. Keep program colors preserves the extended palette.</p><p>{overrideCount} {overrideCount === 1 ? "session has" : "sessions have"} a theme override.</p><p>Saved on this device. Existing terminals update without restarting agents.</p></>
       : <p>A session override stays in place when its folder theme changes. Choose “Use folder setting” to inherit again.</p>}
-    <details><summary>How program colors behave</summary><p>The theme changes default text and all 256 terminal colors, including the extended colors used by agents. Explicit RGB colors remain program-controlled, with low-contrast text adjusted for readability. “Keep program colors” preserves extended and RGB colors. Inherited contrast defaults to improved readability.</p></details>
+    <details><summary>How program colors behave</summary><p>The theme changes default text and all 256 terminal colors, including the extended colors used by agents. Explicit RGB colors remain program-controlled, with low-contrast text adjusted for readability. “Keep program colors” preserves extended and RGB colors. Inherited contrast defaults to improved readability. Enhanced text accents neutral bold text and makes dim text more readable; plain prose keeps the theme foreground. Follow program formatting keeps the program’s bold and dim styling. Inherited styling defaults to Enhanced text. Keep program colors also disables these enhancements.</p></details>
   </div>;
 }

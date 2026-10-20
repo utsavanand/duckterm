@@ -64,7 +64,7 @@ test("appearance persists, scales the interface independently, and refits the li
 test("folder colors inherit, session overrides persist, and explicit program colors gain contrast without reconnecting", async ({ page }) => {
   const group = `Colors-${Date.now()}`;
   await apiPost("/folders", { name: group });
-  const launched = await apiPost("/sessions/launch", { command: "sh -c 'printf \"\\033[38;5;231mFIXED_WHITE\\033[0m\\n\\033[38;5;77mINDEX_GREEN\\033[0m\\n\\033[31mANSI_RED\\033[0m\\nDEFAULT_TEXT\\n\"; exec cat'", cwd: "/tmp", name: "Contrast review", group, in_terminal: false, test: true });
+  const launched = await apiPost("/sessions/launch", { command: "sh -c 'printf \"\\033[38;5;231mFIXED_WHITE\\033[0m\\n\\033[38;5;77mINDEX_GREEN\\033[0m\\n\\033[31mANSI_RED\\033[0m\\n\\033[1mBOLD_TEXT\\033[0m\\n\\033[2mDIM_TEXT\\033[0m\\n\\033[1;31mBOLD_RED\\033[0m\\nDEFAULT_TEXT\\n\"; exec cat'", cwd: "/tmp", name: "Contrast review", group, in_terminal: false, test: true });
   expect(launched.status).toBe(200);
   const key = String(launched.body.session_key);
   expect((await apiPatch(`/sessions/${key}`, { group })).status).toBe(200);
@@ -90,6 +90,17 @@ test("folder colors inherit, session overrides persist, and explicit program col
     expect(await color("FIXED_WHITE")).not.toBe(originalWhite);
     await expect.poll(() => color("INDEX_GREEN")).not.toBe(originalGreen);
     await expect.poll(() => color("DEFAULT_TEXT")).toBe("rgb(235, 219, 178)");
+    const bold = term.locator(".xterm-bold").filter({ hasText: "BOLD_TEXT" });
+    const dim = term.locator(".xterm-dim").filter({ hasText: "DIM_TEXT" });
+    await expect(bold).toHaveCSS("color", "rgb(131, 165, 152)");
+    await expect(dim).toHaveCSS("opacity", "0.82");
+    const explicitRed = await color("BOLD_RED");
+    await page.getByRole("combobox", { name: "Text styling", exact: true }).selectOption("program");
+    await expect(bold).toHaveCSS("color", "rgb(235, 219, 178)");
+    await expect(dim).toHaveCSS("opacity", "0.5");
+    await expect.poll(() => color("BOLD_RED")).toBe(explicitRed);
+    await page.getByRole("combobox", { name: "Text styling", exact: true }).selectOption("enhanced");
+    await expect(bold).toHaveCSS("color", "rgb(131, 165, 152)");
     await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("nord");
     await expect.poll(() => color("FIXED_WHITE")).toBe("rgb(216, 222, 233)");
     expect(connections).toBe(initialConnections);
@@ -107,9 +118,11 @@ test("folder colors inherit, session overrides persist, and explicit program col
     await page.locator(".rd-session-section > summary").filter({ hasText: /^Terminal appearance/ }).click();
     await page.getByRole("combobox", { name: "Theme for this session", exact: true }).selectOption("paper");
     await expect(page.locator(".rd-terminal-appearance-effective")).toContainText("Paper");
+    await page.getByRole("combobox", { name: "Text styling", exact: true }).selectOption("program");
     await page.reload();
     await page.getByRole("tab", { name: "Session", exact: true }).click();
     await page.locator(".rd-session-section > summary").filter({ hasText: /^Terminal appearance/ }).click();
+    await expect(page.getByRole("combobox", { name: "Text styling", exact: true })).toHaveValue("program");
     await expect(page.getByRole("combobox", { name: "Theme for this session", exact: true })).toHaveValue("paper");
     await page.getByRole("combobox", { name: "Theme for this session", exact: true }).selectOption("");
     await expect(page.locator(".rd-terminal-appearance-effective")).toContainText("Solarized Light");
