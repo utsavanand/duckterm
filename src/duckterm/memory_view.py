@@ -109,6 +109,11 @@ def checkpoint(
             "batches": batches,
             "pagination": pagination,
             "batch_coverage_known": attempt is not None,
+            "linked_revision_id": (
+                saved["record"].get("summary_ref")
+                if isinstance(saved["record"].get("summary_ref"), str)
+                else None
+            ),
             "combined_summary": None,
             "combined_summary_reason": "independent_batch_summaries",
         },

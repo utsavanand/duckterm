@@ -160,19 +160,21 @@ def test_old_checkpoint_does_not_mislabel_all_session_revisions_as_this_attempt(
             "created_at": 50,
             "label": "manual",
             "record": {
+                "summary_ref": "older-linked",
                 "summary_update": {
                     "state": "updated",
                     "span_coverage": {
                         "scope": "unprocessed_selection",
                         "revision_ids": [r["id"] for r in catalog["canonical"]["revisions"]],
                     },
-                }
+                },
             },
         }
     ]
     sources.append({"kind": "checkpoint", "checkpoint_id": "old", "records": []})
     value = memory_view.checkpoint(catalog, sources, "old")["checkpoint"]
     assert value["batch_coverage_known"] is False and value["batches"] == []
+    assert value["linked_revision_id"] == "older-linked"
 
 
 def get(server, key="agent", action="", **query):

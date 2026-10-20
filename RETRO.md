@@ -1,3 +1,12 @@
+## 2026-10-20 — Read the whole checkpoint without losing session identity
+
+A checkpoint link must identify the complete attempt, not just its last saved
+batch. Keep attempt results, accumulated saved knowledge and historical revisions
+separate. Page large reads with snapshot-bound cursors and reload explicitly on
+conflict. Remote response identities are already host-qualified by the transport;
+comparing them to raw IDs incorrectly rejects valid remote results. Test the
+encoded host reference through the reader as well as the native allowlist.
+
 ## 2026-10-20 — Verify checkpoint meaning across selection, generation and reading
 
 The configured count was 20, but the manual dialog chose the oldest unprocessed

@@ -32,7 +32,7 @@ function validPlan(value: CheckpointPlan) {
     && value.available_records === value.processed_records + value.pending_records
     && value.selected_records === Math.min(value.default_records, value.pending_records)
     && value.remaining_records === value.pending_records - value.selected_records
-    && value.order === "oldest_unprocessed_first" && value.selection_plan && typeof value.selection_plan === "object" && !Array.isArray(value.selection_plan);
+    && ["oldest_unprocessed_first", "newest_unprocessed_first"].includes(value.order) && value.selection_plan && typeof value.selection_plan === "object" && !Array.isArray(value.selection_plan);
 }
 
 export function CheckpointDialog({ request, onFinish }: { request: CheckpointChoiceRequest; onFinish: (selection: CheckpointSelection | null) => void }) {
@@ -85,13 +85,13 @@ export function CheckpointDialog({ request, onFinish }: { request: CheckpointCho
         <p><strong>{plan.pending_records.toLocaleString()}</strong> conversation records haven’t been summarized.</p>
         <p className="hint">Records are individual user or assistant messages, not whole turns. Tool activity and routine inbox reminders are excluded.</p>
         {plan.pending_records > 0 && <fieldset><legend>How many should this checkpoint summarize?</legend>
-          <label><input type="radio" name="checkpoint-choice" checked={choice === "default"} onChange={() => setChoice("default")} /> Next {Math.min(plan.default_records, plan.pending_records).toLocaleString()} · your configured default</label>
+          <label><input type="radio" name="checkpoint-choice" checked={choice === "default"} onChange={() => setChoice("default")} /> {plan.order === "newest_unprocessed_first" ? "Latest" : "Earliest"} {Math.min(plan.default_records, plan.pending_records).toLocaleString()} · your configured default</label>
           <label><input type="radio" name="checkpoint-choice" checked={choice === "custom"} onChange={() => setChoice("custom")} /> Choose a count <input aria-label="Number of records" type="number" min="1" max="1000" step="1" value={custom} onChange={event => { setChoice("custom"); setCustom(event.target.value); }} /></label>
           <label><input type="radio" name="checkpoint-choice" checked={choice === "all"} onChange={() => setChoice("all")} /> All {plan.pending_records.toLocaleString()} unprocessed records</label>
         </fieldset>}
         <div className="rd-checkpoint-selection" aria-live="polite"><strong>{selected.toLocaleString()}</strong> records selected · <strong>{(plan.pending_records - selected).toLocaleString()}</strong> left for later
           <p className="hint">{selected ? "Batches contain at most 20 records; large messages may need smaller batches." : "Nothing new to summarize."}</p></div>
-        {plan.pending_records > 0 && <p className="hint">Oldest unprocessed first. New messages arriving after this dialog opens are left for your next checkpoint.</p>}
+        {plan.pending_records > 0 && <p className="hint">{plan.order === "newest_unprocessed_first" ? "Newest" : "Oldest"} unprocessed first. New messages arriving after this dialog opens are left for your next checkpoint.</p>}
         <p className="hint">This choice applies once. Your default in Settings stays at {plan.default_records.toLocaleString()}.</p>
         {!valid && <p role="alert">Enter a whole number from 1 to 1,000.</p>}
       </>}

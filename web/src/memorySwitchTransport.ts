@@ -238,6 +238,14 @@ async function preparationRequest(path: string, method = "GET", body?: unknown, 
     signal?.removeEventListener("abort", abort);
   }
 }
+function checkHandoffPlan(plan: ObjectValue): void {
+  // v1 manual previews say oldest; harness preparation explicitly uses newest.
+  // Preserve the opaque confirmation token rather than rewriting its meaning.
+  if (plan.version === 1) return;
+  if (plan.version !== 2 || plan.order !== "newest_unprocessed_first") {
+    throw new MemoryTransportError("Record selection order changed; refresh the checkpoint dialog", 409, "selection_order_changed");
+  }
+}
 export function memorySwitchService(input: SwitchSelection) {
   const selection = structuredClone(input);
   const { host, key } = splitSessionRef(selection.sessionRef);
@@ -259,17 +267,20 @@ export function memorySwitchService(input: SwitchSelection) {
         available_records: num(v.available_records), processed_records: num(v.processed_records),
         pending_records: num(v.pending_records), default_records: num(v.default_records),
         selected_records: num(v.selected_records), remaining_records: num(v.remaining_records),
-        batch_records: num(v.batch_records) as 20, order: choice(v.order, ["oldest_unprocessed_first"]),
+        batch_records: num(v.batch_records) as 20, order: choice(v.order, ["oldest_unprocessed_first", "newest_unprocessed_first"]),
         selection_plan: obj(v.selection_plan),
       };
       if (plan.batch_records !== 20 || plan.default_records < 1 || plan.default_records > 1000
         || plan.available_records !== plan.processed_records + plan.pending_records
         || plan.selected_records !== Math.min(plan.default_records, plan.pending_records)
         || plan.remaining_records !== plan.pending_records - plan.selected_records) invalid();
+      checkHandoffPlan(plan.selection_plan);
+      if (plan.selection_plan.version === 2 && plan.order !== plan.selection_plan.order) invalid();
       return plan;
     },
     async prepare(requestKey: string, recordSelection?: CheckpointSelection | null) {
       identity(requestKey);
+      if (recordSelection) checkHandoffPlan(recordSelection.plan);
       const value = await preparationRequest(`${path()}/restart-preparation`, "POST", { request_key: requestKey,
         binding: { session_key: key, source_generation: selection.sourceGeneration,
           target: { harness: selection.harness, model: selection.model } },
