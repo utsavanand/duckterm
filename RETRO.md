@@ -1,3 +1,7 @@
+## 2026-10-19 — Native acceptance needs actual pointer gestures
+
+Programmatic clicks and a draggable grip passed automation while the owner could not drag the shortcut rectangle. Support pointer capture on both the label/initials button and grip, distinguish click from drag, and cancel safely on Escape or an outside drop. Test real Mac mouse events with an AppKit event loop; JavaScript click/keyboard dispatch alone is not native interaction evidence.
+
 ## 2026-10-19 — Floating controls need opaque fallbacks
 
 Mix an unset shortcut color with the card color, not transparent. Native screenshots caught terminal text bleeding through uncolored pins; assert opacity as well as color selection.

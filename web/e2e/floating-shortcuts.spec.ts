@@ -36,7 +36,7 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     const beforeHover = (await firstPin.boundingBox())!;
     const firstPoint = { x: beforeHover.x + beforeHover.width / 2, y: beforeHover.y + beforeHover.height / 2 };
     await page.mouse.move(firstPoint.x, firstPoint.y);
-    await expect.poll(async () => (await rail.boundingBox())!.width).toBe(360);
+    await expect.poll(async () => (await rail.boundingBox())!.width).toBe(260);
     expect((await firstPin.boundingBox())!.y).toBe(beforeHover.y);
     expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("button")?.getAttribute("aria-label"), firstPoint)).toBe("Pin current session shortcut-ui");
     await page.screenshot({ path: "/tmp/floating-shortcuts-first-pin.png" });
@@ -72,7 +72,7 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     const compact = (await rail.getByRole("button", { name: "Open pinned shortcut-ui" }).boundingBox())!;
     const point = { x: compact.x + compact.width / 2, y: compact.y + compact.height / 2 };
     await page.mouse.move(point.x, point.y);
-    await expect.poll(railWidth).toBe(360);
+    await expect.poll(railWidth).toBe(260);
     expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("button")?.getAttribute("aria-label"), point)).toBe("Open pinned shortcut-ui");
     await page.mouse.click(point.x, point.y);
     await expect(rail.locator(".rd-shortcut-tab")).toHaveCount(3);
@@ -81,11 +81,11 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     await expect.poll(railWidth).toBe(38);
     await page.keyboard.press("Tab");
     await rail.getByRole("button", { name: "Choose sessions to pin" }).focus();
-    await expect.poll(railWidth).toBe(360);
+    await expect.poll(railWidth).toBe(260);
     await page.keyboard.press("Enter");
     await expect(picker).toBeVisible();
     await page.mouse.move(500, 700);
-    await expect.poll(railWidth).toBe(360);
+    await expect.poll(railWidth).toBe(260);
     await page.keyboard.press("Escape");
     await rail.getByRole("button", { name: "Open pinned shortcut-api" }).click();
     await expect(rows).toContainText("READY_shortcut-api");
@@ -109,7 +109,7 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     await rail.getByRole("combobox", { name: "Shortcut display" }).selectOption("expanded");
     await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
     await page.mouse.move(500, 700);
-    await expect.poll(railWidth).toBe(360);
+    await expect.poll(railWidth).toBe(260);
     const tabNames = () => rail.locator(".rd-shortcut-session").allTextContents();
     const originalOrder = await tabNames();
     // Uncolored pins must remain opaque over terminal text.
@@ -122,9 +122,23 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     await expect.poll(async () => (await tabNames())[1]).toBe(originalOrder[0]);
     await page.keyboard.press("Alt+ArrowUp");
     await expect.poll(tabNames).toEqual(originalOrder);
-    await rail.locator(".rd-shortcut-grip").first().dragTo(rail.locator(".rd-shortcut-open").nth(2), { targetPosition: { x: 20, y: 29 } });
+    const dragFrom = await rail.locator(".rd-shortcut-open").first().boundingBox();
+    const dragTo = await rail.locator(".rd-shortcut-open").nth(2).boundingBox();
+    expect(dragFrom && dragTo).toBeTruthy();
+    await page.mouse.move(dragFrom!.x + 25, dragFrom!.y + 18); await page.mouse.down();
+    await page.mouse.move(dragTo!.x + 25, dragTo!.y + 28, { steps: 12 }); await page.mouse.up();
     await expect.poll(async () => (await tabNames())[2]).toBe(originalOrder[0]);
     const savedOrder = await tabNames();
+    // Escape and a drop outside the rail cancel without selecting a session.
+    const from = await rail.locator(".rd-shortcut-open").first().boundingBox();
+    const to = await rail.locator(".rd-shortcut-open").nth(2).boundingBox();
+    for (const cancel of ["escape", "outside"]) {
+      await page.mouse.move(from!.x + 25, from!.y + 18); await page.mouse.down();
+      await page.mouse.move(cancel === "outside" ? from!.x - 100 : to!.x + 25, to!.y + 28, { steps: 10 });
+      if (cancel === "escape") await page.keyboard.press("Escape");
+      await page.mouse.up(); await expect.poll(tabNames).toEqual(savedOrder);
+      await expect(rail.locator(".dragging,.drop-before,.drop-after")).toHaveCount(0);
+    }
     expect(await width()).toBe(originalWidth); expect(sizes.length).toBe(customizationResizes);
     expect(connections).toBe(initialConnections + 1);
     await expect(page.locator(".rd-row.selected .rd-row-name")).toHaveText("shortcut-ui");

@@ -38,7 +38,7 @@
 .rd-floating-shortcuts button:disabled, .rd-shortcut-picker button:disabled { opacity:.5; cursor:default; }
 .rd-floating-shortcuts button:focus-visible, .rd-shortcut-picker button:focus-visible, .rd-shortcut-picker input:focus-visible { outline:2px solid var(--brand-green); outline-offset:-2px; }
 /* Expand leftward. The rightmost open-session target never becomes an unpin target. */
-.rd-floating-shortcuts:is(.is-hovered, :has(:focus-visible), .picker-open, .always-expanded) { width:360px; }
+.rd-floating-shortcuts:is(.is-hovered, :has(:focus-visible), .picker-open, .always-expanded) { width:260px; }
 .rd-floating-shortcuts:is(.is-hovered, :has(:focus-visible), .picker-open, .always-expanded) .rd-shortcut-heading,
 .rd-floating-shortcuts:is(.is-hovered, :has(:focus-visible), .picker-open, .always-expanded) .rd-shortcut-current { width:100%; }
 .rd-floating-shortcuts:is(.is-hovered, :has(:focus-visible), .picker-open, .always-expanded) .rd-shortcut-heading > span,
@@ -75,3 +75,8 @@
 .rd-shortcut-menu button:disabled { opacity:.4; cursor:default; }
 .rd-shortcut-menu button:focus-visible, .rd-shortcut-display:focus-visible { outline:2px solid var(--brand-green); outline-offset:-2px; }
 .rd-shortcut-announcement { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+
+/* Dragging labels/initials must not select text or initiate a browser drag. */
+.rd-shortcut-open, .rd-shortcut-grip { touch-action:none; user-select:none; -webkit-user-select:none; }
+
+.rd-shortcut-name { font-family:"Avenir Next Condensed","Arial Narrow",system-ui,sans-serif; font-size:.875rem; font-weight:500; gap:4px; }

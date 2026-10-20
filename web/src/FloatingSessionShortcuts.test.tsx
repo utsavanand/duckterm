@@ -90,7 +90,7 @@ it("keeps reordering on the grip without a move menu or session changes", () => 
   render(<FloatingSessionShortcuts sessions={[a, b]} selected={a} onOpen={onOpen} onToggle={onToggle} />);
   const grip = screen.getByRole("button", { name: "Reorder Ungrouped / a" });
   grip.focus(); fireEvent.click(grip);
-  expect(grip).toHaveAttribute("draggable", "true");
+  expect(grip).toHaveAttribute("draggable", "false");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   fireEvent.keyDown(grip, { key: "ArrowUp", altKey: true });
   expect(screen.getAllByRole("button", { name: /Open pinned/ })[0]).toHaveAttribute("aria-label", "Open pinned a");

@@ -6,6 +6,7 @@ import { useNow } from "./useNow";
 import type { SessionView } from "./types";
 import "./floatingSessionShortcuts.css";
 import { orderShortcuts, SHORTCUT_COLORS, useShortcutPreferences, type ShortcutColor } from "./shortcutPreferences";
+import { useShortcutDrag } from "./useShortcutDrag";
 import { ShortcutMenu, type ShortcutMenuTarget } from "./ShortcutMenu";
 
 const SESSION_PIN_LIMIT = 10;
@@ -26,9 +27,6 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
 }) {
   const { preferences, update, storageError } = useShortcutPreferences();
   const [customizing, setCustomizing] = useState<ShortcutMenuTarget | null>(null);
-  const dragged = useRef<string | null>(null);
-  const [dragKey, setDragKey] = useState<string | null>(null);
-  const [drop, setDrop] = useState<{ key: string; after: boolean } | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -86,7 +84,7 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
     const index = pins.findIndex(s => s.key === key), target = pins[index + direction];
     if (index >= 0 && target) reorder(key, target.key, direction > 0);
   }
-  function endDrag() { dragged.current = null; setDragKey(null); setDrop(null); }
+  const { bindings: dragBindings, consumeClick, dragKey, drop } = useShortcutDrag(root, reorder, () => { setCustomizing(null); setOpen(false); });
   useEffect(() => {
     if (customizing && !customSession) { setCustomizing(null); add.current?.focus({ preventScroll: true }); }
   }, [customizing, customSession]);
@@ -156,17 +154,14 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
       onChange={e => { const display = e.target.value === "expanded" ? "expanded" : "hover"; update(previous => ({ ...previous, display })); }}>
       <option value="hover">Expand on hover</option><option value="expanded">Always expanded</option></select><button ref={add} aria-label="Choose sessions to pin" aria-expanded={open} aria-controls={id}
       title="Choose sessions to pin" onClick={() => { setCustomizing(null); setQuery(""); setOpen(!open); }}>+</button></div>
-    <div className="rd-shortcut-list">{pins.map(s => <div className={`rd-shortcut-tab${s.key === selected.key ? " active" : ""}${dragKey === s.key ? " dragging" : ""}${drop?.key === s.key ? drop.after ? " drop-after" : " drop-before" : ""}`} key={s.key}
-      style={{ "--shortcut-color": SHORTCUT_COLORS[colorOf(s.key)] || undefined } as CSSProperties}
-      onDragOver={event => { if (!dragged.current || dragged.current === s.key) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; const rect = event.currentTarget.getBoundingClientRect(); setDrop({ key: s.key, after: event.clientY >= rect.top + rect.height / 2 }); }}
-      onDrop={event => { if (!dragged.current) return; event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); reorder(dragged.current, s.key, event.clientY >= rect.top + rect.height / 2); endDrag(); }}>
-      <button className="rd-shortcut-grip" draggable aria-label={`Reorder ${folderLabel(s)}`} title="Drag to reorder · Alt + ↑ / ↓ with keyboard" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-        onKeyDown={event => { if (event.altKey && ["ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); move(s.key, event.key === "ArrowUp" ? -1 : 1); } }}
-        onDragStart={event => { setCustomizing(null); setOpen(false); dragged.current = s.key; setDragKey(s.key); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("application/x-duckterm-shortcut", s.key); }} onDragEnd={endDrag}>
+    <div className="rd-shortcut-list">{pins.map(s => <div className={`rd-shortcut-tab${s.key === selected.key ? " active" : ""}${dragKey === s.key ? " dragging" : ""}${drop?.key === s.key ? drop.after ? " drop-after" : " drop-before" : ""}`} key={s.key} data-key={s.key}
+      style={{ "--shortcut-color": SHORTCUT_COLORS[colorOf(s.key)] || undefined } as CSSProperties}>
+      <button className="rd-shortcut-grip" {...dragBindings(s.key)} aria-label={`Reorder ${folderLabel(s)}`} title="Drag to reorder · Alt + ↑ / ↓ with keyboard" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+        onKeyDown={event => { if (event.altKey && ["ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); move(s.key, event.key === "ArrowUp" ? -1 : 1); } }}>
         <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="4" r="1" /><circle cx="7" cy="4" r="1" /><circle cx="3" cy="8" r="1" /><circle cx="7" cy="8" r="1" /><circle cx="3" cy="12" r="1" /><circle cx="7" cy="12" r="1" /></svg>
       </button>
-      <button className="rd-shortcut-open" aria-label={`Open pinned ${s.label}`} aria-description={locationOf(s)} aria-current={s.key === selected.key ? "true" : undefined}
-        title={`${folderLabel(s)} · ${s.hostLabel || hostName(s.key)}${s.hostOffline ? " · Offline" : ""}`} onClick={() => onOpen(s.key)}>
+      <button className="rd-shortcut-open" {...dragBindings(s.key)} aria-label={`Open pinned ${s.label}`} aria-description={locationOf(s)} aria-current={s.key === selected.key ? "true" : undefined}
+        title={`${folderLabel(s)} · ${s.hostLabel || hostName(s.key)}${s.hostOffline ? " · Offline" : ""}`} onClick={event => { if (!consumeClick(s.key, event.detail)) onOpen(s.key); }}>
         <span className="rd-shortcut-name"><span className="rd-shortcut-folder">{s.group || "Ungrouped"}</span><span className="rd-shortcut-slash">/</span><span className="rd-shortcut-session">{s.label}</span></span>
         <span className="rd-shortcut-badge" aria-hidden="true">{initials(s.label)}<ShortcutState session={s} /></span>
       </button>{pinButton(s, "from shortcuts")}
