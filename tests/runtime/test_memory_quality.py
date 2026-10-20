@@ -6,7 +6,7 @@ import json
 import pytest
 from test_maintained_repair import candidate, review
 from test_memory import memory_rig, transcript
-from test_memory_spans import snapshot
+from test_memory_spans import capture, snapshot
 
 from duckterm import memory_continuity, memory_spans, memory_summary_input
 from duckterm.core import progress
@@ -92,6 +92,101 @@ def test_routine_setup_repair_keeps_feedback_and_reviews_both_fields(memory_rig,
     assert saved["continuity"]["context"]["overview"] == saved["summary"]
 
 
+@pytest.mark.parametrize("issue", ["semantic", "format"])
+def test_full_span_leaves_room_for_correction_and_preserves_pending_records(
+    memory_rig, monkeypatch, issue
+):
+    from test_maintained_progress import append
+
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "Keep the owner constraint. " + "x" * 500)
+    for number in range(30):
+        append(path, f"Evidence {number}: " + "y" * 500)
+    calls = []
+    correction = (
+        "Remove routine setup from the summary and overview; preserve the owner constraint. "
+        + "é" * 300
+    )
+
+    def generate(prompt, **kwargs):
+        calls.append(prompt)
+        if prompt.startswith("You are validating"):
+            if issue == "semantic" and len(calls) == 2:
+                return Summary(
+                    json.dumps(
+                        {
+                            "accept": [],
+                            "summary_corrections": [correction],
+                            "summary_validation": {
+                                "ready": False,
+                                "reason_codes": ["routine_notice_noise"],
+                            },
+                        }
+                    ),
+                    "fixture",
+                )
+            assert "Research completed; keep the owner constraint." in prompt
+            return review()
+        assert len(prompt.encode()) <= (
+            memory_spans.MAX_GENERATION_BYTES
+            if len(calls) == 1
+            else memory_spans.repair_input_limit()
+        )
+        value = candidate(prompt)
+        if len(calls) == 1:
+            value["summary"] = "Setup (routine): " + "é" * (4000 if issue == "semantic" else 6000)
+            value["context"]["overview"] = "Setup: inbox empty."
+        else:
+            original, _ = json.JSONDecoder().raw_decode(calls[0].split("MEMORY UPDATE:\n", 1)[1])
+            repaired, _ = json.JSONDecoder().raw_decode(prompt.split("MEMORY UPDATE:\n", 1)[1])
+            assert repaired == original
+            assert "Keep the owner constraint." in prompt
+            if issue == "semantic":
+                feedback, _ = json.JSONDecoder().raw_decode(
+                    prompt.split("CORRECTION REQUIRED:\n", 1)[1]
+                )
+                assert feedback["review_feedback"] == [correction]
+            assert "é" * 4000 not in prompt
+            value["summary"] = "Research completed; keep the owner constraint."
+            value["context"]["overview"] = value["summary"]
+        return Summary(json.dumps(value), "fixture")
+
+    monkeypatch.setattr("duckterm.server.summarize", generate)
+
+    async def run():
+        frozen = await capture(server)
+        lower = memory_spans.boundary(frozen, empty=True)
+        planned = memory_spans.plan(frozen, lower)
+        assert planned["selected"] and planned["pending_records"]
+        # Filling the batch must stop for bytes, not the record-count ceiling.
+        extra = next(
+            r
+            for r in planned["rows"]
+            if r["record"] == planned["pending_refs"][0].rsplit(":", 1)[1]
+        )
+        assert (
+            len(
+                memory_spans.prompt({**planned, "selected": [*planned["selected"], extra]}).encode()
+            )
+            > memory_spans.MAX_GENERATION_BYTES
+        )
+        result, batch = await server.progress_coordinator.write_span("agent", frozen, lower)
+        assert result.state == "updated", result
+        assert len(calls) == (4 if issue == "semantic" else 3)
+        saved = server.digests.revision("agent", result.revision["id"])
+        assert saved["summary"] == "Research completed; keep the owner constraint."
+        assert saved["continuity"]["context"]["overview"] == saved["summary"]
+        expected = {r["record"] for r in batch["selected"]}
+        covered = {
+            record for records in saved["continuity"]["processed"].values() for record in records
+        }
+        assert covered == expected
+        later = memory_spans.plan(frozen, batch["next_boundary"])
+        assert later["selected"][0]["record"] == extra["record"]
+
+    asyncio.run(run())
+
+
 def test_review_feedback_that_cannot_fit_refuses_instead_of_retrying_blind(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Keep the owner constraint.")
@@ -117,6 +212,7 @@ def test_review_feedback_that_cannot_fit_refuses_instead_of_retrying_blind(memor
                 "fixture",
             )
         monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", len(prompt.encode()) + 2000)
+        monkeypatch.setattr(memory_spans, "REPAIR_HEADROOM_BYTES", 0)
         return Summary(json.dumps(candidate(prompt)), "fixture")
 
     monkeypatch.setattr("duckterm.server.summarize", generate)
@@ -300,6 +396,7 @@ def test_correction_respects_generation_reserve_without_slicing_sources(
                 )
             return review()
         if len(calls) == 1:
+            monkeypatch.setattr(memory_spans, "REPAIR_HEADROOM_BYTES", 0)
             # Leave room for minimal correction but not for a copied large draft.
             monkeypatch.setattr(
                 memory_spans,

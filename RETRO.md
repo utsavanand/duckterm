@@ -1,3 +1,7 @@
+## 2026-10-20 — Budget correction requests separately from initial summary input
+
+A span filled the initial writer allowance, but correction needed the same originals plus feedback under that same allowance. Preserving feedback exposed the impossible retry as repair_input_too_large. A separate bounded correction allowance preserves the original record window; shrinking that window instead broke previously supported long single records. Test a naturally full batch through rejection, correction, rereview and persistence, including deferred coverage. Keep the final encoded-size guard so unusual feedback cannot silently drop evidence or bypass review.
+
 ## 2026-10-19 — Remote acceptance must cover both installed host versions and native routes
 
 A current Mac dashboard could not archive through the new undo flow because its native transport omitted those endpoints. The remote service was still 0.4.64, so shell requests returned plain-text 404s that surfaced as WebKit JSON errors. Check the actual owning host version, preserve HTTP errors, and test exact native route/method pairs. macOS xterm also needs Option-forced selection explicitly enabled; verify a wrapped synthetic login URL with agent mouse tracking active, through the dashboard copy bridge.

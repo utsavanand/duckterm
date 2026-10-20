@@ -508,9 +508,9 @@ class ProgressCoordinator:
             if maintained and maintained.get("span") == "incremental":
                 from duckterm import memory_spans
 
-                if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+                if len(prompt.encode()) > memory_spans.repair_input_limit():
                     prompt = memory_continuity.repair_prompt(original, "", diagnostic)
-                if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+                if len(prompt.encode()) > memory_spans.repair_input_limit():
                     return SummaryUpdate.failed("invalid_context", diagnostic=diagnostic)
         raise AssertionError("draft loop exhausted without a result")
 
@@ -661,7 +661,7 @@ class ProgressCoordinator:
                 ",".join(review["reason_codes"]),
                 review_feedback=corrections,
             )
-            if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+            if len(prompt.encode()) > memory_spans.repair_input_limit():
                 # Drop only the draft copy, never the actionable review feedback.
                 prompt = memory_continuity.repair_prompt(
                     original_prompt,
@@ -669,7 +669,7 @@ class ProgressCoordinator:
                     ",".join(review["reason_codes"]),
                     review_feedback=corrections,
                 )
-            if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+            if len(prompt.encode()) > memory_spans.repair_input_limit():
                 return SummaryUpdate.failed("invalid_context", diagnostic="repair_input_too_large")
         reasons = []
         if review["state"] != "accepted":
