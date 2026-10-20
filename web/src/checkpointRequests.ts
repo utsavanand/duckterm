@@ -39,13 +39,19 @@ export function requestCheckpoint(key: string, selection?: CheckpointSelection):
   const requestId = crypto.randomUUID();
   // Defer dispatch until the promise is registered, even for synchronous callers.
   const request = Promise.resolve().then(async () => {
-    const stopProgress = watchProgress(key, requestId, startedAt);
+    let completeFromReceipt!: (result: CheckpointRecord) => void;
+    const receiptResult = new Promise<CheckpointRecord>(resolve => { completeFromReceipt = resolve; });
+    const stopProgress = watchProgress(key, requestId, startedAt, completeFromReceipt);
     try {
-      const result = await api.checkpoint(key, "manual", requestId, ...(selection ? [selection] as const : []));
-      // Older servers may omit the ID on the direct response. A conflicting ID
-      // is never safe to use, even when it arrived on this request's connection.
-      if (result.request_id && result.request_id !== requestId) throw new Error("Checkpoint response identity mismatch");
-      return result;
+      const response = api.checkpoint(key, "manual", requestId, ...(selection ? [selection] as const : [])).then(result => {
+        // Older servers may omit the ID on the direct response. A conflicting ID
+        // is never safe to use, even when it arrived on this request's connection.
+        if (result.request_id && result.request_id !== requestId) throw new Error("Checkpoint response identity mismatch");
+        return result;
+      });
+      // The native POST can remain pending after the server has finished. Both
+      // paths settle this one request; a late POST cannot publish or start recovery.
+      return await Promise.race([response, receiptResult]);
     } catch (error) {
       stopProgress();
       publish(key, { state: "unknown", startedAt, recovering: true });
@@ -105,10 +111,7 @@ async function recoverCheckpoint(key: string, requestId: string, startedAt: numb
       clearTimeout(timer); controller.abort();
     }
     if (!receipt || receipt.request_id !== requestId) return null;
-    if (receipt.state === "complete") {
-      const result = receipt.result;
-      return result?.request_id === requestId && typeof result.id === "string" && result.id ? result : null;
-    }
+    if (receipt.state === "complete") return completedResult(receipt, requestId);
     if (selected && receipt.state === "failed" && receipt.error === "checkpoint_source_changed") throw new CheckpointSelectionChanged();
     // A failed/interrupted receipt without its exact result cannot establish
     // whether a checkpoint was saved. Preserve the existing unknown status.
@@ -123,9 +126,15 @@ async function recoverCheckpoint(key: string, requestId: string, startedAt: numb
   return null;
 }
 
-// Progress is advisory: a failed read never retries or cancels the checkpoint.
-// Poll while the POST is outstanding, not only after its response is lost.
-function watchProgress(key: string, requestId: string, startedAt: number): () => void {
+function completedResult(receipt: CheckpointAttemptReceipt, requestId: string): CheckpointRecord | null {
+  if (receipt.request_id !== requestId || receipt.state !== "complete") return null;
+  const result = receipt.result;
+  return result?.request_id === requestId && typeof result.id === "string" && result.id ? result : null;
+}
+
+// Poll while the POST is outstanding. Exact terminal receipts are authoritative;
+// failed reads and unconfirmed receipts never retry or cancel the checkpoint.
+function watchProgress(key: string, requestId: string, startedAt: number, complete: (result: CheckpointRecord) => void): () => void {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout>;
   let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -138,8 +147,10 @@ function watchProgress(key: string, requestId: string, startedAt: number): () =>
         api.checkpointAttempt(key, requestId, controller.signal),
         new Promise<null>(resolve => { cancelRead = () => resolve(null); timeout = setTimeout(cancelRead, 10_000); }),
       ]);
-      if (!stopped && receipt?.request_id === requestId && receipt.state === "running") {
-        publish(key, { state: "running", startedAt, progress: validProgress(receipt.progress) });
+      if (!stopped && receipt?.request_id === requestId) {
+        const result = completedResult(receipt, requestId);
+        if (result) { stopped = true; complete(result); }
+        else if (receipt.state === "running") publish(key, { state: "running", startedAt, progress: validProgress(receipt.progress) });
       }
     } catch { /* The POST still owns the result; recovery handles a lost response. */ }
     finally {

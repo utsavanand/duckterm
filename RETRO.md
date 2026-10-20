@@ -1,3 +1,7 @@
+## 2026-10-20 — A pending POST must not hide a completed checkpoint receipt
+
+The progress poll consumed only running receipts, so a delayed native POST left the bar at zero even after the server stored a failed result. Let the exact completed receipt settle the original shared promise. Validate both request IDs and a nonempty checkpoint ID, retain the owning host, stop polling, and ignore late transport callbacks. Reproduce with the POST still unresolved, not merely rejected; verify failures stay failures and no second POST is sent.
+
 ## 2026-10-20 — A paused-state notification is not shutdown completion
 
 Stop publishes stopped before awaiting child exit to preserve queued questions. A quick Resume could launch successfully, then the old Stop wrote stopped over its new busy state. Serialize Stop and Resume per session through shutdown completion. A deterministic event-barrier test must attempt Resume while Stop is suspended, then verify exactly one launch and final busy state; polling for stopped alone cannot prove the old request finished.
