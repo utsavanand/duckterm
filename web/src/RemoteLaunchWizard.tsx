@@ -64,12 +64,15 @@ export function RemoteLaunchWizard({ target, onTarget, onOtherProject, onClose, 
     running.current = true; setStarted(true); setBusy(true); setError(""); setProgress("Preparing workspace…");
     let active = true;
     let launchAttempted = false;
+    let polling = false;
     const poll = window.setInterval(() => {
+      if (polling) return;
+      polling = true;
       destinationRequest<Journal>(target, "project-status", { id: project.id }).then(state => {
         if (!active || !mounted.current || state.error) return;
-        const labels: Record<string, string> = { cloning: "Cloning repository…", publishing: "Verifying project…", launching: "Starting agent…" };
+        const labels: Record<string, string> = { cloning: "Cloning repository…", verifying: "Verifying project…", publishing: "Verifying project…", launching: "Starting agent…" };
         if (labels[state.stage]) setProgress(labels[state.stage]);
-      }).catch(() => undefined);
+      }).catch(() => undefined).finally(() => { polling = false; });
     }, 1000);
     try {
       await destinationRequest(target, "project-clone", { ...project, github_repository: project.repository, destination: preflight.destination, auto_workspace: true });

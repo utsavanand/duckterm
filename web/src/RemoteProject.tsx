@@ -64,14 +64,17 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
   async function transfer() {
     setBusy(true); onBusy(true); setError(""); setProgress(kind === "clone" ? "Cloning repository…" : "Preparing project…"); setPercentage(undefined);
     let active = true;
+    let polling = false;
     const poll = window.setInterval(() => {
+      if (polling) return;
+      polling = true;
       destinationRequest<PreparedProject>(target, "project-status", { id: draft.id }).then(s => {
         if (active && mounted.current && s.stage) {
           const percent = s.stage === "receiving" ? Math.round(100 * (s.offset ?? 0) / (s.bytes || 1)) : undefined;
           setPercentage(percent);
-          setProgress(percent !== undefined ? `Copying ${percent}%` : ({ cloning: "Cloning repository…", publishing: "Verifying project…", ready: "Project verified and ready" }[s.stage] ?? "Preparing project…"));
+          setProgress(percent !== undefined ? `Copying ${percent}%` : ({ cloning: "Cloning repository…", verifying: "Verifying project…", publishing: "Verifying project…", ready: "Project verified and ready" }[s.stage] ?? "Preparing project…"));
         }
-      }).catch(() => undefined);
+      }).catch(() => undefined).finally(() => { polling = false; });
     }, 1000);
     try {
       const result = await destinationRequest<PreparedProject>(target, kind === "copy" ? "project-transfer" : "project-clone", {

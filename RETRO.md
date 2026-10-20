@@ -6,6 +6,8 @@ while the destination was wrong. Use a three-step setup with a server-generated,
 per-operation checkout under the destination user's home. Bind retries to the
 same operation and invalidate the destination whenever the repository changes.
 A failed clone must persist its failure and invalidate pending progress polls.
+Read atomic progress journals without waiting for the long-running clone lock,
+and keep at most one status poll in flight.
 Committed Markdown project rules are not private agent state; test that distinction
 without relaxing credential checks or local-copy exclusions.
 

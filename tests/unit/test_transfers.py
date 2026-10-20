@@ -458,3 +458,14 @@ def test_automatic_preflight_recovers_ready_operation_without_recloning(
     assert asyncio.run(transfer_api.dispatch(None, "preflight", req))["destination"] == str(dest)
     with pytest.raises(ValueError, match="already exists"):
         asyncio.run(transfer_api.dispatch(None, "preflight", {**req, "branch": "different"}))
+
+
+def test_progress_is_readable_while_clone_holds_operation_lock(homes):
+    from concurrent.futures import ThreadPoolExecutor
+
+    identifier = uuid.uuid4().hex
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with t.locked(identifier) as directory:
+            t.save(directory, {"id": identifier, "stage": "cloning"})
+            result = pool.submit(t.status, identifier)
+            assert result.result(timeout=1)["stage"] == "cloning"

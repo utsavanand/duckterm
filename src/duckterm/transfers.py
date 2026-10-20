@@ -155,8 +155,12 @@ def save(directory: Path, value: dict[str, Any]) -> dict[str, Any]:
 
 
 def status(identifier: str) -> dict[str, Any]:
-    with locked(identifier) as directory:
-        return read_state(directory)
+    # Journals are replaced atomically. Waiting for the operation lock would
+    # hide all progress until a long clone/verification has already finished.
+    directory = private_root() / operation_id(identifier)
+    if directory.is_symlink():
+        raise ValueError("Transfer storage must not be a symlink")
+    return read_state(directory)
 
 
 def check_url(url: str) -> None:
@@ -868,6 +872,7 @@ def clone(
                     raise ValueError(
                         "Clone failed; check repository URL and this computer's Git authorization"
                     )
+            save(directory, {**state, "stage": "verifying"})
             # Apply the same unsupported-project checks; no repository hooks are run.
             compatibility = scan(stage, [], cloned=True)
             check_requirements(compatibility["requirements"], compatibility["linux_compatible"])
