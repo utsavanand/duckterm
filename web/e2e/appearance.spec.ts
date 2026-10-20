@@ -90,10 +90,12 @@ test("folder colors inherit, session overrides persist, and explicit program col
     await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("solarized-light");
     await page.getByRole("button", { name: "View session override →" }).click();
     await page.getByRole("tab", { name: "Session", exact: true }).click();
+    await page.locator(".rd-session-section > summary").filter({ hasText: /^Terminal appearance/ }).click();
     await page.getByRole("combobox", { name: "Theme for this session", exact: true }).selectOption("paper");
     await expect(page.locator(".rd-terminal-appearance-effective")).toContainText("Paper");
     await page.reload();
     await page.getByRole("tab", { name: "Session", exact: true }).click();
+    await page.locator(".rd-session-section > summary").filter({ hasText: /^Terminal appearance/ }).click();
     await expect(page.getByRole("combobox", { name: "Theme for this session", exact: true })).toHaveValue("paper");
     await page.getByRole("combobox", { name: "Theme for this session", exact: true }).selectOption("");
     await expect(page.locator(".rd-terminal-appearance-effective")).toContainText("Solarized Light");

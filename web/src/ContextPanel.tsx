@@ -1,6 +1,6 @@
 import { routedFetch as fetch, sessionFetch } from "./hostTransport";
 import { useEffect, useRef, useState } from "react";
-import { api, CheckpointRecord } from "./api";
+import { api, CheckpointRecord, CheckpointActivity } from "./api";
 import { Duck, duckPhrase, poseFor } from "./Duck";
 import { FileEditModal } from "./FileEditModal";
 import { effectiveState, sessionStateLabel } from "./sessions";
@@ -23,6 +23,8 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
   const [acting, setActing] = useState<string | null>(null);
   const [editingFile, setEditingFile] = useState(false);
   const [lastCheckpoint, setLastCheckpoint] = useState<CheckpointRecord | null>(null);
+  const [activity, setActivity] = useState<CheckpointActivity | null>(null);
+  const [activityState, setActivityState] = useState<"loading" | "loaded" | "error">("loading");
   const checkpointGeneration = useRef(0);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
@@ -37,6 +39,11 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
   const compactAvailable = session.ptyOwned && ["claude-code", "codex"].includes(session.runtime ?? "");
   const harness = ({ "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini CLI" } as Record<string, string>)[session.runtime ?? ""] ?? session.runtime ?? "Not reported";
 
+  const eventCount = activity?.state === "known" && Number.isSafeInteger(activity.events_since_capture) && activity.events_since_capture! >= 0 ? activity.events_since_capture : null;
+  const activityLabel = activityState === "loading" ? "Loading…" : activityState === "error" ? "Couldn’t load activity"
+    : eventCount !== null ? eventCount.toLocaleString() : activity?.state === "never" ? "No successful checkpoint yet"
+    : activity?.state === "unknown" ? "Capture boundary unavailable" : "Not provided by this server";
+
   async function compact() {
     setActing("compact");
     try {
@@ -50,7 +57,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
   }
 
   useEffect(() => {
-    setLastCheckpoint(null); setActing(null); setSummaryOpen(false); checkpointGeneration.current++;
+    setLastCheckpoint(null); setActivity(null); setActivityState("loading"); setActing(null); setSummaryOpen(false); checkpointGeneration.current++;
   }, [session.key]);
   useEffect(() => {
     if (!active) return;
@@ -60,8 +67,8 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
       pending = true;
       const generation = checkpointGeneration.current;
       void api.checkpoints(session.key).then(d => {
-        if (live && generation === checkpointGeneration.current) { setLastCheckpoint(d.checkpoints[0] ?? null); publishCheckpointClock(session.key, d.checkpoint_clock); }
-      }).catch(() => { if (live) publishCheckpointClock(session.key, null); }).finally(() => { pending = false; });
+        if (live && generation === checkpointGeneration.current) { setLastCheckpoint(d.checkpoints[0] ?? null); setActivity(d.checkpoint_activity ?? null); setActivityState("loaded"); publishCheckpointClock(session.key, d.checkpoint_clock); }
+      }).catch(() => { if (live && generation === checkpointGeneration.current) { setActivity(null); setActivityState("error"); publishCheckpointClock(session.key, null); } }).finally(() => { pending = false; });
     };
     const updated = (event: Event) => { if ((event as CustomEvent<string>).detail === session.key) load(); };
     load();
@@ -111,7 +118,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
       <SessionPanelSection key={`memory-${session.key}`} title="Saved memory" initiallyOpen status={<CheckpointAgeValue sessionKey={session.key} />}>
         <p className="rd-section-purpose">Knowledge kept for future sessions.</p>
         <div className="rd-session-metrics"><div><span>Last successful save</span><strong><CheckpointAgeValue sessionKey={session.key} /></strong></div>
-          <div><span>New events since save</span><strong className="rd-value-unavailable">Unavailable</strong></div></div>
+          <div><span>Events since saved capture</span><strong className={eventCount === null ? "rd-value-unavailable" : undefined}>{activityLabel}</strong></div></div>
         {lastCheckpoint && <details className="rd-section-disclosure" aria-label="Latest checkpoint">
           <summary>Latest attempt · {checkpointStatus(lastCheckpoint).label}</summary>
           <CheckpointFacts checkpoint={lastCheckpoint} compact />
@@ -119,7 +126,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
         </details>}
         <div className="rd-section-actions">{onMemory && <button className="rd-timeline-link" onClick={onMemory}>Read saved memory ↗</button>}
           <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!!checkpointRunning || !!session.hostOffline} onClick={() => { void chooseCheckpoint(session.key, session.label).catch(e => toast(checkpointRequestError(e), "err")); }}>Checkpoint</button></div>
-        <details className="rd-section-disclosure rd-section-help"><summary>About saved memory</summary><p>Checkpoint saves a durable summary. Later failed attempts do not reset the last successful save.</p><p>An exact event count after the saved capture boundary is not available. Events are recorded activity, not conversation turns or unsummarized records; older summary gaps may still exist.</p></details>
+        <details className="rd-section-disclosure rd-section-help"><summary>About saved memory</summary><p>Checkpoint saves a durable summary. Later failed attempts do not reset the last successful save.</p><p>Counts use the last successful checkpoint’s captured history boundary, including events recorded while that save was running. Events are recorded activity, not conversation turns or unsummarized records; older summary gaps may still exist.</p>{activity?.event_filter && <p>{activity.event_filter === "work-v1" ? "Uses the saved work-event filter; attendance and status-only notifications are excluded." : "Uses the saved all-events filter, including status observations."}</p>}</details>
       </SessionPanelSection>
       <SessionPanelSection key={`context-${session.key}`} title="Active context" initiallyOpen status={tokens ? `${tokens} tokens` : "Unknown"}>
         <p className="rd-section-purpose">Conversation currently used by the agent.</p>

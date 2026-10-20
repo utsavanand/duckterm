@@ -35,6 +35,7 @@ test("terminal palette follows the app light/dark toggle", async ({ page }) => {
     .toBeLessThan(200); // dark terminal background
 
   await page.getByRole("tab", { name: "Session", exact: true }).click();
+    await page.locator(".rd-session-section > summary").filter({ hasText: /^Terminal appearance/ }).click();
   const picker = page.getByRole("combobox", { name: "Theme for this session", exact: true });
   await expect(picker.locator('option[value="paper"]')).toHaveCount(0);
   await expect(picker.locator('option[value="duck"]')).toHaveCount(1);
@@ -48,6 +49,7 @@ test("terminal palette follows the app light/dark toggle", async ({ page }) => {
     .toBeGreaterThan(600); // near-white terminal background
 
   await page.getByRole("tab", { name: "Session", exact: true }).click();
+    await page.locator(".rd-session-section > summary").filter({ hasText: /^Terminal appearance/ }).click();
   await expect(picker.locator('option[value="paper"]')).toHaveCount(1);
   await expect(picker.locator('option[value="duck"]')).toHaveCount(0);
 });
@@ -83,6 +85,7 @@ test("light selections stay readable when terminal focus moves away", async ({ p
     await expect.poll(() => page.evaluate(() => window.__rtCopy?.())).toContain("SELECTABLE");
     await page.screenshot({ path: "/tmp/duckterm-light-selection-inactive.png" });
     await page.getByRole("tab", { name: "Session", exact: true }).click();
+    await page.locator(".rd-session-section > summary").filter({ hasText: /^Terminal appearance/ }).click();
     await page.getByRole("combobox", { name: "Theme for this session", exact: true }).selectOption("solarized-light");
     await expect.poll(() => shownTermBg(page)).toBe("rgb(253, 246, 227)");
     await expect(selection).toHaveCSS("background-color", "rgb(82, 99, 89)");
