@@ -373,7 +373,7 @@ export const Terminal = memo(function Terminal({
     <div
       ref={hostRef}
       className={enhanced ? "rd-terminal-enhanced" : undefined}
-      style={{ flex: 1, height: 0, minHeight: 0, background: palette.background, "--terminal-emphasis": palette.mode === "light" ? palette.blue : palette.brightBlue } as CSSProperties}
+      style={{ flex: 1, height: 0, minHeight: 0, background: palette.background, "--terminal-dim": `${palette.foreground}d1`, "--terminal-emphasis": palette.mode === "light" ? palette.blue : palette.brightBlue } as CSSProperties}
     />
   );
 });

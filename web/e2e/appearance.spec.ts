@@ -93,14 +93,15 @@ test("folder colors inherit, session overrides persist, and explicit program col
     const bold = term.locator(".xterm-bold").filter({ hasText: "BOLD_TEXT" });
     const dim = term.locator(".xterm-dim").filter({ hasText: "DIM_TEXT" });
     await expect(bold).toHaveCSS("color", "rgb(131, 165, 152)");
-    await expect(dim).toHaveCSS("opacity", "0.82");
+    await expect(dim).toHaveCSS("color", "rgba(235, 219, 178, 0.82)");
     const explicitRed = await color("BOLD_RED");
     await page.getByRole("combobox", { name: "Text styling", exact: true }).selectOption("program");
     await expect(bold).toHaveCSS("color", "rgb(235, 219, 178)");
-    await expect(dim).toHaveCSS("opacity", "0.5");
-    await expect.poll(() => color("BOLD_RED")).toBe(explicitRed);
+    await expect(dim).not.toHaveCSS("color", "rgba(235, 219, 178, 0.82)");
     await page.getByRole("combobox", { name: "Text styling", exact: true }).selectOption("enhanced");
     await expect(bold).toHaveCSS("color", "rgb(131, 165, 152)");
+    await expect.poll(() => color("BOLD_RED")).toBe(explicitRed);
+    expect(explicitRed).not.toBe(await color("BOLD_TEXT"));
     await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("nord");
     await expect.poll(() => color("FIXED_WHITE")).toBe("rgb(216, 222, 233)");
     expect(connections).toBe(initialConnections);

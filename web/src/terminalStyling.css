@@ -4,4 +4,8 @@
 .rd-terminal-enhanced .xterm-bold.xterm-fg-231:not([style*="color"]) {
   color: var(--terminal-emphasis) !important;
 }
-.rd-terminal-enhanced .xterm-dim { opacity: .82; }
+/* xterm encodes dimming in foreground alpha, not element opacity. */
+.rd-terminal-enhanced .xterm-dim:not(.xterm-bold):not([class*="xterm-fg-"]):not([style*="color"]),
+.rd-terminal-enhanced .xterm-dim.xterm-fg-231:not(.xterm-bold):not([style*="color"]) {
+  color: var(--terminal-dim) !important;
+}
