@@ -1,3 +1,21 @@
+## 2026-10-20 — Verify checkpoint meaning across selection, generation and reading
+
+The configured count was 20, but the manual dialog chose the oldest unprocessed
+records while the owner expected recent work. Startup's short approval also
+landed after a batch boundary, without its proposal, and its accumulated memory
+could not display because a per-summary byte limit was applied to the whole
+read view. Successful receipts pointed at the final batch, not a complete
+attempt result.
+
+New selection plans explicitly carry newest-first order while old confirmed
+plans retain their meaning. Bounded adjacent original messages supply context
+without becoming duplicate processed coverage. Display pagination preserves the
+full evidenced union independently of generation budgets. Receipts identify
+exact attempt batches and keep failure status separate from saved evidence.
+Tests must exercise actual selection order, a proposal/approval split, multi-batch
+results and memory larger than one generated summary. Synthetic shape checks
+alone cannot establish summary usefulness or resolve stale claims across batches.
+
 ## 2026-10-20 — Saved batch evidence is not checkpoint success
 
 Render validated attempt-only coverage and exact revision links while keeping the overall failure. A late source fence can fail after publication: never promise rollback or a frozen success clock in that case. Keep current-memory navigation separate from historical revision links, preserve host routing, and reject malformed counts rather than infer completion.

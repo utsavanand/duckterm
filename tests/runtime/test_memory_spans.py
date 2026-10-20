@@ -52,6 +52,49 @@ def test_successive_spans_advance_first_without_reusing_prior_summary():
     assert memory_spans.metadata(b)["coverage"]["omitted"] == []
 
 
+def test_proposal_before_batch_boundary_remains_context_without_advancing_coverage():
+    captured = snapshot(["Use the real dashboard; keep the voice. Shall I proceed?", "sgtm"])
+    captured["memory_sources"][0]["records"][0]["role"] = "assistant"
+    captured["checkpoint_settings"] = {"batch_records": 1}
+    a = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
+    b = memory_spans.plan(captured, a["next_boundary"])
+    payload = json.loads(memory_spans.prompt(b).split("MEMORY UPDATE:\n", 1)[1])
+    assert [r["text"] for r in payload["records"]] == ["sgtm"]
+    assert [r["record"] for r in payload["context_records"]] == ["0"]
+    assert b["ranges"] == [{"source": "test-conversation", "version": "2", "first": 1, "end": 2}]
+    assert memory_spans.continuity(b, {})["processed"] == {
+        "test-conversation": {"1": b["selected"][0]["hash"]}
+    }
+    context = {
+        "overview": "The owner approved the real-dashboard proposal.",
+        **{field: [] for field in memory_summary.FIELDS},
+    }
+    context["decisions"] = [
+        {
+            "text": "Proceed with the real dashboard and keep the voice.",
+            "refs": [payload["context_records"][0]["ref"], payload["records"][0]["ref"]],
+            "kind": "decision",
+            "state": "open",
+        }
+    ]
+    assert memory_continuity.context(json.dumps({"context": context}), b)["decisions"]
+    assert memory_spans.metadata(b)["span_input"]["context_refs"] == [
+        payload["context_records"][0]["ref"]
+    ]
+
+
+def test_context_never_skips_a_large_proposal_or_reduces_selected_records():
+    captured = snapshot(["Earlier unrelated proposal", "x" * 48000, "sgtm"])
+    captured["memory_sources"][0]["records"][1]["role"] = "assistant"
+    rows = memory_spans.original_rows(captured)
+    captured["checkpoint_selection"] = {(rows[2]["source"], rows[2]["record"]): rows[2]["hash"]}
+    batch = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
+    assert [r["text"] for r in batch["selected"]] == ["sgtm"]
+    assert batch["context_records"] == []
+    assert not batch["oversized"]
+    assert len(memory_spans.prompt(batch).encode()) <= memory_spans.MAX_GENERATION_BYTES
+
+
 def test_frozen_large_span_splits_in_bytes_and_turns_without_holes():
     captured = snapshot([f"Turn {i}: " + "🔒" * 2000 for i in range(12)])
     lower = memory_spans.boundary(captured, empty=True)

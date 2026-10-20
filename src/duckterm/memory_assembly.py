@@ -19,6 +19,7 @@ def assemble(
     links: list[dict[str, Any]] | None = None,
     sources: list[dict[str, Any]] | None = None,
     active_only: bool = False,
+    display: bool = False,
 ) -> dict[str, Any]:
     """Resolve all active protected claims; use recent heads for narrative only.
 
@@ -94,7 +95,7 @@ def assemble(
     # active handoff union has its own final budget, including tools/coverage;
     # applying the per-revision cap here would refuse before optional omissions.
     context = memory_contract.read_context(
-        context, 2, valid_refs=refs, check_budget=not active_only
+        context, 2, valid_refs=refs, check_budget=not (active_only or display)
     )
     return {
         "context": context,

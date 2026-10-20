@@ -17,7 +17,7 @@ async def freeze(
     settings: dict[str, Any],
     *,
     selection: dict[str, Any] | None = None,
-    order: str = "oldest_unprocessed_first",
+    order: str | None = None,
 ) -> dict[str, Any]:
     captured = await memory_continuity.capture(server, key, captured)
     if selection is not None and (captured.get("memory_gaps") or "memory_sources" not in captured):
@@ -43,6 +43,9 @@ async def freeze(
     if selection is not None:
         from duckterm import checkpoint_plan
 
+        order = checkpoint_plan.selection_order(
+            checkpoint_plan.validate_plan(selection.get("plan")), order
+        )
         chosen, available = checkpoint_plan.selected(
             server, key, captured, settings, selection, order=order
         )

@@ -14,6 +14,33 @@ from duckterm import memory_sources, memory_summary_input
 __all__ = ["memory_rig"]
 
 
+@pytest.mark.parametrize(
+    "role,text",
+    [
+        ("user", "check inbox"),
+        ("user", "Check your inbox."),
+        ("user", "You have something in your inbox."),
+        ("assistant", "I’ll check the session inbox."),
+    ],
+)
+def test_plain_inbox_notices_do_not_consume_record_allowance(role, text):
+    assert memory_summary_input.is_routine_notice(role, text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Check inbox. Fix the failed checkpoint before releasing.",
+        "Do not send anything when you check your inbox.",
+        'The summary incorrectly says "check inbox".',
+        "sgtm",
+        "yes",
+    ],
+)
+def test_substantive_inbox_instructions_and_approvals_remain_originals(text):
+    assert not memory_summary_input.is_routine_notice("user", text)
+
+
 @pytest.mark.parametrize("runtime", ["claude-code", "codex"])
 def test_native_tool_output_stays_readable_but_reference_only(memory_rig, runtime):
     _, _, _, tmp = memory_rig

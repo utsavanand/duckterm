@@ -265,7 +265,10 @@ def context(reply: str, plan: dict[str, Any]) -> dict[str, Any]:
     raw = progress.json_object(reply)
     if raw is None or not isinstance(raw.get("context"), dict):
         raise memory_summary.InvalidContext("invalid_context_object")
-    refs = {r["source"] + ":" + r["version"] + ":" + r["record"] for r in plan["selected"]}
+    refs = {
+        r["source"] + ":" + r["version"] + ":" + r["record"]
+        for r in [*plan["selected"], *plan.get("context_records", [])]
+    }
     for name in memory_summary.FIELDS:
         for item in (plan["prior_context"] or {}).get(name, []):
             refs.update(item["refs"])
