@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,8 @@ def test_adopted_claude_preserves_identity_messages_and_model(tmp_path: Path) ->
         "while True:time.sleep(1)\n"
     )
     fake.chmod(0o755)
-    namespace = "adoption-" + tmp_path.name
+    # tmp_path.name repeats across concurrent pytest runs in other worktrees.
+    namespace = "adoption-" + uuid.uuid4().hex
     env = {
         **os.environ,
         "HOME": str(tmp_path),

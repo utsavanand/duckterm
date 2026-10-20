@@ -1,3 +1,7 @@
+## 2026-10-20 — Test socket names must be unique across concurrent worktrees
+
+The adoption fixture derived its tmux socket from tmp_path.name, which repeats across pytest runs. Concurrent gates could adopt or stop another fixture’s synthetic agent and look for its argv file in the wrong temporary home. Use a per-run UUID and retain exact-socket cleanup; verify concurrent fixture runs before trusting the full gate.
+
 ## 2026-10-20 — Keep hook capture fixtures independent of interpreter startup
 
 The full gate intermittently missed a background hook payload while focused
