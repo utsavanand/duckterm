@@ -1,6 +1,6 @@
 .rd-checkpoint-settings p, .rd-checkpoint-settings small { color: var(--text-muted); line-height: 1.6; }
 .rd-checkpoint-settings p { margin: 8px 0 20px; }
-.rd-checkpoint-settings small { display: block; margin-top: 8px; font-size: 12px; }
+.rd-checkpoint-settings small { display: block; margin-top: 8px; font-size: 0.75rem; }
 .rd-checkpoint-settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .rd-checkpoint-settings label { display: block; font-weight: 600; margin: 22px 0 9px; }
 .rd-checkpoint-settings input { max-width: 170px; }

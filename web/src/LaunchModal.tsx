@@ -276,7 +276,7 @@ export function LaunchModal({
               padding: "8px 10px",
               border: "1px solid var(--border-strong)",
               borderRadius: 8,
-              fontSize: 13,
+              fontSize: "0.8125rem",
             }}
           >
             <span className="mono" style={{ flex: 1, wordBreak: "break-all" }}>

@@ -71,14 +71,14 @@ export function DirBrowser({
         </button>
         <span
           className="mono"
-          style={{ flex: 1, fontSize: 12, wordBreak: "break-all" }}
+          style={{ flex: 1, fontSize: "0.75rem", wordBreak: "break-all" }}
         >
           {data.path}
         </span>
       </div>
       <div style={{ maxHeight: 200, overflowY: "auto", padding: 6 }}>
         {data.entries.length === 0 && (
-          <div style={{ fontSize: 12, color: "var(--muted)", padding: 8 }}>
+          <div style={{ fontSize: "0.75rem", color: "var(--muted)", padding: 8 }}>
             No subfolders.
           </div>
         )}
@@ -93,18 +93,18 @@ export function DirBrowser({
               padding: "5px 8px",
               borderRadius: 6,
               cursor: "pointer",
-              fontSize: 13,
+              fontSize: "0.8125rem",
             }}
           >
             <span>📁</span>
             <span style={{ flex: 1 }}>{e.name}</span>
             {e.is_git && (
-              <span style={{ fontSize: 11, color: "var(--idle)" }}>git</span>
+              <span style={{ fontSize: "0.6875rem", color: "var(--idle)" }}>git</span>
             )}
           </div>
         ))}
       </div>
-      {emptyOnly && data.empty !== true && <p style={{ padding: "0 12px", fontSize: 13 }}>Choose an empty folder, or create a new one here. Existing files will not be overwritten.</p>}
+      {emptyOnly && data.empty !== true && <p style={{ padding: "0 12px", fontSize: "0.8125rem" }}>Choose an empty folder, or create a new one here. Existing files will not be overwritten.</p>}
       {createFolder && <div style={{ padding: "0 12px 12px" }}>
         {newFolder ? <>
           <label>New folder name<input aria-label="New folder name" style={inputStyle} value={folderName} disabled={creating} onChange={e => setFolderName(e.target.value)} /></label>
