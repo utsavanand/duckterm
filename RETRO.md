@@ -1,3 +1,7 @@
+## 2026-10-20 — Personal colors should tint the whole shortcut without competing with content
+
+Use the owner-approved soft color mix across the whole row, with readable labels and subdued hover feedback. Composite over the opaque card so terminal text does not show through; neither a tiny colored corner nor a solid saturated fill meets the intended behavior.
+
 ## 2026-10-19 — Native acceptance needs actual pointer gestures
 
 Programmatic clicks and a draggable grip passed automation while the owner could not drag the shortcut rectangle. Support pointer capture on both the label/initials button and grip, distinguish click from drag, and cancel safely on Escape or an outside drop. Test real Mac mouse events with an AppKit event loop; JavaScript click/keyboard dispatch alone is not native interaction evidence.

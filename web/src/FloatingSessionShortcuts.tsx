@@ -155,7 +155,7 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
       <option value="hover">Expand on hover</option><option value="expanded">Always expanded</option></select><button ref={add} aria-label="Choose sessions to pin" aria-expanded={open} aria-controls={id}
       title="Choose sessions to pin" onClick={() => { setCustomizing(null); setQuery(""); setOpen(!open); }}>+</button></div>
     <div className="rd-shortcut-list">{pins.map(s => <div className={`rd-shortcut-tab${s.key === selected.key ? " active" : ""}${dragKey === s.key ? " dragging" : ""}${drop?.key === s.key ? drop.after ? " drop-after" : " drop-before" : ""}`} key={s.key} data-key={s.key}
-      style={{ "--shortcut-color": SHORTCUT_COLORS[colorOf(s.key)] || undefined } as CSSProperties}>
+      data-color={colorOf(s.key)} style={{ "--shortcut-color": SHORTCUT_COLORS[colorOf(s.key)] || undefined } as CSSProperties}>
       <button className="rd-shortcut-grip" {...dragBindings(s.key)} aria-label={`Reorder ${folderLabel(s)}`} title="Drag to reorder · Alt + ↑ / ↓ with keyboard" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         onKeyDown={event => { if (event.altKey && ["ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); move(s.key, event.key === "ArrowUp" ? -1 : 1); } }}>
         <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="4" r="1" /><circle cx="7" cy="4" r="1" /><circle cx="3" cy="8" r="1" /><circle cx="7" cy="8" r="1" /><circle cx="3" cy="12" r="1" /><circle cx="7" cy="12" r="1" /></svg>

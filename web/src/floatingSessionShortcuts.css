@@ -48,8 +48,15 @@
 @media(prefers-reduced-motion:reduce) { .rd-floating-shortcuts, .rd-shortcut-heading { transition:none; } }
 
 /* Personal identity colors never replace the live agent status dot. */
-.rd-shortcut-tab { border-left:3px solid var(--shortcut-color,var(--border)); background:color-mix(in srgb,var(--shortcut-color,var(--card)) 9%,var(--card)); }
-.rd-shortcut-tab.active { background:color-mix(in srgb,var(--shortcut-color,var(--card)) 9%,var(--card)); }
+.rd-shortcut-tab { border-left-width:3px; background:var(--card); }
+.rd-shortcut-tab.active { background:var(--card); }
+.rd-shortcut-tab[data-color]:not([data-color="None"]) {
+  background:color-mix(in srgb,var(--shortcut-color) 30%,var(--card));
+  border-color:color-mix(in srgb,var(--shortcut-color) 50%,var(--border));
+  color:var(--text);
+}
+.rd-shortcut-tab[data-color]:not([data-color="None"]) :is(button,.rd-shortcut-folder,.rd-shortcut-slash,.rd-shortcut-badge) { color:var(--text); }
+.rd-floating-shortcuts .rd-shortcut-tab[data-color]:not([data-color="None"]) button:hover:not(:disabled) { background:color-mix(in srgb,var(--text) 8%,transparent); }
 .rd-shortcut-tab.active .rd-shortcut-session { font-weight:650; }
 .rd-shortcut-folder { color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto; }
 .rd-shortcut-session { flex-shrink:0; max-width:60%; overflow:hidden; text-overflow:ellipsis; }

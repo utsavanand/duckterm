@@ -105,7 +105,18 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     await uiTab.getByRole("button", { name: /^Color for/ }).click();
     await page.getByRole("dialog", { name: "Shortcut color", exact: true }).getByRole("button", { name: "Red", exact: true }).click();
     await expect(uiTab.getByRole("button", { name: /Color for .*: Red$/ })).toBeFocused();
-    await expect(uiTab).toHaveCSS("border-left-color", "rgb(237, 120, 120)");
+    await expect(uiTab).toHaveAttribute("data-color", "Red");
+    // The whole row gets a soft tint, composited over an opaque card.
+    const tint = await uiTab.evaluate(el => {
+      const actual = getComputedStyle(el).backgroundColor;
+      const sample = document.createElement("span");
+      sample.style.background = "color-mix(in srgb,var(--shortcut-color) 30%,var(--card))";
+      el.append(sample);
+      const expected = getComputedStyle(sample).backgroundColor;
+      sample.remove();
+      return { actual, expected };
+    });
+    expect(tint.actual).toBe(tint.expected);
     await rail.getByRole("combobox", { name: "Shortcut display" }).selectOption("expanded");
     await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
     await page.mouse.move(500, 700);
