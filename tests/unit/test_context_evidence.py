@@ -73,7 +73,10 @@ def test_claude_completion_marker_not_usage_drop_or_model_lookup(tmp_path):
 
 @pytest.mark.parametrize("bad", [None, 0, -1, True, "1000000", 2**53])
 def test_invalid_latest_capacity_does_not_reuse_old_value(tmp_path, bad):
-    path = write(tmp_path / "log", [meta(), usage(100), usage(bad)])
+    path = write(tmp_path / "log", [meta(), usage(100)])
+    assert read(path)["context_window_tokens"] == 100
+    with path.open("a") as stream:
+        stream.write(json.dumps(usage(bad)) + "\n")
     assert read(path)["context_window_tokens"] is None
 
 
@@ -87,9 +90,10 @@ def test_partial_history_does_not_claim_never_compacted(tmp_path, monkeypatch):
 
 
 def test_malformed_records_and_timestamp_are_not_evidence(tmp_path):
-    path = write(tmp_path / "log", [meta(), compact(), compact("not-a-date"), [], None])
+    path = write(tmp_path / "log", [meta(), compact()])
+    assert read(path)["last_compaction_at"] == STAMP
     with path.open("a") as stream:
-        stream.write("broken JSON\n")
+        stream.write(json.dumps(compact("not-a-date")) + "\n[]\nnull\nbroken JSON\n")
     assert read(path)["last_compaction_at"] is None
 
 
