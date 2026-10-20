@@ -19,6 +19,9 @@ Hook config locations:
 """
 
 import json
+import os
+import re
+import shlex
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -29,8 +32,6 @@ from duckterm.runtimes.base import HookSpec
 # Canonical event set (Claude's names), defined once in core.events. Each
 # harness maps these to its own hook names below.
 _EVENTS = events.ALL
-
-_MARKER = "duckterm"  # present in our command string so we can find/remove it
 
 # The pre-exec permission event must BLOCK so the hook can long-poll Duckterm
 # for the user's decision and return it to the agent (the dashboard becomes the
@@ -45,8 +46,44 @@ def hook_script_path() -> Path:
     return Path(str(files("duckterm").joinpath("hooks/duckterm-hook.sh")))
 
 
+def _hook_invocation(command: str) -> Path | None:
+    if not isinstance(command, str):
+        return None
+    try:
+        args = shlex.split(command)
+    except ValueError:
+        return None
+    if (
+        len(args) == 3
+        and Path(args[0]).name == "duckterm-hook.sh"
+        and args[1] in _EVENTS
+        and args[2] in {"claude-code", "codex", "copilot"}
+    ):
+        return Path(args[0])
+    return None
+
+
 def _is_ours(command: str) -> bool:
-    return _MARKER in command
+    """Require our loaded script or the exact package path in a known pipx venv."""
+    path = _hook_invocation(command)
+    if path is None or not path.is_absolute():
+        return False
+    if path == hook_script_path():
+        return True
+    roots = [Path.home() / ".local/pipx", Path.home() / ".local/share/pipx"]
+    if os.environ.get("PIPX_HOME"):
+        roots.append(Path(os.environ["PIPX_HOME"]))
+    for root in roots:
+        try:
+            relative = path.relative_to(root / "venvs/duckterm")
+        except ValueError:
+            continue
+        if re.fullmatch(
+            r"lib/python[0-9]+\.[0-9]+/site-packages/duckterm/hooks/duckterm-hook\.sh",
+            relative.as_posix(),
+        ):
+            return True
+    return False
 
 
 # ── claude-code & codex: identical {hooks: {Event: [{matcher, hooks:[…]}]}} ──
@@ -61,10 +98,10 @@ def claude_style_build(config: dict[str, Any], script: str, runtime: str) -> dic
 
     supports_notice = REGISTRY[runtime].turn_end_inbox_notice
     supports_async = runtime != "codex"
+    claude_style_strip(config)
     hooks: dict[str, Any] = config.setdefault("hooks", {})
     for event in _EVENTS:
         entries = hooks.setdefault(event, [])
-        entries[:] = [e for e in entries if not _claude_entry_is_ours(e)]
         blocking = supports_async and event == _BLOCKING_EVENT
         # codex caps hook timeouts at 3s and prints a "clamping" warning at
         # every session start for anything higher — write 3 so it's quiet.
@@ -82,17 +119,34 @@ def claude_style_build(config: dict[str, Any], script: str, runtime: str) -> dic
     return config
 
 
-def _claude_entry_is_ours(entry: dict[str, Any]) -> bool:
-    return any(_is_ours(h.get("command", "")) for h in entry.get("hooks", []))
+def _hook_groups(config: dict[str, Any]) -> dict[str, Any]:
+    hooks = config.get("hooks", {})
+    if not isinstance(hooks, dict) or any(not isinstance(v, list) for v in hooks.values()):
+        raise ValueError("Invalid hooks configuration; leaving it unchanged")
+    return hooks
 
 
 def claude_style_strip(config: dict[str, Any]) -> dict[str, Any]:
-    hooks: dict[str, Any] = config.get("hooks", {})
-    for event in list(hooks):
-        hooks[event] = [e for e in hooks[event] if not _claude_entry_is_ours(e)]
-        if not hooks[event]:
+    hooks = _hook_groups(config)
+    had_events = bool(hooks)
+    for event, entries in list(hooks.items()):
+        kept = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("hooks", []), list):
+                raise ValueError("Invalid hook group; leaving configuration unchanged")
+            children = entry.get("hooks", [])
+            remaining = [
+                h for h in children if not (isinstance(h, dict) and _is_ours(h.get("command", "")))
+            ]
+            if len(remaining) == len(children):
+                kept.append(entry)
+            elif remaining:
+                kept.append({**entry, "hooks": remaining})
+        if kept or not entries:
+            hooks[event] = kept
+        else:
             del hooks[event]
-    if not hooks:
+    if had_events and not hooks:
         config.pop("hooks", None)
     return config
 
@@ -115,11 +169,11 @@ _COPILOT_EVENTS = {
 
 
 def copilot_build(config: dict[str, Any], script: str, runtime: str) -> dict[str, Any]:
+    copilot_strip(config)
     config.setdefault("version", 1)
     hooks: dict[str, Any] = config.setdefault("hooks", {})
     for canonical, cop_event in _COPILOT_EVENTS.items():
         entries = hooks.setdefault(cop_event, [])
-        entries[:] = [e for e in entries if not _is_ours(e.get("command", "") + e.get("bash", ""))]
         entries.append(
             {
                 "type": "command",
@@ -134,23 +188,36 @@ def copilot_build(config: dict[str, Any], script: str, runtime: str) -> dict[str
 
 
 def copilot_strip(config: dict[str, Any]) -> dict[str, Any]:
-    hooks: dict[str, Any] = config.get("hooks", {})
-    for event in list(hooks):
-        hooks[event] = [
-            e for e in hooks[event] if not _is_ours(e.get("command", "") + e.get("bash", ""))
-        ]
-        if not hooks[event]:
+    hooks = _hook_groups(config)
+    had_events = bool(hooks)
+    for event, entries in list(hooks.items()):
+        kept = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise ValueError("Invalid hook entry; leaving configuration unchanged")
+            commands = [entry[k] for k in ("command", "bash", "powershell") if entry.get(k)]
+            owned = [_is_ours(command) for command in commands]
+            if any(owned) and not all(owned):
+                raise ValueError("Mixed owned and custom hook commands; inspect before removal")
+            if not any(owned):
+                kept.append(entry)
+        if kept or not entries:
+            hooks[event] = kept
+        else:
             del hooks[event]
-    if not hooks:
+    if had_events and not hooks:
         config.pop("hooks", None)
-        config.pop("version", None)
+    # The format version is not a DuckTerm-owned hook.
     return config
 
 
 def _load(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
-    return json.loads(path.read_text())  # type: ignore[no-any-return]
+    config = json.loads(path.read_text())
+    if not isinstance(config, dict):
+        raise ValueError("Hook configuration must be an object")
+    return config
 
 
 def _spec(agent: str) -> tuple[str, HookSpec]:
@@ -193,10 +260,23 @@ def uninstall(*, global_scope: bool, project_dir: Path, agent: str = "claude-cod
 
         uninstall_file(path)
         return path
-    if not path.exists():
-        return path
     if spec.strip is None:
         raise ValueError("config-entry hook has no stripper")
-    config = spec.strip(_load(path))
-    path.write_text(json.dumps(config, indent=2) + "\n")
+    # Reuse the existing descriptor-based lock/write implementation. This refuses
+    # symlink parents and replaces the file atomically without truncating it.
+    from duckterm.agents.hook_files import _lock, _read, _write
+
+    with _lock(path, create=False) as directory:
+        if directory is None:
+            return path
+        raw = _read(path.name, directory)
+        if raw is None:
+            return path
+        config = json.loads(raw)
+        if not isinstance(config, dict):
+            raise ValueError("Hook configuration must be an object")
+        original = json.dumps(config, sort_keys=True)
+        result = spec.strip(config)
+        if json.dumps(result, sort_keys=True) != original:
+            _write(path.name, (json.dumps(result, indent=2) + "\n").encode(), directory)
     return path

@@ -107,3 +107,113 @@ def test_uninstall_is_per_agent(tmp_path: Path) -> None:
     config = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
     # All duckterm entries gone; empty hooks block removed.
     assert config.get("hooks", {}) == {}
+
+
+def test_remove_keeps_custom_children_in_same_group(tmp_path: Path) -> None:
+    path = install(global_scope=False, project_dir=tmp_path)
+    config = json.loads(path.read_text())
+    custom = {"type": "command", "command": "echo duckterm", "timeout": 7}
+    config["hooks"]["Stop"][0]["hooks"].append(custom)
+    config["hooks"]["Stop"][0]["custom"] = "retained"
+    path.write_text(json.dumps(config))
+    uninstall(global_scope=False, project_dir=tmp_path)
+    assert json.loads(path.read_text())["hooks"] == {
+        "Stop": [{"matcher": "*", "hooks": [custom], "custom": "retained"}]
+    }
+
+
+def test_reinstall_keeps_custom_children_in_same_group(tmp_path: Path) -> None:
+    path = install(global_scope=False, project_dir=tmp_path)
+    config = json.loads(path.read_text())
+    config["hooks"]["Stop"][0]["hooks"].append({"command": "my-linter"})
+    path.write_text(json.dumps(config))
+    install(global_scope=False, project_dir=tmp_path)
+    commands = [
+        h["command"] for e in json.loads(path.read_text())["hooks"]["Stop"] for h in e["hooks"]
+    ]
+    assert "my-linter" in commands
+    assert len(commands) == 2
+
+
+def test_uninstall_does_not_rewrite_unrelated_config(tmp_path: Path) -> None:
+    path = settings_path(global_scope=False, project_dir=tmp_path)
+    path.parent.mkdir()
+    original = '{ "hooks": {"Stop": [{"hooks": [{"command": "echo duckterm"}]}]}, "other": 1 }\n'
+    path.write_text(original)
+    uninstall(global_scope=False, project_dir=tmp_path)
+    assert path.read_text() == original
+
+
+def test_uninstall_refuses_symlink(tmp_path: Path) -> None:
+    import pytest
+
+    path = install(global_scope=False, project_dir=tmp_path)
+    original = path.read_bytes()
+    target = tmp_path / "custom.json"
+    path.rename(target)
+    path.symlink_to(target)
+    with pytest.raises(ValueError, match="unsafe"):
+        uninstall(global_scope=False, project_dir=tmp_path)
+    assert target.read_bytes() == original
+
+
+def test_copilot_preserves_custom_alternative_command(tmp_path: Path) -> None:
+    import pytest
+
+    path = install(global_scope=False, project_dir=tmp_path, agent="copilot")
+    config = json.loads(path.read_text())
+    config["hooks"]["sessionStart"][0]["bash"] = "custom-tool"
+    original = json.dumps(config)
+    path.write_text(original)
+    with pytest.raises(ValueError, match="Mixed"):
+        uninstall(global_scope=False, project_dir=tmp_path, agent="copilot")
+    assert path.read_text() == original
+
+
+def test_ownership_does_not_match_mentions_or_shell_wrappers() -> None:
+    from duckterm.agents.hooks_install import _is_ours, hook_script_path
+
+    assert _is_ours(f'"{hook_script_path()}" Stop claude-code')
+    for value in [
+        "echo duckterm",
+        "/custom/duckterm-linter.sh",
+        "echo /x/duckterm-hook.sh Stop codex",
+        '"unterminated',
+        '"/x/duckterm-hook.sh" Stop codex; other',
+        None,
+    ]:
+        assert not _is_ours(value)
+
+
+def test_no_owned_hooks_keeps_empty_shared_fields(tmp_path: Path) -> None:
+    path = settings_path(global_scope=False, project_dir=tmp_path)
+    path.parent.mkdir()
+    original = '{ "hooks": {}, "version": 1 }\n'
+    path.write_text(original)
+    uninstall(global_scope=False, project_dir=tmp_path)
+    assert path.read_text() == original
+
+
+def test_custom_same_basename_is_preserved(tmp_path: Path) -> None:
+    path = install(global_scope=False, project_dir=tmp_path)
+    config = json.loads(path.read_text())
+    custom = {"type": "command", "command": "/custom/user-tools/duckterm-hook.sh Stop claude-code"}
+    config["hooks"]["Stop"][0]["hooks"].append(custom)
+    path.write_text(json.dumps(config))
+    uninstall(global_scope=False, project_dir=tmp_path)
+    assert json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"] == [custom]
+
+
+def test_deleted_known_pipx_package_script_remains_recognizable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from duckterm.agents.hooks_install import _is_ours
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    script = (
+        tmp_path
+        / ".local/pipx/venvs/duckterm/lib/python3.13/site-packages/duckterm/hooks/duckterm-hook.sh"
+    )
+    assert not script.exists()
+    assert _is_ours(f'"{script}" Stop claude-code')
+    assert not _is_ours(f'"{script.parent / ".." / "duckterm-hook.sh"}" Stop claude-code')

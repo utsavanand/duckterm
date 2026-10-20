@@ -110,6 +110,20 @@ def build_parser() -> argparse.ArgumentParser:
     uninst.add_argument("--global", dest="global_scope", action="store_true")
     uninst.add_argument("--agent", choices=_installable_agents(), default="claude-code")
 
+    removal = sub.add_parser(
+        "uninstall", help="preview uninstall cleanup without changing anything"
+    )
+    removal.add_argument(
+        "--dry-run", action="store_true", help="inspect only (currently the default)"
+    )
+    removal.add_argument(
+        "--project",
+        action="append",
+        type=Path,
+        default=[],
+        help="also inspect this project's hooks; repeat for other projects",
+    )
+
     crun = sub.add_parser(
         "connector-run",
         help="exec a connector's MCP server with its credential resolved at launch "
@@ -548,6 +562,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _dashboard()
     if args.command == "install-hooks":
         return _install_hooks(args.global_scope, args.agent)
+    if args.command == "uninstall":
+        from duckterm.uninstall_plan import inventory
+
+        report = inventory(instance.home(), args.project)
+        print(json.dumps(report, indent=2))
+        return 1 if any(h["state"] == "blocked" for h in report["hooks"]) else 0
     if args.command == "uninstall-hooks":
         return _uninstall_hooks(args.global_scope, args.agent)
     if args.command == "doctor":
