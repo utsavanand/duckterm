@@ -140,7 +140,7 @@ export const Terminal = memo(function Terminal({
     let disposed = false;
     let attachGeneration = 0;
     let replayReady = false;
-    const terminalClipboard = bindTerminalClipboard(term, () => visible && replayReady && !disposed);
+    const terminalClipboard = bindTerminalClipboard(term, () => visible && replayReady && !disposed && ws?.readyState === WebSocket.OPEN);
     let snapshotSizing = false;
     let pendingOpenScroll = false;
     let openGeneration = 0;
@@ -270,7 +270,9 @@ export const Terminal = memo(function Terminal({
         }
       };
       ws.onclose = () => {
-        if (disposed) return;
+        if (disposed || generation !== attachGeneration) return;
+        replayReady = false;
+        ++attachGeneration;
         connectionRef.current?.(false);
         // Fast retries pick a Resume up promptly; exponential backoff (cap
         // 15s) keeps a long-stopped session from hammering the server with
