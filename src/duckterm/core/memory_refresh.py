@@ -175,13 +175,35 @@ async def _run(
     total: int | None = None
     completed = 0
     batch_index = 0
+    completed_ids: list[str] = []
+
+    def incomplete(update: SummaryUpdate) -> SummaryUpdate:
+        # These are accepted writes from this attempt, not a replacement for
+        # the last successful checkpoint or a certificate of current readiness.
+        # Do not include unrelated leaves loaded before this attempt.
+        if total is None:
+            return update
+        return replace(
+            update,
+            span_coverage={
+                "state": "incomplete",
+                "scope": "refresh_attempt",
+                "revision_ids": list(completed_ids),
+                "available_records": total,
+                "eligible_records": total,
+                "summarized_records": completed,
+                "pending_records": total - completed,
+                "reference_only_records": 0,
+            },
+        )
+
     while True:
         if not wanted(coordinator, key):
-            return SummaryUpdate.failed("update_failed", diagnostic="update_canceled")
+            return incomplete(SummaryUpdate.failed("update_failed", diagnostic="update_canceled"))
         try:
             planned = memory_spans.plan(captured, lower)
         except ValueError as exc:
-            return SummaryUpdate.failed("source_changed", diagnostic=str(exc))
+            return incomplete(SummaryUpdate.failed("source_changed", diagnostic=str(exc)))
         if total is None:
             total = len(planned["selected"]) + planned["pending_records"]
         coordinator.report_span_progress(key, stage="writing", completed=completed, total=total)
@@ -191,7 +213,9 @@ async def _run(
         }
         if not planned["selected"]:
             if planned["oversized"]:
-                return SummaryUpdate.failed("invalid_context", diagnostic="oversized_record")
+                return incomplete(
+                    SummaryUpdate.failed("invalid_context", diagnostic="oversized_record")
+                )
             break
         batch_index += 1
         batch = {
@@ -204,8 +228,9 @@ async def _run(
         }
         update, planned = await coordinator.write_span(key, batch, lower)
         if update.state not in {"updated", "reused"} or update.revision is None:
-            return update
+            return incomplete(update)
         completed += len(planned["selected"])
+        completed_ids.append(update.revision["id"])
         coordinator.report_span_progress(key, completed=completed, stage="checking")
         latest = update.revision
         leaves.append(update.revision)
@@ -214,38 +239,46 @@ async def _run(
         if not planned["pending_records"]:
             break
     if not wanted(coordinator, key):
-        return SummaryUpdate.failed("update_failed", diagnostic="update_canceled")
+        return incomplete(SummaryUpdate.failed("update_failed", diagnostic="update_canceled"))
     if latest is None:
-        return SummaryUpdate.failed("no_transcript")
+        return incomplete(SummaryUpdate.failed("no_transcript"))
     coordinator.report_span_progress(key, stage="checking")
     try:
         final = await coordinator._validation_capture(key, captured)
         if final is None:
-            return SummaryUpdate.failed("source_changed", diagnostic="publication:capture_unstable")
+            return incomplete(
+                SummaryUpdate.failed("source_changed", diagnostic="publication:capture_unstable")
+            )
         final = await coordinator._validation_memory(key, final)
     except APIError as exc:
-        return SummaryUpdate.failed(
-            "source_changed" if exc.status == 409 else "source_unavailable",
-            diagnostic=(
-                "publication:memory_capture_conflict"
-                if exc.status == 409
-                else "publication:memory_capture_unavailable"
-            ),
+        return incomplete(
+            SummaryUpdate.failed(
+                "source_changed" if exc.status == 409 else "source_unavailable",
+                diagnostic=(
+                    "publication:memory_capture_conflict"
+                    if exc.status == 409
+                    else "publication:memory_capture_unavailable"
+                ),
+            )
         )
     for name in ("source", "conversation", "policy"):
         if final[name] != captured[name]:
-            return SummaryUpdate.failed(
-                "source_changed", diagnostic="publication:" + name + "_changed"
+            return incomplete(
+                SummaryUpdate.failed(
+                    "source_changed", diagnostic="publication:" + name + "_changed"
+                )
             )
     # Publish only after the entire captured range completes. Every accepted leaf
     # already exists and survives a later batch's failure for an exact retry.
     conn = coordinator.server.history._conn
     with transaction(conn):
         if not current(coordinator, key, final, catalog=True):
-            return SummaryUpdate.failed(
-                "source_changed",
-                diagnostic="publication:"
-                + (change_reason(coordinator, key, final, catalog=True) or "source_changed"),
+            return incomplete(
+                SummaryUpdate.failed(
+                    "source_changed",
+                    diagnostic="publication:"
+                    + (change_reason(coordinator, key, final, catalog=True) or "source_changed"),
+                )
             )
         conn.execute(
             "UPDATE sessions SET progress=?,progress_at=?,outcome_summary=? WHERE session_key=?",

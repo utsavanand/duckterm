@@ -109,6 +109,9 @@ class SummaryUpdate:
     reason: str | None = None
     diagnostic: str | None = None
     review: dict[str, Any] | None = None
+    # Incomplete refresh_attempt coverage describes accepted writes from that
+    # attempt only. Its revision_ids are evidence links, not handoff readiness
+    # or a replacement for revision_id / the last successful summary.
     span_coverage: dict[str, Any] | None = None
     summary_corrections: list[str | dict[str, str]] | None = None
 

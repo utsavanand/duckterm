@@ -1,3 +1,7 @@
+## 2026-10-20 — Report accepted batches even when the checkpoint fails
+
+A later batch failure returned only its error, although earlier reviewed leaves were durable. The checkpoint therefore hid completed work. Preserve attempt-scoped counts and accepted revision IDs in failure metadata while keeping failure, the last-good summary and its clock unchanged. A test that proves retry reuses stored leaves does not prove the owner can discover them: exercise the persisted checkpoint response, a later-batch failure, exact remaining-record retry, and the unchanged success clock together. Do not count old session-wide digest references as records summarized in this attempt.
+
 ## 2026-10-20 — Budget correction requests separately from initial summary input
 
 A span filled the initial writer allowance, but correction needed the same originals plus feedback under that same allowance. Preserving feedback exposed the impossible retry as repair_input_too_large. A separate bounded correction allowance preserves the original record window; shrinking that window instead broke previously supported long single records. Test a naturally full batch through rejection, correction, rereview and persistence, including deferred coverage. Keep the final encoded-size guard so unusual feedback cannot silently drop evidence or bypass review.
