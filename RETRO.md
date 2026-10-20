@@ -1,13 +1,18 @@
+## 2026-10-19 — Count activity from the captured checkpoint boundary
+
+A successful checkpoint is saved after its source capture, so counting events after the save time misses work that arrived during summarization. Subtracting lifetime counts also fails after deletion or with filtered markers. Reuse the successful-checkpoint selector, validate its saved rowid and event ID in the same session, then count later events with the original filter. A missing anchor is unknown, not zero; an explicitly empty capture is a valid zero boundary. Label this event activity, not turns or unsummarized conversation. Read existing records only; a status panel must never trigger a checkpoint to obtain its values.
+
 ## 2026-10-19 — Verify the colors the agent actually emits
 
 A theme preview using only default text and ANSI colors hid extended indexed/RGB text that programs keep fixed. Remove the misleading sample; verify program-selected colors in native WebKit and a live terminal. Offer explicit contrast improvement without rewriting the PTY stream, and carry that preference through folder inheritance, session overrides, grids, and shells. Text-size resets must preserve fonts, palettes, and terminal drafts.
 
-## 2026-10-19 — Native scrollbar tracks need the resolved color scheme
 
 ## 2026-10-19 — Session panel hierarchy must preserve meaning and controls
 
 Repeated checkpoint cards, mismatched type sizes, and scattered actions made the right panel hard to scan. Group saved memory and active conversation context separately, keep supporting sections collapsible with summaries, and reuse existing checkpoint/recovery flows. Missing capture-boundary counts or native compaction events must remain unavailable; lifetime event totals and token changes cannot stand in for those contracts. Verify notes, recovery, keyboard disclosure, and memory navigation after moving controls.
 
+
+## 2026-10-19 — Native scrollbar tracks need the resolved color scheme
 
 Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
 

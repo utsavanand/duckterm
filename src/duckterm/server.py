@@ -4959,12 +4959,16 @@ class Server:
         from duckterm import checkpoint_clock
 
         checkpoints = self.history.checkpoints(session_key)
+        clock = checkpoint_clock.project(checkpoints)
         await _write_json(
             writer,
             200,
             {
                 "checkpoints": checkpoints,
-                "checkpoint_clock": checkpoint_clock.project(checkpoints),
+                "checkpoint_clock": clock,
+                "checkpoint_activity": checkpoint_clock.activity(
+                    self.history._conn, session_key, checkpoints, clock=clock
+                ),
             },
         )
 
