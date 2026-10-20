@@ -105,3 +105,16 @@ it("preserves remote text metadata before binary snapshot bytes", async () => {
   expect(socket.readyState).toBe(1);
   socket.close();
 });
+
+
+it("reports legacy-host plain-text errors without losing their HTTP status", async () => {
+  const remote = vi.fn().mockResolvedValue({ status: 404, body: "not found" });
+  window.webkit = { messageHandlers: { launchRequest: { postMessage: remote } } };
+  const result = await hostFetch("old-remote", "/sessions/stopped/shell");
+  expect(result.status).toBe(404);
+  expect((await result.json()).error).toContain("DuckTerm update");
+  remote.mockResolvedValue({ status: 502, body: "<html>private upstream details</html>" });
+  expect(await (await hostFetch("old-remote", "/sessions")).json()).toEqual({ error: "Remote request failed (HTTP 502)." });
+  remote.mockResolvedValue({ status: 200, body: "plain file contents" });
+  expect(await (await hostFetch("old-remote", "/file?path=notes")).text()).toBe("plain file contents");
+});

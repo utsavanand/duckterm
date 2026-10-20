@@ -146,6 +146,10 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         let bugReport = (method == "GET" && route == "/bugreport/context")
             || (method == "POST" && path == "/bugreport/submit")
             || (method == "GET" && path.range(of: #"^/bugreport/bundles/[a-f0-9]{32}$"#, options: .regularExpression) != nil)
+        let archiveUndoRoute = components.query == nil && (
+            (method == "GET" && route == "/archive-requests")
+            || (["POST", "DELETE"].contains(method)
+                && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/archive-undo$"#, options: .regularExpression) != nil))
         let shellRoute = ["GET", "POST", "DELETE"].contains(method)
             && components.query == nil
             && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/shell$"#, options: .regularExpression) != nil
@@ -166,7 +170,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         let memoryRoute = Self.memoryRestartRoute(components: components, method: method)
             || Self.memoryReadRoute(components: components, method: method)
         let checkpointSettingsRoute = path == "/checkpoint-settings" && ["GET", "POST"].contains(method)
-        guard checkpointPlanRoute || checkpointSettingsRoute || checkpointAttemptRoute || agentMergeRoute || memoryRoute || timelineRoute || recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
+        guard archiveUndoRoute || checkpointPlanRoute || checkpointSettingsRoute || checkpointAttemptRoute || agentMergeRoute || memoryRoute || timelineRoute || recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
             throw LaunchDestination.Failure.message("Unsupported session operation")
         }
         var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!

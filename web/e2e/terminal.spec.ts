@@ -246,3 +246,34 @@ test("terminal: evicting an old view preserves the running PTY and its input dra
       .join("\n").split("DRAFT_SURVIVES_EVICTION_CONTINUED").length - 1).toBe(2);
   } finally { for (const key of keys) await apiDelete(`/sessions/${key}`); }
 });
+
+// macOS xterm uses Option, not Shift, to bypass an agent's mouse tracking.
+// Soft-wrapped OAuth URLs must survive selection without inserted newlines.
+test("terminal: Option-drag copies a wrapped URL while the agent owns the mouse", async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, "platform", { get: () => "MacIntel" }));
+  const url = "https://example.test/oauth?client_id=synthetic&state=" + "x".repeat(250);
+  const launch = await apiPost("/sessions/launch", {
+    command: `sh -c 'printf "\\033[?1000h${url}\\r\\n"; exec cat'`,
+    cwd: "/tmp", name: "copy-wrapped-url", in_terminal: false, test: true,
+  });
+  expect(launch.status).toBe(200);
+  const key = launch.body.session_key as string;
+  try {
+    await page.goto(base());
+    await page.locator(".rd-row-name", { hasText: "copy-wrapped-url" }).click();
+    const screen = page.locator(".rd-terminal-slot:visible .xterm-screen");
+    await expect(screen).toContainText("https://example.test/oauth", { timeout: 10_000 });
+    const rows = screen.locator(".xterm-rows > div");
+    const first = await rows.first().boundingBox();
+    const last = await rows.nth(5).boundingBox();
+    expect(first).not.toBeNull(); expect(last).not.toBeNull();
+    await page.keyboard.down("Alt");
+    await page.mouse.move(first!.x + 1, first!.y + first!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(last!.x + last!.width - 1, last!.y + last!.height / 2, { steps: 20 });
+    await page.mouse.up();
+    await page.keyboard.up("Alt");
+    const selected = await page.evaluate(() => window.__rtCopy?.());
+    expect(selected?.trim()).toBe(url);
+  } finally { await apiDelete(`/sessions/${key}`); }
+});

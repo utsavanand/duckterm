@@ -89,6 +89,7 @@ export const Terminal = memo(function Terminal({
       minimumContrastRatio: minimumContrast,
       cursorBlink: true,
       convertEol: false,
+      macOptionClickForcesSelection: true,
     });
     termRef.current = term;
     const fit = new FitAddon();

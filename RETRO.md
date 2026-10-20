@@ -1,3 +1,7 @@
+## 2026-10-19 — Remote acceptance must cover both installed host versions and native routes
+
+A current Mac dashboard could not archive through the new undo flow because its native transport omitted those endpoints. The remote service was still 0.4.64, so shell requests returned plain-text 404s that surfaced as WebKit JSON errors. Check the actual owning host version, preserve HTTP errors, and test exact native route/method pairs. macOS xterm also needs Option-forced selection explicitly enabled; verify a wrapped synthetic login URL with agent mouse tracking active, through the dashboard copy bridge.
+
 ## 2026-10-19 — Contrast adjustment is not theme application
 
 ## Missing compaction data needs native evidence, not model guesses (2026-10-19)
