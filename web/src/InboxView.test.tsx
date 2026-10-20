@@ -143,7 +143,7 @@ it("filters only reply-required work and searches loaded replies without treatin
 it.each([false, true])("finds older open work using the server view (folder=%s) and resets its cursor", async (folder) => {
   const totals = { all: 104, pending: 2, answered: 102 };
   const old = { ...message, id: "old-open", sender_name: "Older open request", status: "accepted" as const, answer: null };
-  const fetchPage = vi.fn(async (_key: string, before?: number, view?: string) => view === "pending"
+  const fetchPage = vi.fn(async (_key: string, before?: number | string, view?: string) => view === "pending"
     ? { messages: [old], next_cursor: null, counts: totals }
     : { messages: [{ ...message, id: before ? "page-two" : "newest" }], next_cursor: before ? null : 75, counts: totals });
   vi.mocked(api.inbox).mockImplementation(fetchPage);

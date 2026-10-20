@@ -1,3 +1,19 @@
+## 2026-10-20 — A paused-state notification is not shutdown completion
+
+Stop publishes stopped before awaiting child exit to preserve queued questions. A quick Resume could launch successfully, then the old Stop wrote stopped over its new busy state. Serialize Stop and Resume per session through shutdown completion. A deterministic event-barrier test must attempt Resume while Stop is suspended, then verify exactly one launch and final busy state; polling for stopped alone cannot prove the old request finished.
+
+## 2026-10-20 — Establish a terminal draft before testing its preservation
+
+The artifact browser test typed immediately after xterm mounted, before the WebSocket necessarily opened. A blank terminal later looked like draft loss. Wait for a fixture readiness banner and assert the typed draft is visible before navigating away; keep the original return-to-terminal assertion. This tests preservation of an established draft rather than racing transport startup.
+
+## 2026-10-20 — Check status after successful disconnect
+
+The native packaged-backend rehearsal completed revocation and disconnect, then status crashed because the identity setting existed with JSON null. A storage default applies only to missing keys. Normalize the cleared identity before reading fields, and exercise the status endpoint after real disconnect so successful recovery does not appear as a network failure.
+
+## 2026-10-20 — A shared inbox must reach the folder history too
+
+Federated session inboxes worked while the owner’s folder interaction history still queried only local questions. Combine both durable sources at the existing owner-only boundary, scope either participant by current local subtree membership, retain independent cursors, and never mark agent messages read from an owner view. Test equal timestamps across more than one page, answered/pending filters, stopped participants, unrelated folders and unavailable coordinators. Integrating the feature must also preserve newer memory/recovery routes and appearance controls from main.
+
 ## 2026-10-19 — Remote acceptance must cover both installed host versions and native routes
 
 A current Mac dashboard could not archive through the new undo flow because its native transport omitted those endpoints. The remote service was still 0.4.64, so shell requests returned plain-text 404s that surfaced as WebKit JSON errors. Check the actual owning host version, preserve HTTP errors, and test exact native route/method pairs. macOS xterm also needs Option-forced selection explicitly enabled; verify a wrapped synthetic login URL with agent mouse tracking active, through the dashboard copy bridge.
@@ -826,6 +842,45 @@ separate paste target, retain the owning session for uploads, and reject a late
 result after focus changes. Verify collapse/reopen against a real shell: close
 the viewer without ending its process, and bind destructive confirmation to the
 backend's observed process token rather than a cached busy label.
+## 2026-10-06 — A stale sync response cannot confirm a newer owner change
+
+Review reproduced an exchange that captured the old folder tree, then returned
+after an owner rename committed. Settling every locally committed action hid
+the still-unapplied rename and removed its local exclusion. Capture committed
+action IDs before requesting the snapshot, and settle only those IDs after the
+folder plan has been applied and acknowledged. Regressions commit create, rename
+and delete operations while the old response is in flight. Recovery must also
+preserve stable empty-folder IDs, reject a changed membership preview, and
+confirm coordinator revocation before forgetting a disconnected capability.
+
+## 2026-10-06 — Concurrent gates can serve a different dashboard build
+
+Two full gates in one checkout share web/dist even with separate servers and
+test homes. A rebuild briefly removed dist/index.html, so the older browser
+loaded the fallback packaged UI and could not find the current panel control.
+Its trace identified the old bundled JS hash. Run gates serially in a checkout,
+or give each its own build tree; isolated ports alone do not isolate assets.
+
+## 2026-10-06 — Folder identity cannot depend on a live session card
+
+An empty nested folder appeared in snapshots but had no computer-to-folder
+binding. Renaming it created the new name locally while leaving the old folder
+behind. Bind every canonical folder, including empty ones, using the nearest
+ancestor's existing local path while renames are pending. A regression creates,
+renames and deletes an empty child and checks that each old path disappears.
+
+## 2026-10-06 — A lost receipt is not a rejected workspace change
+
+The native owner broker originally caught a local receipt failure in the same
+block as coordinator rejection. That would label an already-committed change
+safe to cancel. Separate the remote commit from the local receipt, retry the
+same operation ID, and only permit cancellation before transmission or after
+confirmed rejection. Recheck the durable queue before sending so a cancellation
+between queue-read and send cannot still mutate the workspace. Commit folder
+mutations and their idempotency receipt in one SQLite transaction; bind queued
+destination parents by stable identity so an offline action cannot recreate a
+parent that moved elsewhere. Native failure-injection and coordinator rollback
+tests cover these boundaries.
 
 ## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
 
@@ -932,6 +987,31 @@ escalation, confirm the private tmux server is gone, and await writer EOF marker
 before removing state. Retried removal is a backstop, not the synchronization.
 A real child that writes for 500 ms after SIGTERM fails the original teardown
 and passes the corrected ordering. Count gate exit status, not passing specs.
+
+## 2026-10-05 — Folder synchronization must survive interrupted prefix moves
+
+Independent acknowledgments for a renamed parent and child can skip the child,
+recreate its old identity, or get stuck when another rename arrives before the
+acknowledgment. Freeze each delivered plan until it is acknowledged as a unit.
+Preflight all local destinations before changing any folders, and journal exact
+membership before and after each move so restart can distinguish a committed
+move from an unrelated folder. Keep narrower sharing grants intact immediately
+at the coordinator, including the interval before the next computer sync. Test
+nested edits, lost responses, interruption after commit, and local collisions.
+Order moves by the final tree: a former child may now contain its former parent;
+ordering by the original tree can manufacture a destination collision.
+
+## 2026-10-04 — A unified sidebar is not a shared session directory
+
+Remote cards were grouped only in browser storage while agent discovery queried
+a different computer's database. Reusing those labels as permissions would hide
+the missing transport and could revive stale grants. Cross-computer work needs
+server-owned folder identities, authenticated computer pairing and durable
+messages. Keep Ungrouped cards out of exported snapshots, validate scope again
+at delivery/read time, and test actual HTTP boundaries plus disconnected peers.
+A passing preview with a synthetic native bridge is not installed acceptance;
+keep the implementation in draft until every sidebar mutation and recovery
+path uses the same canonical policy.
 
 ## 2026-10-04 — Passing isolated layers hid an adopted-session restart failure
 Runtime mocks, browser responses and generic-pane adoption each passed while

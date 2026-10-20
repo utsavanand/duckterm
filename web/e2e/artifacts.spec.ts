@@ -11,7 +11,7 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
   const cwd = realpathSync(mkdtempSync(join(tmpdir(), "duckterm-artifacts-test-")));
   let key = "";
   try {
-    const launched = await apiPost("/sessions/launch", { command: "sh -c 'cat'", cwd, runtime: "generic", name: "artifact-test-agent", in_terminal: false, test: true });
+    const launched = await apiPost("/sessions/launch", { command: "sh -c 'echo ARTIFACT_READY; exec cat'", cwd, runtime: "generic", name: "artifact-test-agent", in_terminal: false, test: true });
     expect(launched.status).toBe(200);
     key = String(launched.body.session_key);
     await apiPatch(`/sessions/${key}`, { group: "Artifact probes" });
@@ -25,8 +25,10 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     await page.goto(base());
     await expandFolder(page, "Artifact probes");
     await page.locator(".rd-row-name", { hasText: "artifact-test-agent" }).click();
+    await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("ARTIFACT_READY", { timeout: 8000 });
     await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
     await page.keyboard.type("ARTIFACT_DRAFT_NOT_SUBMITTED");
+    await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("ARTIFACT_DRAFT_NOT_SUBMITTED");
     await page.getByRole("button", { name: "Artifacts", exact: true }).click();
     await expect(page.getByText("No visible files in this directory.")).toBeVisible();
     const tabs = await page.locator(".rd-view-toggle button").allTextContents();

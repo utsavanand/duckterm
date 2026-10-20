@@ -29,7 +29,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
     onInstall: () => void;
     onRemove: () => void;
   };
-  onAction: (action: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "checkpointing" | "appearance") => void;
+  onAction: (action: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "appearance") => void;
 }) {
   const [open, setOpen] = useState<Menu | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -59,7 +59,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
     };
   }, [open]);
 
-  const action = (value: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "checkpointing" | "appearance") => {
+  const action = (value: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "appearance") => {
     setOpen(null);
     onAction(value);
   };
@@ -94,6 +94,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
           <NaturalVoicePanel status={voice.local} fallbackReason={voice.fallbackReason} onInstall={voice.onInstall} onRemove={voice.onRemove} />
         </div>
         <div className="rd-header-menu-divider" />
+        <button className="rd-header-menu-item" onClick={() => action("collaboration")}>Collaboration <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("checkpointing")}>Checkpointing <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("bugreport")}>Report a bug <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>

@@ -1,3 +1,4 @@
+import { CollaborationPanel } from "./CollaborationPanel";
 import { TerminalAppearance } from "./TerminalAppearance";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { useInterfaceAppearance } from "./appearance";
@@ -82,7 +83,7 @@ function Dashboard() {
   const { density, setDensity } = useSidebarDensity();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "checkpointing" | "appearance" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "appearance" | null
   >(desktop()?.draft ? "launch" : null);
   const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerOpen, setTowerOpen] = useState(false);
@@ -585,6 +586,7 @@ function Dashboard() {
         <AgentsMdModal sessionKey={selected?.key} dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
       {modal === "bugreport" && <BugReport session={bugSession} onClose={() => setModal(null)} />}
+      {modal === "collaboration" && <CollaborationPanel onClose={() => setModal(null)} />}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "appearance" && <AppearanceSettings {...appearance} onClose={() => setModal(null)} />}
       {modal === "checkpointing" && <CheckpointSettingsModal onClose={() => setModal(null)} />}

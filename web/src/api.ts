@@ -1,3 +1,4 @@
+import { desktop, destinationRequest } from "./desktop";
 import type { CheckpointClock } from "./CheckpointAge";
 import type { AgentMergeService, AgentMergePreview, AgentMergeRecord, MergeTarget } from "./AgentMergeDialog";
 import type { OpenCodeLaunchOptions } from "./OpenCodeOptions";
@@ -17,6 +18,14 @@ const TOKEN =
 
 export function authHeaders(extra?: Record<string, string>): HeadersInit {
   return { "X-Duckterm-Token": TOKEN, ...extra };
+}
+
+async function sharedFolder(action: "create" | "move" | "delete", old: string, next: string) {
+  if (!desktop()?.canCollaborate) return null;
+  const result = await destinationRequest<{ handled: boolean; pending: boolean }>("local", "collaboration-folder", { action, old, new: next });
+  if (!result.handled) return null;
+  window.dispatchEvent(new Event("remote-sessions-refresh"));
+  return { pending: result.pending, created: next, moved: old, to: next, deleted: old };
 }
 
 // Oracle's optional local neural voice (Kokoro), from GET /voice/status.
@@ -267,7 +276,7 @@ export interface InboxMessage {
   sender_kind?: "session" | "owner";
   requires_reply?: boolean;
   delivery?: { outcome?: string; last_read_at?: number };
-  status: "read" | "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled";
+  status: "read" | "queued" | "accepted" | "answered" | "declined" | "expired" | "cancelled" | "blocked";
   answer: string | null;
   created_at: number;
   expires_at: number;
@@ -292,10 +301,12 @@ export interface SessionCard {
 export type InboxFilter = "all" | "pending" | "answered";
 
 export interface InboxPage {
+  cross_computer_status?: "connected" | "unavailable";
+  cross_computer_reason?: string;
   counts?: Record<InboxFilter, number>;
   card?: SessionCard | null;
   messages: InboxMessage[];
-  next_cursor: number | null;
+  next_cursor: number | string | null;
 }
 
 export interface BroadcastTarget {
@@ -398,7 +409,7 @@ export const api = {
     post<BroadcastResult>(`/folders/${encodeURIComponent(folder)}/broadcast`, { text, request_key }),
   collaborationInstructions: (key: string) => post<{ prompt: string }>(`/sessions/${encodeURIComponent(key)}/collaboration/instructions`),
   introduceCollaboration: (key: string) => post<{ sent: boolean }>(`/sessions/${encodeURIComponent(key)}/collaboration/introduce`),
-  inbox: async (key: string, before?: number, view: InboxFilter = "all"): Promise<InboxPage> => {
+  inbox: async (key: string, before?: number | string, view: InboxFilter = "all"): Promise<InboxPage> => {
     const query = new URLSearchParams({ view });
     if (before !== undefined) query.set("before", String(before));
     const suffix = `?${query}`;
@@ -410,7 +421,7 @@ export const api = {
     if (!res.ok) throw new Error(data.error ?? "Could not load inbox");
     return data as InboxPage;
   },
-  folderInbox: async (folder: string, before?: number, view: InboxFilter = "all"): Promise<InboxPage> => {
+  folderInbox: async (folder: string, before?: number | string, view: InboxFilter = "all"): Promise<InboxPage> => {
     const query = new URLSearchParams({ folder, view });
     if (before !== undefined) query.set("before", String(before));
     const res = await fetch(`/folder-interactions?${query}`, { cache: "no-store", headers: authHeaders() });
@@ -528,7 +539,12 @@ export const api = {
   sendInput: (key: string, text: string) =>
     post<{ written: boolean }>(`/sessions/${key}/input`, { text }),
   // Move a session into a folder group; "" ungroups it.
-  setGroup: (key: string, group: string) => {
+  setGroup: async (key: string, group: string) => {
+    if (desktop()?.canCollaborate) {
+      const ref = splitSessionRef(key);
+      const result = await destinationRequest<{ handled: boolean; updated?: boolean }>(ref.host, "collaboration-move", { key: ref.key, folder: group });
+      if (result.handled) { window.dispatchEvent(new Event("remote-sessions-refresh")); return { updated: true }; }
+    }
     if (splitSessionRef(key).host !== "local") {
       setRemoteGroup(key, group);
       return Promise.resolve({ updated: true });
@@ -572,41 +588,41 @@ export const api = {
     }).then((r) => r.json() as Promise<{ removed: boolean }>),
   // Left-panel folders (persist even when empty).
   folders: () => get<{ folders: string[] }>("/folders"),
-  createFolder: (name: string) =>
-    post<{ created: string }>("/folders", { name }),
+  createFolder: async (name: string) =>
+    await sharedFolder("create", "", name) ?? post<{ created: string; pending?: boolean }>("/folders", { name }),
   // Re-parent a folder ("" = top level); subfolders + sessions follow.
-  moveFolder: (name: string, parent: string) =>
-    fetch(`/folders/${encodeURIComponent(name)}`, {
+  moveFolder: async (name: string, parent: string) =>
+    await sharedFolder("move", name, [parent, name.split("/").at(-1)].filter(Boolean).join("/")) ?? fetch(`/folders/${encodeURIComponent(name)}`, {
       method: "PATCH",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ parent }),
     }).then(async (r) => {
-      const d = (await r.json()) as { to?: string; error?: string };
+      const d = (await r.json()) as { to?: string; error?: string; pending?: boolean };
       if (!r.ok) throw new Error(d.error ?? `${r.status}`);
-      changeRemoteFolders(name, d.to!);
-      return d as { moved: string; to: string };
+      if (!d.pending) changeRemoteFolders(name, d.to!);
+      return d as { moved: string; to: string; pending?: boolean };
     }),
   // Rename the leaf (parent unchanged); subfolders + sessions follow.
-  renameFolder: (path: string, name: string) =>
-    fetch(`/folders/${encodeURIComponent(path)}`, {
+  renameFolder: async (path: string, name: string) =>
+    await sharedFolder("move", path, [...path.split("/").slice(0, -1), name].join("/")) ?? fetch(`/folders/${encodeURIComponent(path)}`, {
       method: "PATCH",
       headers: authHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ name }),
     }).then(async (r) => {
-      const d = (await r.json()) as { to?: string; error?: string };
+      const d = (await r.json()) as { to?: string; error?: string; pending?: boolean };
       if (!r.ok) throw new Error(d.error ?? `${r.status}`);
-      changeRemoteFolders(path, d.to!);
-      return d as { moved: string; to: string };
+      if (!d.pending) changeRemoteFolders(path, d.to!);
+      return d as { moved: string; to: string; pending?: boolean };
     }),
-  deleteFolder: (name: string) =>
-    fetch(`/folders/${encodeURIComponent(name)}`, {
+  deleteFolder: async (name: string) =>
+    await sharedFolder("delete", name, "") ?? fetch(`/folders/${encodeURIComponent(name)}`, {
       method: "DELETE",
       headers: authHeaders(),
     }).then(async (r) => {
       const result = await r.json();
       if (!r.ok) throw new Error(result.error ?? "Could not delete folder");
-      changeRemoteFolders(name, "");
-      return result as { deleted: string };
+      if (!result.pending) changeRemoteFolders(name, "");
+      return result as { deleted: string; pending?: boolean };
     }),
   getSession: (key: string) =>
     get<{ notes?: string | null; name?: string | null }>(`/sessions/${key}`),

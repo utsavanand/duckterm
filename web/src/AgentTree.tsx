@@ -98,6 +98,7 @@ export function AgentTree({
     if (name === parent || parent.startsWith(name + "/")) return;
     try {
       const r = await api.moveFolder(name, parent);
+      if (r.pending) { toast("Folder change pending sync. Open Settings → Collaboration to review."); onFoldersChanged(); return; }
       // Sessions follow the move server-side; mirror locally or they'd render
       // under a group path that no longer exists (invisible until reload).
       for (const s of sessions) {
@@ -127,7 +128,8 @@ export function AgentTree({
     const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
     const next = parent ? `${parent}/${name}` : name;
     try {
-      await api.renameFolder(path, name);
+      const result = await api.renameFolder(path, name);
+      if (result.pending) { toast("Folder change pending sync. Open Settings → Collaboration to review."); onFoldersChanged(); return; }
       // Sessions follow the rename server-side; mirror it locally so rows
       // don't jump to Ungrouped until the next refetch.
       for (const s of sessions) {
@@ -147,7 +149,8 @@ export function AgentTree({
     const name = window.prompt(`New folder inside "${parent}":`)?.trim();
     if (!name) return;
     try {
-      await api.createFolder(`${parent}/${name.replaceAll("/", "-")}`);
+      const result = await api.createFolder(`${parent}/${name.replaceAll("/", "-")}`);
+      if (result.pending) toast("Folder creation pending sync. Open Settings → Collaboration to review.");
       onFoldersChanged();
     } catch (e) {
       toast(`Create failed: ${(e as Error).message}`, "err");
@@ -161,13 +164,12 @@ export function AgentTree({
       )
     )
       return;
-    // Optimistically ungroup the folder's (and subfolders') sessions.
-    for (const s of sessions) {
-      if (s.group === name || s.group?.startsWith(name + "/"))
-        onSessionMoved(s.key, "");
-    }
     try {
-      await api.deleteFolder(name);
+      const result = await api.deleteFolder(name);
+      if (result.pending) { toast("Folder deletion pending sync. Open Settings → Collaboration to review."); onFoldersChanged(); return; }
+      for (const s of sessions) {
+        if (s.group === name || s.group?.startsWith(name + "/")) onSessionMoved(s.key, "");
+      }
       onFolderDeleted?.(name);
       toast(`Deleted folder ${name}`);
       onFoldersChanged();
