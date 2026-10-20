@@ -14,6 +14,38 @@ The native packaged-backend rehearsal completed revocation and disconnect, then 
 
 Federated session inboxes worked while the owner’s folder interaction history still queried only local questions. Combine both durable sources at the existing owner-only boundary, scope either participant by current local subtree membership, retain independent cursors, and never mark agent messages read from an owner view. Test equal timestamps across more than one page, answered/pending filters, stopped participants, unrelated folders and unavailable coordinators. Integrating the feature must also preserve newer memory/recovery routes and appearance controls from main.
 
+## 2026-10-20 — Report accepted batches even when the checkpoint fails
+
+A later batch failure returned only its error, although earlier reviewed leaves were durable. The checkpoint therefore hid completed work. Preserve attempt-scoped counts and accepted revision IDs in failure metadata while keeping batch failure, the last-good summary and its clock unchanged. A test that proves retry reuses stored leaves does not prove the owner can discover them: exercise the persisted checkpoint response, a later-batch failure, exact remaining-record retry, and the unchanged success clock together. Check the waiter-side source fence too: it can convert success to failure after publication, so preserve attempt-only evidence across that conversion without claiming rollback. Do not count old session-wide digest references as records summarized in this attempt.
+
+## 2026-10-20 — Budget correction requests separately from initial summary input
+
+A span filled the initial writer allowance, but correction needed the same originals plus feedback under that same allowance. Preserving feedback exposed the impossible retry as repair_input_too_large. A separate bounded correction allowance preserves the original record window; shrinking that window instead broke previously supported long single records. Test a naturally full batch through rejection, correction, rereview and persistence, including deferred coverage. Keep the final encoded-size guard so unusual feedback cannot silently drop evidence or bypass review.
+
+## 2026-10-20 — Personal colors should tint the whole shortcut without competing with content
+
+Use the owner-approved soft color mix across the whole row, with readable labels and subdued hover feedback. Composite over the opaque card so terminal text does not show through; neither a tiny colored corner nor a solid saturated fill meets the intended behavior.
+
+## 2026-10-19 — Native acceptance needs actual pointer gestures
+
+Programmatic clicks and a draggable grip passed automation while the owner could not drag the shortcut rectangle. Support pointer capture on both the label/initials button and grip, distinguish click from drag, and cancel safely on Escape or an outside drop. Test real Mac mouse events with an AppKit event loop; JavaScript click/keyboard dispatch alone is not native interaction evidence.
+
+## 2026-10-19 — Floating controls need opaque fallbacks
+
+Mix an unset shortcut color with the card color, not transparent. Native screenshots caught terminal text bleeding through uncolored pins; assert opacity as well as color selection.
+
+## 2026-10-19 — Reordering should be direct manipulation
+
+The owner wants to drag pinned sessions, not navigate Move up/down buttons. Keep a visible drag grip and drop indicator; support keyboard reordering on that same grip without adding a second menu. Verify reordering preserves the terminal and the order used by Focus.
+
+## 2026-10-19 — Focus entry defaults and folder expansion have different lifetimes
+
+Focus should start with the first three pins in the owner's shortcut order, even when an old persisted grid contains more panes. Keep the remaining pins docked. Sidebar expansion belongs to the dashboard lifetime, not the conditionally mounted tree; preserve it when entering/exiting Focus without persisting it across a fresh app launch.
+
+## 2026-10-19 — Floating shortcut preferences must preserve the terminal and session identity
+
+Store personal colors/order by host-qualified session key, not display names or folder paths. Keep the rightmost open-session target stable during hover expansion; new color or reorder controls must never replace it under the pointer. Verify reorder/display changes without PTY resizes, reconnects, draft loss or pin writes, and preserve those choices across reload and renamed sessions.
+
 ## 2026-10-19 — Remote acceptance must cover both installed host versions and native routes
 
 A current Mac dashboard could not archive through the new undo flow because its native transport omitted those endpoints. The remote service was still 0.4.64, so shell requests returned plain-text 404s that surfaced as WebKit JSON errors. Check the actual owning host version, preserve HTTP errors, and test exact native route/method pairs. macOS xterm also needs Option-forced selection explicitly enabled; verify a wrapped synthetic login URL with agent mouse tracking active, through the dashboard copy bridge.

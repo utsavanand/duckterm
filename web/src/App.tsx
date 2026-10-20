@@ -26,6 +26,7 @@ import { useRelayCount } from "./relay";
 import { ForkModal } from "./ForkModal";
 import { GridView } from "./GridView";
 import { FloatingSessionShortcuts } from "./FloatingSessionShortcuts";
+import { orderShortcuts, useShortcutPreferences } from "./shortcutPreferences";
 import { CheckpointSettingsModal } from "./CheckpointSettingsModal";
 import { CheckpointDialogHost } from "./CheckpointDialog";
 import { BackupModal } from "./BackupModal";
@@ -73,6 +74,11 @@ function Dashboard() {
   const archives = useArchiveRequests();
   const sidePanels = useSidePanels();
   const sidebarFilters = useSidebarFilters();
+  // Transient view state survives Focus/grid remounts; a new app launch still starts collapsed.
+  const folderExpansion = useState<Set<string>>(() => new Set());
+  const archiveExpansion = useState(false);
+  const sidebarScroll = useRef({ tree: 0, content: 0 });
+  const { preferences: shortcutPreferences } = useShortcutPreferences();
   const sessions = useMemo(
     () => sourceSessions.filter(s => !archives.requests.some(r => r.session_key === s.key)).map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 })),
     [sourceSessions, inboxCounts, archives.requests],
@@ -155,7 +161,7 @@ function Dashboard() {
   // The folder whose terminals are tiled fullscreen; null = grid closed.
   const [gridFolder, setGridFolder] = useState<string | null>(null);
   const [focusOpen, setFocusOpen] = useState(false);
-  const pinnedSessions = sessions.filter((s) => s.pinned);
+  const pinnedSessions = orderShortcuts(sessions.filter((s) => s.pinned), shortcutPreferences.order);
   useEffect(() => {
     if (focusOpen && pinnedSessions.length === 0) setFocusOpen(false);
   }, [focusOpen, pinnedSessions.length]);
@@ -366,7 +372,7 @@ function Dashboard() {
       )}
       <div className="rd-workspace-panes" {...(towerOpen && !focusOpen && gridFolder === null ? { inert: "" } : {})}>
       {focusOpen ? (
-        <GridView key="focus" title="Focus" focus storageKey="rd.grid.focus"
+        <GridView key="focus" title="Focus" focus
           agents={pinnedSessions} folders={[]} themeFor={themeFor}
           onPin={toggleSessionPin} onSwitchFolder={() => undefined}
           onClose={() => setFocusOpen(false)} />
@@ -398,6 +404,7 @@ function Dashboard() {
               </p>
             ) : (
               <LiveAgentTree
+                expansion={{ folders: folderExpansion, archives: archiveExpansion, scroll: sidebarScroll }}
                 filterControls={sidebarFilters}
                 sessions={sessions}
                 active={!towerOpen && !sidePanels.collapsed.left}

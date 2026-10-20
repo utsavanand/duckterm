@@ -15,11 +15,19 @@ from duckterm.persistence.saved_state import fingerprint
 
 POLICY = "independent-conversation-spans-v2"
 MAX_INPUT_BYTES = 48000
-# The 48 KB call budget reserves 32 KB for generation. Bound the *encoded
-# prompt*, including metadata/instructions, to the remaining 16 KB.
+# Initial writer input leaves a generous output reserve inside the 48 KB envelope.
 GENERATION_RESERVE_BYTES = 32000
 MAX_GENERATION_BYTES = MAX_INPUT_BYTES - GENERATION_RESERVE_BYTES
+# A correction keeps the same original records and adds feedback. Give that call
+# a separate bounded allowance rather than shrinking the initial record window:
+# shrinking it made previously supported single records impossible to process.
+# The existing final size guard still refuses unusually large feedback.
+REPAIR_HEADROOM_BYTES = 4096
 MAX_RECORDS = 50
+
+
+def repair_input_limit() -> int:
+    return min(MAX_INPUT_BYTES, MAX_GENERATION_BYTES + REPAIR_HEADROOM_BYTES)
 
 
 def original_rows(captured: dict[str, Any]) -> list[dict[str, Any]]:
