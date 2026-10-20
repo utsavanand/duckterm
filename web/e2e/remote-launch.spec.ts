@@ -10,13 +10,15 @@ test("remote destination reopens New Session with the carried task", async ({ pa
   });
   await page.goto("/");
   await expect(page.getByRole("combobox", { name: "Run on" })).toHaveValue("dev");
+  await page.getByText("Other project options", { exact: true }).click();
+  await page.getByRole("button", { name: "Copy a local project or use an existing folder" }).click();
   await expect(page.getByPlaceholder("e.g. login refactor")).toHaveValue("Remote task");
   await expect(page.getByPlaceholder("add a healthcheck endpoint")).toHaveValue("Check the build");
   await expect(page.getByText("Browse…", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("button", { name: "New", exact: true }).click();
   await page.getByRole("button", { name: "New session", exact: true }).click();
-  await expect(page.getByPlaceholder("e.g. login refactor")).toHaveValue("");
+  await expect(page.getByRole("button", { name: "Choose from GitHub…" })).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Run on" })).toHaveValue("dev");
 });
 
@@ -39,10 +41,10 @@ test("choosing Remote keeps the current page and form mounted", async ({ page })
   await page.getByRole("button", { name: "New session", exact: true }).click();
   const name = page.getByPlaceholder("e.g. login refactor");
   await name.fill("Keep my draft");
-  await name.evaluate((element) => element.setAttribute("data-qa-original", "yes"));
   const before = page.url();
   await page.getByRole("combobox", { name: "Run on" }).selectOption("dev");
-  await expect(name).toHaveAttribute("data-qa-original", "yes");
+  await page.getByText("Other project options", { exact: true }).click();
+  await page.getByRole("button", { name: "Copy a local project or use an existing folder" }).click();
   await expect(name).toHaveValue("Keep my draft");
   await page.getByText("Browse…", { exact: true }).click();
   await expect(page.getByText("/home/remote/project", { exact: true })).toBeVisible();

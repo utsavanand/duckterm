@@ -44,8 +44,11 @@ it("keeps the same dashboard after a remote launch and selects the qualified ses
   fireEvent.click(screen.getByText("Codex"));
   await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Run on" }), { target: { value: "dev" } }); });
   expect(switchHost).not.toHaveBeenCalled();
-  expect(screen.getByDisplayValue("My task")).toBe(name);
+  fireEvent.click(screen.getByText("Other project options"));
+  fireEvent.click(screen.getByText("Copy a local project or use an existing folder"));
+  expect(screen.getByDisplayValue("My task")).toHaveValue("My task");
   expect(window.__rubbertermDesktop?.currentTarget).toBe("local");
+  if (screen.queryByText("Other project options")) { fireEvent.click(screen.getByText("Other project options")); fireEvent.click(screen.getByText("Copy a local project or use an existing folder")); }
   fireEvent.click(screen.getByText("Browse…"));
   await screen.findByText("Use this folder");
   fireEvent.click(screen.getByText("Use this folder"));
@@ -68,10 +71,12 @@ it("ignores remote folder replies after returning to This Mac and lets Cancel cl
   const close = vi.fn();
   await act(async () => { render(<LaunchModal folders={[]} onCreated={vi.fn()} onClose={close} />); });
   await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Run on" }), { target: { value: "dev" } }); });
+  if (screen.queryByText("Other project options")) { fireEvent.click(screen.getByText("Other project options")); fireEvent.click(screen.getByText("Copy a local project or use an existing folder")); }
   fireEvent.click(screen.getByText("Browse…"));
   await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Run on" }), { target: { value: "local" } }); });
   await act(async () => { resolveBrowse({ path: "/remote/stale", parent: null, entries: [], is_git: false }); });
   expect(screen.queryByText("/remote/stale")).not.toBeInTheDocument();
+  if (screen.queryByText("Other project options")) { fireEvent.click(screen.getByText("Other project options")); fireEvent.click(screen.getByText("Copy a local project or use an existing folder")); }
   fireEvent.click(screen.getByText("Browse…"));
   expect(await screen.findByText("/Users/test")).toBeVisible();
   fireEvent.click(screen.getAllByRole("button", { name: "Cancel" }).at(-1)!);
@@ -83,6 +88,7 @@ it("shows a connection error inside the form without changing dashboards", async
   const switchHost = setup(async () => { throw new Error("SSH unavailable"); });
   await act(async () => { render(<LaunchModal folders={[]} onCreated={vi.fn()} onClose={() => undefined} />); });
   await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Run on" }), { target: { value: "dev" } }); });
+  if (screen.queryByText("Other project options")) { fireEvent.click(screen.getByText("Other project options")); fireEvent.click(screen.getByText("Copy a local project or use an existing folder")); }
   fireEvent.click(screen.getByText("Browse…"));
   expect(await screen.findByText("SSH unavailable")).toBeVisible();
   expect(screen.getByText("Retry")).toBeVisible();

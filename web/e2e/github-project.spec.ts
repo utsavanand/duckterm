@@ -48,7 +48,11 @@ for (const target of ["local", "dev"]) {
     await page.goto("/");
     await page.getByRole("button", { name: "New", exact: true }).click();
     await page.getByRole("button", { name: "New session", exact: true }).click();
-    if (target !== "local") await page.getByRole("combobox", { name: "Run on" }).selectOption(target);
+    if (target !== "local") {
+      await page.getByRole("combobox", { name: "Run on" }).selectOption(target);
+      await page.getByText("Other project options", { exact: true }).click();
+      await page.getByRole("button", { name: "Copy a local project or use an existing folder" }).click();
+    }
     const source = page.getByRole("combobox", { name: "Project source" });
     if (target === "local") await expect(source.locator("option[value=copy]")).toHaveCount(0);
     await source.selectOption("clone");

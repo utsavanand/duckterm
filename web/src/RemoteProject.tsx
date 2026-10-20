@@ -63,9 +63,10 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
   }
   async function transfer() {
     setBusy(true); onBusy(true); setError(""); setProgress(kind === "clone" ? "Cloning repository…" : "Preparing project…"); setPercentage(undefined);
+    let active = true;
     const poll = window.setInterval(() => {
       destinationRequest<PreparedProject>(target, "project-status", { id: draft.id }).then(s => {
-        if (mounted.current && s.stage) {
+        if (active && mounted.current && s.stage) {
           const percent = s.stage === "receiving" ? Math.round(100 * (s.offset ?? 0) / (s.bytes || 1)) : undefined;
           setPercentage(percent);
           setProgress(percent !== undefined ? `Copying ${percent}%` : ({ cloning: "Cloning repository…", publishing: "Verifying project…", ready: "Project verified and ready" }[s.stage] ?? "Preparing project…"));
@@ -79,8 +80,8 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
       if (!mounted.current) return;
       setProgress("Project verified and ready");
       await onPrepared(result);
-    } catch (e) { if (mounted.current) setError((e as Error).message); }
-    finally { clearInterval(poll); if (mounted.current) setBusy(false); onBusy(false); }
+    } catch (e) { if (mounted.current) { setProgress(""); setPercentage(undefined); setError((e as Error).message); } }
+    finally { active = false; clearInterval(poll); if (mounted.current) setBusy(false); onBusy(false); }
   }
   return <div>
     {kind === "copy" ? <><Field label="Source project on This Mac">

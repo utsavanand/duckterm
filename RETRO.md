@@ -1,3 +1,14 @@
+## 2026-10-20 — Make remote checkout setup automatic and failure states final
+
+A remote coding session required manually entering a checkout path and clicking
+separate review, clone and launch buttons. The selected repository could be right
+while the destination was wrong. Use a three-step setup with a server-generated,
+per-operation checkout under the destination user's home. Bind retries to the
+same operation and invalidate the destination whenever the repository changes.
+A failed clone must persist its failure and invalidate pending progress polls.
+Committed Markdown project rules are not private agent state; test that distinction
+without relaxing credential checks or local-copy exclusions.
+
 ## 2026-10-20 — Read the whole checkpoint without losing session identity
 
 A checkpoint link must identify the complete attempt, not just its last saved

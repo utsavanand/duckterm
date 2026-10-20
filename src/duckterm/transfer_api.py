@@ -79,14 +79,30 @@ async def dispatch(server: "Server", operation: str, req: dict[str, Any]) -> dic
     if operation == "chunk":
         return await asyncio.to_thread(transfers.chunk, identifier, int(req["offset"]))
     if operation == "preflight":
-        dest = transfers.destination_path(str(req["destination"]))
+        automatic = req.get("auto_workspace") is True
+        dest = (
+            transfers.automatic_workspace(identifier, str(req["url"]))
+            if automatic
+            else transfers.destination_path(str(req["destination"]))
+        )
+        if automatic and dest.exists():
+            prior = transfers.status(identifier)
+            if not (
+                prior.get("destination") == str(dest)
+                and prior.get("url") == req["url"]
+                and prior.get("branch") == str(req.get("branch") or "")
+                and prior.get("stage") in ("ready", "launching", "launched", "publishing")
+            ):
+                raise ValueError("Automatic workspace already exists; start a new session")
+        parent = transfers.available_parent(dest.parent)
         runtime = str(req.get("runtime") or "") or None
         transfers.check_runtime(str(req.get("command") or ""), runtime)
         transfers.check_requirements(req.get("requirements", []), req.get("linux_compatible", True))
         return {
             "destination": str(dest),
             "runtime": "available",
-            "disk_free": shutil.disk_usage(dest.parent).free,
+            "disk_free": shutil.disk_usage(parent).free,
+            "auto_workspace": automatic,
             "platform": sys.platform,
         }
     if operation == "begin":
@@ -115,6 +131,7 @@ async def dispatch(server: "Server", operation: str, req: dict[str, Any]) -> dic
             str(req.get("branch") or ""),
             str(req["destination"]),
             str(req.get("github_repository") or ""),
+            req.get("auto_workspace") is True,
         )
     if operation == "status":
         return await asyncio.to_thread(transfers.status, identifier)
