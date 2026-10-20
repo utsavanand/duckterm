@@ -12,7 +12,7 @@ import { DuckCelebration, SessionView } from "./types";
 //   sleeping — eyes closed, head tucked, z's flowing (stopped/terminated/archived)
 // Pure inline SVG + CSS keyframes (theme.css); honors prefers-reduced-motion.
 
-export type DuckPose = "busy" | "waiting" | "idle" | "sleeping";
+export type DuckPose = "busy" | "waiting" | "idle" | "sleeping" | "waving";
 
 // raised: the session asked for the owner and they haven't attended yet, so
 // the hand stays up whatever the agent is doing now (owner decision, 2026-09-30).
@@ -29,6 +29,8 @@ export function poseFor(state: string, raised = false): DuckPose {
 export function duckPhrase(s: SessionView, state: string): string {
   const ago = agoShort(s.updatedAt);
   switch (state) {
+    case "unknown":
+      return "Status unavailable. Check the terminal while DuckTerm reconnects.";
     case "busy":
       return s.lastTool
         ? `Right now: working — running ${s.lastTool}.`
@@ -84,6 +86,9 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
       aria-hidden="true"
       focusable="false"
     >
+      {pose === "waving" && <>
+        <ellipse className="duck-shadow" cx="31" cy="56" rx="20" ry="2.6" fill="#000"></ellipse><g className="duck-p-wave"><path d="M12 42 Q8 34 14 31 Q15 37 19 39 Z" fill="#FFD32B" stroke="#E0AD00" strokeWidth="1"></path><ellipse cx="29" cy="45" rx="17" ry="11.5" fill="#FFD32B" stroke="#E0AD00" strokeWidth="1.2"></ellipse><g className="duck-wave-wing"><path d="M27 44 C20 45 14 40 12 33 C10 28 10 22 13 20 C15 19 17 23 18 25 C18 21 19 19 21 21 C23 24 22 28 24 31 C29 35 31 40 27 44Z" fill="#FFD32B" stroke="#C99300" strokeWidth="1.5"/><path d="M16 29 Q18 35 24 39" fill="none" stroke="#E6B309" strokeWidth="1.5" strokeLinecap="round"/></g><circle cx="41" cy="25" r="11.5" fill="#FFD32B" stroke="#E0AD00" strokeWidth="1.2"></circle><path d="M50.5 24.5 Q59 24 58.5 26.8 Q58 29.5 50.5 28.3 Q49 26.4 50.5 24.5 Z" fill="#FF8A00" stroke="#D96F00" strokeWidth=".8"></path><circle cx="44.5" cy="22" r="2" fill="#1a1a1a"></circle><circle cx="45.2" cy="21.2" r="0.65" fill="#fff"></circle></g>
+      </>}
       {pose === "busy" && (
         <>
           {SHADOW(32)}

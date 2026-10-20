@@ -139,6 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
     from duckterm import session_client
 
     session_client.add_parser(sub)
+    session_client.add_memory_parser(sub)
     return parser
 
 
@@ -162,36 +163,82 @@ def _serve(host: str, port: int, reload: bool = False) -> int:
     return 0
 
 
+def _listening_pids(port: int) -> set[int]:
+    """PIDs currently bound to the local dashboard port."""
+    import subprocess
+
+    result = subprocess.run(
+        ["lsof", "-t", f"-iTCP:{port}", "-sTCP:LISTEN"],
+        capture_output=True,
+        text=True,
+        timeout=2,
+        check=False,
+    )
+    if result.returncode not in {0, 1}:
+        raise OSError("Cannot identify the server listening on the dashboard port")
+    return {int(line) for line in result.stdout.splitlines() if line.isdecimal()}
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _restart(host: str, port: int) -> int:
-    """Stop the running server (if any) and start a fresh one. Watched agents keep
-    running independently and re-stream into the new server as their hooks fire —
-    so this is how you get the dashboard watching live sessions again after a
-    server upgrade or crash."""
+    """Stop the old server completely before opening its SQLite database."""
+    import signal
     import subprocess
     import time
 
     if _duckterm_responds(host, port):
         print(f"stopping the server on :{port}…", file=sys.stderr)
-        # Kill whatever owns the port (our server). lsof is on macOS and Linux.
-        subprocess.run(
-            f"lsof -ti tcp:{port} -sTCP:LISTEN | xargs kill",
-            shell=True,
-            capture_output=True,
-        )
-        for _ in range(25):  # wait up to ~5s for the port to free
-            time.sleep(0.2)
-            if not _duckterm_responds(host, port):
+        try:
+            old_pids = _listening_pids(port)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"cannot identify the server on :{port}: {exc}", file=sys.stderr)
+            return 1
+        if not old_pids:
+            print(f"server on :{port} changed; retry restart", file=sys.stderr)
+            return 1
+        for pid in old_pids:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except PermissionError:
+                print(f"cannot stop the server on :{port}", file=sys.stderr)
+                return 1
+            except ProcessLookupError:
+                pass  # It exited between discovery and SIGTERM.
+        for _ in range(50):  # Up to 10 seconds for shutdown and DB close.
+            if not any(_pid_alive(pid) for pid in old_pids):
                 break
+            time.sleep(0.2)
         else:
-            print(f"server on :{port} didn't stop; free it manually", file=sys.stderr)
+            print(f"server on :{port} did not exit; stop it before retrying", file=sys.stderr)
+            return 1
+        try:
+            replacement = _listening_pids(port)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            print(f"cannot verify the port on :{port}: {exc}", file=sys.stderr)
+            return 1
+        if replacement:
+            print(f"another server took :{port}; stop it before retrying", file=sys.stderr)
             return 1
     else:
         print(f"no server running on :{port}; starting one", file=sys.stderr)
-    # Forget deletions so any agent still running re-streams and reappears — the
-    # whole point of restart: recover sessions deleted by mistake while live.
+    # Recover tombstoned sessions only after the previous process has closed
+    # its SQLite handle. Close this short-lived connection before starting serve.
     from duckterm.persistence.history import HistoryStore
 
-    cleared = HistoryStore().clear_tombstones()
+    store = HistoryStore()
+    try:
+        cleared = store.clear_tombstones()
+    finally:
+        store.close()
     if cleared:
         print(f"cleared {cleared} deletion(s) — live agents will re-appear", file=sys.stderr)
     return _serve(host, port)
@@ -466,7 +513,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
-    if args.command == "session":
+    if args.command in {"session", "memory"}:
         from duckterm import session_client
 
         return session_client.main(args)

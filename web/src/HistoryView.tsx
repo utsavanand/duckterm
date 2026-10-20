@@ -1,3 +1,4 @@
+import { CheckpointDetails } from "./CheckpointStatus";
 import { routedFetch as fetch, splitSessionRef } from "./hostTransport";
 import { useEffect, useState } from "react";
 import { api, forkMergeService, CheckpointRecord, forkMergeHistory, ForkMergeHistory } from "./api";
@@ -137,15 +138,7 @@ export function HistoryView({ session, active = true }: { session: SessionView; 
           <h3>Checkpoints</h3>
           {checkpoints.map((cp) => (
             <div key={cp.id} className="rd-history-checkpoint">
-              <div className="rd-history-cp-head">
-                <span className="rd-history-mark">⚑</span>
-                {new Date(cp.created_at).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })}{" "}
-                · {cp.label}
-              </div>
-              {cp.summary && <p>{cp.summary}</p>}
+              <p>{new Date(cp.created_at).toLocaleString()}</p><CheckpointDetails checkpoint={cp} />
             </div>
           ))}
         </section>

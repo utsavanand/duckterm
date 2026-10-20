@@ -6,24 +6,24 @@
 [data-density="compact"] .rd-row { padding-top: 3px; padding-bottom: 3px; }
 [data-density="compact"] .rd-row-main { gap: 5px; }
 [data-density="compact"] .rd-row-main > svg { width: 20px; height: 20px; }
-[data-density="compact"] .rd-row-name { font-size: 13px; }
+[data-density="compact"] .rd-row-name { font-size: 0.8125rem; }
 [data-density="compact"] .rd-row-meta { display: none; }
 [data-density="compact"] .rd-group-head { padding-top: 5px; padding-bottom: 5px; }
 [data-density="compact"] .rd-row .rd-state { font-size: 0; }
 [data-density="compact"] .rd-row .rd-state::before { content: ""; display: block; width: 6px; height: 6px; background: currentColor; border-radius: 50%; }
 
 [data-density="standard"] .rd-row { padding-top: 6px; padding-bottom: 6px; }
-[data-density="standard"] .rd-row-name { font-size: 14px; }
-[data-density="standard"] .rd-row-meta { font-size: 11px; margin-top: 1px; }
+[data-density="standard"] .rd-row-name { font-size: 0.875rem; }
+[data-density="standard"] .rd-row-meta { font-size: 0.6875rem; margin-top: 1px; }
 
 [data-density="relaxed"] .rd-row { padding-top: 10px; padding-bottom: 10px; }
-[data-density="relaxed"] .rd-row-name { font-size: 15px; }
+[data-density="relaxed"] .rd-row-name { font-size: 0.9375rem; }
 [data-density="relaxed"] .rd-row-main > svg { width: 28px; height: 28px; }
-[data-density="relaxed"] .rd-row-meta { font-size: 12px; margin-top: 6px; white-space: normal; }
-[data-density="relaxed"] .rd-row-density-detail { display: block; font-size: 11px; line-height: 1.6; color: var(--muted); margin-top: 5px; }
+[data-density="relaxed"] .rd-row-meta { font-size: 0.75rem; margin-top: 6px; white-space: normal; }
+[data-density="relaxed"] .rd-row-density-detail { display: block; font-size: 0.6875rem; line-height: 1.6; color: var(--muted); margin-top: 5px; }
 
-/* The sole row action: recovery of an explicitly stopped, owned session. */
-.rd-row-resume { flex: 0 0 auto; border: 1px solid var(--border-strong); background: transparent; color: var(--text-soft); font: inherit; font-size: 11px; padding: 3px 7px; border-radius: 5px; cursor: pointer; }
+/* Keep recovery of explicitly stopped sessions beside their Focus pin. */
+.rd-row-resume { flex: 0 0 auto; border: 1px solid var(--border-strong); background: transparent; color: var(--text-soft); font: inherit; font-size: 0.6875rem; padding: 3px 7px; border-radius: 5px; cursor: pointer; }
 .rd-row-resume:hover:not(:disabled) { color: var(--brand-green); border-color: var(--brand-green); }
 .rd-row-resume:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }
 .rd-row-resume:disabled { opacity: .5; cursor: wait; }

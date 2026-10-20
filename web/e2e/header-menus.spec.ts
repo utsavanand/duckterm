@@ -42,7 +42,7 @@ test("terminal replay does not steal focus from an open header menu", async ({ p
     await page.locator(".rd-row-name", { hasText: "menu-focus-probe" }).click();
     await expect.poll(() => !!terminal).toBe(true);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    const theme = page.getByRole("combobox", { name: "Theme", exact: true });
+    const theme = page.getByRole("button", { name: "Text sizes", exact: true });
     await expect(theme).toBeFocused();
     terminal!.send(Buffer.from("DELAYED_REPLAY\r\n"));
     await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("DELAYED_REPLAY");
@@ -74,10 +74,10 @@ test("header menus support keyboard navigation, dismissal, and separate rules", 
   await settings.click();
   await expect(create).toHaveAttribute("aria-expanded", "false");
   const panel = page.getByRole("region", { name: "Settings", exact: true });
-  await expect(panel.getByRole("combobox", { name: "Theme", exact: true })).toBeFocused();
+  await expect(panel.getByRole("button", { name: "Text sizes", exact: true })).toBeFocused();
   await expect(panel.getByRole("checkbox", { name: "Desktop notifications" })).toBeVisible();
   await expect(panel.getByRole("button", { name: "AGENTS.md" })).toHaveCount(0);
-  await panel.getByRole("combobox", { name: "Theme", exact: true }).selectOption("dark");
+  await page.getByRole("combobox", { name: "App theme", exact: true }).selectOption("dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.keyboard.press("Escape");
   await expect(settings).toBeFocused();

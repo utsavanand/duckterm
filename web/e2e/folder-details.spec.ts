@@ -16,7 +16,7 @@ test("folder details keep categorized files and show removed provenance across r
     const enrollment = await apiPost(`/sessions/${key}/collaboration`, { root: folder });
     const ids: string[] = [];
     for (const title of ["Navigation decision", "Accessibility research", "Earlier preview"]) {
-      const response = await fetch(`${base()}/api/v1/session/artifacts`, { method: "POST", headers: { Authorization: `Bearer ${enrollment.body.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ source_path: join(cwd, `${title}.md`), title, content_base64: Buffer.from(`# ${title}\n\nReview notes.`).toString("base64") }) });
+      const response = await fetch(`${base()}/api/v1/session/artifacts`, { method: "POST", headers: { Authorization: `Bearer ${enrollment.body.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ source_path: join(cwd, `${title}.md`), title, kind: title === "Navigation decision" ? "kdd" : title === "Accessibility research" ? "research" : "preview", content_base64: Buffer.from(`# ${title}\n\nReview notes.`).toString("base64") }) });
       expect(response.status).toBe(200); ids.push((await response.json()).artifact.id);
     }
     await apiDelete(`/sessions/${key}/artifacts/${ids[2]}`);

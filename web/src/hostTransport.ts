@@ -43,7 +43,13 @@ export async function hostFetch(host: string, path: string, init?: RequestInit):
     return new Response(bytes, { status: response.status, headers: { "Content-Type": response.contentType ?? "application/octet-stream" } });
   }
   let result = response.body;
-  try { result = JSON.stringify(qualifyResult(JSON.parse(result), host)); } catch { /* text response */ }
+  try { result = JSON.stringify(qualifyResult(JSON.parse(result), host)); } catch {
+    // Older hosts return plain text for unknown endpoints. Preserve successful
+    // text reads, but do not let response.json() hide the HTTP error in WebKit.
+    if (response.status >= 400) result = JSON.stringify({ error: response.status === 404
+      ? "This remote operation is unavailable. The session may be missing or this computer may need a DuckTerm update."
+      : `Remote request failed (HTTP ${response.status}).` });
+  }
   return new Response(result, { status: response.status });
 }
 
@@ -87,7 +93,7 @@ export interface TerminalSocket {
   binaryType: string;
   onopen: (() => void) | null;
   onclose: (() => void) | null;
-  onmessage: ((event: { data: ArrayBuffer }) => void) | null;
+  onmessage: ((event: { data: ArrayBuffer | string }) => void) | null;
   send(data: string | Uint8Array): void;
   close(): void;
 }
@@ -97,7 +103,7 @@ class NativeTerminal implements TerminalSocket {
   binaryType = "arraybuffer";
   onopen: (() => void) | null = null;
   onclose: (() => void) | null = null;
-  onmessage: ((event: { data: ArrayBuffer }) => void) | null = null;
+  onmessage: ((event: { data: ArrayBuffer | string }) => void) | null = null;
   private id = crypto.randomUUID();
   private outgoing = Promise.resolve();
   private opened: Promise<unknown>;
@@ -106,15 +112,18 @@ class NativeTerminal implements TerminalSocket {
     if (data.id !== this.id || this.readyState === 3) return;
     if (data.closed) { this.finish(); return; }
     if (data.opened && this.readyState === 0) { this.readyState = 1; this.onopen?.(); }
-    if (typeof data.data === "string") {
+    if (typeof data.text === "string") {
+      if (this.readyState === 0) { this.readyState = 1; this.onopen?.(); }
+      this.onmessage?.({ data: data.text });
+    } else if (typeof data.data === "string") {
       if (this.readyState === 0) { this.readyState = 1; this.onopen?.(); }
       const bytes = Uint8Array.from(atob(data.data), c => c.charCodeAt(0));
       this.onmessage?.({ data: bytes.buffer });
     }
   };
-  constructor(private host: string, key: string) {
+  constructor(private host: string, key: string, kind: "agent" | "shell" = "agent") {
     window.addEventListener("remote-terminal", this.listener);
-    this.opened = destinationRequest(host, "terminal-open", { id: this.id, key });
+    this.opened = destinationRequest(host, "terminal-open", { id: this.id, key, ...(kind === "shell" ? { kind } : {}) });
     void this.opened.catch(() => this.finish());
   }
   send(data: string | Uint8Array): void {
@@ -141,9 +150,11 @@ class NativeTerminal implements TerminalSocket {
   }
 }
 
-export function terminalSocket(ref: string): TerminalSocket {
+export function terminalSocket(ref: string, kind: "agent" | "shell" = "agent"): TerminalSocket {
   const { host, key } = splitSessionRef(ref);
-  if (host !== "local") return new NativeTerminal(host, key);
+  if (host !== "local") return new NativeTerminal(host, key, kind);
   const protocol = location.protocol === "https:" ? "wss" : "ws";
-  return new WebSocket(`${protocol}://${location.host}/sessions/${encodeURIComponent(key)}/terminal`) as unknown as TerminalSocket;
+  const path = `/sessions/${encodeURIComponent(key)}/${kind === "shell" ? "shell/" : ""}terminal`;
+  const token = document.querySelector('meta[name="duckterm-token"]')?.getAttribute("content") ?? "";
+  return new WebSocket(`${protocol}://${location.host}${path}`, kind === "shell" ? ["duckterm-shell", `duckterm-owner.${token}`] : []) as unknown as TerminalSocket;
 }

@@ -96,6 +96,8 @@ def test_busy_waits_for_real_hook_then_same_key_model_version_and_resume(rig):
         server.restarts.save("a", cli_version="codex 0.9")
         result = await server.restarts.request("a", "new-model")
         assert result["status"] == "queued" and not calls
+        # A resumed operation may carry diagnostics saved by an older build.
+        server.restarts.save("a", code="launch_failed", error="Previous launch failed")
         # Output-derived idle is not a turn end, including after a server restart.
         server.bus.publish({"event_type": "Stop", "session_key": "a"})
         server.restarts = Restarts(server)
@@ -109,6 +111,7 @@ def test_busy_waits_for_real_hook_then_same_key_model_version_and_resume(rig):
         ]
         state = server.restarts.read("a")
         assert state["status"] == "completed", state
+        assert state["code"] is None and state["error"] is None
         assert state["cli_version"] == "codex 2.0"
         assert state["previous_cli_version"] == "codex 0.9"
         assert server._resume_argv("a", "codex", server.history.session("a"))[0] == calls[1][2]
@@ -128,6 +131,22 @@ def test_canceled_queue_cannot_restart_and_model_is_not_changed(rig):
         assert not server.restarts.read("a").get("configured_model")
 
     asyncio.run(run())
+
+
+def test_cancel_failed_restart_clears_diagnostics_but_preserves_process_evidence(rig):
+    server, _, _, calls = rig
+    server.restarts.save(
+        "a",
+        status="failed",
+        code="launch_failed",
+        error="Previous launch failed",
+        process_state="source_stopped",
+    )
+    state = server.restarts.cancel("a")
+    assert state["status"] == "canceled"
+    assert state["code"] is None and state["error"] is None
+    assert state["process_state"] == "source_stopped"
+    assert not calls
 
 
 def test_draft_at_request_or_execution_never_stops(rig, monkeypatch):
@@ -350,14 +369,33 @@ def test_turn_finishing_during_prior_probe_is_not_lost(rig, monkeypatch, finish_
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("switch_harness", [False, True])
-def test_real_isolated_terminal_restarts_under_same_key(tmp_path, monkeypatch, switch_harness):
+@pytest.mark.parametrize("switch_harness,interrupt", [(False, False), (True, False), (True, True)])
+def test_real_isolated_terminal_restarts_under_same_key(
+    tmp_path, monkeypatch, switch_harness, interrupt
+):
     """Exercise the real stop/resume lifecycle using only our fake CLI and tmux socket."""
     import os
     import shlex
     import uuid
 
     repo = make_conversations.__wrapped__(tmp_path, monkeypatch)
+    source = next((tmp_path / "home" / ".codex").rglob("*" + A + ".jsonl"))
+    with source.open("a") as stream:
+        stream.write(
+            json.dumps(
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": "Keep the test task on the same card"}
+                        ],
+                    },
+                }
+            )
+            + "\n"
+        )
     binary_dir = tmp_path / "bin"
     binary_dir.mkdir()
     version_file = tmp_path / "cli-version"
@@ -385,6 +423,46 @@ def test_real_isolated_terminal_restarts_under_same_key(tmp_path, monkeypatch, s
     monkeypatch.setattr(server, "_maybe_refresh_progress", lambda key: None)
     monkeypatch.setattr(server, "_relay_observe", lambda event: None)
 
+    # Synthetic source/provider, real terminal stop+launch. Handoff readiness is
+    # tested separately; this case proves crossing the process boundary safely.
+    from duckterm.llm.summarizer import Summary
+
+    monkeypatch.setattr(
+        server,
+        "_progress_transcript",
+        lambda *args: [{"role": "user", "text": "Keep the test task on the same card"}],
+    )
+
+    def summarize(prompt):
+        value = (
+            {
+                "accept": [],
+                "done_next_action_ids": [],
+                "summary_validation": {"ready": True, "reason_codes": []},
+            }
+            if "validating a candidate" in prompt
+            else {
+                "summary": "Keep the test task",
+                "context": {
+                    "overview": "Keep the test task",
+                    **{
+                        k: []
+                        for k in (
+                            "goals",
+                            "constraints",
+                            "decisions",
+                            "unfinished",
+                            "questions",
+                            "risks",
+                        )
+                    },
+                },
+            }
+        )
+        return Summary(json.dumps(value), "stub")
+
+    monkeypatch.setattr("duckterm.server.summarize", summarize)
+
     async def run():
         try:
             await server.orchestrator.launch(
@@ -401,10 +479,13 @@ def test_real_isolated_terminal_restarts_under_same_key(tmp_path, monkeypatch, s
                 pytest.fail("fake CLI did not paint its empty prompt")
             version_file.write_text("fake-codex 2.0")
             await server.restarts.request(
-                "a", "test-model", "claude-code" if switch_harness else None
+                "a", "test-model", "claude-code" if switch_harness else None, interrupt=interrupt
             )
             assert server.restarts.read("a")["status"] == "queued"
-            await hook(server)
+            if interrupt:
+                assert not server.restarts.turn_finished("a")
+            else:
+                await hook(server)
             await drain(server)
             state = server.restarts.read("a")
             assert state["status"] == "completed", state
@@ -417,16 +498,18 @@ def test_real_isolated_terminal_restarts_under_same_key(tmp_path, monkeypatch, s
                 assert command[:3] == ["claude", "--model", "test-model"]
                 assert "NEW conversation" in command[-1]
                 assert row["runtime"] == "claude-code"
-                assert store.session_id_for("a") is None
+                assigned = command[command.index("--session-id") + 1]
+                assert uuid.UUID(assigned).version == 4
+                assert store.session_id_for("a") == assigned
                 generation = state["native_binding"]["generation"]
                 await hook(
                     server,
                     event_type="SessionStart",
                     runtime="claude-code",
-                    session_id="new-native-id",
+                    session_id=assigned,
                     launch_generation=generation,
                 )
-                assert store.session_id_for("a") == "new-native-id"
+                assert store.session_id_for("a") == assigned
                 assert state["previous_conversation"]["native_id"] == A
             else:
                 assert command[:5] == ["codex", "-c", 'model="test-model"', "resume", A]

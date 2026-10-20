@@ -25,9 +25,28 @@ returns 404; empty or duplicate keys return 400. The response contains:
 Items include version, actual database schema version, server OS, and when a
 session is selected its recorded harness/model/state, the latest 20 canonical
 event types and timestamps, and a count of other waiting sessions using that
-harness. Event payloads, terminal output, transcripts, session names, filesystem
-paths, raw log lines, and other-session content are not collected. Event types
-are observations, not proof that a particular failure occurred.
+harness. A `resume-readiness` item also summarizes up to 50 interrupted/stopped
+sessions (selected session first), with the total and shown counts. Rows use
+anonymous ordinal labels, not session names or keys. Each reports runtime,
+state, native-ID presence (`missing`, `empty-string`, `present`, `invalid`, or
+`unknown`), working-directory source/existence, and expected transcript-file
+existence. Claude project slugs are represented only by a stable SHA-256 fingerprint
+(first 16 hex characters), so project/user names are not exposed. This correlates
+equal expected project locations without exporting the slug or absolute path. No
+absolute paths, conversation IDs, transcript filenames, contents or credentials
+are emitted. Codex uses its existing filename lookup; other harnesses explicitly
+report that per-conversation file lookup was not checked.
+
+The item reports jq availability and DuckTerm hook configuration per harness,
+both global and the row's project configuration. Configured does not establish
+runtime trust or successful delivery. Invalid/unreadable configuration reports
+unknown. SQLite metadata is gathered on its owning thread; file checks run off
+the event loop. Only ID presence is exported from the stored event ID field;
+event payload contents, terminal output, transcripts, raw logs and other-session
+content are excluded. This snapshot does not diagnose which condition caused a
+previous failed attempt. Submit still uses exactly the bytes the owner reviewed.
+The native report must retrieve and append this item through its own integration;
+the backend change alone does not change native ZIP contents.
 
 Set DUCKTERM_SUPPORT_EMAIL in the server environment, or save a private
 support-email.txt under DUCKTERM_HOME. No personal recipient is stored in the

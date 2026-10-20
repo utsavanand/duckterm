@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiDelete, apiPost, base, expandFolder, postEvent, seedSession, sessions } from "./helpers";
 
@@ -13,7 +14,7 @@ test("reviewed merge preserves exact text and a closed child stays readable", as
     await page.goto(base());
     await expandFolder(page, folder);
     await page.locator(".rd-row-name", { hasText: "Implementation fork" }).click();
-    await page.getByRole("button", { name: "Merge back", exact: true }).click();
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Merge back", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Merge back to parent" });
     await expect(dialog.getByText("Planning", { exact: true })).toBeVisible();
     await expect(dialog.getByText(/receives inbox mail only/)).toBeVisible();
@@ -33,7 +34,7 @@ test("reviewed merge preserves exact text and a closed child stays readable", as
     await page.setViewportSize({ width: 1440, height: 1000 });
     const controls = page.getByRole("region", { name: "Session controls" });
     await expect(controls.getByRole("button", { name: /^(Resume|Restart|Merge back)$/ })).toHaveCount(0);
-    await page.getByRole("button", { name: "History", exact: true }).click();
+    await page.getByRole("button", { name: "Timeline", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Fork merges" })).toBeVisible();
   } finally {
     await apiDelete(`/sessions/${child}`); await apiDelete(`/sessions/${parent}`);

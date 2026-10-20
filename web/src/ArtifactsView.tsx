@@ -46,7 +46,7 @@ function size(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function ArtifactPreview({ artifact, onSelect, onEscape }: { artifact: ArtifactContent; onSelect: (selection: ArtifactSelection) => void; onEscape: () => void }) {
+export function ArtifactPreview({ artifact, onSelect, onEscape }: { artifact: Pick<ArtifactContent, "media_type" | "content_base64" | "title">; onSelect: (selection: ArtifactSelection) => void; onEscape: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [nonce] = useState(() => Array.from(crypto.getRandomValues(new Uint8Array(24)), b => b.toString(16).padStart(2, "0")).join(""));
   useEffect(() => {

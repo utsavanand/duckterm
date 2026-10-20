@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Messages as ActualMessages } from "./Messages";
 
@@ -12,8 +12,16 @@ const transcript = (prompt: string, reply: string) => ({
 const transcripts: Record<string, unknown> = {
   a: transcript("alpha prompt", "ALPHA REPLY"),
   b: transcript("bravo prompt", "BRAVO REPLY"),
+  copy: { messages: [{ id: 1, role: "assistant", blocks: [
+    { type: "text", text: "**First paragraph**" },
+    { type: "tool_result", text: "Internal tool output" },
+    { type: "text", text: "Last paragraph" },
+  ] }] },
   missing: { messages: [], transcript: { status: "identity_missing", reason: "No conversation ID has been recorded for this session yet." } },
   absent: { messages: [], transcript: { status: "not_found", reason: "The recorded transcript is unavailable." } },
+  nativeMissing: { messages: [], transcript: { status: "native_unavailable" } },
+  native: { ...transcript("native prompt", "VERIFIED NATIVE REPLY"), transcript: { status: "native_cached", checked_at: 1700000000000 } },
+  current: { ...transcript("current prompt", "CURRENT NATIVE REPLY"), transcript: { status: "native_current" } },
   empty: { messages: [], transcript: { status: "ready" } },
 };
 
@@ -106,4 +114,35 @@ describe("Messages transcript availability", () => {
     await waitFor(() => expect(screen.getByText("RECOVERED REPLY")).toBeTruthy(), { timeout: 4500 });
     expect(screen.queryByText("Conversation not identified yet")).toBeNull();
   });
+});
+
+
+it("copies only the chosen assistant response text, preserving markdown", async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+  render(<Messages sessionKey="copy" />); flush();
+  await waitFor(() => expect(screen.getByText("Last paragraph")).toBeTruthy());
+  fireEvent.click(screen.getByRole("button", { name: "Copy" }));
+  await waitFor(() => expect(writeText).toHaveBeenCalledWith("**First paragraph**\n\nLast paragraph"));
+  expect(writeText).toHaveBeenCalledTimes(1);
+});
+
+it("shows cached native history with its notice and removes it on session switch", async () => {
+  const view = render(<Messages sessionKey="native" />);
+  flush();
+  await waitFor(() => expect(screen.getByText(/VERIFIED NATIVE REPLY/)).toBeTruthy());
+  expect(screen.getByText(/Showing the last verified conversation/).textContent).toContain("checked at");
+  view.rerender(<Messages sessionKey="current" />);
+  expect(screen.queryByText(/Showing the last verified conversation/)).toBeNull();
+  expect(screen.queryByText(/VERIFIED NATIVE REPLY/)).toBeNull();
+  flush();
+  await waitFor(() => expect(screen.getByText(/CURRENT NATIVE REPLY/)).toBeTruthy());
+  expect(screen.queryByText(/Showing the last verified conversation/)).toBeNull();
+});
+
+it("does not claim a cached conversation before the first verified snapshot", async () => {
+  render(<Messages sessionKey="nativeMissing" />);
+  flush();
+  await waitFor(() => expect(screen.getByText("No verified conversation snapshot is available yet.")).toBeTruthy());
+  expect(screen.queryByText(/Showing the last verified conversation/)).toBeNull();
 });

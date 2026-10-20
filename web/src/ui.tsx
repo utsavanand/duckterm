@@ -51,7 +51,7 @@ export function Modal({
           <h2
             style={{
               margin: 0,
-              fontSize: 19,
+              fontSize: "1.1875rem",
               fontWeight: 600,
               letterSpacing: "-0.01em",
             }}
@@ -71,7 +71,7 @@ export function Modal({
 const iconBtn: React.CSSProperties = {
   border: "none",
   background: "transparent",
-  fontSize: 16,
+  fontSize: "1rem",
   cursor: "pointer",
   color: "#6b7280",
 };
@@ -89,8 +89,8 @@ export function Field({
       <span
         style={{
           display: "block",
-          fontSize: 13,
-          color: "#374151",
+          fontSize: "0.8125rem",
+          color: "var(--text-soft)",
           marginBottom: 4,
         }}
       >
@@ -106,7 +106,7 @@ export const inputStyle: React.CSSProperties = {
   padding: "10px 12px",
   border: "1px solid var(--border-strong)",
   borderRadius: 8,
-  fontSize: 14,
+  fontSize: "0.875rem",
   boxSizing: "border-box",
   background: "var(--bg)",
   color: "var(--text)",
@@ -164,7 +164,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               borderRadius: 8,
               padding: "10px 14px",
               marginTop: 8,
-              fontSize: 14,
+              fontSize: "0.875rem",
               maxWidth: 360,
               boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
             }}

@@ -1171,3 +1171,96 @@ def test_disconnect_quiesces_queue_and_never_replays_into_new_identity(paired_fo
         assert hub.path(root) == "Project"
 
     asyncio.run(run())
+
+
+def test_folder_history_pages_both_durable_sources_without_marking_agent_mail_read(
+    paired_folder_service,
+):
+    import asyncio
+    import time
+    from unittest.mock import AsyncMock
+
+    service, _, _, _ = paired_folder_service
+    service.sync = AsyncMock(return_value=True)
+    parent = service.own_ref("parent")
+    remote = reference(uuid.uuid4().hex, "remote")
+    timestamp = int(time.time() * 1000)
+    questions = []
+    for n in range(60):
+        status = "answered" if n % 2 else "queued"
+        service.history._conn.execute(
+            "INSERT INTO session_questions "
+            "(id,sender,recipient,sender_name,root,question,status,created_at,expires_at,"
+            "idempotency_key,content_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                f"local-{n}",
+                "parent",
+                "child",
+                "Parent",
+                "Project",
+                "Synthetic question",
+                status,
+                timestamp,
+                253402300799000,
+                f"local-{n}",
+                f"hash-{n}",
+            ),
+        )
+        questions.append(
+            {
+                "id": f"fq-{n}",
+                "sequence": n + 1,
+                "sender": parent if n % 2 else remote,
+                "recipient": remote if n % 2 else parent,
+                "created_at": timestamp,
+                "status": status,
+                "question": "Synthetic remote question",
+            }
+        )
+    questions.append(
+        {
+            "id": "fq-unrelated",
+            "sequence": 61,
+            "sender": remote,
+            "recipient": reference(uuid.uuid4().hex, "private"),
+            "created_at": timestamp,
+            "status": "queued",
+        }
+    )
+    service.history._conn.commit()
+    service.cache("questions", questions)
+    service.history.set_state("parent", "stopped")
+
+    async def scenario():
+        first = await service.combined_inbox(None, owner=True, folder="Project", view="all")
+        assert first["counts"] == {"all": 120, "pending": 60, "answered": 60}
+        assert len(first["messages"]) == 100
+        second = await service.combined_inbox(
+            None,
+            first["next_cursor"],
+            owner=True,
+            folder="Project",
+            view="all",
+        )
+        assert len(second["messages"]) == 20 and second["next_cursor"] is None
+        ids = [q["id"] for page in (first, second) for q in page["messages"]]
+        assert len(set(ids)) == 120 and "fq-unrelated" not in ids
+        answered = await service.combined_inbox(
+            None,
+            owner=True,
+            folder="Project",
+            view="answered",
+        )
+        assert len(answered["messages"]) == 60
+        assert all(q["status"] == "answered" for q in answered["messages"])
+        assert service.store.conn.execute("SELECT count(*) FROM local_outbox").fetchone()[0] == 0
+        with pytest.raises(APIError, match="owner access"):
+            await service.combined_inbox("child", folder="Project")
+        with pytest.raises(APIError, match="cursor"):
+            await service.combined_inbox(None, "cc:-1:2", owner=True, folder="Project")
+        service.sync = AsyncMock(return_value=False)
+        offline = await service.combined_inbox(None, owner=True, folder="Project", view="all")
+        assert offline["cross_computer_status"] == "unavailable"
+        assert all(q["id"].startswith("local-") for q in offline["messages"])
+
+    asyncio.run(scenario())

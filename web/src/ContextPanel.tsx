@@ -1,65 +1,54 @@
 import { routedFetch as fetch, sessionFetch } from "./hostTransport";
-import { useEffect, useState } from "react";
-import { api } from "./api";
+import { useEffect, useRef, useState } from "react";
+import { api, CheckpointRecord, CheckpointActivity, ContextEvidence } from "./api";
 import { Duck, duckPhrase, poseFor } from "./Duck";
 import { FileEditModal } from "./FileEditModal";
-import {
-  contextLevel,
-  contextWindowFor,
-  contextWindowIsAssumed,
-  fmtTokens,
-} from "./sessions";
+import { effectiveState, sessionStateLabel } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
-
-function checkpointFresh(ts: number | null): boolean {
-  return ts !== null && Date.now() - ts < 30 * 60_000;
-}
-
-function agoShort(ts: number): string {
-  const mins = Math.max(0, Math.round((Date.now() - ts) / 60_000));
-  return mins < 1 ? "just now" : `${mins}m ago`;
-}
-
-function age(startedAt: number): string {
-  const mins = Math.max(0, Math.round((Date.now() - startedAt) / 60_000));
-  if (mins < 60) return `${mins}m`;
-  const h = Math.floor(mins / 60);
-  return h < 24 ? `${h}h ${mins % 60}m` : `${Math.floor(h / 24)}d ${h % 24}h`;
-}
+import { CheckpointAgeValue, publishCheckpointClock } from "./CheckpointAge";
+import { CheckpointFacts } from "./CheckpointStatus";
+import { checkpointStatus } from "./checkpointState";
+import { chooseCheckpoint } from "./checkpointSelection";
+import { checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
+import { SessionPanelSection } from "./SessionPanelSection";
 
 // Right pane: context about the selected agent's terminal. If the session is on
 // a git branch, show a git view (branch, repo, and the working-tree diff). If
 // not, show the folder it's running in. (Approvals render above this in App.)
-export function ContextPanel({ session }: { session: SessionView }) {
+export function ContextPanel({ session, active = true, onCheckpointTimeline, onMemory }: { session: SessionView; active?: boolean; onCheckpointTimeline?: () => void; onMemory?: () => void }) {
   const toast = useToast();
   const [diff, setDiff] = useState<string>("");
   const [branches, setBranches] = useState<string[]>([]);
   const [acting, setActing] = useState<string | null>(null);
   const [editingFile, setEditingFile] = useState(false);
-  // Newest checkpoint timestamp — the context warning acknowledges a fresh
-  // one instead of nagging as if nothing happened.
-  const [lastCheckpoint, setLastCheckpoint] = useState<number | null>(null);
+  const [lastCheckpoint, setLastCheckpoint] = useState<CheckpointRecord | null>(null);
+  const [contextEvidence, setContextEvidence] = useState<ContextEvidence | null>(null);
+  const [activity, setActivity] = useState<CheckpointActivity | null>(null);
+  const [activityState, setActivityState] = useState<"loading" | "loaded" | "error">("loading");
+  const checkpointGeneration = useRef(0);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [diffOpen, setDiffOpen] = useState(false);
   const [branchesOpen, setBranchesOpen] = useState(false);
   const localBranches = branches.filter((b) => !b.startsWith("origin/"));
   const onBranch = !!session.branch;
   const dir = session.worktreePath ?? session.cwd ?? null;
-  const ctxLevel = contextLevel(session.contextTokens, session.model);
+  const state = effectiveState(session, Date.now());
+  const attempt = useCheckpointAttempt(session.key);
+  const checkpointRunning = attempt?.state === "running" || (attempt?.state === "unknown" && attempt.recovering);
+  const tokens = typeof session.contextTokens === "number" && Number.isFinite(session.contextTokens) && session.contextTokens >= 0 ? session.contextTokens.toLocaleString() : null;
+  const compactAvailable = session.ptyOwned && ["claude-code", "codex"].includes(session.runtime ?? "");
+  const harness = ({ "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini CLI" } as Record<string, string>)[session.runtime ?? ""] ?? session.runtime ?? "Not reported";
 
-  async function checkpoint() {
-    setActing("checkpoint");
-    try {
-      await api.checkpoint(session.key, "context-full");
-      setLastCheckpoint(Date.now());
-      toast("Checkpoint recorded — see the History tab");
-    } catch (e) {
-      toast(`Checkpoint failed: ${(e as Error).message}`, "err");
-    } finally {
-      setActing(null);
-    }
-  }
+  const eventCount = activity?.state === "known" && Number.isSafeInteger(activity.events_since_capture) && activity.events_since_capture! >= 0 ? activity.events_since_capture : null;
+  const activityLabel = activityState === "loading" ? "Loading…" : activityState === "error" ? "Couldn’t load activity"
+    : eventCount !== null ? eventCount.toLocaleString() : activity?.state === "never" ? "No successful checkpoint yet"
+    : activity?.state === "unknown" ? "Capture boundary unavailable" : "Not provided by this server";
+
+  const evidenceReady = activityState === "loaded" && contextEvidence?.state === "available";
+  const capacity = evidenceReady && Number.isSafeInteger(contextEvidence?.context_window_tokens) && contextEvidence!.context_window_tokens! > 0 ? contextEvidence!.context_window_tokens : null;
+  const compactedAt = evidenceReady && contextEvidence?.last_compaction_at && Number.isFinite(Date.parse(contextEvidence.last_compaction_at)) ? contextEvidence.last_compaction_at : null;
+  const noEvidence = activityState === "loading" ? "Loading…" : activityState === "error" ? "Couldn’t load context" : !contextEvidence ? "Not provided by this server" : "Not reported";
 
   async function compact() {
     setActing("compact");
@@ -74,12 +63,26 @@ export function ContextPanel({ session }: { session: SessionView }) {
   }
 
   useEffect(() => {
-    setLastCheckpoint(null);
-    api
-      .checkpoints(session.key)
-      .then((d) => setLastCheckpoint(d.checkpoints[0]?.created_at ?? null))
-      .catch(() => undefined);
+    setLastCheckpoint(null); setContextEvidence(null); setActivity(null); setActivityState("loading"); setActing(null); setSummaryOpen(false); checkpointGeneration.current++;
   }, [session.key]);
+  useEffect(() => {
+    if (!active) return;
+    let live = true, pending = false;
+    const load = () => {
+      if (!live || pending || document.visibilityState === "hidden") return;
+      pending = true;
+      const generation = checkpointGeneration.current;
+      void api.checkpoints(session.key).then(d => {
+        if (live && generation === checkpointGeneration.current) { setLastCheckpoint(d.checkpoints[0] ?? null); setContextEvidence(d.context_evidence ?? null); setActivity(d.checkpoint_activity ?? null); setActivityState("loaded"); publishCheckpointClock(session.key, d.checkpoint_clock); }
+      }).catch(() => { if (live && generation === checkpointGeneration.current) { setActivity(null); setContextEvidence(null); setActivityState("error"); publishCheckpointClock(session.key, null); } }).finally(() => { pending = false; });
+    };
+    const updated = (event: Event) => { if ((event as CustomEvent<string>).detail === session.key) load(); };
+    load();
+    const timer = setInterval(load, 10_000);
+    document.addEventListener("visibilitychange", load);
+    window.addEventListener("duckterm-checkpoint", updated);
+    return () => { live = false; clearInterval(timer); document.removeEventListener("visibilitychange", load); window.removeEventListener("duckterm-checkpoint", updated); };
+  }, [session.key, active]);
 
   useEffect(() => {
     setDiffOpen(false); // a new session starts with the diff collapsed
@@ -110,124 +113,35 @@ export function ContextPanel({ session }: { session: SessionView }) {
 
   return (
     <div className="rd-context">
-      {dir && (
-        <div className="rd-context-files">
-          <button
-            className="rd-btn rd-btn-primary rd-context-edit"
-            onClick={() => setEditingFile(true)}
-          >
-            <svg
-              aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"
-              fill="none" stroke="currentColor" strokeWidth="1.8"
-              strokeLinecap="round" strokeLinejoin="round"
-            >
-              <path d="M14 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9M15 5l4 4M10 14l-1 4 4-1L22 8a2.8 2.8 0 0 0-4-4Z" />
-            </svg>
-            Edit file
-          </button>
-          <div className="rd-context-edit-hint">
-            Open or create a file in this session’s folder
-          </div>
-        </div>
-      )}
-      {/* The latest running summary (3-4 lines); the full digest — delivered,
-          learnings, next actions — lives in the middle pane's History tab. */}
-      {session.progress?.summary && (
-        <p
-          className={`rd-context-summary${summaryOpen ? " open" : ""}`}
-          title={
-            summaryOpen
-              ? "Click to collapse"
-              : "Click to expand — full digest in the History tab"
-          }
-          onClick={() => setSummaryOpen((o) => !o)}
-        >
-          <span className="rd-context-summary-text">
-            {session.progress.summary}
-          </span>
-        </p>
-      )}
-      <div className="rd-rightnow">
-        <Duck key={session.key} pose={poseFor(session.state, !!session.attentionSince)} size={48} celebrating={session.celebration} />
-        <span>{duckPhrase(session, session.state)}</span>
-      </div>
-      <div className="rd-context-meta">
-        <div className="rd-context-tools">
-          <span title="Harness">{session.runtime ?? "—"}</span>
-          {session.metaHarnesses?.map((harness) => (
-            <span key={harness} className="rd-context-meta-harness" title="Meta-harness">{harness}</span>
-          ))}
-        </div>
-        {session.model && (
-          <div className="rd-context-row">
-            <span className="k">model</span>
-            <span className="v">{session.model}</span>
-          </div>
-        )}
-        <div className="rd-context-row">
-          <span className="k">started</span>
-          <span className="v">
-            {new Date(session.startedAt).toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}{" "}
-            · up {age(session.startedAt)}
-          </span>
-        </div>
-        {session.contextTokens != null && (
-          <div className="rd-context-row">
-            <span className="k">context</span>
-            <span className={`v${ctxLevel ? ` ctx-${ctxLevel}` : ""}`}>
-              {fmtTokens(session.contextTokens)} used ·{" "}
-              {contextWindowIsAssumed(session.model, session.contextTokens)
-                ? "window unknown"
-                : `${fmtTokens(
-                    contextWindowFor(session.model) - session.contextTokens,
-                  )} left`}
-            </span>
-          </div>
-        )}
-        {session.intention && (
-          <div className="rd-context-row">
-            <span className="k">intent</span>
-            <span className="v">{session.intention}</span>
-          </div>
-        )}
-      </div>
-
-      {ctxLevel && (
-        <div className={`rd-ctx-warning ${ctxLevel}`}>
-          <div className="rd-ctx-warning-text">
-            {checkpointFresh(lastCheckpoint)
-              ? `Checkpointed ${agoShort(lastCheckpoint!)} — resumable. Only /compact frees context; run it when convenient.`
-              : ctxLevel === "high"
-                ? "Context is nearly full — checkpoint the session, or compact it before quality degrades."
-                : "This session has been going a while and its context is filling up — a checkpoint now makes it resumable later."}
-          </div>
-          <div className="rd-ctx-warning-actions">
-            {!checkpointFresh(lastCheckpoint) && (
-              <button
-                className="rd-btn rd-btn-sm rd-btn-ghost"
-                disabled={acting !== null}
-                onClick={checkpoint}
-              >
-                {acting === "checkpoint" ? "Capturing…" : "Checkpoint"}
-              </button>
-            )}
-            {session.ptyOwned && (
-              <button
-                className="rd-btn rd-btn-sm rd-btn-ghost"
-                disabled={acting !== null}
-                title="Types /compact into the agent's terminal"
-                onClick={compact}
-              >
-                {acting === "compact" ? "Sending…" : "Compact"}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
+      <header className="rd-session-overview">
+        <div className="rd-session-overview-title"><Duck key={session.key} pose={poseFor(state, !!session.attentionSince)} size={28} celebrating={session.celebration} />
+          <h2>{session.label}</h2><span className="rd-session-overview-state">{sessionStateLabel(state)}</span></div>
+        <div className="rd-section-purpose">{session.group || "Ungrouped"}{session.branch && <> / {session.branch}</>}</div>
+        {session.progress?.summary ? <button className={`rd-session-work${summaryOpen ? " open" : ""}`} aria-expanded={summaryOpen} onClick={() => setSummaryOpen(o => !o)} title={summaryOpen ? "Collapse current work" : "Expand current work"}><span className="rd-session-work-text">{session.progress.summary}</span></button>
+          : <p className="rd-session-work open">{duckPhrase(session, state)}</p>}
+        <div className="rd-session-overview-model">{harness} <span>·</span> <strong>{session.model || "Model not reported yet"}</strong></div>
+      </header>
+      <SessionPanelSection key={`memory-${session.key}`} title="Saved memory" initiallyOpen status={<CheckpointAgeValue sessionKey={session.key} />}>
+        <p className="rd-section-purpose">Knowledge kept for future sessions.</p>
+        <div className="rd-session-metrics"><div><span>Last successful save</span><strong><CheckpointAgeValue sessionKey={session.key} /></strong></div>
+          <div><span>Events since saved capture</span><strong className={eventCount === null ? "rd-value-unavailable" : undefined}>{activityLabel}</strong></div></div>
+        {lastCheckpoint && <details className="rd-section-disclosure" aria-label="Latest checkpoint">
+          <summary>Latest attempt · {checkpointStatus(lastCheckpoint).label}</summary>
+          <CheckpointFacts checkpoint={lastCheckpoint} compact />
+          {onCheckpointTimeline && <button className="rd-timeline-link" onClick={onCheckpointTimeline}>Latest checkpoint ↗</button>}
+        </details>}
+        <div className="rd-section-actions">{onMemory && <button className="rd-timeline-link" onClick={onMemory}>Read saved memory ↗</button>}
+          <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!!checkpointRunning || !!session.hostOffline} onClick={() => { void chooseCheckpoint(session.key, session.label).catch(e => toast(checkpointRequestError(e), "err")); }}>Checkpoint</button></div>
+        <details className="rd-section-disclosure rd-section-help"><summary>About saved memory</summary><p>Checkpoint saves a durable summary. Later failed attempts do not reset the last successful save.</p><p>Counts use the last successful checkpoint’s captured history boundary, including events recorded while that save was running. Events are recorded activity, not conversation turns or unsummarized records; older summary gaps may still exist.</p>{activity?.event_filter && <p>{activity.event_filter === "work-v1" ? "Uses the saved work-event filter; attendance and status-only notifications are excluded." : "Uses the saved all-events filter, including status observations."}</p>}</details>
+      </SessionPanelSection>
+      <SessionPanelSection key={`context-${session.key}`} title="Active context" initiallyOpen status={tokens ? `${tokens} tokens` : "Unknown"}>
+        <p className="rd-section-purpose">Conversation currently used by the agent.</p>
+        <div className="rd-session-context-total"><strong>{tokens ?? "Unknown"}</strong>{tokens && <span>tokens reported</span>}</div>
+        <dl className="rd-session-facts"><div><dt>Context window</dt><dd>{capacity !== null ? `${capacity.toLocaleString()} tokens` : noEvidence}</dd></div><div><dt>Last compaction</dt><dd>{compactedAt ? <time dateTime={compactedAt}>{new Date(compactedAt).toLocaleString()}</time> : noEvidence}</dd></div></dl>
+        <div className="rd-section-actions rd-section-separated"><span>Shorten the active conversation.<br />Saved memory stays separate.</span><button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!compactAvailable || acting !== null || !!session.hostOffline} title={compactAvailable ? "Types /compact into the agent’s terminal" : "Requires a running Claude Code or Codex terminal"} onClick={compact}>{acting === "compact" ? "Sending…" : "Compact"}</button></div>
+        <details className="rd-section-disclosure rd-section-help"><summary>About context &amp; compaction</summary><p>Window size and completed compaction come only from this conversation’s native transcript. A high token count or a drop in usage does not prove compaction. Missing values mean there is no verified report available.</p>{contextEvidence?.history_scope === "recent" && <p>Only recent history was inspected. A missing compaction marker does not mean the conversation has never been compacted.</p>}<p>Compact asks the harness to condense its active conversation. It does not create a DuckTerm checkpoint.</p></details>
+      </SessionPanelSection>
+      <SessionPanelSection key={`workspace-${session.key}`} title="Workspace" status={session.branch ? `${session.repoName || "Repository"} / ${session.branch}` : "Folder"}>
       {onBranch ? (
         <div className="rd-context-git">
           <div className="rd-context-repository">
@@ -280,6 +194,8 @@ export function ContextPanel({ session }: { session: SessionView }) {
           <code className="rd-context-path">{session.cwd ?? "—"}</code>
         </div>
       )}
+      {dir && <div className="rd-section-actions"><button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => setEditingFile(true)}>Edit file</button></div>}
+      </SessionPanelSection>
       {editingFile && dir && (
         <FileEditModal sessionKey={session.key} dir={dir} onClose={() => setEditingFile(false)} />
       )}

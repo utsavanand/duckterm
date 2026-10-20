@@ -67,6 +67,26 @@ struct BugReportDataTests {
         assert(events.first!.hasSuffix("(code 10)"))
         assert(events.last!.hasSuffix("(code 109)"))
         print("PASS: diagnostic ring retains only last 100 events")
+        func context(_ items: [[String: Any]], status: Int = 200) throws -> [String: Any] {
+            let data = try JSONSerialization.data(withJSONObject: ["items": items])
+            return ["status": status, "body": String(decoding: data, as: UTF8.self)]
+        }
+        let readiness = ["id": "resume-readiness", "label": "Ignored title", "text": "Session 1: transcript missing"]
+        let selectedReadiness = BugReportData.resumeReadiness(from: try context([
+            ["id": "session", "text": "Private project name and path"], readiness
+        ]))
+        assert(selectedReadiness == "Session 1: transcript missing")
+        let invalidResponses: [[String: Any]] = [
+            try context([]),
+            try context([readiness], status: 500),
+            try context([readiness, readiness]),
+            ["status": 200, "body": "not JSON"],
+            try context([["id": "resume-readiness", "text": String(repeating: "a", count: 65537)]])
+        ]
+        for response in invalidResponses {
+            assert(BugReportData.resumeReadiness(from: response) == nil)
+        }
+        print("PASS: only one bounded readiness item enters native diagnostics; old, failed and malformed responses are omitted")
         print("All bug-report data tests passed")
     }
 }

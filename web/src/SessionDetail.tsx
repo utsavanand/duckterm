@@ -1,3 +1,8 @@
+import { sessionStateLabel } from "./sessions";
+import { checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
+import { chooseCheckpoint } from "./checkpointSelection";
+import { checkpointAttemptFailed, checkpointNotice } from "./checkpointState";
+import { CheckpointDetails } from "./CheckpointStatus";
 import { routedFetch as fetch } from "./hostTransport";
 import { useCallback, useEffect, useState } from "react";
 import { api, CheckpointRecord, RawEvent } from "./api";
@@ -19,7 +24,7 @@ export function SessionDetail({
   const [events, setEvents] = useState<RawEvent[]>([]);
   const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([]);
   const [diff, setDiff] = useState<string>("");
-  const [capturing, setCapturing] = useState(false);
+  const capturing = useCheckpointAttempt(session.key)?.state === "running";
 
   // Esc closes the panel.
   useEffect(() => {
@@ -58,15 +63,13 @@ export function SessionDetail({
     if (capturing) return;
     // Capturing runs a summarizer agent (claude -p / codex / copilot), which
     // takes a few seconds — show a loader so the click doesn't feel dead.
-    setCapturing(true);
     try {
-      await api.checkpoint(session.key, "manual");
-      toast("Checkpoint recorded");
+      const cp = await chooseCheckpoint(session.key, session.label);
+      if (!cp) return;
+      toast(checkpointNotice(cp), checkpointAttemptFailed(cp) ? "err" : "ok");
       loadCheckpoints();
-    } catch (e) {
-      toast((e as Error).message, "err");
-    } finally {
-      setCapturing(false);
+    } catch (error) {
+      toast(checkpointRequestError(error), "err");
     }
   }
 
@@ -111,7 +114,7 @@ export function SessionDetail({
               alignItems: "center",
             }}
           >
-            <strong style={{ fontSize: 16 }}>{session.label}</strong>
+            <strong style={{ fontSize: "1rem" }}>{session.label}</strong>
             <button
               onClick={onClose}
               aria-label="Close"
@@ -121,8 +124,8 @@ export function SessionDetail({
               ✕ Close
             </button>
           </div>
-          <div style={{ fontSize: 12, color: "#6b7280", marginTop: 4 }}>
-            {session.state} · {session.runtime ?? "—"} · {session.eventCount}{" "}
+          <div style={{ fontSize: "0.75rem", color: "#6b7280", marginTop: 4 }}>
+            {sessionStateLabel(session.state)} · {session.runtime ?? "—"} · {session.eventCount}{" "}
             events
             {session.branch ? ` · ${session.branch}` : ""} · started{" "}
             {new Date(session.startedAt).toLocaleString()}
@@ -130,7 +133,7 @@ export function SessionDetail({
           {session.intention && (
             <div
               style={{
-                fontSize: 13,
+                fontSize: "0.8125rem",
                 marginTop: 8,
                 fontStyle: "italic",
                 color: "#374151",
@@ -140,7 +143,7 @@ export function SessionDetail({
             </div>
           )}
           {session.outcome && (
-            <div style={{ fontSize: 13, marginTop: 4, color: "#4b5563" }}>
+            <div style={{ fontSize: "0.8125rem", marginTop: 4, color: "#4b5563" }}>
               {session.outcome}
             </div>
           )}
@@ -182,7 +185,7 @@ export function SessionDetail({
                 color: tab === t ? "#2563eb" : "#6b7280",
                 padding: "6px 12px",
                 borderRadius: 6,
-                fontSize: 13,
+                fontSize: "0.8125rem",
                 cursor: "pointer",
                 fontWeight: tab === t ? 600 : 400,
               }}
@@ -218,7 +221,7 @@ function Timeline({ events }: { events: RawEvent[] }) {
       {events.map((e) => (
         <div
           key={e._id}
-          style={{ display: "flex", gap: 10, padding: "6px 0", fontSize: 13 }}
+          style={{ display: "flex", gap: 10, padding: "6px 0", fontSize: "0.8125rem" }}
         >
           <span
             style={{
@@ -242,7 +245,7 @@ function Timeline({ events }: { events: RawEvent[] }) {
 function DiffView({ diff }: { diff: string }) {
   if (!diff)
     return (
-      <div style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.6 }}>
+      <div style={{ color: "var(--muted)", fontSize: "0.8125rem", lineHeight: 1.6 }}>
         <p style={{ margin: "0 0 6px", fontWeight: 600, color: "var(--text)" }}>
           Diff — stay tuned.
         </p>
@@ -256,7 +259,7 @@ function DiffView({ diff }: { diff: string }) {
   return (
     <pre
       style={{
-        fontSize: 12,
+        fontSize: "0.75rem",
         lineHeight: 1.5,
         margin: 0,
         whiteSpace: "pre-wrap",
@@ -301,7 +304,7 @@ function Checkpoints({
           marginBottom: 12,
         }}
       >
-        <span style={{ fontSize: 13, color: "#565869" }}>
+        <span style={{ fontSize: "0.8125rem", color: "#565869" }}>
           A record of what was done — prompts, files, tools, git state.
         </span>
         <button
@@ -360,7 +363,7 @@ function CapturingCard() {
         alignItems: "center",
         gap: 10,
         color: "#565869",
-        fontSize: 13,
+        fontSize: "0.8125rem",
       }}
     >
       <Spinner />
@@ -370,76 +373,9 @@ function CapturingCard() {
 }
 
 function CheckpointCard({ c }: { c: CheckpointRecord }) {
-  const [open, setOpen] = useState(false);
-  const r = c.record;
-  return (
-    <div style={{ borderBottom: "1px solid #f0f0f2", padding: "12px 0" }}>
-      <div style={{ cursor: "pointer" }} onClick={() => setOpen((v) => !v)}>
-        <div style={{ display: "flex", justifyContent: "space-between" }}>
-          <strong style={{ fontSize: 13 }}>{c.label}</strong>
-          <span style={{ fontSize: 12, color: "#9ca3af" }}>
-            {new Date(c.created_at).toLocaleString()}
-          </span>
-        </div>
-        <div style={{ fontSize: 13, color: "#374151", marginTop: 4 }}>
-          {c.summary}
-        </div>
-      </div>
-      {open && (
-        <div style={{ marginTop: 10, fontSize: 12.5, color: "#565869" }}>
-          {r.git && (
-            <div style={{ marginBottom: 8 }}>
-              <strong>Git:</strong> {r.repo} · {r.branch}
-            </div>
-          )}
-          {r.prompts.length > 0 && (
-            <Section title="Prompts">
-              {r.prompts.map((p, i) => (
-                <li key={i}>{p}</li>
-              ))}
-            </Section>
-          )}
-          {r.files.length > 0 && (
-            <Section title="Files changed">
-              {r.files.map((f, i) => (
-                <li key={i}>
-                  {f.path} ({f.edits}×)
-                </li>
-              ))}
-            </Section>
-          )}
-          {r.tools.length > 0 && (
-            <Section title="Tools">
-              {r.tools.map((t, i) => (
-                <li key={i}>
-                  {t.count}× {t.tool}
-                </li>
-              ))}
-            </Section>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  return <div style={{ padding: "12px 0" }}><p>{new Date(c.created_at).toLocaleString()}</p><CheckpointDetails checkpoint={c} /></div>;
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div style={{ marginBottom: 8 }}>
-      <div style={{ fontWeight: 600, marginBottom: 2 }}>{title}</div>
-      <ul style={{ margin: 0, paddingLeft: 18 }}>{children}</ul>
-    </div>
-  );
-}
-
-// Notes are a list of entries, stored newline-separated in the session's
-// `notes` column. Each non-empty line is one note.
 function parseNotes(raw: string | null | undefined): string[] {
   return (raw ?? "").split("\n").filter((l) => l.trim() !== "");
 }
@@ -501,18 +437,18 @@ function Notes({ sessionKey }: { sessionKey: string }) {
 
   if (loading)
     return (
-      <p style={{ fontSize: 13, color: "var(--muted)" }}>Loading notes…</p>
+      <p style={{ fontSize: "0.8125rem", color: "var(--muted)" }}>Loading notes…</p>
     );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <p style={{ margin: 0, fontSize: 13, color: "var(--text-soft)" }}>
+      <p style={{ margin: 0, fontSize: "0.8125rem", color: "var(--text-soft)" }}>
         Your private notes for this session — things to do, reminders, context.
         Local only, never sent anywhere.
       </p>
 
       {notes.length === 0 ? (
-        <p style={{ margin: 0, fontSize: 13, color: "var(--muted)" }}>
+        <p style={{ margin: 0, fontSize: "0.8125rem", color: "var(--muted)" }}>
           No notes yet. Add one below.
         </p>
       ) : (
@@ -537,7 +473,7 @@ function Notes({ sessionKey }: { sessionKey: string }) {
                 border: "1px solid var(--border)",
                 borderRadius: 8,
                 background: "var(--bg-soft)",
-                fontSize: 13,
+                fontSize: "0.8125rem",
               }}
             >
               <span
@@ -575,7 +511,7 @@ function Notes({ sessionKey }: { sessionKey: string }) {
             padding: "8px 10px",
             border: "1px solid var(--border-strong)",
             borderRadius: 8,
-            fontSize: 13,
+            fontSize: "0.8125rem",
             fontFamily: "inherit",
             background: "var(--bg)",
             color: "var(--text)",
@@ -594,5 +530,5 @@ function Notes({ sessionKey }: { sessionKey: string }) {
 }
 
 function Empty({ text }: { text: string }) {
-  return <p style={{ color: "#9ca3af", fontSize: 13 }}>{text}</p>;
+  return <p style={{ color: "#9ca3af", fontSize: "0.8125rem" }}>{text}</p>;
 }

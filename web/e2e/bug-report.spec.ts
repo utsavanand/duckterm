@@ -21,12 +21,16 @@ test("bug report downloads the exact reviewed body and captured attachments", as
     await report.getByRole('textbox', { name: 'Summary' }).fill('Clipboard test');
     await report.getByRole('textbox', { name: 'What happened?' }).fill('Selected terminal text did not copy.\nExpected the selected text in the clipboard.');
     await expect(report.getByRole('checkbox', { name: /DuckTerm version/ })).toBeChecked();
+    await expect(report.getByRole('checkbox', { name: /Resume readiness/ })).toBeChecked();
+    await expect(report.getByLabel('Complete report')).toContainText('### Resume readiness');
+    await report.getByRole('checkbox', { name: /Resume readiness/ }).uncheck();
     await report.getByRole('checkbox', { name: /DuckTerm version/ }).uncheck();
     const files = [1, 2, 3].map(n => ({ name: `attachment-${n}.bin`, mimeType: 'application/octet-stream', buffer: Buffer.alloc(5 * 1024 * 1024, 255) }));
     await report.getByLabel('Attachments', { exact: true }).setInputFiles(files);
     await expect(report.getByRole('button', { name: 'Remove attachment-3.bin', exact: true })).toBeVisible();
     const reviewed = await report.getByLabel('Complete report').innerText();
     expect(reviewed).not.toContain('### DuckTerm version');
+    expect(reviewed).not.toContain('### Resume readiness');
     await page.screenshot({ path: '/tmp/duckterm-bug-report-implemented.png', fullPage: true });
     await report.getByRole('button', { name: 'Prepare mail draft', exact: true }).click();
     await expect(report.getByRole('heading', { name: 'Draft prepared', exact: true })).toBeVisible();

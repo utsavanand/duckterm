@@ -4,6 +4,7 @@ import { DirBrowser } from "./DirBrowser";
 import { api, BrowseResult, LaunchRequest } from "./api";
 import { desktop, destinationRequest } from "./desktop";
 import { RemoteProject, PreparedProject } from "./RemoteProject";
+import { OpenCodeModel, OpenCodeSupport, openCodeCommand, useOpenCodeOptions, validOpenCodeModel } from "./OpenCodeOptions";
 import { Button, Field, inputStyle, Modal, useToast } from "./ui";
 
 // New session: a command (runtime is inferred from it), a path picked by
@@ -15,6 +16,7 @@ const AGENTS: { id: string; label: string; command: string }[] = [
   { id: "claude", label: "Claude Code", command: "claude" },
   { id: "codex", label: "Codex", command: "codex" },
   { id: "copilot", label: "Copilot", command: "copilot" },
+  { id: "opencode", label: "OpenCode", command: "opencode" },
   { id: "custom", label: "Custom…", command: "" },
 ];
 
@@ -54,6 +56,11 @@ export function LaunchModal({
   } : api, [elsewhere, target]);
   const [agent, setAgent] = useState(native?.draft?.agent ?? "claude");
   const [command, setCommand] = useState(native?.draft?.command ?? "claude");
+  const [openCodeModels, setOpenCodeModels] = useState<Record<string, string>>({});
+  const openCodeModel = openCodeModels[target] ?? "";
+  const openCode = useOpenCodeOptions(agent === "opencode", target);
+  const openCodeBlocked = agent === "opencode" && (!openCode.options?.launch.available || !validOpenCodeModel(openCodeModel));
+  const launchCommand = agent === "opencode" && validOpenCodeModel(openCodeModel) ? openCodeCommand(openCodeModel) : command;
   const [name, setName] = useState(native?.draft?.name ?? "");
   const [prompt, setPrompt] = useState(native?.draft?.prompt ?? "");
   const [picked, setPicked] = useState<BrowseResult | null>(null);
@@ -123,6 +130,7 @@ export function LaunchModal({
   }, [mode, path, destination]);
 
   async function submit() {
+    if (openCodeBlocked) return;
     if (projectKind !== "existing" && !prepared) {
       toast(`Review and ${projectKind === "clone" ? "clone" : "copy"} the project before launching`, "err");
       return;
@@ -142,8 +150,8 @@ export function LaunchModal({
       const worktree = isGit && mode === "worktree";
       // Run the agent in a PTY Duckterm owns (in_terminal:false) so it renders
       // in the in-app terminal — no external iTerm/Terminal tab.
-      const launched = prepared ? await destinationRequest<{ session_key: string }>(target, "project-launch", { id: prepared.id, command, name, prompt }) : await destination.launch({
-        command,
+      const launched = prepared ? await destinationRequest<{ session_key: string }>(target, "project-launch", { id: prepared.id, command: launchCommand, name, prompt }) : await destination.launch({
+        command: launchCommand,
         name: name || undefined,
         prompt: prompt || undefined,
         in_terminal: false,
@@ -215,6 +223,7 @@ export function LaunchModal({
             <button
               key={a.id}
               type="button"
+              disabled={busy || transferBusy}
               className={`rd-pill${agent === a.id ? " active" : ""}`}
               onClick={() => {
                 setAgent(a.id);
@@ -226,6 +235,8 @@ export function LaunchModal({
           ))}
         </div>
       </Field>
+
+      {agent === "opencode" && <OpenCodeModel model={openCodeModel} onModel={value => setOpenCodeModels(current => ({ ...current, [target]: value }))} options={openCode.options} disabled={busy || transferBusy} />}
 
       {agent === "custom" && (
         <Field label="Command (any CLI agent — runtime is detected from it)">
@@ -253,7 +264,7 @@ export function LaunchModal({
           <option value="existing">{target === "local" ? "Existing folder" : "Existing remote folder"}</option>{target !== "local" && <option value="copy">Copy local project</option>}<option value="clone">Clone Git repository</option>
         </select>
       </Field>}
-      {projectKind !== "existing" && !prepared && <RemoteProject key={target + projectKind} target={target} kind={projectKind} command={command} onBusy={setTransferBusy} onPrepared={p => { setPrepared(p); setPicked({ path: p.destination, parent: null, is_git: false, entries: [] }); setMode("in-place"); }} />}
+      {projectKind !== "existing" && !prepared && <RemoteProject key={target + projectKind} target={target} kind={projectKind} command={launchCommand} onBusy={setTransferBusy} onPrepared={p => { setPrepared(p); setPicked({ path: p.destination, parent: null, is_git: false, entries: [] }); setMode("in-place"); }} />}
       {(projectKind === "existing" || prepared) && <>
       <Field label={native ? `Folder on ${native.targets.find((t) => t.id === target)?.name ?? target}` : "Folder to work in"}>
         {path ? (
@@ -265,7 +276,7 @@ export function LaunchModal({
               padding: "8px 10px",
               border: "1px solid var(--border-strong)",
               borderRadius: 8,
-              fontSize: 13,
+              fontSize: "0.8125rem",
             }}
           >
             <span className="mono" style={{ flex: 1, wordBreak: "break-all" }}>
@@ -401,6 +412,8 @@ export function LaunchModal({
         />
       </Field>
 
+      {agent === "opencode" && <OpenCodeSupport options={openCode.options} error={openCode.error} retry={openCode.retry} />}
+
       <div
         style={{
           display: "flex",
@@ -412,7 +425,7 @@ export function LaunchModal({
         <Button variant="ghost" onClick={onClose} disabled={busy || transferBusy}>
           Cancel
         </Button>
-        <Button onClick={submit} disabled={busy || transferBusy || (projectKind !== "existing" && !prepared)}>
+        <Button onClick={submit} disabled={busy || transferBusy || openCodeBlocked || (projectKind !== "existing" && !prepared)}>
           {busy ? "Launching…" : "Launch"}
         </Button>
       </div>

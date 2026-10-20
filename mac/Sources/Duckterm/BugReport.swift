@@ -10,6 +10,10 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
     private var diagnostics = ""
     private var report = BugReportData()
     private var preparing = false
+    private var loadingContext = false
+    private var contextTask: Task<Void, Never>?
+    private var contextGeneration = UUID()
+    private let loadResumeReadiness: (@MainActor () async throws -> String?)?
     private var share: NSSharingService?
     private let recipient: String
     private let onSaved: (URL) -> Void
@@ -17,7 +21,8 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
     private let temporary = FileManager.default.temporaryDirectory
         .appendingPathComponent("DuckTerm-report-\(UUID().uuidString)", isDirectory: true)
 
-    init(screenshot: NSImage?, chooseSaveDestination: @escaping (NSWindow, @escaping (URL?) -> Void) -> Void = { panel, completion in
+    init(screenshot: NSImage?, loadResumeReadiness: (@MainActor () async throws -> String?)? = nil,
+         chooseSaveDestination: @escaping (NSWindow, @escaping (URL?) -> Void) -> Void = { panel, completion in
         let picker = NSSavePanel()
         picker.nameFieldStringValue = "DuckTerm-bug-report.zip"
         picker.beginSheetModal(for: panel) { response in
@@ -27,6 +32,7 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
         NSWorkspace.shared.activateFileViewerSelecting([$0])
     }) {
         self.onSaved = onSaved
+        self.loadResumeReadiness = loadResumeReadiness
         self.chooseSaveDestination = chooseSaveDestination
         recipient = UserDefaults.standard.string(forKey: "SupportEmail")
             ?? Bundle.main.object(forInfoDictionaryKey: "DuckTermSupportEmail") as? String ?? ""
@@ -63,11 +69,35 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
         panel.center()
         self.panel = panel
         web = view
+        if let loadResumeReadiness {
+            loadingContext = true
+            contextGeneration = UUID()
+            let generation = contextGeneration
+            contextTask = Task { @MainActor [weak self] in
+                let readiness: String
+                do {
+                    readiness = try await loadResumeReadiness()
+                        ?? "Unavailable — this server does not provide resume-readiness diagnostics."
+                } catch {
+                    // Network errors may embed paths or credentials. Never export them.
+                    readiness = "Unavailable — could not read local server diagnostics."
+                }
+                guard !Task.isCancelled, let self, self.panel != nil,
+                      self.contextGeneration == generation else { return }
+                self.diagnostics += "\nLocal server resume readiness:\n\(readiness)\n"
+                self.loadingContext = false
+                self.contextTask = nil
+                self.update()
+            }
+        }
         view.loadHTMLString(Self.html, baseURL: nil)
         panel.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
+        contextTask?.cancel()
+        contextTask = nil
+        contextGeneration = UUID()
         web?.configuration.userContentController.removeScriptMessageHandler(forName: "bugReport")
         web = nil
         panel = nil
@@ -92,8 +122,9 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
             "diagnostics": diagnostics,
             "files": report.attachments.map(\.name),
             "canEmail": !recipient.isEmpty,
-            "status": status,
+            "status": status.isEmpty && loadingContext ? "Loading local server diagnostics…" : status,
             "busy": preparing,
+            "loadingContext": loadingContext,
         ]
         guard let json = try? JSONSerialization.data(withJSONObject: data),
               let text = String(data: json, encoding: .utf8) else { return }
@@ -149,6 +180,8 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
     }
 
     private func prepare(_ body: [String: Any], email: Bool) {
+        // Freeze the reviewed diagnostic snapshot before creating any files.
+        guard !loadingContext else { return }
         let summary = String((body["summary"] as? String ?? "").prefix(200))
         let details = String((body["details"] as? String ?? "").prefix(20000))
         let reply = String((body["reply"] as? String ?? "").prefix(254))
@@ -226,7 +259,7 @@ const el=id=>document.getElementById(id);const send=(action,data={})=>window.web
 el('add').onclick=()=>send('add');el('preview').onclick=()=>send('preview');el('cancel').onclick=()=>send('cancel');el('review').onclick=()=>{el('logs').hidden=!el('logs').hidden};
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();send('cancel')}});
 el('report').onsubmit=e=>{e.preventDefault();send(e.submitter?.value||'save',{summary:el('summary').value,details:el('details').value,reply:el('reply').value,screenshot:el('screenshot').checked,diagnostics:el('diagnostics').checked})};
-window.updateReport=d=>{el('status').textContent=d.status;el('logs').textContent=d.diagnostics;el('image').src=d.screenshot;el('preview').hidden=!d.screenshot;if(!d.screenshot){el('screenshot').checked=false;el('screenshot').disabled=true;el('captureNote').textContent='Screenshot unavailable. You can add one manually.'}else{el('screenshot').disabled=false;el('captureNote').textContent='Captured before this form opened · Click to preview'}el('email').disabled=!d.canEmail||d.busy;el('save').disabled=d.busy;el('add').disabled=d.busy;el('cancel').disabled=d.busy;if(!d.canEmail&&!d.status)el('status').textContent='No support email is configured for this build. You can still save your report.';el('files').replaceChildren();d.files.forEach((name,index)=>{const row=document.createElement('div');row.className='file';const span=document.createElement('span');span.textContent=name;const b=document.createElement('button');b.type='button';b.textContent='Remove';b.onclick=()=>send('remove',{index});row.append(span,b);el('files').append(row)})};
+window.updateReport=d=>{el('status').textContent=d.status;el('logs').textContent=d.diagnostics+(d.loadingContext?'\nLoading local server resume readiness…':'');el('image').src=d.screenshot;el('preview').hidden=!d.screenshot;if(!d.screenshot){el('screenshot').checked=false;el('screenshot').disabled=true;el('captureNote').textContent='Screenshot unavailable. You can add one manually.'}else{el('screenshot').disabled=false;el('captureNote').textContent='Captured before this form opened · Click to preview'}el('email').disabled=!d.canEmail||d.busy||d.loadingContext;el('save').disabled=d.busy||d.loadingContext;el('add').disabled=d.busy;el('cancel').disabled=d.busy;if(!d.canEmail&&!d.status)el('status').textContent='No support email is configured for this build. You can still save your report.';el('files').replaceChildren();d.files.forEach((name,index)=>{const row=document.createElement('div');row.className='file';const span=document.createElement('span');span.textContent=name;const b=document.createElement('button');b.type='button';b.textContent='Remove';b.onclick=()=>send('remove',{index});row.append(span,b);el('files').append(row)})};
 </script></body></html>
 """#
 }

@@ -11,6 +11,8 @@ import json
 import re
 from typing import Any
 
+from duckterm import prompts
+
 # The list buckets the UI renders (plus a freeform "summary" paragraph);
 # anything else the model returns is dropped. `learnings` is about the WORK;
 # `user_learnings` is about the COLLABORATION — how this user prompts, what
@@ -18,51 +20,21 @@ from typing import Any
 KEYS = ("deliverables", "learnings", "user_learnings", "next_actions")
 _MAX_ITEMS = 8
 _MAX_ITEM_CHARS = 160
-_MAX_SUMMARY_CHARS = 400
+_MAX_SUMMARY_CHARS = 6000
 _MAX_TRANSCRIPT_CHARS = 8_000
 
-_PROMPT = """You maintain a running progress digest for an AI coding-agent session.
-Update the digest from the prior digest and the recent conversation. Return STRICT JSON only,
-no markdown fences, exactly this shape:
-{"summary": "...", "deliverables": ["..."], "learnings": ["..."],
- "user_learnings": ["..."], "next_actions": ["..."]}
-
-- summary: 2-3 plain sentences: where the session stands right now
-- deliverables: concrete things produced or changed (features, fixes, files, releases)
-- learnings: decisions made and constraints discovered about the WORK itself.
-  Record the CURRENT decision, not the history of rejected alternatives. Skip
-  transient environment hiccups unless they constrain future work.
-- user_learnings: recurring collaboration patterns ONLY — a behavior you
-  observed at least TWICE, or a preference the user stated outright as a rule.
-  A one-off remark or a single decision is an anecdote, not a pattern: leave
-  it out. Describe the behavior neutrally ("approves with terse replies —
-  proceed immediately"), never characterize personality. Facts about the
-  user's life or the project belong in learnings/summary, not here. At most
-  4 items; an empty list is better than a stretched one.
-- next_actions: what should happen next, most important first
-Rules: at most 8 items per list, each item one plain sentence under 120 characters.
-Carry forward prior items that are still true; drop next_actions that got done
-(they usually become deliverables). Empty lists are fine early on.
-
-PRIOR DIGEST:
-{prior}
-
-SESSION GOAL (may be empty):
-{goal}
-
-RECENT CONVERSATION (oldest first):
-{transcript}
-"""
+_PROMPT = prompts.load("digest_write")
 
 
 def build_prompt(transcript: list[dict[str, str]], prior: dict[str, Any] | None, goal: str) -> str:
     lines = [f"{r['role']}: {r['text']}" for r in transcript]
     text = "\n".join(lines)[-_MAX_TRANSCRIPT_CHARS:]
-    prior_json = json.dumps({k: (prior or {}).get(k, []) for k in KEYS})
-    return (
-        _PROMPT.replace("{prior}", prior_json)
-        .replace("{goal}", goal or "")
-        .replace("{transcript}", text or "(no transcript available)")
+    prior_json = json.dumps({k: (prior or {}).get(k, []) for k in ("summary", *KEYS)})
+    return prompts.render(
+        "digest_write",
+        prior=prior_json,
+        goal=goal or "",
+        transcript=text or "(no transcript available)",
     )
 
 
@@ -70,16 +42,17 @@ def parse(text: str) -> dict[str, Any] | None:
     """The summarizer's reply as a clean digest, or None when unusable.
     Tolerates prose/fences around the JSON (models add them despite the
     prompt) by extracting the outermost {...} block."""
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if match is None:
+    raw = json_object(text)
+    if raw is None:
         return None
-    try:
-        raw = json.loads(match.group(0))
-    except json.JSONDecodeError:
+    if "summary" in raw and not isinstance(raw["summary"], str):
         return None
-    if not isinstance(raw, dict):
+    summary = (raw.get("summary") or "").strip()
+    if len(summary) > _MAX_SUMMARY_CHARS:
+        # This text is reviewed and saved, not a display preview. Slicing it can
+        # cut off a sentence or qualification and manufacture a rejected draft.
         return None
-    digest: dict[str, Any] = {"summary": str(raw.get("summary") or "").strip()[:_MAX_SUMMARY_CHARS]}
+    digest: dict[str, Any] = {"summary": summary}
     for key in KEYS:
         items = raw.get(key)
         if not isinstance(items, list):
@@ -93,32 +66,34 @@ def parse(text: str) -> dict[str, Any] | None:
     return digest
 
 
+def parse_diagnostic(text: str) -> str:
+    """Fixed failure codes for the existing bounded draft-correction path."""
+    raw = json_object(text)
+    if raw is not None and "summary" in raw and not isinstance(raw["summary"], str):
+        return "summary_must_be_text"
+    if raw is not None and len(str(raw.get("summary") or "").strip()) > _MAX_SUMMARY_CHARS:
+        return "summary_too_long"
+    return "invalid_digest"
+
+
+def json_object(text: str) -> dict[str, Any] | None:
+    """Extract a JSON object without weakening the schema checks of its caller."""
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match is None:
+        return None
+    try:
+        raw = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return raw
+
+
 # ── validation: L1 (does each item make sense on its own) + L2 (compare
 #    against what's already stored) — one summarizer call for both ──
 
-_VALIDATE_PROMPT = """You are validating a candidate progress digest before it is stored.
-
-L1 — judge each CANDIDATE item on its own: reject items that are vague
-("made progress"), not concrete, or restate another candidate.
-L2 — compare candidates against the EXISTING stored items: reject candidates
-that duplicate or merely rephrase an existing item; separately, list the ids
-of existing next_actions that the candidates imply are now completed (they
-typically reappear as deliverables).
-
-Return STRICT JSON only, exactly this shape:
-{"accept": [{"bucket": "...", "text": "..."}],
- "reject": [{"text": "...", "reason": "..."}],
- "done_next_action_ids": ["..."]}
-Buckets are: deliverables, learnings, user_learnings, next_actions.
-When unsure whether an item is a duplicate, reject it — the archive already
-has it. Keep accepted text verbatim from the candidate.
-
-CANDIDATE ITEMS:
-{candidate}
-
-EXISTING STORED ITEMS (id | bucket | status | text):
-{existing}
-"""
+_VALIDATE_PROMPT = prompts.load("digest_validate")
 
 
 def candidate_items(digest: dict[str, Any]) -> list[dict[str, str]]:
@@ -126,13 +101,26 @@ def candidate_items(digest: dict[str, Any]) -> list[dict[str, str]]:
     return [{"bucket": bucket, "text": text} for bucket in KEYS for text in digest.get(bucket, [])]
 
 
-def validate_prompt(digest: dict[str, Any], existing: list[dict[str, Any]]) -> str:
+def validate_prompt(
+    digest: dict[str, Any],
+    existing: list[dict[str, Any]],
+    *,
+    source: str = "",
+    required: str = "",
+) -> str:
     cand = json.dumps(candidate_items(digest))
     rows = (
         "\n".join(f"{r['id']} | {r['bucket']} | {r['status']} | {r['text']}" for r in existing)
         or "(none yet)"
     )
-    return _VALIDATE_PROMPT.replace("{candidate}", cand).replace("{existing}", rows)
+    return prompts.render(
+        "digest_validate",
+        candidate=cand,
+        existing=rows,
+        summary=str(digest.get("summary") or ""),
+        source=source,
+        required=required,
+    )
 
 
 def parse_verdicts(text: str) -> dict[str, Any] | None:
@@ -152,8 +140,80 @@ def parse_verdicts(text: str) -> dict[str, Any] | None:
         for i in raw["accept"]
         if isinstance(i, dict) and str(i.get("text", "")).strip()
     ]
-    done = [str(i) for i in raw.get("done_next_action_ids", []) if str(i).strip()]
-    return {"accept": accept, "done_next_action_ids": done}
+    done_raw = raw.get("done_next_action_ids", [])
+    if not isinstance(done_raw, list):
+        return None
+    done = [str(i) for i in done_raw if str(i).strip()]
+    validation = raw.get("summary_validation")
+    return {"accept": accept, "done_next_action_ids": done, "summary_validation": validation}
+
+
+def summary_corrections(text: str) -> list[str | dict[str, str]]:
+    """Keep useful reviewer feedback bounded before it enters a checkpoint."""
+    raw = json_object(text)
+    values = raw.get("summary_corrections") if raw is not None else None
+    if not isinstance(values, list):
+        return []
+    result: list[str | dict[str, str]] = []
+    for value in values[:8]:
+        if isinstance(value, str) and value.strip():
+            result.append(value.strip()[:500])
+        elif isinstance(value, dict):
+            fields = {
+                key: value[key].strip()[:500]
+                for key in ("field", "claim", "correction", "source")
+                if isinstance(value.get(key), str) and value[key].strip()
+            }
+            if fields:
+                result.append(fields)
+    return result
+
+
+def summary_review(validation: Any, corrections: list[Any] | None = None) -> dict[str, Any]:
+    """Keep review outcomes distinct, without retaining arbitrary provider prose."""
+    if validation is None:
+        return {"state": "missing_verdict", "reason_codes": []}
+    if not isinstance(validation, dict) or type(validation.get("ready")) is not bool:
+        return {"state": "invalid_verdict", "reason_codes": []}
+    codes = validation.get("reason_codes")
+    if (
+        not isinstance(codes, list)
+        or len(codes) > 16
+        or any(
+            not isinstance(c, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", c) for c in codes
+        )
+    ):
+        return {"state": "invalid_reason_codes", "reason_codes": []}
+    if (
+        validation["ready"] is False
+        and (not codes or codes == ["summary_unverified"])
+        and not corrections
+    ):
+        return {"state": "invalid_reason_codes", "reason_codes": list(codes)}
+    if validation["ready"] is False:
+        return {"state": "rejected", "reason_codes": list(codes)}
+    if codes:
+        return {"state": "inconsistent_verdict", "reason_codes": list(codes)}
+    return {"state": "accepted", "reason_codes": []}
+
+
+def review_diagnostic(review: dict[str, Any]) -> str:
+    return (
+        "review_"
+        + str(review["state"])
+        + (":" + ",".join(review["reason_codes"]) if review["reason_codes"] else "")
+    )
+
+
+def review_outcome(text: str, verdicts: dict[str, Any] | None) -> dict[str, Any]:
+    corrections = summary_corrections(text)
+    if verdicts is not None:
+        return summary_review(verdicts.get("summary_validation"), corrections)
+    # A malformed digest envelope can still contain a readable rejection.
+    # Preserve its valid reason codes without accepting the broken response.
+    raw = json_object(text)
+    review = summary_review(raw.get("summary_validation") if raw is not None else None, corrections)
+    return {"state": "malformed_reply", "reason_codes": review["reason_codes"]}
 
 
 def fallback_verdicts(digest: dict[str, Any]) -> dict[str, Any]:

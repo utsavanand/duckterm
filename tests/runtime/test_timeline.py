@@ -202,3 +202,30 @@ def test_cursor_supports_full_relay_retention(stores):
     )
     assert first["entries"][0]["id"] != second["entries"][0]["id"]
     assert second["summary"]["total"] == 500
+
+
+def test_summary_freshness_uses_stored_progress_timestamp(stores):
+    h, _ = stores
+    assert read(stores)["summary"]["age_ms"] is None
+    assert read(stores)["summary"]["updated_at"] is None
+    h.set_progress("a", json.dumps({"summary": "Recent work"}), 900)
+    summary = read(stores)["summary"]
+    assert summary["text"] == "Recent work"
+    assert summary["updated_at"] == 900
+    assert summary["age_ms"] == 100
+    h.set_progress("a", json.dumps({"summary": "Clock ahead"}), 1100)
+    assert read(stores)["summary"]["age_ms"] == 0
+
+
+@pytest.mark.parametrize("timestamp", [None, 0, -1, "invalid"])
+def test_legacy_summary_without_valid_timestamp_has_unknown_age(stores, timestamp):
+    h, _ = stores
+    h._conn.execute(
+        "UPDATE sessions SET progress = ?, progress_at = ? WHERE session_key = 'a'",
+        (json.dumps({"summary": "Legacy work"}), timestamp),
+    )
+    h._conn.commit()
+    summary = read(stores)["summary"]
+    assert summary["text"] == "Legacy work"
+    assert summary["updated_at"] is None
+    assert summary["age_ms"] is None

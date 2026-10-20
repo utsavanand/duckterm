@@ -44,3 +44,15 @@ it("keeps the edited report after submission failure", async () => {
   expect(screen.getByRole("textbox", { name: "Summary" })).toHaveValue("Copy failed");
   expect(screen.getByRole("checkbox", { name: /Recorded model/ })).not.toBeChecked();
 });
+it("includes server resume readiness in review and excludes it from submission when removed", async () => {
+  vi.mocked(bugReport.context).mockResolvedValue({ ...context, items: [...context.items,
+    { id: "resume-readiness", label: "Resume readiness", text: "Session 1: harness=codex; resume id=missing" },
+  ] });
+  await edit();
+  expect(screen.getByLabelText("Complete report")).toHaveTextContent("resume id=missing");
+  fireEvent.click(screen.getByRole("checkbox", { name: /Resume readiness/ }));
+  const reviewed = screen.getByLabelText("Complete report").textContent;
+  expect(reviewed).not.toContain("resume id=missing");
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Prepare mail draft" })); });
+  expect(bugReport.prepare).toHaveBeenCalledWith("test-session", "Copy failed", reviewed, []);
+});

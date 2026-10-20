@@ -23,7 +23,7 @@ import sys
 import time
 import uuid
 from collections import deque
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 
 from duckterm.agents import tmux, tmux_stream
@@ -33,9 +33,9 @@ from duckterm.git.worktrees import WorktreeManager
 from duckterm.helpers import paths, session_credentials, session_instructions
 from duckterm.helpers.pane_log import completion_for
 from duckterm.helpers.private_files import private_write
-from duckterm.llm.summarizer import build_prompt, mechanical_summary, summarize
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.base import AgentRuntime, SessionState, plain_screen
+from duckterm.runtimes.preparation import LaunchPreparation
 
 # State -> the event_type whose derive_state yields that state. One vocabulary.
 _TAIL_TICK_BYTES = 64 * 1024
@@ -73,6 +73,7 @@ class SessionSupervisor:
         initial_prompt: str = "",
         extra: dict[str, object] | None = None,
         env: dict[str, str] | None = None,
+        history: HistoryStore | None = None,
     ) -> None:
         self.bus = bus
         self.runtime = runtime
@@ -80,6 +81,9 @@ class SessionSupervisor:
         self.cwd = cwd
         self.initial_prompt = initial_prompt
         self._extra = extra or {}
+        self._history = history
+        self._preparing = runtime.requires_launch_preparation
+        self._preparation: LaunchPreparation | None = None
         self._env = {**session_credentials.launch_env(session_key), **(env or {})}
         self._proc: asyncio.subprocess.Process | None = None
         self._state: SessionState = "busy"
@@ -107,19 +111,23 @@ class SessionSupervisor:
         self.last_owner_input_ms = 0
 
     def _emit(self, event_type: str, **fields: object) -> None:
-        self.bus.publish(
-            {
-                "event_type": event_type,
-                "session_key": self.session_key,
-                "source_app": Path(self.cwd).name or self.session_key,
-                "cwd": self.cwd,
-                "runtime": self.runtime.name,
-                # The orchestrator only ever runs sessions Duckterm launched.
-                "launched": True,
-                **self._extra,
-                **fields,
-            }
-        )
+        event = {
+            "event_type": event_type,
+            "session_key": self.session_key,
+            "source_app": Path(self.cwd).name or self.session_key,
+            "cwd": self.cwd,
+            "runtime": self.runtime.name,
+            # The orchestrator only ever runs sessions Duckterm launched.
+            "launched": True,
+            **self._extra,
+            **fields,
+        }
+        if fields.get("_assigned_native_id") or (
+            event_type == events.SESSION_START and self._preparation is not None
+        ):
+            self.bus.publish(event, require_persistence=True)
+        else:
+            self.bus.publish(event)
 
     async def start(self) -> None:
         prompt = session_instructions.launch_prompt(
@@ -129,9 +137,41 @@ class SessionSupervisor:
             home=Path(self._env["DUCKTERM_SESSION_TOKEN_FILE"]).parent.parent,
             cwd=Path(self.cwd),
         )
-        argv = self.runtime.launch_command(
-            cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=prompt
+        self._preparation = await self.runtime.prepare_launch(
+            cwd=Path(self.cwd),
+            session_key=self.session_key,
+            initial_prompt=prompt,
+            env=dict(self._env),
+            history=self._history,
         )
+        if self._preparing and self._preparation is None:
+            raise ValueError("This harness requires verified native preparation")
+        if self._preparation is not None:
+            argv = self._preparation.argv
+            self._env.update(self._preparation.env)
+            self._preparing = True
+        else:
+            argv = self.runtime.launch_command(
+                cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=prompt
+            )
+        assigned = None
+        if self.runtime.session_id_assignable:
+            from duckterm.runtimes.launch_identity import assign
+
+            base = self.runtime.launch_command(
+                cwd=Path(self.cwd), session_key=self.session_key, initial_prompt=""
+            )
+            command, assigned = assign(base)
+            argv = command + argv[len(base) :]
+        identity: dict[str, object] = {}
+        if assigned:
+            generation = self._env.get("DUCKTERM_HARNESS_GENERATION") or uuid.uuid4().hex
+            self._env["DUCKTERM_HARNESS_GENERATION"] = generation
+            identity = {
+                "_assigned_native_id": assigned,
+                "session_id": assigned,
+                "launch_generation": generation,
+            }
         # Fail before publishing a session row for predictable launch errors.
         if not Path(self.cwd).is_dir():
             raise ValueError(f"project folder does not exist: {self.cwd}")
@@ -141,12 +181,25 @@ class SessionSupervisor:
         ):
             raise ValueError(f"command not found: {argv[0] if argv else '(empty)'}")
         # Register and enroll synchronously before the child can use its inbox.
-        self._emit(events.SESSION_START, command=shlex.join(argv))
+        self._emit(
+            events.SESSION_START,
+            command=self.runtime.command_for_history(argv),
+            **identity,
+        )
         try:
             if await asyncio.to_thread(tmux.has_tmux):
                 await self._start_tmux(argv)
             else:
                 await self._start_pty(argv)
+            if self._preparation is not None:
+                if self._tmux_target is not None:
+                    pid = await asyncio.to_thread(tmux.pane_pid, self._tmux_target)
+                elif self._proc is not None:
+                    pid = self._proc.pid
+                else:
+                    raise ValueError("Native preparation has no owned terminal process")
+                await self._preparation.ready(pid, lambda: self.running, self._native_status)
+                self._preparing = False
         except BaseException as exc:
             self._emit(
                 events.SESSION_END,
@@ -187,6 +240,10 @@ class SessionSupervisor:
         """Run the agent inside tmux so it survives the server restarting. Output
         streams to a pipe file we tail; input goes via tmux send-keys."""
         command = shlex.join(argv)
+        if self._preparation is not None:
+            # The native observer's PID must be the exact owned pane process,
+            # not an unverified descendant of a launcher shell.
+            command = "exec " + command
         self._pipe_path = str(paths.home() / "panes" / f"{self.session_key}.log")
         Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
         private_write(Path(self._pipe_path), "")
@@ -197,6 +254,7 @@ class SessionSupervisor:
             self.cwd,
             self._pipe_path,
             env={"DUCKTERM_SESSION_KEY": self.session_key, **self._env},
+            **({"private_env": True} if self._preparation is not None else {}),
         )
         self._task = asyncio.create_task(self._tail_pipe())
 
@@ -209,6 +267,23 @@ class SessionSupervisor:
             Path(self._pipe_path).parent.mkdir(parents=True, exist_ok=True)
             private_write(Path(self._pipe_path), "")
         self._task = asyncio.create_task(self._tail_pipe())
+        self._preparation = await self.runtime.prepare_recovery(
+            cwd=Path(self.cwd),
+            session_key=self.session_key,
+            env=dict(self._env),
+            history=self._history,
+        )
+        if self._preparing:
+            if self._preparation is None:
+                raise ValueError("This harness requires verified native recovery")
+            pid = await asyncio.to_thread(tmux.pane_pid, self._tmux_target)
+            await self._preparation.ready(pid, lambda: self.running, self._native_status)
+            self._preparing = False
+
+    def _native_status(self, state: str) -> None:
+        if state not in ("idle", "busy", "waiting", "unknown"):
+            return
+        self._emit(events.NATIVE_STATUS, native_state=state)
 
     async def _tail_pipe(self) -> None:
         """Follow the tmux pane's output file, applying the same state/tool
@@ -307,6 +382,9 @@ class SessionSupervisor:
         finally:
             if output_error:
                 print(f"[duckterm] {self.session_key}: {output_error}", file=sys.stderr)
+            if self._preparation is not None:
+                self._preparing = True
+                await self._preparation.close()
             self._close_byte_subs()
             self._emit(
                 events.SESSION_END, **({"output_error": output_error} if output_error else {})
@@ -543,6 +621,8 @@ class SessionSupervisor:
         write_input (line/key semantics for the approval flow), this passes
         keystrokes through verbatim so the agent's TUI sees exactly what was
         typed (arrow keys, ctrl chars, partial input)."""
+        if self._preparing:
+            return False
         if self._tmux_target is not None and self.running:
             return tmux.send_raw(self._tmux_target, data)
         if self._primary_fd is not None and self.running:
@@ -560,11 +640,17 @@ class SessionSupervisor:
 
     async def write_queued_bytes(self, data: bytes) -> bool:
         """Deliver owner feedback after earlier keystrokes and report its result."""
+        if self._preparation is not None and not self._preparation.allow_automation:
+            return False
         result: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
         self._enqueue_input(data, result)
         return await result
 
     def _enqueue_input(self, data: bytes, result: asyncio.Future[bool] | None = None) -> None:
+        if self._preparing:
+            if result is not None:
+                result.set_result(False)
+            return
         if self._input_task is not None and (
             self._input_task.done() or self._input_task.cancelling()
         ):
@@ -619,6 +705,10 @@ class SessionSupervisor:
     def write_input(self, text: str) -> bool:
         """Write to the agent's stdin (terminal-attach / approvals). Routes to
         tmux send-keys or the PTY depending on how the session is backed."""
+        if self._preparing or (
+            self._preparation is not None and not self._preparation.allow_automation
+        ):
+            return False
         self.last_owner_input_ms = int(time.time() * 1000)
         if self._tmux_target is not None and self.running:
             stripped = text.rstrip("\r\n")
@@ -634,16 +724,27 @@ class SessionSupervisor:
     async def _finish(self) -> None:
         if self._proc is not None:
             await self._proc.wait()
+        if self._preparation is not None:
+            self._preparing = True
+            await self._preparation.close()
         self._close_byte_subs()
         self._emit(events.SESSION_END)
 
     async def stop(self) -> None:
+        if self._preparation is not None:
+            self._preparing = True
+            await self._preparation.close()
         if self._input_task is not None:
             self._input_task.cancel()
             # A task cancelled before its first run never enters its finally.
             self._fail_pending_input()
         if self._tmux_target is not None:
-            await asyncio.to_thread(tmux.kill_session, self._tmux_target)
+            if self._preparation is not None:
+                await asyncio.to_thread(
+                    tmux.kill_session, self._tmux_target, terminate_process=True
+                )
+            else:
+                await asyncio.to_thread(tmux.kill_session, self._tmux_target)
         elif self._proc is not None and self._proc.returncode is None:
             os.killpg(os.getpgid(self._proc.pid), signal.SIGTERM)
         if self._task is not None:
@@ -666,6 +767,7 @@ class Orchestrator:
         self.bus = bus
         self.worktrees = worktrees if worktrees is not None else WorktreeManager()
         self.history = history
+        self.on_completed: Callable[[str], None] | None = None
         self._supervisors: dict[str, SessionSupervisor] = {}
 
     async def reconcile(self) -> list[str]:
@@ -705,10 +807,27 @@ class Orchestrator:
             command = str(row.get("command") or "") if row else ""
             name = (row.get("runtime") if row else None) or infer_runtime(command)
             supervisor = SessionSupervisor(
-                bus=self.bus, runtime=runtime_for(name, "true"), session_key=key, cwd=cwd
+                bus=self.bus,
+                runtime=runtime_for(name, "true"),
+                session_key=key,
+                cwd=cwd,
+                history=self.history,
             )
-            await supervisor.reattach()
             self._supervisors[key] = supervisor
+            try:
+                await supervisor.reattach()
+            except (ValueError, OSError, TimeoutError) as exc:
+                # Keep this existing terminal readable, with input gated, and
+                # continue adopting the other local and remote cards.
+                print(
+                    f"[duckterm] native recovery for {key} is blocked: {type(exc).__name__}",
+                    file=sys.stderr,
+                )
+                if not supervisor.runtime.requires_launch_preparation:
+                    self._supervisors.pop(key, None)
+                    raise
+                supervisor._native_status("unknown")
+                continue
             adopted.append(key)
             if self.history is not None:
                 self.history.recover_interrupted(key)
@@ -786,6 +905,7 @@ class Orchestrator:
             initial_prompt=prompt,
             extra=extra,
             env=agent_env,
+            history=self.history,
         )
         self._supervisors[key] = supervisor
         try:
@@ -822,43 +942,13 @@ class Orchestrator:
                         file=sys.stderr,
                     )
                 try:
-                    self._write_summary(k)
+                    if self.on_completed is not None:
+                        self.on_completed(k)
                 except Exception as e:  # noqa: BLE001 — boundary: DB + summarizer
                     print(f"[duckterm] summary for {k} failed: {e}", file=sys.stderr)
 
             supervisor._task.add_done_callback(_on_done)
         return key
-
-    def _write_summary(self, key: str) -> None:
-        """Write the outcome summary after a session ends. Runs the (possibly
-        slow) summarizer off the event loop so it never stalls the bus."""
-        if self.history is None:
-            return
-        row = self.history.session(key)
-        if row is None:
-            return
-        intention = str(row.get("intention") or "")
-        events_summary = self.history.events_summary(key)
-        transcript = self._transcript_text(key, row)
-        result = summarize(build_prompt(intention, transcript, events_summary))
-        outcome = result.text or mechanical_summary(intention, events_summary)
-        self.history.set_outcome(key, outcome)
-
-    def _transcript_text(self, key: str, row: dict[str, object]) -> str:
-        """Read the runtime's transcript if it has one; else empty (the generic
-        runtime, which makes the summarizer fall back to the activity digest)."""
-        supervisor = self._supervisors.get(key)
-        session_id = self.history.session_id_for(key) if self.history else None
-        cwd = row.get("cwd")
-        if supervisor is None or session_id is None or not cwd:
-            return ""
-        path = supervisor.runtime.locate_transcript(cwd=Path(str(cwd)), session_id=session_id)
-        if path is None:
-            return ""
-        from duckterm.runtimes.claude_code import parse_transcript
-
-        records = parse_transcript(path)
-        return "\n".join(f"{r['role']}: {r['text']}" for r in records)
 
     async def stop(self, session_key: str) -> bool:
         """Terminate a supervised session. Returns False if it isn't one we run

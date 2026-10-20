@@ -1,5 +1,826 @@
+## 2026-10-19 — Remote acceptance must cover both installed host versions and native routes
+
+A current Mac dashboard could not archive through the new undo flow because its native transport omitted those endpoints. The remote service was still 0.4.64, so shell requests returned plain-text 404s that surfaced as WebKit JSON errors. Check the actual owning host version, preserve HTTP errors, and test exact native route/method pairs. macOS xterm also needs Option-forced selection explicitly enabled; verify a wrapped synthetic login URL with agent mouse tracking active, through the dashboard copy bridge.
+
+## 2026-10-19 — Contrast adjustment is not theme application
+
+## Missing compaction data needs native evidence, not model guesses (2026-10-19)
+
+Read capacity and completed compaction only from the currently bound native transcript. Validate its identity, reject evidence if the binding changes while reading, bound/cache history reads, and distinguish a recent-history miss from proof that compaction never happened. Codex completion identifiers live inside payload; confirm record structure rather than implementing from a prose description.
+
+## Terminal theme acceptance must include text hierarchy (2026-10-19)
+
+Changing indexed colors proved the palette worked but did not satisfy the owner’s readability need: most agent prose shares one foreground. Compare actual bold/dim/default text at native size, not just color swatches. The approved enhancement accents only neutral bold text and lifts dim opacity, preserving explicit colored text and offering original formatting; it never infers semantics or rewrites terminal output.
+
+Native acceptance showed that improving contrast still left agent text unchanged across dark palettes. A 16-color theme does not cover the indexed256 colors agents actually emit. Supply the extended palette to xterm so existing text and scrollback follow the chosen theme without replaying output, reconnecting or editing terminal bytes. Test default, indexed white, indexed accent and background cells across themes; document explicit RGB as a separate program-controlled case.
+
+## 2026-10-19 — Replace panel placeholders with the matching evidence contract
+
+Keep checkpoint age, captured-event activity and native conversation context separate. Wire activity to the successful capture projection, preserve zero versus absent evidence, and clear stale counts on refresh failure or session changes. A large lifetime event total cannot fill a missing boundary. Reuse the approved panel and backend work rather than preparing competing previews.
+
+## 2026-10-19 — Count activity from the captured checkpoint boundary
+
+A successful checkpoint is saved after its source capture, so counting events after the save time misses work that arrived during summarization. Subtracting lifetime counts also fails after deletion or with filtered markers. Reuse the successful-checkpoint selector, validate its saved rowid and event ID in the same session, then count later events with the original filter. A missing anchor is unknown, not zero; an explicitly empty capture is a valid zero boundary. Label this event activity, not turns or unsummarized conversation. Read existing records only; a status panel must never trigger a checkpoint to obtain its values.
+
+
+## 2026-10-19 — Verify the colors the agent actually emits
+
+A theme preview using only default text and ANSI colors hid extended indexed/RGB text that programs keep fixed. Remove the misleading sample; verify program-selected colors in native WebKit and a live terminal. Offer explicit contrast improvement without rewriting the PTY stream, and carry that preference through folder inheritance, session overrides, grids, and shells. Text-size resets must preserve fonts, palettes, and terminal drafts.
+
+
+## 2026-10-19 — Session panel hierarchy must preserve meaning and controls
+
+Repeated checkpoint cards, mismatched type sizes, and scattered actions made the right panel hard to scan. Group saved memory and active conversation context separately, keep supporting sections collapsible with summaries, and reuse existing checkpoint/recovery flows. Missing capture-boundary counts or native compaction events must remain unavailable; lifetime event totals and token changes cannot stand in for those contracts. Verify notes, recovery, keyboard disclosure, and memory navigation after moving controls.
+
+
+## 2026-10-19 — Native scrollbar tracks need the resolved color scheme
+
+Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
+
+## 2026-10-19 — Persist work boundaries, not unrelated observed history
+
+A twenty-record window saved megabytes because span metadata repeated every observed event source in upper and next-boundary maps. Window retries already use exact processed hashes and are never sequential predecessors. Store their selected ranges and input hash, without unrelated observation maps. Preserve the next boundary for legacy sequential callers and retain overlap, evidence and sharing checks. Assert equal-sized selected windows produce equal-sized metadata despite vastly different unrelated history; do not mistake boundary maps for raw provider text or erase fields before finding their readers.
+
+## 2026-10-19 — Do not parse every revision blob to look up one input key
+
+A JSON predicate over summary revisions repeatedly parsed multi-megabyte rows on the event loop. Cache only input-key mappings for immutable revision IDs, inspect cheap row headers, parse new rows once, and invalidate on external writes. Do not publish uncommitted mappings across rollback. Selecting a trailing column such as updated_at can still pull large record payloads; use immutable rowid/id headers. Progress-item dedup must also exclude revision buckets rather than normalize their JSON. The first lookup still scans existing keys; this repair removes repeated scans without a schema migration or body cache.
+
+An idle terminal does not prove its checkpoint writer is autonomous: an explicit request can process older records. Preserve the existing no-new-record and idle/exit guards, and record the checkpoint request, harness preparation, compaction initiator, or handoff review on both checkpoint markers and new revisions. Give every explicit range an ID and number its continuation batches; a later checkpoint reusing a revision must keep its own request metadata without rewriting the revision's original initiator. Do not invent trigger history for old rows.
+
+## 2026-10-19 — Scale interface text independently of the terminal grid
+
+An interface font setting is incomplete when hard-coded pixel labels ignore it. Convert interface typography to root-relative units while preserving default sizes; keep xterm font metrics independent. Update existing terminal options and refit through the snapshot-aware resize path, rather than remounting or reconnecting. Verify persistence, a live unsubmitted draft, hidden terminals and shells, maximum sizes on narrow screens, palette mode changes, and focus restoration after closing settings.
+
+## 2026-10-19 — Preserve terminal wraps and replay at the captured grid size
+
+Physical capture rows are not logical lines. Joining every captured row with CRLF permanently broke paragraphs when the panel resized. Capture physical rows for bounded protocol framing and cursor accounting, plus tmux-joined logical lines for replay; validate the text agrees before exposing the snapshot. Send the captured dimensions before the binary repaint and defer browser fitting until it has parsed that repaint. Omit unused blank rows below the cursor so reconnecting does not push the first paragraph into scrollback. The regression must check actual prose, panel expansion/collapse, a small viewport shrink, reload and later input, not just terminal dimensions. Keep control-mode capture and live output in one ordered stream.
+
+## 2026-10-19 — Replay terminal snapshots at their captured dimensions
+
+Restoring terminal history at the current panel width can split text and misplace the cursor before the first resize. Preserve soft-wrap information in the backend snapshot and send its captured dimensions before the bytes. Hold frontend fitting until xterm finishes parsing, then reflow to the visible host. Carry metadata through the native remote bridge in order as well. Test paragraphs across resize and reconnect, not only dimensions and draft preservation; binary-only older streams must still work.
+
+## 2026-10-16 — Terminal restart states must clear both error fields
+
+Cancel and completion cleared the human-readable error but retained its machine-readable code, leaving a canceled operation labeled launch_failed. Clear both fields on these transitions, retain process-state evidence, and test persisted stale diagnostics across completion and cancellation. Do not rewrite historical failed-operation evidence to hide the earlier bug.
+
+## 2026-10-16 — Test selection plans through their HTTP boundary
+
+Change harness accepted selected records in manager tests but rejected real requests before preparation: the old 8 KiB endpoint cap could not fit the per-source selection boundary. Reuse the existing 8 MiB transport ceiling used by checkpoint requests, keeping selection validation and the chosen record budget intact. Exercise a real generated many-source plan through the HTTP handler and verify that only the newest selected 20 records reach the writer; retain an over-limit rejection test.
+
+## 2026-10-16 — A vague reviewer rejection must not be attributed to the writer
+
+A checkpoint could fail with only `summary_unverified` even though the reviewer named no offending claim. The last good summary remained intact, but the failure was impossible to diagnose and skipped the existing writer repair. Require a specific rejection reason or bounded correction, retry a malformed reviewer verdict once against the same draft, and retain actionable corrections on failed checkpoint metadata. Inspect failed attempts rather than only saved revisions when measuring rejection rates.
+
+## 2026-10-16 — Bound the whole harness preparation, and disclose partial memory
+
+Batching each writer call did not bound Change harness: it still drained every unprocessed record before allowing a switch. Reuse the checkpoint count and exact selection fence, default to the newest 20 records for a handoff, and let the owner choose more or All. The handoff must report older eligible records as pending and keep originals searchable; a selected-span success is not full-history coverage. Include the selection in the refresh and request identities so different counts cannot share work accidentally. When replacing the count step with progress, move keyboard focus into the progress panel so Escape still closes the dialog.
+
+## 2026-10-13 — A free port does not mean the old server has closed SQLite
+
+`duckterm restart` waited for HTTP to stop answering, then opened the same DB while the old server was still shutting down. SQLite already had a five-second busy timeout, so adding another PRAGMA was not the fix. Wait for the exact former listener PIDs to exit before touching tombstones or starting a new server. If a Mac app instance takes the port meanwhile, report it and leave the new listener alone. Close the restart command's short-lived HistoryStore explicitly.
+
+## 2026-10-13 — Preparation activity is not connection health or switch readiness
+
+Show record counts only when supplied by the backend, keep stage progress separate from successful poll timestamps, and retain last-known progress during a connection failure. A completed record bar does not prove a handoff is ready. Recover status against the same preparation lease; never create another job just to check connectivity. Test unchanged progress across successful polls, out-of-order responses, transport timeouts, and all-records-checked before proof readiness.
+
+## 2026-10-12 — Pin capacity must agree across storage and every control
+
+Raising a pin limit requires changing both the atomic server write and the floating picker guard. Keep server-side enforcement for concurrent requests, retain existing pins, and verify the tenth pin persists while the eleventh is refused without swapping. A multi-host Focus count must not display a misleading single-host denominator. Exercise short-window scrolling and the existing Focus dock so extra pins remain reachable.
+
+## 2026-10-12 — Preparation status requests need their own deadline
+
+A background job can outlive a lost HTTP response. Unbounded local fetch or body reads leave the Change harness controller waiting forever and prevent its next poll. Bound metadata exchanges independently from model generation, preserve the original request key after an ambiguous start, and let status polling recover. Regression tests must include never-settling promises and late replies, not only rejected network requests. A request timeout does not prove that generation failed.
+
+## 2026-10-12 — Show generation work, not just a preparing label
+
+Harness preparation already used the shared summarizer but omitted its progress observer. Forward the existing checked-record counts and writing/reviewing stages to the preparation response; keep later evidence and brief checks separate from summarization. A successful status poll is evidence of connectivity, not evidence that work advanced, so polling must not refresh the last-progress timestamp or invent completion percentages.
+
+## 2026-10-12 — Empty-state copy must not displace a hovered action
+
+A hover-only helper above Pin current moved the button after the pointer arrived, swallowing the first click. Keep helper text after the action so expansion preserves both its horizontal and vertical hit target. Browser regressions must capture the collapsed coordinates, expand, and click the same point; locator clicks can hide this defect by chasing moving elements.
+
+## 2026-10-12 — Expanding shortcuts must preserve the action under the pointer
+
+Keep the compact session button anchored at the terminal edge while its label expands to the left. Revealing an unpin control under the original pointer turns an intended session switch into an accidental unpin. Verify the hit target before and after hover, keep the picker and keyboard focus expanded, and delay collapse across click-through gaps without changing terminal geometry.
+
+## 2026-10-12 — Floating terminal controls must not resize the terminal
+
+Session shortcuts belong in an absolutely positioned layer over the existing terminal slot. Do not reserve a grid column or add terminal padding: either changes PTY columns and can reflow output. Reuse saved session pins and host-qualified selection; verify widths, terminal connections, unsent drafts, and right-panel collapse with real terminal sessions.
+
+## 2026-10-12 — Timeline memory links must retain the saved revision
+
+A checkpoint is a historical reference, so its Memory link must carry summary_ref and the host-qualified session key. Initialize the read at that exact revision; never fetch current memory first or silently replace an unavailable revision. Keep older linked revisions selectable even outside the recent-20 dropdown, and load their original evidence without generating a checkpoint. Verify panel navigation still explicitly opens current memory.
+
+## 2026-10-12 — A checkpoint count must describe the work the request will actually do
+
+- Checkpoint confirmation must be separate from execution: fetching counts and Cancel save nothing; keep the dialog outside the dismissing session menu, carry the exact counted boundary into confirmation, and distinguish a rejected stale selection from an unknown network result. Verify the actual modal bounds in a browser, not only DOM presence.
+
+A configured recent window hid older unprocessed records and gave users no way to choose the next checkpoint's size. Count meaningful conversation records against exact accepted leaf coverage, expose a read-only selection plan, and bind submission to the displayed history boundary. Append-only activity must stay outside that selection; changed history, scope, settings or accepted coverage requires a refreshed count. Keep request identity stable through response recovery and reject different options on the same identity. Failed generation cannot advance coverage. Test old holes, retries, authorization and the Mac transport rather than treating a successful dialog render as proof of checkpoint behavior.
+
+## 2026-10-12 — Valid citations do not prove that a memory claim is still current
+
+A checkpoint retained early uncertainty after later records diagnosed and verified the fix. Filter exact routine notices from the summary projection without deleting originals, reconcile claims against the end of the same span, and have the independent reviewer check every field rather than only the narrative. Give a rejected semantic draft one bounded correction using the same evidence; never advance coverage on rejection. Validate that summary is text rather than coercing arrays into Python-looking strings. Allow a useful-length narrative without expanding the compact overview or slicing saved text. Label historical memory and preserve current work pointers so lack of verification in an old conversation is not asserted as today's release status.
+
+## 2026-10-12 — Bound the whole checkpoint request, not just each provider call
+
+A 50-record batch ceiling still allowed one manual checkpoint to process thousands of historical records and then fail when live activity changed. Capture immutable evidence once, choose an explicit recent window (20 records by default), and use at most 20 records per batch. Keep model roles explicit, persist exact coverage, and distinguish older history outside the request from unfinished work inside it. Expanding a window must fill holes without repeating accepted batches or dropping protected claims. Preserve conversation/scope checks and verify native Settings routes as well as the HTTP API.
+
+## 2026-10-12 — Compare the same evidence projection at checkpoint publication
+
+Checkpoint capture excluded generated progress notes, but publication compared that original-only catalog against an unfiltered catalog. An unchanged session with any ordinary progress item therefore failed as `source_changed` after completing its summary. Use one projection at both boundaries, test with pre-existing derived progress, and attach fixed stage diagnostics to source refusals. Keep permission, native-file, original-record and publication-race checks intact; do not weaken them to hide a projection mismatch.
+
+## 2026-10-12 — Retrieval must close resources and avoid rereading unrelated history
+
+## Checkpoint activity is not measured progress (2026-10-12)
+
+A looping strip and elapsed seconds made long checkpoints look active without saying how much work had finished. Expose exact-request counts from accepted span writes, poll while the original POST is pending, and show writing/reviewing/saving separately. Count only checked entries in the current captured range; reuse prior summaries without counting them as new work. A full summary bar still needs the final saved result, and connection recovery must never start another checkpoint. Test shared writers, failed spans, stale request IDs, panel navigation and stop-polling behavior.
+
+
+A SQLite connection context commits or rolls back; it does not close the connection. Repeated artifact reads exhausted the live server's file handles and closed requests without responses. Close each temporary connection explicitly and test closure while retaining references so garbage collection cannot hide the leak. Read exact original handles without loading every conversation generation; reuse retained native parsing under file fences and the existing bounded cache. Ignore unrelated new sources during an as-of read, but still reject edited/deleted sources, changed grants, and changed native files.
+
+## 2026-10-12 — A bounded handoff needs declared optional omissions
+
+Apply the final handoff budget after assembling all open claims, not the smaller per-revision summary cap. Preserve protected claims, identity, and retrieval tools. Omit complete optional narratives, source references, or current-work fields only with explicit budget gaps, preserving any prior unknown coverage. Return the same coverage that appears in the brief. If mandatory content cannot fit, leave the source agent intact and name the protected kinds; never cut claims or sentences to manufacture success.
+
+## 2026-10-12 — Read saved memory without creating another summary
+
+Use the existing publication pointer for current memory and exact revision IDs for historical views. Resolve evidence only on expansion and hide stale text when the source read fails. Share checkpoint-clock data from the existing session read; never start provider work on a display timer. Failed attempts must keep the last-success timestamp and their own failure message. Verify the web view, host-qualified reads and native GET admission together.
+
+## Native Memory reads need exact bridge routes
+Backend read routes also require native transport admission. Test GET-only query keys, encoded pagination and the same session key on distinct tunnel ports; retain native token injection.
+
+## 2026-10-12 — Read current memory across immutable spans
+
+A Memory view that shows only the newest span loses older constraints from sight. Assemble published spans for current memory and retain exact historical revision views separately. Search and read responses must expose current lifecycle state alongside immutable saved text, so retirement cannot look like an open constraint. Replay an authenticated identical lifecycle request before applying new-transition preconditions. Age checkpoints by successful outcomes, never the latest attempt. Explicitly retired claims remain retrievable but must stop consuming the open-claim handoff budget. Verify removed evidence, multi-span aggregation, long-running receipts, lifecycle replay and actual typed coverage together.
+
+## 2026-10-12 — Follow the operation, not a short HTTP timeout
+
+A cold start can require several bounded summary spans. Once an exact receipt confirms that the request is running, keep showing the existing running state and keep polling that request; apply the recovery deadline to loss of contact, not confirmed work. A canceled handoff stops before the next model batch unless another dialog or accepted checkpoint still needs the shared range. Server shutdown cancels both the range coordinator and its writer before closing storage. Verify cancellation/retry reuse and a confirmed operation lasting longer than the former three-minute recovery window.
+
+## 2026-10-12 — Integrate memory contracts before asking for another checkpoint trial
+
+A span writer alone does not implement span memory. The reader, handoff, coverage counters,
+claim lifecycle, cancellation and transport recovery must agree on the same contract.
+Keep generated spans immutable and retryable, publish success only after the captured
+range completes, and check native-file and scope fences again at publication. Tool-only
+hooks must not create an endless pending summary. Manual cadence must not secretly retain
+turn-end model calls. Test the combined path before an owner trial; foundation tests are
+not release acceptance.
+
+## Folded retrieval must use the canonical resolver
+
+
+Folded claims contain revision pointers, not inline text/refs. Retrieval must resolve only within the authorized catalog, withhold unresolved views, and test actual search-to-read typed claims. Keep derived records excluded from writer originals.
+
 # Retro — lessons from real breakage
 
+## 2026-10-11 — Independent summaries need independent boundaries and compatible readers
+
+A cumulative revision cannot become a span by changing its label or subtracting an earlier summary. Capture explicit original-record boundaries, verify their prefix hashes, and write only the new range. Bound complete provider prompts in UTF-8 bytes as well as record count; leave an oversized record pending instead of skipping it. A failed later range must not erase or repeat a successful earlier range. Appending to a source changes its version but does not make previously committed positions new work: reject overlapping leaf ranges both before provider calls and inside the write transaction.
+
+A span writer must not replace the current cumulative summary before the handoff reader assembles prior spans. Stage typed leaves through the existing generation, review and persistence path without changing the current-summary pointer. Keep original evidence readable, reject source rewrites, preserve the existing single-writer and cancellation protections, and distinguish a verified individual leaf from completion of the whole requested span. Test source advancement, retry reuse, retained reads and concurrent callers before activation.
+
+## 2026-10-12 — Size saved summaries for useful content
+
+The inherited 400-character overview cap rejected otherwise useful checkpoint summaries after silent clipping was removed. Allow 2,000 characters, with a 100–200 word prompt target when needed; keep writer, correction prompt and parser limits aligned. Test that 100+ words survive unchanged and over-limit text is rejected rather than sliced. This change does not resolve incomplete input coverage.
+
+## 2026-10-11 — Recover a checkpoint by its request, not the newest row
+
+A lost HTTP response does not say whether the summary was saved. Assign a request ID before work starts, keep a bounded durable receipt, and resolve only the checkpoint linked to that receipt. A duplicate request joins the original operation. Keep accepted work alive after its HTTP waiter disconnects; after a server restart, an exact saved checkpoint wins over an unfinished receipt, while an unfinished request without a checkpoint stays interrupted. A completed request may still contain a failed or partial summary. Test those outcomes separately and never infer success from a newer checkpoint or a timestamp.
+
+## 2026-10-11 — Closing a terminal is not proof its native process stopped
+
+OpenCode fixture processes survived tmux hangup and consumed CPU after successful
+QA. Stop native panes with an explicit signal before removing their terminal;
+recheck the exact pane PID before escalation. Native acceptance must verify the
+saved process exited, not merely that its card and temporary files were removed.
+
+## 2026-10-11 — Bind freshness to the displayed native content
+
+An awaited Messages read can finish after a newer observation. Comparing only
+session liveness labelled an older response with the newer check time. Match a
+content fingerprint before borrowing an observation timestamp; unchanged polling
+must still leave the snapshot file stable for checkpoint fences. Regression
+checks cover changed content, unchanged content and legacy revision matching.
+
+## 2026-10-11 — Exercise native launch through the dashboard sink
+
+A supervisor-only fixture persisted directly to HistoryStore and missed the
+dashboard sink rebuilding an adapter from its saved command. OpenCode saved
+temporary port/directory arguments that its user-command parser rightly
+rejected, preventing HTTP launch. Persist the original adapter command while
+keeping temporary process arguments in preparation. Native acceptance now
+launches through the real authenticated HTTP endpoint and reads Messages.
+
+## 2026-10-11 — Unknown native state must remain unknown in the browser
+
+Mirror native lifecycle events in the browser and exclude unknown status from
+the idle grace timer. Keep cached Messages with an explicit last-check notice;
+remove it after verified recovery, and never call a missing first snapshot a
+previously verified conversation. Test real stored history and both themes.
+
+## 2026-10-11 — Native launch support does not imply terminal-paste support
+
+OpenCode needs its session/inbox guide in the verified initial prompt, but
+that does not make later automated terminal pastes safe. Keep launch prompt
+introduction separate from the existing live-introduction capability. Verify
+the guide and literal owner task reach the native launch journal together.
+
+## 2026-10-11 — Destination readiness must check the actual executable
+
+A picker choice does not prove its selected computer can launch the agent.
+Use the same bounded version check for the options endpoint and actual launch;
+recheck at launch, reject unsupported configuration, and reap the probe child
+on cancellation. Keep registration separate from installation and do not claim
+aggregate usage merely because native Messages contain usage fields.
+
+## 2026-10-11 — Recheck native ownership after awaited observation work
+
+OpenCode monitoring checked process ownership before snapshot I/O but could publish idle after the owned process exited during snapshot or cache persistence. Recheck ownership after each awaited worker before updating lifecycle state. Two independent regressions fail on 3edb52f and pass with these checks.
+
+## 2026-10-11 — Owner Stop must fence a late native launch result
+
+Generation checks alone do not cancel a launch whose owner has stopped,
+archived or merged its card. Check that durable lifecycle state before every
+new native write claim and before accepting a returned result. An uncertain
+prompt stays claimed after Stop; a late receipt cannot make it ready again.
+
+## 2026-10-11 — Environment secrets must not become tmux command arguments
+
+Passing a native endpoint password through tmux's `-e` option puts the value in
+the tmux client's command line. Native preparation now exports its environment
+from the existing mode-0600, one-use launch script instead. Values stay literal
+and the child unlinks the script before executing the agent. QA also restarts
+its entire probe with an allowlisted environment so the supervisor's tmux
+server and version preflight cannot inherit provider or SSH-agent credentials.
+
+## 2026-10-11 — Native history refreshes need a durable ordering barrier
+
+A canceled native read can finish after a new server has already refreshed
+Messages. Bind snapshots to destination, store, conversation and generation;
+serialize cache writes and reject an older observation even if it finishes
+last. Keep unchanged content files stable while recording a separate revision
+watermark, so polling does not invalidate every checkpoint's content fence.
+Native status loss is unknown, never inferred idle. Parent completion and its
+own pending questions/permissions must be checked before reporting Idle.
+
+## 2026-10-11 — A lost launch receipt must never authorize another prompt
+
+Native OpenCode acknowledges asynchronous prompt submission with HTTP 204; that
+receipt can be lost after the prompt is accepted. Persist the conversation and
+message identities, and claim each write before sending it. Recover by reading
+that exact native user message, including its content and requested model.
+Neither a timeout nor server restart resets the write claim. Missing native
+creation identity remains uncertain instead of creating another conversation.
+
+The isolated pinned-native fixture drops the real prompt acknowledgment, reopens
+DuckTerm's test database, and verifies one user message with no repeated write.
+Fault tests cover every persisted boundary, competing claims, wrong selection,
+changed generation, failed persistence and foreign conversation receipts.
+
+## 2026-10-11 — Bound reader allocations, not raw transcript age
+
+UI-dev's checkpoint retained an accepted summary but failed completeness because its native Codex file exceeded the reader's 512 MiB whole-file ceiling. The 778 MB file contained repeated compaction metadata; streaming it produced only about 696 KB of searchable text and 392 KB of summary-eligible text in a 3.9-second read-only replay. Filtering tools after materialization cannot help when an earlier raw-file guard refuses the source. Inspect the specific saved source gap before attributing a partial checkpoint to the summarizer or the entire historical backlog.
+
+Remove the total raw-file guard from the existing line-streaming reader. Keep per-record and accumulated-text allocation bounds, exact checksums, identity validation, source-change fences and capture cleanup. Stop at the initially captured byte extent so a concurrent append cannot prolong a scan indefinitely. Regressions must include a real file larger than the old ceiling, first/last conversation records around metadata, exact retained-byte roundtrip and concurrent growth. This fixes raw-size admission; it does not implement incremental indexing, eliminate retention copies or prove a complete checkpoint/handoff.
+
+## 2026-10-11 — Do not clip generated summaries before reviewing them
+
+The parser sliced summary text at 400 characters before validation. A complete provider response could therefore reach the reviewer as a sentence DuckTerm itself cut off. The live summary_truncated rejection identified the symptom; inspecting the parser exposed a deterministic corruption path. This does not prove every historical unverified summary had that cause.
+
+Reject overlong drafts with summary_too_long and use the existing single correction attempt to request complete, concise sentences. State the limit in generation and correction prompts. Review only the intact corrected candidate, retain strict semantic validation, and preserve the last good revision when correction fails. Regression tests must assert the exact text sent to the reviewer and saved in the checkpoint, and verify failures never advance coverage or turn a clipped prefix into a success.
+
+## Recover checkpoint outcomes by exact request, on the same host (2026-10-11)
+
+A disconnected checkpoint request can finish on the server after the UI loses
+its response. Give each attempt a caller-generated ID and reconcile with bounded,
+read-only receipt queries. Never infer completion from a newer timestamp, retry
+the POST automatically, or query the local server for a remote attempt. Native
+remote routing must allow the exact GET endpoint. Test delayed completion,
+unknown receipts, host isolation, duplicate clicks and bounded hung lookups.
+
+## Incomplete checkpoints must not look successful (2026-10-11)
+
+A saved, reviewer-accepted draft can still omit required history. The checkpoint
+progress panel and toast called this a partial save with success styling, masking
+the incomplete outcome. Use the approved incomplete-failure label across progress,
+history and notifications; preserve the saved text for inspection and keep this
+separate from provider/reviewer failure and an unknown transport outcome. Tested
+with a retained, reviewed partial revision and remote connection-loss regressions.
+
+## 2026-10-11 — Preserve the reason a checkpoint review failed
+
+A missing or malformed reviewer response is not a negative review. Preserve the distinction between malformed responses, missing or invalid verdicts, reviewer rejection, and a contradictory ready verdict with non-empty reason codes. Carry bounded structured codes into the checkpoint attempt; never store arbitrary rejected provider prose as a diagnostic. Failed attempts must still retain the last good revision without presenting it as a new success.
+
+Do not remove a validation gate merely because its error reporting was inadequate. Capture the actual reviewer outcome first. Historical attempts without those diagnostics cannot establish whether the writer or reviewer was wrong. Regression tests must cover both maintained-memory and stored-revision paths, including contradictory ready states and malformed envelopes carrying valid rejection codes.
+
+## 2026-10-11 — Compaction failure must not invalidate a usable checkpoint
+
+
+Generate and validate optional folds outside the SQLite transaction. Recheck the source after model work and compare the exact selected revision history again inside the write transaction. Commit parent references with the incoming revision and checkpoint; use a savepoint so an optional parent insertion failure preserves the checkpoint and every child. Parent links change the active read set only after commit. Never infer independent spans from cumulative summaries.
+
+The corrected reader contract refuses a resolved view over 10 KB with explicit budget-exhausted coverage; it does not trim protected facts. Originals remain individually readable. Test complete reference resolution, a second-parent insertion failure, checkpoint rollback, stale source changes, cancellation, retry cooldown and upward tier cascades. These checks do not enable the new span writer or certify the installed runtime.
+
+## 2026-10-11 — Typed memory parsing must not silently change writer authority
+
+Adding claim metadata to the reader does not upgrade existing revision writers. Require an explicit context version, retain legacy claim bytes, and reject unknown keys in both versions. Compute content IDs in code, not by asking a model to invent hashes. A cited source proves reference membership, not authorization to retire a claim; new-claim drafts cannot apply lifecycle transitions.
+
+Stage the policy switch with span-only writes, revision version metadata and reader integration. Whole-history preparation and maintained checkpoint updates have separate reuse policies; changing only one does not migrate the other. Keep the provider's new-claim budget separate from a read view resolving accumulated protected facts. Test mixed legacy/typed reads, oversized new claims, forged IDs, rejected retirement drafts, and the existing checkpoint path before enabling the new writer.
+
+## 2026-10-11 — Validate relationships after combining memory claims
+
+Two individually valid summary contexts can create a supersession cycle when combined: each context may reference a claim held only by the other. Per-child checks therefore cannot certify a compacted parent. Validate the complete protected-claim union before calling either provider. On failure preserve the children and report a pending compaction; do not edit their relationships to make the fold pass.
+
+QA caught this in the isolated compactor foundation before runtime integration. The regression starts with ten valid children, creates a cycle across two of them, and verifies rejection without provider calls or input mutation. A generated parent must obey the same reader contract as its inputs.
+
+## 2026-10-09 — Interactive panes must not inherit automation's no-color flag
+
+The terminal palettes were intact, but the agent and the persistent tmux server had inherited `NO_COLOR=1`; captured output contained only bold/dim styling. A theme cannot recolor ANSI foreground values that the process never emits. Unset inherited `NO_COLOR` in each interactive pane's launch command, while preserving an explicitly supplied launch override. Sanitizing the current server process alone cannot repair environment already retained by tmux. Existing running agents retain their environment until restarted; do not interrupt live work merely to restore color.
+
+The isolated tmux regression failed before the fix on both direct and piped launches. It checks the child environment, actual green ANSI output, explicit opt-out preservation, and that the shared tmux environment is left untouched. Test panes are removed in cleanup.
+
+## 2026-10-11 — Rename a badge selector with its rendered class
+
+Terminology changes can affect styling when a retired term is also a CSS
+selector. Change JSX className and both base/pseudo-element selectors together;
+preserve wire fields and verify the style declarations remain identical.
+
+## 2026-10-10 — Returning to the same destination is a new support check
+
+Independent QA found that keying OpenCode readiness by computer and retry count
+reused a prior available response after changing agents and returning. Bind the
+settled response to the active selection generation instead. The form must stay
+unavailable while that generation's request is pending, including A→B→A changes
+and late replies from B. Dedicated regressions cover both sequences.
+
+## 2026-10-10 — A model picker must follow the selected computer
+
+OpenCode provider configuration belongs to its destination. Keep model drafts
+separate by computer, ignore late replies from a previous destination, and do
+not enable Launch without an affirmative capability response. Unregistered
+OpenCode must fail clearly rather than silently become a generic runtime.
+The approved form's real dark-theme preview also exposed hard-coded dark field
+labels; use the existing theme text color so both themes remain readable.
+
+Validation covers destination changes during requests, literal custom model
+IDs, other-agent launches, unavailable/malformed support responses, the native
+read-only bridge and the actual form against an isolated dashboard.
+
+## 2026-10-10 — Validate native discriminators before classifying them
+
+Independent OpenCode QA supplied JSON arrays as a message role and part type.
+Set membership raised an uncontrolled TypeError before the parser could reject
+the malformed response. Validate discriminator string types first; keep future
+string part types explicitly unsupported. Regression coverage includes arrays,
+objects, null, numbers and booleans for both fields, plus a future string type.
+Native fixture review also identified the prompt route's valid empty HTTP 204:
+accept that acknowledgment without trying to parse JSON, while retaining
+uncertain-write handling for a missing response or malformed expected JSON.
+An acknowledgment alone still does not prove delivery to the intended session.
+
+## 2026-10-09 — Native selection success must come from the terminal
+
+A native API can accept conversation selection while the terminal stays on its
+previous route. In the OpenCode native probe, a macOS `/var` versus `/private/var`
+project alias also separated API and TUI instance identity. Canonicalize the
+project directory before launch and require a fresh TUI observation bound to
+version, process, generation and exact conversation. Never substitute HTTP 200,
+matching cwd or session existence for that proof. File-drop ownership likewise
+needs both saved content hash and safe directory traversal, not a marker alone.
+
+Validation: the pinned native observer selected two synthetic conversations in
+one isolated project; focused tests cover stale/foreign identity, unsupported
+history, uncertain native writes and unowned/modified/symlinked plugin files.
+The full gate also exposed a pre-existing Codex relay test that assumed two
+executor calls completed within 50 ms; wait for its actual confirmation event
+before asserting stale-answer rejection. This is foundation evidence, not
+complete harness acceptance.
+
+## 2026-10-11 — Prompt pointers are not a checkpoint retention boundary
+
+Bounding the inbox pointers in required context accidentally shortened the checkpoint's mail ID list and changed its hash input from canonical messages to metadata. The checkpoint resolver still hashes full messages; this would report false source changes and leave omitted messages outside the retention boundary. Capture complete authorized IDs and the canonical hash separately from prompt context. Persist only those IDs and the hash, never another copy of message bodies. Changes beyond the pointer limit must still change the source fence.
+
+Test more than eight messages through checkpoint creation, resolution and the retention predicate. Verify omitted pointers remain retained and an edit to an omitted message invalidates the saved hash. Model-input tests alone cannot establish checkpoint retention correctness.
+
+## 2026-10-11 — Query tasks and mail instead of copying their bodies into memory
+
+Folder tasks and the inbox already have canonical stores and read commands. Do not send notes, questions or answers through the session summarizer merely because they are assigned to that session. Keep them reference-only, and onboard with a bounded selection of IDs, short title previews, counts and read commands. Distinguish folder-wide work from assigned work, disclose omitted pointers and preserve current sharing checks. A title is discovery metadata, not the instruction or evidence of authorization.
+
+Exercise long notes, escaped mail, many open assignments, scope changes and original retrieval. Successful pointer delivery does not certify that the task or message bodies were read. Conversation statements about the work still remain eligible narrative; current canonical records must be read before action. This does not remove the separate bounds on conversation updates, session notes or final launch context.
+
+## 2026-10-11 — Project summary inputs without rewriting original evidence
+
+Successful tool output and command arguments can dominate memory input through both hook events and native transcripts. Filter both at the summarization boundary; retain conversation text, current work and explicit failures. Keep native text, roles, locators and original hashes unchanged so search and reads still recover evidence. Treat mixed messages per block, preserving narrative and failed results while excluding successful bodies. Version the summary policy so older coverage is not reused under changed input semantics.
+
+Report eligible versus reference-only input separately from original-history counts. A reference is not proof a body was summarized, and fixture byte reduction is not measured token savings or semantic completeness. A new reference-only event still changes the source boundary: refresh that boundary instead of returning a stale ready revision. Tests must exercise this through checkpoint persistence and prove excluded originals remain readable.
+
+## 2026-10-11 — Do not reject summary inputs for a duplicate copy of current work
+
+Maintained memory already supplies citable session, task and inbox originals within its 48,000-byte record budget. Copying the same text into a separate 12,000-character required-context field made checkpoints fail before generation as open tasks and mail accumulated. Send originals once, accompanied by explicit coverage counts. If whole required records span multiple updates, process unseen records first and retain skipped identities as pending; never certify incomplete current work as complete or repeatedly fill the budget with already processed tasks. An indivisible oversized original stays readable and reports its size and budget as a gap. Keep the independent harness-launch limit intact.
+
+Exercise checkpoint persistence with 45 open tasks, a 13,000-character incoming message, their combination across bounded updates, multibyte notes, and provider failure preserving the last good revision. A deterministic provider verifies plumbing and coverage, not semantic summary quality or success on the installed runtime.
+
+## 2026-10-10 — A version number does not identify the installed build
+
+An unreleased branch used the same version as a later release, so numeric comparison alone could report it up to date. Stamp the exact commit, Git description, branch, dirty state and main containment into a generated package module before the build. Only a clean commit at the matching version tag, contained in the recorded main ref, can be classified as released; missing or unverifiable metadata remains unknown. Keep the version sed-readable and never import the source package to obtain it. Remove the generated stamp from the checkout after packaging so an editable install does not inherit stale identity.
+
+Updater responses keep the latest release information but do not return `update_available=false` for an unreleased or unknown install. Bug reports include commit and describe beside the existing version. Regressions use isolated Git repositories for clean tags, unmerged and untagged commits, dirty worktrees, missing refs and malformed stamps. Packaging verification must inspect and import the built wheel, rather than trusting the source checkout. The stamp records local Git evidence; it does not attest that an asset was published or signed.
+
+## 2026-10-10 — Historical backlog is not a failed current summary update
+
+A verified, saved summary over current work was permanently labeled partial because thousands of older, searchable records had not been summarized. Keep historical processing counts separate from whether the bounded update covers required work and new records. Observation frontiers are not processed frontiers: remember skipped new records in the existing revision metadata so a later capture cannot silently turn a missed owner constraint into historical backlog. Genuine source gaps, oversized records, reviewer rejection and changed evidence still prevent a complete update. Never rewrite an old revision's readiness after changing policy.
+
+Test the outcome through an actual checkpoint with more than 5,000 originals and resolvable evidence in goals, constraints, decisions and unfinished work; also prove deferred new records remain partial until consumed. Replay retained real-session evidence read-only, and state the limits: citation presence and a better status label do not establish current handoff usefulness or replace owner acceptance on the installed build.
+
+## Checkpoint progress must outlive its menu (2026-10-10)
+
+Checkpoint requests previously kept their busy state inside the context menu, so closing it hid a potentially long summary update. Keep the request and its result outside the mounted menu, keyed by the full host-qualified session reference. Show immediate indeterminate progress and elapsed time in the Session panel; suppress duplicate requests across entry points. A lost connection cannot prove a save failed: report an unconfirmed result and retain the previous summary. Verify menu dismissal, session/host changes, late responses and real returned outcomes.
+
+## 2026-10-10 — A readable Memory view must use the same evidence checks as agent tools
+
+Session memory existed as saved revisions and linked originals, but the owner could not inspect it in the dashboard. Expose a read-only view of those same records rather than creating another summary store or generating a summary when the panel opens. Keep processed-history counts at save time distinct from source availability now and from the amount of knowledge a summary preserves. Show the last checkpoint outcome separately so a failed update does not hide the previous good revision.
+
+Use the existing memory projection and exact-version reader for evidence. Returning raw revision JSON would bypass the removal and sharing-scope checks that withhold inaccessible claims; the dashboard must not leak those claims from a convenient cached summary. Regression checks cover owner authentication, session isolation, original paging and relationships, historical revisions, partial coverage, failed updates, revoked evidence and a sharing-scope change during projection. Visible UI remains separately preview-reviewed.
+
+## 2026-10-10 — A native message's transport role is not always its author
+
+Claude stores tool results inside user-role records, including records that mix owner text and tool output. Flattening the blocks and copying that role made handoffs attribute command output to the owner; Codex outputs similarly inherited an assistant role. Normalize ordered blocks by provenance for memory only: tool outputs keep a tool role and mixed records have exact group locators. Keep native snapshot bytes/checksums unchanged and let old whole-line reads return the typed groups. Salt the existing disposable search cache and maintained-summary input with the reader version; otherwise a correct reader can still return old flattened search results or reuse a summary with wrong attribution. Verify search, reads, retained snapshots, handoff context and summary invalidation with synthetic native records and no live model calls.
+
+## File browsing must preserve session origin and snapshot identity (2026-10-10)
+
+A file explorer cannot infer locality from a session key after host routing has stripped its origin. Reject remote keys and remote host identities before issuing any filesystem request. Keep registered snapshots separate from current bytes, and do not turn an outside-root source into a claim that the file is missing. Empty post-ignore pages may still have cursors; stale cursors must discard their old listing. Tests now exercise these boundaries, cancellation on root/session switches, and preserved expanded previews alongside actual filesystem browsing.
+
+## 2026-10-10 — Reserved paths need the filesystem's case aliases covered
+
+On the default Mac filesystem, `.GIT/config` can open `.git/config`. Excluding only the exact lowercase spelling therefore left Git internals browseable. Reject `.git` case-insensitively in requests, directory entries and saved-source existence checks. Verify both direct and nested aliases, and retain separately registered snapshot access without claiming the excluded original is a browseable file.
+
+## 2026-10-10 — A saved artifact path does not prove a file exists
+
+The file explorer must distinguish registered snapshot bytes from the current filesystem. Use only the selected local session's recorded worktree/cwd, never the server's current directory. Read one directory page in a worker; use Git for ignore semantics, and keep the registration list independent of directory traversal. Pin every component from the filesystem root, then the relative components, without following symlinks; guarding only the final root component allows an ancestor-replacement race after resolve(). Recheck the root after the read, and refuse changed files rather than returning partial downloads. Missing and outside-root sources remain readable as saved artifact copies, with explicit source states. Remote desktop references must not fall back to a same-named local session.
+
+## 2026-10-10 — A successful summary sample does not cover malformed next drafts
+
+Product's next manual checkpoint failed with invalid_context after the timeout/citation fix was installed. The saved failure did not identify the rejected field, and a read-only rerun passed; neither result proves which field failed in the owner's attempt. The maintained pipeline had another concrete gap: unlike older preparation, it abandoned the first malformed draft. One successful provider response was not sufficient reliability evidence.
+
+Allow one correction against the same captured evidence for malformed digest/context output. Recheck the complete source and policy before the correction, then require the unchanged strict parser and normal independent review before the sole canonical writer can persist. Keep timeout/quota/login/disabled failures and negative/unavailable reviews as failures; do not blindly retry them or switch providers. Bound the rejected draft in the correction prompt and never append corrections cumulatively. This path permits at most two generation calls plus one review, with the existing per-call deadline; it is not an indefinite retry loop.
+
+Persist only a fixed diagnostic code (such as unknown_reference or context_too_large), never rejected model text, alongside the existing failed checkpoint outcome. Failed attempts preserve the previous revision and coverage. Regression fixtures must exercise bad-first/good-second responses, exhausted corrections, changed evidence, reviewer rejection, and actual checkpoint persistence, not only a successful generation sample. Real-data acceptance uses a disposable test instance, never the owner's live session.
+
+## 2026-10-09 — Finding the server executable does not equip its subprocesses
+
+After a Mac reboot, DuckTerm launched its CLI by absolute path but passed the
+Dock's system-only PATH to the backend. Homebrew's tmux could not be found, so
+startup skipped reconciliation and dead terminals kept stale busy/idle states.
+Build one environment for both CLI discovery and server launch, preserving
+custom PATH priority and adding standard Homebrew and user-tool directories.
+Test discovery and a spawned child tool with the minimal macOS GUI PATH, then
+verify a normal app launch with no pre-existing server; a healthy server started
+from Terminal hides this defect.
+
+## 2026-10-09 — A changed working directory must not hide an exact conversation
+
+A stopped Claude session kept its recorded conversation ID but its current cwd moved into a child folder. The transcript remained under the original project slug, so DuckTerm incorrectly reported it unavailable. Keep the current-project lookup, then search a bounded set of project directories for the exact recorded filename. Reject duplicates, symlinks, mismatched metadata, metadata-only files and incomplete scans. Require real message evidence in the existing bounded metadata windows. Known-identity recovery can cross directories; the owner-adoption picker stays project-scoped.
+
+Claude Code 2.1.223 and later already supports cross-project resume by exact ID; preserve the current directory, card and ID. The new regression also exposed a check-to-command gap: if exact identity is lost while building Resume's command, fail instead of silently starting a fresh conversation. Tests cover directory drift, retrieval, readiness, launch arguments, duplicate identities, malformed metadata, scan bounds and that race. Read-only verification found the owner's intact transcript without modifying or resuming it. Native launch is not an atomic filesystem operation, and these checks do not claim otherwise.
+
+## 2026-10-09 — Maintained checkpoints must use the isolated summary runner
+
+Product's manual checkpoint recorded provider_timeout and no summary revision. The maintained-memory writer still auto-launched bare `claude -p` / `codex exec -` through the legacy 60-second shell runner, even though memory already had an isolated, tool-disabled, bounded executor. Route automatic Claude summary and validation calls through that executor (180 seconds per call, bounded output, temporary working directory, process-group cleanup). Preserve provider preference, Claude user model/effort settings, explicit model selection, existing Codex dispatch and explicit command/HTTP overrides; do not silently route to another provider or label failed output successful.
+
+The shared runner must honor each caller's requested output format, including Oracle prose and checkpoint JSON. Strict settings isolation remains the default for explicit memory preparation; only automatic Claude summaries retain user preferences. Project instructions/settings remain excluded from the private summary working directory.
+
+The owner-approved real product-input probe then took 68.50 seconds and returned a 9,598-byte context with scalar citation strings. This established a second failure: the prompt did not explicitly specify the citation array shape. Specify arrays and complete literal references in the prompt, and losslessly normalize a scalar only if it is an exact supplied reference. Unknown citations, malformed compound strings and oversized context still fail validation. Include the added citation metadata in the existing input budget.
+
+A further real-input probe exposed missing evidence: current tasks and mail were present in the required-work text but their citable original records lost out to conversation backlog. Reserve the bounded batch for those originals first, attach their exact memory references to the required work, and recite already-covered current work when processing new history. Reject oversized required work without truncating JSON or overwriting the last good revision. Ask for concise, nonduplicated claims within the unchanged 10 KB context limit; never truncate rejected claims to make a summary pass.
+
+The regression first failed at the legacy runner boundary. Real subprocess fixtures cover generation plus validation, revision reuse, timeout cleanup and last-good preservation. A synthetic 45 KB prompt returned a structured summary through the isolated Claude runner in 29.44 seconds; this is not proof that product's real checkpoint succeeds. Real-history verification and release are still required. Tests must stub the legacy runner too when reproducing dispatch failures so the failing version cannot invoke a real installed provider.
+
+## 2026-10-08 — A valid handoff can exceed the terminal launch transport
+
+A harness switch stopped the old agent, then tmux rejected the new launch with "command too long". The complete handoff was nested inside a quoted shell command passed through tmux IPC; the brief's own size budget did not account for that transport limit. Pass a short path to a private, one-use launch script instead. The child removes the script before running the command; failed spawn, capture attachment and startup release also remove it. Preserve the output-capture-before-execution barrier and the full prompt.
+
+The regression reproduced the exact tmux rejection, then verified a large literal prompt including shell syntax and Unicode, cwd/environment preservation, output capture, private permissions and failure cleanup. A real harness-switch launch with a fake Codex executable checks the full 32 KB brief, onboarding instructions, selected model, same card and prior-conversation recovery metadata. Do not mistake preparation-only testing for a successful process launch.
+
+## 2026-10-08 — Dismiss the originating menu when closing its dialog
+
+Canceling Change harness closed only its dialog, revealing the hidden session context menu again. Dialog dismissal must notify the menu owner so both close and focus returns to the session row. Keep model-picker back navigation separate, and preserve focus return to the direct Session-panel button.
+
+The browser regression reproduced the lingering menu before the fix and exercises Cancel, Escape, close and backdrop dismissal for both Change harness and Restart, including preparation cleanup and no restart submission.
+
+## 2026-10-08 — Make changing harnesses an explicit action
+
+The owner could not discover harness switching inside Restart. Give Change harness its own Session-panel button and menu action, using the existing preparation and confirmation flow. Restart keeps the current harness/model; Change model stays within that harness. Exclude the current harness from switch choices, so missing alternatives cannot accidentally turn a switch action into a restart.
+
+Validation: focused component and browser checks cover discovery, unchanged-harness restart, model changes, preparation cancellation and focus, drafts, unavailable targets, remote restrictions and stale dialogs. The approved layout was also checked against startup's real data; preparation completed in 4.9 seconds and was canceled without a switch. This UI fix does not claim the missing maintained summary or tool-result provenance findings are fixed.
+
+## 2026-10-08 — A prose width limit must not constrain message tables
+
+The centered 680px Messages container applied the paragraph measure to tables and code too, wasting a wide terminal pane and forcing table cells into narrow columns. Let the Messages surface fill its pane, limit prose separately, and contain horizontal table scrolling within a keyboard-focusable region. Give the transcript its own vertical scroll so turn navigation and follow-up stay reachable. Verify pins, annotation selection, clipboard contents, theme changes and the open context panel in the actual dashboard.
+
+## 2026-10-07 — Saving a checkpoint record does not mean its summary update succeeded
+
+Startup's Timeline showed a saved checkpoint with no summary and generic Unavailable/Not ready labels. History was already recorded automatically; the owner's manual action was intended to update the shared summary. Return an explicit updated, reused, partial or failed outcome from the same coalesced summary job and retain its fixed failure category on the existing marker. Keep the last good summary and its original age when a candidate fails. Never infer an old failure's cause or turn a prepared-switch record into current permission to stop an agent.
+
+Regression coverage uses isolated history and fake providers to check timeout/unavailable/invalid responses, last-good preservation, partial batches and concurrent manual/automatic requests. No second summary store, new schema or provider-selection policy is introduced. The owner approved the revised Timeline preview on October 8. The matching UI reports explicit summary outcomes, retains older failure causes as unknown, and retries through the same pipeline. UI regressions cover duplicate clicks, remote session identity, late responses after navigation and completion during a pending refresh; the isolated browser test verifies a second real attempt without losing the original prompts or commands. Full release checks and installation remain required.
+
+## 2026-10-07 — Native metadata size is not conversation text size
+
+The installed memory smoke test found an 8.8 MB Codex compaction record that exceeded the reader's 8 MiB line bound. The 251 MB raw file normalized to only 0.8 MB of conversation text. Permit records up to 16 MiB while retaining the independent total raw/text limits, exact checksums and file-change fences. A regression fails at the old limit, reads original messages on both sides of a 9 MiB compaction record, and verifies the retained bytes after native cleanup. Do not hide an unreadable source or call partial retrieval complete.
+
+## 2026-10-07 — Graph reads should not rehash the whole history per revision
+
+A scale check with 4,000 conversation records and ten saved revisions exposed duplicate hashing in relationship reads. Hash only records that a revision actually processed, once per exact source version within the request. This keeps checksum and changed-record behavior intact while reducing the measured graph read from 1.64 to 0.55 seconds on the synthetic fixture. The regression verifies multiple revisions and a corrected original; the full retrieval path still rechecks access and canonical references.
+
+## 2026-10-07 — Readiness is retrieval safety, not complete summarization
+
+Problem: the switch UI still required a whole-history summary revision even after preparation moved to maintained memory and bounded recent originals. A valid no-summary packet could therefore remain unusable, and source counts implied more summary coverage than existed.
+
+Fix: validate the maintained response separately, including exact retrieval/retention, summary identity and record accounting. Show the owner-approved saved-summary, included-record and searchable-history wording in the existing Restart layout; keep draft, expiry and explicit-switch guards.
+
+Validation: 90 focused transport/controller/component checks, including real-decoder component cases for absent summaries, incomplete retrieval, stale sources and duplicate clicks; browser coverage checks the maintained counts and existing controls. Full combined release gate remains required.
+
+## 2026-10-07 — Graph citations must resolve exact, still-authorized records
+
+Problem: an artifact hash identified a replaced version but did not itself make its content readable, and generated claims could outlive permission to their evidence. A single-version search index could also silently drop cited old text.
+
+Fix: retain only canonically referenced versions, index source/version pairs, and derive checkpoint/revision relationships on read. Validate typed assertion endpoints and original evidence before retention and again before commit. Withdraw dependent claims and edges when their evidence becomes unavailable; never substitute current text for an old citation.
+
+Validation: isolated tests cover source replacement, deletion, orphan references, corrupt snapshots, credential/scope changes during writes, claim supersession, pagination invalidation, retry idempotency and CLI JSON transport. No existing session was switched.
+
+## 2026-10-07 — Backfill arrival order is not conversation chronology
+
+Problem: a bounded summary update may process a recent correction first and older history later. Without input provenance, the later update can mistake the older direction for new owner guidance. An onboarding packet also needs the named session, project and chosen harness, not just an opaque session key.
+
+Fix: record observed source frontiers and label historical backfill versus newly appended records. Include that provenance in generation and validation input. Supply the exact session/directory/target envelope in the bounded handoff. These are evidence and context, not additional owner authority.
+
+Validation: regressions exercise an older direction, a later correction and a newly appended owner message across two updates, plus named-session onboarding with an explicit target. No live session was switched.
+
+## 2026-10-07 — Harness switching cannot depend on a whole-history model pass
+
+Problem: the source session's long history became a serial generation/review workflow in the switch dialog. Quota failures and large backlogs blocked an owner-requested harness change, even though originals and current work were already available.
+
+Fix: assemble a bounded packet from canonical maintained context, current work and complete recent records; retain exact originals and teach the continuing agent its retrieval tools. Maintain summary coverage separately through the existing progress writer at a fifteen-minute eligible-turn cadence, shared with manual checkpoints. Never call searchable history fully summarized merely to make readiness pass. Changing this architecture also requires moving cancellation/source-change tests from obsolete provider callbacks to actual capture and retention boundaries.
+
+Validation: new quota-disabled, long-history, incremental coverage, coalescing, retention and scope/corruption regressions; integration and the complete release gate remain required before shipping this feature.
+
+## 2026-10-07 — Configuring a merge must distinguish delivery from integration
+
+Independent agents can combine reviewed context without rewriting conversation
+identity or stopping either process. Save the delivery intent, appended notes,
+and receipt in the broker's transaction; an uncertain-response retry must not
+append notes again. Recheck membership and worktree evidence after asynchronous
+Git reads. Send code as a request to integrate exact reviewed commits, with a
+recipient reply; neither delivery nor acknowledgement proves a successful Git
+merge. Keep native route permissions narrow and include their transport tests.
+
+## 2026-10-07 — File metadata is a recheck signal, not changed conversation content
+
+A real preparation tripped the transcript stat fence. Its earlier byte hash was unavailable, so the exact live change could not be reconstructed. Targeted regressions then demonstrated a separate concrete false positive: touching the timestamp or atomically replacing a file with identical bytes invalidated the whole preparation. Re-read changed files off-loop and compare their exact content hashes before refreshing the stat fence. Keep scope/policy checks across that await and the synchronous final-stop fence afterward. Changed, missing, or corrupted bytes still invalidate; do not weaken this to file size, timestamp, or an assumed equivalent summary.
+
+## 2026-10-07 — A late preparation timeout must not discard reviewed work
+
+The first complete startup trial passed two history batches, then timed out on the third. A retry would have regenerated every earlier batch. Keep reviewed intermediate work in the expiring job, reuse it only under matching session/source/model/policy/CLI fences, and never publish partial work as a checkpoint or ready proof. Split a large timed-out batch into smaller ordered pieces with a bounded depth; do not retry authentication, quota or semantic failures as timeouts. Refresh the inactivity deadline only after a whole batch passes review. Test changed sources, cancellation, expiry and server reconstruction as well as the successful retry.
+
+## 2026-10-07 — Hidden windows still need an operation's terminal result
+
+The owner still saw “Preparing” after the backend had failed. A hidden-page guard returned before scheduling another status read, leaving recovery dependent on a visibility event that native windows may not deliver as expected. Keep polling while the operation dialog is mounted, at a slower background rate, and stop after a terminal result or close. Reproduce the persistent-hidden state in component and browser tests; do not force a native acceptance fixture visible and count that as focus behavior coverage.
+
+## 2026-10-07 — Test preparation with real history and repair rejected drafts
+
+The startup harness-switch trial exposed failures hidden by providers mocked to return perfect JSON: a summary used an array for the overview, and another draft omitted an owner constraint. Request the response schema from Codex, retain independent source and UTF-8 validation, and allow at most two corrections against the same sources with a fresh review after each. A rejected draft never becomes coverage or a saved revision. Expose batch progress through preparation status and distinguish a provider timeout from malformed output. Synthetic green checks do not substitute for a complete real-session trial.
+
+## 2026-10-07 — Viewing an idle session is not changed work
+
+Attended and content-free idle notifications invalidated a prepared handoff even when no work changed. A native acceptance retry hid the same symptom before the owner reproduced it. Treat that failure as a product regression: keep status observations in the audit history but exclude them consistently from progress freshness and memory inputs. Version the event-boundary interpretation so existing checkpoints remain readable. Unknown or content-bearing notifications, real turns, transcript changes, tasks and inbox changes must still invalidate. Test observations during generation, after readiness and at the final stop boundary without retrying.
+
+## 2026-10-07 — Reconcile new tests after concurrent menu changes
+
+The memory feature and the plain-label menu passed their separate gates, but their merge left the new memory browser workflow looking for the previous menu labels. Align the integration test with the merged accessible labels and exercise the full preparation/switch/cancel/Timeline scenario. Do not assume two independently green branches imply a green merge.
+
+## 2026-10-07 — Effect cleanup must own its cancellation lease
+
+React development replay reused one preparation key across two effect lifetimes. The disposed effect then released the mounted effect’s lease, canceling active work. Allocate a separate lease for each effect lifetime; preserve the original key only for an explicit retry of a genuinely lost request. Test replay, late close, and lost-response retry together. When integrating a dialog into an existing context menu, also close that menu after an accepted action and preserve its accessibility roles.
+
+## 2026-10-07 — Invalidating readiness must also remove its old payload
+
+A ready preparation stripped its full brief from status responses, but changing its state to stale left the old proof and brief attached. Define the response by the current state: only ready responses carry a proof, and full text belongs only in the separately validated detail read. Test the ready-to-stale transition and serialized response, not just the new state label.
+
+## 2026-10-07 — Recheck retry identities after awaited probes
+
+QA synchronized two preparations at a target probe and showed the same request key could start two different model jobs. A pre-await lookup cannot establish idempotency. Repeat the exact request/binding check under the creation lock, and recheck restart receipts after the terminal probe before creating another operation. A local retained-history feature also must not widen an existing cloud backup selection merely by placing files under a directory already traversed by backup; exclude its reserved snapshot/cache directory explicitly.
+
+## 2026-10-07 — A prepared switch must bind its sources and survive a lost response
+
+Preparing a brief is not permission to stop an agent. Bind the final explicit switch to its target, model, conversation generation and exact source versions; repeat source and draft checks at the stop boundary. Persist operation receipts so a repeated request cannot stop a second process. Keep canceled dialog leases separate from an accepted switch. If target launch fails, report that the source is stopped and preserve its native recovery metadata. A newer short progress summary may update the card but must reference, rather than overwrite or silently extend, the last whole-history revision.
+
+## 2026-10-07 — Saved originals must be discoverable, and malformed blocks are gaps
+
+QA found that retaining a current transcript did not make it discoverable after provider cleanup: the live identity shadowed its retained snapshot. Search the authorized saved version while explicitly reporting incomplete current coverage. Validate native block shapes before counting attachments or normalizing text; valid JSON with an array-valued block type must produce an unavailable source, not crash the API or claim complete empty history. Exercise both runtimes, warm and cold caches, and token revocation during a paused read.
+
+## 2026-10-07 — A harness change needs the complete chain of original conversations
+
+A single previous-conversation field loses older generations after a second switch. Reconstruct the chain from durable checkpoint identities, retain immutable original bytes at explicit checkpoints, and use content-versioned handles scoped to the owning session. Indexes are disposable; they cannot grant access after source deletion or a scope change. Verify a three-generation chain after native cleanup and service reconstruction, exact older versions, forged handles and mid-read scope changes. A saved checkpoint remains useful even when a native snapshot cannot be retained; state that limitation instead of failing its fact capture.
+
+## 2026-10-07 — A context menu needs its own visible target
+
+Right-clicking an unselected session must identify the target without switching
+terminals. Keep its outline tied to the menu's session key, including nested,
+filtered and archived rows, and clear it when the menu or dialog closes. Folder
+moves need the same catalog as the sidebar, including empty and remote folders;
+show an error before changing local grouping if persistence fails. Keep forks
+with their parent and verify that the chosen destination survives reload.
+
+## 2026-10-07 — Session menus must stay tied to the clicked row
+
+Moving session actions out of the detail panel requires an explicit target key;
+right-clicking another row must not switch the active terminal or send an action
+to its session. The menu now retains that row and checks late completions against
+the current menu instance. Keep process and recovery protections in the existing
+handlers, and retain visible recovery/pending-restart notices in the detail panel.
+
+Browser acceptance exposed two menu-specific failures: terminal autoscroll closed
+the menu before an action could be clicked, and focus events from a portal-based
+model picker replaced the parent menu's return target. Dismiss on outside pointer/wheel input, not programmatic scroll events, and scope
+keyboard/focus handling to the menu's own DOM.
+Focus the menu and its return target with preventScroll: programmatic scrolling
+at the bottom of a long sidebar otherwise triggers the dismissal listener.
+Archive Undo must continue to preserve the same terminal node and unsent draft.
+Making rows keyboard-focusable also means reselecting the active row takes focus
+from its terminal without changing the selected key. Send an explicit focus
+request for row activation; opening or dismissing its menu must not send one.
+When relocating actions, compare every eligibility and click-time guard with
+the original handler. Local continuation must remain blocked across menu reopen
+while conversation Undo is unresolved, before it can change the transfer state.
+
+## 2026-10-07 — Preparing a handoff must not confirm a switch
+
+Bind preparation to the session, source generation, target harness and exact model choice. Source changes invalidate readiness, closing a dialog releases only its own preparation lease, and only the explicit Switch action may stop the current harness. A lost switch response requires checking its durable receipt; an explicit retry must reuse the same immutable request and idempotency key. Test these boundaries separately from same-harness restart, and keep ordinary conversation turns out of Timeline milestones while retaining checkpoint evidence.
+
+## 2026-10-07 — Slow background reads can consume the browser's action slots
+
+A retained CI trace showed Undo succeeded only after a seven-second delay before its request was sent. Repeated hidden connector refreshes occupied four browser connections beside the event stream and a slow recovery read. Focus fanout and stale-host overwrites were independently reproduced. Share pending status reads by resolved host, abort obsolete local reads, reject late results after host changes, and coalesce backend CLI probes so abandoned viewers cannot fill the executor. Keep the original action timeout and verify real HTTP congestion, not just mocked responses.
+
+## 2026-10-07 — New dashboard reads must work through older Mac wrappers
+
+Replacing History with Timeline added a remote read absent from the native transport allowlist. Test the complete route through the native adapter, including filters and cursors, and allow only GET. Preserve the prior History view when an older remote wrapper rejects that new route; do not hide authorization or unrelated local errors as compatibility fallback.
+
+## 2026-10-07 — A source fingerprint is not review evidence
+
+An approval packet needs inspectable source links and the exact bounded excerpts the owner saw, not just hashes and counts. Preserve that immutable packet inside the existing reviewed revision, label omitted tools and attachments, and verify a read after the draft cache is gone reproduces the same packet hash. The frozen evidence is part of the explicit review record; it is not a new continuously maintained memory store.
+
+## 2026-10-07 — An owner-reviewed handoff must survive retries without approving new work
+
+Quota exhaustion cannot be solved by asking the exhausted provider for one last summary. Prepare an explicit owner review of a bounded brief and its current sources, then save approval through the existing revision writer. Commit the revision, checkpoint retention marker and current projection together. Bind approval to the displayed packet, source boundary and prior revision; make a lost-response retry return the same checkpoint. The first path certifies only the exact reviewed state: a subsequent digest must neither extend that approval nor truncate the reviewed brief into a short card summary.
+
+## 2026-10-07 — Handoff readers must keep the inbox's original grant and byte limits
+
+A current peer grant does not restore access to messages sent in a previous collaboration root. Apply the message's recorded root check as well as current membership when assembling a handoff. Readiness also needs the launch seed's byte budget: multibyte notes can fit a character bound and still exceed the allowed payload. Preserve the complete source, block readiness on either bound, and test moved-peer mail and multibyte owner notes.
+
+## 2026-10-07 — A saved timestamp must not certify a handoff
+
+The context panel treated any checkpoint less than thirty minutes old as resumable and substituted the click time for the saved record. Render the backend’s saved, summary-source and historical handoff fields independently; missing or legacy fields must remain unverified. Keep original history readable and guard asynchronous results across session/filter changes. Timeline pagination must stay within one source snapshot, and polling must pause for hidden views. Preserve every existing right-panel action when implementing an abbreviated mock.
+
+## 2026-10-07 — Every awaited check can invalidate the previous check
+
+A handoff was validated before the final awaited terminal prompt probe. QA changed the transcript or summarizer configuration during that probe and reproduced an unsafe stop. Revalidate source bytes after the first probe, check the draft again, then compare current database facts, provider policy and the captured file's device/inode/size/mtime/ctime without another await before beginning stop. Keep expensive transcript reads off the event loop. Test both sides: source changes during either prompt probe and new owner input during the added source read must preserve the original process.
+
+## 2026-10-07 — A saved checkpoint is not proof of a usable handoff
+
+Exhausted providers left durable checkpoints with mechanical counts while the UI implied they were resumable. Progress, exit and checkpoint summaries also had independent writers. Use one versioned progress pipeline and retain checkpoint references to its original sources; expose summary readiness separately from persistence. Validate the paragraph as well as list items, preserve a last good summary on failure, and recheck the current sources before stopping an agent. Coalesce concurrent refreshes without letting a canceled waiter cancel everyone; compare policy and source identity before promoting late results. A recovery attempt must be able to retry unverified input. Protect both mail expiry paths and their analytics predicates, and refuse older expiry writers before pruning a reference-based database.
+
+## 2026-10-06 — Cleanup must not erase the failure it is cleaning up
+
+Two archive browser failures reported only DELETE409 because a finally block replaced the earlier error while an archive request was pending. A controlled primary assertion reproduced the masking; moving cleanup to Playwright afterEach preserved that assertion and allowed the owned archive to settle before deletion. Verify Undo via server state, include response bodies in cleanup errors, and upload retained traces/screenshots from failed CI jobs. A green local rerun or cleanup-only stack does not prove the original product behavior was correct; absent original traces, keep that diagnosis unresolved.
+
+## 2026-10-06 — Pinning must remain available where sessions are listed
+
+Moving the Focus pin into the context header made a sidebar operation depend on opening another panel. Restore the approved icon beside every session, including filtered rows and forks, and reuse the shared pin handler and three-session limit. Exercise pinning an unselected session with Context collapsed, without changing the active terminal.
+
+## 2026-10-06 — Switch coverage must cross the changed lifecycle boundary
+
+The interruption checks mocked launch, while the real terminal switch still supplied a Stop hook. Added an explicit no-Stop case to the isolated tmux test, retained default quota/no-Stop guards, and checked both-direction task/inbox/artifact and membership preservation after reopening SQLite. Separate checkpoint failure, archive and transfer races assert that the source is never stopped. Compare durable work fields, not intentionally rotating per-process credentials. Focused checks passed; synthetic terminals and test records are cleaned up. These checks do not establish installed-provider, native WebKit or SSH behavior.
+
+## 2026-10-06 — Immediate switching needs explicit intent and honest progress
+
+A working or quota-exhausted harness may never reach a Stop hook. Expose the reviewed stop-and-switch choice when the backend supports it, keep draft and source-identity checks, and send interrupt intent only after confirmation for a different harness. Clear the choice when its target changes or a request fails. Pending text must say it is preparing to switch, not waiting for a turn that may never end.
+
+## 2026-10-06 — Keep regression checks isolated from rebuilds
+
+A harness-picker rewrite removed the existing availability explanation used by other session workflows. Retain that explanation while separating it from switch eligibility. Also never run a browser rebuild beside another browser run in the same worktree: Vite briefly removes dist, so the active server can serve its unbuilt-dashboard fallback. Verify the corrected committed tree in its own checkout.
+
+## 2026-10-06 — Native resume proof must not hide harness switching
+
+A session without a verified conversation could not open Restart, even though another harness can start a seeded conversation on the same card. Discover per-harness availability separately, scope model choices to the selected harness, preserve draft and turn checks, and label switches as new conversations both before and after completion. Test missing native identity, blocked drafts, exact model submission, stale card responses and cancelable queues.
+
+## 2026-10-06 — A token-exhausted source may never emit another Stop
+
+An after-turn harness switch could queue forever when the source had exhausted
+its provider quota. Offer an explicit owner-requested immediate switch to a
+different harness, with checkpoint and handoff before stopping. Bind consent to
+the current process, identity, activity epoch and owner-input stamp; recheck the
+empty draft and reject intervening changes. Keep ordinary Restart after-turn,
+and fail pending immediate requests after a server restart instead of replaying
+an interruption against a later process.
+
+## 2026-10-06 — Harness handoffs need current assigned work
+
+A checkpoint summary omitted unfinished task records when switching harnesses.
+Read the same session's in-progress and parked tasks after checkpoint creation,
+within its current shared grant, and include their durable IDs and statuses in
+a bounded handoff brief. Do not copy done or handed-off tasks, turn parked work
+into an instruction, or store a second task snapshot. Exercise completion,
+handoff and folder moves during the checkpoint await, plus the actual switch
+launch, while asserting that task records remain unchanged.
+
+## 2026-10-06 — A remounted card cannot settle an in-flight Undo
+
+Sharing a Resume block across controls was insufficient: a remounted recovery card could read the old adopted binding and clear the block while detach was still pending. Track the in-flight phase by canonical session key, release it only when that request settles, and then reread identity. A ready read during the write must never clear the guard. Cover remount, duplicate Undo and captured callbacks; guard Continue locally before it changes continuation bookkeeping too.
+
+## 2026-10-06: Guard every Resume entry point during recovery
+
+Undo disabled only the session-card Resume button; the sidebar could still resume while the mutation was pending or uncertain. A delayed-request browser regression exposed the bypass. Recovery readiness now guards the card, sidebar and resume handler by canonical session key, including across card unmounts. Test all entry points for shared operations.
+
+## 2026-10-06 — An explicit recovery choice needs a safe way back
+
+An incorrect transcript attachment must be reversible without deleting its file or starting an agent. Expose Undo only for an adopted binding on a stopped session, send the current revision, and leave launch-assigned or observed identities alone. Disable Resume while Undo is unresolved. A lost response requires a fresh identity read before another action, never an automatic mutation retry. Verify the complete attach/undo/reselect workflow and compare transcript bytes before and after Undo.
+
+## 2026-10-06 — Show missing conversation identity before Resume is needed
+
+A launched agent could work normally while no conversation ID was recorded, hiding the loss until a later Resume. Show identity, hook configuration and readable transcript readiness as separate facts. Recovery must use an explicit owner choice with bounded project-scoped discovery, opaque handles, whole-file verification and an atomic session revision/duplicate-ownership check; never choose the newest transcript or automatically resume. Preserve a generation barrier when undoing an adopted binding so old hooks cannot restore it. Keep filesystem work off the event loop and reject discovery without a recorded absolute project directory. Test stale files, competing attachments, missing directories, expired handles, uncertain responses and real-browser recovery.
+
+## 2026-10-06 — Distinguish missing resume inputs from unsupported adapters
+
+A known transcript adapter with no recorded directory was labeled as lacking file-per-conversation lookup. Report the missing directory explicitly so diagnostics direct the owner toward the actual missing input. Keep malformed hook configuration private and report unknown rather than echoing it.
+
+## 2026-10-06 — Empty launch generations must receive a fresh token
+
+Resuming an unidentified legacy conversation passes an empty generation override.
+Using setdefault preserved that empty value when assigning its first native ID,
+so valid hooks from the new process were rejected. Generate a nonempty token for
+both absent and empty values, while preserving an explicit switch generation.
+Reproduce through Resume and verify the child's matching hook is accepted.
+
+## 2026-10-06 — Validate identity evidence before recording a conflict
+
+A malformed current-generation SessionStart could permanently contest an assigned conversation and block Resume. Apply the same native-ID validation to conflicting evidence as to an initial binding. Invalid hook input should be dropped without changing a valid recorded identity; valid mismatches must still remain contested.
+
+## 2026-10-06 — Native bug reports need reviewed server readiness
+
+A post-reboot Resume report contained only app startup events, leaving no
+evidence about resumable IDs or transcript availability. The native reporter
+must retrieve the server's redacted resume-readiness item, wait for that snapshot
+before export, and show the same text it writes. Keep unrelated context out;
+never append raw network errors. The existing diagnostics opt-out must exclude
+the entire snapshot. Label local scope explicitly and retain graceful fallback
+for older or unavailable servers.
+
+## 2026-10-06 — Resume diagnostics must follow durable identity precedence
+
+Saving an observed ID outside retained events is only useful if diagnostics also
+read it. Prefer explicit native bindings, then the saved observation for the same
+harness, then legacy events. Keep contested and pending bindings visible and never
+probe their transcript as though the identity were usable. Verify the report after
+event deletion and ensure it still exports no IDs or paths and writes no data.
+
+## 2026-10-06 — Conversation identity must precede the process
+
+Ordinary launches learned conversation IDs only from optional hooks, then lost
+that evidence when old events were retained away. Assign Claude/Copilot UUIDs
+and commit them with the session before spawn; persist observed identities too.
+The event bus previously swallowed persistence errors, so launch now requires
+its identity write to succeed. Preserve generation barriers and switch rollback;
+never backfill a pending binding from the previous conversation. Test a real
+no-hook child reading its committed ID, failed writes, retention, duplicate UUIDs
+and current-generation mismatches. Reuse durable native_binding metadata rather
+than introducing redundant columns and an unnecessary schema migration.
+
+## 2026-10-06 — A resume report needs identity readiness, not just app startup
+The reboot report carried five startup events but omitted whether the native
+conversation ID or expected transcript was missing. Add bounded read-only
+readiness checks to removable diagnostics, exporting only ID presence and file
+existence. Keep SQLite on its owner thread and filesystem work off the loop.
+Do not export conversation IDs, transcript contents, credentials or arbitrary
+paths, and do not mistake hook configuration for successful event delivery.
+
+## 2026-10-06 — Identical timestamps can hide changed transcript bytes
+
+Linux assigned the same size, mtime_ns and ctime_ns to rapid transcript rewrites,
+so a stat-only cache kept returning old Messages and message keys indefinitely.
+Recheck recent file bytes until a content read occurs beyond a two-second
+timestamp window, then retain stat-only polling for settled files. Reuse parsed
+records and serialized responses when the bytes match; hash the partial final
+record as well as complete lines. Cover equal-stamp rewrites during the window
+and the first poll after it, for Claude and Codex, and verify real Linux behavior.
+
+## 2026-10-05 — Two terminals in one session need separate paste targets
+
+A companion shell shares an agent's session identity but not its input stream.
+Keying an asynchronous image paste only by session allowed a focus change to
+send the completed path to the sibling terminal. Give each shell viewer a
+separate paste target, retain the owning session for uploads, and reject a late
+result after focus changes. Verify collapse/reopen against a real shell: close
+the viewer without ending its process, and bind destructive confirmation to the
+backend's observed process token rather than a cached busy label.
 ## 2026-10-06 — A stale sync response cannot confirm a newer owner change
 
 Review reproduced an exchange that captured the old folder tree, then returned
@@ -65,6 +886,13 @@ the flagged packages (`npm update <pkg>`) and diff the lockfile's resolved
 versions before committing. KaTeX's low advisory needs a breaking mermaid
 change and stays open until mermaid ships a fix.
 
+## 2026-10-06 — Session age is not summary freshness
+The timeline labeled time since session start as summary age. Use the existing
+progress_at timestamp saved with the summary, and return null for legacy or
+missing timestamps. Never substitute a related record timestamp for the event
+the UI claims to measure. Regression checks cover old sessions with recent
+summaries, missing timestamps, and clocks ahead of the reader.
+
 ## 2026-10-05 — The gate's temp log name broke on macOS
 `mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's
 that aren't at the end. macOS's BSD mktemp replaces trailing X's only, so it
@@ -73,6 +901,34 @@ GATE_LOG then failed immediately with "File exists". Readers of the old shared
 log were also seeing another session's results. Keep the X's at the end of a
 mktemp template, and test temp-file names on macOS, not only in CI's Linux.
 Found by oracle-main-dev.
+
+## 2026-10-06 — Linux shell launchers can outlive their command
+A tmux shell command without explicit exec left a /bin/sh launcher on Linux.
+The pane PID belonged to that parent while the interactive owner shell held a
+different foreground process group, so idle shells always required confirmation.
+Exec the helper into the pane process; the helper already execs the owner shell.
+Verify pane PID equals interactive $$ with real tmux on Linux and macOS, and
+retain busy-job checks rather than increasing idle-wait timeouts.
+
+## 2026-10-05 — Derived names cannot grant cleanup ownership
+
+A legacy agent may already occupy a proposed sibling-shell name. Explicit shell
+open/close must refuse that collision, but parent archive/delete must skip the
+unowned target and finish ordinary cleanup. Test two real agents with colliding
+names: deleting one must leave the other alive and discoverable.
+
+- A new sibling-shell suffix is not ownership: older agent keys can already use it. Filter discovery by the explicit owner-shell tag, publish that tag with creation, and keep shell eligibility checks out of ordinary agent archive/delete. Regress legacy-key discovery and both cleanup paths with private real tmux sessions.
+
+## 2026-10-05 — A surviving sibling can impersonate a departed tmux target
+
+The session-shell integration test hung stopping an agent: tmux resolved its
+missing name by prefix to the still-running `-sh` sibling. Use exact session and
+pane targets for agent liveness, input, output, resize and kill operations. tmux
+has different syntax for an exact session (`=name`), a pane in that session
+(`=name:`), and session option lookup (literal name). Test with real tmux, including
+agent exit while the sibling survives. On macOS, tcgetpgrp on another controlling
+tty fails with ENOTTY; query process groups through ps and require confirmation
+when inspection fails.
 
 ## 2026-10-04 — A remote Codex couldn't save October's conversations
 On duckterm-dev, Codex (running as the service user) got Permission denied
@@ -273,6 +1129,23 @@ persistent WKWebView cache. Cache only the content-hashed dashboard assets as
 immutable; stable URLs must revalidate. Bundle the header and favicon from one
 SVG source so an update changes their URLs and bypasses already-cached icons.
 Verify the actual app window after release, not just a fresh browser profile.
+
+## 2026-10-04 — Don't justify a change with a performance claim you didn't measure
+**Broke:** the fix that moved `connector_last_used` back onto the serving
+thread shipped with a comment calling it "a bounded indexed read". Review
+caught it: the query is a full `SCAN events`, ~40 ms on a 67k-row database.
+**Cause:** the claim was reasoning, not measurement. The method filters on
+`event_type`, which sounds selective, and I never ran `EXPLAIN QUERY PLAN`.
+The only index on `events` is `(session_key, ts)`, which that filter cannot
+use. Measuring afterwards also showed an index on `event_type` changes the
+plan but *not* the time — the cost is `json_extract` over 27k PreToolUse
+rows, so the obvious follow-up fix would have bought nothing either.
+**Rule:** a performance adjective in a comment is a claim, and a claim in
+shipped code outlives the conversation that produced it. Run
+`EXPLAIN QUERY PLAN` and time it, or describe what the code does and leave
+cost out. The correctness argument for this change stood on its own; the
+unmeasured aside was the only part that was wrong, and it would have told
+the next reader not to bother looking.
 
 ## 2026-10-03 — A convention nothing checks is a trap for the next caller
 **Broke:** `GET /connectors` logged an `IndexError` on a zero-column row.

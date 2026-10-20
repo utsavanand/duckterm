@@ -19,6 +19,8 @@ PERMISSION_REQUEST = "PermissionRequest"
 NOTIFICATION = "Notification"
 STOP = "Stop"
 SESSION_END = "SessionEnd"
+# Internal API-backed observation; unknown is distinct from idle or a dead child.
+NATIVE_STATUS = "NativeStatus"
 SUBAGENT_START = "SubagentStart"
 SUBAGENT_STOP = "SubagentStop"
 

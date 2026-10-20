@@ -178,7 +178,7 @@ def test_v5_migration_counts_retained_rows_only(store, tmp_path):
     store._conn.execute("PRAGMA user_version=5")
     store._conn.commit()
     reopened = HistoryStore(tmp_path / "db.sqlite")
-    assert reopened._conn.execute("PRAGMA user_version").fetchone()[0] == 11
+    assert reopened._conn.execute("PRAGMA user_version").fetchone()[0] == 12
     assert sum(d["sent"] for d in snapshot(reopened)["daily"]) == 1
     assert reopened._conn.execute("SELECT COUNT(*) FROM session_questions").fetchone()[0] == 0
     reopened.close()
@@ -193,7 +193,7 @@ def test_v6_restart_migration_preserves_retired_mail_counts(store, tmp_path):
     store._conn.commit()
     reopened = HistoryStore(tmp_path / "db.sqlite")
     try:
-        assert reopened._conn.execute("PRAGMA user_version").fetchone()[0] == 11
+        assert reopened._conn.execute("PRAGMA user_version").fetchone()[0] == 12
         assert snapshot(reopened) == before
         assert "restart_json" in {
             row["name"] for row in reopened._conn.execute("PRAGMA table_info(sessions)")
@@ -253,3 +253,66 @@ def test_folder_scope_includes_either_endpoint_once_before_and_after_retirement(
     store.session_api._sweep()
     assert mail.snapshot(store._conn, None, now=NOW, sessions={"inside"}) == selected
     assert mail.snapshot(store._conn, None, now=NOW, sessions=set())["daily"] == []
+
+
+def test_checkpoint_retains_closed_mail_and_broadcast_once(store, tmp_path):
+    from duckterm.persistence.saved_state import MARKER_FORMAT, event_source
+
+    for key, kind in [
+        ("held-q", "question"),
+        ("held-b", "broadcast"),
+        ("free-q", "question"),
+        ("free-b", "broadcast"),
+    ]:
+        seed(store, key, kind=kind)
+    store.add_checkpoint(
+        checkpoint_id="pin",
+        session_key="b",
+        label="manual",
+        summary="",
+        record={
+            "format": MARKER_FORMAT,
+            "events": event_source(store._conn, "b"),
+            "mail_ids": ["held-q", "held-b"],
+        },
+        markdown_path=None,
+        created_at=NOW,
+    )
+    before = snapshot(store)
+    for _ in range(2):
+        store.session_api._sweep()
+        assert {r[0] for r in store._conn.execute("SELECT id FROM session_questions")} == {
+            "held-q",
+            "held-b",
+        }
+        assert snapshot(store) == before
+    reopened = HistoryStore(tmp_path / "db.sqlite")
+    try:
+        assert {r[0] for r in reopened._conn.execute("SELECT id FROM session_questions")} == {
+            "held-q",
+            "held-b",
+        }
+        assert snapshot(reopened) == before
+        reopened._conn.execute("DELETE FROM checkpoints WHERE id='pin'")
+        reopened._conn.commit()
+        reopened.session_api._sweep()
+        assert not reopened._conn.execute("SELECT id FROM session_questions").fetchall()
+        assert snapshot(reopened) == before
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize(
+    "record",
+    ["broken json", '{"format":"future_marker"}', '{"format":"checkpoint_marker_v2"}', "null"],
+)
+def test_unrecognized_marker_suspends_normal_retirement_for_its_session(store, record):
+    seed(store, "held")
+    store._conn.execute(
+        "INSERT INTO checkpoints(id,session_key,label,summary,record_json,created_at) "
+        "VALUES('unknown','b','manual','',?,?)",
+        (record, NOW),
+    )
+    store._conn.commit()
+    store.session_api._sweep()
+    assert store._conn.execute("SELECT id FROM session_questions").fetchone()[0] == "held"

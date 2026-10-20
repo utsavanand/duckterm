@@ -4,6 +4,14 @@ import XCTest
 final class LaunchDestinationTests: XCTestCase {
     let base = URL(string: "http://127.0.0.1:14300")!
 
+    func testOpenCodeOptionsAreAReadOnTheSelectedComputer() throws {
+        let request = try LaunchDestination.request(base: base, operation: "opencode-options", params: [:])
+        XCTAssertEqual(request.url?.path, "/runtimes/opencode/launch-options")
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertNil(request.httpBody)
+        XCTAssertThrowsError(try LaunchDestination.request(base: base, operation: "opencode-options", params: ["url": "https://example.com"]))
+    }
+
     func testDoesNotAcceptArbitraryURLsOrOperations() {
         XCTAssertThrowsError(try LaunchDestination.request(base: URL(string: "https://example.com")!, operation: "browse", params: [:]))
         XCTAssertThrowsError(try LaunchDestination.request(base: base, operation: "../connectors/github/enable", params: [:]))

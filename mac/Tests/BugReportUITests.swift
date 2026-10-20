@@ -68,7 +68,19 @@ struct BugReportUITests {
         fputs("UI: dashboard ready\n", stderr)
         var savedURL: URL?
         var exportDestination: URL?
-        let report = BugReportController(screenshot: screenshot, chooseSaveDestination: { window, completion in
+        var finishContext: CheckedContinuation<String?, Never>?
+        var readiness = "Session 1: harness=codex; resume id=missing; cwd exists=yes"
+        if let address = ProcessInfo.processInfo.environment["RT_REPORT_CONTEXT_TEST_URL"], let base = URL(string: address) {
+            let transport = SessionTransport()
+            let response = try await transport.perform(base: base, api: LaunchDestination(),
+                params: ["method": "GET", "path": "/bugreport/context"])
+            guard let text = BugReportData.resumeReadiness(from: response) else { fatalError("Live readiness item missing") }
+            readiness = text
+            print("PASS: native authenticated transport reads real server readiness")
+        }
+        let report = BugReportController(screenshot: screenshot, loadResumeReadiness: {
+            await withCheckedContinuation { finishContext = $0 }
+        }, chooseSaveDestination: { window, completion in
             if let exportDestination { completion(exportDestination); return }
             let picker = NSSavePanel()
             picker.beginSheetModal(for: window) { response in
@@ -81,6 +93,13 @@ struct BugReportUITests {
         try await wait { try await js(web, "typeof window.updateReport === 'function'") as? Bool == true }
         try await wait { try await js(web, "document.activeElement.id === 'summary'") as? Bool == true }
         verify(report.isOpen)
+        verify(try await js(web, "document.getElementById('save').disabled") as? Bool == true)
+        try await wait { finishContext != nil }
+        finishContext?.resume(returning: readiness)
+        finishContext = nil
+        try await wait { try await js(web, "!document.getElementById('save').disabled") as? Bool == true }
+        let reviewedDiagnostics = try await js(web, "document.getElementById('logs').textContent") as? String ?? ""
+        verify(reviewedDiagnostics.contains("Local server resume readiness:\n" + readiness))
         report.show()
         verify(NSApp.windows.filter { $0.title == panel.title && $0.isVisible }.count == 1)
         verify(try await js(web, "document.getElementById('report').checkValidity()") as? Bool == false)
@@ -149,15 +168,58 @@ struct BugReportUITests {
         let listing = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         verify(unzip.terminationStatus == 0 && listing.contains("report.txt"))
         verify(!listing.contains("screenshot.png") && !listing.contains("diagnostics.txt"))
-        let secondReport = BugReportController(screenshot: nil)
+        var includedURL: URL?
+        let includedArchive = exportDirectory.appendingPathComponent("included.zip")
+        let secondReport = BugReportController(screenshot: nil, loadResumeReadiness: { readiness },
+            chooseSaveDestination: { _, done in done(includedArchive) }, onSaved: { includedURL = $0 })
         secondReport.show()
         guard let secondPanel = NSApp.windows.first(where: { $0.title == panel.title && $0.isVisible }),
               let secondWeb = secondPanel.contentView as? WKWebView else { fatalError("Missing second report") }
         try await wait { try await js(secondWeb, "typeof window.updateReport === 'function'") as? Bool == true }
-        _ = try await js(secondWeb, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
-        try await wait { !secondReport.isOpen }
+        try await wait { try await js(secondWeb, "!document.getElementById('save').disabled") as? Bool == true }
+        let includedDiagnostics = try await js(secondWeb, "document.getElementById('logs').textContent") as? String ?? ""
+        _ = try await js(secondWeb, "document.getElementById('summary').value='Resume verification';document.getElementById('save').click()")
+        try await wait { includedURL == includedArchive && !secondReport.isOpen }
+        let extract = Process()
+        extract.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+        extract.arguments = ["-p", includedArchive.path, "*/diagnostics.txt"]
+        let extracted = Pipe()
+        extract.standardOutput = extracted
+        try extract.run()
+        let savedDiagnostics = String(data: extracted.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        extract.waitUntilExit()
+        verify(extract.terminationStatus == 0 && savedDiagnostics == includedDiagnostics, "ZIP must contain exactly the reviewed diagnostic snapshot")
+        verify(savedDiagnostics.contains(readiness))
+        let failedReport = BugReportController(screenshot: nil, loadResumeReadiness: {
+            throw NSError(domain: "Secret path", code: 1, userInfo: [NSLocalizedDescriptionKey: "/private/owner/token"])
+        })
+        failedReport.show()
+        guard let failedPanel = NSApp.windows.first(where: { $0.title == panel.title && $0.isVisible }),
+              let failedWeb = failedPanel.contentView as? WKWebView else { fatalError("Missing failed-context report") }
+        try await wait { try await js(failedWeb, "typeof window.updateReport === 'function' && !document.getElementById('save').disabled") as? Bool == true }
+        let failedDiagnostics = try await js(failedWeb, "document.getElementById('logs').textContent") as? String ?? ""
+        verify(failedDiagnostics.contains("could not read local server diagnostics") && !failedDiagnostics.contains("/private/owner/token"))
+        _ = try await js(failedWeb, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
+        try await wait { !failedReport.isOpen }
+        var finishClosed: CheckedContinuation<String?, Never>?
+        let closedReport = BugReportController(screenshot: nil, loadResumeReadiness: {
+            await withCheckedContinuation { finishClosed = $0 }
+        })
+        closedReport.show()
+        guard let closedPanel = NSApp.windows.first(where: { $0.title == panel.title && $0.isVisible }),
+              let closedWeb = closedPanel.contentView as? WKWebView else { fatalError("Missing loading report") }
+        try await wait {
+            guard finishClosed != nil else { return false }
+            return try await js(closedWeb, "typeof window.updateReport === 'function'") as? Bool == true
+        }
+        _ = try await js(closedWeb, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
+        try await wait { !closedReport.isOpen }
+        finishClosed?.resume(returning: "Late result must not reopen the panel")
+        finishClosed = nil
+        await Task.yield()
+        verify(!closedReport.isOpen)
         withExtendedLifetime(dashboard) {}
-        print("PASS: native WK form validation, single window, diagnostics, safe filenames, missing-email fallback, save cancellation/export and opt-outs, close guard, narrow layout, Escape")
+        print("PASS: native WK form validation, readiness loading/review, exact included ZIP, diagnostic opt-out, sanitized fetch failure, safe filenames, save cancellation/export, close guard, narrow layout, Escape")
     }
 
     static func main() {

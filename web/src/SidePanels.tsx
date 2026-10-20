@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import "./sidePanels.css";
 
 export function useSidePanels() {
@@ -12,7 +12,8 @@ export function useSidePanels() {
     try { localStorage.setItem("rd.panelsCollapsed", JSON.stringify(collapsed)); }
     catch { /* Panel controls still work when storage is unavailable. */ }
   }, [collapsed]);
-  return { collapsed, toggle: (side: "left" | "right") => setCollapsed(current => ({ ...current, [side]: !current[side] })) };
+  const show = useCallback((side: "left" | "right") => setCollapsed(current => current[side] ? { ...current, [side]: false } : current), []);
+  return { collapsed, show, toggle: (side: "left" | "right") => setCollapsed(current => ({ ...current, [side]: !current[side] })) };
 }
 
 export function PanelToggle({ side, collapsed, onToggle }: { side: "left" | "right"; collapsed: boolean; onToggle: () => void }) {

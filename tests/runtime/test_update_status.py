@@ -14,6 +14,9 @@ from duckterm.server import Server
 def test_release_check_is_read_only_and_versions_are_numeric(monkeypatch):
     monkeypatch.delenv("DUCKTERM_RELEASE_CHECK", raising=False)
     monkeypatch.setattr(update_status, "__version__", "0.4.9")
+    monkeypatch.setattr(
+        update_status.build_info, "installed", lambda: {"installed_is_release": True}
+    )
     seen = []
 
     def response(request, **kwargs):

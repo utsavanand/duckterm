@@ -1,5 +1,10 @@
+import { useTerminalStyling, resolveStyling } from "./terminalStyling";
+import "./terminalStyling.css";
+import { terminalPalette } from "./terminalPalette";
+import { useTerminalContrast, resolveContrast } from "./terminalContrast";
 import { terminalSocket, TerminalSocket, sessionFetch } from "./hostTransport";
-import { memo, useEffect, useRef } from "react";
+import { useAppearance, TERMINAL_FONTS } from "./appearance";
+import { memo, useEffect, useRef, type CSSProperties } from "react";
 import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
@@ -19,19 +24,37 @@ import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 // the GET API — no token needed (only state-changing POSTs are token-gated).
 export const Terminal = memo(function Terminal({
   sessionKey,
+  folder,
   active = true,
+  focusRequest = 0,
+  kind = "agent",
+  onConnection,
   theme = DEFAULT_TERM_THEME,
 }: {
   sessionKey: string;
+  folder?: string;
   active?: boolean;
+  focusRequest?: number;
+  kind?: "agent" | "shell";
+  onConnection?: (connected: boolean) => void;
   theme?: string;
 }) {
+  const { appearance } = useAppearance();
+  const { preferences } = useTerminalContrast();
+  const contrast = resolveContrast(preferences, sessionKey, folder);
+  const { preferences: stylingPreferences } = useTerminalStyling();
+  const enhanced = contrast === "readable" && resolveStyling(stylingPreferences, sessionKey, folder) === "enhanced";
+  const minimumContrast = contrast === "preserve" ? 1 : enhanced ? 7 : 4.5;
+  const refitRef = useRef<(() => void) | null>(null);
+  const connectionRef = useRef(onConnection);
+  connectionRef.current = onConnection;
   const toast = useToast();
   const toastRef = useRef(toast);
   toastRef.current = toast;
   const hostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Xterm | null>(null);
   const activateRef = useRef<((visible: boolean) => void) | null>(null);
+  const focusRef = useRef<(() => void) | null>(null);
 
   // Live theme switch (e.g. toggling the app light/dark): set the new palette
   // and force a full repaint so already-rendered rows recolor immediately,
@@ -39,9 +62,18 @@ export const Terminal = memo(function Terminal({
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
-    term.options.theme = TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME];
+    term.options.minimumContrastRatio = minimumContrast;
+    term.options.theme = terminalPalette(theme, contrast === "preserve");
     term.refresh(0, term.rows - 1);
-  }, [theme]);
+  }, [theme, contrast, minimumContrast]);
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.fontSize = appearance.terminalSize;
+    term.options.fontFamily = TERMINAL_FONTS[appearance.terminalFont].css;
+    refitRef.current?.();
+  }, [appearance.terminalSize, appearance.terminalFont]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -51,11 +83,13 @@ export const Terminal = memo(function Terminal({
       // Match the attach snapshot's history depth (tmux capture -S -2000):
       // xterm's 1000-line default silently ate half the replayed history.
       scrollback: 5000,
-      fontSize: 12,
-      fontFamily: "ui-monospace, Menlo, monospace",
-      theme: TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME],
+      fontSize: appearance.terminalSize,
+      fontFamily: TERMINAL_FONTS[appearance.terminalFont].css,
+      theme: terminalPalette(theme, contrast === "preserve"),
+      minimumContrastRatio: minimumContrast,
       cursorBlink: true,
       convertEol: false,
+      macOptionClickForcesSelection: true,
     });
     termRef.current = term;
     const fit = new FitAddon();
@@ -63,7 +97,7 @@ export const Terminal = memo(function Terminal({
     term.open(host);
     let visible = active;
     if (visible) fit.fit();
-    bindClipboardBridge(term, sessionKey); // Mac-app Edit menu targets the focused terminal
+    bindClipboardBridge(term, sessionKey, kind); // Mac-app Edit menu targets the focused terminal
     // Focus xterm's hidden input directly. term.focus() alone proved unreliable
     // on mount (after selecting an agent, focus stayed on <body>, so keystrokes
     // went nowhere and you had to click the terminal first). Targeting the
@@ -93,6 +127,7 @@ export const Terminal = memo(function Terminal({
     };
     host.addEventListener("focusout", refocusOnBlur);
     const focusOnClick = () => focusTerm(true);
+    focusRef.current = focusOnClick;
     host.addEventListener("mousedown", focusOnClick);
 
     // The WS dies whenever the session's PTY goes away — Stop, a server
@@ -105,6 +140,7 @@ export const Terminal = memo(function Terminal({
     let disposed = false;
     let attachGeneration = 0;
     let replayReady = false;
+    let snapshotSizing = false;
     let pendingOpenScroll = false;
     let openGeneration = 0;
     let scrollFrame: number | undefined;
@@ -125,7 +161,7 @@ export const Terminal = memo(function Terminal({
 
     const sendResize = () => {
       if (ws?.readyState !== WebSocket.OPEN) return;
-      ws.send(JSON.stringify({ resize: { cols: term.cols, rows: term.rows } }));
+      ws.send(JSON.stringify({ resize: { cols: kind === "shell" ? Math.min(term.cols, 500) : term.cols, rows: kind === "shell" ? Math.min(term.rows, 300) : term.rows } }));
     };
 
     // Hidden terminals have no usable dimensions. Fit only after activation,
@@ -134,7 +170,7 @@ export const Terminal = memo(function Terminal({
     const settleOpening = () => {
       window.cancelAnimationFrame(fitFrame ?? 0);
       fitFrame = undefined;
-      if (disposed || !visible) return;
+      if (disposed || !visible || snapshotSizing) return;
       if (!host.clientWidth || !host.clientHeight) {
         // A panel transition can report zero before layout settles. There may
         // be no further observer notification: keep the pending fit alive.
@@ -167,6 +203,7 @@ export const Terminal = memo(function Terminal({
         });
       });
     };
+    refitRef.current = settleOpening;
     activateRef.current = (nextVisible) => {
       visible = nextVisible;
       cancelAttachScroll();
@@ -183,16 +220,37 @@ export const Terminal = memo(function Terminal({
       const generation = ++attachGeneration;
       let firstFrame = true;
       replayReady = false;
+      snapshotSizing = false;
       cancelAttachScroll();
       pendingOpenScroll = visible;
-      ws = terminalSocket(sessionKey);
+      ws = terminalSocket(sessionKey, kind);
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
+        connectionRef.current?.(true);
         attempts = 0; // live again — future retries start fast
         settleOpening();
         focusTerm();
       };
       ws.onmessage = (ev) => {
+        if (disposed || generation !== attachGeneration) return;
+        if (typeof ev.data === "string") {
+          // Control frames are never terminal output. Restore the snapshot at
+          // its captured geometry before xterm reflows it to the visible pane.
+          if (!firstFrame || snapshotSizing) return;
+          try {
+            const snapshot: unknown = JSON.parse(ev.data)?.snapshot;
+            if (!snapshot || typeof snapshot !== "object") return;
+            const { cols, rows } = snapshot as { cols?: unknown; rows?: unknown };
+            if (typeof cols !== "number" || typeof rows !== "number"
+              || !Number.isInteger(cols) || !Number.isInteger(rows)
+              || cols < 1 || rows < 1 || cols > 1000 || rows > 1000) return;
+            snapshotSizing = true;
+            window.cancelAnimationFrame(fitFrame ?? 0);
+            fitFrame = undefined;
+            term.resize(cols, rows);
+          } catch { /* Ignore malformed/unknown control frames. */ }
+          return;
+        }
         // Raw PTY bytes. xterm's write() takes a Uint8Array and decodes UTF-8
         // itself — passing bytes (not a decoded string) keeps multi-byte
         // sequences split across frames intact.
@@ -202,6 +260,7 @@ export const Terminal = memo(function Terminal({
           // frame. Wait for xterm's parser, not a timer or later live writes.
           term.write(new Uint8Array(ev.data as ArrayBuffer), () => {
             if (disposed || generation !== attachGeneration) return;
+            snapshotSizing = false;
             replayReady = true;
             settleOpening();
           });
@@ -211,6 +270,7 @@ export const Terminal = memo(function Terminal({
       };
       ws.onclose = () => {
         if (disposed) return;
+        connectionRef.current?.(false);
         // Fast retries pick a Resume up promptly; exponential backoff (cap
         // 15s) keeps a long-stopped session from hammering the server with
         // 404 attaches every 1.5s forever.
@@ -223,8 +283,10 @@ export const Terminal = memo(function Terminal({
 
     // User keystrokes -> agent stdin, verbatim (arrows, ctrl-C, partial input).
     const onData = term.onData((data) => {
-      if (ws?.readyState === WebSocket.OPEN)
-        ws.send(new TextEncoder().encode(data));
+      if (ws?.readyState !== WebSocket.OPEN) return;
+      const bytes = new TextEncoder().encode(data);
+      if (kind === "shell") for (let i = 0; i < bytes.length; i += 32768) ws.send(bytes.slice(i, i + 32768));
+      else ws.send(bytes);
     });
 
     // Capture image paste before xterm's normal text handler. Many clipboard
@@ -271,7 +333,9 @@ export const Terminal = memo(function Terminal({
 
     return () => {
       disposed = true;
+      refitRef.current = null;
       activateRef.current = null;
+      focusRef.current = null;
       cancelAttachScroll();
       window.cancelAnimationFrame(fitFrame ?? 0);
       window.clearTimeout(retry);
@@ -295,18 +359,22 @@ export const Terminal = memo(function Terminal({
     // live terminal in place — re-running this one would tear down the WS and
     // rebuild the terminal on every theme switch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionKey]);
+  }, [sessionKey, kind]);
 
   useEffect(() => { activateRef.current?.(active); }, [active, sessionKey]);
+  // Clicking or keyboard-activating the already selected row must also return
+  // focus to its terminal. Context-menu opening does not issue this request.
+  useEffect(() => { if (focusRequest) focusRef.current?.(); }, [focusRequest]);
 
   // height:0 + flex:1 makes the host fill the pane with a DEFINITE height, so
   // xterm scrolls its buffer internally instead of growing the page. (A
   // min-height here would let it expand and scroll the whole dashboard.)
-  const bg = (TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME]).background;
+  const palette = TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME];
   return (
     <div
       ref={hostRef}
-      style={{ flex: 1, height: 0, minHeight: 0, background: bg }}
+      className={enhanced ? "rd-terminal-enhanced" : undefined}
+      style={{ flex: 1, height: 0, minHeight: 0, background: palette.background, "--terminal-dim": `${palette.foreground}d1`, "--terminal-emphasis": palette.mode === "light" ? palette.blue : palette.brightBlue } as CSSProperties}
     />
   );
 });

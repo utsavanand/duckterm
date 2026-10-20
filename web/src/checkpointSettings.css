@@ -1,0 +1,14 @@
+.rd-checkpoint-settings p, .rd-checkpoint-settings small { color: var(--text-muted); line-height: 1.6; }
+.rd-checkpoint-settings p { margin: 8px 0 20px; }
+.rd-checkpoint-settings small { display: block; margin-top: 8px; font-size: 0.75rem; }
+.rd-checkpoint-settings fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.rd-checkpoint-settings label { display: block; font-weight: 600; margin: 22px 0 9px; }
+.rd-checkpoint-settings input { max-width: 170px; }
+.rd-checkpoint-batch-note { margin: 18px 0 25px; border: 1px solid var(--border); border-radius: 8px; padding: 15px; line-height: 1.6; }
+.rd-checkpoint-batch-note strong, .rd-checkpoint-settings footer [role="status"] { color: var(--accent); }
+.rd-checkpoint-models { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; border-top: 1px solid var(--border); padding-top: 4px; }
+.rd-checkpoint-settings .rd-checkpoint-settings-note { border-top: 1px solid var(--border); padding-top: 22px; margin-top: 24px; }
+.rd-checkpoint-settings footer { display: flex; flex-wrap: wrap; gap: 12px; justify-content: flex-end; align-items: center; margin-top: 24px; }
+.rd-checkpoint-settings footer [role="status"] { margin-right: auto; }
+.rd-checkpoint-settings .rd-checkpoint-settings-scope { margin-top: 20px; }
+@media (max-width: 500px) { .rd-checkpoint-models { grid-template-columns: 1fr; gap: 0; } }

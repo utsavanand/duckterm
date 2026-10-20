@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiDelete, apiPatch, seedSession } from "./helpers";
 
@@ -23,7 +24,7 @@ test("context tabs keep connectors reachable, preserve notes and follow the sele
     const session = pane.getByRole("tab", { name: "Session", exact: true });
     const connectors = pane.getByRole("tab", { name: "Connectors", exact: true });
     await expect(session).toHaveAttribute("aria-selected", "true");
-    await pane.getByRole("button", { name: "Notes", exact: true }).click();
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Notes", exact: true }).click();
     await pane.locator("textarea").fill("Unsaved note survives changing views");
     await session.focus(); await page.keyboard.press("ArrowRight");
     await expect(connectors).toBeFocused();

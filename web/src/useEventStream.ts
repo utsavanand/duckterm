@@ -96,6 +96,7 @@ export function reduce(state: State, action: Action): State {
       merged.ptyOwned = persisted.ptyOwned;
       merged.pinned = persisted.pinned;
       if (action.collaboration) merged.group = persisted.group;
+      merged.conversationIdentity = persisted.conversationIdentity;
       // Active lineage is DB-owned. Historical fork events retain provenance,
       // but cannot override a parent that was deleted while this page was away.
       merged.parentKey = persisted.parentKey;
@@ -232,9 +233,11 @@ export function useEventStream(): {
     // fields) change as the agent works but emit no SSE event of their own.
     const t = setInterval(() => { if (collaboration || Date.now() - lastSeed >= 30_000) void seed(); }, 2500);
     window.addEventListener("remote-sessions-refresh", seed);
+    window.addEventListener("conversation-recovery-changed", seed);
     return () => {
       cancelled = true;
       clearInterval(t);
+      window.removeEventListener("conversation-recovery-changed", seed);
       window.removeEventListener("remote-sessions-refresh", seed);
     };
   }, []);

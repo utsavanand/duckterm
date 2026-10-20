@@ -80,7 +80,7 @@ test("side panels reclaim space independently, preserve PTY drafts, and remember
   }
 });
 
-test("collapsed Context rail keeps its reopen arrow inside the viewport with Pin or Pinned", async ({ page }) => {
+test("collapsed Context rail keeps its reopen arrow inside the viewport with pinned or unpinned sessions", async ({ page }) => {
   const result = await apiPost("/sessions/launch", { command: "sh -c 'cat'", cwd: "/tmp", name: "context-reopen-check", in_terminal: false, test: true });
   expect(result.status).toBe(200);
   const key = String(result.body.session_key);
@@ -92,7 +92,7 @@ test("collapsed Context rail keeps its reopen arrow inside the viewport with Pin
     const pane = page.locator(".rd-context-pane");
     const reopen = page.getByRole("button", { name: "Show Context panel", exact: true });
     for (const pinned of [false, true]) {
-      if (pinned) await pane.getByRole("button", { name: "Pin context-reopen-check", exact: true }).click();
+      if (pinned) await page.locator(".rd-agents").getByRole("button", { name: "Pin context-reopen-check", exact: true }).click();
       for (const width of [1970, 1440, 1101, 1000]) {
         await page.setViewportSize({ width, height: 1250 });
         await page.getByRole("button", { name: "Collapse Context panel", exact: true }).click();
@@ -108,7 +108,7 @@ test("collapsed Context rail keeps its reopen arrow inside the viewport with Pin
         if (width === 1970 && !pinned) await page.screenshot({ path: "/tmp/context-reopen-fixed.png" });
         await reopen.click();
         await expect(pane.locator('.rd-context-body')).toBeVisible();
-        await expect(pane.getByRole("button", { name: `${pinned ? "Unpin" : "Pin"} context-reopen-check`, exact: true })).toBeVisible();
+        await expect(page.locator(".rd-agents").getByRole("button", { name: `${pinned ? "Unpin" : "Pin"} context-reopen-check`, exact: true })).toBeVisible();
       }
     }
   } finally {

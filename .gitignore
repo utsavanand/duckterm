@@ -13,4 +13,5 @@ web/dist/
 .uv-suite-state/
 *.tsbuildinfo
 src/duckterm/dashboard/
+src/duckterm/_build.py
 uv-out/

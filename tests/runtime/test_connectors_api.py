@@ -113,3 +113,85 @@ def test_huggingface_anonymous_lifecycle_over_endpoints(
     asyncio.run(server._disable_connector(w, "huggingface"))
     status, body = _status_and_body(w)
     assert (status, body["enabled"]) == (200, False)
+
+
+def test_slow_connector_probe_is_shared_and_one_cancel_does_not_cancel_others(
+    isolated: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def slow_status():
+        calls.append(True)
+        entered.set()
+        assert release.wait(5)
+        return [{"name": "github"}]
+
+    monkeypatch.setattr(connectors, "list_status", slow_status)
+    server = _server(tmp_path)
+
+    async def run():
+        writers = [_W() for _ in range(8)]
+        tasks = [asyncio.create_task(server._list_connectors(w)) for w in writers]
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            await asyncio.sleep(0)
+            tasks[0].cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await tasks[0]
+            assert len(calls) == 1
+            # The event loop stays available while the single CLI probe waits.
+            await asyncio.wait_for(asyncio.sleep(0.01), 0.5)
+            release.set()
+            await asyncio.gather(*tasks[1:])
+            assert all(_status_and_body(w)[0] == 200 for w in writers[1:])
+            await server._list_connectors(_W())
+            assert len(calls) == 2  # Explicit later refresh is not a stale cache.
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            server.history.close()
+            server.digests.close()
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("action", ["enable", "disable", "forget"])
+def test_connector_change_does_not_reuse_a_pre_change_probe(
+    isolated: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, action: str
+) -> None:
+    import threading
+
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def status():
+        calls.append(True)
+        old = len(calls) == 1
+        if old:
+            entered.set()
+            assert release.wait(5)
+        return [{"name": "github", "old": old}]
+
+    monkeypatch.setattr(connectors, "list_status", status)
+    monkeypatch.setattr(connectors, action, lambda *args, **kwargs: {"name": "github"})
+    server = _server(tmp_path)
+
+    async def run():
+        old = asyncio.create_task(server._list_connectors(_W()))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            method = getattr(server, f"_{action}_connector")
+            await method(_W(), "github", *([b"{}"] if action == "enable" else []))
+            current = _W()
+            await asyncio.wait_for(server._list_connectors(current), 1)
+            assert _status_and_body(current)[1]["connectors"][0]["old"] is False
+        finally:
+            release.set()
+            await old
+            server.history.close()
+            server.digests.close()
+
+    asyncio.run(run())

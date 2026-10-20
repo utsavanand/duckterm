@@ -52,21 +52,31 @@ class EventBus:
         self._subscribers: set[asyncio.Queue[Event]] = set()
         self._sink = sink
 
-    def publish(self, raw: Event) -> Event:
+    def publish(self, raw: Event, *, require_persistence: bool = False) -> Event:
         """Stamp the event with _id/_ts, append to the ring buffer, mirror it to
         the sink (persistence), and fan it out to subscribers. Returns the
-        stamped event. A sink failure is logged, not raised."""
+        stamped event. Ordinary sink failures are logged. Launch-time identity
+        requires persistence and fails before fan-out if its sink fails."""
         event = dict(raw)
         event["_id"] = uuid.uuid4().hex
         event["_ts"] = int(time.time() * 1000)
-        self._ring.append(event)
+        if require_persistence and self._sink is None:
+            raise ValueError("Cannot launch without durable conversation identity storage")
+        if not require_persistence:
+            self._ring.append(event)
         if self._sink is not None:
             # A persistence failure must not break the live stream or the
             # request; the event still reaches the ring and SSE subscribers.
             try:
                 self._sink(event)
             except Exception as exc:  # noqa: BLE001 - sink is untrusted at this boundary
+                if require_persistence:
+                    raise ValueError(
+                        "Cannot persist conversation identity; agent was not started"
+                    ) from exc
                 print(f"[duckterm] event sink failed: {exc}", file=sys.stderr)
+        if require_persistence:
+            self._ring.append(event)
         for queue in self._subscribers:
             queue.put_nowait(event)
         return event

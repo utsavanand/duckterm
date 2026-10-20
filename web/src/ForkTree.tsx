@@ -64,8 +64,8 @@ function Node({
             display: "inline-block",
           }}
         />
-        <span style={{ fontSize: 13, fontWeight: 500 }}>{label}</span>
-        <span style={{ fontSize: 12, color: "#6b7280" }}>{node.state}</span>
+        <span style={{ fontSize: "0.8125rem", fontWeight: 500 }}>{label}</span>
+        <span style={{ fontSize: "0.75rem", color: "#6b7280" }}>{node.state}</span>
       </div>
       {node.children
         .sort((a, b) => a.started_at - b.started_at)
@@ -96,10 +96,10 @@ export function ForkTree({
     <section className="rd-tree">
       <div className="rd-section-title">Fork tree</div>
       {forest.length === 0 ? (
-        <p style={{ fontSize: 13, color: "#9ca3af" }}>No sessions yet.</p>
+        <p style={{ fontSize: "0.8125rem", color: "#9ca3af" }}>No sessions yet.</p>
       ) : (
         <>
-          <p style={{ fontSize: 13, color: "#9ca3af", marginTop: 0 }}>
+          <p style={{ fontSize: "0.8125rem", color: "#9ca3af", marginTop: 0 }}>
             Each top-level row is a session; forks nest underneath their parent.
           </p>
           {forest

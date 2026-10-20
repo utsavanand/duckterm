@@ -33,6 +33,10 @@ test("filters across folders, persists choices, and restores expansion and selec
     await expect(page.locator(".rd-row-name", { hasText: "filter-active" })).toHaveCount(0);
     await expect(page.locator(".rd-row-folder", { hasText: folders[1] })).toBeVisible();
     await expect(page.locator(".rd-row-name", { hasText: "filter-waiting" })).toBeVisible();
+    // Filtered rows keep their Focus pin without selecting a different terminal.
+    await page.locator(".rd-agents").getByRole("button", { name: "Pin filter-waiting", exact: true }).click();
+    await expect(page.locator(".rd-agents").getByRole("button", { name: "Unpin filter-waiting", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator(".rd-context-pane > .rd-panel-head")).toContainText("filter-active");
     // A different harness must produce an explicit empty state, not a blank tree.
     await filters.getByRole("button", { name: /^Codex / }).click();
     await expect(page.getByText("No sessions match these filters.")).toBeVisible();

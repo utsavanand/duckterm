@@ -1,5 +1,5 @@
-import { hostName } from "./hostTransport";
-import { useCallback, useEffect, useState } from "react";
+import { hostName, sessionRef, splitSessionRef } from "./hostTransport";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, Connector, ConnectorCheck } from "./api";
 import { useToast } from "./ui";
 
@@ -50,25 +50,54 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
   const [write, setWrite] = useState(false);
   const [harnesses, setHarnesses] = useState<string[]>(HARNESS_ORDER);
   const [checks, setChecks] = useState<Record<string, ConnectorCheck & { at: number }>>({});
+  // Status and usage belong to a host, not its selected session. In-flight CLI
+  // probes must not multiply every time the selection or window focus changes.
+  const host = splitSessionRef(sessionKey).host;
+  const context = host === "local" ? "" : sessionRef(host, "connectors");
+  const currentHost = useRef(host);
+  currentHost.current = host;
+  const pending = useRef<AbortController | null>(null);
+  const revision = useRef(0);
+  const lifetime = useRef(0);
+  const invalidate = useCallback(() => {
+    ++revision.current;
+    pending.current?.abort();
+    pending.current = null;
+  }, []);
 
   async function verify(c: Connector) {
+    const epoch = lifetime.current;
+    const current = () => lifetime.current === epoch && currentHost.current === host;
     setBusy(c.name);
     try {
       const result = await api.verifyConnector(c.name, sessionKey);
+      if (!current()) return;
       setChecks(prev => ({ ...prev, [c.name]: { ...result, at: Date.now() } }));
     } catch (e) {
-      toast(`${c.title}: ${(e as Error).message}`, "err");
+      if (current()) toast(`${c.title}: ${(e as Error).message}`, "err");
     } finally {
-      setBusy(null);
+      if (current()) setBusy(null);
     }
   }
 
-  const refresh = useCallback(() => { api.connectors(sessionKey).then(d => setRows(d.connectors)).catch(() => undefined); }, [sessionKey]);
+  const refresh = useCallback(() => {
+    if (pending.current) return;
+    const controller = new AbortController();
+    pending.current = controller;
+    const stamp = ++revision.current;
+    void api.connectors(context, controller.signal).then(d => {
+      if (stamp === revision.current) setRows(d.connectors);
+    }).catch(() => undefined).finally(() => {
+      if (pending.current === controller) pending.current = null;
+    });
+  }, [context]);
   useEffect(() => {
+    const epoch = ++lifetime.current;
+    setRows([]); setChecks({}); setEditing(null); setToken(""); setSecret(""); setBusy(null);
     refresh();
     window.addEventListener("focus", refresh);
-    return () => window.removeEventListener("focus", refresh);
-  }, [refresh]);
+    return () => { lifetime.current = epoch + 1; invalidate(); window.removeEventListener("focus", refresh); };
+  }, [refresh, invalidate]);
 
   function edit(c: Connector) {
     setEditing(c.name);
@@ -80,24 +109,29 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
   }
 
   async function change(c: Connector, action: "enable" | "disable" | "forget") {
+    const epoch = lifetime.current;
+    const current = () => lifetime.current === epoch && currentHost.current === host;
     if (action === "forget" && !window.confirm(`Forget credentials stored by Duckterm for ${c.title}? This also disables the connector. CLI logins and provider authorization remain active.`)) return;
     setBusy(c.name);
     try {
       const next = action === "enable"
         ? await api.enableConnector(c.name, editing === c.name ? token.trim() || undefined : undefined, editing === c.name ? secret.trim() || undefined : undefined, source, write, sessionKey, editing === c.name ? harnesses : undefined)
         : action === "forget" ? await api.forgetConnector(c.name, sessionKey) : await api.disableConnector(c.name, sessionKey);
+      if (!current()) return;
+      invalidate(); // An older status response cannot undo this confirmed change.
       setRows(rs => rs.map(r => r.name === next.name ? next : r));
       setEditing(null);
       setToken("");
       setSecret("");
       toast(action === "enable" ? `${c.title} enabled — available to new agent sessions` : `${c.title} disabled in Duckterm${action === "forget" ? "; stored credentials removed" : "; authorization retained"}`);
     } catch (e) {
+      if (!current()) return;
       // Clear submitted secrets even when validation fails.
       setToken("");
       setSecret("");
       toast(`${c.title}: ${(e as Error).message}`, "err");
     } finally {
-      setBusy(null);
+      if (current()) setBusy(null);
     }
   }
 

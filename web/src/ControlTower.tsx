@@ -191,7 +191,7 @@ function AgentDuck({
       type="button"
       data-duck={agent.key}
       className={`rd-tower-duck s-${state}${stuck ? " stuck" : ""}${pinned ? " pinned" : ""}${pose === "sleeping" ? " resting" : ""}`}
-      aria-label={`${agent.label}, ${teamOf(agent)}, ${stuck ? "looks stuck" : STATE_WORD[state] ?? state}${sessionLocation(agent).remote ? `, ${sessionLocation(agent).label}` : ""}`}
+      aria-label={`${agent.label}, ${teamOf(agent)}, ${stuck ? "looks stuck" : (state === "unknown" ? "Status unavailable" : STATE_WORD[state] ?? state)}${sessionLocation(agent).remote ? `, ${sessionLocation(agent).label}` : ""}`}
       onMouseEnter={(e) => onHover(e.currentTarget)}
       onMouseLeave={() => onHover(null)}
       onFocus={(e) => onHover(e.currentTarget)}
@@ -303,7 +303,7 @@ function AgentCard({
     >
       <div className="rd-tower-card-head">
         <span className="rd-tower-card-name">{agent.label}</span>
-        <span className={`rd-tower-pill s-${stuck ? "stuck" : state}`}>{stuck ? "Looks stuck" : STATE_WORD[state] ?? state}</span>
+        <span className={`rd-tower-pill s-${stuck ? "stuck" : state}`}>{stuck ? "Looks stuck" : (state === "unknown" ? "Status unavailable" : STATE_WORD[state] ?? state)}</span>
       </div>
       <div className="rd-tower-card-meta">
         {[sessionLocation(agent).remote ? sessionLocation(agent).label : null, agent.group || "No folder", agent.runtime, agent.model].filter(Boolean).join(" · ")} · updated {ago(now - agent.updatedAt)} ago

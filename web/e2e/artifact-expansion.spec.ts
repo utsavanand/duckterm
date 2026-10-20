@@ -18,7 +18,7 @@ test("full-window artifacts preserve the preview, selection feedback and return 
       ["txt", "Notes", "Plain text review"],
       ["svg", "Diagram", '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="300"><rect width="600" height="300" fill="#eaf0e7"/><text x="40" y="150" font-size="30">Review → Feedback → Revision</text></svg>'],
     ]) {
-      const registered = await fetch(`${base()}/api/v1/session/artifacts`, { method: "POST", headers: { Authorization: `Bearer ${enrollment.body.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ source_path: `/tmp/expansion.${ext}`, title, content_base64: Buffer.from(content).toString("base64") }) });
+      const registered = await fetch(`${base()}/api/v1/session/artifacts`, { method: "POST", headers: { Authorization: `Bearer ${enrollment.body.token}`, "Content-Type": "application/json" }, body: JSON.stringify({ source_path: `/tmp/expansion.${ext}`, title, kind: "preview", content_base64: Buffer.from(content).toString("base64") }) });
       expect(registered.status).toBe(200);
     }
     await page.goto(base());
@@ -27,6 +27,7 @@ test("full-window artifacts preserve the preview, selection feedback and return 
     await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
     await page.keyboard.type("PRESERVE_EXPANSION_DRAFT");
     await page.getByRole("button", { name: "Artifacts", exact: true }).click();
+    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     await page.getByRole("button", { name: /Markdown Release review/ }).click();
     const heading = page.frameLocator('.rd-artifact-frame').getByRole("heading");
     await heading.click();

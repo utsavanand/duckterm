@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -40,10 +41,10 @@ test("notes open, save, and persist on the session", async ({ page }) => {
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").getByRole("button", { name: /^Notes/ }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: /^Notes/ }).click();
 
   await page.locator(".rd-session-controls .rd-row-notes").fill("check the retry logic");
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Save" }).click();
+  await page.locator(".rd-session-controls").getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Notes saved")).toBeVisible();
 
   const res = await fetch(`${base()}/sessions/${key}`);
@@ -85,7 +86,7 @@ test("AGENTS.md modal saves the folder's shared instructions", async ({
 test("Settings theme selection persists after reload", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  const theme = page.getByRole("combobox", { name: "Theme", exact: true });
+  const theme = page.getByRole("combobox", { name: "App theme", exact: true });
   await theme.selectOption("dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await page.reload();

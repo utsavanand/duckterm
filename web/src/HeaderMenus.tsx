@@ -1,7 +1,6 @@
+import type { Theme } from "./useTheme";
 import { UpdateDuckTerm } from "./UpdateDuckTerm";
 import { useEffect, useRef, useState } from "react";
-import { AUTO, TermMode, themesForMode } from "./termThemes";
-import { Theme } from "./useTheme";
 import { SidebarDensity } from "./useSidebarDensity";
 import "./headerMenus.css";
 import { VOICE_LEVELS, VoiceChoice, VoiceLevel } from "./voice";
@@ -9,14 +8,11 @@ import { NaturalVoicePanel, VoicePicker } from "./VoiceControl";
 import { LocalVoiceStatus } from "./api";
 
 type Menu = "settings" | "new";
-export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, termTheme, onTermTheme, notifyOn, onNotify, notificationHelp, voiceLevel, onVoiceLevel, voice, onAction }: {
+export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNotify, notificationHelp, voiceLevel, onVoiceLevel, voice, onAction }: {
+  theme?: Theme;
+  onTheme?: (theme: Theme) => void;
   density: SidebarDensity;
   onDensity: (density: SidebarDensity) => void;
-  theme: Theme;
-  onTheme: (theme: Theme) => void;
-  termMode: TermMode;
-  termTheme: string;
-  onTermTheme: (theme: string) => void;
   notifyOn: boolean;
   onNotify: () => void;
   notificationHelp?: string;
@@ -33,7 +29,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
     onInstall: () => void;
     onRemove: () => void;
   };
-  onAction: (action: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration") => void;
+  onAction: (action: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "appearance") => void;
 }) {
   const [open, setOpen] = useState<Menu | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -63,7 +59,7 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
     };
   }, [open]);
 
-  const action = (value: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration") => {
+  const action = (value: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "appearance") => {
     setOpen(null);
     onAction(value);
   };
@@ -75,14 +71,8 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
         if (event.key === "ArrowDown") { event.preventDefault(); setOpen("settings"); }
       }}>Settings <span aria-hidden="true">▾</span></button>
       {open === "settings" && <section id="header-settings-panel" className="rd-header-popup rd-settings-popup" aria-label="Settings">
-        <div className="rd-header-menu-group">Appearance</div>
-        <label className="rd-header-menu-field">Theme<select value={theme} onChange={(event) => onTheme(event.target.value as Theme)}>
-          <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
-        </select></label>
-        <label className="rd-header-menu-field">Terminal colors<select className="rd-term-theme" title={`Terminal color theme (${termMode} mode)`} value={termTheme} onChange={(event) => onTermTheme(event.target.value)}>
-          <option value={AUTO}>Auto ({termMode})</option>
-          {themesForMode(termMode).map((name) => <option key={name} value={name}>{name}</option>)}
-        </select></label>
+        <button className="rd-header-menu-item" onClick={() => action("appearance")}>Text sizes <span aria-hidden="true">›</span></button>
+        {onTheme && <label className="rd-header-menu-field">App theme<select value={theme} onChange={e => onTheme(e.target.value as Theme)}><option value="system">Follow system</option><option value="dark">Dark</option><option value="light">Light</option></select></label>}
         <label className="rd-header-menu-field">Sidebar density<select value={density} onChange={(event) => onDensity(event.target.value as SidebarDensity)}>
           <option value="compact">Compact</option><option value="standard">Standard</option><option value="relaxed">Relaxed</option>
         </select></label>
@@ -105,9 +95,10 @@ export function HeaderMenus({ density, onDensity, theme, onTheme, termMode, term
         </div>
         <div className="rd-header-menu-divider" />
         <button className="rd-header-menu-item" onClick={() => action("collaboration")}>Collaboration <span aria-hidden="true">›</span></button>
+        <button className="rd-header-menu-item" onClick={() => action("checkpointing")}>Checkpointing <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("bugreport")}>Report a bug <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>
-        <button className="rd-header-menu-item" title="Manage meta-harnesses for your projects" onClick={() => action("harnesses")}>Harnesses <span aria-hidden="true">›</span></button>
+        <button className="rd-header-menu-item" title="Manage skill kits for your projects" onClick={() => action("harnesses")}>Harnesses <span aria-hidden="true">›</span></button>
         <div className="rd-header-menu-divider" /><UpdateDuckTerm />
       </section>}
     </div>

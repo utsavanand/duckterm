@@ -207,6 +207,7 @@ class ForkMerges:
             return
         record = {
             "kind": "merge",
+            "format": "checkpoint_fork_merge_v1",
             "from_session": row["child"],
             "request_key": row["id"],
             "message_id": row["message_id"],
@@ -218,7 +219,7 @@ class ForkMerges:
                 "merge-" + row["message_id"],
                 row["parent"],
                 "Merge from fork",
-                row["summary"],
+                "",
                 json.dumps(record),
                 int(time.time() * 1000),
             ),

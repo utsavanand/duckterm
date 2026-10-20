@@ -605,13 +605,16 @@ class Service:
 
     async def combined_inbox(
         self,
-        key: str,
+        key: str | None,
         before: str | None = None,
         *,
         owner: bool = False,
         view: str | None = None,
+        folder: str | None = None,
     ) -> dict[str, Any]:
         """Page each durable source independently; never let one hide the other."""
+        if folder is not None and not owner:
+            raise APIError(403, "Folder interaction history requires owner access")
         limit = 9223372036854775807
         try:
             if before and before.startswith("cc:"):
@@ -628,13 +631,35 @@ class Service:
             raise APIError(400, "Invalid inbox cursor") from exc
         api = self.history.session_api
         # Cursor zero means that source was exhausted on the preceding page.
-        result = api.inbox(key, before=local_before or 1, owner=owner, view=view)
+        if folder is not None:
+            result = api.folder_inbox(folder, before=local_before or 1, view=view)
+        else:
+            assert key is not None
+            result = api.inbox(key, before=local_before or 1, owner=owner, view=view)
         if not local_before:
             result.update(messages=[], next_cursor=None)
         local_next = result["next_cursor"]
         remote_next = 0
         try:
-            questions = await self.inbox(key, read=False)
+            if folder is not None:
+                if not await self.sync():
+                    raise APIError(
+                        503,
+                        "Cross-computer history unavailable until coordinator access is restored",
+                    )
+                members = {
+                    self.own_ref(row["session_key"])
+                    for row in self.history.sessions()
+                    if row.get("grp") == folder or (row.get("grp") or "").startswith(folder + "/")
+                }
+                questions = [
+                    q
+                    for q in self.cached("questions", [])
+                    if members.intersection((q["sender"], q["recipient"]))
+                ]
+            else:
+                assert key is not None
+                questions = await self.inbox(key, read=False)
             if view is not None:
                 totals = result.setdefault("counts", {"all": 0, "pending": 0, "answered": 0})
                 for q in questions:
@@ -658,6 +683,7 @@ class Service:
             page = questions[:50]
             remote_next = page[-1]["sequence"] if len(questions) > 50 else 0
             if not owner:
+                assert key is not None
                 self.mark_read(key, page)
             result["messages"].extend(page)
             result["messages"].sort(key=lambda q: (q["created_at"], q["id"]), reverse=True)

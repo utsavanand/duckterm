@@ -13,6 +13,7 @@ export interface DucktermEvent {
   session_name?: string;
   name?: string;
   lifecycle?: string;
+  native_state?: string;
   branch?: string;
   repo_path?: string;
   worktree_path?: string;
@@ -40,6 +41,7 @@ export function waitingCauseOf(eventType?: string, notificationType?: string, to
 }
 
 export type SessionState =
+  | "unknown"
   | "idle"
   | "busy"
   | "waiting"
@@ -54,7 +56,14 @@ export interface DuckCelebration {
   startedAt: number;
 }
 
+export interface ConversationBinding {
+  status: "missing" | "pending" | "recorded" | "contested";
+  source: "none" | "assigned" | "observed" | "adopted";
+  assignable: boolean;
+}
+
 export interface SessionView {
+  conversationIdentity?: ConversationBinding;
   host?: string;
   hostLabel?: string;
   hostOffline?: boolean;
@@ -107,6 +116,7 @@ export interface ProgressDigest {
 
 /** A persisted session row from GET /sessions (SQLite, snake_case). */
 export interface PersistedSession {
+  conversation_identity?: ConversationBinding;
   remote_transfer?: SessionView["remoteTransfer"];
   session_key: string;
   pinned?: number;
@@ -139,7 +149,7 @@ export interface PersistedSession {
   subagents?: SubAgent[];
   context_tokens?: number | null; // server-computed from the transcript tail
   model?: string | null; // model id of the last assistant call
-  suites?: string[]; // meta-harnesses detected for this session (e.g. uv-suite)
+  suites?: string[]; // skill kits detected for this session (e.g. uv-suite)
 }
 
 /** A sub-agent the session spawned via the Task tool (GET /sessions embeds these). */
@@ -184,6 +194,7 @@ function parseProgress(raw: string | null | undefined): ProgressDigest | undefin
 export function viewFromPersisted(s: PersistedSession): SessionView {
   return {
     key: s.session_key,
+    conversationIdentity: s.conversation_identity,
     pinned: s.pinned === 1,
     remoteTransfer: s.remote_transfer,
     label: s.name || s.source_app || s.session_key.slice(0, 8),

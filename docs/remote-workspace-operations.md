@@ -28,6 +28,11 @@ new codes does not fix that. Enable the setting first, then start one fresh
 The CLI must report success; browser account sign-in alone is not confirmation.
 Verify afterward with `codex login status`.
 
+In the Mac app, hold **Option** while dragging across terminal text, then press
+**Command-C** to copy. This works even when an agent captures mouse input;
+soft-wrapped URLs copy as one line. An agent’s remote `c to copy` shortcut does
+not necessarily copy to the Mac clipboard.
+
 Claude uses `claude auth login --claudeai`; paste its browser-returned code
 directly into the remote login terminal. Verify with `claude auth status`.
 Neither flow requires copying the laptop's credential cache. Both authenticate

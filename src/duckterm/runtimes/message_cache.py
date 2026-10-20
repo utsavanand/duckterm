@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from copy import deepcopy
@@ -10,6 +11,9 @@ from pathlib import Path
 from threading import RLock
 
 Parser = Callable[[Iterable[str], int], list[dict[str, object]]]
+# Fast writes can share even nanosecond-valued mtime/ctime on Linux. Only
+# trust stat after checking the bytes beyond this filesystem timestamp window.
+STAMP_WINDOW_NS = 2_000_000_000
 
 
 @dataclass
@@ -17,6 +21,8 @@ class _State:
     identity: tuple[int, int]
     stamp: tuple[int, int, int] = (0, 0, 0)
     digest: bytes = field(default_factory=lambda: hashlib.sha256().digest())
+    content_digest: bytes = b""
+    verified_at: int = 0
     offset: int = 0
     lines: int = 0
     records: list[dict[str, object]] = field(default_factory=list)
@@ -28,8 +34,9 @@ class _State:
 class MessageCache:
     """Keep at most eight transcripts / 128 MiB of source per runtime.
 
-    Unchanged files require only stat. Appends reread from the last complete
-    line, so a partially written JSON record is retried without duplicate IDs.
+    Settled unchanged files require only stat. Recent files verify their bytes
+    until a read occurs beyond the timestamp collision window. Appends parse
+    from the last complete line, so partial records retry without duplicate IDs.
     Changed files verify the committed prefix before parsing the new suffix;
     a growing rewrite must not retain stale message contents or pin identities.
     Returned records are deeply detached, including nested tool input and blocks.
@@ -71,11 +78,17 @@ class MessageCache:
             identity = (stat.st_dev, stat.st_ino)
             stamp = (stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
             state = self._states.get(path)
-            if state is not None and state.identity == identity and state.stamp == stamp:
+            if (
+                state is not None
+                and state.identity == identity
+                and state.stamp == stamp
+                and state.verified_at > max(stamp[1:]) + STAMP_WINDOW_NS
+            ):
                 self._states.move_to_end(path)
                 return state
-            if state is None or state.identity != identity or stat.st_size <= state.stamp[0]:
+            if state is None or state.identity != identity or stat.st_size < state.stamp[0]:
                 state = _State(identity)
+            verified_at = time.time_ns()
             with path.open("rb") as source:
                 # Size growth alone does not establish an append: transcript
                 # rewrites can grow too. Hash the committed prefix in bounded
@@ -93,6 +106,13 @@ class MessageCache:
                     digest = hashlib.sha256()
                     source.seek(0)
                 data = source.read(stat.st_size - state.offset)
+            content_digest = digest.copy()
+            content_digest.update(data)
+            state.verified_at = verified_at
+            if content_digest.digest() == state.content_digest:
+                state.stamp = stamp
+                self._states.move_to_end(path)
+                return state
             end = data.rfind(b"\n") + 1
             lines = data[:end].decode(errors="replace").splitlines()
             state.records.extend(self._parser(lines, state.lines))
@@ -100,6 +120,7 @@ class MessageCache:
             state.offset += end
             digest.update(data[:end])
             state.digest = digest.digest()
+            state.content_digest = content_digest.digest()
             # Preserve the full parser's support for a valid final record
             # without a newline, but do not commit that potentially partial line.
             state.trailing = self._parser(

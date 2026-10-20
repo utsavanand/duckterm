@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiPost, findSession } from "./helpers";
 
@@ -24,7 +25,7 @@ test("stop pauses a PTY session; resume relaunches its recorded command", async 
   await expect(row).toBeVisible({ timeout: 10_000 });
 
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Stop", exact: true }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: "Stop", exact: true }).click();
   // Stopping a tmux-backed session waits for its tail loop to notice the pane
   // died — give it the same headroom as the resume poll (the 5s default flakes
   // when the whole suite runs).
@@ -38,7 +39,7 @@ test("stop pauses a PTY session; resume relaunches its recorded command", async 
   // The stopped row offers Resume; the relaunch runs `sh -c ...` again (the
   // recorded command), so the terminal reconnects and shows the banner.
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Resume" }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: "Resume" }).click();
   await expect
     .poll(
       async () => (await findSession((s) => s.session_key === key))?.state,

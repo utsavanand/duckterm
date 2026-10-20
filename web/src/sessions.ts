@@ -35,6 +35,12 @@ function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
   // tags these events before they reach the stream, so the badge the stream
   // drives must read them the same way or the two disagree.
   switch (e.event_type) {
+    case "NativeStatus":
+      if (e.runtime === "opencode") {
+        return ["idle", "busy", "waiting", "unknown"].includes(e.native_state ?? "")
+          ? e.native_state as SessionState : prev ?? "unknown";
+      }
+      return prev ?? "busy";
     case "PermissionRequest":
       return e.auto_reviewed ? "busy" : "waiting";
     case "Notification":
@@ -66,7 +72,8 @@ export function effectiveState(s: SessionView, now: number, settleMs = IDLE_SETT
     s.state === "interrupted" ||
     s.state === "archived" ||
     s.state === "merged" ||
-    s.state === "waiting"
+    s.state === "waiting" ||
+    s.state === "unknown"
   )
     return s.state;
   if (s.idleSince !== undefined && now - s.idleSince >= settleMs)
@@ -155,6 +162,7 @@ export function applyEvent(
     contextTokens: prev?.contextTokens,
     model: prev?.model,
     metaHarnesses: prev?.metaHarnesses,
+    conversationIdentity: prev?.conversationIdentity,
     startedAt: prev?.startedAt ?? e._ts,
     updatedAt: e._ts,
     eventCount: (prev?.eventCount ?? 0) + 1,
@@ -217,4 +225,8 @@ export function contextLevel(
 
 export function fmtTokens(n: number): string {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+export function sessionStateLabel(state: string): string {
+  return state === "unknown" ? "Status unavailable" : state;
 }

@@ -264,3 +264,14 @@ def test_recipient_is_private_configuration_and_github_stays_disabled(app, monke
     assert request(app, "GET", "/bugreport/context")[1]["recipient"] == "support@example.test"
     private.write_text("support@example.test\r\nBcc:other@example.test")
     assert request(app, "GET", "/bugreport/context")[0] == 400
+
+
+def test_reviewed_version_diagnostic_includes_build_identity(app, monkeypatch):
+    monkeypatch.setattr(
+        bug_reports.build_info,
+        "installed",
+        lambda: {"installed_commit": "a" * 40, "installed_describe": "v0.4.132-2-gaaaaaaa-dirty"},
+    )
+    status, context = request(app, "GET", "/bugreport/context")
+    version = next(row["text"] for row in context["items"] if row["id"] == "version")
+    assert status == 200 and "a" * 40 in version and "v0.4.132-2-gaaaaaaa-dirty" in version

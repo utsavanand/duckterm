@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { apiDelete, apiPost, findSession, seedSession } from "./helpers";
 
@@ -18,7 +19,7 @@ test("archive hides the session for good; resume is refused", async ({
 
   // Archive it.
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Archive", exact: true }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: "Archive", exact: true }).click();
 
   // It leaves the agents list...
   await expect(page.locator(".rd-row", { hasText: key })).toHaveCount(0);

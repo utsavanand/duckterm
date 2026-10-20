@@ -1,3 +1,4 @@
+import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { postEvent, seedSession, sessions } from "./helpers";
 
@@ -18,8 +19,8 @@ test("a deleted watched session is not resurrected by its later events", async (
 
   // Remove it from the UI (watched session: "Stop watching", double-confirm).
   await row.locator(".rd-row-click").click();
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Stop watching" }).click();
-  await page.locator(".rd-session-controls").getByRole("button", { name: "Confirm?" }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: "Stop watching" }).click();
+  await page.getByRole("dialog", { name: "Confirm session removal" }).getByRole("button", { name: "Stop watching" }).click();
   await expect(row).toHaveCount(0);
 
   // The watched session's hooks keep firing — simulate more events for the key.

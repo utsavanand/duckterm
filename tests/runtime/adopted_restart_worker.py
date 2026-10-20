@@ -44,7 +44,7 @@ async def run():
             + "\n"
         )
         await s.orchestrator.launch(
-            runtime=ClaudeCodeRuntime(str(root / "bin/claude")),
+            runtime=ClaudeCodeRuntime(str(root / "bin/claude") + " --session-id " + sid),
             cwd=str(cwd),
             session_key=key,
             test=True,

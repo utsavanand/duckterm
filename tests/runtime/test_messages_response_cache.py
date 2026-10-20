@@ -33,6 +33,9 @@ def test_http_snapshot_matches_existing_keys_and_reuses_without_mutable_read(
 ) -> None:
     path = tmp_path / "transcript.jsonl"
     path.write_bytes(record("hello", codex))
+    stamp = path.stat()
+    settled = max(stamp.st_mtime_ns, stamp.st_ctime_ns) + 3_000_000_000
+    monkeypatch.setattr(time, "time_ns", lambda: settled)
     runtime = CodexRuntime if codex else ClaudeCodeRuntime
     name = "codex" if codex else "claude-code"
     monkeypatch.setattr(runtime, "locate_transcript", lambda *args, **kwargs: path)

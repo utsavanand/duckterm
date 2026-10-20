@@ -48,7 +48,13 @@ def test_checkpoint_records_session_activity(git_repo: Path, tmp_path: Path) -> 
                 _post,
                 port,
                 "/sessions/launch",
-                {"command": agent, "repo_path": str(git_repo), "branch": "cp", "session_key": "c"},
+                {
+                    "command": agent,
+                    "repo_path": str(git_repo),
+                    "branch": "cp",
+                    "session_key": "c",
+                    "test": True,
+                },
             )
             await asyncio.sleep(0.3)
             # Some activity to capture.
@@ -60,11 +66,15 @@ def test_checkpoint_records_session_activity(git_repo: Path, tmp_path: Path) -> 
             )
             await asyncio.to_thread(_post, port, "/sessions/c/checkpoint", {"label": "progress"})
             checkpoints = await asyncio.to_thread(_get, port, "/sessions/c/checkpoints")
-            return checkpoints["checkpoints"][0]  # type: ignore[index,return-value]
+            result = checkpoints["checkpoints"][0]
+            store.purge_test_sessions()
+            store.close()
+            return result
 
     cp = asyncio.run(scenario())
     assert cp["label"] == "progress"
-    assert cp["summary"]  # a record was produced
+    assert cp["saved"] and cp["summary_state"] == "unavailable"
+    assert not cp["handoff_eligible"]  # persisted facts do not imply a usable summary
     assert "do the thing" in cp["record"]["prompts"]
 
 

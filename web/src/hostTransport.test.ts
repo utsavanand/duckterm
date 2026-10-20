@@ -72,3 +72,49 @@ it("preserves remote ZIP bytes instead of decoding binary as text", async () => 
   expect(response.headers.get("Content-Type")).toBe("application/zip");
   expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
 });
+
+it("routes shell lifecycle and its terminal to the remote owner without local credentials", async () => {
+  const { terminalSocket } = await import("./hostTransport");
+  const local = vi.fn(); vi.stubGlobal("fetch", local);
+  const request = vi.fn().mockResolvedValue({ status: 200, body: '{"open":true}', opened: true });
+  window.webkit = { messageHandlers: { launchRequest: { postMessage: request } } };
+  const key = sessionRef("remote-shell", "same");
+  await routedFetch(`/sessions/${encodeURIComponent(key)}/shell`, { method: "POST", headers: { "X-Duckterm-Token": "local-secret" }, body: "{}" });
+  expect(request).toHaveBeenCalledWith({ target: "remote-shell", operation: "session-request", params: { path: "/sessions/same/shell", method: "POST", body: "{}" } });
+  const socket = terminalSocket(key, "shell");
+  expect(request).toHaveBeenCalledWith(expect.objectContaining({ target: "remote-shell", operation: "terminal-open", params: expect.objectContaining({ key: "same", kind: "shell" }) }));
+  expect(local).not.toHaveBeenCalled();
+  expect(JSON.stringify(request.mock.calls)).not.toContain("local-secret");
+  socket.close();
+  delete window.webkit;
+  await expect(routedFetch(`/sessions/${encodeURIComponent(key)}/shell`)).rejects.toThrow();
+  expect(local).not.toHaveBeenCalled();
+});
+
+it("preserves remote text metadata before binary snapshot bytes", async () => {
+  const { terminalSocket } = await import("./hostTransport");
+  const request = vi.fn().mockResolvedValue({ opened: true });
+  window.webkit = { messageHandlers: { launchRequest: { postMessage: request } } };
+  const socket = terminalSocket(sessionRef("remote", "snapshot"));
+  const received = vi.fn(); socket.onmessage = received;
+  const id = request.mock.calls[0][0].params.id;
+  const metadata = '{"snapshot":{"cols":120,"rows":40}}';
+  window.dispatchEvent(new CustomEvent("remote-terminal", { detail: { id, text: metadata } }));
+  window.dispatchEvent(new CustomEvent("remote-terminal", { detail: { id, data: btoa("ABC") } }));
+  expect(received.mock.calls.map(call => call[0].data)).toEqual([metadata, new Uint8Array([65, 66, 67]).buffer]);
+  expect(socket.readyState).toBe(1);
+  socket.close();
+});
+
+
+it("reports legacy-host plain-text errors without losing their HTTP status", async () => {
+  const remote = vi.fn().mockResolvedValue({ status: 404, body: "not found" });
+  window.webkit = { messageHandlers: { launchRequest: { postMessage: remote } } };
+  const result = await hostFetch("old-remote", "/sessions/stopped/shell");
+  expect(result.status).toBe(404);
+  expect((await result.json()).error).toContain("DuckTerm update");
+  remote.mockResolvedValue({ status: 502, body: "<html>private upstream details</html>" });
+  expect(await (await hostFetch("old-remote", "/sessions")).json()).toEqual({ error: "Remote request failed (HTTP 502)." });
+  remote.mockResolvedValue({ status: 200, body: "plain file contents" });
+  expect(await (await hostFetch("old-remote", "/file?path=notes")).text()).toBe("plain file contents");
+});

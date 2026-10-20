@@ -1,0 +1,15 @@
+.rd-appearance-dialog { width: min(510px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow: auto; padding: 24px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg-soft); color: var(--text); font-family: var(--ui-font, system-ui); }
+.rd-appearance-dialog::backdrop { background: #0006; }
+.rd-appearance-dialog > header { display: flex; gap: 16px; justify-content: space-between; align-items: flex-start; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.rd-appearance-dialog h2 { margin: 0 0 6px; font-size: 1.5rem; }
+.rd-appearance-dialog h3 { margin: 0 0 6px; font-size: 1rem; }
+.rd-appearance-dialog p { margin: 0; color: var(--text-soft); font-size: .875rem; }
+.rd-appearance-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 24px 0; border-bottom: 1px solid var(--border); }
+.rd-appearance-row > div:first-child { max-width: 250px; }
+.rd-appearance-size { display: flex; gap: 8px; align-items: center; white-space: nowrap; }
+.rd-appearance-size button { width: 32px; flex-shrink: 0; padding: 6px 0; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg-soft); color: var(--text); font: inherit; cursor: pointer; }
+.rd-appearance-size button:disabled { opacity: .4; cursor: default; }
+.rd-appearance-size output { min-width: 42px; text-align: center; font-variant-numeric: tabular-nums; }
+.rd-appearance-dialog footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 20px 0; }
+.rd-appearance-dialog .rd-appearance-note { font-size: .8125rem; }
+@media (max-width: 460px) { .rd-appearance-dialog { padding: 18px; }.rd-appearance-row { flex-wrap: wrap; } }
