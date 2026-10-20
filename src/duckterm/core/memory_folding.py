@@ -167,6 +167,10 @@ async def prepare(
             "policy": captured["policy"],
             "source_at": now,
             "input_key": "fold:" + attempt["input_key"],
+            "trigger": {
+                "kind": "compaction",
+                "initiator": captured.get("trigger", {"kind": "internal_refresh"}),
+            },
             "summary": result["context"]["overview"],
             "context_version": 2,
             "span": "incremental",
