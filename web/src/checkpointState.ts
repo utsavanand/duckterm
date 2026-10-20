@@ -29,9 +29,9 @@ export function checkpointStatus(cp: Partial<CheckpointRecord>) {
   if (cp.format === "fork_merge") label = "Merge note";
   else if (cp.saved === false) label = "Not saved";
   else if (cp.coverage?.state === "missing" || cp.reason_codes?.includes("source_missing")) label = "Incomplete coverage";
+  else if (cp.summary_update?.state === "failed") label = "Summary update failed";
   else if (checkpointSummaryMissing(cp)) label = "Summary unavailable";
   else if (checkpointHandoff(cp)) label = "Brief assembled";
-  else if (cp.summary_update?.state === "failed") label = "Summary update failed";
   else if (cp.summary_update?.state === "partial") label = "Checkpoint failed · summary incomplete";
   else if (cp.summary_update?.state === "updated") label = "Summary updated";
   else if (cp.summary_update?.state === "reused") label = "Summary already current";

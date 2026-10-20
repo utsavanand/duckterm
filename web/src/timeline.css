@@ -22,6 +22,10 @@
 .rd-checkpoint-facts .ready, .rd-checkpoint-status.ready { color: var(--brand-green-strong); }
 .rd-checkpoint-coverage { font-size: 0.75rem; color: var(--text-soft); line-height: 1.7; overflow-wrap: anywhere; }
 .rd-checkpoint-coverage ul { padding-left: 18px; }
+.rd-checkpoint-attempt-warning { font-weight: 500; color: var(--text); }
+.rd-checkpoint-attempt > details > summary { cursor: pointer; color: var(--text); }
+.rd-checkpoint-revision-links { display: grid; justify-items: start; gap: 8px; margin: 10px 0; }
+.rd-checkpoint-attempt-help { font-size: .6875rem; }
 .rd-timeline-link { border: 0; padding: 0; color: var(--text); background: none; font: inherit; text-decoration: underline; text-underline-offset: 4px; cursor: pointer; text-align: left; }
 .rd-timeline-merges { border-top: 1px solid var(--border); margin-top: 22px; font-size: 0.8125rem; }
 .rd-timeline-merges h2 { font-size: 0.8125rem; }

@@ -1,3 +1,7 @@
+## 2026-10-20 — Saved batch evidence is not checkpoint success
+
+Render validated attempt-only coverage and exact revision links while keeping the overall failure. A late source fence can fail after publication: never promise rollback or a frozen success clock in that case. Keep current-memory navigation separate from historical revision links, preserve host routing, and reject malformed counts rather than infer completion.
+
 ## 2026-10-20 — Review generated corrections against original evidence too
 
 A real checkpoint replay exposed three separate defects beyond its initial retry-label failure. The reviewer proposed an old preparation step as remaining work, then rejected the writer for following that advice. Both models also inferred nonimplementation from a missing artifact, although later records reported the build running. Separately, Python silently clipped digest-list strings at 160 characters before review, manufacturing incomplete sentences and potentially removing qualifications.
