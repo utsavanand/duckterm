@@ -2,6 +2,10 @@
 
 Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
 
+## 2026-10-19 — Persist work boundaries, not unrelated observed history
+
+A twenty-record window saved megabytes because span metadata repeated every observed event source in upper and next-boundary maps. Window retries already use exact processed hashes and are never sequential predecessors. Store their selected ranges and input hash, without unrelated observation maps. Preserve the next boundary for legacy sequential callers and retain overlap, evidence and sharing checks. Assert equal-sized selected windows produce equal-sized metadata despite vastly different unrelated history; do not mistake boundary maps for raw provider text or erase fields before finding their readers.
+
 ## 2026-10-19 — Do not parse every revision blob to look up one input key
 
 A JSON predicate over summary revisions repeatedly parsed multi-megabyte rows on the event loop. Cache only input-key mappings for immutable revision IDs, inspect cheap row headers, parse new rows once, and invalidate on external writes. Do not publish uncommitted mappings across rollback. Selecting a trailing column such as updated_at can still pull large record payloads; use immutable rowid/id headers. Progress-item dedup must also exclude revision buckets rather than normalize their JSON. The first lookup still scans existing keys; this repair removes repeated scans without a schema migration or body cache.

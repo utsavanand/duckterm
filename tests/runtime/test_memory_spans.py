@@ -363,3 +363,55 @@ def test_changed_snapshot_does_not_allow_rewriting_an_already_committed_span(
         assert len(calls) == 2
 
     asyncio.run(run())
+
+
+def test_selected_window_metadata_does_not_grow_with_unrelated_event_history():
+    sizes = []
+    for count in (100, 10000):
+        captured = snapshot([f"Owner decision {i}: retain original evidence." for i in range(20)])
+        captured["checkpoint_settings"] = {"batch_records": 20}
+        captured["memory_sources"] += [
+            {
+                "id": f"event-{i:032x}",
+                "version": "e" * 64,
+                "kind": "event",
+                "records": [
+                    {
+                        "id": "0",
+                        "role": "event",
+                        "text": json.dumps({"event_type": "PostToolUse", "output": "tool body"}),
+                    }
+                ],
+            }
+            for i in range(count)
+        ]
+        rows = memory_spans.original_rows(captured)
+        captured["checkpoint_selection"] = {
+            (r["source"], r["record"]): r["hash"] for r in rows if r["kind"] == "conversation"
+        }
+        plan = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
+        metadata = memory_spans.metadata(plan)
+        saved_input = metadata["span_input"]
+        assert saved_input["selection_window"] is True
+        assert saved_input["input_hash"] == plan["input_key"]
+        assert not {"lower", "upper", "next_boundary"} & saved_input.keys()
+        assert len(plan["selected"]) == 20
+        assert memory_spans.overlaps(plan, metadata)
+        assert memory_spans.overlaps(plan, {**metadata, "span_input": {"ranges": plan["ranges"]}})
+        # Evidence remains exact; the compact receipt neither claims old tools
+        # as summarized nor rewrites the frozen in-memory iteration boundary.
+        assert memory_spans.continuity(plan, {})["summarized_records"] == 20
+        assert len(plan["next_boundary"]["sources"]) == count + 1
+        sizes.append(len(json.dumps(metadata).encode()))
+    assert sizes[0] == sizes[1]
+
+
+def test_sequential_metadata_keeps_the_exact_retry_boundary():
+    captured = snapshot(["First record", "Second record"])
+    captured["checkpoint_settings"] = {"batch_records": 1}
+    plan = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
+    saved = memory_spans.metadata(plan)["span_input"]
+    assert saved["next_boundary"] == plan["next_boundary"]
+    assert "lower" not in saved and "upper" not in saved
+    next_plan = memory_spans.plan(captured, saved["next_boundary"])
+    assert [r["record"] for r in next_plan["selected"]] == ["1"]

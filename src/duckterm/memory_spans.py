@@ -145,6 +145,7 @@ def plan(captured: dict[str, Any], lower: dict[str, Any]) -> dict[str, Any]:
         "prior_context": None,
         "context_version": 2,
         "span": "incremental",
+        "selection_window": "checkpoint_selection" in captured,
         "processed": {},
         "invalidated": False,
         "retained_sources": [],
@@ -264,9 +265,16 @@ def metadata(plan: dict[str, Any]) -> dict[str, Any]:
         "coverage": {"declared": True, "unknown": False, "omitted": []},
         "span_input": {
             "policy": POLICY,
-            "lower": plan["lower"],
-            "upper": plan["upper"],
-            "next_boundary": plan["next_boundary"],
+            # Window retries use exact processed hashes, not a sequential
+            # predecessor. Saving all observed source boundaries here made a
+            # twenty-record write grow with every unrelated historical event.
+            # Unbounded legacy callers still need their exact next boundary.
+            **(
+                {"selection_window": True}
+                if plan.get("selection_window")
+                else {"next_boundary": plan["next_boundary"]}
+            ),
+            "input_hash": plan["input_key"],
             "ranges": plan["ranges"],
             "pending_records": plan["pending_records"],
             "pending_refs": plan["pending_refs"],
