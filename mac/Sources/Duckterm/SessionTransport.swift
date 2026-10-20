@@ -204,7 +204,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         let root = #"^/sessions/[A-Za-z0-9._-]{1,128}/memory"#
         let allowed: Set<String>
         if components.path.range(of: root + "$", options: .regularExpression) != nil {
-            allowed = ["revision"]
+            allowed = ["revision", "checkpoint", "claims_cursor", "claims_limit", "revisions_cursor", "revisions_limit"]
         } else if components.path.range(of: root + "/read$", options: .regularExpression) != nil {
             allowed = ["source", "record", "offset", "limit"]
         } else if components.path.range(of: root + "/related$", options: .regularExpression) != nil {
@@ -213,6 +213,8 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             return false
         }
         let items = components.queryItems ?? []
+        let names = Set(items.map(\.name))
+        if names.contains("checkpoint") && !names.isDisjoint(with: ["revision", "claims_cursor", "claims_limit"]) { return false }
         return Set(items.map(\.name)).count == items.count
             && Set(items.map(\.name)).isSubset(of: allowed)
     }

@@ -19,11 +19,19 @@ def choice(value: Any) -> int | str:
 
 
 def validate_plan(value: Any) -> dict[str, Any]:
+    fields = {"version", "boundary", "conversation", "covered_hash", "settings_hash"}
     if (
         not isinstance(value, dict)
-        or set(value) != {"version", "boundary", "conversation", "covered_hash", "settings_hash"}
+        or set(value) != fields | ({"order"} if value.get("version") == 2 else set())
         or type(value["version"]) is not int
-        or value["version"] != 1
+        or value["version"] not in {1, 2}
+        or (
+            value["version"] == 2
+            and (
+                not isinstance(value["order"], str)
+                or value["order"] not in {"oldest_unprocessed_first", "newest_unprocessed_first"}
+            )
+        )
         or not isinstance(value["boundary"], dict)
         or any(
             not isinstance(value[k], str) for k in ("conversation", "covered_hash", "settings_hash")
@@ -83,9 +91,10 @@ async def preview(server: Any, key: str) -> dict[str, Any]:
         "selected_records": selected,
         "remaining_records": len(pending) - selected,
         "batch_records": settings["batch_records"],
-        "order": "oldest_unprocessed_first",
+        "order": "newest_unprocessed_first",
         "selection_plan": {
-            "version": 1,
+            "version": 2,
+            "order": "newest_unprocessed_first",
             "boundary": memory_spans.boundary(captured),
             "conversation": fingerprint(captured["conversation"]),
             "covered_hash": _covered_hash(rows, covered),
@@ -101,9 +110,10 @@ def selected(
     settings: dict[str, Any],
     selection: dict[str, Any],
     *,
-    order: str = "oldest_unprocessed_first",
+    order: str | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     plan = validate_plan(selection.get("plan"))
+    order = selection_order(plan, order)
     count = choice(selection.get("records"))
     if plan["conversation"] != fingerprint(captured["conversation"]) or plan[
         "settings_hash"
@@ -121,6 +131,10 @@ def selected(
         raise APIError(409, "No unprocessed records remain in this selection")
     if order not in {"oldest_unprocessed_first", "newest_unprocessed_first"}:
         raise APIError(400, "Invalid record selection order")
+    if order == "newest_unprocessed_first":
+        # A current conversation may already occupy an earlier catalog slot
+        # from a retained revision. Dict insertion order is not its recency.
+        pending.sort(key=lambda row: bool(row["current"]))
     chosen = (
         pending
         if count == "all"
@@ -129,3 +143,14 @@ def selected(
         )
     )
     return chosen, sum(r["kind"] == "conversation" and not r["reference_only"] for r in rows)
+
+
+def selection_order(plan: dict[str, Any], override: str | None = None) -> str:
+    """An existing confirmed plan keeps its meaning across an application upgrade."""
+    if plan["version"] == 2:
+        if override is not None and override != plan["order"]:
+            raise APIError(409, "Record selection order changed; refresh the checkpoint dialog")
+        return str(plan["order"])
+    # v1 manual dialogs promised oldest first; legacy harness preparation explicitly
+    # selected newest. Preserve both contracts instead of reinterpreting old plans.
+    return override or "oldest_unprocessed_first"

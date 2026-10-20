@@ -1,3 +1,33 @@
+## 2026-10-20 — Read the whole checkpoint without losing session identity
+
+A checkpoint link must identify the complete attempt, not just its last saved
+batch. Keep attempt results, accumulated saved knowledge and historical revisions
+separate. Page large reads with snapshot-bound cursors and reload explicitly on
+conflict. Remote response identities are already host-qualified by the transport;
+comparing them to raw IDs incorrectly rejects valid remote results. Test the
+encoded host reference through the reader as well as the native allowlist.
+
+## 2026-10-20 — Verify checkpoint meaning across selection, generation and reading
+
+The configured count was 20, but the manual dialog chose the oldest unprocessed
+records while the owner expected recent work. Startup's short approval also
+landed after a batch boundary, without its proposal, and its accumulated memory
+could not display because a per-summary byte limit was applied to the whole
+read view. Successful receipts pointed at the final batch, not a complete
+attempt result.
+
+New selection plans explicitly carry newest-first order while old confirmed
+plans retain their meaning. Bounded adjacent original messages supply context
+without becoming duplicate processed coverage. Display pagination preserves the
+full evidenced union independently of generation budgets. Receipts identify
+exact attempt batches and keep failure status separate from saved evidence.
+Tests must exercise actual selection order, a proposal/approval split, multi-batch
+results and memory larger than one generated summary. Synthetic shape checks
+alone cannot establish summary usefulness or resolve stale claims across batches.
+Independent review also caught a legacy truncation flag hardcoded to 20 after
+pagination became configurable. Derive metadata from the actual returned slice
+and test both smaller and larger page limits.
+
 ## 2026-10-20 — Saved batch evidence is not checkpoint success
 
 Render validated attempt-only coverage and exact revision links while keeping the overall failure. A late source fence can fail after publication: never promise rollback or a frozen success clock in that case. Keep current-memory navigation separate from historical revision links, preserve host routing, and reject malformed counts rather than infer completion.

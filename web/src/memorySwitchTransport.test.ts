@@ -35,6 +35,42 @@ function response(value: unknown, status = 200) { fetchMock.mockResolvedValueOnc
 beforeEach(() => { vi.stubGlobal("fetch", fetchMock); });
 afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
+it.each(["oldest_unprocessed_first", "newest_unprocessed_first"])("accepts %s without rewriting the opaque selection plan", async order => {
+  const plan = { available_records: 47, processed_records: 0, pending_records: 47, default_records: 20, selected_records: 20,
+    remaining_records: 27, batch_records: 20, order, selection_plan: { version: order === "newest_unprocessed_first" ? 2 : 1, ...(order === "newest_unprocessed_first" ? { order } : {}), boundary: "frozen" } };
+  response(plan);
+  expect(await memorySwitchService(selection).plan()).toEqual(plan);
+});
+it("rejects unknown plan ordering", async () => {
+  response({ available_records: 47, processed_records: 0, pending_records: 47, default_records: 20, selected_records: 20,
+    remaining_records: 27, batch_records: 20, order: "random", selection_plan: {} });
+  await expect(memorySwitchService(selection).plan()).rejects.toMatchObject({ code: "invalid_response" });
+});
+
+it.each([
+  ["oldest_unprocessed_first", "oldest_unprocessed_first"],
+  ["newest_unprocessed_first", "oldest_unprocessed_first"],
+  ["oldest_unprocessed_first", "newest_unprocessed_first"],
+])("refuses v2 handoff order mismatch: preview %s, token %s", async (order, tokenOrder) => {
+  response({ available_records: 47, processed_records: 0, pending_records: 47, default_records: 20, selected_records: 20,
+    remaining_records: 27, batch_records: 20, order, selection_plan: { version: 2, order: tokenOrder } });
+  await expect(memorySwitchService(selection).plan()).rejects.toBeInstanceOf(Error);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+});
+it("refuses a v2 oldest token before sending a preparation mutation", async () => {
+  await expect(memorySwitchService(selection).prepare("bad-order", {
+    plan: { version: 2, order: "oldest_unprocessed_first" }, records: 20,
+  })).rejects.toMatchObject({ code: "selection_order_changed" });
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+it("passes an explicit v2 newest token unchanged to preparation", async () => {
+  response({ ...prepared, state: "preparing" }, 202);
+  const selected = { plan: { version: 2, order: "newest_unprocessed_first", boundary: "frozen" }, records: 20 };
+  await memorySwitchService(selection).prepare("newest", selected);
+  expect(JSON.parse(fetchMock.mock.calls[0][1].body).selection).toEqual(selected);
+});
+
 it("starts preparation with exact binding and auth, without starting a restart", async () => {
   response({ ...prepared, state: "preparing", phase: "reading", sequence: 0 }, 202);
   const service = memorySwitchService(selection);

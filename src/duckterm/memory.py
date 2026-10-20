@@ -392,7 +392,14 @@ class Memory:
 
     async def operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:
         allowed = {
-            "view": {"revision"},
+            "view": {
+                "revision",
+                "checkpoint",
+                "claims_cursor",
+                "claims_limit",
+                "revisions_cursor",
+                "revisions_limit",
+            },
             "sources": set(),
             "search": {"q", "limit"},
             "read": {"source", "record", "offset", "limit"},
@@ -439,11 +446,32 @@ class Memory:
             }
             result: dict[str, Any] = {"coverage": coverage}
             if action == "view":
-                result.update(
-                    await asyncio.to_thread(
-                        memory_view.project, catalog, sources, query.get("revision", [None])[0]
+                if "checkpoint" in query:
+                    if {"revision", "claims_cursor", "claims_limit"} & query.keys():
+                        raise APIError(400, "Choose checkpoint or revision/current memory scope")
+                    result.update(
+                        await asyncio.to_thread(
+                            memory_view.checkpoint,
+                            catalog,
+                            sources,
+                            query["checkpoint"][0],
+                            cursor=query.get("revisions_cursor", [None])[0],
+                            limit=self._number(query, "revisions_limit", 20, 1, 100),
+                        )
                     )
-                )
+                else:
+                    result.update(
+                        await asyncio.to_thread(
+                            memory_view.project,
+                            catalog,
+                            sources,
+                            query.get("revision", [None])[0],
+                            claims_cursor=query.get("claims_cursor", [None])[0],
+                            claims_limit=self._number(query, "claims_limit", 25, 1, 100),
+                            revisions_cursor=query.get("revisions_cursor", [None])[0],
+                            revisions_limit=self._number(query, "revisions_limit", 20, 1, 100),
+                        )
+                    )
             elif action == "sources":
                 result["sources"] = [
                     {

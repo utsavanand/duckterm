@@ -10,3 +10,5 @@
 @media(max-width:850px){.rd-memory-view{padding:20px}.rd-memory-view select{max-width:100%}}
 
 .rd-memory-failure{border-left:2px solid var(--amber-text);padding:10px 16px;background:var(--amber-bg);font-size:0.8125rem}.rd-memory-failure strong{color:var(--amber-text)}
+
+.rd-memory-tabs{display:flex;gap:20px;border-bottom:1px solid var(--border);flex-wrap:wrap;margin:16px 0}.rd-memory-tabs button{font:inherit;color:var(--text-soft);background:none;border:0;border-bottom:2px solid transparent;padding:8px 0 11px;cursor:pointer}.rd-memory-tabs button[aria-pressed=true]{color:var(--text);border-bottom-color:var(--brand-green-strong)}.rd-memory-pager,.rd-memory-rowhead{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin:16px 0}.rd-memory-pager div{display:flex;gap:8px}.rd-memory-pager p{margin:0}

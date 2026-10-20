@@ -28,6 +28,10 @@ def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
         captured["trigger"] = {"kind": "checkpoint", "request_id": "explicit-range"}
         first = await server.progress_coordinator.refresh_result("agent", captured)
         assert first.state == "updated"
+        first_attempt = first.metadata(1)["attempt_coverage"]
+        assert first_attempt["state"] == "complete"
+        assert first_attempt["summarized_records"] == 2
+        assert len(first_attempt["revision_ids"]) == 2
         assert len(calls) == 4
         assert "Initial constraint" in calls[0]
         assert "Initial constraint" not in calls[2]
@@ -35,6 +39,10 @@ def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
         append(path, "Third instruction")
         second = await server.progress_coordinator.refresh_result("agent")
         assert second.state == "updated" and len(calls) == 6
+        second_attempt = second.metadata(2)["attempt_coverage"]
+        assert second_attempt["summarized_records"] == 1
+        assert second_attempt["revision_ids"] == [second.revision["id"]]
+        assert not set(first_attempt["revision_ids"]).intersection(second_attempt["revision_ids"])
         assert "Third instruction" in calls[4]
         assert "Second instruction" not in calls[4]
         assert "prior_context" not in calls[4]

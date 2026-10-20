@@ -51,7 +51,7 @@ export function CheckpointFacts({ checkpoint: cp, compact = false, onMemory }: {
     </div>}
   </>;
 }
-export function CheckpointDetails({ checkpoint: cp, open = false, onRetry, retrying = false, onMemory }: { checkpoint: CheckpointRecord; open?: boolean; onRetry?: () => void; retrying?: boolean; onMemory?: (revision: string) => void }) {
+export function CheckpointDetails({ checkpoint: cp, open = false, onRetry, retrying = false, onMemory, onCheckpointMemory }: { checkpoint: CheckpointRecord; open?: boolean; onRetry?: () => void; retrying?: boolean; onMemory?: (revision: string) => void; onCheckpointMemory?: (id: string) => void }) {
   const status = checkpointStatus(cp);
   const r = cp.record;
   const title = cp.label === "manual" && checkpointCanRetry(cp) ? "Manual checkpoint attempt"
@@ -60,6 +60,7 @@ export function CheckpointDetails({ checkpoint: cp, open = false, onRetry, retry
     <summary><span className="rd-timeline-cp-heading"><strong>{title}</strong><span className={`rd-checkpoint-status ${status.ready ? "ready" : ""}`}>{status.label}</span></span>
       {cp.summary && <span className="rd-timeline-excerpt">{cp.summary}</span>}</summary>
     <CheckpointFacts checkpoint={cp} onMemory={onMemory} />
+    {onCheckpointMemory && <button className="rd-timeline-link" onClick={() => onCheckpointMemory(cp.id)}>Read checkpoint result ↗</button>}
     {onMemory && typeof r?.summary_ref === "string" && r.summary_ref.trim() && <button className="rd-timeline-link" onClick={() => onMemory(r.summary_ref!)}>Read saved summary and evidence ↗</button>}
     {onRetry && checkpointCanRetry(cp) && <button className="rd-btn rd-btn-sm rd-btn-ghost rd-checkpoint-retry" disabled={retrying} onClick={onRetry}>{retrying ? "Updating summary…" : "Retry summary update"}</button>}
     {r && <div className="rd-checkpoint-coverage">

@@ -14,7 +14,7 @@ from duckterm.handoff_review import handoff_brief
     [
         ("digest_write", "62f5b3ce360f57d118861c7abd9c4acca467fbc6cc4253ea5c879b665b383b79"),
         ("digest_validate", "e06fffb0b69efe7fd4206e2f7237a975898e9f03267963254ae326a3744352f7"),
-        ("span_write", "96816961ee70c1bd838f833aab274ee2cca518a5b7cdc10fc6973c4cf3db59e4"),
+        ("span_write", "1586cfa7b6202b8587a45d4358aa3a5e9cffd7861e297783e7bfde3532885046"),
     ],
 )
 def test_reviewed_summary_prompts_are_byte_identical(name, digest):

@@ -1,6 +1,6 @@
 # Agent memory backend
 
-Implementation candidate on `feat/memory-complete`. This document describes the integrated code, not an installed-release or live-provider acceptance claim.
+This document describes the code in this checkout. It is not an installed-release or live-provider acceptance claim.
 
 ## Records and ownership
 
@@ -24,7 +24,7 @@ Manual checkpoints default to the Claude `haiku` writer and `sonnet` reviewer al
 
 Checkpoint generation reads a retained snapshot. New live messages and ordinary card updates belong to the next attempt; they do not invalidate the captured work. Conversation identity, sharing scope, summary policy, retained evidence and publication races remain checked. Capturing/materializing history still reads the source catalog before selecting the window, so the lookback bounds model input, not all initial filesystem work.
 
-Harness-switch preparation retains its existing full-range behavior and 50-record batch ceiling; these manual-checkpoint preferences do not change it. Both paths keep the 16,000-byte generation-prompt budget, leaving 32,000 bytes of the overall 48,000-byte allowance for generation/review overhead. An indivisible record that cannot fit fails explicitly. The summary allows up to 2,000 characters and asks for about 100–200 words; structured claims have a separate budget. Local validation and a content review must both accept a draft. Rejected or truncated drafts never advance processed coverage.
+Harness-switch preparation also offers a count or All, defaults to the configured window, and selects newest unprocessed records. Both paths keep the 16,000-byte generation-prompt budget, leaving 32,000 bytes of the overall 48,000-byte allowance for generation/review overhead. An indivisible record that cannot fit fails explicitly. The prose summary allows up to 6,000 characters; structured claims have a separate 10,000-byte budget. Local validation and a content review must both accept a draft. Rejected or truncated drafts never advance processed coverage.
 
 A cold start can require many sequential bounded batches. Accepted immutable leaves survive a later batch failure and can be reused on retry when source hashes and boundaries still match. The current published revision advances only when the captured eligible range completes. Changes or deletions invalidate affected source coverage; a failed attempt leaves the previously published memory available. Legacy cumulative summaries remain readable but are not automatically converted into independent spans.
 
@@ -83,6 +83,55 @@ Preparation jobs are ephemeral; server restart requires preparation again, while
 ## Checkpoint request recovery
 
 Checkpoint requests carry stable request IDs. Their bounded durable receipts survive a lost HTTP response; polling the exact receipt does not issue another checkpoint. A confirmed running receipt keeps the operation visible even when processing exceeds three minutes. Loss-of-contact timeout is separate from confirmed work. A crash after saving can reconcile from the persisted checkpoint. The UI distinguishes failure, incomplete coverage, running work and an unconfirmed connection result.
+
+## Checkpoint selection and result reads
+
+The configured count defaults to 20 meaningful, unprocessed conversation records.
+A new manual-checkpoint plan uses `newest_unprocessed_first`, matching harness
+preparation. Selected records are still summarized in conversation order. Older
+unprocessed records remain available; selecting a recent window does not mark
+the older backlog processed. Version 2 selection plans carry their order.
+An already-open version 1 manual dialog retains its original oldest-first
+meaning instead of silently changing the owner's confirmed selection.
+
+At a batch boundary, the writer may receive up to two preceding original
+messages from the same conversation. These supply context for a short response
+such as an approval. They fit inside the existing input budget after the selected
+records, are included in the input fingerprint, and may be cited. They are not
+counted again as processed records. This is bounded adjacent context, not a
+guarantee of complete conversational reconstruction. Earlier summaries remain
+excluded from span generation.
+
+The read-only `GET /sessions/:key/memory` endpoint distinguishes three scopes:
+
+- No selector: the published session memory. `claims_limit` (default 25, maximum
+  100) and `claims_cursor` page through combined typed claims. The
+  `memory.pagination` response includes `snapshot`, `total`, `offset`, `returned`
+  and `next_cursor`; `total_claims` and `returned_claims` are explicit aliases.
+  Each saved revision retains its validation and size checks. Browsing the union
+  does not apply a single generated revision's byte limit to the entire session.
+  Generation and handoff budgets remain unchanged.
+- `revision=ID`: one exact saved revision and its evidence. Selecting an older
+  revision does not substitute the latest revision. `revisions_limit` (default 20,
+  maximum 100) and `revisions_cursor` page the history list independently.
+- `checkpoint=ID`: one attempt's result. The response contains
+  `checkpoint.summary_update`, `attempt_coverage`, and paginated `batches` with
+  exact revision IDs and their saved content. `revisions_limit` and
+  `revisions_cursor` page those batches. A failed attempt remains failed even
+  when some or all batches saved. Independent batch summaries are not presented
+  as a separately verified combined summary.
+
+New checkpoint receipts persist `attempt_coverage` separately from the
+session-wide coverage union. Older failed receipts with `scope=refresh_attempt`
+can supply the same evidence. An older successful receipt that only lists the
+session-wide union returns `batch_coverage_known=false`; its membership is not
+guessed. All these reads use existing records and add no schema or summarizer.
+
+Cursors bind the authorized session, read scope and visible result. A changed
+continuation returns HTTP 409 and requires reloading the first page. Missing
+evidence withholds derived content. Current-memory browsing includes explicit
+retired and superseded states; it does not infer new lifecycle transitions.
+Automatic reconciliation of earlier claims remains a separate behavior decision.
 
 ## Verification and limits
 

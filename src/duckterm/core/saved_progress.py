@@ -114,8 +114,8 @@ class SummaryUpdate:
     # or a replacement for revision_id / the last successful summary.
     span_coverage: dict[str, Any] | None = None
     summary_corrections: list[str | dict[str, str]] | None = None
-    # Transient bookkeeping for the waiter-side source fence. Not serialized
-    # on success: complete coverage can include leaves from earlier attempts.
+    # Attempt-only bookkeeping also identifies the result's exact batches.
+    # Session-wide complete coverage can include leaves from earlier attempts.
     attempt_coverage: dict[str, Any] | None = None
 
     def metadata(self, attempted_at: int) -> dict[str, Any]:
@@ -130,6 +130,21 @@ class SummaryUpdate:
                 else {}
             ),
             **({"span_coverage": self.span_coverage} if self.span_coverage else {}),
+            **(
+                {
+                    "attempt_coverage": {
+                        **self.attempt_coverage,
+                        "state": (
+                            "complete"
+                            if self.state in {"updated", "reused"}
+                            and self.attempt_coverage.get("pending_records") == 0
+                            else "incomplete"
+                        ),
+                    }
+                }
+                if self.attempt_coverage is not None
+                else {}
+            ),
             "attempted_at": attempted_at,
             "revision_id": (
                 self.revision["id"] if self.revision and self.state != "failed" else None

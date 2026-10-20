@@ -21,6 +21,41 @@ def history(tmp, count):
     return path
 
 
+def test_newest_selection_prioritizes_current_conversation_over_catalog_insertion(monkeypatch):
+    from duckterm.persistence.saved_state import fingerprint
+
+    rows = [
+        {
+            "kind": "conversation",
+            "reference_only": False,
+            "source": source,
+            "record": str(i),
+            "hash": str(i),
+            "current": current,
+        }
+        for source, current in (("current", True), ("old", False))
+        for i in range(25)
+    ]
+    monkeypatch.setattr(checkpoint_plan.memory_spans, "rows_through", lambda *args: rows)
+    monkeypatch.setattr(checkpoint_plan, "coverage", lambda *args: {})
+    selection = {
+        "records": 20,
+        "plan": {
+            "version": 2,
+            "order": "newest_unprocessed_first",
+            "boundary": {},
+            "conversation": fingerprint({}),
+            "settings_hash": fingerprint({}),
+            "covered_hash": fingerprint([]),
+        },
+    }
+    chosen, available = checkpoint_plan.selected(None, "agent", {"conversation": {}}, {}, selection)
+    assert available == 50
+    assert [(r["source"], r["record"]) for r in chosen] == [
+        ("current", str(i)) for i in range(5, 25)
+    ]
+
+
 async def submit(server, preview, count=20, request="test-plan"):
     return await server.checkpoint_requests.request(
         "agent",
@@ -38,12 +73,13 @@ def test_preview_is_read_only_and_selection_advances_over_actual_coverage(memory
 
     async def run():
         first = await checkpoint_plan.preview(server, "agent")
+        assert first["order"] == first["selection_plan"]["order"] == "newest_unprocessed_first"
         assert first["pending_records"] == 55
         assert first["selected_records"] == 20 and first["remaining_records"] == 35
         assert not calls and not server.history.checkpoints("agent")
         status, saved = await submit(server, first)
         assert status == 200 and saved["summary_update"]["state"] == "updated", saved
-        assert writer_texts(calls) == [[f"Record {i}" for i in range(20)]]
+        assert writer_texts(calls) == [[f"Record {i}" for i in range(35, 55)]]
         next_plan = await checkpoint_plan.preview(server, "agent")
         assert next_plan["processed_records"] == 20
         assert next_plan["pending_records"] == 35
@@ -155,7 +191,38 @@ def test_http_plan_is_read_only_and_submit_keeps_write_auth(memory_rig, monkeypa
     owner = {"x-duckterm-token": server.token}
     status, result = dispatch(server, "POST", "/sessions/agent/checkpoint", owner, payload)
     assert status == 200 and result["summary_update"]["state"] == "updated", result
-    assert writer_texts(calls) == [["Record 0", "Record 1"]]
+    assert writer_texts(calls) == [["Record 1", "Record 2"]]
+
+
+def test_open_legacy_dialog_keeps_oldest_selection_after_upgrade(memory_rig, monkeypatch):
+    server, _, _, tmp = memory_rig
+    history(tmp, 25)
+    calls, _ = model_provider(monkeypatch)
+
+    async def run():
+        plan = await checkpoint_plan.preview(server, "agent")
+        plan["selection_plan"].pop("order")
+        plan["selection_plan"]["version"] = 1
+        status, saved = await submit(server, plan)
+        assert status == 200 and saved["summary_update"]["state"] == "updated", saved
+        assert writer_texts(calls) == [[f"Record {i}" for i in range(20)]]
+        assert saved["summary_update"]["span_coverage"]["order"] == "oldest_unprocessed_first"
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("order", [[], {}, None, True, "random"])
+def test_invalid_plan_order_is_rejected(order):
+    plan = {
+        "version": 2,
+        "order": order,
+        "boundary": {},
+        "conversation": "",
+        "covered_hash": "",
+        "settings_hash": "",
+    }
+    with pytest.raises(APIError, match="Invalid checkpoint selection plan"):
+        checkpoint_plan.validate_plan(plan)
 
 
 def test_previous_recent_window_does_not_hide_older_pending_records(memory_rig, monkeypatch):

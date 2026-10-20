@@ -119,7 +119,8 @@ def test_waiter_source_change_keeps_only_this_attempts_accepted_refs(memory_rig,
     async def run():
         earlier = await coordinator.refresh_result("agent")
         assert earlier.state == "updated"
-        assert "attempt_coverage" not in earlier.metadata(1)
+        assert earlier.metadata(1)["attempt_coverage"]["state"] == "complete"
+        assert earlier.metadata(1)["attempt_coverage"]["revision_ids"] == [earlier.revision["id"]]
         append(path, "This attempt's owner requirement")
         monkeypatch.setattr(memory_refresh, "_run", changed_after_publication)
         result = await coordinator.refresh_result("agent")
@@ -127,6 +128,7 @@ def test_waiter_source_change_keeps_only_this_attempts_accepted_refs(memory_rig,
         assert result.diagnostic == "refresh_result:native_file_changed"
         assert result.metadata(2)["revision_id"] is None
         coverage = result.metadata(2)["span_coverage"]
+        assert result.metadata(2)["attempt_coverage"] == coverage
         assert coverage["state"] == "incomplete" and coverage["scope"] == "refresh_attempt"
         assert coverage["eligible_records"] == coverage["summarized_records"] == 1
         assert coverage["pending_records"] == 0

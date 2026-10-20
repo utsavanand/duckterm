@@ -139,7 +139,7 @@ test("working session offers an explicit immediate switch with truthful pending 
   await page.route(`**/sessions/${key}/checkpoint-plan`, route => route.fulfill({ json: {
     available_records: 0, processed_records: 0, pending_records: 0, default_records: 20,
     selected_records: 0, remaining_records: 0, batch_records: 20,
-    order: "oldest_unprocessed_first", selection_plan: {},
+    order: "oldest_unprocessed_first", selection_plan: { version: 1 },
   } }));
   await page.route(`**/sessions/${key}/restart-preparation**`, async route => {
     if (route.request().method() === "DELETE") return route.fulfill({ json: { released: true } });

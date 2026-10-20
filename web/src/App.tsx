@@ -152,7 +152,7 @@ function Dashboard() {
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
   const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
-  const [memoryTarget, setMemoryTarget] = useState<{ key: string; revision: string } | null>(null);
+  const [memoryTarget, setMemoryTarget] = useState<{ key: string; revision: string; checkpoint?: string } | null>(null);
   const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory">(
     "terminal",
   );
@@ -483,12 +483,12 @@ function Dashboard() {
                   onClearTarget={() => setPinTarget(null)} />
               </div>
             )}
-            {view === "memory" && selected && <div className="rd-messages-wrap"><MemoryView key={`${selected.key}:${memoryTarget?.key === selected.key ? memoryTarget.revision : ""}`} sessionKey={selected.key} name={selected.label} active={!towerOpen && selectedFolder === null}
-              initialRevision={memoryTarget?.key === selected.key ? memoryTarget.revision : ""} onBack={memoryTarget?.key === selected.key ? () => setView("history") : undefined} /></div>}
+            {view === "memory" && selected && <div className="rd-messages-wrap"><MemoryView key={`${selected.key}:${memoryTarget?.key === selected.key ? (memoryTarget.checkpoint ?? memoryTarget.revision) : ""}`} sessionKey={selected.key} name={selected.label} active={!towerOpen && selectedFolder === null}
+              initialRevision={memoryTarget?.key === selected.key ? memoryTarget.revision : ""} initialCheckpoint={memoryTarget?.key === selected.key ? memoryTarget.checkpoint : undefined} onBack={memoryTarget?.key === selected.key ? () => setView("history") : undefined} /></div>}
             {view === "history" && selected && (
               <div className="rd-messages-wrap">
                 <TimelineView key={selected.key} session={selected} active={!towerOpen && selectedFolder === null} checkpointTarget={checkpointTarget?.key === selected.key ? checkpointTarget.request : undefined} onArtifacts={() => setView("artifacts")} onMessages={() => setView("messages")}
-                  onMemory={(key, revision) => { setMemoryTarget({ key, revision }); setView("memory"); }} />
+                  onMemory={(key, revision) => { setMemoryTarget({ key, revision }); setView("memory"); }} onCheckpointMemory={(key, checkpoint) => { setMemoryTarget({ key, revision: "", checkpoint }); setView("memory"); }} />
               </div>
             )}
             {view === "inbox" && (
@@ -550,7 +550,7 @@ function Dashboard() {
               <button className="rd-btn rd-btn-ghost" style={{ margin: "0 18px 18px" }} onClick={() => setAppearanceFolder(null)}>View session override →</button>
             </> : <ContextViews session={<>
               {selected && <CheckpointProgress sessionKey={selected.key} />}
-              {selected && <LiveContextPanel key={`context-${selected.key}`} session={selected} onMemory={revision => { setMemoryTarget(revision ? { key: selected.key, revision } : null); setView("memory"); }} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
+              {selected && <LiveContextPanel key={`context-${selected.key}`} session={selected} onMemory={revision => { setMemoryTarget(revision ? { key: selected.key, revision } : null); setView("memory"); }} onCheckpointMemory={checkpoint => { setMemoryTarget({ key: selected.key, revision: "", checkpoint }); setView("memory"); }} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && <SessionPanelSection key={`appearance-${selected.key}`} title="Terminal appearance" status={themeOverrides.sessions[selected.key] || "Folder default"}>
                 <TerminalAppearance scope="sessions" target={selected.key} mode={mode} theme={themeOverrides.sessions[selected.key]} effectiveTheme={themeFor(selected)} onTheme={pick => setSessionTheme(selected.key, pick)} />
               </SessionPanelSection>}

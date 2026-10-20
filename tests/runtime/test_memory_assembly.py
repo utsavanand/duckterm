@@ -67,6 +67,14 @@ def test_protected_overflow_reports_gap_instead_of_trimming():
     assert failure.value.coverage["omitted"][0]["reason"] == "budget_exhausted"
 
 
+def test_display_can_page_all_claims_without_changing_generation_budget():
+    values = rows(100)
+    result = memory_assembly.assemble(values, display=True)
+    assert len(result["context"]["constraints"]) == 100
+    with pytest.raises(memory_contract.BudgetExceeded):
+        memory_assembly.assemble(values)
+
+
 def test_legacy_remains_identified_and_is_not_relabelled_as_a_span():
     values = rows(1)
     legacy = {**deepcopy(values[0]), "id": "legacy", "span": "cumulative"}

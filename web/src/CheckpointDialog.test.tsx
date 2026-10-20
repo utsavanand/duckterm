@@ -28,6 +28,23 @@ it("shows pending/default/remaining counts and Cancel never creates a checkpoint
   expect(await work).toBeNull(); expect(screen.queryByRole("dialog")).toBeNull();
   expect(api.checkpoint).not.toHaveBeenCalled();
 });
+it.each(["oldest_unprocessed_first", "newest_unprocessed_first"] as const)("preserves the confirmed %s plan exactly", async order => {
+  const preview: CheckpointPlan = { ...plan(), order, selection_plan: { version: order === "newest_unprocessed_first" ? 2 : 1, order, boundary: { source: "frozen" } } };
+  vi.mocked(api.checkpointPlan).mockResolvedValue(preview); vi.mocked(api.checkpoint).mockResolvedValue(result());
+  render(<CheckpointDialogHost />);
+  const { work } = await open(`order-${order}`);
+  expect(screen.queryByRole("alert")).toBeNull();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Checkpoint 20 records" })); await work; });
+  expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith(`order-${order}`, "manual", expect.any(String), { plan: preview.selection_plan, records: 20 });
+});
+it("rejects an unknown selection order before submitting", async () => {
+  vi.mocked(api.checkpointPlan).mockResolvedValue({ ...plan(), order: "random" as CheckpointPlan["order"] });
+  render(<CheckpointDialogHost />);
+  const { work } = await open("unknown-order");
+  expect(screen.getByRole("alert")).toHaveTextContent("Invalid checkpoint count response");
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" })); await work;
+  expect(api.checkpoint).not.toHaveBeenCalled();
+});
 it.each(["default", "custom", "all"])("sends the %s selection once with its frozen plan and original remote session", async choice => {
   const preview = plan(); const key = sessionRef("cloud", `choice-${choice}`);
   vi.mocked(api.checkpointPlan).mockResolvedValue(preview); vi.mocked(api.checkpoint).mockResolvedValue(result());
@@ -44,7 +61,7 @@ it.each(["default", "custom", "all"])("sends the %s selection once with its froz
 it("keeps configured defaults, bounds custom counts and handles zero remaining", async () => {
   vi.mocked(api.checkpointPlan).mockResolvedValue(plan(7, 40)); render(<CheckpointDialogHost />);
   const { work } = await open("small");
-  expect(screen.getByRole("radio", { name: "Next 7 · your configured default" })).toBeChecked();
+  expect(screen.getByRole("radio", { name: "Earliest 7 · your configured default" })).toBeChecked();
   expect(screen.getByText(/Your default in Settings stays at 40/)).toBeVisible();
   for (const value of ["", "0", "-2", "1.5", "1001"]) {
     fireEvent.change(screen.getByRole("spinbutton"), { target: { value } });

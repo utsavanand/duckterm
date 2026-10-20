@@ -138,3 +138,38 @@ it("keeps a missing historical revision selected without fetching current memory
   expect(get).toHaveBeenCalledExactlyOnceWith("remote::same", "", { revision: "missing" });
   expect(requestCheckpoint).not.toHaveBeenCalled();
 });
+
+it("pages saved knowledge without appending mixed snapshots and reloads explicitly on conflict", async () => {
+  const first = fixture(); first.memory!.pagination = { snapshot: "fixed", total: 27, offset: 0, returned: 25, next_cursor: "next-claims" };
+  get.mockResolvedValueOnce(first);
+  render(<MemoryView sessionKey="remote::paged" name="Paged memory" />);
+  await screen.findByText("1–25 of 27 saved items");
+  get.mockRejectedValueOnce(Object.assign(new Error("Changed"), { status: 409 }));
+  fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await screen.findByText(/Saved memory changed/);
+  expect(screen.queryByText("Keep the earlier decision")).toBeNull();
+  expect(get).toHaveBeenLastCalledWith("remote::paged", "", { claims_cursor: "next-claims" });
+  get.mockResolvedValueOnce(first);
+  fireEvent.click(screen.getByRole("button", { name: "Reload first page" }));
+  await screen.findByText("Keep the earlier decision");
+  expect(get).toHaveBeenLastCalledWith("remote::paged", "", {});
+  expect(requestCheckpoint).not.toHaveBeenCalled();
+});
+
+it("pages revision history and opens the exact historical revision", async () => {
+  const first = fixture(); first.revisions_pagination = { snapshot: "history", total: 22, offset: 0, returned: 20, next_cursor: "older-page" };
+  get.mockResolvedValue(first);
+  render(<MemoryView sessionKey="history-pages" name="History" />);
+  await screen.findByText("Keep the earlier decision");
+  fireEvent.click(screen.getByRole("button", { name: "Revision history" }));
+  await screen.findByText("1–20 of 22 revisions");
+  const second = fixture(); second.revisions = [{ id: "oldest-exact", created_at: 1 }];
+  second.revisions_pagination = { snapshot: "history", total: 22, offset: 20, returned: 2, next_cursor: null };
+  get.mockResolvedValueOnce(second); fireEvent.click(screen.getByRole("button", { name: "Next page" }));
+  await screen.findByText("21–22 of 22 revisions");
+  expect(get).toHaveBeenLastCalledWith("history-pages", "", { revisions_cursor: "older-page" });
+  const exact = fixture(); exact.revision = { ...exact.revision!, id: "oldest-exact", summary: "Exact historical evidence" }; delete exact.memory;
+  get.mockResolvedValueOnce(exact); fireEvent.click(screen.getByRole("button", { name: "Open summary oldest-e ↗" }));
+  await screen.findByText("Exact historical evidence");
+  expect(get).toHaveBeenLastCalledWith("history-pages", "", { revision: "oldest-exact" });
+});

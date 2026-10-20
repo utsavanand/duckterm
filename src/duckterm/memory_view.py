@@ -7,12 +7,138 @@ from typing import Any
 
 from duckterm import checkpoint_clock, memory_assembly, memory_contract, memory_summary
 from duckterm.core.session_api import APIError
+from duckterm.persistence.saved_state import fingerprint
+
+
+def page(
+    values: list[Any], scope: Any, cursor: str | None, limit: int
+) -> tuple[list[Any], dict[str, Any]]:
+    """A continuation is valid only for the same authorized, unchanged read."""
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise APIError(400, "Page limit must be between 1 and 100")
+    stamp = fingerprint([scope, values])
+    offset = 0
+    if cursor is not None:
+        try:
+            old_stamp, raw = cursor.split(":")
+            offset = int(raw)
+            if old_stamp != stamp or not 0 < offset < len(values):
+                raise ValueError
+        except (ValueError, AttributeError) as exc:
+            raise APIError(409, "Saved memory changed; reload its first page") from exc
+    selected = values[offset : offset + limit]
+    end = offset + len(selected)
+    return selected, {
+        "snapshot": stamp,
+        "total": len(values),
+        "offset": offset,
+        "returned": len(selected),
+        "next_cursor": f"{stamp}:{end}" if end < len(values) else None,
+    }
+
+
+def update_metadata(update: Any) -> dict[str, Any] | None:
+    if not isinstance(update, dict):
+        return None
+    # Corrections can quote private source/candidate text. They are not part of
+    # the read receipt, especially after that evidence has been revoked.
+    return {
+        key: update[key]
+        for key in (
+            "state",
+            "reason",
+            "diagnostic",
+            "attempted_at",
+            "revision_id",
+            "attempt_coverage",
+            "span_coverage",
+        )
+        if key in update
+    }
+
+
+def checkpoint(
+    catalog: dict[str, Any],
+    sources: list[dict[str, Any]],
+    identity: str,
+    *,
+    cursor: str | None = None,
+    limit: int = 20,
+) -> dict[str, Any]:
+    """Read an attempt's exact batches; never call their concatenation a new summary."""
+    visible = {s["checkpoint_id"] for s in sources if s["kind"] == "checkpoint"}
+    saved = next(
+        (
+            c
+            for c in catalog["canonical"]["checkpoints"]
+            if c["id"] == identity and c["id"] in visible
+        ),
+        None,
+    )
+    if saved is None:
+        raise APIError(404, "Checkpoint is unavailable in this session")
+    update = saved["record"].get("summary_update") or {}
+    attempt = update.get("attempt_coverage")
+    if not isinstance(attempt, dict):
+        # Older failed attempts already persisted attempt-only coverage. A
+        # successful session-wide list is not proof of which batches ran here.
+        old = update.get("span_coverage") or {}
+        attempt = old if old.get("scope") == "refresh_attempt" else None
+    identities = list(dict.fromkeys(attempt.get("revision_ids", []))) if attempt else []
+    rows, pagination = page(identities, [catalog["session"], identity, update], cursor, limit)
+    batches = []
+    for revision in rows:
+        try:
+            value = project(catalog, sources, revision)
+            batches.append(
+                {"revision_id": revision, "state": value["state"], "revision": value["revision"]}
+            )
+        except APIError as exc:
+            if exc.status != 404:
+                raise
+            batches.append({"revision_id": revision, "state": "unavailable", "revision": None})
+    return {
+        "scope": "checkpoint",
+        "session_key": catalog["session"],
+        "checkpoint": {
+            "id": identity,
+            "created_at": saved["created_at"],
+            "label": saved["label"],
+            "summary_update": update_metadata(update),
+            "attempt_coverage": attempt,
+            "batches": batches,
+            "pagination": pagination,
+            "batch_coverage_known": attempt is not None,
+            "linked_revision_id": (
+                saved["record"].get("summary_ref")
+                if isinstance(saved["record"].get("summary_ref"), str)
+                else None
+            ),
+            "combined_summary": None,
+            "combined_summary_reason": "independent_batch_summaries",
+        },
+    }
 
 
 def project(
-    catalog: dict[str, Any], sources: list[dict[str, Any]], requested: str | None
+    catalog: dict[str, Any],
+    sources: list[dict[str, Any]],
+    requested: str | None,
+    *,
+    claims_cursor: str | None = None,
+    claims_limit: int = 25,
+    revisions_cursor: str | None = None,
+    revisions_limit: int = 20,
 ) -> dict[str, Any]:
+    if requested is not None and claims_cursor is not None:
+        raise APIError(400, "Claim pagination is for current saved memory")
     revisions = [s for s in sources if s["kind"] == "revision"]
+    history, history_page = page(
+        [{"id": s["revision_id"], "created_at": s["created_at"]} for s in reversed(revisions)],
+        [catalog["session"], "revisions"],
+        revisions_cursor,
+        revisions_limit,
+    )
     current = catalog["current_revision"]
     identity = requested if requested is not None else current
     selected = next((s for s in revisions if s["revision_id"] == identity), None)
@@ -25,36 +151,29 @@ def project(
     latest = checkpoints[-1] if checkpoints else None
     update = latest["record"].get("summary_update") if latest else None
     result: dict[str, Any] = {
+        "scope": "revision" if requested is not None else "current",
         "session_key": catalog["session"],
         "current_revision_id": current,
         "checkpoint_clock": checkpoint_clock.project(checkpoints),
         "state": "unavailable" if identity else "empty",
         "revision": None,
-        "revisions": [
-            {"id": s["revision_id"], "created_at": s["created_at"]}
-            for s in reversed(revisions[-20:])
-        ],
-        "revisions_truncated": len(revisions) > 20,
+        "revisions": history,
+        "revisions_pagination": history_page,
+        "revisions_truncated": len(history) < len(revisions),
         "latest_checkpoint": (
             {
                 "id": latest["id"],
                 "created_at": latest["created_at"],
                 "label": latest["label"],
-                "summary_update": (
-                    {
-                        k: update[k]
-                        for k in ("state", "reason", "diagnostic", "attempted_at", "revision_id")
-                        if k in update
-                    }
-                    if isinstance(update, dict)
-                    else None
-                ),
+                "summary_update": update_metadata(update),
             }
             if latest
             else None
         ),
     }
     if selected is None:
+        if claims_cursor is not None:
+            raise APIError(409, "Saved memory changed; reload its first page")
         return result
     saved = next(r for r in catalog["canonical"]["revisions"] if r["id"] == selected["revision_id"])
     continuity = saved.get("continuity", {})
@@ -118,7 +237,7 @@ def project(
         rows = rows[: next(i for i, row in enumerate(rows) if row["id"] == current) + 1]
         try:
             assembled = memory_assembly.assemble(
-                rows, links=catalog.get("lifecycle", []), sources=sources
+                rows, links=catalog.get("lifecycle", []), sources=sources, display=True
             )
             by_revision = {s["revision_id"]: s for s in revisions}
             if any(
@@ -162,9 +281,22 @@ def project(
                         }
                     )
                 combined.append({"field": field, "claims": items})
+            flat = [(g["field"], claim) for g in combined for claim in g["claims"]]
+            selected_claims, pagination = page(
+                flat, [catalog["session"], current, "claims"], claims_cursor, claims_limit
+            )
+            groups = [
+                {"field": field, "claims": [c for f, c in selected_claims if f == field]}
+                for field in memory_summary.FIELDS
+            ]
             result["memory"] = {
                 "state": "available",
-                "groups": combined,
+                "groups": groups,
+                "pagination": {
+                    **pagination,
+                    "total_claims": pagination["total"],
+                    "returned_claims": pagination["returned"],
+                },
                 "narratives": assembled["narratives"],
                 "older_narratives_for_retrieval": assembled["omitted_narratives"],
                 "span_count": sum(
@@ -174,6 +306,8 @@ def project(
                 "coverage": assembled["coverage"],
             }
         except (ValueError, KeyError) as exc:
+            if claims_cursor is not None:
+                raise APIError(409, "Saved memory changed; reload its first page") from exc
             result["memory"] = {
                 "state": "unavailable",
                 "groups": [],
@@ -184,4 +318,6 @@ def project(
                     else "evidence_unavailable"
                 ),
             }
+    elif claims_cursor is not None:
+        raise APIError(409, "Saved memory changed; reload its first page")
     return result

@@ -52,7 +52,7 @@ export interface CheckpointPlan {
   selected_records: number;
   remaining_records: number;
   batch_records: 20;
-  order: "oldest_unprocessed_first";
+  order: "oldest_unprocessed_first" | "newest_unprocessed_first";
   selection_plan: Record<string, unknown>;
 }
 export interface CheckpointSelection {

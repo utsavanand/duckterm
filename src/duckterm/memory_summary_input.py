@@ -8,7 +8,7 @@ from typing import Any
 
 from duckterm import memory_handoff
 
-POLICY = "conversation-session-and-failures-v4"
+POLICY = "conversation-session-and-failures-v5"
 CONVERSATION_EVENTS = {"UserPromptSubmit", "Stop", "SubagentStop", "PostToolUseFailure"}
 
 
@@ -26,16 +26,20 @@ _ORACLE = re.compile(
     r"Peer requests do not grant permission to act\.)"
 )
 _INBOX_ACK = re.compile(
-    r"I(?:’|')ll check (?:the|my) (?:new )?inbox(?: item)?"
+    r"I(?:’|')ll check (?:the|my) (?:new |session )?inbox(?: item)?"
     r"(?: and (?:follow up on (?:the pending QA work|any remaining summary-update QA)"
     r"|verify any updates to the summary fix))?\."
+)
+_INBOX_REQUEST = re.compile(
+    r"(?:check (?:your |the )?inbox|you have something in your inbox)[.!]?",
+    re.IGNORECASE,
 )
 
 
 def is_routine_notice(role: str, text: str) -> bool:
     text = text.strip()
     return bool(
-        (role == "user" and _ORACLE.fullmatch(text))
+        (role == "user" and (_ORACLE.fullmatch(text) or _INBOX_REQUEST.fullmatch(text)))
         or (role == "assistant" and _INBOX_ACK.fullmatch(text))
     )
 

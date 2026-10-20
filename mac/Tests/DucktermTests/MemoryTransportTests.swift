@@ -108,10 +108,32 @@ extension MemoryTransportTests {
             "/sessions/x/memory/read?source=a&source=b", "/sessions/x/memory?revision=a&revision=b",
             "/sessions/x/memory/related?cursor=a&cursor=b", "/sessions/x/memory/related?offset=1",
             "/sessions/x/memory/read?cursor=a", "/sessions/x/memory?source=a",
+            "/sessions/x/memory?claims_cursor=a&claims_cursor=b",
+            "/sessions/x/memory?revisions_cursor=a&revisions_cursor=b",
+            "/sessions/x/memory?checkpoint=a&checkpoint=b",
+            "/sessions/x/memory?checkpoint=a&revision=b",
+            "/sessions/x/memory?checkpoint=a&claims_cursor=b",
+            "/sessions/x/memory?checkpoint=a&claims_limit=25",
             "/sessions/%2e%2e/memory", "/sessions/x/memory/%2e%2e/read",
             "//example.com/sessions/x/memory", "/sessions/x/memory#fragment",
         ] {
             XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": "GET"]), path)
+        }
+    }
+
+    @MainActor func testCheckpointAndPagedMemoryReadsPreserveSelectedConnection() throws {
+        for base in [URL(string: "http://127.0.0.1:14300")!, URL(string: "http://127.0.0.1:15400")!] {
+            for path in [
+                "/sessions/x/memory?claims_cursor=stamp%3A25&claims_limit=25",
+                "/sessions/x/memory?revisions_cursor=stamp%3A20&revisions_limit=20",
+                "/sessions/x/memory?revision=exact&revisions_cursor=stamp%3A20&revisions_limit=20",
+                "/sessions/x/memory?checkpoint=exact&revisions_cursor=stamp%3A20&revisions_limit=20",
+            ] {
+                let request = try SessionTransport.request(base: base, params: ["path": path, "method": "GET"])
+                XCTAssertEqual(request.url?.absoluteString, base.absoluteString + path)
+                XCTAssertEqual(request.httpMethod, "GET")
+                XCTAssertNil(request.httpBody)
+            }
         }
     }
 }
