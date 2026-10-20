@@ -4956,8 +4956,17 @@ class Server:
             return []
 
     async def _list_checkpoints(self, writer: asyncio.StreamWriter, session_key: str) -> None:
-        from duckterm import checkpoint_clock
+        from duckterm import checkpoint_clock, context_evidence
 
+        row = self.history.session(session_key)
+        identity = self.history.native_identity(session_key)
+        evidence = await asyncio.to_thread(context_evidence.project, row or {}, identity)
+        current = self.history.session(session_key)
+        if self.history.native_identity(session_key) != identity or any(
+            (current or {}).get(k) != (row or {}).get(k)
+            for k in ("runtime", "cwd", "worktree_path", "restart_json")
+        ):
+            evidence = context_evidence.unavailable("binding_changed")
         checkpoints = self.history.checkpoints(session_key)
         clock = checkpoint_clock.project(checkpoints)
         await _write_json(
@@ -4966,6 +4975,7 @@ class Server:
             {
                 "checkpoints": checkpoints,
                 "checkpoint_clock": clock,
+                "context_evidence": evidence,
                 "checkpoint_activity": checkpoint_clock.activity(
                     self.history._conn, session_key, checkpoints, clock=clock
                 ),

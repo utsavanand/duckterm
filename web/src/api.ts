@@ -686,7 +686,7 @@ export const api = {
   timeline: (key: string, kinds = "", before = "") =>
     get<TimelinePage>(`/sessions/${key}/timeline?${new URLSearchParams({ kinds, before, limit: "50" })}`, undefined, { authed: true }),
   checkpoints: (key: string) =>
-    get<{ checkpoints: CheckpointRecord[]; checkpoint_clock?: CheckpointClock; checkpoint_activity?: CheckpointActivity }>(`/sessions/${key}/checkpoints`),
+    get<{ checkpoints: CheckpointRecord[]; checkpoint_clock?: CheckpointClock; checkpoint_activity?: CheckpointActivity; context_evidence?: ContextEvidence }>(`/sessions/${key}/checkpoints`),
   spotlight: (key: string) =>
     post<{ synced_files: string[] }>(`/sessions/${key}/spotlight`),
   sessionEvents: (key: string) =>
@@ -712,6 +712,13 @@ export interface TimelineEntry {
 export interface TimelinePage {
   summary: { text: string; updated_at: number | null; total: number; counts: Record<string, number> };
   entries: TimelineEntry[]; next_cursor: string | null;
+}
+export interface ContextEvidence {
+  state: "available" | "unavailable";
+  reason: string | null;
+  context_window_tokens: number | null;
+  last_compaction_at: string | null;
+  history_scope: "complete" | "recent" | null;
 }
 export interface CheckpointActivity {
   state: "known" | "never" | "unknown";

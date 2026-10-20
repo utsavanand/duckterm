@@ -1,5 +1,9 @@
 ## 2026-10-19 — Contrast adjustment is not theme application
 
+## Missing compaction data needs native evidence, not model guesses (2026-10-19)
+
+Read capacity and completed compaction only from the currently bound native transcript. Validate its identity, reject evidence if the binding changes while reading, bound/cache history reads, and distinguish a recent-history miss from proof that compaction never happened. Codex completion identifiers live inside payload; confirm record structure rather than implementing from a prose description.
+
 ## Terminal theme acceptance must include text hierarchy (2026-10-19)
 
 Changing indexed colors proved the palette worked but did not satisfy the owner’s readability need: most agent prose shares one foreground. Compare actual bold/dim/default text at native size, not just color swatches. The approved enhancement accents only neutral bold text and lifts dim opacity, preserving explicit colored text and offering original formatting; it never infers semantics or rewrites terminal output.

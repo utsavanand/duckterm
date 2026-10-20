@@ -1,6 +1,6 @@
 import { routedFetch as fetch, sessionFetch } from "./hostTransport";
 import { useEffect, useRef, useState } from "react";
-import { api, CheckpointRecord, CheckpointActivity } from "./api";
+import { api, CheckpointRecord, CheckpointActivity, ContextEvidence } from "./api";
 import { Duck, duckPhrase, poseFor } from "./Duck";
 import { FileEditModal } from "./FileEditModal";
 import { effectiveState, sessionStateLabel } from "./sessions";
@@ -23,6 +23,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
   const [acting, setActing] = useState<string | null>(null);
   const [editingFile, setEditingFile] = useState(false);
   const [lastCheckpoint, setLastCheckpoint] = useState<CheckpointRecord | null>(null);
+  const [contextEvidence, setContextEvidence] = useState<ContextEvidence | null>(null);
   const [activity, setActivity] = useState<CheckpointActivity | null>(null);
   const [activityState, setActivityState] = useState<"loading" | "loaded" | "error">("loading");
   const checkpointGeneration = useRef(0);
@@ -44,6 +45,11 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
     : eventCount !== null ? eventCount.toLocaleString() : activity?.state === "never" ? "No successful checkpoint yet"
     : activity?.state === "unknown" ? "Capture boundary unavailable" : "Not provided by this server";
 
+  const evidenceReady = activityState === "loaded" && contextEvidence?.state === "available";
+  const capacity = evidenceReady && Number.isSafeInteger(contextEvidence?.context_window_tokens) && contextEvidence!.context_window_tokens! > 0 ? contextEvidence!.context_window_tokens : null;
+  const compactedAt = evidenceReady && contextEvidence?.last_compaction_at && Number.isFinite(Date.parse(contextEvidence.last_compaction_at)) ? contextEvidence.last_compaction_at : null;
+  const noEvidence = activityState === "loading" ? "Loading…" : activityState === "error" ? "Couldn’t load context" : !contextEvidence ? "Not provided by this server" : "Not reported";
+
   async function compact() {
     setActing("compact");
     try {
@@ -57,7 +63,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
   }
 
   useEffect(() => {
-    setLastCheckpoint(null); setActivity(null); setActivityState("loading"); setActing(null); setSummaryOpen(false); checkpointGeneration.current++;
+    setLastCheckpoint(null); setContextEvidence(null); setActivity(null); setActivityState("loading"); setActing(null); setSummaryOpen(false); checkpointGeneration.current++;
   }, [session.key]);
   useEffect(() => {
     if (!active) return;
@@ -67,8 +73,8 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
       pending = true;
       const generation = checkpointGeneration.current;
       void api.checkpoints(session.key).then(d => {
-        if (live && generation === checkpointGeneration.current) { setLastCheckpoint(d.checkpoints[0] ?? null); setActivity(d.checkpoint_activity ?? null); setActivityState("loaded"); publishCheckpointClock(session.key, d.checkpoint_clock); }
-      }).catch(() => { if (live && generation === checkpointGeneration.current) { setActivity(null); setActivityState("error"); publishCheckpointClock(session.key, null); } }).finally(() => { pending = false; });
+        if (live && generation === checkpointGeneration.current) { setLastCheckpoint(d.checkpoints[0] ?? null); setContextEvidence(d.context_evidence ?? null); setActivity(d.checkpoint_activity ?? null); setActivityState("loaded"); publishCheckpointClock(session.key, d.checkpoint_clock); }
+      }).catch(() => { if (live && generation === checkpointGeneration.current) { setActivity(null); setContextEvidence(null); setActivityState("error"); publishCheckpointClock(session.key, null); } }).finally(() => { pending = false; });
     };
     const updated = (event: Event) => { if ((event as CustomEvent<string>).detail === session.key) load(); };
     load();
@@ -131,9 +137,9 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
       <SessionPanelSection key={`context-${session.key}`} title="Active context" initiallyOpen status={tokens ? `${tokens} tokens` : "Unknown"}>
         <p className="rd-section-purpose">Conversation currently used by the agent.</p>
         <div className="rd-session-context-total"><strong>{tokens ?? "Unknown"}</strong>{tokens && <span>tokens reported</span>}</div>
-        <dl className="rd-session-facts"><div><dt>Context window</dt><dd>Not reported</dd></div><div><dt>Last compaction</dt><dd>Unknown</dd></div></dl>
+        <dl className="rd-session-facts"><div><dt>Context window</dt><dd>{capacity !== null ? `${capacity.toLocaleString()} tokens` : noEvidence}</dd></div><div><dt>Last compaction</dt><dd>{compactedAt ? <time dateTime={compactedAt}>{new Date(compactedAt).toLocaleString()}</time> : noEvidence}</dd></div></dl>
         <div className="rd-section-actions rd-section-separated"><span>Shorten the active conversation.<br />Saved memory stays separate.</span><button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!compactAvailable || acting !== null || !!session.hostOffline} title={compactAvailable ? "Types /compact into the agent’s terminal" : "Requires a running Claude Code or Codex terminal"} onClick={compact}>{acting === "compact" ? "Sending…" : "Compact"}</button></div>
-        <details className="rd-section-disclosure rd-section-help"><summary>About context &amp; compaction</summary><p>No explicit compaction event or context-window size is available to DuckTerm. A high token count or a drop in usage does not prove compaction.</p><p>Compact asks the harness to condense its active conversation. It does not create a DuckTerm checkpoint.</p></details>
+        <details className="rd-section-disclosure rd-section-help"><summary>About context &amp; compaction</summary><p>Window size and completed compaction come only from this conversation’s native transcript. A high token count or a drop in usage does not prove compaction. Missing values mean there is no verified report available.</p>{contextEvidence?.history_scope === "recent" && <p>Only recent history was inspected. A missing compaction marker does not mean the conversation has never been compacted.</p>}<p>Compact asks the harness to condense its active conversation. It does not create a DuckTerm checkpoint.</p></details>
       </SessionPanelSection>
       <SessionPanelSection key={`workspace-${session.key}`} title="Workspace" status={session.branch ? `${session.repoName || "Repository"} / ${session.branch}` : "Folder"}>
       {onBranch ? (

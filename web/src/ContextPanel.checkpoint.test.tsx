@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api, CheckpointRecord, CheckpointActivity } from "./api";
+import { api, CheckpointRecord, CheckpointActivity, ContextEvidence } from "./api";
 import { ContextPanel } from "./ContextPanel";
 import type { SessionView } from "./types";
 const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
@@ -33,8 +33,8 @@ it("does not invent event counts or infer compaction from lifetime events and mo
   render(<ContextPanel session={{ ...session, eventCount: 40000, contextTokens: 334881, model: "claude-opus-5" }} />);
   await screen.findByText("Latest attempt · Summary unavailable");
   expect(screen.getByText("Events since saved capture").nextElementSibling).toHaveTextContent("Not provided by this server");
-  expect(screen.getByText("Last compaction").nextElementSibling).toHaveTextContent("Unknown");
-  expect(screen.getByText("Context window").nextElementSibling).toHaveTextContent("Not reported");
+  expect(screen.getByText("Last compaction").nextElementSibling).toHaveTextContent("Not provided by this server");
+  expect(screen.getByText("Context window").nextElementSibling).toHaveTextContent("Not provided by this server");
   expect(screen.getByText("334,881")).toBeVisible();
   expect(api.sendInput).not.toHaveBeenCalled();
   expect(api.checkpoint).not.toHaveBeenCalled();
@@ -79,4 +79,26 @@ it("ignores activity returned after selection changes", async () => {
   await act(async () => { finish({ checkpoints: [cp], checkpoint_activity: activity(1026) }); });
   expect(screen.getByText("Events since saved capture").nextElementSibling).toHaveTextContent(/^2$/);
   expect(screen.queryByText("1,026")).toBeNull();
+});
+
+const evidence: ContextEvidence = { state: "available", reason: null, context_window_tokens: 258400, last_compaction_at: "2026-10-19T10:00:00Z", history_scope: "recent" };
+it("shows explicit native capacity and compaction, then clears evidence when the host fails", async () => {
+  vi.mocked(api.checkpoints).mockResolvedValueOnce({ checkpoints: [], context_evidence: evidence }).mockRejectedValue(new Error("offline"));
+  render(<ContextPanel session={session} />);
+  await screen.findByText("258,400 tokens");
+  expect(screen.getByText("Last compaction").nextElementSibling?.querySelector("time")).toHaveAttribute("datetime", evidence.last_compaction_at);
+  expect(screen.getByText(/Only recent history was inspected/)).toBeInTheDocument();
+  act(() => { window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: session.key })); });
+  await screen.findByText("Couldn’t load activity");
+  expect(screen.queryByText("258,400 tokens")).toBeNull();
+  expect(screen.getByText("Last compaction").nextElementSibling).toHaveTextContent("Couldn’t load context");
+});
+it("does not retain another session’s context evidence after a late response", async () => {
+  let finish!: (value: Awaited<ReturnType<typeof api.checkpoints>>) => void;
+  vi.mocked(api.checkpoints).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue({ checkpoints: [] });
+  const view = render(<ContextPanel session={session} />);
+  view.rerender(<ContextPanel session={{ ...session, key: "two" }} />);
+  await act(async () => { finish({ checkpoints: [], context_evidence: evidence }); });
+  expect(screen.queryByText("258,400 tokens")).toBeNull();
+  expect(screen.getByText("Last compaction").nextElementSibling).toHaveTextContent("Not provided by this server");
 });

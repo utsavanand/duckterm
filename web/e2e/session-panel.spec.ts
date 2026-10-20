@@ -8,6 +8,7 @@ test("session sections preserve meaningful state, notes and checkpoint review wi
   page.on("request", r => { if (r.method() === "POST" && /\/(checkpoint|input)$/.test(new URL(r.url()).pathname)) writes++; });
   try {
     await page.route(`**/sessions/${key}/checkpoints`, route => route.fulfill({ json: {
+      context_evidence: { state: "available", reason: null, context_window_tokens: 258400, last_compaction_at: "2026-10-19T10:00:00Z", history_scope: "recent" },
       checkpoint_activity: { state: "known", checkpoint_id: "saved", events_since_capture: 1026, event_filter: "work-v1", reason: null },
       checkpoint_clock: { state: "known", succeeded_at: savedAt, checkpoint_id: "saved" },
       checkpoints: [{ id: "failed", label: "manual", created_at: Date.now(), summary_update: { state: "failed", reason: "summary_unverified" }, record: { prompts: [], files: [], tools: [], event_count: 9000 } }],
@@ -21,7 +22,8 @@ test("session sections preserve meaningful state, notes and checkpoint review wi
     await expect(saved).toHaveAttribute("open", "");
     await expect(saved.getByText("2d 0h ago").last()).toBeVisible();
     await expect(saved.getByText("Events since saved capture").locator("+ strong")).toHaveText("1,026");
-    await expect(context.getByText("Last compaction").locator("+ dd")).toHaveText("Unknown");
+    await expect(context.getByText("Last compaction").locator("+ dd time")).toHaveAttribute("datetime", "2026-10-19T10:00:00Z");
+    await expect(context.getByText("Context window").locator("+ dd")).toHaveText("258,400 tokens");
     await expect(context.getByRole("button", { name: "Compact", exact: true })).toBeDisabled();
     await saved.locator(":scope > summary").focus(); await page.keyboard.press("Enter");
     await expect(saved).not.toHaveAttribute("open", "");

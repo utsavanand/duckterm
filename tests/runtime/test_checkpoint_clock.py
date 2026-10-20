@@ -194,10 +194,47 @@ def test_checkpoint_endpoint_exposes_clock_and_activity_without_writing(events):
     add_event(events, "later")
     original = deepcopy(cp)
     changed = events.total_changes
-    server = SimpleNamespace(history=SimpleNamespace(_conn=events, checkpoints=lambda key: [cp]))
+    server = SimpleNamespace(
+        history=SimpleNamespace(
+            _conn=events,
+            checkpoints=lambda key: [cp],
+            session=lambda key: None,
+            native_identity=lambda key: {"status": "missing"},
+        )
+    )
     writer = Writer()
     asyncio.run(Server._list_checkpoints(server, writer, "test-agent"))
     response = json.loads(writer.data.split(b"\r\n\r\n", 1)[1])
     assert response["checkpoint_clock"]["checkpoint_id"] == "saved"
     assert response["checkpoint_activity"]["events_since_capture"] == 1
     assert cp == original and events.total_changes == changed
+
+
+def test_context_evidence_drops_result_if_native_binding_changes(monkeypatch):
+    from tests.runtime.test_session_api import Writer
+
+    from duckterm import context_evidence
+    from duckterm.server import Server
+
+    identity = {"native_id": "old", "status": "recorded"}
+    row = {"runtime": "codex", "cwd": "/tmp"}
+
+    def read_evidence(row, captured):
+        assert captured["native_id"] == "old"
+        identity["native_id"] = "new"
+        return {"state": "available", "context_window_tokens": 258400}
+
+    monkeypatch.setattr(context_evidence, "project", read_evidence)
+    server = SimpleNamespace(
+        history=SimpleNamespace(
+            _conn=None,
+            checkpoints=lambda key: [],
+            session=lambda key: dict(row),
+            native_identity=lambda key: dict(identity),
+        )
+    )
+    writer = Writer()
+    asyncio.run(Server._list_checkpoints(server, writer, "test-agent"))
+    response = json.loads(writer.data.split(b"\r\n\r\n", 1)[1])
+    assert response["context_evidence"]["reason"] == "binding_changed"
+    assert response["context_evidence"]["context_window_tokens"] is None
