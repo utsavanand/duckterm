@@ -1,6 +1,6 @@
 ## 2026-10-20 — Test socket names must be unique across concurrent worktrees
 
-The adoption fixture derived its tmux socket from tmp_path.name, which repeats across pytest runs. Concurrent gates could adopt or stop another fixture’s synthetic agent and look for its argv file in the wrong temporary home. Use a per-run UUID and retain exact-socket cleanup; verify concurrent fixture runs before trusting the full gate.
+The adoption fixture derived its tmux socket from tmp_path.name, which repeats across pytest runs. Concurrent gates could adopt or stop another fixture’s synthetic agent and look for its argv file in the wrong temporary home. Use a per-run UUID and retain exact-socket cleanup; verify concurrent fixture runs before trusting the full gate. Readiness must also wait for the synthetic prompt and recorded restart arguments, not fixed 0.2/0.5-second sleeps: a scheduled process is not necessarily ready to accept a restart.
 
 ## 2026-10-20 — Disconnect revokes terminal clipboard writes immediately
 

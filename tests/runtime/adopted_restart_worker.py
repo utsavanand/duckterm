@@ -22,6 +22,23 @@ cwd = root / "project"
 cwd.mkdir(exist_ok=True)
 
 
+async def wait_for_fixture(predicate, message):
+    deadline = asyncio.get_running_loop().time() + 10
+    while not predicate():
+        assert asyncio.get_running_loop().time() < deadline, message
+        await asyncio.sleep(0.05)
+
+
+def target_argv_written():
+    try:
+        return any(
+            "qa-model-two" in json.loads(line)
+            for line in (root / "argv.jsonl").read_text().splitlines()
+        )
+    except (FileNotFoundError, json.JSONDecodeError):
+        return False
+
+
 async def run():
     store = HistoryStore(root / "db.sqlite")
     s = Server(history=store)
@@ -58,7 +75,10 @@ async def run():
                 "test": True,
             }
         )
-        await asyncio.sleep(0.5)
+        await wait_for_fixture(
+            lambda: "❯" in s.orchestrator.get(key).visible_screen(),
+            "Synthetic agent did not render its ready prompt",
+        )
         assert s.orchestrator.get(key).running
         print("seeded real pane", flush=True)
         store.close()
@@ -77,7 +97,9 @@ async def run():
             "test": True,
         }
     )
-    await asyncio.sleep(0.2)
+    await wait_for_fixture(
+        lambda: "❯" in sup.visible_screen(), "Adopted terminal did not replay its ready prompt"
+    )
     print("screen", repr(sup.visible_screen()), flush=True)
     try:
         await s.restarts.request(key, "qa-model-two")
@@ -103,6 +125,7 @@ async def run():
         assert row["runtime"] == "claude-code" and store.session_id_for(key) == sid
         assert s.orchestrator.get(key).running
         assert "QA215 preserved conversation" in json.dumps(messages)
+        await wait_for_fixture(target_argv_written, "Restarted synthetic agent did not record argv")
         args = [json.loads(line) for line in (root / "argv.jsonl").read_text().splitlines()]
         assert any(
             "--resume" in argv and sid in argv and "qa-model-two" in argv for argv in args
