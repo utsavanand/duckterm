@@ -80,9 +80,13 @@ it("isolates model drafts by computer and ignores a stale remote support respons
   await form();
   fireEvent.change(screen.getByLabelText("OpenCode model"), { target: { value: "mac/model" } });
   await act(async () => { fireEvent.change(screen.getByLabelText("Run on"), { target: { value: "dev" } }); });
+  fireEvent.click(screen.getByText("Other project options"));
+  fireEvent.change(screen.getByLabelText("Repository URL"), { target: { value: "https://github.com/fixture/project.git" } });
+  fireEvent.click(screen.getByRole("button", { name: "Next →" }));
   expect(screen.getByLabelText("OpenCode model")).toHaveValue("");
-  expect(screen.getByRole("button", { name: "Launch" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Next →" })).toBeDisabled();
   fireEvent.change(screen.getByLabelText("OpenCode model"), { target: { value: "remote/model" } });
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
   await act(async () => { fireEvent.change(screen.getByLabelText("Run on"), { target: { value: "local" } }); });
   await act(async () => { resolveRemote({ ...available, launch: { available: false, reason: "Stale remote result" } }); });
   expect(screen.getByLabelText("OpenCode model")).toHaveValue("mac/model");
