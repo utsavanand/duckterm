@@ -655,28 +655,19 @@ class ProgressCoordinator:
             )
             if review_attempt or not repairable_rejection:
                 break
-            feedback = corrections
             prompt = memory_continuity.repair_prompt(
                 original_prompt,
-                json.dumps(
-                    {
-                        "summary": digest["summary"],
-                        "context": context,
-                        "review_feedback": feedback,
-                    }
-                ),
+                json.dumps({"summary": digest["summary"], "context": context}),
                 ",".join(review["reason_codes"]),
+                review_feedback=corrections,
             )
-            if feedback and len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
-                # Prefer actionable reviewer feedback over copying the rejected draft.
+            if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
+                # Drop only the draft copy, never the actionable review feedback.
                 prompt = memory_continuity.repair_prompt(
                     original_prompt,
-                    json.dumps({"review_feedback": feedback}),
+                    "",
                     ",".join(review["reason_codes"]),
-                )
-            if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
-                prompt = memory_continuity.repair_prompt(
-                    original_prompt, "", ",".join(review["reason_codes"])
+                    review_feedback=corrections,
                 )
             if len(prompt.encode()) > memory_spans.MAX_GENERATION_BYTES:
                 return SummaryUpdate.failed("invalid_context", diagnostic="repair_input_too_large")

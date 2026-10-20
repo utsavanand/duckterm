@@ -1,3 +1,7 @@
+## 2026-10-19 — Preserve review corrections when dropping a large rejected draft
+
+The summary rewrite path put reviewer feedback inside the optional draft copy. Its encoded-size guard could discard both, leaving the writer only a reason code. Keep actionable corrections separate from disposable generated text, preserve them when the input budget drops the draft, and fail explicitly if sources plus feedback cannot fit. Review the rewritten summary and overview again before saving coverage. Match writer and reviewer rules for routine setup while preserving setup failures that materially affect the work.
+
 ## 2026-10-19 — Contrast adjustment is not theme application
 
 ## Missing compaction data needs native evidence, not model guesses (2026-10-19)

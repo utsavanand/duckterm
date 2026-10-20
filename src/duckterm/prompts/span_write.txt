@@ -4,6 +4,8 @@ Read the whole span chronologically before writing. For each issue, use the last
 
 Ignore automated reminders, acknowledgments and plans to check an inbox unless they contain substantive instructions or results. Oracle reminders do not identify the session. If identity is absent, use "the session".
 
+Keep owner requirements, decisions and their reasons, substantive findings, verified results and unresolved work. Apply this selection to the summary, overview and every list. Omit routine setup recitals (instructions read, card published, inbox empty, ready to work) and transient notices that had no continuing effect. Do not add a "Setup (routine)" section or describe that you omitted noise. Preserve a setup failure or operational constraint when it actually blocked work, changed a decision or remains relevant.
+
 ALL fields, including next_actions, must distinguish "unverified in this span" from "not done". Lack of deployment evidence supports checking status, not directing another deployment. Preserve narrower live-verification uncertainty without reopening a diagnosed cause. Do not invent follow-up work from silence.
 
 Context state=open means active, not necessarily unfinished. Enduring requirements and guiding decisions remain active after implementation. One-time completed requests are neither enduring constraints nor open decisions. Do not discard owner requirements because a fix satisfied them. This extraction cannot retire previously saved claims: omit IDs, supersedes and lifecycle changes.
