@@ -1,3 +1,7 @@
+## 2026-10-19 — Verify the colors the agent actually emits
+
+A theme preview using only default text and ANSI colors hid extended indexed/RGB text that programs keep fixed. Remove the misleading sample; verify program-selected colors in native WebKit and a live terminal. Offer explicit contrast improvement without rewriting the PTY stream, and carry that preference through folder inheritance, session overrides, grids, and shells. Text-size resets must preserve fonts, palettes, and terminal drafts.
+
 ## 2026-10-19 — Native scrollbar tracks need the resolved color scheme
 
 Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.

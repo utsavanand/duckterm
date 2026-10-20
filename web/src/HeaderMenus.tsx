@@ -1,3 +1,4 @@
+import type { Theme } from "./useTheme";
 import { UpdateDuckTerm } from "./UpdateDuckTerm";
 import { useEffect, useRef, useState } from "react";
 import { SidebarDensity } from "./useSidebarDensity";
@@ -7,7 +8,9 @@ import { NaturalVoicePanel, VoicePicker } from "./VoiceControl";
 import { LocalVoiceStatus } from "./api";
 
 type Menu = "settings" | "new";
-export function HeaderMenus({ density, onDensity, notifyOn, onNotify, notificationHelp, voiceLevel, onVoiceLevel, voice, onAction }: {
+export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNotify, notificationHelp, voiceLevel, onVoiceLevel, voice, onAction }: {
+  theme?: Theme;
+  onTheme?: (theme: Theme) => void;
   density: SidebarDensity;
   onDensity: (density: SidebarDensity) => void;
   notifyOn: boolean;
@@ -68,7 +71,8 @@ export function HeaderMenus({ density, onDensity, notifyOn, onNotify, notificati
         if (event.key === "ArrowDown") { event.preventDefault(); setOpen("settings"); }
       }}>Settings <span aria-hidden="true">▾</span></button>
       {open === "settings" && <section id="header-settings-panel" className="rd-header-popup rd-settings-popup" aria-label="Settings">
-        <button className="rd-header-menu-item" onClick={() => action("appearance")}>Appearance <span aria-hidden="true">›</span></button>
+        <button className="rd-header-menu-item" onClick={() => action("appearance")}>Text sizes <span aria-hidden="true">›</span></button>
+        {onTheme && <label className="rd-header-menu-field">App theme<select value={theme} onChange={e => onTheme(e.target.value as Theme)}><option value="system">Follow system</option><option value="dark">Dark</option><option value="light">Light</option></select></label>}
         <label className="rd-header-menu-field">Sidebar density<select value={density} onChange={(event) => onDensity(event.target.value as SidebarDensity)}>
           <option value="compact">Compact</option><option value="standard">Standard</option><option value="relaxed">Relaxed</option>
         </select></label>

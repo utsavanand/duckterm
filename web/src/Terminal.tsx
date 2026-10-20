@@ -1,3 +1,4 @@
+import { useTerminalContrast, resolveContrast } from "./terminalContrast";
 import { terminalSocket, TerminalSocket, sessionFetch } from "./hostTransport";
 import { useAppearance, TERMINAL_FONTS } from "./appearance";
 import { memo, useEffect, useRef } from "react";
@@ -20,6 +21,7 @@ import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 // the GET API — no token needed (only state-changing POSTs are token-gated).
 export const Terminal = memo(function Terminal({
   sessionKey,
+  folder,
   active = true,
   focusRequest = 0,
   kind = "agent",
@@ -27,6 +29,7 @@ export const Terminal = memo(function Terminal({
   theme = DEFAULT_TERM_THEME,
 }: {
   sessionKey: string;
+  folder?: string;
   active?: boolean;
   focusRequest?: number;
   kind?: "agent" | "shell";
@@ -34,6 +37,8 @@ export const Terminal = memo(function Terminal({
   theme?: string;
 }) {
   const { appearance } = useAppearance();
+  const { preferences } = useTerminalContrast();
+  const contrast = resolveContrast(preferences, sessionKey, folder);
   const refitRef = useRef<(() => void) | null>(null);
   const connectionRef = useRef(onConnection);
   connectionRef.current = onConnection;
@@ -51,9 +56,10 @@ export const Terminal = memo(function Terminal({
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
+    term.options.minimumContrastRatio = contrast === "readable" ? 4.5 : 1;
     term.options.theme = TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME];
     term.refresh(0, term.rows - 1);
-  }, [theme]);
+  }, [theme, contrast]);
 
   useEffect(() => {
     const term = termRef.current;
@@ -74,6 +80,7 @@ export const Terminal = memo(function Terminal({
       fontSize: appearance.terminalSize,
       fontFamily: TERMINAL_FONTS[appearance.terminalFont].css,
       theme: TERM_THEMES[theme] ?? TERM_THEMES[DEFAULT_TERM_THEME],
+      minimumContrastRatio: contrast === "readable" ? 4.5 : 1,
       cursorBlink: true,
       convertEol: false,
     });

@@ -1,0 +1,12 @@
+.rd-terminal-appearance { padding: 18px; font-size: .875rem; }
+.rd-terminal-appearance > p { margin: 0 0 16px; color: var(--text-soft); line-height: 1.55; }
+.rd-terminal-appearance label { display: block; margin-bottom: 18px; color: var(--text-soft); }
+.rd-terminal-appearance select { display: block; width: 100%; min-width: 0; margin-top: 7px; padding: 7px 10px; background: var(--bg-soft); border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text); font: inherit; }
+.rd-terminal-appearance-effective { border-top: 1px solid var(--border); padding: 12px 0; margin-top: 4px; }
+.rd-terminal-appearance details { border-top: 1px solid var(--border); padding-top: 14px; color: var(--text-soft); }
+.rd-terminal-appearance summary { cursor: pointer; }
+.rd-terminal-appearance details p { line-height: 1.55; }
+.rd-session-appearance { border-top: 1px solid var(--border); margin: 12px 18px; }
+.rd-session-appearance > summary { padding: 16px 0; cursor: pointer; font-weight: 600; }
+.rd-session-appearance .rd-terminal-appearance { padding: 0 0 12px; }
+.rd-folder-colors-heading { padding: 18px 18px 0; margin: 0; font-size: 1.1rem; }
