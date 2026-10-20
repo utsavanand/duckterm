@@ -24,6 +24,7 @@ let width = 0;
 let frames: Map<number, FrameRequestCallback>;
 let seq = 0;
 beforeEach(() => {
+  mocks.socket.readyState = WebSocket.OPEN;
   localStorage.clear(); mocks.options = {}; frames = new Map(); width = 0; vi.clearAllMocks(); mocks.fit.mockReset();
   vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => width);
   vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(500);
@@ -31,7 +32,7 @@ beforeEach(() => {
   vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { frames.set(++seq, callback); return seq; });
   vi.spyOn(window, "cancelAnimationFrame").mockImplementation(id => { frames.delete(id); });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const frame = () => act(() => { const work = [...frames.values()]; frames.clear(); work.forEach(callback => callback(0)); });
 it("retries an unmeasurable observer callback without needing a second resize event", () => {
   render(<Terminal sessionKey="resize-fixture" />);
@@ -153,4 +154,34 @@ it("suppresses clipboard writes during replay, while hidden, and after disposal"
   view.unmount();
   expect(mocks.clipboardLive()).toBe(false);
   expect(mocks.clipboardDispose).toHaveBeenCalledOnce();
+});
+
+it("revokes clipboard eligibility as soon as the socket starts closing", () => {
+  render(<Terminal sessionKey="closing-clipboard" />);
+  message(new ArrayBuffer(1)); replayParsed();
+  expect(mocks.clipboardLive()).toBe(true);
+  mocks.socket.readyState = WebSocket.CLOSING;
+  expect(mocks.clipboardLive()).toBe(false);
+});
+it("does not let a late snapshot callback restore clipboard eligibility after close", () => {
+  render(<Terminal sessionKey="closed-snapshot" />);
+  message(new ArrayBuffer(1));
+  act(() => mocks.socket.onclose?.());
+  replayParsed();
+  // Keep the mock OPEN to prove generation invalidation, not only readyState.
+  expect(mocks.clipboardLive()).toBe(false);
+});
+it("ignores obsolete close callbacks after reconnecting and parsing a fresh snapshot", () => {
+  vi.useFakeTimers();
+  render(<Terminal sessionKey="reconnected-clipboard" />);
+  message(new ArrayBuffer(1)); replayParsed();
+  const oldClose = mocks.socket.onclose;
+  act(() => oldClose?.());
+  expect(mocks.clipboardLive()).toBe(false);
+  act(() => vi.advanceTimersByTime(1500));
+  message(new ArrayBuffer(1));
+  act(() => mocks.write.mock.calls.at(-1)?.[1]());
+  expect(mocks.clipboardLive()).toBe(true);
+  act(() => oldClose?.());
+  expect(mocks.clipboardLive()).toBe(true);
 });

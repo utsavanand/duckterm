@@ -1,3 +1,7 @@
+## 2026-10-20 — Disconnect revokes terminal clipboard writes immediately
+
+A visible terminal can still have queued parser work after its socket closes. Require an OPEN connection for OSC52 writes, revoke replay readiness on close, and invalidate callbacks from the closed attachment. Test a late snapshot callback and an obsolete close notification after reconnect; checking only visibility and disposal misses both races.
+
 ## 2026-10-20 — Federated discovery and terminal copying need end-to-end parity
 
 Filter inactive cross-computer discovery cards before pagination, just as local discovery does. Resolve CLI names through the caller’s complete permitted directory, rejecting ambiguous live names and incomplete remote results. Keep archived cards for history without making them active discovery candidates. Test duplicate archived names against a live peer.
