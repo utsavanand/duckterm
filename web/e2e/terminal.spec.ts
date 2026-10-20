@@ -277,3 +277,29 @@ test("terminal: Option-drag copies a wrapped URL while the agent owns the mouse"
     expect(selected?.trim()).toBe(url);
   } finally { await apiDelete(`/sessions/${key}`); }
 });
+
+test("terminal: live OSC52 reaches the Mac clipboard bridge", async ({ page }) => {
+  const url = "https://example.test/oauth?synthetic=" + "x".repeat(250);
+  const encoded = Buffer.from(url).toString("base64");
+  const launch = await apiPost("/sessions/launch", {
+    command: `sh -c 'read answer; printf "\\033]52;c;${encoded}\\007"; exec cat'`,
+    cwd: "/tmp", name: "copy-osc52-url", in_terminal: false, test: true,
+  });
+  expect(launch.status).toBe(200);
+  const key = launch.body.session_key as string;
+  try {
+    await page.goto(base());
+    await page.locator(".rd-row-name", { hasText: "copy-osc52-url" }).click();
+    const terminal = page.locator(".rd-terminal-slot:visible .xterm-helper-textarea");
+    await terminal.focus();
+    await page.evaluate(() => {
+      (window as unknown as { clipboardWrites: unknown[] }).clipboardWrites = [];
+      window.webkit = { messageHandlers: { remoteSession: { postMessage: message => {
+        (window as unknown as { clipboardWrites: unknown[] }).clipboardWrites.push(message);
+      } } } };
+    });
+    await terminal.press("Enter");
+    await expect.poll(() => page.evaluate(() => (window as unknown as { clipboardWrites: unknown[] }).clipboardWrites))
+      .toEqual([{ action: "copy-terminal-text", text: url }]);
+  } finally { await apiDelete(`/sessions/${key}`); }
+});

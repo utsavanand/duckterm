@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import type { Terminal } from "@xterm/xterm";
-import { bindClipboardBridge, releaseClipboardBridge } from "./clipboardBridge";
+import { bindClipboardBridge, bindTerminalClipboard, releaseClipboardBridge } from "./clipboardBridge";
 import { sessionFetch, sessionRef } from "./hostTransport";
 vi.mock("./hostTransport", async importOriginal => ({ ...await importOriginal<typeof import("./hostTransport")>(), sessionFetch: vi.fn() }));
 const terminals: Terminal[] = [];
@@ -30,4 +30,25 @@ it("does not paste a resolved image into the sibling terminal of the same sessio
   resolve(new Response('{"path":"/remote/image.png"}'));
   await vi.waitFor(() => expect(alert).toHaveBeenCalled());
   expect(agent.paste).not.toHaveBeenCalled(); expect(shell.paste).not.toHaveBeenCalled();
+});
+
+it("only copies bounded live OSC52 writes from the focused terminal", () => {
+  const term = terminal("remote", "agent");
+  let handler!: (data: string) => boolean;
+  Object.assign(term, { parser: { registerOscHandler: (_: number, callback: typeof handler) => { handler = callback; return { dispose() {} }; } } });
+  const postMessage = vi.fn();
+  window.webkit = { messageHandlers: { remoteSession: { postMessage } } };
+  let live = false;
+  const binding = bindTerminalClipboard(term, () => live);
+  const payload = "c;" + btoa("https://example.test/oauth?synthetic=1");
+  handler(payload); expect(postMessage).not.toHaveBeenCalled();
+  live = true;
+  handler(payload);
+  expect(postMessage).toHaveBeenCalledWith({ action: "copy-terminal-text", text: "https://example.test/oauth?synthetic=1" });
+  postMessage.mockClear();
+  for (const invalid of ["c;?", "c;!", "c;" + "YQ==".repeat(22000), "c;/w=="]) handler(invalid);
+  expect(postMessage).not.toHaveBeenCalled();
+  terminal("other", "agent"); handler(payload);
+  expect(postMessage).not.toHaveBeenCalled();
+  binding.dispose(); delete window.webkit;
 });
