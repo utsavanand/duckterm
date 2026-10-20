@@ -156,7 +156,12 @@ async def _run(
                 covered.update({(source, record): digest for record, digest in records.items()})
     if covered:
         captured = {**captured, "span_covered": covered}
-    sequential = [leaf for leaf in leaves if "checkpoint_settings" not in leaf]
+    sequential = [
+        leaf
+        for leaf in leaves
+        if "checkpoint_settings" not in leaf
+        and not leaf.get("span_input", {}).get("selection_window")
+    ]
     latest = leaves[-1] if leaves else None
     predecessor = sequential[-1] if sequential and selection is None else None
     if latest and latest.get("policy") != captured["policy"]:
