@@ -219,7 +219,18 @@ def test_local_services_durable_offline_send_and_no_cached_access_after_revoke(t
             p["session_ref"] == target
             for p in (await one.discover("one", "self_folder"))["sessions"]
         )
+        cached = one.cached("cards", [])
+        archived = {
+            **next(c for c in cached if c["session_ref"] == target),
+            "session_ref": "peer:archived:duplicate",
+            "state": "archived",
+        }
+        one.cache("cards", [archived] + cached)
         online[0] = False
+        assert not any(
+            p["session_ref"] == archived["session_ref"]
+            for p in (await one.discover("one", "self_folder"))["sessions"]
+        )
         status, queued = await one.ask(
             "one", {"target_session_id": target, "question": "Check this change"}, "offline-send"
         )

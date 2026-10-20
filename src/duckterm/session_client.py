@@ -17,6 +17,7 @@ from typing import Any
 
 from duckterm.helpers.session_credentials import client_credentials
 from duckterm.persistence.artifacts import MAX_FILE_BYTES, MEDIA_TYPES, registration
+from duckterm.runtimes.base import AT_REST_STATES
 
 
 def add_parser(sub: Any) -> None:
@@ -35,7 +36,7 @@ def add_parser(sub: Any) -> None:
     inbox = actions.add_parser("inbox", help="read pending questions when you choose to respond")
     inbox.add_argument("--before")
     ask = actions.add_parser("ask", help="send a question; returns an ID to check later")
-    ask.add_argument("target")
+    ask.add_argument("target", help="session ID, peer reference, or unique visible session name")
     ask.add_argument("question")
     ask.add_argument(
         "--request-key", default=None, help="reuse this key when retrying the same question"
@@ -113,6 +114,53 @@ def add_memory_parser(sub: Any) -> None:
     link.add_argument("--file", required=True, type=Path)
     claim = actions.add_parser("claim", help="explicitly retire or supersede your own claim")
     claim.add_argument("--file", required=True, type=Path)
+
+
+def _resolve_target(url: str, headers: dict[str, str], target: str) -> str:
+    """Resolve names only through the caller's authorized, complete directory."""
+    if re.fullmatch(r"[a-f0-9]{32}", target) or target.startswith("peer:"):
+        return target
+    matches: set[str] = set()
+    seen: set[str] = set()
+    cursor = ""
+    for _ in range(1000):
+        query = {"scope": "shared_root"}
+        if cursor:
+            query["cursor"] = cursor
+        request = urllib.request.Request(
+            url + "/api/v1/session/peers?" + urllib.parse.urlencode(query), headers=headers
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            page = json.load(response)
+        if page.get("cross_computer_status") == "unavailable":
+            raise ValueError(
+                "Cannot resolve a name while remote discovery is unavailable; "
+                "use the session ID or peer reference"
+            )
+        for card in page.get("sessions", []):
+            identifier = card.get("session_ref") or card.get("session_id")
+            if target in (card.get("session_id"), card.get("session_ref")):
+                return str(identifier)
+            if (
+                card.get("name") == target
+                and card.get("state") not in AT_REST_STATES
+                and isinstance(identifier, str)
+            ):
+                matches.add(identifier)
+        cursor = page.get("next_cursor") or ""
+        if not cursor:
+            break
+        if cursor in seen:
+            raise ValueError("Session discovery repeated a cursor; use the session ID")
+        seen.add(cursor)
+    else:
+        raise ValueError("Session directory is too large for name lookup; use the session ID")
+    if len(matches) > 1:
+        raise ValueError(
+            f"Session name {target!r} is ambiguous; use an ID from duckterm session discover"
+        )
+    # Preserve legacy opaque IDs and let the server enforce current access.
+    return next(iter(matches)) if matches else target
 
 
 def _save_artifact(result: dict[str, Any], destination: Path | None) -> dict[str, Any]:
@@ -230,7 +278,7 @@ def main(args: argparse.Namespace) -> int:
             method, path = "POST", "/questions"
             headers["Idempotency-Key"] = args.request_key or str(uuid.uuid4())
             body = {
-                "target_session_id": args.target,
+                "target_session_id": _resolve_target(url, headers, args.target),
                 "question": args.question,
                 "timeout_seconds": args.timeout,
             }

@@ -92,3 +92,26 @@ window.__rtPasteImageData = (base64, sessionKey) => {
     }).catch((error: Error) => window.alert(`Image paste failed: ${error.message}`));
   return true;
 };
+
+// OSC 52 is write-only. Never answer clipboard-read requests or replay old writes.
+export function bindTerminalClipboard(term: XTerm, live: () => boolean): { dispose(): void } {
+  return term.parser.registerOscHandler(52, data => {
+    const separator = data.indexOf(";");
+    if (separator < 0) return true;
+    const selection = data.slice(0, separator);
+    const encoded = data.slice(separator + 1);
+    if (!live() || active !== term || document.activeElement !== term.textarea
+      || !term.textarea?.getClientRects().length || document.visibilityState !== "visible"
+      || !/^[cps0-7]*$/.test(selection) || encoded.length > 87384
+      || !encoded || encoded === "?" || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return true;
+    try {
+      const bytes = Uint8Array.from(atob(encoded), c => c.charCodeAt(0));
+      if (bytes.length > 65536) return true;
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+      const bridge = window.webkit?.messageHandlers?.remoteSession;
+      if (bridge) bridge.postMessage({ action: "copy-terminal-text", text });
+      else void navigator.clipboard?.writeText(text).catch(() => {});
+    } catch { /* Invalid or denied clipboard writes must not break terminal output. */ }
+    return true;
+  });
+}

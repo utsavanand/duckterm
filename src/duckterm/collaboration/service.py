@@ -503,7 +503,12 @@ class Service:
         own_host = self.store.setting("identity")["computer_id"]
         cards = local_cards + [c for c in cards if c["computer_id"] != own_host]
         cards = sorted(
-            (c for c in cards if c["session_ref"] > cursor), key=lambda c: c["session_ref"]
+            (
+                c
+                for c in cards
+                if c["session_ref"] > cursor and c.get("state") not in AT_REST_STATES
+            ),
+            key=lambda c: c["session_ref"],
         )
         return {
             "sessions": cards[:50],
