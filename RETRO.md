@@ -1,3 +1,7 @@
+## 2026-10-20 — A pending POST must not hide a completed checkpoint receipt
+
+The progress poll consumed only running receipts, so a delayed native POST left the bar at zero even after the server stored a failed result. Let the exact completed receipt settle the original shared promise. Validate both request IDs and a nonempty checkpoint ID, retain the owning host, stop polling, and ignore late transport callbacks. Reproduce with the POST still unresolved, not merely rejected; verify failures stay failures and no second POST is sent.
+
 ## 2026-10-20 — A paused-state notification is not shutdown completion
 
 ## 2026-10-20 — Review labels must not silently disable actionable corrections

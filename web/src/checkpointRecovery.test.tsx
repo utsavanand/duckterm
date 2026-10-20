@@ -107,3 +107,82 @@ it("retries a transient receipt-read error without retrying the checkpoint POST"
   expect(api.checkpoint).toHaveBeenCalledOnce();
   expect(api.checkpointAttempt).toHaveBeenCalledTimes(2);
 });
+
+it.each(["updated", "failed"] as const)("settles a pending POST from its exact %s receipt and ignores late POST callbacks", async state => {
+  vi.useFakeTimers();
+  const key = `pending-post-${state}`;
+  let finish!: (value: CheckpointRecord) => void;
+  let fail!: (error: Error) => void;
+  vi.mocked(api.checkpoint).mockImplementation(() => new Promise((resolve, reject) => { finish = resolve; fail = reject; }));
+  vi.mocked(api.checkpointAttempt).mockImplementation(async (_key, id) => ({ request_id: id, state: "complete", result: result(id, state) }));
+  const refreshed = vi.fn();
+  window.addEventListener("duckterm-checkpoint", refreshed);
+  try {
+    const view = render(<CheckpointProgress sessionKey={key} />);
+    let work!: Promise<CheckpointRecord>;
+    let settled = false;
+    await act(async () => { work = requestCheckpoint(key); void work.then(() => { settled = true; }); });
+    expect(requestCheckpoint(key)).toBe(work);
+    const id = vi.mocked(api.checkpoint).mock.calls[0][2]!;
+    view.unmount(); render(<CheckpointProgress sessionKey={key} />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    expect(settled).toBe(true);
+    expect(await work).toEqual(result(id, state));
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent(state === "failed" ? "Summary update failed" : "Summary updated");
+    expect(api.checkpoint).toHaveBeenCalledOnce();
+    expect(refreshed).toHaveBeenCalledOnce();
+    // Start a newer attempt before the old transport finally returns.
+    vi.mocked(api.checkpoint).mockImplementation(async (_key, _label, nextId) => result(nextId!, "partial"));
+    await act(async () => { await requestCheckpoint(key); });
+    await act(async () => {
+      if (state === "failed") finish(result(id)); else fail(new Error("late disconnect"));
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Checkpoint failed · summary incomplete");
+    expect(refreshed).toHaveBeenCalledTimes(2);
+    expect(api.checkpointAttempt).toHaveBeenCalledOnce();
+  } finally { window.removeEventListener("duckterm-checkpoint", refreshed); }
+});
+
+it.each(["wrong-outer", "wrong-inner", "missing-id", "empty-id", "interrupted", "failed"])("does not settle a pending POST from a %s receipt", async kind => {
+  vi.useFakeTimers();
+  const key = `invalid-pending-${kind}`;
+  let finish!: (value: CheckpointRecord) => void;
+  vi.mocked(api.checkpoint).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  vi.mocked(api.checkpointAttempt).mockImplementation(async (_key, id) => ({
+    request_id: kind === "wrong-outer" ? "other" : id,
+    state: kind === "interrupted" || kind === "failed" ? kind : "complete",
+    result: { ...result(kind === "wrong-inner" ? "other" : id), id: kind === "empty-id" ? "" : kind === "missing-id" ? undefined as unknown as string : "exact" },
+  }));
+  render(<CheckpointProgress sessionKey={key} />);
+  let work!: Promise<CheckpointRecord>;
+  await act(async () => { work = requestCheckpoint(key); await vi.advanceTimersByTimeAsync(1000); });
+  expect(screen.getByRole("progressbar")).toBeInTheDocument();
+  expect(requestCheckpoint(key)).toBe(work);
+  const id = vi.mocked(api.checkpoint).mock.calls[0][2]!;
+  await act(async () => { finish(result(id)); await work; });
+  expect(screen.getByRole("status")).toHaveTextContent("Summary updated");
+  expect(api.checkpoint).toHaveBeenCalledOnce();
+});
+
+it("ignores an in-flight progress read after the POST has already settled", async () => {
+  vi.useFakeTimers();
+  const key = "late-progress-after-post";
+  let finishPost!: (value: CheckpointRecord) => void;
+  let finishRead!: (value: CheckpointAttemptReceipt) => void;
+  vi.mocked(api.checkpoint).mockImplementation(() => new Promise(resolve => { finishPost = resolve; }));
+  vi.mocked(api.checkpointAttempt).mockImplementation(() => new Promise(resolve => { finishRead = resolve; }));
+  render(<CheckpointProgress sessionKey={key} />);
+  let work!: Promise<CheckpointRecord>;
+  await act(async () => { work = requestCheckpoint(key); await vi.advanceTimersByTimeAsync(1000); });
+  const id = vi.mocked(api.checkpoint).mock.calls[0][2]!;
+  await act(async () => { finishPost(result(id, "failed")); await work; });
+  await act(async () => {
+    finishRead({ request_id: id, state: "complete", result: result(id) });
+    await vi.advanceTimersByTimeAsync(20_000);
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("Summary update failed");
+  expect(api.checkpointAttempt).toHaveBeenCalledOnce();
+  expect(vi.mocked(api.checkpointAttempt).mock.calls[0][2]?.aborted).toBe(true);
+});
