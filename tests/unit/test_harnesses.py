@@ -43,9 +43,11 @@ def test_installable_agents_carry_a_hook_spec() -> None:
         spec = REGISTRY[name].hook_spec
         assert spec is not None
         # build/strip round-trip: stripping a freshly built config removes
-        # exactly our entries, leaving nothing behind.
-        built = spec.build({}, "/path/to/duckterm-hook.sh", name)
-        assert spec.strip(built) == {}
+        # exactly our entries, preserving the shared format version.
+        from duckterm.agents.hooks_install import hook_script_path
+
+        built = spec.build({}, str(hook_script_path()), name)
+        assert spec.strip(built) == ({"version": 1} if name == "copilot" else {})
 
 
 def test_native_preparation_arguments_are_not_replayed_as_the_user_command():

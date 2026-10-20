@@ -54,9 +54,21 @@ A theme preview using only default text and ANSI colors hid extended indexed/RGB
 
 Repeated checkpoint cards, mismatched type sizes, and scattered actions made the right panel hard to scan. Group saved memory and active conversation context separately, keep supporting sections collapsible with summaries, and reuse existing checkpoint/recovery flows. Missing capture-boundary counts or native compaction events must remain unavailable; lifetime event totals and token changes cannot stand in for those contracts. Verify notes, recovery, keyboard disclosure, and memory navigation after moving controls.
 
+## 2026-10-19 — A hook basename is not ownership evidence
+
+Independent QA showed that a custom script can use the same filename and arguments as a DuckTerm hook. Preserve it unless the command points to the currently loaded package script or the exact historical package location in a known DuckTerm pipx environment. Ambiguous hooks require review, not deletion; missing historical scripts can still be identified by their precise managed installation path.
+
+## 2026-10-19 — Make the uninstall inventory genuinely read-only
+
+A dry run must not create missing configuration directories, lock files or ownership receipts while inspecting integrations. Read hook configs through the existing ownership rules without invoking their mutation path, redact parser details, retain unreadable or uncertain entries as blockers, and measure data without following symlinks. Keep project scope and unimplemented cleanup stages explicit rather than claiming the whole machine is clean.
+
 ## 2026-10-19 — Native scrollbar tracks need the resolved color scheme
 
 Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
+
+## 2026-10-19 — Remove only owned hook commands, not their entire group
+
+A matcher group can contain both DuckTerm and user hooks. Dropping the group when any child mentions DuckTerm loses unrelated automation. Recognize the generated script invocation and remove individual owned commands; retain sibling hooks and group metadata. Fail closed for mixed alternative commands, preserve no-op files byte-for-byte, and use the existing descriptor-based atomic write path so malformed or symlinked configuration is not overwritten.
 
 ## 2026-10-19 — Persist work boundaries, not unrelated observed history
 
@@ -842,6 +854,7 @@ separate paste target, retain the owning session for uploads, and reject a late
 result after focus changes. Verify collapse/reopen against a real shell: close
 the viewer without ending its process, and bind destructive confirmation to the
 backend's observed process token rather than a cached busy label.
+
 ## 2026-10-06 — A stale sync response cannot confirm a newer owner change
 
 Review reproduced an exchange that captured the old folder tree, then returned
