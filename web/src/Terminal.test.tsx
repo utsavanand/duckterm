@@ -4,12 +4,13 @@ import { useAppearance } from "./appearance";
 import { Terminal } from "./Terminal";
 import type { TerminalSocket } from "./hostTransport";
 const mocks = vi.hoisted(() => ({
+  clipboardLive: (() => false) as () => boolean, clipboardDispose: vi.fn(),
   options: {} as Record<string, unknown>, create: vi.fn(), fit: vi.fn(), resize: vi.fn(), write: vi.fn(),
   socket: { readyState: 1, binaryType: "arraybuffer", send: vi.fn(), close: vi.fn(),
     onopen: null, onclose: null, onmessage: null } as TerminalSocket,
 }));
 vi.mock("./hostTransport", () => ({ terminalSocket: () => mocks.socket, sessionFetch: vi.fn() }));
-vi.mock("./clipboardBridge", () => ({ bindClipboardBridge: vi.fn(), releaseClipboardBridge: vi.fn(), imagePathText: vi.fn() }));
+vi.mock("./clipboardBridge", () => ({ bindTerminalClipboard: (_term: unknown, live: () => boolean) => { mocks.clipboardLive = live; return { dispose: mocks.clipboardDispose }; }, bindClipboardBridge: vi.fn(), releaseClipboardBridge: vi.fn(), imagePathText: vi.fn() }));
 vi.mock("@xterm/addon-fit", () => ({ FitAddon: class { fit = mocks.fit; } }));
 vi.mock("@xterm/xterm", () => ({ Terminal: class {
   cols = 80; rows = 24; options = mocks.options; constructor(options: Record<string, unknown>) { Object.assign(this.options, options); mocks.create(); } loadAddon() {} open() {} refresh() {} dispose() {}
@@ -137,4 +138,19 @@ it.each(["agent", "shell"] as const)("updates hidden %s fonts without recreating
   message(new ArrayBuffer(1)); replayParsed();
   expect(mocks.fit).toHaveBeenCalledOnce();
   expect(mocks.create).toHaveBeenCalledOnce();
+});
+
+it("suppresses clipboard writes during replay, while hidden, and after disposal", () => {
+  const view = render(<Terminal sessionKey="clipboard-fixture" />);
+  expect(mocks.clipboardLive()).toBe(false);
+  message(new Uint8Array([65]).buffer);
+  expect(mocks.clipboardLive()).toBe(false);
+  replayParsed(); expect(mocks.clipboardLive()).toBe(true);
+  view.rerender(<Terminal sessionKey="clipboard-fixture" active={false} />);
+  expect(mocks.clipboardLive()).toBe(false);
+  view.rerender(<Terminal sessionKey="clipboard-fixture" active />);
+  expect(mocks.clipboardLive()).toBe(true);
+  view.unmount();
+  expect(mocks.clipboardLive()).toBe(false);
+  expect(mocks.clipboardDispose).toHaveBeenCalledOnce();
 });
