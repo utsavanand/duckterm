@@ -48,7 +48,14 @@ def test_idle_does_not_start_writer_and_unchanged_checkpoint_reuses_revision(
         assert saved["trigger"] == {
             "kind": "checkpoint",
             "label": "manual",
+            "origin": "checkpoint_request",
+            "range_id": first["id"],
             "request_id": "request-one",
+            "batch_index": 1,
+            "continuation": False,
+        }
+        assert first["record"]["trigger"] == {
+            k: v for k, v in saved["trigger"].items() if k not in {"batch_index", "continuation"}
         }
         count = len(calls)
         assert count > 0
@@ -56,6 +63,8 @@ def test_idle_does_not_start_writer_and_unchanged_checkpoint_reuses_revision(
             "agent", server.history.session("agent"), "manual", request_id="request-two"
         )
         assert len(calls) == count
+        assert again["record"]["trigger"]["request_id"] == "request-two"
+        assert again["record"]["trigger"]["range_id"] == again["id"]
         assert again["record"]["summary_update"]["revision_id"] == revision_id
         assert server.digests.revision("agent", revision_id)["trigger"] == saved["trigger"]
 
@@ -109,5 +118,23 @@ def test_live_edit_does_not_rewrite_the_captured_checkpoint(memory_rig, monkeypa
 
         saved = read_native("agent", cp["record"]["memory_sources"][0])
         assert saved["records"][0]["text"] == "Original owner constraint."
+
+    asyncio.run(run())
+
+
+def test_failed_summary_still_records_checkpoint_initiator(memory_rig, monkeypatch):
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Work retained even when the provider fails.")
+    _, fail = provider(monkeypatch)
+    fail[0] = True
+
+    async def run():
+        cp = await server._create_checkpoint(
+            "agent", server.history.session("agent"), "manual", request_id="failed-request"
+        )
+        assert cp["record"]["summary_update"]["state"] == "failed"
+        assert cp["record"]["trigger"]["request_id"] == "failed-request"
+        assert cp["record"]["trigger"]["range_id"] == cp["id"]
+        assert cp["record"]["summary_ref"] is None
 
     asyncio.run(run())

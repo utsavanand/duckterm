@@ -4796,6 +4796,15 @@ class Server:
             raise APIError(409, "Session changed while capturing checkpoint; try again")
         prior = current_revision(self.history.session(session_key) or {})
         update = SummaryUpdate.failed("update_failed")
+        identity = identity or uuid.uuid4().hex
+        trigger = {
+            "kind": "harness_preparation" if label == "Before harness switch" else "checkpoint",
+            "origin": "checkpoint_request" if request_id else "internal_call",
+            "label": label,
+            "range_id": identity,
+            **({"request_id": request_id} if request_id else {}),
+        }
+        captured["trigger"] = trigger
         if selection is not None:
             captured = await memory_checkpoint.freeze(
                 self, session_key, captured, checkpoint_settings.load(), selection=selection
@@ -4805,11 +4814,7 @@ class Server:
                 captured = await memory_checkpoint.freeze(
                     self, session_key, captured, checkpoint_settings.load()
                 )
-            captured["trigger"] = {
-                "kind": "checkpoint",
-                "label": label,
-                **({"request_id": request_id} if request_id else {}),
-            }
+            captured["trigger"] = trigger
             update = await self.progress_coordinator.refresh_result(
                 session_key, captured, on_progress=on_progress
             )

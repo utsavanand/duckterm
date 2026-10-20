@@ -80,8 +80,7 @@ class DigestStore:
         known = self._revision_inputs.get(session_key, {})
         current = {}
         rows = self._conn.execute(
-            "SELECT rowid,id FROM digest_items WHERE session_key=? AND bucket=? "
-            "ORDER BY rowid",
+            "SELECT rowid,id FROM digest_items WHERE session_key=? AND bucket=? ORDER BY rowid",
             (session_key, REVISION_BUCKET),
         ).fetchall()
         for row in rows:

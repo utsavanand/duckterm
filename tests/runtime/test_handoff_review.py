@@ -48,6 +48,11 @@ def test_long_reviewed_brief_uses_one_revision_without_provider_and_can_prepare(
     async def run():
         packet, result = await approved(server)
         assert result["saved"] and packet["coverage"] == "owner-selected"
+        review_cp = server.history.checkpoints("test-save")[0]
+        revision = server.digests.revision("test-save", result["revision_id"])
+        assert review_cp["record"]["trigger"] == revision["trigger"]
+        assert revision["trigger"]["kind"] == "handoff_review"
+        assert revision["trigger"]["request_id"] == packet["review_id"]
         assert "not the full conversation" in packet["warning"]
         cp = await checkpoint(server)
         assert cp["saved"] and cp["handoff_eligible"]

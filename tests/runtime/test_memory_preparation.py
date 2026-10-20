@@ -112,8 +112,14 @@ def test_preparation_completes_spans_before_creating_proof(preparation):
     assert saved["trigger"] == {
         "kind": "harness_preparation",
         "preparation_id": view["preparation_id"],
+        "range_id": view["preparation_id"],
+        "batch_index": 1,
+        "continuation": False,
     }
     cp = server.history.checkpoints("agent")[0]
+    assert cp["record"]["trigger"] == {
+        k: v for k, v in saved["trigger"].items() if k not in {"batch_index", "continuation"}
+    }
     assert cp["record"]["summary_ref"] == view["proof"]["revision_id"]
     assert cp["record"]["memory_sources"] and cp["record"]["retained_sources"]
     assert len(calls) == 2

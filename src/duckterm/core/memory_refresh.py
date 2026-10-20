@@ -56,7 +56,11 @@ async def refresh(
         if key in coordinator.span_progress:
             on_progress(dict(coordinator.span_progress[key]))
     if active is None:
-        active = asyncio.create_task(_run(coordinator, key, captured))
+        # Diagnostics belong to the initiating caller, even when later requests
+        # join this job. They never participate in summary deduplication.
+        trigger = dict(captured.get("trigger", {"kind": "internal_refresh"}))
+        trigger.setdefault("range_id", identity)
+        active = asyncio.create_task(_run(coordinator, key, {**captured, "trigger": trigger}))
         coordinator.span_refreshes[key] = active
         coordinator.span_refresh_inputs[key] = identity
 
@@ -165,6 +169,7 @@ async def _run(
     changed = False
     total: int | None = None
     completed = 0
+    batch_index = 0
     while True:
         if not wanted(coordinator, key):
             return SummaryUpdate.failed("update_failed", diagnostic="update_canceled")
@@ -183,7 +188,16 @@ async def _run(
             if planned["oversized"]:
                 return SummaryUpdate.failed("invalid_context", diagnostic="oversized_record")
             break
-        update, planned = await coordinator.write_span(key, captured, lower)
+        batch_index += 1
+        batch = {
+            **captured,
+            "trigger": {
+                **captured["trigger"],
+                "batch_index": batch_index,
+                "continuation": batch_index > 1,
+            },
+        }
+        update, planned = await coordinator.write_span(key, batch, lower)
         if update.state not in {"updated", "reused"} or update.revision is None:
             return update
         completed += len(planned["selected"])

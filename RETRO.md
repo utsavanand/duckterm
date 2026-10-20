@@ -2,7 +2,7 @@
 
 A JSON predicate over summary revisions repeatedly parsed multi-megabyte rows on the event loop. Cache only input-key mappings for immutable revision IDs, inspect cheap row headers, parse new rows once, and invalidate on external writes. Do not publish uncommitted mappings across rollback. Selecting a trailing column such as updated_at can still pull large record payloads; use immutable rowid/id headers. Progress-item dedup must also exclude revision buckets rather than normalize their JSON. The first lookup still scans existing keys; this repair removes repeated scans without a schema migration or body cache.
 
-An idle terminal does not prove its checkpoint writer is autonomous: an explicit request can process older records. Preserve the existing no-new-record and idle/exit guards, and record the checkpoint request, harness preparation, compaction initiator, or handoff review on new revisions. Do not invent trigger history for old rows.
+An idle terminal does not prove its checkpoint writer is autonomous: an explicit request can process older records. Preserve the existing no-new-record and idle/exit guards, and record the checkpoint request, harness preparation, compaction initiator, or handoff review on both checkpoint markers and new revisions. Give every explicit range an ID and number its continuation batches; a later checkpoint reusing a revision must keep its own request metadata without rewriting the revision's original initiator. Do not invent trigger history for old rows.
 
 ## 2026-10-19 — Preserve terminal wraps and replay at the captured grid size
 
