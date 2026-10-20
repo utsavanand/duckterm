@@ -1,3 +1,7 @@
+## 2026-10-20 — A paused-state notification is not shutdown completion
+
+Stop publishes stopped before awaiting child exit to preserve queued questions. A quick Resume could launch successfully, then the old Stop wrote stopped over its new busy state. Serialize Stop and Resume per session through shutdown completion. A deterministic event-barrier test must attempt Resume while Stop is suspended, then verify exactly one launch and final busy state; polling for stopped alone cannot prove the old request finished.
+
 ## 2026-10-20 — Establish a terminal draft before testing its preservation
 
 The artifact browser test typed immediately after xterm mounted, before the WebSocket necessarily opened. A blank terminal later looked like draft loss. Wait for a fixture readiness banner and assert the typed draft is visible before navigating away; keep the original return-to-terminal assertion. This tests preservation of an established draft rather than racing transport startup.

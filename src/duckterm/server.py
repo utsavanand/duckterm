@@ -403,6 +403,7 @@ _ROUTES: list[Route] = [
 
 class Server:
     def __init__(self, bus: EventBus | None = None, history: HistoryStore | None = None) -> None:
+        self._lifecycle_locks: dict[str, asyncio.Lock] = {}
         self._transfer_sources: set[str] = set()
         self._transfer_launches: set[str] = set()
         self.history = history if history is not None else HistoryStore()
@@ -2387,6 +2388,10 @@ class Server:
         return out
 
     async def _stop(self, writer: asyncio.StreamWriter, session_key: str) -> None:
+        async with self._lifecycle_locks.setdefault(session_key, asyncio.Lock()):
+            await self._stop_locked(writer, session_key)
+
+    async def _stop_locked(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         if self.archives.pending(session_key):
             await _write_json(writer, 409, {"error": "Archive pending; undo it first"})
             return
@@ -2532,6 +2537,14 @@ class Server:
             )
 
     async def _resume_session(
+        self, session_key: str, *, exact: bool = False
+    ) -> tuple[int, dict[str, Any]]:
+        # Stop publishes its paused state before awaiting child exit. Serialize
+        # Resume through the final Stop write so the new launch stays busy.
+        async with self._lifecycle_locks.setdefault(session_key, asyncio.Lock()):
+            return await self._resume_session_locked(session_key, exact=exact)
+
+    async def _resume_session_locked(
         self, session_key: str, *, exact: bool = False
     ) -> tuple[int, dict[str, Any]]:
         """Resume a stopped/terminated launched session: relaunch its agent in the
