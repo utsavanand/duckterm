@@ -9,7 +9,7 @@ import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { authHeaders } from "./api";
-import { bindClipboardBridge, imagePathText, releaseClipboardBridge } from "./clipboardBridge";
+import { bindClipboardBridge, bindTerminalClipboard, imagePathText, releaseClipboardBridge } from "./clipboardBridge";
 import { useToast } from "./ui";
 import { DEFAULT_TERM_THEME, TERM_THEMES } from "./termThemes";
 
@@ -140,6 +140,7 @@ export const Terminal = memo(function Terminal({
     let disposed = false;
     let attachGeneration = 0;
     let replayReady = false;
+    const terminalClipboard = bindTerminalClipboard(term, () => visible && replayReady && !disposed);
     let snapshotSizing = false;
     let pendingOpenScroll = false;
     let openGeneration = 0;
@@ -333,6 +334,7 @@ export const Terminal = memo(function Terminal({
 
     return () => {
       disposed = true;
+      terminalClipboard.dispose();
       refitRef.current = null;
       activateRef.current = null;
       focusRef.current = null;

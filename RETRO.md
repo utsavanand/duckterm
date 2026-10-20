@@ -1,3 +1,9 @@
+## 2026-10-20 — Federated discovery and terminal copying need end-to-end parity
+
+Filter inactive cross-computer discovery cards before pagination, just as local discovery does. Resolve CLI names through the caller’s complete permitted directory, rejecting ambiguous live names and incomplete remote results. Keep archived cards for history without making them active discovery candidates. Test duplicate archived names against a live peer.
+
+Agent clipboard shortcuts emit OSC 52, which must reach the native pasteboard through a bounded, focused, live-output-only bridge; selection copying alone does not cover that path. Verify synthetic wrapped URLs and OSC output through tmux. Never run dashboard builds concurrently with browser tests: rebuilding dist can briefly replace the dashboard with its missing-assets page.
+
 ## 2026-10-20 — Saved batch evidence is not checkpoint success
 
 Render validated attempt-only coverage and exact revision links while keeping the overall failure. A late source fence can fail after publication: never promise rollback or a frozen success clock in that case. Keep current-memory navigation separate from historical revision links, preserve host routing, and reject malformed counts rather than infer completion.
