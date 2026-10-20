@@ -1156,6 +1156,14 @@ def test_disconnect_quiesces_queue_and_never_replays_into_new_identity(paired_fo
         hub.revoke(prepared["computer_id"])
         assert await recovery.disconnect(service, {"id": prepared["id"]}) == {"disconnected": True}
         assert not service.connected
+        from duckterm.collaboration.api import owner as owner_api
+
+        status = await owner_api(service, "GET", "/collaboration/status", b"")
+        assert status["enabled"] is False
+        assert status["computer_id"] is None
+        assert status["workspace_id"] is None
+        assert status["disconnecting"] is None
+        assert status["pending_changes"] == []
         assert service.history.session("parent")["grp"] == "Project"
         assert service.history.session("parent")["state"] == "busy"
         assert owner.pending(service) == []

@@ -1,3 +1,7 @@
+## 2026-10-20 — Check status after successful disconnect
+
+The native packaged-backend rehearsal completed revocation and disconnect, then status crashed because the identity setting existed with JSON null. A storage default applies only to missing keys. Normalize the cleared identity before reading fields, and exercise the status endpoint after real disconnect so successful recovery does not appear as a network failure.
+
 ## 2026-10-20 — A shared inbox must reach the folder history too
 
 Federated session inboxes worked while the owner’s folder interaction history still queried only local questions. Combine both durable sources at the existing owner-only boundary, scope either participant by current local subtree membership, retain independent cursors, and never mark agent messages read from an owner view. Test equal timestamps across more than one page, answered/pending filters, stopped participants, unrelated folders and unavailable coordinators. Integrating the feature must also preserve newer memory/recovery routes and appearance controls from main.

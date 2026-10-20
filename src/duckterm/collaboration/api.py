@@ -38,7 +38,7 @@ async def owner(service: Service, method: str, route: str, body: bytes) -> dict[
     req = body_json(body)
     store = service.store
     if route == "/collaboration/status" and method == "GET":
-        identity = store.setting("identity", {}) if store else {}
+        identity = (store.setting("identity") or {}) if store else {}
         result = {
             "protocol": PROTOCOL,
             "enabled": service.connected,
