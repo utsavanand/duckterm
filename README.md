@@ -59,7 +59,7 @@ install Python 3.11+, pipx, and tmux using your distribution's package manager.
 Then install the published wheel:
 
 ```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.144/duckterm-0.4.144-py3-none-any.whl
+pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.168/duckterm-0.4.168-py3-none-any.whl
 duckterm serve
 ```
 
@@ -119,9 +119,9 @@ See [installation, upgrades, and troubleshooting](docs/installation.md) for help
 - **AGENTS.md that learns** — "Suggest from corrections" distills the feedback
   you've given agents (annotations, follow-up prompts) into proposed rules you
   review before saving.
-- **Installable meta-harnesses** — register a collection of skills/hooks/sub-agents
+- **Installable skill kits** — register a collection of skills/hooks/sub-agents
   (e.g. uv-suite) and install it into any project from the dashboard, with
-  per-meta-harness option pickers and compatibility declarations.
+  per-skill-kit option pickers and compatibility declarations.
   Contract: [docs/harnesses.md](docs/harnesses.md).
 
 ## Session inboxes
@@ -155,13 +155,13 @@ and the [shared connector guide](docs/shared-connectors.md) for central hosting.
 ## Mac app
 
 On **Apple Silicon Macs running macOS 13+**, install the CLI above, then download
-[DuckTerm-0.4.144-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/download/v0.4.144/DuckTerm-0.4.144-macos-arm64.zip),
+[DuckTerm-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/latest/download/DuckTerm-macos-arm64.zip),
 unzip it, and move **DuckTerm.app** to **Applications**.
 
 The app opens the dashboard in a native window with a Dock icon and notifications.
 It starts the local server when needed, or connects to one already running.
-It is ad-hoc signed, **not notarized**; macOS may require you to allow it in
-**System Settings → Privacy & Security** after the first launch attempt.
+It is signed with a Developer ID and notarized by Apple, so it opens without a
+security override.
 The browser installation works without the app. Intel Mac users can use the
 browser or [build the native app from source](mac/README.md).
 
