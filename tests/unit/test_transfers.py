@@ -464,8 +464,7 @@ def test_progress_is_readable_while_clone_holds_operation_lock(homes):
     from concurrent.futures import ThreadPoolExecutor
 
     identifier = uuid.uuid4().hex
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        with t.locked(identifier) as directory:
-            t.save(directory, {"id": identifier, "stage": "cloning"})
-            result = pool.submit(t.status, identifier)
-            assert result.result(timeout=1)["stage"] == "cloning"
+    with ThreadPoolExecutor(max_workers=1) as pool, t.locked(identifier) as directory:
+        t.save(directory, {"id": identifier, "stage": "cloning"})
+        result = pool.submit(t.status, identifier)
+        assert result.result(timeout=1)["stage"] == "cloning"

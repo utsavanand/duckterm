@@ -1,3 +1,12 @@
+## 2026-10-20 — Keep hook capture fixtures independent of interpreter startup
+
+The full gate intermittently missed a background hook payload while focused
+checks passed. Its fake curl started another Python interpreter and allowed only
+one second for a fire-and-forget post. Capture the curl argument using shell
+builtins with a bounded wait. The test still exercises the real hook's jq and
+fallback paths and validates exact forwarding fields; production hook timing
+and restart behavior stay unchanged.
+
 ## 2026-10-20 — Make remote checkout setup automatic and failure states final
 
 A remote coding session required manually entering a checkout path and clicking
