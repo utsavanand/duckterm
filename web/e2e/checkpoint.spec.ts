@@ -69,11 +69,13 @@ test("checkpoint captures the session's prompts and commands", async ({
   await timeline.getByText("Commands (1)", { exact: true }).click();
   await expect(timeline.getByText("npm test", { exact: true })).toBeVisible();
   await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Notes", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Edit file", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
+  await page.locator(".rd-session-section > summary").filter({ hasText: "Workspace" }).click();
+  await expect(page.getByRole("button", { name: "Edit file", exact: true })).toBeVisible();
   await page.screenshot({ path: "/tmp/timeline-implemented-dark.png", animations: "disabled" });
   await page.emulateMedia({ colorScheme: "light" });
   await page.screenshot({ path: "/tmp/timeline-implemented-light.png", animations: "disabled" });
+  await page.locator('.rd-section-disclosure[aria-label="Latest checkpoint"] > summary').click();
   await page.getByRole("button", { name: "Latest checkpoint ↗", exact: true }).click();
   await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveAttribute("open", "");
   await timeline.getByRole("button", { name: "Retry summary update", exact: true }).click();

@@ -11,6 +11,7 @@ test("missing conversation identity is visible on launch and does not promise Re
     await page.addInitScript(() => localStorage.setItem("rd-theme", "dark"));
     await page.goto(base());
     await page.getByText(name, { exact: true }).first().click();
+    await page.locator(".rd-session-controls .rd-session-section > summary").click();
     const card = page.getByRole("region", { name: "Session controls", exact: true });
     await expect(card.getByRole("heading", { name: "Resume unavailable" })).toBeVisible();
     await expect(card.getByText(/Conversation ID not recorded/)).toBeVisible();
@@ -24,6 +25,7 @@ test("missing conversation identity is visible on launch and does not promise Re
     await postEvent({ event_type: "SessionStart", session_key: key, session_id: "owner-test-conversation", runtime: "codex" });
     await page.reload();
     await page.getByText(name, { exact: true }).first().click();
+    await page.locator(".rd-session-controls .rd-session-section > summary").click();
     await expect(card.getByRole("heading", { name: "Conversation identity recorded" })).toBeVisible();
     await expect(card.getByText(/transcript could not be found/)).toBeVisible();
   } finally { await apiDelete(`/sessions/${key}`); }
@@ -46,6 +48,7 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.goto(base());
     await page.locator(".rd-row-name", { hasText: "Recovery picker reviewer" }).click();
+    await page.locator(".rd-session-controls .rd-session-section > summary").click();
     const card = page.getByRole("region", { name: "Session controls", exact: true });
     await card.getByRole("button", { name: "Install hooks" }).click();
     await expect(card.getByRole("heading", { name: "Awaiting conversation ID" })).toBeVisible();
@@ -128,9 +131,10 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
     try {
       await card.getByRole("button", { name: "Undo attachment", exact: true }).click();
       await page.locator(".rd-row-name", { hasText: "Recovery other reviewer" }).click();
-      await expect(card.getByText("Recovery other reviewer", { exact: true })).toBeVisible();
+      await expect(page.locator(".rd-session-overview").getByText("Recovery other reviewer", { exact: true })).toBeVisible();
       await page.locator(".rd-row-name", { hasText: "Recovery picker reviewer" }).click();
-      await expect(card.getByText("Recovery picker reviewer", { exact: true })).toBeVisible();
+      await expect(page.locator(".rd-session-overview").getByText("Recovery picker reviewer", { exact: true })).toBeVisible();
+      await page.locator(".rd-session-controls .rd-session-section > summary").click();
       await sessionMenu(page); await expect(sidebarResume).toBeDisabled();
       await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true })).toBeDisabled();
       const undo = card.getByRole("button", { name: "Undo attachment", exact: true });

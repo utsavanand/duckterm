@@ -4,6 +4,11 @@ A theme preview using only default text and ANSI colors hid extended indexed/RGB
 
 ## 2026-10-19 — Native scrollbar tracks need the resolved color scheme
 
+## 2026-10-19 — Session panel hierarchy must preserve meaning and controls
+
+Repeated checkpoint cards, mismatched type sizes, and scattered actions made the right panel hard to scan. Group saved memory and active conversation context separately, keep supporting sections collapsible with summaries, and reuse existing checkpoint/recovery flows. Missing capture-boundary counts or native compaction events must remain unavailable; lifetime event totals and token changes cannot stand in for those contracts. Verify notes, recovery, keyboard disclosure, and memory navigation after moving controls.
+
+
 Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
 
 ## 2026-10-19 — Persist work boundaries, not unrelated observed history

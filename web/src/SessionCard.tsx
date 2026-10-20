@@ -1,15 +1,14 @@
-import { sessionStateLabel } from "./sessions";
 import { ReactNode, useEffect, useRef, useState } from "react";
 import { SessionConversationRecovery } from "./ConversationRecovery";
 import { api } from "./api";
 import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
-import { CheckpointAge } from "./CheckpointAge";
+import { SessionPanelSection } from "./SessionPanelSection";
 import { RestartControls } from "./RestartControls";
 import "./sessionCard.css";
 
-// Harness switching and recovery remain visible; routine actions live in the row menu.
+// Supporting details collapse; pending restart results remain visible outside.
 export function SessionCard({ session: s, now, notesOpen = false, onCloseNotes }: {
   session: SessionView; now: number; notesOpen?: boolean; onCloseNotes?: () => void;
 }) {
@@ -41,14 +40,11 @@ export function SessionCard({ session: s, now, notesOpen = false, onCloseNotes }
       <div><dt>Model</dt><dd>{s.model ?? "Not reported yet"}</dd></div></dl>
     {["claude-code", "codex", "copilot"].includes(s.runtime ?? "") && <SessionConversationRecovery key={s.key} session={s} stopped={!live && !archived} />}
   </>;
-  return <section className="rd-session-controls" aria-label="Session controls">
-    <div className="rd-session-controls-identity">
-      <div className="rd-session-controls-caption">Session</div>
-      <div className="rd-session-controls-title"><strong>{s.label}</strong><span className={`rd-state st-${state}`}>{sessionStateLabel(state)}</span></div>
-      <div className="rd-session-controls-folder"><span>{s.group || "Ungrouped"}</span></div>
-      <CheckpointAge sessionKey={s.key} showDuck />
-    </div>
-    {s.launched ? <RestartControls session={s} showActions={false}>{details}</RestartControls> : details()}
+  const panel = (changeHarness?: ReactNode) => <SessionPanelSection title="Session details" status={`${s.host && s.host !== "local" ? "Remote" : "Local"} · ${s.conversationIdentity?.status || "identity unknown"}`} forceOpen={notesOpen}>
+    <dl className="rd-session-facts"><div><dt>Session</dt><dd>{s.label}</dd></div><div><dt>Started</dt><dd>{new Date(s.startedAt).toLocaleString()}</dd></div>
+      {s.intention && <div><dt>Intent</dt><dd>{s.intention}</dd></div>}
+      {!!s.metaHarnesses?.length && <div><dt>Meta-harness</dt><dd>{s.metaHarnesses.join(", ")}</dd></div>}</dl>
+    {details(changeHarness)}
     {notesOpen && <div className="rd-row-notes-wrap">
       <label htmlFor="session-notes">Notes</label>
       <textarea id="session-notes" autoFocus aria-label="Session notes" className="rd-row-notes" value={notes}
@@ -63,5 +59,8 @@ export function SessionCard({ session: s, now, notesOpen = false, onCloseNotes }
         }}>{saving ? "Saving…" : "Save"}</button>
       </div>
     </div>}
+    </SessionPanelSection>;
+  return <section className="rd-session-controls" aria-label="Session controls">
+    {s.launched ? <RestartControls session={s} showActions={false}>{panel}</RestartControls> : panel()}
   </section>;
 }
