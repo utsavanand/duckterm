@@ -171,9 +171,7 @@ def test_copilot_preserves_custom_alternative_command(tmp_path: Path) -> None:
 
 
 def test_ownership_does_not_match_mentions_or_shell_wrappers() -> None:
-    from duckterm.agents.hooks_install import _is_ours
-
-    from duckterm.agents.hooks_install import hook_script_path
+    from duckterm.agents.hooks_install import _is_ours, hook_script_path
 
     assert _is_ours(f'"{hook_script_path()}" Stop claude-code')
     for value in [
