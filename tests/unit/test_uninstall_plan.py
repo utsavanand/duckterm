@@ -56,3 +56,24 @@ def test_cli_defaults_to_read_only_plan(tmp_path, monkeypatch, capsys):
     assert result["dry_run"] is True
     assert result["project_scope"] == [str(tmp_path / "project")]
     assert not list(tmp_path.iterdir())
+
+
+def test_custom_same_basename_is_not_offered_for_removal(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    path = hooks_install.settings_path(global_scope=True, project_dir=tmp_path)
+    path.parent.mkdir()
+    original = json.dumps(
+        {
+            "hooks": {
+                "Stop": [
+                    {"hooks": [{"command": "/custom/user-tools/duckterm-hook.sh Stop claude-code"}]}
+                ]
+            }
+        }
+    )
+    path.write_text(original)
+    result = inspect_hook("claude-code")
+    assert result["state"] == "blocked"
+    assert result["owned_commands"] == 0
+    assert result["unverified_commands"] == 1
+    assert path.read_text() == original

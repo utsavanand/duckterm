@@ -33,11 +33,18 @@ def _directory(path: Path) -> Iterator[int | None]:
         os.close(fd)
 
 
-def _owned_count(config: dict[str, Any]) -> int:
+def _owned_count(config: dict[str, Any], *, unverified: bool = False) -> int:
     def count(value: Any) -> int:
         if isinstance(value, dict):
             own = sum(
-                hooks_install._is_ours(v)
+                (
+                    (
+                        hooks_install._hook_invocation(v) is not None
+                        and not hooks_install._is_ours(v)
+                    )
+                    if unverified
+                    else hooks_install._is_ours(v)
+                )
                 for k, v in value.items()
                 if k in {"command", "bash", "powershell"}
             )
@@ -76,7 +83,14 @@ def inspect_hook(agent: str, *, project: Path | None = None) -> dict[str, Any]:
             raise ValueError("Unsupported hook configuration")
         candidate = spec.strip(copy.deepcopy(config))
         count = _owned_count(config) - _owned_count(candidate)
+        ambiguous = _owned_count(candidate, unverified=True)
         result.update(state="removable" if count else "unchanged", owned_commands=count)
+        if ambiguous:
+            result.update(
+                state="blocked",
+                unverified_commands=ambiguous,
+                reason="Custom or historical hook paths require manual ownership review",
+            )
     except (OSError, ValueError, TypeError):
         # Never include source text or parser excerpts: config can contain secrets.
         result.update(
