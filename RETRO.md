@@ -2,6 +2,14 @@
 
 A current Mac dashboard could not archive through the new undo flow because its native transport omitted those endpoints. The remote service was still 0.4.64, so shell requests returned plain-text 404s that surfaced as WebKit JSON errors. Check the actual owning host version, preserve HTTP errors, and test exact native route/method pairs. macOS xterm also needs Option-forced selection explicitly enabled; verify a wrapped synthetic login URL with agent mouse tracking active, through the dashboard copy bridge.
 
+## 2026-10-19 — Review the writer and reviewer as one content contract
+
+An exclusion list did not tell the writer which facts deserved memory, while the reviewer rejected routine setup after generation. State the same positive inclusion and consequence-based noise rules on both sides, across prose and structured fields. Review for contradictions, preserve material setup failures and owner restrictions, and require actionable field-specific corrections. Exercise the actual writer/reviewer on fictional useful examples and deliberately bad candidates; prompt hashes and JSON-shape tests cannot establish summary quality.
+
+## 2026-10-19 — Preserve review corrections when dropping a large rejected draft
+
+The summary rewrite path put reviewer feedback inside the optional draft copy. Its encoded-size guard could discard both, leaving the writer only a reason code. Keep actionable corrections separate from disposable generated text, preserve them when the input budget drops the draft, and fail explicitly if sources plus feedback cannot fit. Review the rewritten summary and overview again before saving coverage. Match writer and reviewer rules for routine setup while preserving setup failures that materially affect the work.
+
 ## 2026-10-19 — Contrast adjustment is not theme application
 
 ## Missing compaction data needs native evidence, not model guesses (2026-10-19)
@@ -22,16 +30,13 @@ Keep checkpoint age, captured-event activity and native conversation context sep
 
 A successful checkpoint is saved after its source capture, so counting events after the save time misses work that arrived during summarization. Subtracting lifetime counts also fails after deletion or with filtered markers. Reuse the successful-checkpoint selector, validate its saved rowid and event ID in the same session, then count later events with the original filter. A missing anchor is unknown, not zero; an explicitly empty capture is a valid zero boundary. Label this event activity, not turns or unsummarized conversation. Read existing records only; a status panel must never trigger a checkpoint to obtain its values.
 
-
 ## 2026-10-19 — Verify the colors the agent actually emits
 
 A theme preview using only default text and ANSI colors hid extended indexed/RGB text that programs keep fixed. Remove the misleading sample; verify program-selected colors in native WebKit and a live terminal. Offer explicit contrast improvement without rewriting the PTY stream, and carry that preference through folder inheritance, session overrides, grids, and shells. Text-size resets must preserve fonts, palettes, and terminal drafts.
 
-
 ## 2026-10-19 — Session panel hierarchy must preserve meaning and controls
 
 Repeated checkpoint cards, mismatched type sizes, and scattered actions made the right panel hard to scan. Group saved memory and active conversation context separately, keep supporting sections collapsible with summaries, and reuse existing checkpoint/recovery flows. Missing capture-boundary counts or native compaction events must remain unavailable; lifetime event totals and token changes cannot stand in for those contracts. Verify notes, recovery, keyboard disclosure, and memory navigation after moving controls.
-
 
 ## 2026-10-19 — Native scrollbar tracks need the resolved color scheme
 
