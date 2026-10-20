@@ -10,7 +10,7 @@ const binding = { session_key: "test", source_generation: "a", target: { harness
 const fetchMock = vi.fn();
 const emptyPlan = { available_records: 0, processed_records: 0, pending_records: 0,
   default_records: 20, selected_records: 0, remaining_records: 0, batch_records: 20,
-  order: "oldest_unprocessed_first", selection_plan: {} };
+  order: "oldest_unprocessed_first", selection_plan: { version: 1 } };
 const props = () => ({ selection, targetName: "Codex", allowed: true, afterTurn: false, canInterrupt: false, close: vi.fn(), onBusy: vi.fn(), onAccepted: vi.fn() });
 function packet(saved = true) {
   return { version: 1, preparation_id: "p1", sequence: 1, binding, state: "ready",
@@ -128,5 +128,23 @@ it("shows an expired job after a server restart and requires explicit prepare ag
   expect(screen.getByRole("button", { name: "Switch to Codex" })).toBeDisabled();
   await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
   expect(fetchMock.mock.calls).toHaveLength(3);
+  expect(switches()).toHaveLength(0);
+});
+
+it("keeps v1 handoff newest copy despite the generic oldest preview and forwards its token unchanged", async () => {
+  const plan = { ...emptyPlan, available_records: 47, pending_records: 47, selected_records: 20, remaining_records: 27 };
+  fetchMock.mockImplementation(async (path: string, init: RequestInit) => {
+    if (path.endsWith("/checkpoint-plan")) return respond(plan);
+    if (init.method === "DELETE") return respond({ released: true });
+    return respond(packet());
+  });
+  render(<MemorySwitchPanel {...props()} />);
+  expect(await screen.findByText("Recent 20 · your configured default")).toBeVisible();
+  expect(screen.getByText(/Newest unprocessed first for this handoff/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Prepare handoff" }));
+  await screen.findByText("Ready to switch");
+  const posts = fetchMock.mock.calls.filter(([path, init]) => path.endsWith("/restart-preparation") && init.method === "POST");
+  expect(posts).toHaveLength(1);
+  expect(JSON.parse(posts[0][1].body).selection).toEqual({ plan: plan.selection_plan, records: 20 });
   expect(switches()).toHaveLength(0);
 });

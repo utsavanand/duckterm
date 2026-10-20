@@ -16,7 +16,7 @@ import { SessionPanelSection } from "./SessionPanelSection";
 // Right pane: context about the selected agent's terminal. If the session is on
 // a git branch, show a git view (branch, repo, and the working-tree diff). If
 // not, show the folder it's running in. (Approvals render above this in App.)
-export function ContextPanel({ session, active = true, onCheckpointTimeline, onMemory }: { session: SessionView; active?: boolean; onCheckpointTimeline?: () => void; onMemory?: (revision?: string) => void }) {
+export function ContextPanel({ session, active = true, onCheckpointTimeline, onMemory, onCheckpointMemory }: { session: SessionView; active?: boolean; onCheckpointTimeline?: () => void; onMemory?: (revision?: string) => void; onCheckpointMemory?: (id: string) => void }) {
   const toast = useToast();
   const [diff, setDiff] = useState<string>("");
   const [branches, setBranches] = useState<string[]>([]);
@@ -135,7 +135,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
           <div className="rd-section-actions">{checkpointCanRetry(lastCheckpoint) && <button className="rd-timeline-link" disabled={!!checkpointRunning || !!session.hostOffline} onClick={checkpoint}>Retry checkpoint</button>}
           {onCheckpointTimeline && <button className="rd-timeline-link" onClick={onCheckpointTimeline}>Latest checkpoint ↗</button>}</div>
         </details>}
-        <div className="rd-section-actions">{onMemory && <button className="rd-timeline-link" onClick={() => onMemory()}>Read saved memory ↗</button>}
+        <div className="rd-section-actions">{lastCheckpoint && onCheckpointMemory && <button className="rd-timeline-link" onClick={() => onCheckpointMemory(lastCheckpoint.id)}>Read checkpoint result ↗</button>}{onMemory && <button className="rd-timeline-link" onClick={() => onMemory()}>Read saved memory ↗</button>}
           <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!!checkpointRunning || !!session.hostOffline} onClick={checkpoint}>Checkpoint</button></div>
         <details className="rd-section-disclosure rd-section-help"><summary>About saved memory</summary><p>Checkpoint saves a durable summary. A failed result does not certify readiness; saved memory may have advanced before a final source check failed.</p><p>Counts use the last successful checkpoint’s captured history boundary, including events recorded while that save was running. Events are recorded activity, not conversation turns or unsummarized records; older summary gaps may still exist.</p>{activity?.event_filter && <p>{activity.event_filter === "work-v1" ? "Uses the saved work-event filter; attendance and status-only notifications are excluded." : "Uses the saved all-events filter, including status observations."}</p>}</details>
       </SessionPanelSection>

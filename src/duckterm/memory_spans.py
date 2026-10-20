@@ -125,16 +125,50 @@ def rows_through(captured: dict[str, Any], upper: dict[str, Any]) -> list[dict[s
 
 def prompt(plan: dict[str, Any]) -> str:
     """The entire generation prompt, including metadata, fits the byte budget."""
-    records = [
-        {
-            **{k: row[k] for k in ("source", "version", "record", "position", "role", "text")},
-            "ref": row["source"] + ":" + row["version"] + ":" + row["record"],
-        }
-        for row in plan["selected"]
-    ]
-    return prompts.render(
-        "span_write", payload=json.dumps({"records": records}, ensure_ascii=False)
-    )
+
+    def render(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {
+                **{k: row[k] for k in ("source", "version", "record", "position", "role", "text")},
+                "ref": row["source"] + ":" + row["version"] + ":" + row["record"],
+            }
+            for row in rows
+        ]
+
+    payload = {"records": render(plan["selected"])}
+    if plan.get("context_records"):
+        payload["context_records"] = render(plan["context_records"])
+    return prompts.render("span_write", payload=json.dumps(payload, ensure_ascii=False))
+
+
+def original_context(plan: dict[str, Any]) -> list[dict[str, Any]]:
+    """Carry nearby originals across a batch cut without claiming them as new coverage.
+
+    Never consume the selected records' budget or skip a large intervening message
+    to attach an older, misleading antecedent. Missing context stays unknown.
+    """
+    if not plan["selected"]:
+        return []
+    first = plan["selected"][0]
+    if first["role"] not in {"user", "assistant"}:
+        return []
+    previous = [
+        row
+        for row in plan["rows"]
+        if row["source"] == first["source"]
+        and row["position"] < first["position"]
+        and row["role"] in {"user", "assistant"}
+        and not row["reference_only"]
+    ][-2:]
+    if not previous or previous[-1]["role"] == first["role"]:
+        return []
+    context: list[dict[str, Any]] = []
+    for row in reversed(previous):
+        candidate = [row, *context]
+        if len(prompt({**plan, "context_records": candidate}).encode()) > MAX_GENERATION_BYTES:
+            break
+        context = candidate
+    return context
 
 
 def plan(captured: dict[str, Any], lower: dict[str, Any]) -> dict[str, Any]:
@@ -231,6 +265,7 @@ def plan(captured: dict[str, Any], lower: dict[str, Any]) -> dict[str, Any]:
                         "end": row["position"] + 1,
                     }
                 )
+    result["context_records"] = original_context(result)
     result["input_key"] = "span:" + fingerprint(
         {
             "policy": POLICY,
@@ -241,6 +276,10 @@ def plan(captured: dict[str, Any], lower: dict[str, Any]) -> dict[str, Any]:
             "ranges": result["ranges"],
             "records": [
                 [r["source"], r["version"], r["record"], r["hash"]] for r in result["selected"]
+            ],
+            "context_records": [
+                [r["source"], r["version"], r["record"], r["hash"]]
+                for r in result["context_records"]
             ],
         }
     )
@@ -286,6 +325,10 @@ def metadata(plan: dict[str, Any]) -> dict[str, Any]:
             "ranges": plan["ranges"],
             "pending_records": plan["pending_records"],
             "pending_refs": plan["pending_refs"],
+            "context_refs": [
+                r["source"] + ":" + r["version"] + ":" + r["record"]
+                for r in plan.get("context_records", [])
+            ],
         },
     }
 

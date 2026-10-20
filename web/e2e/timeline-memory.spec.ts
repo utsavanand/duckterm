@@ -16,6 +16,16 @@ test("Timeline opens an exact historical revision; the session panel still opens
     await page.route(`**/sessions/${key}/memory**`, route => {
       const url = new URL(route.request().url());
       if (url.pathname.endsWith("/read")) return route.fulfill({ json: { source: "conversation:old", text: "Original evidence for the earlier saved decision.", next_offset: null } });
+      if (url.searchParams.get("checkpoint") === "older") return route.fulfill({ json: {
+        scope: "checkpoint", session_key: key, checkpoint: { id: "older", label: "Earlier saved checkpoint", created_at: now - 60000,
+          summary_update: { state: "failed", reason: "source_changed" },
+          attempt_coverage: { state: "complete", scope: "refresh_attempt", eligible_records: 20, summarized_records: 20, pending_records: 0 },
+          batch_coverage_known: true, combined_summary: null, combined_summary_reason: "independent_batch_summaries",
+          pagination: { snapshot: "exact-attempt", total: 1, offset: 0, returned: 1, next_cursor: null },
+          batches: [{ revision_id: "older-revision", state: "available", revision: { id: "older-revision", created_at: now - 60000,
+            summary: "Saved batch from the failed checkpoint.", overview: null, groups: [] } }],
+        },
+      } });
       const revision = url.searchParams.get("revision") || ""; reads.push(revision);
       const historical = revision === "older-revision";
       return route.fulfill({ json: {
@@ -47,6 +57,13 @@ test("Timeline opens an exact historical revision; the session panel still opens
     await expect(memory.getByText("Newer current summary.")).toBeVisible();
     await expect(memory.getByRole("combobox")).toHaveValue("");
     expect(reads).toEqual(["older-revision", ""]);
+    await page.getByRole("button", { name: "Timeline", exact: true }).click();
+    await page.getByRole("button", { name: "Read checkpoint result ↗" }).first().click();
+    await expect(memory.getByText("Saved batch from the failed checkpoint.")).toBeVisible();
+    await expect(memory.getByText("Checkpoint failed", { exact: true })).toBeVisible();
+    await page.screenshot({ path: "/tmp/whole-checkpoint-implemented.png" });
+    await memory.getByRole("button", { name: "Open summary older-re ↗" }).click();
+    await expect(memory.getByText("Historical summary from the clicked checkpoint.")).toBeVisible();
     expect(checkpoints).toBe(0);
   } finally { await apiDelete(`/sessions/${key}`); }
 });

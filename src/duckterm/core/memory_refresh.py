@@ -83,6 +83,7 @@ async def refresh(
                     + (change_reason(coordinator, key, captured) or "source_changed"),
                 ),
                 span_coverage=result.attempt_coverage,
+                attempt_coverage=result.attempt_coverage,
             )
         return result
     finally:
@@ -198,7 +199,9 @@ async def _run(
         }
 
     def incomplete(update: SummaryUpdate) -> SummaryUpdate:
-        return replace(update, span_coverage=attempt_coverage())
+        return replace(
+            update, span_coverage=attempt_coverage(), attempt_coverage=attempt_coverage()
+        )
 
     while True:
         if not wanted(coordinator, key):

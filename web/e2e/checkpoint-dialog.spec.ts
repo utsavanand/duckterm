@@ -19,6 +19,7 @@ test("checkpoint dialog counts real pending records, cancels cleanly and sends t
     await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Checkpoint", exact: true });
     await expect(dialog.getByRole("button", { name: "Checkpoint 20 records" })).toBeEnabled();
+    await expect(dialog.getByRole("radio", { name: "Latest 20 · your configured default" })).toBeChecked();
     await expect(dialog.getByText(/records selected/)).toContainText("20 records selected · 27 left for later");
     await expect(page.getByRole("menu")).toHaveCount(0);
     await expect(page.getByRole("region", { name: "Checkpoint progress" })).toHaveCount(0);
@@ -46,7 +47,7 @@ test("checkpoint dialog counts real pending records, cancels cleanly and sends t
     await dialog.getByRole("button", { name: "Checkpoint 47 records" }).click();
     await expect(dialog).toHaveCount(0);
     await expect.poll(() => posts.length).toBe(1);
-    expect(posts[0]).toMatchObject({ label: "manual", selection: { records: "all", plan: { version: 1 } } });
+    expect(posts[0]).toMatchObject({ label: "manual", selection: { records: "all", plan: { version: 2, order: "newest_unprocessed_first" } } });
     expect(typeof posts[0].request_id).toBe("string");
     // The fixture provider deliberately produces invalid summaries. The real
     // server still returns a durable failed attempt for this exact selection.
