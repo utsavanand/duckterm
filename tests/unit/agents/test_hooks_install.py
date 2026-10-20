@@ -107,3 +107,79 @@ def test_uninstall_is_per_agent(tmp_path: Path) -> None:
     config = json.loads((tmp_path / ".codex" / "hooks.json").read_text())
     # All duckterm entries gone; empty hooks block removed.
     assert config.get("hooks", {}) == {}
+
+
+def test_remove_keeps_custom_children_in_same_group(tmp_path: Path) -> None:
+    path = install(global_scope=False, project_dir=tmp_path)
+    config = json.loads(path.read_text())
+    custom = {"type": "command", "command": "echo duckterm", "timeout": 7}
+    config["hooks"]["Stop"][0]["hooks"].append(custom)
+    config["hooks"]["Stop"][0]["custom"] = "retained"
+    path.write_text(json.dumps(config))
+    uninstall(global_scope=False, project_dir=tmp_path)
+    assert json.loads(path.read_text())["hooks"] == {
+        "Stop": [{"matcher": "*", "hooks": [custom], "custom": "retained"}]
+    }
+
+
+def test_reinstall_keeps_custom_children_in_same_group(tmp_path: Path) -> None:
+    path = install(global_scope=False, project_dir=tmp_path)
+    config = json.loads(path.read_text())
+    config["hooks"]["Stop"][0]["hooks"].append({"command": "my-linter"})
+    path.write_text(json.dumps(config))
+    install(global_scope=False, project_dir=tmp_path)
+    commands = [
+        h["command"] for e in json.loads(path.read_text())["hooks"]["Stop"] for h in e["hooks"]
+    ]
+    assert "my-linter" in commands
+    assert len(commands) == 2
+
+
+def test_uninstall_does_not_rewrite_unrelated_config(tmp_path: Path) -> None:
+    path = settings_path(global_scope=False, project_dir=tmp_path)
+    path.parent.mkdir()
+    original = '{ "hooks": {"Stop": [{"hooks": [{"command": "echo duckterm"}]}]}, "other": 1 }\n'
+    path.write_text(original)
+    uninstall(global_scope=False, project_dir=tmp_path)
+    assert path.read_text() == original
+
+
+def test_uninstall_refuses_symlink(tmp_path: Path) -> None:
+    import pytest
+
+    path = install(global_scope=False, project_dir=tmp_path)
+    original = path.read_bytes()
+    target = tmp_path / "custom.json"
+    path.rename(target)
+    path.symlink_to(target)
+    with pytest.raises(ValueError, match="unsafe"):
+        uninstall(global_scope=False, project_dir=tmp_path)
+    assert target.read_bytes() == original
+
+
+def test_copilot_preserves_custom_alternative_command(tmp_path: Path) -> None:
+    import pytest
+
+    path = install(global_scope=False, project_dir=tmp_path, agent="copilot")
+    config = json.loads(path.read_text())
+    config["hooks"]["sessionStart"][0]["bash"] = "custom-tool"
+    original = json.dumps(config)
+    path.write_text(original)
+    with pytest.raises(ValueError, match="Mixed"):
+        uninstall(global_scope=False, project_dir=tmp_path, agent="copilot")
+    assert path.read_text() == original
+
+
+def test_ownership_does_not_match_mentions_or_shell_wrappers() -> None:
+    from duckterm.agents.hooks_install import _is_ours
+
+    assert _is_ours('"/old path/duckterm-hook.sh" Stop claude-code')
+    for value in [
+        "echo duckterm",
+        "/custom/duckterm-linter.sh",
+        "echo /x/duckterm-hook.sh Stop codex",
+        '"unterminated',
+        '"/x/duckterm-hook.sh" Stop codex; other',
+        None,
+    ]:
+        assert not _is_ours(value)

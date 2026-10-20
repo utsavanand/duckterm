@@ -2,6 +2,10 @@
 
 Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
 
+## 2026-10-19 — Remove only owned hook commands, not their entire group
+
+A matcher group can contain both DuckTerm and user hooks. Dropping the group when any child mentions DuckTerm loses unrelated automation. Recognize the generated script invocation and remove individual owned commands; retain sibling hooks and group metadata. Fail closed for mixed alternative commands, preserve no-op files byte-for-byte, and use the existing descriptor-based atomic write path so malformed or symlinked configuration is not overwritten.
+
 ## 2026-10-19 — Persist work boundaries, not unrelated observed history
 
 A twenty-record window saved megabytes because span metadata repeated every observed event source in upper and next-boundary maps. Window retries already use exact processed hashes and are never sequential predecessors. Store their selected ranges and input hash, without unrelated observation maps. Preserve the next boundary for legacy sequential callers and retain overlap, evidence and sharing checks. Assert equal-sized selected windows produce equal-sized metadata despite vastly different unrelated history; do not mistake boundary maps for raw provider text or erase fields before finding their readers.
