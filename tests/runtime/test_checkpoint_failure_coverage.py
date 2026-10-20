@@ -9,6 +9,7 @@ from test_memory import memory_rig, transcript
 from test_memory_spans import provider
 
 from duckterm.checkpoint_clock import project
+from duckterm.core import memory_refresh
 from duckterm.persistence.saved_state import current_revision
 
 __all__ = ["memory_rig"]
@@ -98,5 +99,52 @@ def test_failed_checkpoint_persists_coverage_and_retry_only_writes_remaining(
             cp for cp in server.history.checkpoints("agent") if cp["id"] == failed["id"]
         )
         assert original["summary_update"] == update
+
+    asyncio.run(run())
+
+
+def test_waiter_source_change_keeps_only_this_attempts_accepted_refs(memory_rig, monkeypatch):
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "An earlier owner requirement")
+    calls, _ = provider(monkeypatch)
+    coordinator = server.progress_coordinator
+    original_run = memory_refresh._run
+
+    async def changed_after_publication(*args):
+        result = await original_run(*args)
+        assert result.state == "updated"
+        append(path, "Later work arriving before the waiting caller resumes")
+        return result
+
+    async def run():
+        earlier = await coordinator.refresh_result("agent")
+        assert earlier.state == "updated"
+        assert "attempt_coverage" not in earlier.metadata(1)
+        append(path, "This attempt's owner requirement")
+        monkeypatch.setattr(memory_refresh, "_run", changed_after_publication)
+        result = await coordinator.refresh_result("agent")
+        assert result.state == "failed"
+        assert result.diagnostic == "refresh_result:native_file_changed"
+        assert result.metadata(2)["revision_id"] is None
+        coverage = result.metadata(2)["span_coverage"]
+        assert coverage["state"] == "incomplete" and coverage["scope"] == "refresh_attempt"
+        assert coverage["eligible_records"] == coverage["summarized_records"] == 1
+        assert coverage["pending_records"] == 0
+        assert len(coverage["revision_ids"]) == 1
+        assert earlier.revision["id"] not in coverage["revision_ids"]
+        saved = server.digests.revision("agent", coverage["revision_ids"][0])
+        assert saved["summary_review"]["state"] == "accepted"
+        # Publication already happened before this late fence; the report must
+        # not imply rollback or that the summary covers the just-appended work.
+        assert current_revision(server.history.session("agent")) == saved["id"]
+        monkeypatch.setattr(memory_refresh, "_run", original_run)
+        before_retry = len(calls)
+        retried = await coordinator.refresh_result("agent")
+        assert retried.state == "updated"
+        assert len(calls) - before_retry == 2
+        records = json.loads(calls[before_retry].split("MEMORY UPDATE:\n", 1)[1])["records"]
+        assert [record["text"] for record in records] == [
+            "Later work arriving before the waiting caller resumes"
+        ]
 
     asyncio.run(run())

@@ -76,10 +76,13 @@ async def refresh(
         result = await asyncio.shield(active)
         # Keep the original failure stage instead of masking it with a later fence.
         if result.state != "failed" and not current(coordinator, key, captured):
-            return SummaryUpdate.failed(
-                "source_changed",
-                diagnostic="refresh_result:"
-                + (change_reason(coordinator, key, captured) or "source_changed"),
+            return replace(
+                SummaryUpdate.failed(
+                    "source_changed",
+                    diagnostic="refresh_result:"
+                    + (change_reason(coordinator, key, captured) or "source_changed"),
+                ),
+                span_coverage=result.attempt_coverage,
             )
         return result
     finally:
@@ -177,25 +180,25 @@ async def _run(
     batch_index = 0
     completed_ids: list[str] = []
 
-    def incomplete(update: SummaryUpdate) -> SummaryUpdate:
+    def attempt_coverage() -> dict[str, Any] | None:
         # These are accepted writes from this attempt, not a replacement for
         # the last successful checkpoint or a certificate of current readiness.
         # Do not include unrelated leaves loaded before this attempt.
         if total is None:
-            return update
-        return replace(
-            update,
-            span_coverage={
-                "state": "incomplete",
-                "scope": "refresh_attempt",
-                "revision_ids": list(completed_ids),
-                "available_records": total,
-                "eligible_records": total,
-                "summarized_records": completed,
-                "pending_records": total - completed,
-                "reference_only_records": 0,
-            },
-        )
+            return None
+        return {
+            "state": "incomplete",
+            "scope": "refresh_attempt",
+            "revision_ids": list(completed_ids),
+            "available_records": total,
+            "eligible_records": total,
+            "summarized_records": completed,
+            "pending_records": total - completed,
+            "reference_only_records": 0,
+        }
+
+    def incomplete(update: SummaryUpdate) -> SummaryUpdate:
+        return replace(update, span_coverage=attempt_coverage())
 
     while True:
         if not wanted(coordinator, key):
@@ -299,6 +302,7 @@ async def _run(
     available = len(selection) if selection is not None else len(originals)
     return replace(
         SummaryUpdate.from_revision(latest, reused=not changed),
+        attempt_coverage=attempt_coverage(),
         span_coverage={
             "state": "complete",
             "revision_ids": [row["id"] for row in leaves],

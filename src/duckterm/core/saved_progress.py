@@ -114,6 +114,9 @@ class SummaryUpdate:
     # or a replacement for revision_id / the last successful summary.
     span_coverage: dict[str, Any] | None = None
     summary_corrections: list[str | dict[str, str]] | None = None
+    # Transient bookkeeping for the waiter-side source fence. Not serialized
+    # on success: complete coverage can include leaves from earlier attempts.
+    attempt_coverage: dict[str, Any] | None = None
 
     def metadata(self, attempted_at: int) -> dict[str, Any]:
         return {

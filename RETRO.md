@@ -1,6 +1,6 @@
 ## 2026-10-20 — Report accepted batches even when the checkpoint fails
 
-A later batch failure returned only its error, although earlier reviewed leaves were durable. The checkpoint therefore hid completed work. Preserve attempt-scoped counts and accepted revision IDs in failure metadata while keeping failure, the last-good summary and its clock unchanged. A test that proves retry reuses stored leaves does not prove the owner can discover them: exercise the persisted checkpoint response, a later-batch failure, exact remaining-record retry, and the unchanged success clock together. Do not count old session-wide digest references as records summarized in this attempt.
+A later batch failure returned only its error, although earlier reviewed leaves were durable. The checkpoint therefore hid completed work. Preserve attempt-scoped counts and accepted revision IDs in failure metadata while keeping batch failure, the last-good summary and its clock unchanged. A test that proves retry reuses stored leaves does not prove the owner can discover them: exercise the persisted checkpoint response, a later-batch failure, exact remaining-record retry, and the unchanged success clock together. Check the waiter-side source fence too: it can convert success to failure after publication, so preserve attempt-only evidence across that conversion without claiming rollback. Do not count old session-wide digest references as records summarized in this attempt.
 
 ## 2026-10-20 — Budget correction requests separately from initial summary input
 
