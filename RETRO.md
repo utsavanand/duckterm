@@ -1,3 +1,7 @@
+## 2026-10-20 — Establish a terminal draft before testing its preservation
+
+The artifact browser test typed immediately after xterm mounted, before the WebSocket necessarily opened. A blank terminal later looked like draft loss. Wait for a fixture readiness banner and assert the typed draft is visible before navigating away; keep the original return-to-terminal assertion. This tests preservation of an established draft rather than racing transport startup.
+
 ## 2026-10-20 — Check status after successful disconnect
 
 The native packaged-backend rehearsal completed revocation and disconnect, then status crashed because the identity setting existed with JSON null. A storage default applies only to missing keys. Normalize the cleared identity before reading fields, and exercise the status endpoint after real disconnect so successful recovery does not appear as a network failure.
