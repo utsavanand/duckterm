@@ -183,3 +183,12 @@ def test_ownership_does_not_match_mentions_or_shell_wrappers() -> None:
         None,
     ]:
         assert not _is_ours(value)
+
+
+def test_no_owned_hooks_keeps_empty_shared_fields(tmp_path: Path) -> None:
+    path = settings_path(global_scope=False, project_dir=tmp_path)
+    path.parent.mkdir()
+    original = '{ "hooks": {}, "version": 1 }\n'
+    path.write_text(original)
+    uninstall(global_scope=False, project_dir=tmp_path)
+    assert path.read_text() == original

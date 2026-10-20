@@ -43,9 +43,9 @@ def test_installable_agents_carry_a_hook_spec() -> None:
         spec = REGISTRY[name].hook_spec
         assert spec is not None
         # build/strip round-trip: stripping a freshly built config removes
-        # exactly our entries, leaving nothing behind.
+        # exactly our entries, preserving the shared format version.
         built = spec.build({}, "/path/to/duckterm-hook.sh", name)
-        assert spec.strip(built) == {}
+        assert spec.strip(built) == ({"version": 1} if name == "copilot" else {})
 
 
 def test_native_preparation_arguments_are_not_replayed_as_the_user_command():

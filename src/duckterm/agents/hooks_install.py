@@ -102,6 +102,7 @@ def _hook_groups(config: dict[str, Any]) -> dict[str, Any]:
 
 def claude_style_strip(config: dict[str, Any]) -> dict[str, Any]:
     hooks = _hook_groups(config)
+    had_events = bool(hooks)
     for event, entries in list(hooks.items()):
         kept = []
         for entry in entries:
@@ -119,7 +120,7 @@ def claude_style_strip(config: dict[str, Any]) -> dict[str, Any]:
             hooks[event] = kept
         else:
             del hooks[event]
-    if not hooks:
+    if had_events and not hooks:
         config.pop("hooks", None)
     return config
 
@@ -162,6 +163,7 @@ def copilot_build(config: dict[str, Any], script: str, runtime: str) -> dict[str
 
 def copilot_strip(config: dict[str, Any]) -> dict[str, Any]:
     hooks = _hook_groups(config)
+    had_events = bool(hooks)
     for event, entries in list(hooks.items()):
         kept = []
         for entry in entries:
@@ -177,7 +179,7 @@ def copilot_strip(config: dict[str, Any]) -> dict[str, Any]:
             hooks[event] = kept
         else:
             del hooks[event]
-    if not hooks:
+    if had_events and not hooks:
         config.pop("hooks", None)
     # The format version is not a DuckTerm-owned hook.
     return config
