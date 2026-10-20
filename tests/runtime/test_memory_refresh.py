@@ -24,7 +24,9 @@ def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
     calls, _ = provider(monkeypatch)
 
     async def run():
-        first = await server.progress_coordinator.refresh_result("agent")
+        captured = await server.progress_coordinator.capture("agent")
+        captured["trigger"] = {"kind": "checkpoint", "request_id": "explicit-range"}
+        first = await server.progress_coordinator.refresh_result("agent", captured)
         assert first.state == "updated"
         assert len(calls) == 4
         assert "Initial constraint" in calls[0]
@@ -54,6 +56,13 @@ def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
             evidence_sources=evidence_sources,
         )
         assert len(rows) == 3
+        first_trigger, second_trigger, third_trigger = [row["trigger"] for row in rows]
+        assert first_trigger["request_id"] == second_trigger["request_id"] == "explicit-range"
+        assert first_trigger["range_id"] == second_trigger["range_id"]
+        assert first_trigger["batch_index"] == 1 and first_trigger["continuation"] is False
+        assert second_trigger["batch_index"] == 2 and second_trigger["continuation"] is True
+        assert third_trigger["kind"] == "internal_refresh"
+        assert third_trigger["range_id"] != first_trigger["range_id"]
         assert coverage["protected_kinds"]["constraint"] == 3
         assert "duckterm memory read" in brief
         assert "x" * 100 not in brief  # no raw transcript tail in a span brief

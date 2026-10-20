@@ -50,7 +50,7 @@
   background: none;
   padding: 0;
   color: var(--text-soft);
-  font-size: 13px;
+  font-size: 0.8125rem;
 }
 .an-title {
   display: flex;
@@ -60,13 +60,13 @@
   margin: 14px 0 22px;
 }
 .an-title h1 {
-  font-size: 30px;
+  font-size: 1.875rem;
   font-weight: 550;
   letter-spacing: -0.7px;
   margin: 0 0 4px;
 }
 .an-title > span {
-  font-size: 12px;
+  font-size: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 20px;
   padding: 5px 12px;
@@ -92,7 +92,7 @@
   background: none;
 }
 .an-range button {
-  font-size: 12px;
+  font-size: 0.75rem;
   padding: 6px 12px;
 }
 .an-filters {
@@ -106,26 +106,26 @@
   display: grid;
   gap: 5px;
   color: var(--text-soft);
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 .an-filters select {
   min-width: 140px;
   max-width: 260px;
-  font-size: 13px;
+  font-size: 0.8125rem;
   color: var(--text);
 }
 .an-filters button {
   border: 0;
   background: none;
   color: var(--brand-green);
-  font-size: 12px;
+  font-size: 0.75rem;
   margin-bottom: 2px;
 }
 .an-filters .an-refresh {
   margin-left: auto;
 }
 .rd-analytics .an-context {
-  font-size: 12px;
+  font-size: 0.75rem;
   margin-bottom: 20px;
 }
 .an-stats {
@@ -141,19 +141,19 @@
   border-radius: 10px;
 }
 .an-stat > span {
-  font-size: 12px;
+  font-size: 0.75rem;
   color: var(--text-soft);
 }
 .an-stat strong {
   display: block;
-  font-size: 29px;
+  font-size: 1.8125rem;
   font-weight: 500;
   letter-spacing: -0.6px;
   margin: 7px 0 1px;
   font-variant-numeric: tabular-nums;
 }
 .an-stat small {
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--text-soft);
 }
 .an-grid {
@@ -179,12 +179,12 @@
   margin-bottom: 17px;
 }
 .an-panel h2 {
-  font-size: 15px;
+  font-size: 0.9375rem;
   font-weight: 550;
   margin: 0 0 4px;
 }
 .an-panel p {
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .an-views {
   display: flex;
@@ -192,7 +192,7 @@
   flex-shrink: 0;
 }
 .an-views button {
-  font-size: 11px;
+  font-size: 0.6875rem;
   padding: 4px 8px;
 }
 .an-chart-scroll {
@@ -209,13 +209,13 @@
 .an-chart-scroll text {
   fill: var(--text-soft);
   font-family: inherit;
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 .an-legend {
   display: flex;
   gap: 18px;
   flex-wrap: wrap;
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--text-soft);
   margin-bottom: 12px;
 }
@@ -237,7 +237,7 @@
 .an-table table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 0.75rem;
   text-align: left;
   font-variant-numeric: tabular-nums;
 }
@@ -267,7 +267,7 @@
   align-items: center;
   gap: 7px 18px;
   margin: 14px 0;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .an-rank > span {
   overflow-wrap: anywhere;
@@ -293,7 +293,7 @@
   margin: 20px 0;
   border-left: 2px solid var(--border);
   padding: 3px 0 3px 14px;
-  font-size: 12px;
+  font-size: 0.75rem;
 }
 .an-history strong {
   display: block;
@@ -306,7 +306,7 @@
   padding: 3px 7px;
   background: color-mix(in srgb, var(--brand-green) 12%, transparent);
   color: var(--brand-green);
-  font-size: 11px;
+  font-size: 0.6875rem;
 }
 .an-status.queued {
   background: #d7a53219;
@@ -317,7 +317,7 @@
   text-align: center;
 }
 .an-empty h2 {
-  font-size: 18px;
+  font-size: 1.125rem;
 }
 .an-empty p {
   max-width: 450px;
@@ -327,7 +327,7 @@
   margin-top: 18px;
 }
 .an-open small {
-  font-size: 11px;
+  font-size: 0.6875rem;
   color: var(--text-soft);
 }
 .rd-tower-tile-button {
@@ -372,10 +372,10 @@
     align-items: start;
   }
   .an-title h1 {
-    font-size: 26px;
+    font-size: 1.625rem;
   }
   .an-title > span {
-    font-size: 10px;
+    font-size: 0.625rem;
   }
   .an-panel {
     padding: 15px;
@@ -390,6 +390,6 @@
     padding: 14px;
   }
   .an-stat strong {
-    font-size: 25px;
+    font-size: 1.5625rem;
   }
 }

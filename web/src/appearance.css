@@ -1,0 +1,36 @@
+.rd-appearance-dialog { width: min(1180px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); overflow: auto; padding: 26px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg); color: var(--text); font-family: var(--ui-font, system-ui); }
+.rd-appearance-dialog::backdrop { background: #0009; }
+.rd-appearance-dialog > header { display: flex; gap: 16px; justify-content: space-between; align-items: flex-start; }
+.rd-appearance-dialog h2 { margin: 0 0 6px; font-size: 1.5rem; }
+.rd-appearance-dialog h3 { margin: 0 0 18px; font-size: .9375rem; }
+.rd-appearance-dialog p { margin: 0; color: var(--text-soft); font-size: .8125rem; }
+.rd-appearance-layout { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 32px; margin-top: 28px; }
+.rd-appearance-controls { border-top: 1px solid var(--border); min-width: 0; }
+.rd-appearance-controls section { padding: 22px 0; border-bottom: 1px solid var(--border); }
+.rd-appearance-field { display: grid; grid-template-columns: minmax(85px, 1fr) minmax(0, 1.8fr); align-items: center; gap: 10px; margin-bottom: 14px; font-size: .875rem; }
+.rd-appearance-field select { width: 100%; min-width: 0; padding: 8px 22px 8px 10px; background-color: var(--bg-soft); color: var(--text); border: 1px solid var(--border-strong); border-radius: 4px; font: inherit; }
+.rd-appearance-size { display: flex; gap: 6px; align-items: center; }
+.rd-appearance-size button { width: 35px; flex-shrink: 0; padding: 8px 0; border: 1px solid var(--border-strong); border-radius: 4px; background: var(--bg-soft); color: var(--text); font: inherit; cursor: pointer; }
+.rd-appearance-size button:disabled { opacity: .4; cursor: default; }
+.rd-appearance-size output { flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
+.rd-appearance-controls p { font-size: .75rem; }
+.rd-appearance-preview { min-width: 0; }
+.rd-appearance-preview-label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 12px; color: var(--text-soft); font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; }
+.rd-appearance-sample { border: 1px solid var(--border); font-size: .875rem; }
+.rd-appearance-sample-head { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 13px 16px; background: var(--bg-soft); border-bottom: 1px solid var(--border); }
+.rd-appearance-sample-head > span { padding: 4px 10px; border: 1px solid var(--border-strong); }
+.rd-appearance-sample-body { display: grid; grid-template-columns: 145px minmax(0, 1fr); }
+.rd-appearance-sessions { border-right: 1px solid var(--border); }
+.rd-appearance-sessions > * { display: block; padding: 12px; }
+.rd-appearance-sessions .selected { background: color-mix(in srgb, var(--brand-green) 12%, var(--bg)); border-left: 3px solid var(--brand-green); padding-left: 9px; }
+.rd-appearance-sessions small { display: block; color: var(--text-soft); font-size: .75rem; }
+.rd-appearance-terminal { margin: 0; padding: 18px 16px; line-height: 1.65; min-width: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rd-appearance-terminal .ok { color: var(--preview-green); }.rd-appearance-terminal .cmd { color: var(--preview-cyan); }.rd-appearance-terminal .warn { color: var(--preview-yellow); }.rd-appearance-terminal .err { color: var(--preview-red); }.rd-appearance-terminal .info { color: var(--preview-blue); }
+.rd-appearance-message { border-top: 1px solid var(--border); padding: 18px; background: var(--bg-soft); }
+.rd-appearance-message small { color: var(--text-soft); font-size: .75rem; }
+.rd-appearance-message p { font-size: .875rem; margin-top: 8px; line-height: 1.6; color: var(--text); }
+.rd-appearance-preview .rd-appearance-note { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; font-size: .75rem; }
+.rd-appearance-dialog footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--border); }
+.rd-appearance-dialog footer p { font-size: .75rem; margin-top: 8px; }
+@media (max-width: 850px) { .rd-appearance-layout { grid-template-columns: minmax(0,1fr); gap: 24px; } .rd-appearance-dialog { padding: 18px; } }
+@media (max-width: 460px) { .rd-appearance-sample-body { grid-template-columns: minmax(0,1fr); }.rd-appearance-sessions { border-right: 0; border-bottom: 1px solid var(--border); }.rd-appearance-sessions > div:not(.selected) { display: none; }.rd-appearance-dialog footer { align-items: flex-start; } }

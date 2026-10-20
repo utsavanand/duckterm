@@ -2,6 +2,16 @@
 
 Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
 
+## 2026-10-19 — Do not parse every revision blob to look up one input key
+
+A JSON predicate over summary revisions repeatedly parsed multi-megabyte rows on the event loop. Cache only input-key mappings for immutable revision IDs, inspect cheap row headers, parse new rows once, and invalidate on external writes. Do not publish uncommitted mappings across rollback. Selecting a trailing column such as updated_at can still pull large record payloads; use immutable rowid/id headers. Progress-item dedup must also exclude revision buckets rather than normalize their JSON. The first lookup still scans existing keys; this repair removes repeated scans without a schema migration or body cache.
+
+An idle terminal does not prove its checkpoint writer is autonomous: an explicit request can process older records. Preserve the existing no-new-record and idle/exit guards, and record the checkpoint request, harness preparation, compaction initiator, or handoff review on both checkpoint markers and new revisions. Give every explicit range an ID and number its continuation batches; a later checkpoint reusing a revision must keep its own request metadata without rewriting the revision's original initiator. Do not invent trigger history for old rows.
+
+## 2026-10-19 — Scale interface text independently of the terminal grid
+
+An interface font setting is incomplete when hard-coded pixel labels ignore it. Convert interface typography to root-relative units while preserving default sizes; keep xterm font metrics independent. Update existing terminal options and refit through the snapshot-aware resize path, rather than remounting or reconnecting. Verify persistence, a live unsubmitted draft, hidden terminals and shells, maximum sizes on narrow screens, palette mode changes, and focus restoration after closing settings.
+
 ## 2026-10-19 — Preserve terminal wraps and replay at the captured grid size
 
 Physical capture rows are not logical lines. Joining every captured row with CRLF permanently broke paragraphs when the panel resized. Capture physical rows for bounded protocol framing and cursor accounting, plus tmux-joined logical lines for replay; validate the text agrees before exposing the snapshot. Send the captured dimensions before the binary repaint and defer browser fitting until it has parsed that repaint. Omit unused blank rows below the cursor so reconnecting does not push the first paragraph into scrollback. The regression must check actual prose, panel expansion/collapse, a small viewport shrink, reload and later input, not just terminal dimensions. Keep control-mode capture and live output in one ordered stream.

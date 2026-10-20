@@ -1,15 +1,15 @@
 .rd-session-controls { margin: 0 0 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); container-type: inline-size; }
 .rd-session-controls-identity { padding: 16px; }
-.rd-session-controls-caption { color: var(--text-soft); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
+.rd-session-controls-caption { color: var(--text-soft); font-size: 0.6875rem; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px; }
 .rd-session-controls-title { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.rd-session-controls-title > strong { font-size: 18px; font-weight: 550; overflow-wrap: anywhere; min-width: 0; }
+.rd-session-controls-title > strong { font-size: 1.125rem; font-weight: 550; overflow-wrap: anywhere; min-width: 0; }
 .rd-session-controls-title .rd-state { flex: 0 0 auto; }
-.rd-session-controls-folder { margin-top: 6px; display: flex; justify-content: space-between; gap: 12px; color: var(--text-soft); font-size: 12px; }
+.rd-session-controls-folder { margin-top: 6px; display: flex; justify-content: space-between; gap: 12px; color: var(--text-soft); font-size: 0.75rem; }
 .rd-session-controls-folder > span { overflow-wrap: anywhere; min-width: 0; }
 .rd-session-controls-meta { margin: 0; }
 .rd-session-controls-meta > div { padding: 10px 16px; border-top: 1px solid var(--border); }
-.rd-session-controls-meta dt { font-size: 11px; color: var(--text-soft); }
-.rd-session-controls-meta dd { margin: 2px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+.rd-session-controls-meta dt { font-size: 0.6875rem; color: var(--text-soft); }
+.rd-session-controls-meta dd { margin: 2px 0 0; font-size: 0.8125rem; overflow-wrap: anywhere; }
 .rd-session-controls .rd-row-notes-wrap { padding: 0 16px 16px; }
 .rd-session-controls .rd-row-notes { width: 100%; }
 .rd-session-controls button:focus-visible { outline: 2px solid var(--brand-green); outline-offset: 2px; }

@@ -180,7 +180,7 @@ export function AgentsMdModal({
 
   return (
     <Modal title="AGENTS.md rules" onClose={onClose}>
-      <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 8 }}>
+      <div style={{ fontSize: "0.75rem", color: "#6b7280", marginBottom: 8 }}>
         <code>{dir}</code> — saved to <code>.duckterm-rules.json</code>, rendered
         to <code>AGENTS.md</code>
       </div>

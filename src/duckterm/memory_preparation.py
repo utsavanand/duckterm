@@ -303,6 +303,11 @@ class MemoryPreparation:
                     order="newest_unprocessed_first",
                 )
             self.update(job, phase="summarizing")
+            captured["trigger"] = {
+                "kind": "harness_preparation",
+                "preparation_id": job["id"],
+                "range_id": job["id"],
+            }
             summary_update = await coordinator.refresh_result(
                 key,
                 captured,

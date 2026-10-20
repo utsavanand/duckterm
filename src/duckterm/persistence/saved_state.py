@@ -63,6 +63,7 @@ def checkpoint_marker(
     mail = captured["facts"]["required"]["mail"]
     return {
         "format": MARKER_FORMAT,
+        "trigger": dict(captured.get("trigger", {"kind": "internal_checkpoint"})),
         "policy": captured["policy"],
         "conversation": captured["conversation"],
         "events": source["events"],
