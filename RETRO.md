@@ -1,3 +1,7 @@
+## 2026-10-19 — Floating shortcut preferences must preserve the terminal and session identity
+
+Store personal colors/order by host-qualified session key, not display names or folder paths. Keep the rightmost open-session target stable during hover expansion; new color or reorder controls must never replace it under the pointer. Verify reorder/display changes without PTY resizes, reconnects, draft loss or pin writes, and preserve those choices across reload and renamed sessions.
+
 ## 2026-10-19 — Remote acceptance must cover both installed host versions and native routes
 
 A current Mac dashboard could not archive through the new undo flow because its native transport omitted those endpoints. The remote service was still 0.4.64, so shell requests returned plain-text 404s that surfaced as WebKit JSON errors. Check the actual owning host version, preserve HTTP errors, and test exact native route/method pairs. macOS xterm also needs Option-forced selection explicitly enabled; verify a wrapped synthetic login URL with agent mouse tracking active, through the dashboard copy bridge.

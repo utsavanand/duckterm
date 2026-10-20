@@ -2,10 +2,11 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { afterEach, expect, it, vi } from "vitest";
 import { FloatingSessionShortcuts } from "./FloatingSessionShortcuts";
 import { sessionRef } from "./hostTransport";
+import { SHORTCUT_PREFERENCES_KEY } from "./shortcutPreferences";
 import type { SessionView } from "./types";
 
 const session = (key: string, extra: Partial<SessionView> = {}) => ({ key, label: key, state: "idle", ...extra } as SessionView);
-afterEach(cleanup);
+afterEach(() => { cleanup(); localStorage.clear(); vi.restoreAllMocks(); });
 
 it("keeps same-named remote sessions distinct and applies pin limits per host", () => {
   const local = session("same", { label: "Agent", pinned: true });
@@ -57,4 +58,61 @@ it("searches folder/host names, restores focus on Escape, and excludes unpinned 
   fireEvent.keyDown(screen.getByRole("searchbox"), { key: "Escape" });
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   expect(add).toHaveFocus();
+});
+
+it("keeps colors and order tied to host-qualified identity across rename, reload and session switching", () => {
+  const local = session("same", { label: "Agent", group: "Local", pinned: true });
+  const remote = session(sessionRef("cloud", "same"), { label: "Agent", group: "Cloud", pinned: true });
+  const onOpen = vi.fn(), onToggle = vi.fn();
+  const props = { sessions: [local, remote], selected: local, onOpen, onToggle };
+  const view = render(<FloatingSessionShortcuts {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Color for Cloud / Agent: None" }));
+  fireEvent.click(screen.getByRole("button", { name: "Red" }));
+  expect(screen.getByRole("button", { name: "Color for Local / Agent: None" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Color for Cloud / Agent: Red" })).toHaveFocus();
+  fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Cloud / Agent" }), { key: "ArrowUp", altKey: true });
+  fireEvent.change(screen.getByRole("combobox", { name: "Shortcut display" }), { target: { value: "expanded" } });
+  expect(screen.getByRole("navigation")).toHaveClass("always-expanded");
+  expect(onOpen).not.toHaveBeenCalled(); expect(onToggle).not.toHaveBeenCalled();
+  view.unmount();
+  render(<FloatingSessionShortcuts {...props} sessions={[local, { ...remote, label: "Renamed", group: "Moved" }]} selected={remote} />);
+  expect(screen.getAllByRole("button", { name: /Open pinned/ })[0]).toHaveAccessibleName("Open pinned Renamed");
+  expect(screen.getByRole("button", { name: "Color for Moved / Renamed: Red" })).toBeInTheDocument();
+  expect(screen.getByRole("combobox")).toHaveValue("expanded");
+  fireEvent.click(screen.getByRole("button", { name: "Color for Moved / Renamed: Red" }));
+  fireEvent.click(screen.getByRole("button", { name: "None" }));
+  expect(screen.getByRole("button", { name: "Color for Moved / Renamed: None" })).toBeInTheDocument();
+});
+
+it("moves from the menu without switching or pinning and preserves bounds and keyboard focus", () => {
+  const a = session("a", { pinned: true }), b = session("b", { pinned: true });
+  const onOpen = vi.fn(), onToggle = vi.fn();
+  render(<FloatingSessionShortcuts sessions={[a, b]} selected={a} onOpen={onOpen} onToggle={onToggle} />);
+  fireEvent.click(screen.getByRole("button", { name: "Reorder Ungrouped / a" }));
+  expect(screen.getByRole("button", { name: "↑ Move up" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "↓ Move down" }));
+  expect(screen.getAllByRole("button", { name: /Open pinned/ }).map(e => e.getAttribute("aria-label"))).toEqual(["Open pinned b", "Open pinned a"]);
+  expect(screen.getByRole("button", { name: "↓ Move down" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "↑ Move up" })).toHaveFocus();
+  expect(screen.getByRole("status")).toHaveTextContent("Ungrouped / a, position 2 of 2");
+  fireEvent.keyDown(document, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Reorder Ungrouped / a" })).toHaveFocus();
+  expect(onOpen).not.toHaveBeenCalled(); expect(onToggle).not.toHaveBeenCalled();
+});
+
+it("recovers malformed stored preferences, follows another window and reports a failed save", () => {
+  localStorage.setItem(SHORTCUT_PREFERENCES_KEY, '{"display":"wrong","colors":{"a":"not-a-color"},"order":[null,3]}');
+  const a = session("a", { pinned: true });
+  render(<FloatingSessionShortcuts sessions={[a]} selected={a} onOpen={vi.fn()} onToggle={vi.fn()} />);
+  expect(screen.getByRole("combobox")).toHaveValue("hover");
+  expect(screen.getByRole("button", { name: "Color for Ungrouped / a: None" })).toBeInTheDocument();
+  localStorage.setItem(SHORTCUT_PREFERENCES_KEY, JSON.stringify({ display: "expanded", colors: { a: "Yellow" }, order: [] }));
+  fireEvent(window, new StorageEvent("storage", { key: SHORTCUT_PREFERENCES_KEY }));
+  expect(screen.getByRole("combobox")).toHaveValue("expanded");
+  expect(screen.getByRole("button", { name: "Color for Ungrouped / a: Yellow" })).toBeInTheDocument();
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("Storage full"); });
+  fireEvent.change(screen.getByRole("combobox"), { target: { value: "hover" } });
+  expect(screen.getByRole("alert")).toHaveTextContent("could not be saved");
+  expect(screen.getByRole("combobox")).toHaveValue("hover");
 });

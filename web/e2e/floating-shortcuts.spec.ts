@@ -36,7 +36,7 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     const beforeHover = (await firstPin.boundingBox())!;
     const firstPoint = { x: beforeHover.x + beforeHover.width / 2, y: beforeHover.y + beforeHover.height / 2 };
     await page.mouse.move(firstPoint.x, firstPoint.y);
-    await expect.poll(async () => (await rail.boundingBox())!.width).toBe(176);
+    await expect.poll(async () => (await rail.boundingBox())!.width).toBe(360);
     expect((await firstPin.boundingBox())!.y).toBe(beforeHover.y);
     expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("button")?.getAttribute("aria-label"), firstPoint)).toBe("Pin current session shortcut-ui");
     await page.screenshot({ path: "/tmp/floating-shortcuts-first-pin.png" });
@@ -72,7 +72,7 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     const compact = (await rail.getByRole("button", { name: "Open pinned shortcut-ui" }).boundingBox())!;
     const point = { x: compact.x + compact.width / 2, y: compact.y + compact.height / 2 };
     await page.mouse.move(point.x, point.y);
-    await expect.poll(railWidth).toBe(176);
+    await expect.poll(railWidth).toBe(360);
     expect(await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest("button")?.getAttribute("aria-label"), point)).toBe("Open pinned shortcut-ui");
     await page.mouse.click(point.x, point.y);
     await expect(rail.locator(".rd-shortcut-tab")).toHaveCount(3);
@@ -81,11 +81,11 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     await expect.poll(railWidth).toBe(38);
     await page.keyboard.press("Tab");
     await rail.getByRole("button", { name: "Choose sessions to pin" }).focus();
-    await expect.poll(railWidth).toBe(176);
+    await expect.poll(railWidth).toBe(360);
     await page.keyboard.press("Enter");
     await expect(picker).toBeVisible();
     await page.mouse.move(500, 700);
-    await expect.poll(railWidth).toBe(176);
+    await expect.poll(railWidth).toBe(360);
     await page.keyboard.press("Escape");
     await rail.getByRole("button", { name: "Open pinned shortcut-api" }).click();
     await expect(rows).toContainText("READY_shortcut-api");
@@ -97,6 +97,36 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     await expect(page.locator(".rd-row.selected .rd-row-name")).toHaveText("shortcut-ui");
     await rail.getByRole("button", { name: "Pin current session shortcut-ui" }).click();
     await expect(rail.getByRole("button", { name: "Open pinned shortcut-ui" })).toBeVisible();
+    // Session switches above legitimately fitted the new terminal; measure only customization below.
+    const customizationResizes = sizes.length;
+    // Personal presentation must not touch pin membership, selected terminal or its connection.
+    const uiTab = rail.locator(".rd-shortcut-tab").filter({ has: page.getByRole("button", { name: "Open pinned shortcut-ui", exact: true }) });
+    await expect(uiTab.locator(".rd-shortcut-folder")).toHaveText("Ungrouped");
+    await uiTab.getByRole("button", { name: /^Color for/ }).click();
+    await page.getByRole("dialog", { name: "Shortcut color", exact: true }).getByRole("button", { name: "Red", exact: true }).click();
+    await expect(uiTab.getByRole("button", { name: /Color for .*: Red$/ })).toBeFocused();
+    await expect(uiTab).toHaveCSS("border-left-color", "rgb(237, 120, 120)");
+    await rail.getByRole("combobox", { name: "Shortcut display" }).selectOption("expanded");
+    await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
+    await page.mouse.move(500, 700);
+    await expect.poll(railWidth).toBe(360);
+    const tabNames = () => rail.locator(".rd-shortcut-session").allTextContents();
+    const originalOrder = await tabNames();
+    await rail.locator(".rd-shortcut-grip").first().click();
+    const moveMenu = page.getByRole("dialog", { name: "Move shortcut", exact: true });
+    await expect(moveMenu.getByRole("button", { name: "↑ Move up" })).toBeDisabled();
+    await moveMenu.getByRole("button", { name: "↓ Move down" }).click();
+    await expect.poll(async () => (await tabNames())[1]).toBe(originalOrder[0]);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Alt+ArrowUp");
+    await expect.poll(tabNames).toEqual(originalOrder);
+    await rail.locator(".rd-shortcut-grip").first().dragTo(rail.locator(".rd-shortcut-open").nth(2), { targetPosition: { x: 20, y: 29 } });
+    await expect.poll(async () => (await tabNames())[2]).toBe(originalOrder[0]);
+    const savedOrder = await tabNames();
+    expect(await width()).toBe(originalWidth); expect(sizes.length).toBe(customizationResizes);
+    expect(connections).toBe(initialConnections + 1);
+    await expect(page.locator(".rd-row.selected .rd-row-name")).toHaveText("shortcut-ui");
+    await page.screenshot({ path: "/tmp/floating-shortcuts-customized.png" });
     for (const theme of ["dark", "light"] as const) {
       await page.emulateMedia({ colorScheme: theme });
       await page.screenshot({ path: `/tmp/floating-shortcuts-${theme}.png` });
@@ -114,6 +144,13 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     await expect(rail.locator(".rd-shortcut-tab")).toHaveCount(3);
     await expect(page.getByRole("button", { name: "Focus · 3", exact: true })).toBeVisible();
     await expect(rows).toContainText("UNSENT_SHORTCUT_DRAFT");
+    await expect.poll(tabNames).toEqual(savedOrder);
+    await expect(rail.getByRole("combobox", { name: "Shortcut display" })).toHaveValue("expanded");
+    await expect(uiTab.getByRole("button", { name: /Color for .*: Red$/ })).toBeVisible();
+    await rail.getByRole("combobox", { name: "Shortcut display" }).selectOption("hover");
+    await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
+    await page.mouse.move(500, 700);
+    await expect.poll(railWidth).toBe(38);
     await page.setViewportSize({ width: 600, height: 900 });
     await rail.getByRole("button", { name: "Choose sessions to pin" }).click();
     await expect(picker).toBeVisible();
