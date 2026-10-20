@@ -1,5 +1,12 @@
 ## 2026-10-20 — A paused-state notification is not shutdown completion
 
+## 2026-10-20 — Review labels must not silently disable actionable corrections
+
+Startup's checkpoint failed at 0/20 after review rejected an invented question and an optional suggestion presented as assigned work. The reviewer supplied precise corrections, but the repair policy recognized only four labels while the review parser intentionally accepted arbitrary bounded diagnostic labels. A valid `invented_question` label therefore suppressed the correction attempt. Existing tests exercised recognized labels and missed the contract mismatch.
+
+Repair eligibility now accepts actionable feedback on any valid rejection, preserving the existing single semantic correction, source snapshot, byte limits, rereview and failure blocking. A field name alone is not actionable. Regression coverage includes new/multiple labels, required-context violations, rejection after correction, provider failure and non-actionable feedback. The original-history checkpoint must also be exercised and its saved memory reviewed; synthetic tests alone cannot establish real summarization quality.
+
+
 Stop publishes stopped before awaiting child exit to preserve queued questions. A quick Resume could launch successfully, then the old Stop wrote stopped over its new busy state. Serialize Stop and Resume per session through shutdown completion. A deterministic event-barrier test must attempt Resume while Stop is suspended, then verify exactly one launch and final busy state; polling for stopped alone cannot prove the old request finished.
 
 ## 2026-10-20 — Establish a terminal draft before testing its preservation
