@@ -112,6 +112,10 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     await expect.poll(railWidth).toBe(360);
     const tabNames = () => rail.locator(".rd-shortcut-session").allTextContents();
     const originalOrder = await tabNames();
+    // Uncolored pins must remain opaque over terminal text.
+    for (const tab of await rail.locator(".rd-shortcut-tab").all()) {
+      expect(await tab.evaluate(el => getComputedStyle(el).backgroundColor)).not.toMatch(/\/\s*0\.|rgba\([^)]*,\s*0\./);
+    }
     await rail.locator(".rd-shortcut-grip").first().click();
     await expect(page.getByRole("dialog", { name: "Move shortcut", exact: true })).toHaveCount(0);
     await page.keyboard.press("Alt+ArrowDown");

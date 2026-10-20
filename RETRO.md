@@ -1,3 +1,7 @@
+## 2026-10-19 — Floating controls need opaque fallbacks
+
+Mix an unset shortcut color with the card color, not transparent. Native screenshots caught terminal text bleeding through uncolored pins; assert opacity as well as color selection.
+
 ## 2026-10-19 — Reordering should be direct manipulation
 
 The owner wants to drag pinned sessions, not navigate Move up/down buttons. Keep a visible drag grip and drop indicator; support keyboard reordering on that same grip without adding a second menu. Verify reordering preserves the terminal and the order used by Focus.

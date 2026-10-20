@@ -48,8 +48,8 @@
 @media(prefers-reduced-motion:reduce) { .rd-floating-shortcuts, .rd-shortcut-heading { transition:none; } }
 
 /* Personal identity colors never replace the live agent status dot. */
-.rd-shortcut-tab { border-left:3px solid var(--shortcut-color,var(--border)); background:color-mix(in srgb,var(--shortcut-color,transparent) 9%,var(--card)); }
-.rd-shortcut-tab.active { background:color-mix(in srgb,var(--shortcut-color,transparent) 9%,var(--card)); }
+.rd-shortcut-tab { border-left:3px solid var(--shortcut-color,var(--border)); background:color-mix(in srgb,var(--shortcut-color,var(--card)) 9%,var(--card)); }
+.rd-shortcut-tab.active { background:color-mix(in srgb,var(--shortcut-color,var(--card)) 9%,var(--card)); }
 .rd-shortcut-tab.active .rd-shortcut-session { font-weight:650; }
 .rd-shortcut-folder { color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto; }
 .rd-shortcut-session { flex-shrink:0; max-width:60%; overflow:hidden; text-overflow:ellipsis; }
