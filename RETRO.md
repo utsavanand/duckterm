@@ -2,6 +2,10 @@
 
 Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
 
+## 2026-10-19 — Make the uninstall inventory genuinely read-only
+
+A dry run must not create missing configuration directories, lock files or ownership receipts while inspecting integrations. Read hook configs through the existing ownership rules without invoking their mutation path, redact parser details, retain unreadable or uncertain entries as blockers, and measure data without following symlinks. Keep project scope and unimplemented cleanup stages explicit rather than claiming the whole machine is clean.
+
 ## 2026-10-19 — Remove only owned hook commands, not their entire group
 
 A matcher group can contain both DuckTerm and user hooks. Dropping the group when any child mentions DuckTerm loses unrelated automation. Recognize the generated script invocation and remove individual owned commands; retain sibling hooks and group metadata. Fail closed for mixed alternative commands, preserve no-op files byte-for-byte, and use the existing descriptor-based atomic write path so malformed or symlinked configuration is not overwritten.
