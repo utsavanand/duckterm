@@ -657,7 +657,11 @@ class ProgressCoordinator:
             }
             repairable_rejection = review["state"] == "rejected" and (
                 bool(repairable.intersection(review.get("reason_codes", [])))
-                or (review.get("reason_codes") == ["summary_unverified"] and bool(corrections))
+                # Reason codes are diagnostic labels, not an exhaustive repair policy.
+                # A reviewer may name a new factual defect and still explain its fix.
+                or any(
+                    isinstance(item, str) or bool(item.get("correction")) for item in corrections
+                )
             )
             if review_attempt or not repairable_rejection:
                 break

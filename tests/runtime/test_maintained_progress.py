@@ -34,7 +34,7 @@ def provider(monkeypatch):
                 "summary_validation": {"ready": True, "reason_codes": []},
             }
         else:
-            data = json.loads(prompt.split("MEMORY UPDATE:\n", 1)[1])
+            data, _ = json.JSONDecoder().raw_decode(prompt.split("MEMORY UPDATE:\n", 1)[1])
             refs = [r["source"] + ":" + r["version"] + ":" + r["record"] for r in data["records"]]
             context = data.get("prior_context") or {
                 "overview": "Continue the test work.",
