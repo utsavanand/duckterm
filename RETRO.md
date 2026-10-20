@@ -1,3 +1,7 @@
+## 2026-10-20 — Test socket names must be unique across concurrent worktrees
+
+The adoption fixture derived its tmux socket from tmp_path.name, which repeats across pytest runs. Concurrent gates could adopt or stop another fixture’s synthetic agent and look for its argv file in the wrong temporary home. Use a per-run UUID and retain exact-socket cleanup; verify concurrent fixture runs before trusting the full gate.
+
 ## 2026-10-20 — Disconnect revokes terminal clipboard writes immediately
 
 A visible terminal can still have queued parser work after its socket closes. Require an OPEN connection for OSC52 writes, revoke replay readiness on close, and invalidate callbacks from the closed attachment. Test a late snapshot callback and an obsolete close notification after reconnect; checking only visibility and disposal misses both races.
