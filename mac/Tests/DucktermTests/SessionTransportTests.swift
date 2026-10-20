@@ -137,3 +137,18 @@ extension SessionTransportTests {
         }
     }
 }
+
+
+extension SessionTransportTests {
+    @MainActor func testArchiveUndoRoutesStayOnSelectedHost() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        for (path, method) in [("/archive-requests", "GET"), ("/sessions/stopped.remote/archive-undo", "POST"), ("/sessions/stopped.remote/archive-undo", "DELETE")] {
+            let request = try SessionTransport.request(base: base, params: ["path": path, "method": method])
+            XCTAssertEqual(request.url?.absoluteString, base.absoluteString + path)
+            XCTAssertEqual(request.httpMethod, method)
+        }
+        for (path, method) in [("/archive-requests", "POST"), ("/archive-requests?host=local", "GET"), ("/sessions/x/archive-undo", "GET"), ("/sessions/x/archive-undo?force=true", "DELETE"), ("/sessions/../archive-undo", "POST")] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+        }
+    }
+}

@@ -43,7 +43,13 @@ export async function hostFetch(host: string, path: string, init?: RequestInit):
     return new Response(bytes, { status: response.status, headers: { "Content-Type": response.contentType ?? "application/octet-stream" } });
   }
   let result = response.body;
-  try { result = JSON.stringify(qualifyResult(JSON.parse(result), host)); } catch { /* text response */ }
+  try { result = JSON.stringify(qualifyResult(JSON.parse(result), host)); } catch {
+    // Older hosts return plain text for unknown endpoints. Preserve successful
+    // text reads, but do not let response.json() hide the HTTP error in WebKit.
+    if (response.status >= 400) result = JSON.stringify({ error: response.status === 404
+      ? "This remote operation is unavailable. The session may be missing or this computer may need a DuckTerm update."
+      : `Remote request failed (HTTP ${response.status}).` });
+  }
   return new Response(result, { status: response.status });
 }
 
