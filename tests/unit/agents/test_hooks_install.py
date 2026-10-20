@@ -173,7 +173,9 @@ def test_copilot_preserves_custom_alternative_command(tmp_path: Path) -> None:
 def test_ownership_does_not_match_mentions_or_shell_wrappers() -> None:
     from duckterm.agents.hooks_install import _is_ours
 
-    assert _is_ours('"/old path/duckterm-hook.sh" Stop claude-code')
+    from duckterm.agents.hooks_install import hook_script_path
+
+    assert _is_ours(f'"{hook_script_path()}" Stop claude-code')
     for value in [
         "echo duckterm",
         "/custom/duckterm-linter.sh",
@@ -192,3 +194,28 @@ def test_no_owned_hooks_keeps_empty_shared_fields(tmp_path: Path) -> None:
     path.write_text(original)
     uninstall(global_scope=False, project_dir=tmp_path)
     assert path.read_text() == original
+
+
+def test_custom_same_basename_is_preserved(tmp_path: Path) -> None:
+    path = install(global_scope=False, project_dir=tmp_path)
+    config = json.loads(path.read_text())
+    custom = {"type": "command", "command": "/custom/user-tools/duckterm-hook.sh Stop claude-code"}
+    config["hooks"]["Stop"][0]["hooks"].append(custom)
+    path.write_text(json.dumps(config))
+    uninstall(global_scope=False, project_dir=tmp_path)
+    assert json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"] == [custom]
+
+
+def test_deleted_known_pipx_package_script_remains_recognizable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from duckterm.agents.hooks_install import _is_ours
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    script = (
+        tmp_path
+        / ".local/pipx/venvs/duckterm/lib/python3.13/site-packages/duckterm/hooks/duckterm-hook.sh"
+    )
+    assert not script.exists()
+    assert _is_ours(f'"{script}" Stop claude-code')
+    assert not _is_ours(f'"{script.parent / ".." / "duckterm-hook.sh"}" Stop claude-code')

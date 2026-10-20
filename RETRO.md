@@ -1,10 +1,15 @@
-## 2026-10-19 — Native scrollbar tracks need the resolved color scheme
+## 2026-10-19 — A hook basename is not ownership evidence
 
-Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
+Independent QA showed that a custom script can use the same filename and arguments as a DuckTerm hook. Preserve it unless the command points to the currently loaded package script or the exact historical package location in a known DuckTerm pipx environment. Ambiguous hooks require review, not deletion; missing historical scripts can still be identified by their precise managed installation path.
 
 ## 2026-10-19 — Make the uninstall inventory genuinely read-only
 
 A dry run must not create missing configuration directories, lock files or ownership receipts while inspecting integrations. Read hook configs through the existing ownership rules without invoking their mutation path, redact parser details, retain unreadable or uncertain entries as blockers, and measure data without following symlinks. Keep project scope and unimplemented cleanup stages explicit rather than claiming the whole machine is clean.
+
+## 2026-10-19 — Native scrollbar tracks need the resolved color scheme
+
+Dark CSS colors did not inform WKWebView's native scrollbar chrome, leaving bright white gutters between dark panels. Set color-scheme alongside the existing light/dark theme selectors; keep scrollbar sizing and panel geometry intact. Verify using a native window capture: WKWebView's own page snapshot excludes the native scrollbar tracks and hid this defect during earlier visual checks.
+
 
 ## 2026-10-19 — Remove only owned hook commands, not their entire group
 

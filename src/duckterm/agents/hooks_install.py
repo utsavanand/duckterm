@@ -19,6 +19,8 @@ Hook config locations:
 """
 
 import json
+import os
+import re
 import shlex
 from importlib.resources import files
 from pathlib import Path
@@ -44,20 +46,44 @@ def hook_script_path() -> Path:
     return Path(str(files("duckterm").joinpath("hooks/duckterm-hook.sh")))
 
 
-def _is_ours(command: str) -> bool:
-    """Recognize our generated invocation, not arbitrary mentions of DuckTerm."""
+def _hook_invocation(command: str) -> Path | None:
     if not isinstance(command, str):
-        return False
+        return None
     try:
         args = shlex.split(command)
     except ValueError:
-        return False
-    return (
+        return None
+    if (
         len(args) == 3
         and Path(args[0]).name == "duckterm-hook.sh"
         and args[1] in _EVENTS
         and args[2] in {"claude-code", "codex", "copilot"}
-    )
+    ):
+        return Path(args[0])
+    return None
+
+
+def _is_ours(command: str) -> bool:
+    """Require our loaded script or the exact package path in a known pipx venv."""
+    path = _hook_invocation(command)
+    if path is None or not path.is_absolute():
+        return False
+    if path == hook_script_path():
+        return True
+    roots = [Path.home() / ".local/pipx", Path.home() / ".local/share/pipx"]
+    if os.environ.get("PIPX_HOME"):
+        roots.append(Path(os.environ["PIPX_HOME"]))
+    for root in roots:
+        try:
+            relative = path.relative_to(root / "venvs/duckterm")
+        except ValueError:
+            continue
+        if re.fullmatch(
+            r"lib/python[0-9]+\.[0-9]+/site-packages/duckterm/hooks/duckterm-hook\.sh",
+            relative.as_posix(),
+        ):
+            return True
+    return False
 
 
 # ── claude-code & codex: identical {hooks: {Event: [{matcher, hooks:[…]}]}} ──
