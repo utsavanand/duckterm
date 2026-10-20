@@ -1,3 +1,14 @@
+## 2026-10-20 — Revocation polling must not resolve credentials
+
+Connector supervisors called the full legacy policy resolver five times per
+second per session. That repeatedly parsed harness configuration and could
+launch `gh auth token`, multiplying idle CPU and Keychain activity. Watch policy
+and legacy config metadata instead, parse only after changes, and keep credential
+resolution in startup. Preserve the existing polling interval, generation checks
+and process-group cleanup. Verify unchanged-file read counts, atomic replacement,
+config removal and real isolated child shutdown; do not fix load by disabling
+revocation or killing the owner’s sessions.
+
 ## 2026-10-20 — Read the whole checkpoint without losing session identity
 
 A checkpoint link must identify the complete attempt, not just its last saved
