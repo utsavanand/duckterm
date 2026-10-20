@@ -67,7 +67,6 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
   const [position, setPosition] = useState({ left: 8, top: 8, width: 310, maxHeight: 400 });
   const pins = orderShortcuts(sessions.filter(s => s.pinned), preferences.order);
   const customSession = pins.find(s => s.key === customizing?.key);
-  const customIndex = pins.findIndex(s => s.key === customizing?.key);
   const folderLabel = (s: SessionView) => `${s.group || "Ungrouped"} / ${s.label}`;
   const colorOf = (key: string): ShortcutColor => Object.hasOwn(preferences.colors, key) ? preferences.colors[key] : "None";
   function closeCustomization() {
@@ -161,8 +160,7 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
       style={{ "--shortcut-color": SHORTCUT_COLORS[colorOf(s.key)] || undefined } as CSSProperties}
       onDragOver={event => { if (!dragged.current || dragged.current === s.key) return; event.preventDefault(); event.dataTransfer.dropEffect = "move"; const rect = event.currentTarget.getBoundingClientRect(); setDrop({ key: s.key, after: event.clientY >= rect.top + rect.height / 2 }); }}
       onDrop={event => { if (!dragged.current) return; event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); reorder(dragged.current, s.key, event.clientY >= rect.top + rect.height / 2); endDrag(); }}>
-      <button className="rd-shortcut-grip" draggable aria-label={`Reorder ${folderLabel(s)}`} title="Drag to reorder, or click for move controls"
-        onClick={event => { setOpen(false); setCustomizing({ key: s.key, mode: "move", anchor: event.currentTarget }); }}
+      <button className="rd-shortcut-grip" draggable aria-label={`Reorder ${folderLabel(s)}`} title="Drag to reorder · Alt + ↑ / ↓ with keyboard" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         onKeyDown={event => { if (event.altKey && ["ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); move(s.key, event.key === "ArrowUp" ? -1 : 1); } }}
         onDragStart={event => { setCustomizing(null); setOpen(false); dragged.current = s.key; setDragKey(s.key); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("application/x-duckterm-shortcut", s.key); }} onDragEnd={endDrag}>
         <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="4" r="1" /><circle cx="7" cy="4" r="1" /><circle cx="3" cy="8" r="1" /><circle cx="7" cy="8" r="1" /><circle cx="3" cy="12" r="1" /><circle cx="7" cy="12" r="1" /></svg>
@@ -173,12 +171,12 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
         <span className="rd-shortcut-badge" aria-hidden="true">{initials(s.label)}<ShortcutState session={s} /></span>
       </button>{pinButton(s, "from shortcuts")}
       <button className="rd-shortcut-color" aria-label={`Color for ${folderLabel(s)}: ${colorOf(s.key)}`} title={`Shortcut color: ${colorOf(s.key)}`}
-        onClick={event => { setOpen(false); setCustomizing({ key: s.key, mode: "color", anchor: event.currentTarget }); }}><i aria-hidden="true" /></button>
+        onClick={event => { setOpen(false); setCustomizing({ key: s.key, anchor: event.currentTarget }); }}><i aria-hidden="true" /></button>
     </div>)}</div>
     <span className="rd-shortcut-announcement" role="status">{announcement}</span>
-    {customizing && customSession && <ShortcutMenu target={customizing} label={folderLabel(customSession)} color={colorOf(customSession.key)} canUp={customIndex > 0} canDown={customIndex < pins.length - 1}
+    {customizing && customSession && <ShortcutMenu target={customizing} color={colorOf(customSession.key)}
       onColor={color => update(previous => ({ ...previous, colors: { ...previous.colors, [customSession.key]: color } }))}
-      onMove={direction => move(customSession.key, direction)} onClose={closeCustomization} />}
+      onClose={closeCustomization} />}
     {!selected.pinned && <button className="rd-shortcut-current" disabled={!!pending || atCapacity(selected) || !!selected.hostOffline}
       title={selected.hostOffline ? "Reconnect this host to pin its session" : atCapacity(selected) ? `Unpin a session on this host first (${SESSION_PIN_LIMIT} pinned)` : `Pin ${selected.label}`}
       aria-label={`Pin current session ${selected.label}`} onClick={() => void toggle(selected)}><span>Pin {selected.label}</span>{pinIcon}</button>}

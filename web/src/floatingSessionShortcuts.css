@@ -72,8 +72,6 @@
 .rd-shortcut-swatches button { height:36px; border:1px solid var(--border); border-radius:3px; background:var(--bg); display:grid; place-items:center; cursor:pointer; color:var(--text); }
 .rd-shortcut-swatches i { width:18px; height:18px; border-radius:2px; }
 .rd-shortcut-swatches button[aria-pressed=true] { outline:2px solid var(--text); outline-offset:1px; }
-.rd-shortcut-menu-actions { display:grid; gap:7px; margin-top:10px; }
-.rd-shortcut-menu-actions button { padding:9px 12px; background:var(--bg); border:1px solid var(--border); color:var(--text); border-radius:3px; text-align:left; cursor:pointer; }
 .rd-shortcut-menu button:disabled { opacity:.4; cursor:default; }
 .rd-shortcut-menu button:focus-visible, .rd-shortcut-display:focus-visible { outline:2px solid var(--brand-green); outline-offset:-2px; }
 .rd-shortcut-announcement { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }

@@ -1,3 +1,7 @@
+## 2026-10-19 — Reordering should be direct manipulation
+
+The owner wants to drag pinned sessions, not navigate Move up/down buttons. Keep a visible drag grip and drop indicator; support keyboard reordering on that same grip without adding a second menu. Verify reordering preserves the terminal and the order used by Focus.
+
 ## 2026-10-19 — Focus entry defaults and folder expansion have different lifetimes
 
 Focus should start with the first three pins in the owner's shortcut order, even when an old persisted grid contains more panes. Keep the remaining pins docked. Sidebar expansion belongs to the dashboard lifetime, not the conditionally mounted tree; preserve it when entering/exiting Focus without persisting it across a fresh app launch.

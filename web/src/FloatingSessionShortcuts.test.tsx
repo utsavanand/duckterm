@@ -84,20 +84,21 @@ it("keeps colors and order tied to host-qualified identity across rename, reload
   expect(screen.getByRole("button", { name: "Color for Moved / Renamed: None" })).toBeInTheDocument();
 });
 
-it("moves from the menu without switching or pinning and preserves bounds and keyboard focus", () => {
+it("keeps reordering on the grip without a move menu or session changes", () => {
   const a = session("a", { pinned: true }), b = session("b", { pinned: true });
   const onOpen = vi.fn(), onToggle = vi.fn();
   render(<FloatingSessionShortcuts sessions={[a, b]} selected={a} onOpen={onOpen} onToggle={onToggle} />);
-  fireEvent.click(screen.getByRole("button", { name: "Reorder Ungrouped / a" }));
-  expect(screen.getByRole("button", { name: "↑ Move up" })).toBeDisabled();
-  fireEvent.click(screen.getByRole("button", { name: "↓ Move down" }));
-  expect(screen.getAllByRole("button", { name: /Open pinned/ }).map(e => e.getAttribute("aria-label"))).toEqual(["Open pinned b", "Open pinned a"]);
-  expect(screen.getByRole("button", { name: "↓ Move down" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "↑ Move up" })).toHaveFocus();
-  expect(screen.getByRole("status")).toHaveTextContent("Ungrouped / a, position 2 of 2");
-  fireEvent.keyDown(document, { key: "Escape" });
+  const grip = screen.getByRole("button", { name: "Reorder Ungrouped / a" });
+  grip.focus(); fireEvent.click(grip);
+  expect(grip).toHaveAttribute("draggable", "true");
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Reorder Ungrouped / a" })).toHaveFocus();
+  fireEvent.keyDown(grip, { key: "ArrowUp", altKey: true });
+  expect(screen.getAllByRole("button", { name: /Open pinned/ })[0]).toHaveAttribute("aria-label", "Open pinned a");
+  fireEvent.keyDown(grip, { key: "ArrowDown", altKey: true });
+  expect(screen.getAllByRole("button", { name: /Open pinned/ }).map(e => e.getAttribute("aria-label"))).toEqual(["Open pinned b", "Open pinned a"]);
+  fireEvent.keyDown(grip, { key: "ArrowDown", altKey: true });
+  expect(grip).toHaveFocus();
+  expect(screen.getByRole("status")).toHaveTextContent("Ungrouped / a, position 2 of 2");
   expect(onOpen).not.toHaveBeenCalled(); expect(onToggle).not.toHaveBeenCalled();
 });
 

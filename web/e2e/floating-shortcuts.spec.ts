@@ -113,11 +113,9 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     const tabNames = () => rail.locator(".rd-shortcut-session").allTextContents();
     const originalOrder = await tabNames();
     await rail.locator(".rd-shortcut-grip").first().click();
-    const moveMenu = page.getByRole("dialog", { name: "Move shortcut", exact: true });
-    await expect(moveMenu.getByRole("button", { name: "↑ Move up" })).toBeDisabled();
-    await moveMenu.getByRole("button", { name: "↓ Move down" }).click();
+    await expect(page.getByRole("dialog", { name: "Move shortcut", exact: true })).toHaveCount(0);
+    await page.keyboard.press("Alt+ArrowDown");
     await expect.poll(async () => (await tabNames())[1]).toBe(originalOrder[0]);
-    await page.keyboard.press("Escape");
     await page.keyboard.press("Alt+ArrowUp");
     await expect.poll(tabNames).toEqual(originalOrder);
     await rail.locator(".rd-shortcut-grip").first().dragTo(rail.locator(".rd-shortcut-open").nth(2), { targetPosition: { x: 20, y: 29 } });
