@@ -1,3 +1,14 @@
+## 2026-10-20 — Revocation polling must not resolve credentials
+
+Connector supervisors called the full legacy policy resolver five times per
+second per session. That repeatedly parsed harness configuration and could
+launch `gh auth token`, multiplying idle CPU and Keychain activity. Watch policy
+and legacy config metadata instead, parse only after changes, and keep credential
+resolution in startup. Preserve the existing polling interval, generation checks
+and process-group cleanup. Verify unchanged-file read counts, atomic replacement,
+config removal and real isolated child shutdown; do not fix load by disabling
+revocation or killing the owner’s sessions.
+
 ## 2026-10-20 — Test socket names must be unique across concurrent worktrees
 
 The adoption fixture derived its tmux socket from tmp_path.name, which repeats across pytest runs. Concurrent gates could adopt or stop another fixture’s synthetic agent and look for its argv file in the wrong temporary home. Use a per-run UUID and retain exact-socket cleanup; verify concurrent fixture runs before trusting the full gate. Readiness must also wait for the synthetic prompt and recorded restart arguments, not fixed 0.2/0.5-second sleeps: a scheduled process is not necessarily ready to accept a restart.

@@ -5,9 +5,12 @@ duck and TEST badge distinguish it from the production app. Follow the
 [test-to-production workflow](../mac/README.md) before promotion.
 
 Choose **New session → Run on → This Mac / Remote** to start an agent on the
-selected computer. The form stays mounted and preserves its agent/name/prompt;
-the folder picker always browses the destination. The dashboard changes only
-after successful launch. Cancel leaves it unchanged. Manage saved connections
+selected computer. Remote Git setup uses **Repository → Agent & task → Review**;
+DuckTerm creates a separate checkout automatically on the remote computer.
+Advanced options retain the optional branch, session name and sidebar folder.
+Copying a local project or using an existing folder remains available under
+Other project options. Local and remote sessions stay in the same dashboard.
+Cancel leaves running sessions unchanged. Manage saved connections
 under **Settings → Remote computers**. Verify new hosts in Terminal first;
 the app never accepts unknown or changed host keys. SSH credentials remain in
 SSH configuration/agent. The selected computer is remembered; notifications

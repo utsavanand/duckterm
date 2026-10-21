@@ -2,8 +2,8 @@
 
 Status: implemented in the remote-session candidate; live candidate QA is pending.
 The Test build now keeps New session mounted when selecting a destination,
-browses through a constrained native request/reply bridge, and switches the
-dashboard only after successful remote launch. Tested against the live VM.
+browses through a constrained native request/reply bridge, and selects the
+remote session in the same dashboard after successful launch. Tested against the live VM.
 Project copy/clone and Move to remote now use a reviewed snapshot and a durable
 operation journal. Local tests cover project integrity, retries, restart recovery,
 and launch deduplication. The new candidate has not yet been validated on the VM.
@@ -25,23 +25,26 @@ Duckterm's transfers directory for recovery; automatic retention is not implemen
 
 ## New session
 
-Keep **Run on**, **Project**, agent, and prompt in one form. Changing Run on
-connects in the background and updates destination-specific project choices;
-it must not close/reopen the form or change the underlying dashboard. Preserve
-portable fields and remember project choices separately for each computer.
+Remote coding sessions use three steps:
 
-When Remote is selected, offer three project choices:
+1. **Repository** — choose the remote computer and a GitHub repository. A Git URL
+   is available under Other project options.
+2. **Agent & task** — choose an agent and optionally describe the task. Branch,
+   session name and sidebar folder are under Advanced options.
+3. **Review** — inspect the repository, computer and agent, then choose
+   **Launch session**. DuckTerm prepares, clones and starts the session in order.
 
-- **Existing remote folder**: browse that computer and show its absolute path.
-- **Copy local project**: choose a local folder and a new remote destination;
-  review the transfer before copying. Local files remain in place.
-- **Clone Git repository**: enter a repository URL and optional branch, then
-  choose a new remote destination. Cloning does not include local edits.
+The destination server creates a separate checkout under its own home:
+`~/projects/<owner>/<repository>/session-<operation-id>`. No folder is required.
+Changing repository or branch starts a new operation; retrying keeps the same
+checkout and cannot blindly launch a second agent. Automatic workspaces require
+an updated destination server. Credentials continue to come from that computer's
+GitHub connector or Git authorization.
 
-Label both source and destination with the computer name. Show connection,
-copy/clone progress, failures, and retry in place. Change the active dashboard
-only after the remote session has been created successfully. Do not start an
-agent against a partly transferred project.
+Other project options retain **Copy a local project** and **Existing folder**
+with explicit folder selection. Local sessions retain their existing setup.
+Remote and local sessions stay together in the same dashboard. A failed clone
+replaces progress with an error and Retry; an agent only starts after verification.
 
 Use a narrowly scoped native request/response bridge for saved-host connection,
 project operations, and launch. Bind responses to the originating form and

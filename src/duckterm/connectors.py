@@ -640,6 +640,53 @@ def server_command(
     return [cli, "mcp"], env
 
 
+class _RunnerPolicy:
+    """Watch revocation without resolving credentials or reparsing unchanged files."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.home = Path.home()
+        self.path = _policy_path(name)
+        self.signature: tuple[object, ...] | None = None
+        self.current: dict[str, object] = {}
+
+    @staticmethod
+    def _stamp(path: Path) -> tuple[int, ...] | None:
+        try:
+            info = path.stat()
+        except FileNotFoundError:
+            return None
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    def read(self) -> dict[str, object]:
+        policy_stamp = self._stamp(self.path)
+        signature: tuple[object, ...] = (policy_stamp,)
+        if policy_stamp is None:
+            signature += (
+                self._stamp(mcp_install._claude_path(self.home)),
+                self._stamp(mcp_install._codex_path(self.home)),
+            )
+        if signature == self.signature:
+            return self.current
+        current: dict[str, object]
+        if policy_stamp is not None:
+            current = json.loads(self.path.read_text())
+            if not isinstance(current, dict):
+                raise RuntimeError("invalid connector policy")
+        else:
+            # Existing children need only enabled/generation. In particular, do
+            # not call policy(): its legacy branch runs `gh auth token`.
+            current = {
+                "enabled": mcp_install.claude_installed(self.name, home=self.home)
+                or mcp_install.codex_installed(self.name, home=self.home),
+                "generation": "legacy",
+            }
+        self.current = current
+        # Keep the pre-read signature: a concurrent change is reread next tick.
+        self.signature = signature
+        return current
+
+
 def run(name: str) -> None:
     from duckterm import connector_client
 
@@ -667,8 +714,9 @@ def run(name: str) -> None:
 
     previous = signal.signal(signal.SIGTERM, stop)
     try:
+        watcher = _RunnerPolicy(name)
         while proc.poll() is None:
-            latest = policy(name)
+            latest = watcher.read()
             if not latest.get("enabled") or latest.get("generation") != current.get("generation"):
                 break
             time.sleep(0.2)
