@@ -1,3 +1,10 @@
+## 2026-10-20 — Recheck cache identity after awaiting shared work
+
+Independent QA changed the tmux socket while a shared observation was in flight.
+The next caller awaited the old task and consumed its positive result without
+rechecking socket identity. Recheck identity and expiry after every await;
+a test that switches only after a snapshot completes misses this race.
+
 ## 2026-10-20 — Attribute background forks before multiplying request latency
 
 A reported 30–70% server CPU problem was attributed to every `/sessions` read

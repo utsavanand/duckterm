@@ -149,6 +149,39 @@ def test_shared_probe_preserves_final_output_drain(tmp_path, monkeypatch):
     asyncio.run(scenario())
 
 
+def test_socket_change_during_refresh_rechecks_completed_snapshot(monkeypatch):
+    async def scenario():
+        started = asyncio.Event()
+        release = threading.Event()
+        loop = asyncio.get_running_loop()
+        monkeypatch.setenv("DUCKTERM_TMUX_SOCKET", "test-old")
+
+        def query():
+            if tmux.socket_name() == "test-old":
+                loop.call_soon_threadsafe(started.set)
+                assert release.wait(3)
+                return {"rd_old"}
+            return set()
+
+        probe = Mock(side_effect=query)
+        monkeypatch.setattr(tmux, "session_targets", probe)
+        monkeypatch.setattr(tmux, "session_exists", lambda target: False)
+        monitor = TailLiveness()
+        first = asyncio.create_task(monitor.exists("rd_old"))
+        try:
+            await asyncio.wait_for(started.wait(), 3)
+            monkeypatch.setenv("DUCKTERM_TMUX_SOCKET", "test-new")
+            second = asyncio.create_task(monitor.exists("rd_old"))
+            await asyncio.sleep(0)
+        finally:
+            release.set()
+        assert not await first
+        assert not await second
+        assert probe.call_count == 2
+
+    asyncio.run(scenario())
+
+
 def test_session_snapshot_preserves_names_and_has_session_semantics(monkeypatch):
     command = Mock(return_value=(True, "rd_alive\nrd_dead\nrd_alive_shell\nother\n"))
     monkeypatch.setattr(tmux, "_tmux", command)

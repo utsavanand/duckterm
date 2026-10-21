@@ -32,12 +32,13 @@ class TailLiveness:
     async def exists(self, target: str) -> bool:
         loop = asyncio.get_running_loop()
         socket = tmux.socket_name()
-        if self._socket != socket or loop.time() >= self._expires:
+        while self._socket != socket or loop.time() >= self._expires:
             if self._refresh is None or self._refresh.done():
                 self._refresh = asyncio.create_task(self._read(socket))
             # Cancelling one tail must not cancel the observation other tails
             # are awaiting or start a second subprocess while it is in flight.
             await asyncio.shield(self._refresh)
+            socket = tmux.socket_name()
         if self._targets is None or target in self._targets:
             return True
         return await asyncio.to_thread(tmux.session_exists, target)
