@@ -187,7 +187,6 @@ roadmap reflects the product, and as evidence for the process note below.
   persists across restart. [message-pins.md](message-pins.md).
 - **Message folder UI** — [message-folder-ui.md](message-folder-ui.md).
 - **Inbox delivery semantics** — [inbox-delivery.md](inbox-delivery.md).
-- **Hugging Face connector** — [hugging-face.md](hugging-face.md).
 - **Shared connectors** — [shared-connectors.md](shared-connectors.md).
 - **AGENTS.md template** — [agents-template.md](agents-template.md).
 - **Installation guide** — [installation.md](installation.md).

@@ -39,28 +39,13 @@ it("does not expose secret administration on the hosted agent dashboard", async 
   expect(screen.queryByText("Connect")).toBeNull();
 });
 
-it("keeps anonymous Hugging Face access available without sending another provider's token", async () => {
-  const hf: Connector = { ...row, name: "huggingface", title: "Hugging Face", sources: ["anonymous", "stored"], ready: true };
-  vi.mocked(api.connectors).mockResolvedValue({ connectors: [hf] });
-  vi.mocked(api.enableConnector).mockResolvedValue({ ...hf, enabled: true, credential: "anonymous" });
-  render(<Connectors />);
-  fireEvent.click(await screen.findByText("Connect"));
-  fireEvent.change(screen.getByLabelText("Hugging Face credential source"), { target: { value: "stored" } });
-  fireEvent.change(screen.getByLabelText("Hugging Face API key"), { target: { value: "synthetic-private-token" } });
-  fireEvent.change(screen.getByLabelText("Hugging Face credential source"), { target: { value: "anonymous" } });
-  fireEvent.click(screen.getByText("Verify and enable"));
-  await waitFor(() => expect(api.enableConnector).toHaveBeenCalledWith("huggingface", undefined, undefined, "anonymous", false, "", ["claude-code", "codex"]));
-  expect(screen.queryByDisplayValue("synthetic-private-token")).toBeNull();
-});
-
-it("retains refresh and personal Google setup instructions", async () => {
-  const gmail: Connector = { ...row, name: "gmail", title: "Gmail", sources: ["google-oauth"] };
-  vi.mocked(api.connectors).mockResolvedValueOnce({ connectors: [] }).mockResolvedValue({ connectors: [gmail] });
+it("picks up a connector that appears while the window regains focus", async () => {
+  const porkbun: Connector = { ...row, name: "porkbun", title: "Porkbun", sources: ["stored"] };
+  vi.mocked(api.connectors).mockResolvedValueOnce({ connectors: [] }).mockResolvedValue({ connectors: [porkbun] });
   render(<Connectors />);
   await screen.findByText("Connectors (0) · This Mac");
   fireEvent(window, new Event("focus"));
-  expect(await screen.findByText("Set up personal Gmail")).toBeVisible();
-  expect(screen.getByText(/duckterm connector-auth gmail/)).toBeInTheDocument();
+  expect(await screen.findByText("Porkbun")).toBeVisible();
   fireEvent.click(screen.getByText("Refresh"));
   await waitFor(() => expect(api.connectors).toHaveBeenCalledTimes(3));
 });

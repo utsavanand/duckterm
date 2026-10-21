@@ -121,7 +121,7 @@ def test_sync_excludes_secrets_symlinks_logs_and_restores_with_history_store(sou
     home, root = source
     for path in [
         root / "session-credentials/private.json",
-        root / "secrets/gmail",
+        root / "secrets/github",
         root / "logs/server.log",
         root / "worktrees/code.py",
         home / "codex/auth.json",
