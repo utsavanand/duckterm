@@ -1,5 +1,10 @@
 # Connector setup: design
 
+Scope update (owner, 2026-10-20): the Gmail, Google Cloud, and Hugging Face
+connectors were removed; the shipped set is GitHub, Railway, and Porkbun.
+Their worked examples below are kept as the record of the reasoning, not as
+a description of current behaviour.
+
 Status: owner-approved 2026-09-28, partly implemented. Supersedes the
 setup-guidance parts of [shared-connectors.md](shared-connectors.md);
 credential storage, the launch-time shim, and the shared host are unchanged.

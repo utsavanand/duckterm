@@ -521,7 +521,7 @@ function Dashboard() {
                 }}
               >
                 <Terminal sessionKey={s.key} folder={s.group} active={selectedFolder === null && view === "terminal" && s.key === selectedKey} focusRequest={terminalFocus.key === s.key ? terminalFocus.revision : 0} theme={themeFor(s)} />
-                {view === "terminal" && s.key === selectedKey && <FloatingSessionShortcuts sessions={sessions} selected={s}
+                {!towerOpen && selectedFolder === null && view === "terminal" && s.key === selectedKey && <FloatingSessionShortcuts sessions={sessions} selected={s}
                   onOpen={key => { setSelectedKey(key); setTerminalFocus(previous => ({ key, revision: previous.revision + 1 })); }}
                   onToggle={toggleSessionPin} />}
               </div>

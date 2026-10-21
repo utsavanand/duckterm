@@ -38,7 +38,7 @@ def test_archive_restores_wal_database_and_transcripts_without_credentials(sourc
     home, root, connection = source
     assert (root / "db.sqlite-wal").stat().st_size > 0
     put(root / "session-credentials/private.json", "session-secret")
-    put(root / "secrets/gmail", "provider-secret")
+    put(root / "secrets/github", "provider-secret")
     put(root / "checkpoints/session/checkpoint.md", "checkpoint")
     put(root / "snapshots/snap-1/manifest.json", "{}")
     put(home / ".codex/auth.json", "login-secret")

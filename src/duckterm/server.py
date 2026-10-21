@@ -1943,8 +1943,10 @@ class Server:
             # Persist the name like the terminal path does: the SessionStart
             # event carries it to LIVE dashboards, but the row is what refresh
             # and server-side readers (the fleet digest) see.
-            if name or req.get("notes"):
-                self.history.set_meta(key, name=name, notes=req.get("notes"))
+            if name or req.get("notes") or req.get("group") is not None:
+                self.history.set_meta(
+                    key, name=name, notes=req.get("notes"), group=req.get("group")
+                )
             await _write_json(writer, 200, {"session_key": key, "opened_in_terminal": False})
             return
 
@@ -2002,6 +2004,7 @@ class Server:
                 "branch": branch,
                 "intention": req.get("prompt", ""),
                 "launched": True,
+                "test": req.get("test") is True,
                 # A tab launch is not attachable from the browser — the PTY
                 # lives in the user's terminal app, not in Duckterm.
                 "pty_owned": False,
@@ -2016,8 +2019,8 @@ class Server:
             heartbeat=(instance.heartbeat_url(), key),
             title=name or repo_name,
         )
-        if name or req.get("notes"):
-            self.history.set_meta(key, name=name, notes=req.get("notes"))
+        if name or req.get("notes") or req.get("group") is not None:
+            self.history.set_meta(key, name=name, notes=req.get("notes"), group=req.get("group"))
         if opened:
             self.history.mark_heartbeat(key)
         await _write_json(

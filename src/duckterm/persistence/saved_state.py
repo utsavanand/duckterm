@@ -178,8 +178,11 @@ def retention_predicate(kind: str) -> str:
         "e.rowid BETWEEN json_extract(c.record_json,'$.events.first') "
         "AND json_extract(c.record_json,'$.events.last')"
         if kind == "events"
-        else "EXISTS (SELECT 1 FROM json_each(c.record_json,'$.mail_ids') m WHERE m.value=q.id)"
+        else "EXISTS (SELECT 1 FROM json_each(json_extract(c.record_json,'$.mail_ids')) m "
+        "WHERE m.value=q.id)"
     )
+    # Extract the guarded array first: json_each would otherwise parse the whole
+    # checkpoint again, including potentially megabytes of unrelated evidence.
     # CASE prevents SQLite from invoking JSON functions on corrupt data.
     return f"""NOT EXISTS (SELECT 1 FROM checkpoints c WHERE {scope} AND
       CASE WHEN NOT json_valid(c.record_json) THEN 1

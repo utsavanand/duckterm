@@ -59,7 +59,7 @@ install Python 3.11+, pipx, and tmux using your distribution's package manager.
 Then install the published wheel:
 
 ```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.172/duckterm-0.4.172-py3-none-any.whl
+pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.173/duckterm-0.4.173-py3-none-any.whl
 duckterm serve
 ```
 
@@ -136,21 +136,11 @@ See [inbox delivery and safeguards](docs/inbox-delivery.md).
 Use `--to PATH` for another local destination or `--to gs://BUCKET/prefix` for
 upload with your existing gcloud login. See [backup and restore](docs/backups.md).
 
-## Shared, Gmail, and Google Cloud connectors
+## Shared connectors
 
 Connectors can run on one shared host for local and remote agents. Provider
 credentials stay on that host; each agent machine enrolls once with a workspace
-certificate. The dashboard also includes personal Gmail (read-only OAuth) and
-Google Cloud (an explicitly selected cloud identity).
-See [shared connector setup and enrollment](docs/shared-connectors.md).
-
-## Hugging Face connector
-
-Choose **Connect** beside **Hugging Face** for model, dataset, and documentation
-search. Public discovery needs no account; Node.js 22+ and npm are required.
-An optional token enables authenticated discovery. See the
-[Hugging Face setup guide](docs/hugging-face.md) for tokens and discovery settings,
-and the [shared connector guide](docs/shared-connectors.md) for central hosting.
+certificate. See [shared connector setup and enrollment](docs/shared-connectors.md).
 
 ## Mac app
 

@@ -12,7 +12,6 @@ import signal
 import ssl
 import sys
 import tempfile
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -52,65 +51,6 @@ def command(name: str, credential: dict[str, str], write: bool) -> tuple[list[st
         )
         return ["porkbun-mcp"] + (["--get-muddy"] if write else []), env
     raise ValueError("Unknown connector")
-
-
-@contextlib.contextmanager
-def provider_command(
-    name: str, credential: dict[str, str], write: bool
-) -> Iterator[tuple[list[str], dict[str, str]]]:
-    """Materialize Google credentials only in a private broker-side runtime directory."""
-    if name not in ("gmail", "gcp", "huggingface"):
-        yield command(name, credential, write)
-        return
-    from duckterm import google_connectors
-
-    env = {
-        "HOME": os.environ["HOME"],
-        "PATH": os.environ.get("PATH", "/usr/bin:/bin") + ":/snap/bin",
-        "LANG": "C.UTF-8",
-    }
-    npx = google_connectors.node_runner()
-    if name == "huggingface":
-        argv = [
-            npx,
-            "--yes",
-            connectors._MCP_REMOTE,
-            connectors._HF_URL,
-            "--transport",
-            "http-only",
-            "--silent",
-        ]
-        if credential.get("token"):
-            env["DUCKTERM_HF_AUTH"] = "Bearer " + credential["token"]
-            argv.extend(["--header", "Authorization:${DUCKTERM_HF_AUTH}"])
-        yield argv, env
-        return
-    with tempfile.TemporaryDirectory(prefix="duckterm-connector-") as directory:
-        root = Path(directory)
-        if name == "gmail":
-            saved = json.loads(credential["credentials_json"])
-            if saved.get("scopes") != ["gmail.readonly"]:
-                raise ValueError("Gmail requires read-only credentials")
-            private_write(root / "oauth.json", credential["oauth_json"])
-            private_write(root / "credentials.json", credential["credentials_json"])
-            env.update(
-                GMAIL_OAUTH_PATH=str(root / "oauth.json"),
-                GMAIL_CREDENTIALS_PATH=str(root / "credentials.json"),
-            )
-            package = google_connectors.GMAIL_PACKAGE
-        else:
-            value = json.loads(credential["credentials_json"])
-            if value.get("type") not in ("authorized_user", "service_account"):
-                raise ValueError("Unsupported GCP credential type")
-            private_write(root / "credentials.json", credential["credentials_json"])
-            env.update(
-                CLOUDSDK_CONFIG=str(root / "gcloud"),
-                CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE=str(root / "credentials.json"),
-            )
-            if credential.get("project"):
-                env["CLOUDSDK_CORE_PROJECT"] = credential["project"]
-            package = google_connectors.GCP_PACKAGE
-        yield [npx, "--yes", package], env
 
 
 async def terminate(proc: asyncio.subprocess.Process) -> None:
@@ -203,14 +143,8 @@ class Broker:
             if read_config(self.config).get("mode") == "local":
                 argv, env = await asyncio.to_thread(connectors.server_command, name)
             else:
-                credential = (
-                    {}
-                    if name == "huggingface" and entry.get("anonymous") is True
-                    else await asyncio.to_thread(self.store.read, entry["reference"])
-                )
-                argv, env = resources.enter_context(
-                    provider_command(name, credential, bool(entry.get("write_access")))
-                )
+                credential = await asyncio.to_thread(self.store.read, entry["reference"])
+                argv, env = command(name, credential, bool(entry.get("write_access")))
                 del credential
             if github_projects:
                 # The same GitHub grant controls repository reads and clones.
@@ -227,11 +161,6 @@ class Broker:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
                 env=env,
-                cwd=(
-                    resources.enter_context(tempfile.TemporaryDirectory(prefix="duckterm-gmail-"))
-                    if name == "gmail"
-                    else None
-                ),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
@@ -330,10 +259,6 @@ def admin(config: Path, name: str, version: int | None, write: bool, disable: bo
             if not connectors.porkbun_keys_valid(credential["token"], credential["secret"]):
                 raise RuntimeError("Porkbun rejected these credentials")
             identity = "API keys verified; account identity unavailable"
-        elif name in ("gmail", "gcp", "huggingface"):
-            with provider_command(name, credential, False):
-                pass
-            identity = f"{name} credential configured; authentication verified when used"
         else:
             import subprocess
 

@@ -1,5 +1,17 @@
 ## 2026-10-21 — Distinguish key markers in source from key material
 
+## 2026-10-20 — Launch metadata must survive every transport
+
+The default terminal launch omitted the test flag from SessionStart, so probes
+explicitly marked test:true became ordinary rows and escaped purge-test. Both
+launch paths also dropped folder metadata. Headless-only coverage missed the
+default path. Pass the same cleanup and folder fields on every launch path, and
+test persisted rows plus actual purge eligibility with disposable databases and
+fake launchers. Include a folder-only request so name/notes guards cannot hide
+the omission.
+
+## 2026-10-20 — A substring match is not an ownership test
+
 The clone scanner rejected DuckTerm's own negative-test string because it
 searched for a private-key header anywhere in a file. Source literals are not
 keys. Check standalone headers and encoded payloads (including escaped strings)
@@ -8,6 +20,46 @@ claiming the repository can be cloned. That full check also caught tokens.py
 being mistaken for a credential export: permit tracked code-module names in
 clones, retaining credential data-file exclusions and the local-copy policy.
 Keep blocking truncated key files.
+
+## 2026-10-20 — Match functional test deadlines to the operation they await
+
+The full gate repeatedly timed out the synthetic skill-kit install at a shared
+two-second HTTP helper deadline, while the same test passed alone in 0.35s.
+The production installer permits 300s and the test asserts actual output and
+filesystem effects, not a two-second latency contract. Give only subprocess
+install/uninstall requests a bounded ten-second budget; retain the default for
+ordinary reads and all functional assertions. Do not change production timeouts
+or retry a flaky full gate until it happens to pass.
+
+## 2026-10-20 — Iterate the retained ID array without reparsing the whole checkpoint
+
+A live native sample showed SQLite JSON work during inbox cleanup. Read-only
+queries found seven old closed messages, all protected, but each retention
+predicate still parsed checkpoint records totaling about 33 MB. `json_each`
+parsed the whole record separately from the scalar JSON checks. Extract the
+already-guarded mail-ID array before iterating it; preserve the CASE guards,
+sender/recipient scope, analytics predicate and expiry policy. Ten alternating
+read-only comparisons returned identical candidate IDs and reduced median query
+CPU from 33.8 ms to 17.8 ms. This measures one query, not total server CPU.
+
+Compare exact IDs and actual disposable-store expiry, including malformed JSON,
+missing/null/scalar arrays, duplicate IDs, Unicode, non-string elements and
+legacy/unknown formats. Preserve observed SQL NULL and type-comparison behavior
+instead of silently changing retention policy during a performance fix.
+
+## 2026-10-20 — Measure usage per name before calling a connector unused
+
+A scope board claimed "Railway has 98 calls logged" to argue Railway earned its
+place. The 98 calls were Porkbun; Railway had 14. The number came from the right
+query but was pinned to the wrong row, and it survived into a published artifact
+because nothing re-read it. Removal decisions rest on these counts, so attribute
+each one to its name in the same step that reads it. Usage lives in
+`events.PreToolUse` grouped by MCP server, not in a `connector_usage` table.
+
+Separately: grep for a connector name hits unrelated infrastructure. `gcp`
+matched the workspace VM docs, GCS backup upload, `GcpSecretStore`, and sample
+transcript text in memory tests — none of which belong to the GCP connector.
+Classify every hit before editing; a name-wide sweep would have broken backups.
 
 ## 2026-10-20 — Recheck cache identity after awaiting shared work
 
@@ -34,6 +86,15 @@ errors mean unknown, not an empty fleet, and session-name snapshots must retain
 `has-session` semantics for retained dead panes and sibling shells. Test shared
 waiter cancellation, expiry, launch races, fresh actions and final output drain.
 A one-second positive snapshot can add up to one second to exit detection.
+
+## 2026-10-20 — Inert terminal panes can still paint over Oracle
+
+The floating session rail stayed mounted while Oracle covered the workspace.
+Both layers used z-index 5, so the later terminal rail painted over Oracle;
+inert blocked input but did not hide it. Gate the rail on the session workspace
+being visible, unmounting its portaled picker/color menus as well. Keep the
+terminal itself mounted at its existing size. The Oracle browser regression
+must check actual DOM absence, return of pins, and preserved draft/wrapping.
 
 ## 2026-10-20 — Revocation polling must not resolve credentials
 
@@ -115,7 +176,6 @@ Treat requirement, acknowledgment and fulfillment as different facts. Preserve a
 ## 2026-10-20 — A pending POST must not hide a completed checkpoint receipt
 
 The progress poll consumed only running receipts, so a delayed native POST left the bar at zero even after the server stored a failed result. Let the exact completed receipt settle the original shared promise. Validate both request IDs and a nonempty checkpoint ID, retain the owning host, stop polling, and ignore late transport callbacks. Reproduce with the POST still unresolved, not merely rejected; verify failures stay failures and no second POST is sent.
-
 
 ## 2026-10-20 — A paused-state notification is not shutdown completion
 
