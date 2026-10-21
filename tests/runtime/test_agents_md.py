@@ -9,17 +9,17 @@ from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
 
 
-async def _request(port: int, raw: bytes) -> tuple[int, dict]:
+async def _request(port: int, raw: bytes, *, timeout: float = 2) -> tuple[int, dict]:
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     writer.write(raw)
     await writer.drain()
-    head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 2)
+    head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout)
     status = int(head.split(b"\r\n")[0].split()[1])
     length = 0
     for line in head.split(b"\r\n"):
         if line.lower().startswith(b"content-length:"):
             length = int(line.split(b":")[1])
-    body = await asyncio.wait_for(reader.readexactly(length), 2) if length else b"{}"
+    body = await asyncio.wait_for(reader.readexactly(length), timeout) if length else b"{}"
     writer.close()
     return status, json.loads(body)
 

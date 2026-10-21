@@ -36,6 +36,10 @@ def _make_suite(root: Path, *, manifest: bool) -> Path:
 
 async def _post(port: int, token: str, path: str, payload: dict) -> tuple[int, dict]:
     body = json.dumps(payload).encode()
+    # These routes start a real worker/subprocess (production allows 300s).
+    # Keep the synthetic installer bounded without making a two-second HTTP
+    # helper deadline an accidental installer performance contract.
+    timeout = 10 if path.endswith(("/install", "/uninstall")) else 2
     return await _request(
         port,
         f"POST {path} HTTP/1.1\r\nHost: localhost\r\n".encode()
@@ -44,6 +48,7 @@ async def _post(port: int, token: str, path: str, payload: dict) -> tuple[int, d
         + b"\r\n"
         b"Content-Type: application/json\r\n"
         b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n" + body,
+        timeout=timeout,
     )
 
 

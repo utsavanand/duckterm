@@ -9,6 +9,16 @@ being mistaken for a credential export: permit tracked code-module names in
 clones, retaining credential data-file exclusions and the local-copy policy.
 Keep blocking truncated key files.
 
+## 2026-10-20 — Match functional test deadlines to the operation they await
+
+The full gate repeatedly timed out the synthetic skill-kit install at a shared
+two-second HTTP helper deadline, while the same test passed alone in 0.35s.
+The production installer permits 300s and the test asserts actual output and
+filesystem effects, not a two-second latency contract. Give only subprocess
+install/uninstall requests a bounded ten-second budget; retain the default for
+ordinary reads and all functional assertions. Do not change production timeouts
+or retry a flaky full gate until it happens to pass.
+
 ## 2026-10-20 — Iterate the retained ID array without reparsing the whole checkpoint
 
 A live native sample showed SQLite JSON work during inbox cleanup. Read-only
