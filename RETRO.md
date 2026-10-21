@@ -73,6 +73,15 @@ errors mean unknown, not an empty fleet, and session-name snapshots must retain
 waiter cancellation, expiry, launch races, fresh actions and final output drain.
 A one-second positive snapshot can add up to one second to exit detection.
 
+## 2026-10-20 — Inert terminal panes can still paint over Oracle
+
+The floating session rail stayed mounted while Oracle covered the workspace.
+Both layers used z-index 5, so the later terminal rail painted over Oracle;
+inert blocked input but did not hide it. Gate the rail on the session workspace
+being visible, unmounting its portaled picker/color menus as well. Keep the
+terminal itself mounted at its existing size. The Oracle browser regression
+must check actual DOM absence, return of pins, and preserved draft/wrapping.
+
 ## 2026-10-20 — Revocation polling must not resolve credentials
 
 Connector supervisors called the full legacy policy resolver five times per
