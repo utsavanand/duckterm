@@ -1,5 +1,17 @@
 ## 2026-10-21 — Distinguish key markers in source from key material
 
+## 2026-10-20 — Launch metadata must survive every transport
+
+The default terminal launch omitted the test flag from SessionStart, so probes
+explicitly marked test:true became ordinary rows and escaped purge-test. Both
+launch paths also dropped folder metadata. Headless-only coverage missed the
+default path. Pass the same cleanup and folder fields on every launch path, and
+test persisted rows plus actual purge eligibility with disposable databases and
+fake launchers. Include a folder-only request so name/notes guards cannot hide
+the omission.
+
+## 2026-10-20 — A substring match is not an ownership test
+
 The clone scanner rejected DuckTerm's own negative-test string because it
 searched for a private-key header anywhere in a file. Source literals are not
 keys. Check standalone headers and encoded payloads (including escaped strings)
