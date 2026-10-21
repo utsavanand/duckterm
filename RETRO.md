@@ -1,11 +1,5 @@
 ## 2026-10-20 — Revocation polling must not resolve credentials
 
-## 2026-10-20 — Test socket names must be unique across concurrent worktrees
-
-The adoption fixture derived its tmux socket from tmp_path.name, which repeats across pytest runs. Concurrent gates could adopt or stop another fixture’s synthetic agent and look for its argv file in the wrong temporary home. Use a per-run UUID and retain exact-socket cleanup; verify concurrent fixture runs before trusting the full gate. Readiness must also wait for the synthetic prompt and recorded restart arguments, not fixed 0.2/0.5-second sleeps: a scheduled process is not necessarily ready to accept a restart.
-
-## 2026-10-20 — Disconnect revokes terminal clipboard writes immediately
-
 Connector supervisors called the full legacy policy resolver five times per
 second per session. That repeatedly parsed harness configuration and could
 launch `gh auth token`, multiplying idle CPU and Keychain activity. Watch policy
@@ -14,6 +8,32 @@ resolution in startup. Preserve the existing polling interval, generation checks
 and process-group cleanup. Verify unchanged-file read counts, atomic replacement,
 config removal and real isolated child shutdown; do not fix load by disabling
 revocation or killing the owner’s sessions.
+
+## 2026-10-20 — Test socket names must be unique across concurrent worktrees
+
+The adoption fixture derived its tmux socket from tmp_path.name, which repeats across pytest runs. Concurrent gates could adopt or stop another fixture’s synthetic agent and look for its argv file in the wrong temporary home. Use a per-run UUID and retain exact-socket cleanup; verify concurrent fixture runs before trusting the full gate. Readiness must also wait for the synthetic prompt and recorded restart arguments, not fixed 0.2/0.5-second sleeps: a scheduled process is not necessarily ready to accept a restart.
+
+## 2026-10-20 — Keep hook capture fixtures independent of interpreter startup
+
+The full gate intermittently missed a background hook payload while focused
+checks passed. Its fake curl started another Python interpreter and allowed only
+one second for a fire-and-forget post. Capture the curl argument using shell
+builtins with a bounded wait. The test still exercises the real hook's jq and
+fallback paths and validates exact forwarding fields; production hook timing
+and restart behavior stay unchanged.
+
+## 2026-10-20 — Make remote checkout setup automatic and failure states final
+
+A remote coding session required manually entering a checkout path and clicking
+separate review, clone and launch buttons. The selected repository could be right
+while the destination was wrong. Use a three-step setup with a server-generated,
+per-operation checkout under the destination user's home. Bind retries to the
+same operation and invalidate the destination whenever the repository changes.
+A failed clone must persist its failure and invalidate pending progress polls.
+Read atomic progress journals without waiting for the long-running clone lock,
+and keep at most one status poll in flight.
+Committed Markdown project rules are not private agent state; test that distinction
+without relaxing credential checks or local-copy exclusions.
 
 ## 2026-10-20 — Read the whole checkpoint without losing session identity
 
@@ -58,6 +78,7 @@ Treat requirement, acknowledgment and fulfillment as different facts. Preserve a
 ## 2026-10-20 — A pending POST must not hide a completed checkpoint receipt
 
 The progress poll consumed only running receipts, so a delayed native POST left the bar at zero even after the server stored a failed result. Let the exact completed receipt settle the original shared promise. Validate both request IDs and a nonempty checkpoint ID, retain the owning host, stop polling, and ignore late transport callbacks. Reproduce with the POST still unresolved, not merely rejected; verify failures stay failures and no second POST is sent.
+
 
 ## 2026-10-20 — A paused-state notification is not shutdown completion
 

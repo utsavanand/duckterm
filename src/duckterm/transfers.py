@@ -155,8 +155,12 @@ def save(directory: Path, value: dict[str, Any]) -> dict[str, Any]:
 
 
 def status(identifier: str) -> dict[str, Any]:
-    with locked(identifier) as directory:
-        return read_state(directory)
+    # Journals are replaced atomically. Waiting for the operation lock would
+    # hide all progress until a long clone/verification has already finished.
+    directory = private_root() / operation_id(identifier)
+    if directory.is_symlink():
+        raise ValueError("Transfer storage must not be a symlink")
+    return read_state(directory)
 
 
 def check_url(url: str) -> None:
@@ -187,7 +191,7 @@ def check_url(url: str) -> None:
     )
 
 
-def scan(root: Path, selected: list[str]) -> dict[str, Any]:
+def scan(root: Path, selected: list[str], *, cloned: bool = False) -> dict[str, Any]:
     root = root.expanduser().resolve(strict=True)
     protected = [
         Path.home() / name
@@ -245,7 +249,18 @@ def scan(root: Path, selected: list[str]) -> dict[str, Any]:
     for folder, dirs, files in os.walk(root, followlinks=False):
         base = Path(folder)
         for name in list(dirs):
-            if name in SKIP or name in (".claude", ".codex"):
+            prefix = str((base / name).relative_to(root)) + "/"
+            project_rules = (
+                cloned
+                and base == root
+                and name == ".claude"
+                and all(
+                    p.startswith(".claude/rules/") and p.endswith(".md")
+                    for p in tracked
+                    if p.startswith(prefix)
+                )
+            )
+            if name in SKIP or (name in (".claude", ".codex") and not project_rules):
                 prefix = str((base / name).relative_to(root)) + "/"
                 if any(p.startswith(prefix) for p in tracked):
                     raise ValueError(
@@ -266,6 +281,9 @@ def scan(root: Path, selected: list[str]) -> dict[str, Any]:
                     raise ValueError(
                         f"Tracked credential/build file requires review before transfer: {rel}"
                     )
+                excluded.append(rel)
+                continue
+            if cloned and rel.startswith(".claude/") and rel not in tracked:
                 excluded.append(rel)
                 continue
             info = file.lstat()
@@ -495,6 +513,42 @@ def chunk(identifier: str, offset: int) -> dict[str, Any]:
         with (directory / "snapshot.tar").open("rb") as stream:
             stream.seek(offset)
             return {"data": base64.b64encode(stream.read(CHUNK)).decode()}
+
+
+def automatic_workspace(identifier: str, url: str, *, create: bool = False) -> Path:
+    """A deterministic, session-specific checkout on this machine, never the client."""
+    operation_id(identifier)
+    check_url(url)
+    parsed = urlsplit(url)
+    repository_path = parsed.path if parsed.scheme else url.split(":", 1)[-1]
+    parts = repository_path.strip("/").removesuffix(".git").split("/")
+    # Labels are only cosmetic; the full operation ID supplies isolation.
+    labels = [re.sub(r"[^A-Za-z0-9_-]", "-", p)[:80] or "project" for p in parts[-2:]]
+    home = Path.home().resolve(strict=True)
+    parent = home / "projects"
+    for part in labels:
+        parent /= part
+    dest = parent / ("session-" + identifier)
+    component = home
+    for part in dest.relative_to(home).parts:
+        component /= part
+        if component.is_symlink():
+            raise ValueError(
+                "Automatic workspace contains a symlink; choose another project location"
+            )
+    if not dest.resolve().is_relative_to(home):
+        raise ValueError("Automatic workspace must stay inside this computer's home folder")
+    if create:
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return dest
+
+
+def available_parent(path: Path) -> Path:
+    while not path.exists():
+        path = path.parent
+    if not path.is_dir() or not os.access(path, os.W_OK | os.X_OK):
+        raise ValueError("Workspace parent is not writable on this computer")
+    return path
 
 
 def destination_path(value: str) -> Path:
@@ -739,7 +793,12 @@ def finish(identifier: str) -> dict[str, Any]:
 
 
 def clone(
-    identifier: str, url: str, branch: str, destination: str, github_repository: str = ""
+    identifier: str,
+    url: str,
+    branch: str,
+    destination: str,
+    github_repository: str = "",
+    auto_workspace: bool = False,
 ) -> dict[str, Any]:
     check_url(url)
     if github_repository:
@@ -748,6 +807,11 @@ def clone(
         github_projects.repository_name(github_repository)
         if url != f"https://github.com/{github_repository}.git":
             raise ValueError("Selected GitHub repository does not match the clone URL")
+    if auto_workspace:
+        expected = automatic_workspace(identifier, url)
+        if destination != str(expected):
+            raise ValueError("Workspace changed; review this repository again")
+        automatic_workspace(identifier, url, create=True)
     requested_destination = destination
     destination = str(Path(destination).expanduser().resolve())
     with locked(identifier) as directory:
@@ -787,41 +851,54 @@ def clone(
                 "destination_empty": dest.is_dir(),
             },
         )
-        args = ["git", "-c", "core.hooksPath=/dev/null", "clone", "--no-local"]
-        if branch:
-            if branch.startswith("-"):
-                raise ValueError("Invalid branch")
-            args += ["--branch", branch]
-        env = {
-            **os.environ,
-            "GIT_TERMINAL_PROMPT": "0",
-            "GIT_SSH_COMMAND": "ssh -oBatchMode=yes -oStrictHostKeyChecking=yes",
-        }
-        if github_repository:
-            github_projects.clone(github_repository, branch, stage)
-        else:
-            proc = subprocess.run(
-                [*args, "--", url, str(stage)], env=env, capture_output=True, timeout=180
-            )
-            if proc.returncode:
-                raise ValueError(
-                    "Clone failed; check repository URL and this computer's Git authorization"
+        try:
+            args = ["git", "-c", "core.hooksPath=/dev/null", "clone", "--no-local"]
+            if branch:
+                if branch.startswith("-"):
+                    raise ValueError("Invalid branch")
+                args += ["--branch", branch]
+            env = {
+                **os.environ,
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_SSH_COMMAND": "ssh -oBatchMode=yes -oStrictHostKeyChecking=yes",
+            }
+            if github_repository:
+                github_projects.clone(github_repository, branch, stage)
+            else:
+                proc = subprocess.run(
+                    [*args, "--", url, str(stage)], env=env, capture_output=True, timeout=180
                 )
-        # Apply the same unsupported-project checks; no repository hooks are run.
-        compatibility = scan(stage, [])
-        check_requirements(compatibility["requirements"], compatibility["linux_compatible"])
-        sibling = dest.parent / (".duckterm-transfer-" + identifier)
-        if sibling.exists():
-            marker = sibling / ".duckterm-transfer-id"
-            if not marker.is_file() or marker.read_text() != identifier:
-                raise ValueError("Staging destination exists; choose another destination")
-            shutil.rmtree(sibling)
-        sibling.mkdir(mode=0o700)
-        private_write(sibling / ".duckterm-transfer-id", identifier)
-        shutil.copytree(stage, sibling, dirs_exist_ok=True)
-        save(directory, {**state, "stage": "publishing"})
-        publish(sibling, dest, allow_empty=state["destination_empty"])
-        return save(directory, {**state, "stage": "ready"})
+                if proc.returncode:
+                    raise ValueError(
+                        "Clone failed; check repository URL and this computer's Git authorization"
+                    )
+            save(directory, {**state, "stage": "verifying"})
+            # Apply the same unsupported-project checks; no repository hooks are run.
+            compatibility = scan(stage, [], cloned=True)
+            check_requirements(compatibility["requirements"], compatibility["linux_compatible"])
+            sibling = dest.parent / (".duckterm-transfer-" + identifier)
+            if sibling.exists():
+                marker = sibling / ".duckterm-transfer-id"
+                if not marker.is_file() or marker.read_text() != identifier:
+                    raise ValueError("Staging destination exists; choose another destination")
+                shutil.rmtree(sibling)
+            sibling.mkdir(mode=0o700)
+            private_write(sibling / ".duckterm-transfer-id", identifier)
+            shutil.copytree(stage, sibling, dirs_exist_ok=True)
+            save(directory, {**state, "stage": "publishing"})
+            publish(sibling, dest, allow_empty=state["destination_empty"])
+            return save(directory, {**state, "stage": "ready"})
+        except Exception as exc:
+            latest = read_state(directory)
+            save(
+                directory,
+                {
+                    **latest,
+                    "stage": "publishing" if latest.get("stage") == "publishing" else "failed",
+                    "error": str(exc),
+                },
+            )
+            raise
 
 
 def claim_launch(identifier: str, command: str, name: str, prompt: str) -> dict[str, Any]:

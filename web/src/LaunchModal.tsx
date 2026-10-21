@@ -1,3 +1,4 @@
+import { RemoteLaunchWizard } from "./RemoteLaunchWizard";
 import { sessionRef } from "./hostTransport";
 import { useEffect, useMemo, useState } from "react";
 import { DirBrowser } from "./DirBrowser";
@@ -36,10 +37,11 @@ export function LaunchModal({
   const native = desktop();
   const [, refreshTargets] = useState(0);
   useEffect(() => {
-    const refresh = () => { refreshTargets(n => n + 1); setTarget(desktop()?.launchTarget ?? desktop()?.currentTarget ?? "local"); setPicked(null); setPrepared(null); setProjectKind("existing"); };
+    const refresh = () => { refreshTargets(n => n + 1); setTarget(desktop()?.launchTarget ?? desktop()?.currentTarget ?? "local"); setPicked(null); setPrepared(null); setProjectKind("existing"); setLegacyRemote(false); };
     window.addEventListener("desktop-targets-changed", refresh);
     return () => window.removeEventListener("desktop-targets-changed", refresh);
   }, []);
+  const [legacyRemote, setLegacyRemote] = useState(false);
   const [projectKind, setProjectKind] = useState<"existing" | "copy" | "clone">("existing");
   const [prepared, setPrepared] = useState<PreparedProject | null>(null);
   const [transferBusy, setTransferBusy] = useState(false);
@@ -185,6 +187,11 @@ export function LaunchModal({
     }
   }
 
+  if (native && target !== "local" && !legacyRemote) return <RemoteLaunchWizard key={target}
+    target={target} onTarget={value => { setTarget(value); setPicked(null); setPrepared(null); setMode(null); }}
+    onOtherProject={() => setLegacyRemote(true)} onClose={onClose} onCreated={onCreated}
+    folders={folders} group={selectedGroup} initial={{ agent, command, name, prompt }} />;
+
   return (
     <Modal title="New session" onClose={() => { if (!busy && !transferBusy) onClose(); }}>
       {native && (
@@ -196,6 +203,7 @@ export function LaunchModal({
             disabled={busy || transferBusy}
             onChange={(event) => {
               setTarget(event.target.value);
+              setLegacyRemote(false);
               setPrepared(null);
               setProjectKind("existing");
               setPicked(null);
@@ -217,6 +225,7 @@ export function LaunchModal({
           </small>
         </Field>
       )}
+      {native && target !== "local" && <Button variant="ghost" onClick={() => setLegacyRemote(false)}>Use GitHub setup</Button>}
       <Field label="Agent">
         <div className="rd-agent-pick">
           {AGENTS.map((a) => (

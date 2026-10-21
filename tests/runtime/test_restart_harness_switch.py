@@ -425,9 +425,9 @@ def test_pending_switch_duplicate_is_idempotent_but_different_target_conflicts(r
 @pytest.mark.parametrize("with_jq", [False, True])
 def test_real_hook_forwards_switch_generation_without_network(tmp_path, with_jq):
     import os
+    import shlex
     import shutil
     import subprocess
-    import sys
     import time
 
     tools = tmp_path / "tools"
@@ -441,10 +441,19 @@ def test_real_hook_forwards_switch_generation_without_network(tmp_path, with_jq)
         (tools / "jq").symlink_to(jq)
     capture = tmp_path / "payload.json"
     curl = tools / "curl"
+    # The hook posts in the background. Capture with shell builtins so this
+    # forwarding test does not depend on a second Python interpreter startup.
     curl.write_text(
-        f"#!{sys.executable}\n"
-        "import sys\nfrom pathlib import Path\n"
-        f"Path({str(capture)!r}).write_text(sys.argv[sys.argv.index('-d')+1])\n"
+        "#!/bin/sh\n"
+        'while [ "$#" -gt 0 ]; do\n'
+        '  if [ "$1" = "-d" ]; then\n'
+        "    shift\n"
+        f"    printf '%s' \"$1\" > {shlex.quote(str(capture))}\n"
+        "    exit 0\n"
+        "  fi\n"
+        "  shift\n"
+        "done\n"
+        "exit 1\n"
     )
     curl.chmod(0o755)
     env = {
@@ -465,7 +474,8 @@ def test_real_hook_forwards_switch_generation_without_network(tmp_path, with_jq)
         capture_output=True,
         timeout=5,
     )
-    for _ in range(100):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
         if capture.exists() and capture.stat().st_size:
             break
         time.sleep(0.01)

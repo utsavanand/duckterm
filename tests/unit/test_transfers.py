@@ -351,3 +351,120 @@ def test_snapshot_reader_never_follows_replaced_parent(tmp_path, homes):
     (root / "replaced").symlink_to(outside, target_is_directory=True)
     with pytest.raises(OSError):
         t.read_project_file(root, "replaced/credential")
+
+
+def test_automatic_workspace_uses_destination_home_and_isolates_sessions(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    first, second = uuid.uuid4().hex, uuid.uuid4().hex
+    path = t.automatic_workspace(first, "https://github.com/fixture/sotto.git")
+    assert path == tmp_path / "projects" / "fixture" / "sotto" / ("session-" + first)
+    assert not path.parent.exists()  # Review does not create directories.
+    assert t.automatic_workspace(first, "https://github.com/fixture/duckterm.git") != path
+    assert t.automatic_workspace(second, "https://github.com/fixture/sotto.git") != path
+    assert t.automatic_workspace(first, "git@github.com:fixture/sotto.git") == path
+    (tmp_path / "projects").symlink_to(tmp_path.parent, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        t.automatic_workspace(first, "https://github.com/fixture/sotto.git", create=True)
+
+
+def test_automatic_clone_records_failure_then_retries_same_workspace(tmp_path, homes, monkeypatch):
+    import shutil
+
+    from duckterm import github_projects
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    source = tmp_path / "source"
+    repo(source)
+    identifier = uuid.uuid4().hex
+    url = "https://github.com/fixture/sotto.git"
+    dest = t.automatic_workspace(identifier, url)
+
+    def fail(*args):
+        raise ValueError("Synthetic access denied")
+
+    monkeypatch.setattr(github_projects, "clone", fail)
+    with pytest.raises(ValueError, match="Synthetic access denied"):
+        t.clone(identifier, url, "", str(dest), "fixture/sotto", True)
+    assert t.status(identifier)["stage"] == "failed"
+    assert t.status(identifier)["error"] == "Synthetic access denied"
+    assert not dest.exists()
+    monkeypatch.setattr(github_projects, "clone", lambda r, b, p: shutil.copytree(source, p))
+    state = t.clone(identifier, url, "", str(dest), "fixture/sotto", True)
+    assert state["stage"] == "ready"
+    assert "error" not in state
+    assert (dest / "file.txt").exists()
+    assert t.clone(identifier, url, "", str(dest), "fixture/sotto", True) == state
+    with pytest.raises(ValueError, match="Workspace changed"):
+        t.clone(identifier, url, "", str(tmp_path / "elsewhere"), "fixture/sotto", True)
+
+
+def test_clone_accepts_committed_claude_rules_but_not_private_agent_state(
+    tmp_path, homes, monkeypatch
+):
+    source = tmp_path / "source"
+    repo(source)
+    rules = source / ".claude" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "architecture.md").write_text("Project coding conventions")
+    t.git(source, "add", ".claude")
+    t.git(source, "commit", "-qm", "project rules")
+    monkeypatch.setattr(t, "check_url", lambda url: None)
+    state = t.clone(uuid.uuid4().hex, str(source), "", str(tmp_path / "checkout"))
+    assert state["stage"] == "ready"
+    assert (tmp_path / "checkout/.claude/rules/architecture.md").is_file()
+    # Local copy retains its stricter transfer review policy.
+    with pytest.raises(ValueError, match="excluded directory"):
+        t.scan(source, [])
+    (source / ".claude" / "credentials.json").write_text('{"synthetic": true}')
+    t.git(source, "add", ".claude")
+    t.git(source, "commit", "-qm", "private fixture")
+    identifier = uuid.uuid4().hex
+    with pytest.raises(ValueError, match="excluded directory"):
+        t.clone(identifier, str(source), "", str(tmp_path / "blocked"))
+    assert t.status(identifier)["stage"] == "failed"
+    assert not (tmp_path / "blocked").exists()
+
+
+def test_automatic_preflight_recovers_ready_operation_without_recloning(
+    tmp_path, homes, monkeypatch
+):
+    import asyncio
+
+    from duckterm import transfer_api
+
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(t, "check_runtime", lambda *args: None)
+    identifier = uuid.uuid4().hex
+    url = "https://github.com/fixture/sotto.git"
+    req = {
+        "id": identifier,
+        "url": url,
+        "auto_workspace": True,
+        "command": "claude",
+        "branch": "main",
+    }
+    result = asyncio.run(transfer_api.dispatch(None, "preflight", req))
+    dest = Path(result["destination"])
+    assert result["auto_workspace"] is True
+    assert not dest.exists()
+    dest.mkdir(parents=True)
+    (dest / "file.txt").write_text("Existing work")
+    with pytest.raises(ValueError, match="already exists"):
+        asyncio.run(transfer_api.dispatch(None, "preflight", req))
+    with t.locked(identifier) as directory:
+        t.save(
+            directory, {"stage": "ready", "destination": str(dest), "url": url, "branch": "main"}
+        )
+    assert asyncio.run(transfer_api.dispatch(None, "preflight", req))["destination"] == str(dest)
+    with pytest.raises(ValueError, match="already exists"):
+        asyncio.run(transfer_api.dispatch(None, "preflight", {**req, "branch": "different"}))
+
+
+def test_progress_is_readable_while_clone_holds_operation_lock(homes):
+    from concurrent.futures import ThreadPoolExecutor
+
+    identifier = uuid.uuid4().hex
+    with ThreadPoolExecutor(max_workers=1) as pool, t.locked(identifier) as directory:
+        t.save(directory, {"id": identifier, "stage": "cloning"})
+        result = pool.submit(t.status, identifier)
+        assert result.result(timeout=1)["stage"] == "cloning"

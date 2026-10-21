@@ -42,10 +42,11 @@ building production preserves `DuckTerm Test.app`.
 ## Start a remote session
 
 Click **New session**, then choose the destination under **Run on**. Pick
-**This Mac** or a saved **Remote** computer. The agent, task name, and prompt
-stay in the same form; choose a folder on the destination computer before launching.
-The underlying dashboard changes only after the new session starts successfully.
-Folders and sidebar groups from one computer are not silently reused on another.
+**This Mac** or a saved **Remote** computer. For a new remote Git checkout, follow
+**Repository → Agent & task → Review**, then **Launch session**. DuckTerm creates
+a separate workspace automatically; no folder path is required. Other project
+options retain copying a local project or choosing an existing folder.
+The remote session opens alongside local sessions in the same dashboard.
 
 For the configured development deployment, build with:
 
