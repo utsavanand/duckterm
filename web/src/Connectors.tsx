@@ -159,33 +159,6 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
         </button>
       </div>}
       {c.enabled && <div className="rd-connector-desc">{availabilityLabel(c)}</div>}
-          {!c.managed && c.name === "gmail" && !c.ready && (
-            <details className="rd-connector-desc">
-              <summary>Set up personal Gmail</summary>
-              <p>On the connector host, enable the Gmail API in your Google Cloud project.
-                Configure an External OAuth consent screen with your Gmail address as a test user,
-                then create a Desktop app OAuth client.</p>
-              <p>Save the downloaded client JSON as <code>~/.gmail-mcp/gcp-oauth.keys.json</code>.</p>
-              <p>Run <code>duckterm connector-auth gmail</code> and sign in with Google.
-                This connector requests read-only mail access.</p>
-              <p>Then click Refresh and Connect.</p>
-              <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer">
-                Open Google Cloud credentials
-              </a>
-            </details>
-          )}
-          {!c.managed && c.name === "gcp" && !c.ready && (
-            <details className="rd-connector-desc">
-              <summary>Set up Google Cloud</summary>
-              <p>Install the Google Cloud CLI on the connector host, then run
-                <code> gcloud auth login</code> and
-                <code> gcloud config set project YOUR_PROJECT_ID</code>.</p>
-              <p>Then click Refresh and Connect. Tools use the active account's permissions.</p>
-              <a href="https://cloud.google.com/sdk/docs/install" target="_blank" rel="noreferrer">
-                Google Cloud CLI installation
-              </a>
-            </details>
-          )}
       {c.managed ? <div className="rd-connector-desc">Managed through the remote connector administrator.</div> : <>
         {c.credential && <div className="rd-connector-installed">
           <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => edit(c)}>Change connection</button>

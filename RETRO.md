@@ -1,3 +1,17 @@
+## 2026-10-20 — Measure usage per name before calling a connector unused
+
+A scope board claimed "Railway has 98 calls logged" to argue Railway earned its
+place. The 98 calls were Porkbun; Railway had 14. The number came from the right
+query but was pinned to the wrong row, and it survived into a published artifact
+because nothing re-read it. Removal decisions rest on these counts, so attribute
+each one to its name in the same step that reads it. Usage lives in
+`events.PreToolUse` grouped by MCP server, not in a `connector_usage` table.
+
+Separately: grep for a connector name hits unrelated infrastructure. `gcp`
+matched the workspace VM docs, GCS backup upload, `GcpSecretStore`, and sample
+transcript text in memory tests — none of which belong to the GCP connector.
+Classify every hit before editing; a name-wide sweep would have broken backups.
+
 ## 2026-10-20 — Recheck cache identity after awaiting shared work
 
 Independent QA changed the tmux socket while a shared observation was in flight.

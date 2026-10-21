@@ -97,24 +97,6 @@ def test_unknown_connector_is_404(isolated: Path, tmp_path: Path) -> None:
     assert status == 404
 
 
-def test_huggingface_anonymous_lifecycle_over_endpoints(
-    isolated: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from duckterm import connectors
-
-    monkeypatch.delenv("HF_TOKEN", raising=False)
-    monkeypatch.setattr(connectors, "huggingface_server_argv", lambda: ["npx"])
-    server = _server(tmp_path)
-    w = _W()
-    asyncio.run(server._enable_connector(w, "huggingface", b"{}"))
-    status, body = _status_and_body(w)
-    assert (status, body["enabled"], body["credential"]) == (200, True, "anonymous")
-    w = _W()
-    asyncio.run(server._disable_connector(w, "huggingface"))
-    status, body = _status_and_body(w)
-    assert (status, body["enabled"]) == (200, False)
-
-
 def test_slow_connector_probe_is_shared_and_one_cancel_does_not_cancel_others(
     isolated: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

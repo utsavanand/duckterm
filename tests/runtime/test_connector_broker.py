@@ -187,22 +187,19 @@ def test_two_agents_reuse_one_provider_and_workspace_revocation_closes_both(
     certificates(tmp_path)
     config = tmp_path / "config.json"
     settings = {
-        "workspaces": {"workspace": ["gmail"]},
-        "connectors": {"gmail": {"enabled": True, "reference": "shared-gmail"}},
+        "workspaces": {"workspace": ["porkbun"]},
+        "connectors": {"porkbun": {"enabled": True, "reference": "shared-porkbun"}},
     }
     config.write_text(json.dumps(settings))
 
     class Store:
         def read(self, reference):
-            assert reference == "shared-gmail"
+            assert reference == "shared-porkbun"
             return {"token": "only-on-broker"}
 
-    from contextlib import contextmanager
-
-    @contextmanager
     def provider(name, credential, write):
-        assert name == "gmail" and credential == {"token": "only-on-broker"}
-        yield (
+        assert name == "porkbun" and credential == {"token": "only-on-broker"}
+        return (
             [
                 sys.executable,
                 "-u",
@@ -212,7 +209,7 @@ def test_two_agents_reuse_one_provider_and_workspace_revocation_closes_both(
             dict(os.environ),
         )
 
-    monkeypatch.setattr(connector_broker, "provider_command", provider)
+    monkeypatch.setattr(connector_broker, "command", provider)
     broker = connector_broker.Broker(config, Store())
 
     async def scenario():
@@ -233,7 +230,7 @@ def test_two_agents_reuse_one_provider_and_workspace_revocation_closes_both(
                     server_hostname="server",
                 )
                 streams.append((reader, writer))
-                writer.write(b'{"name":"gmail"}\n')
+                writer.write(b'{"name":"porkbun"}\n')
                 await writer.drain()
                 assert json.loads(await asyncio.wait_for(reader.readline(), 3)) == {"ready": True}
                 request = (

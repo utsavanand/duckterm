@@ -130,8 +130,6 @@ def build_parser() -> argparse.ArgumentParser:
         "(written into harness MCP configs by the Connectors panel — not run by hand)",
     )
     crun.add_argument("name", help="connector name (e.g. github)")
-    auth = sub.add_parser("connector-auth", help="Sign in once on the connector host")
-    auth.add_argument("name", choices=("gmail", "gcp"))
     broker = sub.add_parser(
         "connector-serve",
         aliases=["connector-service"],
@@ -575,13 +573,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "purge-test":
         return _purge_test()
     if args.command in (
-        "connector-auth",
         "connector-serve",
         "connector-service",
         "connector-attach",
         "connector-admin",
     ):
-        from duckterm import connector_broker, connector_client, google_connectors
+        from duckterm import connector_broker, connector_client
 
         try:
             if args.command in ("connector-serve", "connector-service"):
@@ -589,22 +586,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif args.command == "connector-attach":
                 connector_client.attach(args.config)
                 print("Shared connectors registered for Claude Code and Codex; start new sessions")
-            elif args.command == "connector-admin":
+            else:
                 connector_broker.admin(
                     args.config, args.name, args.version, args.write_access, args.disable
                 )
-            elif connector_client.configured():
-                raise RuntimeError("Sign in on the shared connector host, not this relay client")
-            elif args.name == "gmail":
-                return google_connectors.authenticate_gmail()
-            else:
-                import shutil
-                import subprocess
-
-                cli = shutil.which("gcloud")
-                if not cli:
-                    raise RuntimeError("Install the Google Cloud CLI first")
-                return subprocess.run([cli, "auth", "login"]).returncode
             return 0
         except (OSError, ValueError, RuntimeError) as exc:
             print(f"duckterm: {exc}", file=sys.stderr)
