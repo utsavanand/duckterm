@@ -1,3 +1,11 @@
+## 2026-10-21 — Distinguish key markers in source from key material
+
+The clone scanner rejected DuckTerm's own negative-test string because it
+searched for a private-key header anywhere in a file. Source literals are not
+keys. Check standalone headers and encoded payloads (including escaped strings)
+instead, and test the scanner against its own source and test fixtures before
+claiming the repository can be cloned. Keep blocking truncated key files.
+
 ## 2026-10-20 — Recheck cache identity after awaiting shared work
 
 Independent QA changed the tmux socket while a shared observation was in flight.

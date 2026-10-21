@@ -57,6 +57,20 @@ SECRET = re.compile(
     r"(^\.env($|\.)|^(credentials|secrets?|tokens?|id_rsa|id_ed25519)(\..*)?$|\.(pem|key|p12|pfx)$)",
     re.I,
 )
+# A quoted marker in source code is not key material. Keep rejecting standalone
+# headers (including truncated keys) and encoded payloads embedded in strings.
+_KEY_HEADER = rb"-----BEGIN (?:PRIVATE KEY|OPENSSH PRIVATE KEY|RSA PRIVATE KEY)-----"
+_KEY_SPACE = rb"(?:[ \t\r\n]|\\r|\\n)*"
+PRIVATE_KEY = re.compile(
+    rb"(?m)^[ \t]*"
+    + _KEY_HEADER
+    + rb"[ \t]*\r?$|"
+    + _KEY_HEADER
+    + _KEY_SPACE
+    + rb"(?:[A-Za-z0-9+/=]"
+    + _KEY_SPACE
+    + rb"){32}"
+)
 VERSIONS = {"claude-code": "2.1.267", "codex": "0.155.1"}
 
 
@@ -301,14 +315,7 @@ def scan(root: Path, selected: list[str], *, cloned: bool = False) -> dict[str, 
                     raise ValueError("Git LFS requires an existing remote checkout")
                 if name == ".gitattributes" and b"filter=lfs" in data:
                     raise ValueError("Git LFS requires an existing remote checkout")
-                if any(
-                    mark in data[:65536]
-                    for mark in (
-                        b"-----BEGIN PRIVATE KEY-----",
-                        b"-----BEGIN OPENSSH PRIVATE KEY-----",
-                        b"-----BEGIN RSA PRIVATE KEY-----",
-                    )
-                ):
+                if PRIVATE_KEY.search(data[:65536]):
                     raise ValueError(f"Private key detected; exclude it before transfer: {rel}")
                 total += len(data)
                 entry.update(size=len(data), sha256=digest(data))
