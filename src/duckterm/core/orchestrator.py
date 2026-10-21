@@ -27,6 +27,7 @@ from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 
 from duckterm.agents import tmux, tmux_stream
+from duckterm.agents.tmux_liveness import TailLiveness
 from duckterm.core import events
 from duckterm.core.eventbus import EventBus
 from duckterm.git.worktrees import WorktreeManager
@@ -74,6 +75,7 @@ class SessionSupervisor:
         extra: dict[str, object] | None = None,
         env: dict[str, str] | None = None,
         history: HistoryStore | None = None,
+        tail_liveness: TailLiveness | None = None,
     ) -> None:
         self.bus = bus
         self.runtime = runtime
@@ -82,6 +84,7 @@ class SessionSupervisor:
         self.initial_prompt = initial_prompt
         self._extra = extra or {}
         self._history = history
+        self._tail_liveness = tail_liveness
         self._preparing = runtime.requires_launch_preparation
         self._preparation: LaunchPreparation | None = None
         self._env = {**session_credentials.launch_env(session_key), **(env or {})}
@@ -367,7 +370,12 @@ class SessionSupervisor:
                     # Liveness is independent of display latency: spawning tmux
                     # on every empty 25ms poll dominated many-session CPU cost.
                     if loop.time() >= next_liveness:
-                        if not await asyncio.to_thread(tmux.session_exists, target):
+                        alive = (
+                            await self._tail_liveness.exists(target)
+                            if self._tail_liveness is not None
+                            else await asyncio.to_thread(tmux.session_exists, target)
+                        )
+                        if not alive:
                             ending = True
                             writer_finished = completion is None
                             drain_deadline = loop.time() + _TAIL_DRAIN_TIMEOUT
@@ -769,6 +777,7 @@ class Orchestrator:
         self.history = history
         self.on_completed: Callable[[str], None] | None = None
         self._supervisors: dict[str, SessionSupervisor] = {}
+        self._tail_liveness = TailLiveness()
 
     async def reconcile(self) -> list[str]:
         """On startup, re-adopt tmux sessions that outlived a previous server
@@ -812,6 +821,7 @@ class Orchestrator:
                 session_key=key,
                 cwd=cwd,
                 history=self.history,
+                tail_liveness=self._tail_liveness,
             )
             self._supervisors[key] = supervisor
             try:
@@ -906,6 +916,7 @@ class Orchestrator:
             extra=extra,
             env=agent_env,
             history=self.history,
+            tail_liveness=self._tail_liveness,
         )
         self._supervisors[key] = supervisor
         try:

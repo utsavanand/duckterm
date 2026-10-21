@@ -301,6 +301,18 @@ def session_exists(target: str) -> bool:
     return ok
 
 
+def session_targets() -> set[str]:
+    """Exact session names, including sessions whose panes remain after exit."""
+    ok, out = _tmux("list-sessions", "-F", "#{session_name}")
+    if ok:
+        return set(out.splitlines())
+    if "no server running on " in out or (
+        "error connecting to " in out and "(No such file or directory)" in out
+    ):
+        return set()
+    raise RuntimeError(f"cannot discover tmux sessions: {out.strip()}")
+
+
 def pane_pid(target: str) -> int:
     """Exact pane process for adapters which exec their native child in place."""
     ok, value = _tmux("display-message", "-p", "-t", exact_target(target, pane=True), "#{pane_pid}")
