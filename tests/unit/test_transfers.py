@@ -107,6 +107,60 @@ def test_rejects_unsupported_or_sensitive_project(tmp_path, homes, kind):
         t.scan(source, [])
 
 
+@pytest.mark.parametrize("cloned", [False, True])
+def test_key_marker_literals_in_source_are_not_private_keys(tmp_path, homes, cloned):
+    source = tmp_path / "project"
+    repo(source)
+    # Reproduce the repository's own scanner and negative-test literals.
+    for name in ("transfers.py", "test_transfers.py"):
+        content = 'marker = b"-----BEGIN PRIVATE KEY-----"\n'
+        (source / name).write_text(content)
+    review = t.scan(source, [], cloned=cloned)
+    assert {e["path"] for e in review["entries"]} >= {"transfers.py", "test_transfers.py"}
+
+
+@pytest.mark.parametrize("kind", ["PRIVATE KEY", "OPENSSH PRIVATE KEY", "RSA PRIVATE KEY"])
+@pytest.mark.parametrize("style", ["standalone", "indented", "embedded", "escaped"])
+def test_private_key_material_is_still_blocked(tmp_path, homes, kind, style):
+    source = tmp_path / "project"
+    source.mkdir()
+    header = "-----BEGIN " + kind + "-----"
+    payload = "QUJD" * 24  # Synthetic bytes only; no usable private key.
+    content = header
+    if style == "indented":
+        content = "  " + header + "\r\n" + payload
+    elif style == "embedded":
+        content = 'value = """' + header + "\n" + payload + '\n"""'
+    elif style == "escaped":
+        content = 'value = "' + header + r"\n" + payload + '"'
+    (source / "unexpected.txt").write_text(content)
+    with pytest.raises(ValueError, match="Private key detected"):
+        t.scan(source, [])
+
+
+@pytest.mark.parametrize("name", ["tokens.py", "credentials.ts", "secrets.rs"])
+def test_tracked_code_module_names_are_not_credential_exports(tmp_path, homes, name):
+    source = tmp_path / "project"
+    repo(source)
+    (source / name).write_text("// synthetic source module\n")
+    t.git(source, "add", name)
+    assert name in {e["path"] for e in t.scan(source, [], cloned=True)["entries"]}
+    with pytest.raises(ValueError, match="Tracked credential"):
+        t.scan(source, [])  # Local-copy policy is unchanged.
+
+
+@pytest.mark.parametrize(
+    "name", ["credentials.json", "secrets.env", "tokens.txt", "id_rsa.py", ".env.py"]
+)
+def test_clone_still_blocks_tracked_credential_files(tmp_path, homes, name):
+    source = tmp_path / "project"
+    repo(source)
+    (source / name).write_text("synthetic fixture\n")
+    t.git(source, "add", "-f", name)
+    with pytest.raises(ValueError, match="Tracked credential"):
+        t.scan(source, [], cloned=True)
+
+
 def test_existing_destination_is_never_overwritten(tmp_path, homes):
     dest = tmp_path / "occupied"
     dest.mkdir()
