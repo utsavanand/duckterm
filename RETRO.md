@@ -35,6 +35,16 @@ Credential checks on window focus miss sign-in through an embedded terminal.
 Refresh only a visible, disconnected connector panel at a bounded interval,
 coalesce pending requests, and stop polling after credentials are found.
 
+## 2026-10-21 — A removal decision is not done until the code is gone
+
+The owner ruled on 2026-10-04 that DuckTerm never runs a skill kit's own
+install script, but the Harnesses dialog kept its Install button, raw flag
+pickers and "extra args" box for 17 days, and a later plan was built on top of
+the script path because the code still offered it. Recording a "remove X"
+ruling in a spec left the live behaviour contradicting it. When a decision
+removes behaviour, delete the code path in the same change set as the ruling,
+or file the removal as its own task with an owner.
+
 ## 2026-10-21 — Distinguish key markers in source from key material
 
 ## 2026-10-20 — Launch metadata must survive every transport

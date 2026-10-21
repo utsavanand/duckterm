@@ -622,14 +622,13 @@ export const api = {
       return data as { updated: boolean };
     });
   },
-  // Installable harnesses (suites of skills/hooks/sub-agents, e.g. uv-suite).
+  // Skill kits (collections of skills/hooks/sub-agents, e.g. uv-suite).
   harnesses: (context?: string) =>
     get<{
       harnesses: {
         name: string;
         path: string;
         description?: string;
-        has_manifest?: boolean;
         compatible?: string[];
         error?: string;
       }[];

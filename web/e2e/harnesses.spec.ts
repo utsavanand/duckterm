@@ -1,71 +1,47 @@
-import {
-  chmodSync,
-  existsSync,
-  mkdtempSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { postEvent, seedSession } from "./helpers";
 
-// Installable harnesses end to end: register a suite by path in the Harnesses
-// modal, install it into a project folder, and verify the installer really ran
-// there (marker file) with its output shown in the modal.
+// Skill kits end to end: add a kit by path in the Skill kits dialog and read
+// its contents. DuckTerm never runs a kit's own script, so there is nothing
+// to install from here and a legacy install.sh never executes.
 
-test("register, install with a picker choice, then uninstall", async ({
+test("add a skill kit and view its contents; nothing offers to install", async ({
   page,
 }) => {
-  const suite = mkdtempSync(join(tmpdir(), "rd-e2e-suite-"));
+  const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
+  mkdirSync(join(kit, "skills", "ship-it"), { recursive: true });
   writeFileSync(
-    join(suite, "duckterm-harness.json"),
+    join(kit, "skills", "ship-it", "SKILL.md"),
+    "---\nname: ship-it\ndescription: Reviews, tests, then ships.\n---\n",
+  );
+  writeFileSync(
+    join(kit, "duckterm-harness.json"),
     JSON.stringify({
       name: `kit-${Date.now()}`,
       description: "skills and hooks for the e2e test",
       install: ["./install.sh"],
-      uninstall: ["./uninstall.sh"],
-      args_choices: { "--persona": ["sport", "professional"] },
     }),
   );
-  writeFileSync(
-    join(suite, "install.sh"),
-    '#!/bin/sh\necho "installed into $PWD with $*"\ntouch installed.marker\n',
-  );
-  writeFileSync(
-    join(suite, "uninstall.sh"),
-    '#!/bin/sh\nrm -f installed.marker\necho "uninstalled"\n',
-  );
-  chmodSync(join(suite, "install.sh"), 0o755);
-  chmodSync(join(suite, "uninstall.sh"), 0o755);
-  const target = mkdtempSync(join(tmpdir(), "rd-e2e-target-"));
+  writeFileSync(join(kit, "install.sh"), "#!/bin/sh\ntouch installed.marker\n", {
+    mode: 0o755,
+  });
 
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Harnesses" }).click();
+  await page.getByRole("button", { name: "Skill kits" }).click();
 
-  await page.getByPlaceholder("~/ws-my-projects/uv-suite").fill(suite);
-  await page.getByRole("button", { name: "Register", exact: true }).click();
+  await page.getByPlaceholder("~/ws-my-projects/uv-suite").fill(kit);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
   const row = page.locator(".rd-harness", { hasText: "skills and hooks" });
   await expect(row).toBeVisible();
 
-  // Pick a persona from the manifest-declared choices, then install.
-  await row.getByPlaceholder("target project folder").fill(target);
-  await row.locator("select").selectOption("sport");
-  await row.getByRole("button", { name: "Install", exact: true }).click();
-
-  await expect(row.locator(".rd-harness-output")).toContainText(
-    "--persona sport",
-    { timeout: 10_000 },
-  );
-  expect(existsSync(join(target, "installed.marker"))).toBe(true);
-
-  // Uninstall reverses it, with its own output shown.
-  await row.getByRole("button", { name: "Uninstall", exact: true }).click();
-  await expect(row.locator(".rd-harness-output")).toContainText("uninstalled", {
-    timeout: 10_000,
-  });
-  expect(existsSync(join(target, "installed.marker"))).toBe(false);
+  await row.getByRole("button", { name: "view contents" }).click();
+  await expect(row).toContainText("Reviews, tests, then ships.");
+  await expect(row.getByRole("button", { name: /install/i })).toHaveCount(0);
+  expect(existsSync(join(kit, "installed.marker"))).toBe(false);
 });
 
 // The observation loop: corrections seeded for a folder come back as proposed

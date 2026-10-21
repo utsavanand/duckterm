@@ -1,6 +1,7 @@
-# Harnesses: runtime adapters and installable suites
+# Harnesses and skill kits
 
-"Harness" means two things in Duckterm. Both have a concrete contract.
+A **harness** is an agent CLI Duckterm runs (§1). A **skill kit** is a
+collection of skills, hooks, sub-agents and guardrails those agents load (§2).
 
 ## 1. Runtime adapters — how Duckterm drives and observes one agent CLI
 
@@ -25,45 +26,40 @@ generic runtime — driven in a PTY, just without hook-powered smarts.
 
 Shipped adapters: `claude-code`, `codex`, `copilot`, `generic`.
 
-## 2. Installable harnesses — suites of skills, hooks, and sub-agents
+## 2. Skill kits — collections of skills, hooks, and sub-agents
 
-A suite like [uv-suite](https://github.com/utsavanand/uv-suite) bundles
-skills, hooks, sub-agents, guardrails, and personas, and installs them into a
-project's `.claude/` (or globally). Duckterm manages these from the
-**Harnesses** button in the topbar: register a suite by its directory path,
-then install it into any project folder.
+A kit like [uv-suite](https://github.com/utsavanand/uv-suite) bundles skills,
+hooks, sub-agents, guardrails, and personas. The **Skill kits** item in
+Settings lists the kits you have added by folder path and shows what each
+contains; the session panel's "Skill kit" row shows which kit a session's
+folder has installed.
 
-The contract is `duckterm-harness.json` at the suite's root:
+Duckterm does not install kits. It never runs a kit's own script (owner
+decision 2026-10-04); installing returns with the declarative component
+format, where the manifest lists components and Duckterm writes them per
+harness. Until then, install a kit with its own instructions.
+
+The manifest is `duckterm-harness.json` at the kit's root:
 
 ```json
 {
   "name": "uv-suite",
   "description": "Agents, skills, hooks, guardrails, and personas for Claude Code",
-  "install": ["./install.sh", "--project", "{dir}"],
-  "uninstall": ["./uninstall.sh"],
-  "args_choices": { "--persona": ["professional", "sport", "auto", "spike"] }
+  "detect": ".claude/skills/uv-help",
+  "compatible": ["claude-code"]
 }
 ```
 
-- `install` is an argv template: `{dir}` is replaced with the target
-  directory; a relative program path resolves against the suite's directory;
-  the process runs with **cwd = the target directory**.
-- `uninstall` is optional; suites that declare it get an Uninstall button.
-- `args_choices` maps a flag to its allowed values; the modal renders one
-  picker per flag and appends `flag value` to the argv (uv-suite's personas).
-- **Fallback:** a directory with an `install.sh` but no manifest is accepted
-  as `{name: <dirname>, install: ["./install.sh"]}`. Since cwd is the target,
-  any installer that defaults to `$(pwd)` works unmodified — uv-suite does.
-- Extra args typed in the UI (e.g. `--persona sport`) are appended to the
-  argv.
+- `detect` is a path, relative to a project, whose existence shows the kit
+  is installed there.
+- `compatible` lists the harnesses the kit works with.
+- Older manifests' `install`, `uninstall` and `args_choices` keys are
+  ignored. A folder without a manifest is refused.
 
 Endpoints: `GET /harnesses`, `POST /harnesses/register {path}`,
-`POST /harnesses/:name/install {dir, args}`, `DELETE /harnesses/:name`.
-Registered suites live in the `harnesses` table (name + path); the manifest is
-re-read from disk on every use so edits take effect without re-registering.
-
-Installers are local scripts the user registered by path and run as the user —
-the same trust level as launching an agent in a terminal.
+`GET /harnesses/:name/contents`, `DELETE /harnesses/:name`. Registered kits
+live in the `harnesses` table (name + path); the manifest is re-read from disk
+on every use.
 
 ## The observation loop (AGENTS.md phase 2)
 

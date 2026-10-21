@@ -98,7 +98,7 @@ export interface SessionView {
   ptyOwned?: boolean; // Duckterm owns a live PTY (in-process launch) — terminal-attachable
   contextTokens?: number; // current context size (claude-code), the compact-soon signal
   model?: string; // model id from the transcript (claude-code)
-  metaHarnesses?: string[]; // installed suites this session runs under
+  skillKits?: string[]; // installed skill kits this session runs under
   group?: string; // folder label for organizing the left panel; undefined = ungrouped
   subagents?: SubAgent[]; // sub-agents spawned via the Task tool, for the tree
   progress?: ProgressDigest; // running digest (summary/deliverables/learnings/next)
@@ -234,7 +234,7 @@ export function viewFromPersisted(s: PersistedSession): SessionView {
     subagents: s.subagents ?? undefined,
     contextTokens: s.context_tokens ?? undefined,
     model: s.model ?? undefined,
-    metaHarnesses: s.suites ?? undefined,
+    skillKits: s.suites ?? undefined,
   };
 }
 

@@ -615,7 +615,6 @@ function Dashboard() {
       {modal === "checkpointing" && <CheckpointSettingsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal
-          defaultDir={agentsMdDir}
           sessionKey={selected?.key}
           onClose={() => setModal(null)}
         />

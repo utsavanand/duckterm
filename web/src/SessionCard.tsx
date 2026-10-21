@@ -43,7 +43,7 @@ export function SessionCard({ session: s, now, notesOpen = false, onCloseNotes }
   const panel = (changeHarness?: ReactNode) => <SessionPanelSection title="Session details" status={`${s.host && s.host !== "local" ? "Remote" : "Local"} · ${s.conversationIdentity?.status || "identity unknown"}`} forceOpen={notesOpen}>
     <dl className="rd-session-facts"><div><dt>Session</dt><dd>{s.label}</dd></div><div><dt>Started</dt><dd>{new Date(s.startedAt).toLocaleString()}</dd></div>
       {s.intention && <div><dt>Intent</dt><dd>{s.intention}</dd></div>}
-      {!!s.metaHarnesses?.length && <div><dt>Meta-harness</dt><dd>{s.metaHarnesses.join(", ")}</dd></div>}</dl>
+      {!!s.skillKits?.length && <div><dt>Skill kit</dt><dd>{s.skillKits.join(", ")}</dd></div>}</dl>
     {details(changeHarness)}
     {notesOpen && <div className="rd-row-notes-wrap">
       <label htmlFor="session-notes">Notes</label>

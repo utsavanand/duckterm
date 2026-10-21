@@ -311,13 +311,9 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/clear-terminated",
           lambda s, r, w, h, b, seg: s._clear_terminated(w)),
     Route("GET", "/zsh-themes", lambda s, r, w, h, b, seg: s._list_zsh_themes(w)),
-    # ── installable harnesses (suites like uv-suite) ──
+    # ── skill kits (like uv-suite) ──
     Route("GET", "/harnesses", lambda s, r, w, h, b, seg: s._list_harnesses(w)),
     Route("POST", "/harnesses/register", lambda s, r, w, h, b, seg: s._register_harness(w, b)),
-    Route("POST", "", lambda s, r, w, h, b, seg: s._install_harness(w, seg, b),
-          **_mid("/harnesses/", "/install")),
-    Route("POST", "", lambda s, r, w, h, b, seg: s._uninstall_harness(w, seg, b),
-          **_mid("/harnesses/", "/uninstall")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._harness_contents(w, seg),
           **_mid("/harnesses/", "/contents")),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._deregister_harness(w, seg),
@@ -4358,17 +4354,14 @@ class Server:
         await _write_json(writer, 200, {"themes": zsh_themes.list_themes()})
 
     async def _list_harnesses(self, writer: asyncio.StreamWriter) -> None:
-        """Registered installable harnesses, with manifest details re-read from
-        disk (a suite that vanished from disk is reported, not hidden)."""
+        """Registered skill kits, with manifest details re-read from disk (a kit
+        that vanished from disk is reported, not hidden)."""
         out = []
         for row in self.history.harnesses():
             entry: dict[str, Any] = {"name": row["name"], "path": row["path"]}
             try:
                 suite = suites.load(Path(str(row["path"])))
                 entry["description"] = suite.description
-                entry["has_manifest"] = suite.has_manifest
-                entry["args_choices"] = suite.args_choices
-                entry["uninstallable"] = suite.uninstall is not None
                 entry["compatible"] = suite.compatible
             except (ValueError, OSError, json.JSONDecodeError) as e:
                 entry["error"] = str(e)
@@ -4376,8 +4369,8 @@ class Server:
         await _write_json(writer, 200, {"harnesses": out})
 
     async def _register_harness(self, writer: asyncio.StreamWriter, body: bytes) -> None:
-        """Register a suite by its directory path. The directory must carry a
-        duckterm-harness.json or an install.sh (the contract in suites.py)."""
+        """Register a skill kit by its directory path. The directory must carry
+        a duckterm-harness.json (the contract in suites.py)."""
         try:
             req: Any = json.loads(body or b"{}")
         except json.JSONDecodeError:
@@ -4401,55 +4394,6 @@ class Server:
             writer,
             200,
             {"name": suite.name, "description": suite.description, "path": str(path)},
-        )
-
-    async def _install_harness(self, writer: asyncio.StreamWriter, name: str, body: bytes) -> None:
-        """Run a registered suite's installer against a target directory:
-        {dir, args?: [...]}. Output comes back verbatim so the user sees what
-        the installer did (or why it failed)."""
-        await self._run_suite(writer, name, body, action="install")
-
-    async def _uninstall_harness(
-        self, writer: asyncio.StreamWriter, name: str, body: bytes
-    ) -> None:
-        """Run a suite's declared uninstaller against a target directory.
-        400 for suites whose manifest declares none."""
-        await self._run_suite(writer, name, body, action="uninstall")
-
-    async def _run_suite(
-        self, writer: asyncio.StreamWriter, name: str, body: bytes, *, action: str
-    ) -> None:
-        row = next((h for h in self.history.harnesses() if h["name"] == name), None)
-        if row is None:
-            await _write_json(writer, 404, {"error": f"no harness {name!r} registered"})
-            return
-        try:
-            req: Any = json.loads(body or b"{}")
-        except json.JSONDecodeError:
-            await _write_json(writer, 400, {"error": "invalid JSON"})
-            return
-        target = Path(str(req.get("dir") or "")).expanduser()
-        if not target.is_dir():
-            await _write_json(writer, 400, {"error": f"no such directory: {target}"})
-            return
-        args = [str(a) for a in req.get("args") or []]
-        try:
-            suite = suites.load(Path(str(row["path"])))
-        except (ValueError, json.JSONDecodeError) as e:
-            await _write_json(writer, 400, {"error": str(e)})
-            return
-        if action == "uninstall":
-            if suite.uninstall is None:
-                await _write_json(writer, 400, {"error": f"{name} declares no uninstall command"})
-                return
-            runner = suites.run_uninstall
-        else:
-            runner = suites.run_install
-        ok, output = await asyncio.to_thread(runner, suite, target, args)
-        await _write_json(
-            writer,
-            200 if ok else 502,
-            {"ok": ok, "output": output, "harness": name, "dir": str(target)},
         )
 
     async def _harness_contents(self, writer: asyncio.StreamWriter, name: str) -> None:
