@@ -138,6 +138,29 @@ def test_private_key_material_is_still_blocked(tmp_path, homes, kind, style):
         t.scan(source, [])
 
 
+@pytest.mark.parametrize("name", ["tokens.py", "credentials.ts", "secrets.rs"])
+def test_tracked_code_module_names_are_not_credential_exports(tmp_path, homes, name):
+    source = tmp_path / "project"
+    repo(source)
+    (source / name).write_text("// synthetic source module\n")
+    t.git(source, "add", name)
+    assert name in {e["path"] for e in t.scan(source, [], cloned=True)["entries"]}
+    with pytest.raises(ValueError, match="Tracked credential"):
+        t.scan(source, [])  # Local-copy policy is unchanged.
+
+
+@pytest.mark.parametrize(
+    "name", ["credentials.json", "secrets.env", "tokens.txt", "id_rsa.py", ".env.py"]
+)
+def test_clone_still_blocks_tracked_credential_files(tmp_path, homes, name):
+    source = tmp_path / "project"
+    repo(source)
+    (source / name).write_text("synthetic fixture\n")
+    t.git(source, "add", "-f", name)
+    with pytest.raises(ValueError, match="Tracked credential"):
+        t.scan(source, [], cloned=True)
+
+
 def test_existing_destination_is_never_overwritten(tmp_path, homes):
     dest = tmp_path / "occupied"
     dest.mkdir()

@@ -57,6 +57,13 @@ SECRET = re.compile(
     r"(^\.env($|\.)|^(credentials|secrets?|tokens?|id_rsa|id_ed25519)(\..*)?$|\.(pem|key|p12|pfx)$)",
     re.I,
 )
+# Tracked code modules in a Git checkout are not credential exports merely
+# because their module name is "tokens" or "credentials". Local copies remain
+# conservative; .env files, key files and credential data formats stay excluded.
+_CODE_MODULE = re.compile(
+    r"(?:credentials|secrets?|tokens?)\.(?:py|pyi|js|jsx|ts|tsx|go|rs|java|kt|cs|rb|swift|c|h|cpp|hpp)",
+    re.I,
+)
 # A quoted marker in source code is not key material. Keep rejecting standalone
 # headers (including truncated keys) and encoded payloads embedded in strings.
 _KEY_HEADER = rb"-----BEGIN (?:PRIVATE KEY|OPENSSH PRIVATE KEY|RSA PRIVATE KEY)-----"
@@ -290,8 +297,11 @@ def scan(root: Path, selected: list[str], *, cloned: bool = False) -> dict[str, 
         for name in files:
             file = base / name
             rel = str(file.relative_to(root))
-            if name in SKIP or SECRET.search(name) or (rel in ignored and rel not in selected_set):
-                if rel in tracked and (name in SKIP or SECRET.search(name)):
+            credential_file = SECRET.search(name) and not (
+                cloned and rel in tracked and _CODE_MODULE.fullmatch(name)
+            )
+            if name in SKIP or credential_file or (rel in ignored and rel not in selected_set):
+                if rel in tracked and (name in SKIP or credential_file):
                     raise ValueError(
                         f"Tracked credential/build file requires review before transfer: {rel}"
                     )
