@@ -1,3 +1,22 @@
+## 2026-10-20 — Attribute background forks before multiplying request latency
+
+A reported 30–70% server CPU problem was attributed to every `/sessions` read
+probing all 39 terminals. The handler only probes waiting auto-review runtimes;
+web polls run every 2.5 seconds with collaboration or 30 seconds without it,
+and the native poll runs every 3 seconds. The unconditional fan-out was in the
+output tails: one `has-session` per terminal per second even with no requests.
+An isolated read-only 39-tail harness measured 468 subprocesses in 12 seconds.
+Sharing passive snapshots reduced that to 12 and parent CPU from 0.745 seconds
+to 0.048 seconds in the same interval. This measures the tail component, not
+proof of a whole-server CPU reduction; command wall time is not parent CPU.
+
+Keep action-time liveness fresh. Confirm missing names individually so a
+snapshot taken before launch cannot terminate a new output tail. Discovery
+errors mean unknown, not an empty fleet, and session-name snapshots must retain
+`has-session` semantics for retained dead panes and sibling shells. Test shared
+waiter cancellation, expiry, launch races, fresh actions and final output drain.
+A one-second positive snapshot can add up to one second to exit detection.
+
 ## 2026-10-20 — Revocation polling must not resolve credentials
 
 Connector supervisors called the full legacy policy resolver five times per
