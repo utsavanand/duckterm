@@ -95,6 +95,24 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     await workspace.getByRole("button", { name: "Ask about this hunk" }).click();
     await expect(workspace.getByRole("complementary", { name: "Review chat" })).toContainText("NOTES.md @@");
     await page.screenshot({ path: "/tmp/duckterm-pr-review-since.png" });
+
+    // Review tab: the deterministic release card is ready at once; model cards
+    // are omitted with the reason because the test server has no provider.
+    await workspace.getByRole("tab", { name: "Review" }).click();
+    const strip = workspace.getByRole("tablist", { name: "Review cards" });
+    await expect(strip.getByRole("tab")).toHaveCount(10);
+    await expect(strip.getByRole("tab", { name: /Release impact/ })).toContainText("Low risk if", { timeout: 20_000 });
+    await expect(strip.getByRole("tab", { name: /Intent vs diff/ })).toContainText("Omitted: Automatic preparation is disabled", { timeout: 30_000 });
+    await strip.getByRole("tab", { name: /Release impact/ }).click();
+    const release = workspace.getByRole("tabpanel", { name: "9 Release impact" });
+    await expect(release).toContainText("No CI result yet; open a PR so checks run");
+    await expect(release.getByText("pass").first()).toBeVisible();
+    await page.screenshot({ path: "/tmp/duckterm-pr-review-cards.png" });
+    // Chat (still open from the hunk question): the server's refusal shows inline.
+    const panel = workspace.getByRole("complementary", { name: "Review chat" });
+    await panel.getByRole("textbox", { name: "Ask about this pull request" }).fill("What changed?");
+    await panel.getByRole("button", { name: "Ask", exact: true }).click();
+    await expect(panel.getByRole("alert")).toContainText("Automatic preparation is disabled", { timeout: 20_000 });
   } finally {
     if (key) await apiDelete(`/sessions/${key}`);
     rmSync(root, { recursive: true, force: true });

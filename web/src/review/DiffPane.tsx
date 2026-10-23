@@ -4,6 +4,7 @@ import { highlighter } from "../render";
 import { BUCKET_LABELS, groupByBucket, languageFor, nextUnviewed, shortSha, splitRows, unifiedRows, visibleFiles } from "./diffModel";
 
 type Layout = "unified" | "split";
+export interface DiffFocus { path: string; hunk?: number; line?: number; nonce: number }
 
 function fileName(path: string): { dir: string; name: string } {
   const slash = path.lastIndexOf("/");
@@ -16,7 +17,7 @@ function Code({ text, language }: { text: string; language: string | null }) {
   return <code dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
-export function DiffPane({ header, onAsk }: { header: ReviewHeader; onAsk: (quote: string) => void }) {
+export function DiffPane({ header, onAsk, focus }: { header: ReviewHeader; onAsk: (quote: string) => void; focus?: DiffFocus | null }) {
   const { repo, ref } = header;
   const [diff, setDiff] = useState<ReviewDiff | null>(null);
   const [error, setError] = useState("");
@@ -41,6 +42,20 @@ export function DiffPane({ header, onAsk }: { header: ReviewHeader; onAsk: (quot
   useEffect(() => { void load(); }, [load]);
 
   const files = useMemo(() => diff?.files ?? [], [diff]);
+  // A card or a chat citation asks for a file: select it and scroll to the hunk.
+  useEffect(() => {
+    if (!focus || !files.some(file => file.path === focus.path)) return;
+    setSelected(focus.path);
+    setOnlyUnviewed(false);
+    setSinceOnly(false);
+    const timer = setTimeout(() => {
+      const file = files.find(f => f.path === focus.path);
+      let index = focus.hunk ? focus.hunk - 1 : -1;
+      if (index < 0 && focus.line && file) index = file.hunks.findIndex(h => focus.line! >= h.new_start && focus.line! < h.new_start + Math.max(h.new_lines, 1));
+      document.querySelector<HTMLElement>(`[data-hunk="${Math.max(index, 0)}"]`)?.scrollIntoView({ block: "start" });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [focus, files]);
   const shown = useMemo(() => visibleFiles(files, { onlyUnviewed, sinceOnly }), [files, onlyUnviewed, sinceOnly]);
   const current = files.find(file => file.path === selected) ?? null;
 
@@ -132,13 +147,13 @@ function FileView({ file, header, layout, onAsk, onPrev, onNext, onViewed, hasNe
     </p>
     {file.binary && <p className="rd-prs-empty">Binary file; nothing to show inline.</p>}
     {file.truncated && <p className="rd-prs-note">Showing the first {file.hunks.reduce((n, hunk) => n + hunk.lines.length, 0)} of {file.total_lines} lines.{blob && <> <a href={blob} target="_blank" rel="noreferrer">Open full file</a></>}</p>}
-    {file.hunks.map((hunk, index) => <HunkView key={index} hunk={hunk} language={language} layout={layout} onAsk={() => onAsk(`${file.path} @@ ${hunk.header || `hunk ${index + 1}`}`)} />)}
+    {file.hunks.map((hunk, index) => <HunkView key={index} hunk={hunk} index={index} language={language} layout={layout} onAsk={() => onAsk(`${file.path} @@ ${hunk.header || `hunk ${index + 1}`}`)} />)}
   </article>;
 }
 
-function HunkView({ hunk, language, layout, onAsk }: { hunk: DiffHunk; language: string | null; layout: Layout; onAsk: () => void }) {
+function HunkView({ hunk, index, language, layout, onAsk }: { hunk: DiffHunk; index: number; language: string | null; layout: Layout; onAsk: () => void }) {
   const label = `@@ -${hunk.old_start},${hunk.old_lines} +${hunk.new_start},${hunk.new_lines} @@`;
-  return <div className="rd-hunk">
+  return <div className="rd-hunk" data-hunk={index}>
     <div className="rd-hunk-head">
       <code>{label} {hunk.header}</code>
       <button className="rd-hunk-ask" onClick={onAsk}>Ask about this hunk</button>

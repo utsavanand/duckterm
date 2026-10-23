@@ -20,6 +20,8 @@
     GET  /review/:repo/:ref           review workspace header (PR number or branch)
     GET  /review/:repo/:ref/diff      base-branch diff with risk buckets and viewed state
     PUT  /review/:repo/:ref/viewed    mark a file viewed or move it to another bucket
+    GET  /review/:repo/:ref/cards     review cards (generation starts on first open)
+    POST /review/:repo/:ref/cards/regenerate, chat, ask, send, draft-review, github-review
     GET  /folders/:path/prs           pull requests across the folder's sessions
     GET  /sessions/:key/output        SSE: live agent output (PTY) lines
     GET  /sessions/:key/terminal      WebSocket: raw PTY bytes <-> keystrokes/resize (xterm.js)
@@ -440,6 +442,7 @@ class Server:
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore(conn=self.history._conn)
+        self._review_tasks: dict[str, asyncio.Task[None]] = {}
         from duckterm.checkpoint_requests import CheckpointRequests
 
         self.checkpoint_requests = CheckpointRequests(self)
@@ -758,7 +761,10 @@ class Server:
             )
             return
         review_url = urllib.parse.urlsplit(path)
-        review_match = re.fullmatch(r"/review/([^/]+)/([^/]+)(?:/(diff|viewed))?", review_url.path)
+        review_match = re.fullmatch(
+            r"/review/([^/]+)/([^/]+)(?:/(diff|viewed|cards|cards/regenerate|chat|ask|send|draft-review|github-review))?",
+            review_url.path,
+        )
         if review_match:
             await self._review(
                 writer,
@@ -1531,15 +1537,35 @@ class Server:
         if not self._agents_md_dir_allowed(repo):
             await _write_json(writer, 403, {"error": "repository outside the allowed roots"})
             return
-        expected = {"": "GET", "diff": "GET", "viewed": "PUT"}
+        expected = {
+            "": "GET",
+            "diff": "GET",
+            "viewed": "PUT",
+            "cards": "GET",
+            "cards/regenerate": "POST",
+            "chat": "GET",
+            "ask": "POST",
+            "send": "POST",
+            "draft-review": "POST",
+            "github-review": "POST",
+        }
         if expected.get(part) != method:
             await _write_json(writer, 405, {"error": "method not allowed"})
             return
         flag = query.get("refresh", ["0"])[0] in ("1", "true")
         try:
+            payload: dict[str, Any] = {}
+            if method in ("PUT", "POST"):
+                try:
+                    payload = json.loads(body or b"{}")
+                except json.JSONDecodeError:
+                    raise workspace.ReviewError(400, "invalid JSON body") from None
+                if not isinstance(payload, dict):
+                    raise workspace.ReviewError(400, "body must be a JSON object")
             target = await asyncio.to_thread(workspace.resolve, repo, ref, refresh=flag)
             if part == "":
                 result = await asyncio.to_thread(workspace.header, target)
+                result["session"] = self._review_author(target.branch)
             elif part == "diff":
                 result = await asyncio.to_thread(
                     workspace.diff_payload,
@@ -1547,19 +1573,144 @@ class Server:
                     since=query.get("since", [None])[0],
                     whitespace=query.get("w", ["1"])[0] != "0",
                 )
-            else:
-                try:
-                    payload = json.loads(body or b"{}")
-                except json.JSONDecodeError:
-                    raise workspace.ReviewError(400, "invalid JSON body") from None
+            elif part == "viewed":
                 result = await asyncio.to_thread(workspace.mark_viewed, target, payload)
+            else:
+                result = await self._review_cards(target, part, payload)
         except workspace.ReviewError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except APIError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
             return
         except GitErrorReview as exc:
             await _write_json(writer, 500, {"error": str(exc)})
             return
         await _write_json(writer, 200, result)
+
+    def _review_author(self, branch: str) -> dict[str, Any] | None:
+        """The session whose worktree branch is this PR's head, with its digest."""
+        for row in self.history.sessions():
+            if row.get("branch") == branch and not row.get("ended_at"):
+                return {
+                    "key": row["session_key"],
+                    "name": row.get("name") or row["session_key"],
+                    "progress": row.get("progress"),
+                }
+        for row in self.history.sessions():
+            if row.get("branch") == branch:
+                return {
+                    "key": row["session_key"],
+                    "name": row.get("name") or row["session_key"],
+                    "progress": row.get("progress"),
+                }
+        return None
+
+    async def _review_cards(self, target: Any, part: str, payload: dict[str, Any]) -> Any:
+        """Cards, chat, send and GitHub review for one review target."""
+        from duckterm.review import cards, chat, github, workspace
+
+        key = str(target.directory)
+        if part == "cards":
+            loaded = cards.load(target)
+            running = key in self._review_tasks and not self._review_tasks[key].done()
+            if (loaded["stale"] or loaded["head_sha"] is None) and not running:
+                self._start_cards(target, None)
+                loaded = cards.load(target)
+                running = True
+            loaded["running"] = running
+            return loaded
+        if part == "cards/regenerate":
+            if key in self._review_tasks and not self._review_tasks[key].done():
+                raise workspace.ReviewError(409, "Cards are already being generated")
+            only = payload.get("cards")
+            if only is not None and not (
+                isinstance(only, list) and all(isinstance(c, str) for c in only)
+            ):
+                raise workspace.ReviewError(400, "cards must be a list of card ids")
+            self._start_cards(target, only)
+            return {"started": True, **cards.load(target), "running": True}
+        if part == "chat":
+            return {"messages": chat.transcript(target), "suggestions": chat.SUGGESTIONS}
+        if part == "ask":
+            question = payload.get("question")
+            if not isinstance(question, str) or not question.strip() or len(question) > 8000:
+                raise workspace.ReviewError(400, "question must be 1 to 8000 characters")
+            hunk = payload.get("hunk")
+            author = self._review_author(target.branch)
+            digest = author.get("progress") if author else None
+            diff = await asyncio.to_thread(
+                workspace.diff_payload, target, since=None, whitespace=True
+            )
+            return await chat.ask(
+                target,
+                diff,
+                question.strip(),
+                hunk=hunk if isinstance(hunk, str) else None,
+                digest=digest if isinstance(digest, str) else None,
+            )
+        if part == "draft-review":
+            return {"body": chat.draft_review(target)}
+        if part == "send":
+            session = payload.get("session")
+            card = payload.get("card")
+            items = payload.get("items")
+            if not isinstance(session, str) or self.history.session(session) is None:
+                raise workspace.ReviewError(404, "no such session")
+            if not isinstance(card, str) or not isinstance(items, list) or not items:
+                raise workspace.ReviewError(400, "card and a non-empty items list are required")
+            title = next((t for c, _, t in cards.CARDS if c == card), card)
+            text = (
+                f"Review of {target.branch} ({target.head_sha[:7]}), card {title}:\n"
+                + "\n".join(f"- {str(item)[:2000]}" for item in items[:40])
+            )
+            message_id = self.history.session_api.owner_message(
+                session, text, request_key=f"review:{target.head_sha}:{card}:{int(time.time())}"
+            )
+            await asyncio.to_thread(chat.record_sent, target, card, session, message_id)
+            return {"delivered": "inbox", "message_id": message_id, "session": session}
+        if part == "github-review":
+            event = payload.get("event")
+            review_body = payload.get("body")
+            if event not in ("APPROVE", "REQUEST_CHANGES", "COMMENT"):
+                raise workspace.ReviewError(
+                    400, "event must be APPROVE, REQUEST_CHANGES or COMMENT"
+                )
+            if not isinstance(review_body, str) or (event != "APPROVE" and not review_body.strip()):
+                raise workspace.ReviewError(400, "a review body is required")
+            if not target.pr or not target.slug:
+                raise workspace.ReviewError(409, "This branch has no pull request on GitHub")
+            token, reason = await asyncio.to_thread(github.token)
+            if not token:
+                raise workspace.ReviewError(409, reason or "GitHub is not connected")
+            try:
+                return await asyncio.to_thread(
+                    github.post_review, target.slug, target.pr["number"], event, review_body, token
+                )
+            except github.GitHubError as exc:
+                raise workspace.ReviewError(502, str(exc)) from exc
+        raise workspace.ReviewError(404, "unknown review route")
+
+    def _start_cards(self, target: Any, only: list[str] | None) -> None:
+        from duckterm.review import cards, lists, workspace
+
+        async def run() -> None:
+            diff = await asyncio.to_thread(
+                workspace.diff_payload, target, since=None, whitespace=True
+            )
+            state = lists._repo_state(target.repo, [], refresh=False)
+            row = await asyncio.to_thread(
+                lists._row,
+                target.repo,
+                state,
+                branch=target.branch,
+                pr=target.pr,
+                session=None,
+                local=True,
+            )
+            await cards.generate_all(target, diff, row, only=only)
+
+        self._review_tasks[str(target.directory)] = asyncio.get_running_loop().create_task(run())
 
     async def _prs(
         self,

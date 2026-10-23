@@ -3,14 +3,18 @@ import { afterEach, expect, it, vi } from "vitest";
 import { api, type DiffFile, type ReviewDiff, type ReviewHeader } from "../api";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 
-vi.mock("../api", () => ({ api: { reviewHeader: vi.fn(), reviewDiff: vi.fn(), markViewed: vi.fn() } }));
+vi.mock("../api", () => ({ api: { reviewHeader: vi.fn(), reviewDiff: vi.fn(), markViewed: vi.fn(), reviewCards: vi.fn(), reviewChat: vi.fn(), reviewAsk: vi.fn(), reviewSend: vi.fn(), reviewDraft: vi.fn(), regenerateCards: vi.fn(), reviewGithub: vi.fn() } }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
+function stubChat() {
+  vi.mocked(api.reviewChat).mockResolvedValue({ messages: [], suggestions: ["What is the riskiest hunk and why?"] });
+  vi.mocked(api.reviewCards).mockResolvedValue({ head_sha: "2222222bbbb", stale: false, running: false, cards: [] });
+}
 
 const header: ReviewHeader = {
   repo: "/Users/me/duckterm", repo_name: "duckterm", github: "utsavanand/duckterm", ref: "307", branch: "duckterm/aaa", base: "main",
   base_sha: "1111111aaaa", head_sha: "2222222bbbb", commits: 3, previous_head: "0000000cccc",
   pr: { number: 307, title: "Remote coding wizard", body: "", url: "https://github.com/utsavanand/duckterm/pull/307", state: "open", draft: false, author: "bot", head: "duckterm/aaa", head_sha: "2222222bbbb", base: "main", merge_commit_sha: null, merged_at: null, updated_at: null, created_at: null },
-  row: null,
+  row: null, session: { key: "s1", name: "ui-dev", progress: null },
 };
 const file = (path: string, extra: Partial<DiffFile> = {}): DiffFile => ({
   path, old_path: null, status: "modified", binary: false, additions: 2, deletions: 1, truncated: false, total_lines: 3,
@@ -31,6 +35,7 @@ it("groups files by risk, explains the bucket, and marks a file viewed by its hu
   vi.mocked(api.reviewHeader).mockResolvedValue(header);
   vi.mocked(api.reviewDiff).mockResolvedValue(diff);
   vi.mocked(api.markViewed).mockResolvedValue({});
+  stubChat();
   render(<ReviewWorkspace repo={header.repo} target="307" from="ui-dev" onBack={vi.fn()} />);
   expect(await screen.findByRole("heading", { name: "#307 Remote coding wizard" })).toBeInTheDocument();
   const files = await screen.findByRole("navigation", { name: "Changed files" });
@@ -56,6 +61,7 @@ it("moves a file to another bucket, filters since the last look, and quotes a hu
   vi.mocked(api.reviewHeader).mockResolvedValue(header);
   vi.mocked(api.reviewDiff).mockResolvedValue(diff);
   vi.mocked(api.markViewed).mockResolvedValue({});
+  stubChat();
   render(<ReviewWorkspace repo={header.repo} target="307" onBack={vi.fn()} />);
   const files = await screen.findByRole("navigation", { name: "Changed files" });
   fireEvent.change(within(files).getByRole("combobox", { name: "Bucket for docs/spec.md" }), { target: { value: "high" } });

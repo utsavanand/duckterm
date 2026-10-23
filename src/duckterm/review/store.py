@@ -6,7 +6,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -14,6 +17,9 @@ from typing import Any
 from duckterm.helpers import paths
 
 VIEWED = "viewed.json"
+# The diff request and the card writer both touch viewed.json at once; one
+# lock per process keeps load-modify-save atomic and the temp names unique.
+_lock = threading.RLock()
 
 
 def repo_key(repo: str, slug: str | None) -> str:
@@ -44,21 +50,24 @@ def load(directory: Path, name: str) -> dict[str, Any]:
 
 
 def save(directory: Path, name: str, value: dict[str, Any]) -> None:
-    directory.mkdir(parents=True, exist_ok=True)
-    tmp = directory / f".{name}.tmp"
-    tmp.write_text(json.dumps(value, indent=1, sort_keys=True), encoding="utf-8")
-    tmp.replace(directory / name)
+    with _lock:
+        directory.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=f".{name}.", dir=directory)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(json.dumps(value, indent=1, sort_keys=True))
+        os.replace(tmp, directory / name)
 
 
 def record_head(directory: Path, head: str) -> list[dict[str, Any]]:
     """Remember a head the owner has opened. Returns the history, newest last."""
-    state = load(directory, VIEWED)
-    heads: list[dict[str, Any]] = list(state.get("heads") or [])
-    if not heads or heads[-1].get("sha") != head:
-        heads.append({"sha": head, "at": int(time.time())})
-        state["heads"] = heads[-50:]
-        save(directory, VIEWED, state)
-    return heads
+    with _lock:
+        state = load(directory, VIEWED)
+        heads: list[dict[str, Any]] = list(state.get("heads") or [])
+        if not heads or heads[-1].get("sha") != head:
+            heads.append({"sha": head, "at": int(time.time())})
+            state["heads"] = heads[-50:]
+            save(directory, VIEWED, state)
+        return heads
 
 
 def previous_head(heads: list[dict[str, Any]], head: str) -> str | None:
@@ -72,16 +81,17 @@ def previous_head(heads: list[dict[str, Any]], head: str) -> str | None:
 def mark(
     directory: Path, path: str, hash_: str, *, viewed: bool | None, bucket: str | None
 ) -> dict[str, Any]:
-    state = load(directory, VIEWED)
-    files = state.setdefault("files", {})
-    entry = dict(files.get(path) or {})
-    if viewed is not None:
-        entry.update({"hash": hash_, "viewed": viewed, "at": int(time.time())})
-    if bucket is not None:
-        if bucket == "":
-            entry.pop("bucket", None)
-        else:
-            entry["bucket"] = bucket
-    files[path] = entry
-    save(directory, VIEWED, state)
-    return entry
+    with _lock:
+        state = load(directory, VIEWED)
+        files = state.setdefault("files", {})
+        entry = dict(files.get(path) or {})
+        if viewed is not None:
+            entry.update({"hash": hash_, "viewed": viewed, "at": int(time.time())})
+        if bucket is not None:
+            if bucket == "":
+                entry.pop("bucket", None)
+            else:
+                entry["bucket"] = bucket
+        files[path] = entry
+        save(directory, VIEWED, state)
+        return entry

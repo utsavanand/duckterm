@@ -384,7 +384,12 @@ export interface DiffFile {
   hash: string; viewed: boolean; stale: boolean; changed_since: boolean | null; whitespace_only: boolean;
 }
 export interface ReviewDiff { base_sha: string; head_sha: string; since: string | null; whitespace: boolean; files: DiffFile[]; counts: { high: number; read: number; skim: number; viewed: number; changed_since: number } }
-export interface ReviewHeader { repo: string; repo_name: string; github: string | null; ref: string; branch: string; base: string; base_sha: string; head_sha: string; commits: number; pr: PrSummary | null; row: PrRow | null; previous_head: string | null }
+export interface ReviewHeader { repo: string; repo_name: string; github: string | null; ref: string; branch: string; base: string; base_sha: string; head_sha: string; commits: number; pr: PrSummary | null; row: PrRow | null; previous_head: string | null; session: { key: string; name: string; progress: string | null } | null }
+export type CardStatus = "ready" | "pending" | "omitted" | "failed" | "later" | "stale";
+export interface ReviewCard { id: string; number: number; title: string; status: CardStatus; reason?: string; data?: Record<string, unknown>; at?: number; sent?: { session: string; message_id: string; at: number }[] }
+export interface ReviewCards { head_sha: string | null; stale: boolean; running: boolean; cards: ReviewCard[] }
+export interface Citation { path: string; line: number }
+export interface ChatMessage { q: string; a: string; citations: Citation[]; hunk: string | null; files: string[]; at: number }
 
 async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
   const response = await fetch(path, { method, cache: "no-store", headers: authHeaders() });
@@ -402,6 +407,13 @@ export const api = {
     if (options.since) query.set("since", options.since);
     return get<ReviewDiff>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/diff?${query}`, undefined, { authed: true });
   },
+  reviewCards: (repo: string, ref: string) => get<ReviewCards>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/cards`, undefined, { authed: true }),
+  regenerateCards: (repo: string, ref: string, cards?: string[]) => post<ReviewCards & { started: boolean }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/cards/regenerate`, cards ? { cards } : {}),
+  reviewChat: (repo: string, ref: string) => get<{ messages: ChatMessage[]; suggestions: string[] }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/chat`, undefined, { authed: true }),
+  reviewAsk: (repo: string, ref: string, body: { question: string; hunk?: string | null }) => post<ChatMessage>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/ask`, body),
+  reviewSend: (repo: string, ref: string, body: { card: string; items: string[]; session: string }) => post<{ delivered: string; message_id: string; session: string }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/send`, body),
+  reviewDraft: (repo: string, ref: string) => post<{ body: string }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/draft-review`),
+  reviewGithub: (repo: string, ref: string, body: { event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string }) => post<{ id: number | null; url: string | null; state: string | null }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/github-review`, body),
   markViewed: async (repo: string, ref: string, body: { path: string; hash: string; viewed?: boolean; bucket?: Bucket | "" }) => {
     const res = await fetch(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/viewed`, { method: "PUT", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
