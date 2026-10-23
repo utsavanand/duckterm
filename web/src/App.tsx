@@ -37,6 +37,7 @@ import { HarnessesModal } from "./HarnessesModal";
 import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
 import { SessionFilesView } from "./SessionFilesView";
+import { PrList } from "./review/PrList";
 import { InboxView } from "./InboxView";
 import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
@@ -153,7 +154,7 @@ function Dashboard() {
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
   const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<{ key: string; revision: string; checkpoint?: string } | null>(null);
-  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory">(
+  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory" | "prs">(
     "terminal",
   );
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
@@ -464,6 +465,9 @@ function Dashboard() {
               <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")}>
                 Artifacts
               </button>
+              <button className={view === "prs" ? "active" : ""} onClick={() => setView("prs")}>
+                PRs
+              </button>
               <span id="rd-shell-toggle" />
             </div>
             {selected && (view === "terminal" || view === "messages") && (
@@ -504,6 +508,12 @@ function Dashboard() {
               <div className="rd-messages-wrap rd-files-wrap">
                 {selected ? <SessionFilesView session={selected} />
                   : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
+              </div>
+            )}
+            {view === "prs" && (
+              <div className="rd-messages-wrap rd-prs-wrap">
+                {selected ? <PrList key={selected.key} scope={{ kind: "session", key: selected.key, name: selected.label }} active={!towerOpen && selectedFolder === null} />
+                  : <p className="rd-panel-empty">Select a session to see its pull requests.</p>}
               </div>
             )}
             {/* Keep recent views warm. Older browser views reconnect on demand;

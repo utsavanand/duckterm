@@ -17,6 +17,8 @@
     GET  /sessions/:key/checkpoints   list checkpoint records
     POST /sessions/:key/spotlight     apply worktree changes onto the main checkout
     GET  /sessions/:key/diff          git diff of the session's worktree
+    GET  /sessions/:key/prs           pull requests from the session's branch
+    GET  /folders/:path/prs           pull requests across the folder's sessions
     GET  /sessions/:key/output        SSE: live agent output (PTY) lines
     GET  /sessions/:key/terminal      WebSocket: raw PTY bytes <-> keystrokes/resize (xterm.js)
     POST /sessions/:key/input         write to the agent's stdin (terminal-attach)
@@ -754,6 +756,13 @@ class Server:
                 writer, headers, urllib.parse.unquote(folder_message[1]), folder_message[2], body
             )
             return
+        prs_url = urllib.parse.urlsplit(path)
+        prs_match = re.fullmatch(r"/(sessions|folders)/(.+)/prs", prs_url.path)
+        if prs_match and method == "GET":
+            await self._prs(
+                writer, headers, prs_match[1], urllib.parse.unquote(prs_match[2]), prs_url.query
+            )
+            return
         folder_view = re.fullmatch(r"/folders/(.+)/(chat|artifacts|stats)", path)
         if folder_view and method == "GET":
             await self._folder_view(
@@ -1486,6 +1495,42 @@ class Server:
         else:
             rows = self.history.artifacts.list_folder(folder, 501, include_removed=True)
             await _write_json(writer, 200, {"artifacts": rows[:500], "truncated": len(rows) > 500})
+
+    async def _prs(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        scope: str,
+        target: str,
+        query: str,
+    ) -> None:
+        """Pull request rows for one session or one folder (docs/pr-review-platform-spec.md)."""
+        from duckterm.review import lists as review_lists
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        refresh = urllib.parse.parse_qs(query).get("refresh", ["0"])[0] in ("1", "true")
+        # Rows are read here, on the loop thread; the git and GitHub work below
+        # runs in a worker and never touches the SQLite connection.
+        if scope == "sessions":
+            row = self.history.session(target)
+            if row is None:
+                await _write_json(writer, 404, {"error": "no such session"})
+                return
+            members = [row]
+        else:
+            if not valid_folder(target):
+                await _write_json(writer, 400, {"error": "Invalid folder path"})
+                return
+            if target not in self.history.folders():
+                await _write_json(writer, 404, {"error": "Folder no longer exists"})
+                return
+            members = review_lists.folder_members(self.history, target)
+        result = await asyncio.to_thread(
+            review_lists.build, members, include_unclaimed=scope == "folders", refresh=refresh
+        )
+        await _write_json(writer, 200, result)
 
     async def _artifacts(
         self,

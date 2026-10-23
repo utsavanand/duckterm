@@ -7,7 +7,7 @@
 .rd-folder-tabs { display: flex; gap: 7px; padding: 0 30px 14px; border-bottom: 1px solid var(--border); flex: none; }
 .rd-folder-tabs button { border: 0; background: transparent; color: var(--text-soft); padding: 7px 13px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 0.8125rem; }
 .rd-folder-tabs button[aria-selected=true] { color: var(--brand-green-strong); background: color-mix(in srgb, var(--idle) 16%, transparent); }
-.rd-folder-chat-panel, .rd-folder-artifacts-panel { flex: 1; min-height: 0; overflow: auto; }
+.rd-folder-chat-panel, .rd-folder-artifacts-panel, .rd-folder-prs-panel { flex: 1; min-height: 0; overflow: auto; }
 .rd-folder-view [hidden] { display: none; }
 .rd-folder-chat { box-sizing: border-box; display: flex; flex-direction: column; height: 100%; min-height: 360px; max-width: 940px; padding: 24px 30px; margin: auto; }
 .rd-folder-chat-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; }

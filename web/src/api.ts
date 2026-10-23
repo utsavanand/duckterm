@@ -356,6 +356,23 @@ export interface Artifact {
 export interface FolderArtifact extends Artifact { session_name: string; session_state: string; folder: string }
 export interface ArtifactContent extends Artifact { content_base64: string }
 
+// Pull request rows for the session PRs tab and the folder Pull requests tab
+// (docs/pr-review-platform-spec.md §3). Rows come from GET /sessions/:key/prs
+// and GET /folders/:path/prs; status is derived server-side.
+export type PrStatus = "unpushed" | "pushed" | "draft" | "open" | "changes_requested" | "ci_failing" | "conflict" | "ready" | "merged" | "closed";
+export interface PrSummary { number: number; title: string; body: string; url: string; state: "open" | "merged" | "closed"; draft: boolean; author: string; head: string; head_sha: string; base: string; merge_commit_sha: string | null; merged_at: string | null; updated_at: string | null; created_at: string | null }
+export interface PrRow {
+  repo: string; repo_name: string; github: string | null; branch: string; base: string;
+  session: { key: string; name: string } | null; author: string | null; pr: PrSummary | null;
+  status: PrStatus; label: string; needs_you: boolean; version: string | null;
+  checks: { total: number; failed: number; pending: number; passed: number } | null;
+  review: "none" | "approved" | "changes_requested"; conflict: boolean | null; pushed: boolean; unpushed_commits: number;
+  ahead: number | null; behind: number | null; size: { files: number; additions: number; deletions: number } | null;
+  updated_at: number | null; compare_url: string | null;
+}
+export interface PrRepo { path: string; name: string; github: string | null; default_branch: string; connected: boolean; error: string | null; fetched_at: number }
+export interface PrListResult { rows: PrRow[]; repos: PrRepo[] }
+
 async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
   const response = await fetch(path, { method, cache: "no-store", headers: authHeaders() });
   const result = await response.json();
@@ -365,6 +382,8 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
 
 export const api = {
   folderStats: (folder: string) => artifactRequest<FolderStats>(`/folders/${encodeURIComponent(folder)}/stats`),
+  sessionPrs: (key: string, refresh = false) => get<PrListResult>(`/sessions/${encodeURIComponent(key)}/prs${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),
+  folderPrs: (folder: string, refresh = false) => get<PrListResult>(`/folders/${encodeURIComponent(folder)}/prs${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),
   updateArtifact: async (key: string, id: string, patch: { kind?: ArtifactKind; kept?: boolean }): Promise<{ artifact: Artifact }> => {
     const response = await fetch(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, { method: "PATCH", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(patch) });
     const value = await response.json(); if (!response.ok) throw new Error(value.error || "Could not update artifact"); return value;
