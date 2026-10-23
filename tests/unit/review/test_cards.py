@@ -55,6 +55,11 @@ def payload_for(target: workspace.Target) -> dict[str, Any]:
 REPLIES: dict[str, dict[str, Any]] = {
     "tests": {"coverage": [], "gaps": [], "suggested": []},
     "guardrails": {"findings": []},
+    "blast": {
+        "consequence": "Callers of route see 2.",
+        "risks": [{"symbol": "route", "note": "x"}, {"symbol": "ghost", "note": "y"}],
+    },
+    "author": {"trajectory": "t", "abandoned": [], "decisions": [], "verification": "v"},
     "intent": {
         "summary": "Adds table a.\n\nBumps the route.",
         "claims": [
@@ -136,6 +141,8 @@ def fake_generate(  # type: ignore[no-untyped-def]
             ("risk", "# Task: Risk map"),
             ("tests", "# Task: Tests"),
             ("guardrails", "# Task: Guardrails"),
+            ("blast", "# Task: Blast radius"),
+            ("author", "# Task: How the author got here"),
         ):
             if marker in prompt:
                 card = name
@@ -188,7 +195,13 @@ def test_cards_are_checked_against_the_diff_and_cached_per_head(
     assert {c["name"]: c["status"] for c in release["checks"]}["CI"] == "pass"
     questions = by_id["questions"]["data"]
     assert questions["items"][0]["paths"] == ["src/duckterm/server.py"]
-    assert by_id["blast"]["status"] == "later"
+    blast = by_id["blast"]
+    assert blast["status"] == "ready"
+    assert blast["data"]["model_status"] == "ready"
+    assert [r["symbol"] for r in blast["data"]["risks"]] == ["route"]
+    assert {r["symbol"]: r["change"] for r in blast["data"]["symbols"]} == {"route": "changed"}
+    assert by_id["author"]["status"] == "omitted"
+    assert by_id["author"]["reason"].startswith("No session on this computer owns")
     # Cached: a second load reads the file, no model call.
     assert cards.load(target)["cards"][0]["status"] == "ready"
     saved = json.loads((target.directory / cards.FILE).read_text())

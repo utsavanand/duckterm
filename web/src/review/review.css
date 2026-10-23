@@ -227,3 +227,11 @@
 .rd-review-dialog textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.8125rem; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); resize: vertical; }
 .rd-review-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
 .rd-card-test { display: inline-block; margin: 0 6px 2px 0; font-size: 0.6875rem; }
+.rd-card-trace { list-style: none; margin: 8px 0; padding: 0; font-size: 0.75rem; }
+.rd-card-trace li { display: grid; grid-template-columns: 28px 76px 1fr; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--border); align-items: baseline; }
+.rd-card-trace code { overflow-wrap: anywhere; white-space: pre-wrap; font-size: 0.6875rem; }
+.rd-card-trace-turn { color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.rd-card-trace-kind { font-size: 0.625rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); }
+.rd-card-trace li.is-abandon .rd-card-trace-kind { color: var(--danger); }
+.rd-card-trace li.is-verify .rd-card-trace-kind { color: var(--brand-green-strong); }
+.rd-card-trace li.is-prompt .rd-card-trace-kind { color: var(--amber-text); }

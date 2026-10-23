@@ -106,6 +106,9 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     // The fixture commits lack the problem / fix / how-tested subject: one mechanical finding.
     await expect(strip.getByRole("tab", { name: /Guardrails/ })).toContainText("1 finding", { timeout: 30_000 });
     await expect(strip.getByRole("tab", { name: /^6 Tests/ })).toContainText("0 slop · no coverage report");
+    // The symbol index sees the added function; the session record is empty but present.
+    await expect(strip.getByRole("tab", { name: /Blast radius/ })).toContainText("1 changed symbols · 0 called outside the diff · 1 untested");
+    await expect(strip.getByRole("tab", { name: /How the author got here/ })).toContainText("0 turns · 0 commits");
     await strip.getByRole("tab", { name: /Guardrails/ }).click();
     const guard = workspace.getByRole("tabpanel", { name: "7 Guardrails" });
     await expect(guard).toContainText("Slop-rule review omitted: Automatic preparation is disabled");

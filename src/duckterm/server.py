@@ -1565,7 +1565,7 @@ class Server:
             target = await asyncio.to_thread(workspace.resolve, repo, ref, refresh=flag)
             if part == "":
                 result = await asyncio.to_thread(workspace.header, target)
-                result["session"] = self._review_author(target.branch)
+                result["session"] = await self._review_author(target.branch)
             elif part == "diff":
                 result = await asyncio.to_thread(
                     workspace.diff_payload,
@@ -1588,23 +1588,33 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
-    def _review_author(self, branch: str) -> dict[str, Any] | None:
-        """The session whose worktree branch is this PR's head, with its digest."""
-        for row in self.history.sessions():
-            if row.get("branch") == branch and not row.get("ended_at"):
-                return {
-                    "key": row["session_key"],
-                    "name": row.get("name") or row["session_key"],
-                    "progress": row.get("progress"),
-                }
-        for row in self.history.sessions():
-            if row.get("branch") == branch:
-                return {
-                    "key": row["session_key"],
-                    "name": row.get("name") or row["session_key"],
-                    "progress": row.get("progress"),
-                }
-        return None
+    async def _review_author(self, branch: str) -> dict[str, Any] | None:
+        """The session whose checkout is on this PR's head branch, with its
+        digest. Rows are read on the loop thread; the git look-ups run in a
+        worker, the same claim rule the PR lists use."""
+        from duckterm.review import lists
+
+        rows = [r for r in self.history.sessions() if r.get("worktree_path") or r.get("cwd")]
+        rows.sort(key=lambda r: bool(r.get("ended_at")))
+
+        def find() -> dict[str, Any] | None:
+            for row in rows:
+                if row.get("branch") == branch:
+                    return row
+            for row in rows:
+                found = lists._worktree_branch(row)
+                if found and found[1] == branch:
+                    return row
+            return None
+
+        row = await asyncio.to_thread(find)
+        if row is None:
+            return None
+        return {
+            "key": row["session_key"],
+            "name": row.get("name") or row["session_key"],
+            "progress": row.get("progress"),
+        }
 
     async def _review_cards(self, target: Any, part: str, payload: dict[str, Any]) -> Any:
         """Cards, chat, send and GitHub review for one review target."""
@@ -1615,7 +1625,7 @@ class Server:
             loaded = cards.load(target)
             running = key in self._review_tasks and not self._review_tasks[key].done()
             if (loaded["stale"] or loaded["head_sha"] is None) and not running:
-                self._start_cards(target, None)
+                await self._start_cards(target, None)
                 loaded = cards.load(target)
                 running = True
             loaded["running"] = running
@@ -1628,7 +1638,7 @@ class Server:
                 isinstance(only, list) and all(isinstance(c, str) for c in only)
             ):
                 raise workspace.ReviewError(400, "cards must be a list of card ids")
-            self._start_cards(target, only)
+            await self._start_cards(target, only)
             return {"started": True, **cards.load(target), "running": True}
         if part == "chat":
             return {"messages": chat.transcript(target), "suggestions": chat.SUGGESTIONS}
@@ -1637,7 +1647,7 @@ class Server:
             if not isinstance(question, str) or not question.strip() or len(question) > 8000:
                 raise workspace.ReviewError(400, "question must be 1 to 8000 characters")
             hunk = payload.get("hunk")
-            author = self._review_author(target.branch)
+            author = await self._review_author(target.branch)
             digest = author.get("progress") if author else None
             diff = await asyncio.to_thread(
                 workspace.diff_payload, target, since=None, whitespace=True
@@ -1691,8 +1701,12 @@ class Server:
                 raise workspace.ReviewError(502, str(exc)) from exc
         raise workspace.ReviewError(404, "unknown review route")
 
-    def _start_cards(self, target: Any, only: list[str] | None) -> None:
-        from duckterm.review import cards, lists, workspace
+    async def _start_cards(self, target: Any, only: list[str] | None) -> None:
+        from duckterm.review import author, cards, lists, workspace
+
+        # Session data is read here, on the loop thread, before the worker runs.
+        owner = await self._review_author(target.branch)
+        author_facts = author.facts(self.history, owner["key"]) if owner else None
 
         async def run() -> None:
             diff = await asyncio.to_thread(
@@ -1708,7 +1722,7 @@ class Server:
                 session=None,
                 local=True,
             )
-            await cards.generate_all(target, diff, row, only=only)
+            await cards.generate_all(target, diff, row, only=only, author_facts=author_facts)
 
         self._review_tasks[str(target.directory)] = asyncio.get_running_loop().create_task(run())
 

@@ -23,6 +23,15 @@ export interface TestsData {
 export interface GuardrailCheck { rule: string; status: "pass" | "finding" | "n/a"; note: string; items: { path?: string; line?: number; sha?: string; kind?: string; text: string }[] }
 export interface GuardrailsData { checks: GuardrailCheck[]; findings: { rule: string; status: "pass" | "finding" | "n/a"; location: string; note: string }[]; rule_files: string[]; model_status: "ready" | "omitted"; model_reason?: string; verdict: string }
 
+export interface BlastSymbol { symbol: string; kind: string; path: string; line: number; change: "added" | "changed" | "removed"; callers_in_diff: string[]; callers_outside: string[]; outside_count: number; tested: boolean }
+export interface BlastData { symbols: BlastSymbol[]; diagram: string; index: { base_files: number; head_files: number }; limits: string; consequence: string; risks: { symbol: string; note: string }[]; model_status: "ready" | "omitted"; model_reason?: string; verdict: string }
+export interface TraceEvent { turn: number | null; kind: string; text: string; ts: number | null }
+export interface AuthorData {
+  events: TraceEvent[]; turns: number; commits: number; pushes: number; verification_runs: TraceEvent[]; abandoned_commands: TraceEvent[];
+  owner_decisions: { text: string; ts: number | null }[]; session: { key: string; name: string; runtime: string | null };
+  trajectory?: string; abandoned?: string[]; decisions?: string[]; verification?: string; model_status: "ready" | "omitted"; model_reason?: string; verdict: string;
+}
+
 export type Severity = "ok" | "warn" | "danger" | "neutral" | "muted";
 
 export function verdict(card: ReviewCard): string {
@@ -50,6 +59,14 @@ export function severity(card: ReviewCard): Severity {
     case "tests": {
       const tests = data as unknown as TestsData;
       return tests.slop.length > 0 || tests.coverage.some(row => row.covered === "no") ? "danger" : tests.coverage.some(row => row.covered === "partial") || tests.gaps.length > 0 ? "warn" : "ok";
+    }
+    case "blast": {
+      const blast = data as unknown as BlastData;
+      return blast.symbols.some(s => s.outside_count > 0 && !s.tested) ? "danger" : blast.symbols.some(s => s.outside_count > 0) ? "warn" : "ok";
+    }
+    case "author": {
+      const author = data as unknown as AuthorData;
+      return author.abandoned_commands.length > 0 ? "warn" : "neutral";
     }
     case "guardrails": {
       const guard = data as unknown as GuardrailsData;

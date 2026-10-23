@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import type { ReviewCard, ReviewHeader } from "../api";
 import { html } from "../render";
 import { BUCKET_LABELS } from "./diffModel";
-import { KIND_LABELS, type BehaviourData, type GuardrailsData, type IntentData, type QuestionsData, type ReleaseData, type RiskData, type TestsData, type WalkthroughData } from "./cardModel";
+import { KIND_LABELS, type AuthorData, type BehaviourData, type BlastData, type GuardrailsData, type IntentData, type QuestionsData, type ReleaseData, type RiskData, type TestsData, type WalkthroughData } from "./cardModel";
 import { useMermaid } from "./useMermaid";
 
 export interface CardActions {
@@ -174,5 +174,40 @@ export function GuardrailsCard({ data, actions }: { data: GuardrailsData; action
       </tr>)}
     </tbody></table>
     <p className="rd-card-meta">Mechanical rows come from regexes over the commits and the diff; the rest is the model reading the rule files at this head ({data.rule_files.join(", ") || "none found"}).</p>
+  </div>;
+}
+
+export function BlastCard({ data, actions }: { data: BlastData; actions: CardActions }) {
+  const box = useRef<HTMLDivElement>(null);
+  useMermaid(box, data.diagram);
+  return <div ref={box} className="rd-card-body">
+    {data.symbols.length === 0 && <p className="rd-prs-empty">No function, class or method definition changed; the index found nothing to trace.</p>}
+    {data.consequence && <div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: html(data.consequence) }} />}
+    {data.model_status === "omitted" && data.symbols.length > 0 && <p className="rd-prs-note">Consequence paragraph omitted: {data.model_reason ?? "no model result"}. The callers below come from the index.</p>}
+    {data.symbols.length > 0 && <table className="rd-card-table"><thead><tr><th>Changed symbol</th><th>Callers in diff</th><th>Callers outside</th><th>Tested</th></tr></thead><tbody>
+      {data.symbols.map(row => <tr key={`${row.path}:${row.symbol}`}>
+        <td><code>{row.symbol}</code> <span className={`rd-card-flag is-${row.change === "removed" ? "false" : row.change === "added" ? "true" : "partial"}`}>{row.change}</span><br /><PathLink path={row.path} actions={actions} /></td>
+        <td>{row.callers_in_diff.length === 0 ? "—" : row.callers_in_diff.map(path => <PathLink key={path} path={path} actions={actions} />)}</td>
+        <td>{row.outside_count === 0 ? "—" : <>{row.callers_outside.map(path => <code key={path} className="rd-card-test">{path}</code>)}{row.outside_count > row.callers_outside.length && <small> +{row.outside_count - row.callers_outside.length} more</small>}</>}</td>
+        <td><span className={`rd-card-flag is-${row.tested ? "true" : "false"}`}>{row.tested ? "yes" : "no"}</span></td>
+      </tr>)}
+    </tbody></table>}
+    {data.risks.length > 0 && <><h4>Risks</h4><ul className="rd-card-list">{data.risks.map((risk, index) => <li key={index}><code>{risk.symbol}</code> {risk.note}</li>)}</ul></>}
+    {data.diagram && <><h4>Call graph</h4><pre className="rd-mermaid"><code>{data.diagram}</code></pre></>}
+    <p className="rd-card-meta">{data.limits} Index: {data.index.base_files} files at base, {data.index.head_files} at head.</p>
+  </div>;
+}
+
+export function AuthorCard({ data }: { data: AuthorData }) {
+  const kinds: Record<string, string> = { prompt: "Owner", commit: "Commit", push: "Push", verify: "Verified", abandon: "Undone", checkpoint: "Checkpoint", inbox: "Inbox" };
+  return <div className="rd-card-body">
+    {data.model_status !== "ready" && <p className="rd-prs-note">Summaries omitted: {data.model_reason ?? "no model result"}. The record below is the session's own events.</p>}
+    {data.trajectory && <div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: html(data.trajectory) }} />}
+    {data.abandoned && data.abandoned.length > 0 && <><h4>Abandoned approaches</h4><ul className="rd-card-list">{data.abandoned.map((item, index) => <li key={index}>{item}</li>)}</ul></>}
+    {data.decisions && data.decisions.length > 0 && <><h4>Owner decisions</h4><ul className="rd-card-list">{data.decisions.map((item, index) => <li key={index}>{item}</li>)}</ul></>}
+    {data.verification && <><h4>Verification</h4><div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: html(data.verification) }} /></>}
+    <h4>Record · {data.session.name} · {data.turns} turns · {data.commits} commits · {data.pushes} pushes</h4>
+    {data.owner_decisions.length > 0 && <p className="rd-card-meta">Owner messages in the inbox: {data.owner_decisions.length}. Reverts or resets: {data.abandoned_commands.length}. Verification runs: {data.verification_runs.length}.</p>}
+    <ol className="rd-card-trace">{data.events.slice(-80).map((event, index) => <li key={index} className={`is-${event.kind}`}><span className="rd-card-trace-turn">{event.turn ?? "·"}</span><span className="rd-card-trace-kind">{kinds[event.kind] ?? event.kind}</span><code>{event.text}</code></li>)}</ol>
   </div>;
 }

@@ -1,9 +1,10 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ReviewHeader } from "../api";
-import { GuardrailsCard, TestsCard, type CardActions } from "./CardBodies";
-import type { GuardrailsData, TestsData } from "./cardModel";
+import { AuthorCard, BlastCard, GuardrailsCard, TestsCard, type CardActions } from "./CardBodies";
+import type { AuthorData, BlastData, GuardrailsData, TestsData } from "./cardModel";
 
+vi.mock("./useMermaid", () => ({ useMermaid: () => undefined }));
 afterEach(cleanup);
 const header: ReviewHeader = { repo: "/r", repo_name: "r", github: null, ref: "x", branch: "x", base: "main", base_sha: "1", head_sha: "2", commits: 1, previous_head: null, pr: null, row: null, session: null };
 const actions = (): CardActions => ({ openFile: vi.fn(), ask: vi.fn(), send: vi.fn(), header });
@@ -46,4 +47,43 @@ it("guardrails card lists mechanical rows and model findings with their location
   fireEvent.click(screen.getByRole("button", { name: "src/duckterm/x.py" }));
   expect(act.openFile).toHaveBeenCalledWith("src/duckterm/x.py", undefined);
   expect(screen.getByText(/AGENTS.md, .claude\/rules\/overengineering-slop.md/)).toBeInTheDocument();
+});
+
+it("blast radius card lists changed symbols with their callers and explains omitted paragraphs", () => {
+  const data: BlastData = {
+    symbols: [
+      { symbol: "helper", kind: "function", path: "src/duckterm/core.py", line: 2, change: "changed", callers_in_diff: [], callers_outside: ["src/duckterm/cli.py"], outside_count: 3, tested: false },
+      { symbol: "brand_new", kind: "function", path: "src/duckterm/core.py", line: 14, change: "added", callers_in_diff: ["src/duckterm/server.py"], callers_outside: [], outside_count: 0, tested: true },
+    ],
+    diagram: "graph LR\n  n0[\"helper\"]", index: { base_files: 5, head_files: 5 }, limits: "Name-based.", consequence: "", risks: [], model_status: "omitted", model_reason: "provider down", verdict: "2 changed symbols · 1 called outside the diff · 1 untested",
+  };
+  const act = actions();
+  render(<BlastCard data={data} actions={act} />);
+  expect(screen.getByText(/Consequence paragraph omitted: provider down/)).toBeInTheDocument();
+  expect(screen.getByText("+2 more")).toBeInTheDocument();
+  expect(screen.getAllByText("no")[0]).toHaveClass("is-false");
+  fireEvent.click(screen.getByRole("button", { name: "src/duckterm/server.py" }));
+  expect(act.openFile).toHaveBeenCalledWith("src/duckterm/server.py", undefined);
+  expect(screen.getByText(/Index: 5 files at base, 5 at head/)).toBeInTheDocument();
+});
+
+it("author card shows the model summaries and the numbered record", () => {
+  const data: AuthorData = {
+    events: [
+      { turn: 1, kind: "prompt", text: "Build the list", ts: 1 },
+      { turn: 1, kind: "verify", text: "pytest tests -q", ts: 2 },
+      { turn: 2, kind: "abandon", text: "git reset --hard HEAD~1", ts: 3 },
+    ],
+    turns: 2, commits: 1, pushes: 1, verification_runs: [{ turn: 1, kind: "verify", text: "pytest tests -q", ts: 2 }], abandoned_commands: [{ turn: 2, kind: "abandon", text: "git reset --hard HEAD~1", ts: 3 }],
+    owner_decisions: [{ text: "Drop the widget approach", ts: 3 }], session: { key: "s1", name: "main-dev", runtime: "claude-code" },
+    trajectory: "Started with a **widget**, dropped it at turn 2.", abandoned: ["Widget approach (turn 2)"], decisions: ["Owner: drop the widget approach"], verification: "pytest ran once at turn 1.",
+    model_status: "ready", verdict: "2 turns · 1 commits · 1 reverts · 1 owner decisions",
+  };
+  render(<AuthorCard data={data} />);
+  expect(screen.getByText("widget")).toHaveProperty("tagName", "STRONG");
+  expect(screen.getByRole("heading", { name: "Abandoned approaches" })).toBeInTheDocument();
+  expect(screen.getByText("Widget approach (turn 2)")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Record · main-dev · 2 turns · 1 commits · 1 pushes/ })).toBeInTheDocument();
+  expect(screen.getByText("git reset --hard HEAD~1")).toBeInTheDocument();
+  expect(screen.getByText("Undone")).toBeInTheDocument();
 });

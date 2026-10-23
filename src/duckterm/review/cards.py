@@ -21,7 +21,7 @@ from typing import Any
 
 from duckterm import checkpoint_settings, memory_provider
 from duckterm.core.session_api import APIError
-from duckterm.review import checks, git, store
+from duckterm.review import author, checks, git, store, symbols
 from duckterm.review.workspace import Target
 
 CARDS: list[tuple[str, int, str]] = [
@@ -36,11 +36,18 @@ CARDS: list[tuple[str, int, str]] = [
     ("release", 9, "Release impact"),
     ("questions", 10, "Open questions"),
 ]
-DIFF_ONLY = ["intent", "walkthrough", "risk", "behaviour", "release", "tests", "guardrails"]
-LATER = {
-    "blast": "Arrives with the symbol index (build step 5)",
-    "author": "Arrives with the session trajectory card (build step 5)",
-}
+DIFF_ONLY = [
+    "intent",
+    "walkthrough",
+    "risk",
+    "behaviour",
+    "release",
+    "tests",
+    "guardrails",
+    "blast",
+    "author",
+]
+LATER: dict[str, str] = {}
 FILE = "cards.json"
 CONCURRENCY = 2
 BUDGET = {"high": 12000, "read": 6000, "skim": 1500}
@@ -310,6 +317,31 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             }
         },
     },
+    "blast": {
+        "type": "object",
+        "required": ["consequence", "risks"],
+        "properties": {
+            "consequence": {"type": "string"},
+            "risks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["symbol", "note"],
+                    "properties": {"symbol": {"type": "string"}, "note": {"type": "string"}},
+                },
+            },
+        },
+    },
+    "author": {
+        "type": "object",
+        "required": ["trajectory", "abandoned", "decisions", "verification"],
+        "properties": {
+            "trajectory": {"type": "string"},
+            "abandoned": {"type": "array", "items": {"type": "string"}},
+            "decisions": {"type": "array", "items": {"type": "string"}},
+            "verification": {"type": "string"},
+        },
+    },
     "questions": {
         "type": "object",
         "required": ["items"],
@@ -385,6 +417,25 @@ TASKS: dict[str, str] = {
 def prompt_for(card: str, ctx: dict[str, Any], ready: dict[str, Any]) -> str:
     schema = json.dumps(SCHEMAS[card])
     tail = f"\n\nReply with one JSON object matching this schema and nothing else:\n{schema}"
+    if card == "blast":
+        table = "\n".join(
+            f"- {r['symbol']} ({r['change']}, {r['path']}:{r['line']}): "
+            f"{len(r['callers_in_diff'])} callers in diff, {r['outside_count']} outside, "
+            f"{'tested' if r['tested'] else 'no test references it'}"
+            for r in ctx["blast"]["symbols"][:40]
+        )
+        task = (
+            "# Changed symbols and their callers (from the symbol index)\n"
+            f"{table or '- (none)'}\n\n"
+            "# Task: Blast radius\n"
+            "In one paragraph, say what breaks elsewhere if the changed symbols above behave "
+            "differently, naming the callers outside the diff that matter most. Then list "
+            "risks: for each changed symbol whose outside callers could be affected, one "
+            "sentence. Only use symbols from the table."
+        )
+        return _preamble(ctx) + task + tail
+    if card == "author":
+        return author.prompt(ctx, ctx["author"], SCHEMAS[card])
     if card == "risk":
         high = [f["path"] for f in ctx["files"] if f["bucket"] == "high"]
         task = (
@@ -481,6 +532,9 @@ def finish(card: str, ctx: dict[str, Any], data: dict[str, Any]) -> dict[str, An
             rows.append(row)
         data["coverage"] = rows
         data["suggested"] = [t for t in data.get("suggested", []) if isinstance(t, dict)][:3]
+    elif card == "blast":
+        names = {r["symbol"] for r in ctx["blast"]["symbols"]}
+        data["risks"] = [r for r in data.get("risks", []) if r.get("symbol") in names]
     elif card == "guardrails":
         data["findings"] = [
             f
@@ -546,6 +600,15 @@ def guardrail_facts(ctx: dict[str, Any]) -> dict[str, Any]:
 
 
 def facts_verdict(card: str, data: dict[str, Any]) -> str:
+    if card == "blast":
+        return str(data.get("verdict") or "")
+    if card == "author":
+        bits = [f"{data['turns']} turns", f"{data['commits']} commits"]
+        if data["abandoned_commands"]:
+            bits.append(f"{len(data['abandoned_commands'])} reverts")
+        if data["owner_decisions"]:
+            bits.append(f"{len(data['owner_decisions'])} owner decisions")
+        return " · ".join(bits)
     if card == "tests":
         uncovered = sum(1 for r in data.get("coverage", []) if r.get("covered") == "no")
         bits = [f"{len(data['slop'])} slop"]
@@ -799,6 +862,7 @@ async def generate_all(
     row: dict[str, Any] | None,
     *,
     only: list[str] | None = None,
+    author_facts: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Write the diff-only cards for this head, deterministic ones first, then
     the open questions from whatever is ready."""
@@ -823,7 +887,19 @@ async def generate_all(
         "risk": signals,
         "tests": await asyncio.to_thread(tests_facts, target, ctx),
         "guardrails": guardrail_facts(ctx),
+        "blast": await asyncio.to_thread(
+            symbols.blast_radius,
+            target.repo,
+            target.slug,
+            target.base_sha,
+            target.head_sha,
+            ctx["files"],
+        ),
     }
+    ctx["blast"] = facts["blast"]
+    if author_facts is not None:
+        facts["author"] = author.trajectory(author_facts)
+        ctx["author"] = facts["author"]
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
     async def run(card: str) -> None:
@@ -846,6 +922,22 @@ async def generate_all(
             _write(target, target.head_sha, cards)
 
     model_cards = [c for c in wanted if c != "release"]
+    if "author" in model_cards and author_facts is None:
+        model_cards.remove("author")
+        cards["author"] = {
+            "status": "omitted",
+            "reason": f"No session on this computer owns {target.branch}",
+            "at": now,
+        }
+        _write(target, target.head_sha, cards)
+    if "blast" in model_cards and not facts["blast"]["symbols"]:
+        model_cards.remove("blast")
+        cards["blast"] = {
+            "status": "ready",
+            "data": {**facts["blast"], "consequence": "", "risks": [], "model_status": "ready"},
+            "at": now,
+        }
+        _write(target, target.head_sha, cards)
     if not any(f["bucket"] == "high" for f in ctx["files"]) and "risk" in model_cards:
         model_cards.remove("risk")
         cards["risk"] = {"status": "ready", "data": {**signals, "reasons": []}, "at": now}
