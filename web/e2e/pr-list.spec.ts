@@ -103,6 +103,14 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     await expect(strip.getByRole("tab")).toHaveCount(10);
     await expect(strip.getByRole("tab", { name: /Release impact/ })).toContainText("Low risk if", { timeout: 20_000 });
     await expect(strip.getByRole("tab", { name: /Intent vs diff/ })).toContainText("Omitted: Automatic preparation is disabled", { timeout: 30_000 });
+    // The fixture commits lack the problem / fix / how-tested subject: one mechanical finding.
+    await expect(strip.getByRole("tab", { name: /Guardrails/ })).toContainText("1 finding", { timeout: 30_000 });
+    await expect(strip.getByRole("tab", { name: /^6 Tests/ })).toContainText("0 slop · no coverage report");
+    await strip.getByRole("tab", { name: /Guardrails/ }).click();
+    const guard = workspace.getByRole("tabpanel", { name: "7 Guardrails" });
+    await expect(guard).toContainText("Slop-rule review omitted: Automatic preparation is disabled");
+    await expect(guard).toContainText("Commit messages: problem / fix / how-tested");
+    await expect(guard).toContainText("reindent and add notes");
     await strip.getByRole("tab", { name: /Release impact/ }).click();
     const release = workspace.getByRole("tabpanel", { name: "9 Release impact" });
     await expect(release).toContainText("No CI result yet; open a PR so checks run");

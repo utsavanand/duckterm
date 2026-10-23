@@ -21,7 +21,7 @@ from typing import Any
 
 from duckterm import checkpoint_settings, memory_provider
 from duckterm.core.session_api import APIError
-from duckterm.review import git, store
+from duckterm.review import checks, git, store
 from duckterm.review.workspace import Target
 
 CARDS: list[tuple[str, int, str]] = [
@@ -36,11 +36,9 @@ CARDS: list[tuple[str, int, str]] = [
     ("release", 9, "Release impact"),
     ("questions", 10, "Open questions"),
 ]
-DIFF_ONLY = ["intent", "walkthrough", "risk", "behaviour", "release"]
+DIFF_ONLY = ["intent", "walkthrough", "risk", "behaviour", "release", "tests", "guardrails"]
 LATER = {
     "blast": "Arrives with the symbol index (build step 5)",
-    "tests": "Arrives with the test and guardrail cards (build step 4)",
-    "guardrails": "Arrives with the test and guardrail cards (build step 4)",
     "author": "Arrives with the session trajectory card (build step 5)",
 }
 FILE = "cards.json"
@@ -145,6 +143,8 @@ def context(target: Target, payload: dict[str, Any]) -> dict[str, Any]:
         "files": payload["files"],
         "diff": excerpt(payload),
         "minutes": minutes(payload),
+        "rules": checks.rules_text(target.repo, target.head_ref),
+        "head_time": git.commit_time(target.repo, target.head_ref),
     }
 
 
@@ -259,6 +259,57 @@ SCHEMAS: dict[str, dict[str, Any]] = {
             }
         },
     },
+    "tests": {
+        "type": "object",
+        "required": ["coverage", "gaps", "suggested"],
+        "properties": {
+            "coverage": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["path", "tests", "covered", "note"],
+                    "properties": {
+                        "path": {"type": "string"},
+                        "tests": {"type": "array", "items": {"type": "string"}},
+                        "covered": {"type": "string", "enum": ["yes", "partial", "no"]},
+                        "note": {"type": "string"},
+                    },
+                },
+            },
+            "gaps": {"type": "array", "items": {"type": "string"}},
+            "suggested": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["name", "path", "body"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "path": {"type": "string"},
+                        "body": {"type": "string"},
+                    },
+                },
+            },
+        },
+    },
+    "guardrails": {
+        "type": "object",
+        "required": ["findings"],
+        "properties": {
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["rule", "status", "location", "note"],
+                    "properties": {
+                        "rule": {"type": "string"},
+                        "status": {"type": "string", "enum": ["pass", "finding", "n/a"]},
+                        "location": {"type": "string"},
+                        "note": {"type": "string"},
+                    },
+                },
+            }
+        },
+    },
     "questions": {
         "type": "object",
         "required": ["items"],
@@ -311,6 +362,15 @@ TASKS: dict[str, str] = {
         "process, nobody), regression_risk low/medium/high, and evidence paths from the "
         "diff. Pure refactors with no behaviour change produce an empty list."
     ),
+    "tests": (
+        "# Task: Tests\n"
+        "For each changed source file that is high or read risk, say which test files in this "
+        "diff exercise the change (paths from the list above only), whether it is covered yes, "
+        "partial or no, and a one-line note. Then list gaps: behaviour this change introduces "
+        "that no test in the diff checks. Then suggest at most three tests, each with a test "
+        "name, the test file path it belongs in, and a one-line body describing the assertion. "
+        "Do not claim coverage from tests that are not in the diff."
+    ),
     "questions": (
         "# Task: Open questions\n"
         "From the findings above, list what the reviewer still has to settle before merging. "
@@ -332,6 +392,20 @@ def prompt_for(card: str, ctx: dict[str, Any], ready: dict[str, Any]) -> str:
             f"These files are high risk by rule: {', '.join(high)}. For each, write one "
             "sentence saying what could go wrong in production if this hunk is wrong, "
             "specific to the code shown."
+        )
+        return _preamble(ctx) + task + tail
+    if card == "guardrails":
+        rules = "\n\n".join(f"## {path}\n{text}" for path, text in ctx["rules"].items())
+        task = (
+            "# Project rules at this head\n"
+            f"{rules or '(no AGENTS.md or .claude/rules found)'}\n\n"
+            "# Task: Guardrails\n"
+            "Judge this diff against the project rules above that need reading rather than "
+            "a regex: over-engineering, architecture, test, doc, error-handling and comment "
+            "slop, and any owner ruling in AGENTS.md the change touches. One row per rule you "
+            "checked: rule (short name), status pass, finding or n/a, location as path:line "
+            "from the diff or '' and a one-sentence note. Commit format, trailers, stdlib "
+            "imports and retired terms are checked mechanically elsewhere; skip them."
         )
         return _preamble(ctx) + task + tail
     if card == "questions":
@@ -395,7 +469,97 @@ def finish(card: str, ctx: dict[str, Any], data: dict[str, Any]) -> dict[str, An
         for item in data.get("items", []):
             item["paths"], _ = _known(item.get("paths", []), ctx)
         data["verdict"] = f"{len(data.get('items', []))} open"
+    elif card == "tests":
+        rows = []
+        for row in data.get("coverage", []):
+            if row.get("path") not in set(ctx["paths"]):
+                continue
+            row["tests"], _ = _known(row.get("tests", []), ctx)
+            if not row["tests"] and row.get("covered") == "yes":
+                row["covered"] = "no"
+                row["note"] = (row.get("note") or "") + " (no test in the diff names it)"
+            rows.append(row)
+        data["coverage"] = rows
+        data["suggested"] = [t for t in data.get("suggested", []) if isinstance(t, dict)][:3]
+    elif card == "guardrails":
+        data["findings"] = [
+            f
+            for f in data.get("findings", [])
+            if isinstance(f, dict) and f.get("status") in ("pass", "finding", "n/a")
+        ]
     return data
+
+
+def tests_facts(target: Target, ctx: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "slop": checks.test_slop(ctx["files"]),
+        "existing_tests": checks.existing_tests(target.repo, target.head_ref, ctx["paths"]),
+        "report": checks.coverage_report(target.repo, ctx["paths"]),
+        "gate": checks.gate_report(ctx.get("head_time")),
+        "coverage": [],
+        "gaps": [],
+        "suggested": [],
+    }
+
+
+def guardrail_facts(ctx: dict[str, Any]) -> dict[str, Any]:
+    commits_findings = checks.commit_messages(ctx["commits"])
+    rows: list[dict[str, Any]] = []
+
+    def row(
+        rule: str, items: list[dict[str, Any]], *, applies: bool = True, note: str = ""
+    ) -> None:
+        status = "finding" if items else "pass" if applies else "n/a"
+        rows.append({"rule": rule, "status": status, "items": items, "note": note})
+
+    row(
+        "Commit messages: problem / fix / how-tested",
+        [f for f in commits_findings if f["kind"] == "format"],
+        applies=bool(ctx["commits"]),
+        note="every subject has the three parts" if ctx["commits"] else "no commits",
+    )
+    row(
+        "No Co-Authored-By or generated-with trailers",
+        [f for f in commits_findings if f["kind"] == "trailer"],
+        applies=bool(ctx["commits"]),
+        note="no trailers",
+    )
+    row("Server stays stdlib-only", checks.stdlib_imports(ctx["files"]), note="no new dependency")
+    row("Retired terms never in UI or docs", checks.retired_terms(ctx["files"]), note="none added")
+    habits = checks.shell_habits(ctx["files"])
+    row(
+        "Gate never piped through grep, tail or head",
+        [h for h in habits if h["kind"] == "piped gate"],
+        note="no piped gate",
+    )
+    row(
+        "Never git add -A",
+        [h for h in habits if h["kind"] == "git add -A"],
+        note="no whole-tree staging",
+    )
+    row(
+        "Docs ride with code",
+        [{"text": "every changed file is documentation"}] if checks.docs_only(ctx["paths"]) else [],
+        note="code and docs change together" if ctx["paths"] else "no files",
+    )
+    return {"checks": rows, "findings": [], "rule_files": sorted(ctx["rules"])}
+
+
+def facts_verdict(card: str, data: dict[str, Any]) -> str:
+    if card == "tests":
+        uncovered = sum(1 for r in data.get("coverage", []) if r.get("covered") == "no")
+        bits = [f"{len(data['slop'])} slop"]
+        if data.get("model_status") == "ready":
+            bits.append(f"{uncovered} uncovered")
+        if data.get("report") is None:
+            bits.append("no coverage report")
+        return " · ".join(bits)
+    if card == "guardrails":
+        count = sum(1 for c in data["checks"] if c["status"] == "finding") + sum(
+            1 for f in data.get("findings", []) if f.get("status") == "finding"
+        )
+        return f"{count} findings" if count != 1 else "1 finding"
+    return str(data.get("verdict", ""))
 
 
 def _intent_verdict(data: dict[str, Any]) -> str:
@@ -655,6 +819,11 @@ async def generate_all(
     cards["questions"] = {"status": "pending", "at": now}
     _write(target, target.head_sha, cards)
     signals = await asyncio.to_thread(risk_signals, target, ctx)
+    facts: dict[str, dict[str, Any]] = {
+        "risk": signals,
+        "tests": await asyncio.to_thread(tests_facts, target, ctx),
+        "guardrails": guardrail_facts(ctx),
+    }
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
     async def run(card: str) -> None:
@@ -662,10 +831,17 @@ async def generate_all(
             try:
                 data = await generate_card(card, ctx, {})
             except APIError as exc:
-                cards[card] = {"status": "omitted", "reason": str(exc), "at": int(time.time())}
+                if card in facts:
+                    # The deterministic half still stands; say what is missing.
+                    data = {**facts[card], "model_status": "omitted", "model_reason": str(exc)}
+                    data["verdict"] = facts_verdict(card, data)
+                    cards[card] = {"status": "ready", "data": data, "at": int(time.time())}
+                else:
+                    cards[card] = {"status": "omitted", "reason": str(exc), "at": int(time.time())}
             else:
-                if card == "risk":
-                    data = {**signals, "reasons": data.get("reasons", [])}
+                if card in facts:
+                    data = {**facts[card], **data, "model_status": "ready"}
+                    data["verdict"] = facts_verdict(card, data)
                 cards[card] = {"status": "ready", "data": data, "at": int(time.time())}
             _write(target, target.head_sha, cards)
 

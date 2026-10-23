@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ReviewCard, type ReviewCards, type ReviewHeader } from "../api";
-import { BehaviourCard, IntentCard, QuestionsCard, ReleaseCard, RiskCard, WalkthroughCard, type CardActions } from "./CardBodies";
-import { severity, verdict, type BehaviourData, type IntentData, type QuestionsData, type ReleaseData, type RiskData, type WalkthroughData } from "./cardModel";
+import { BehaviourCard, GuardrailsCard, IntentCard, QuestionsCard, ReleaseCard, RiskCard, TestsCard, WalkthroughCard, type CardActions } from "./CardBodies";
+import { severity, verdict, type BehaviourData, type GuardrailsData, type IntentData, type QuestionsData, type ReleaseData, type RiskData, type TestsData, type WalkthroughData } from "./cardModel";
 import { shortSha } from "./diffModel";
 
 const POLL_MS = 3000;
@@ -85,6 +85,8 @@ function CardBody({ card, actions }: { card: ReviewCard; actions: CardActions })
     case "risk": return <RiskCard data={data as RiskData} actions={actions} />;
     case "behaviour": return <BehaviourCard data={data as BehaviourData} actions={actions} />;
     case "release": return <ReleaseCard data={data as ReleaseData} actions={actions} />;
+    case "tests": return <TestsCard data={data as TestsData} actions={actions} />;
+    case "guardrails": return <GuardrailsCard data={data as GuardrailsData} actions={actions} />;
     case "questions": return <QuestionsCard card={card} data={data as QuestionsData} actions={actions} />;
     default: return <pre className="rd-card-raw">{JSON.stringify(card.data, null, 1)}</pre>;
   }

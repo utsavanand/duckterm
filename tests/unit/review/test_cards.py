@@ -53,6 +53,8 @@ def payload_for(target: workspace.Target) -> dict[str, Any]:
 
 
 REPLIES: dict[str, dict[str, Any]] = {
+    "tests": {"coverage": [], "gaps": [], "suggested": []},
+    "guardrails": {"findings": []},
     "intent": {
         "summary": "Adds table a.\n\nBumps the route.",
         "claims": [
@@ -132,6 +134,8 @@ def fake_generate(  # type: ignore[no-untyped-def]
             ("walkthrough", "# Task: Walkthrough"),
             ("behaviour", "# Task: Behaviour changes"),
             ("risk", "# Task: Risk map"),
+            ("tests", "# Task: Tests"),
+            ("guardrails", "# Task: Guardrails"),
         ):
             if marker in prompt:
                 card = name
@@ -342,3 +346,90 @@ def test_draft_review_groups_open_questions_by_kind(
     assert saved["cards"]["questions"]["sent"] == [
         {**saved["cards"]["questions"]["sent"][0], "session": "s1", "message_id": "m1"}
     ]
+
+
+def test_planted_trailer_and_truthy_matcher_are_caught(
+    target: workspace.Target, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The spec's done-when for build step 4."""
+    repo = Path(target.repo)
+    run(repo, "checkout", "-q", "duckterm/feature")
+    write(
+        repo,
+        "web/src/review/Thing.test.tsx",
+        'it("renders", () => {\n  expect(render()).toBeTruthy();\n});\n',
+    )
+    write(repo, "src/duckterm/review/thing.py", "import requests\n\nX = 1\n")
+    run(repo, "add", "-A")
+    run(
+        repo,
+        "commit",
+        "-q",
+        "-m",
+        "Add thing\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
+    )
+    run(repo, "checkout", "-q", "main")
+    lists._cache.clear()
+    moved = workspace.resolve(target.repo, "duckterm/feature")
+    monkeypatch.setattr(cards, "provider", lambda: None)
+    result = asyncio.run(cards.generate_all(moved, payload_for(moved), None))
+    by_id = {c["id"]: c for c in result["cards"]}
+    tests = by_id["tests"]
+    assert tests["status"] == "ready"
+    assert tests["data"]["model_status"] == "omitted"
+    assert [(f["path"], f["kind"]) for f in tests["data"]["slop"]] == [
+        ("web/src/review/Thing.test.tsx", "toBeTruthy")
+    ]
+    assert tests["data"]["verdict"] == "1 slop · no coverage report"
+    guard = by_id["guardrails"]["data"]
+    rows = {c["rule"]: c for c in guard["checks"]}
+    assert rows["No Co-Authored-By or generated-with trailers"]["status"] == "finding"
+    assert rows["No Co-Authored-By or generated-with trailers"]["items"][0]["text"].startswith(
+        "Co-Authored-By"
+    )
+    assert rows["Commit messages: problem / fix / how-tested"]["status"] == "finding"
+    assert rows["Server stays stdlib-only"]["items"][0]["text"] == "import requests"
+    assert rows["Docs ride with code"]["status"] == "pass"
+    assert guard["verdict"] == "3 findings"
+    assert guard["model_status"] == "omitted"
+
+
+def test_tests_card_merges_model_coverage_with_facts(
+    target: workspace.Target, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    REPLIES["tests"] = {
+        "coverage": [
+            {"path": "src/duckterm/server.py", "tests": [], "covered": "yes", "note": "n"},
+            {"path": "ghost.py", "tests": [], "covered": "no", "note": ""},
+        ],
+        "gaps": ["No test for the route change"],
+        "suggested": [{"name": "test_route", "path": "tests/unit/test_server.py", "body": "x"}],
+    }
+    REPLIES["guardrails"] = {
+        "findings": [
+            {"rule": "Comment slop", "status": "pass", "location": "", "note": "none"},
+            {
+                "rule": "Over-engineering",
+                "status": "finding",
+                "location": "src/duckterm/server.py:1",
+                "note": "wrapper",
+            },
+            {"rule": "bad", "status": "maybe", "location": "", "note": ""},
+        ]
+    }
+    monkeypatch.setattr(cards.memory_provider, "generate", fake_generate([]))
+    result = asyncio.run(cards.generate_all(target, payload_for(target), None))
+    by_id = {c["id"]: c for c in result["cards"]}
+    tests = by_id["tests"]["data"]
+    assert tests["model_status"] == "ready"
+    assert [(r["path"], r["covered"]) for r in tests["coverage"]] == [
+        ("src/duckterm/server.py", "no")
+    ]
+    assert tests["verdict"] == "0 slop · 1 uncovered · no coverage report"
+    assert tests["existing_tests"] == {
+        "src/duckterm/persistence/db.py": [],
+        "src/duckterm/server.py": [],
+    }
+    guard = by_id["guardrails"]["data"]
+    assert [f["rule"] for f in guard["findings"]] == ["Comment slop", "Over-engineering"]
+    assert guard["verdict"] == "2 findings"  # the model finding plus the fixture commit subject

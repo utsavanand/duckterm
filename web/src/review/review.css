@@ -226,3 +226,4 @@
 .rd-review-dialog { display: flex; flex-direction: column; gap: 10px; min-width: min(520px, 80vw); }
 .rd-review-dialog textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 0.8125rem; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); resize: vertical; }
 .rd-review-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.rd-card-test { display: inline-block; margin: 0 6px 2px 0; font-size: 0.6875rem; }
