@@ -1,7 +1,10 @@
 # PR review platform — review an agent's pull request without leaving DuckTerm
 
-Status: owner-requested 2026-10-22. Product spec with build plan, after two
-rounds of owner review on the interactive mock. Nothing here is built.
+Status: owner-requested 2026-10-22; built 2026-10-22 to 2026-10-23 on branch
+`duckterm/14bdde75-pr-review` as six commits, one per build-plan PR, after the
+owner asked for the whole plan to be built in this session. Section 16 lists
+where the build departs from the text below. Not yet shipped: pushing and the
+release go through the owner and release-dev.
 
 Owner, 2026-10-22:
 
@@ -357,3 +360,36 @@ treemap beyond token colours.
 3. Default polling at 60 s while visible: acceptable against the GitHub rate
    limit for a fleet of 12 sessions in one repository (one list call plus one
    check-runs call per open PR, so about 15 requests a minute)?
+
+## 16. As built (2026-10-23)
+
+Departures from the sections above, each with the reason:
+
+- Routes live under `/review/:repo/:ref/...` for everything, including
+  `releases`, `archmap/:tag` and `compare?older=&newer=`, so one resolver
+  handles the repository path check, the branch or PR number and the base.
+  There is no `/repos/:repo/...` family.
+- Card 9 (Release impact) is fully deterministic: path rules for schema,
+  installer and security paths, the merge-tree conflict fact, the CI check
+  runs, and version and README wheel-link detection. No model call.
+- Cards 3, 4, 6, 7 and 8 keep their mechanical half and stay `ready` when the
+  model is unavailable; the card says which part is missing and why. Cards 1,
+  2, 5 and 10 are omitted with the reason.
+- Progress is polled (3 s while a card is pending) rather than pushed over the
+  event stream. Generation starts on the first open of the Review tab and
+  again when the head moves; Regenerate restarts it by hand.
+- "Since my last look" defaults to the previous head the owner opened the diff
+  at; the server records each head it serves. The client can pass `since`.
+- The chat fetches at most 5 files of 20 000 characters each when the model
+  asks for them, in one extra round.
+- History writes module maps for the twelve newest tags on first open and for
+  any other tag when it is selected, instead of every tag, to bound model
+  calls on a repository with 170 releases.
+- GitHub data is cached 60 s per repository; Refresh bypasses the cache. A PR
+  not claimed by a session appears in the folder list when open or when
+  closed within 14 days.
+- Approve from DuckTerm posts a plain GitHub approval (open question 1 in
+  section 15 stands). Chat stays in the workspace only (question 2).
+- Review state is JSON under `~/.duckterm/review/<repo>/<ref>/`: viewed.json,
+  cards.json, chat.json, plus `symbols/<sha>.json` and `archmap/<tag>.json`
+  per repository. Writes go through one lock with unique temp files.
