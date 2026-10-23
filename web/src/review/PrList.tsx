@@ -113,7 +113,7 @@ function Row({ row, folder, onOpenSession, onReview }: { row: PrRow; folder: boo
     <td className="rd-prs-size">{row.size ? <><span className="add">+{row.size.additions}</span> <span className="del">−{row.size.deletions}</span><small>{row.size.files} {row.size.files === 1 ? "file" : "files"}{row.ahead ? ` · ${row.ahead} ${row.ahead === 1 ? "commit" : "commits"}` : ""}</small></> : "—"}</td>
     <td className="rd-prs-when">{ago(row.updated_at)}</td>
     <td>
-      {pr && onReview && <button className="rd-btn rd-btn-primary rd-btn-sm" onClick={() => onReview(row)}>Review</button>}
+      {onReview && <button className="rd-btn rd-btn-primary rd-btn-sm" onClick={() => onReview(row)}>Review</button>}
       {pr && !onReview && <a className="rd-prs-link primary" href={pr.url} target="_blank" rel="noreferrer">Review on GitHub</a>}
       {!pr && row.compare_url && <a className="rd-prs-link" href={row.compare_url} target="_blank" rel="noreferrer">Open PR…</a>}
     </td>

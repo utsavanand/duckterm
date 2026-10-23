@@ -47,3 +47,100 @@
   .rd-prs-table tr.needs-you td:first-child { box-shadow: none; padding-left: 0; }
 }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ── review workspace ── */
+.rd-review { display: flex; flex-direction: column; height: 100%; min-height: 0; container-type: inline-size; container-name: review; }
+.rd-review-head { display: flex; align-items: flex-start; gap: 16px; padding: 14px 22px 10px; border-bottom: 1px solid var(--border); flex: none; }
+.rd-review-back { border: 0; background: transparent; color: var(--text-soft); cursor: pointer; font: inherit; font-size: 0.75rem; padding: 4px 0; white-space: nowrap; }
+.rd-review-back:hover { color: var(--text); }
+.rd-review-title { flex: 1; min-width: 0; }
+.rd-review-title h2 { margin: 0; font-size: 0.9375rem; font-weight: 600; overflow-wrap: anywhere; }
+.rd-review-title p { margin: 4px 0 0; font-size: 0.75rem; color: var(--muted); }
+.rd-review-title code { font-size: 0.6875rem; background: var(--bg-soft); padding: 1px 5px; border-radius: 4px; }
+.rd-review .add { color: var(--brand-green-strong); }
+.rd-review .del { color: var(--danger); }
+.rd-review-actions { display: flex; gap: 8px; align-items: center; flex: none; }
+.rd-review-tabs { display: flex; gap: 4px; padding: 6px 22px; border-bottom: 1px solid var(--border); flex: none; }
+.rd-review-tabs button { border: 0; background: transparent; color: var(--text-soft); padding: 5px 12px; border-radius: 6px; cursor: pointer; font: inherit; font-size: 0.75rem; }
+.rd-review-tabs button[aria-selected=true] { color: var(--brand-green-strong); background: color-mix(in srgb, var(--brand-green) 16%, transparent); }
+.rd-review-body { display: flex; flex: 1; min-height: 0; }
+.rd-review-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.rd-review-panel { flex: 1; min-height: 0; overflow: auto; }
+.rd-review-panel[hidden] { display: none; }
+.rd-review-chat { flex: none; width: 360px; border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.rd-review-chat.collapsed { width: 34px; }
+.rd-review-chat-tab { flex: 1; border: 0; background: transparent; color: var(--text-soft); cursor: pointer; writing-mode: vertical-rl; font: inherit; font-size: 0.75rem; padding: 12px 0; }
+.rd-review-chat-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 0.8125rem; }
+.rd-review-chat-head span { color: var(--muted); font-size: 0.6875rem; flex: 1; }
+.rd-review-chat-head button { border: 0; background: transparent; color: var(--text-soft); cursor: pointer; font-size: 1rem; }
+.rd-review-chat-body { flex: 1; overflow: auto; padding: 0 14px; }
+.rd-review-quote { margin: 0 0 12px; padding: 8px 10px; border-left: 3px solid var(--brand-green); background: var(--bg-soft); font-size: 0.75rem; display: flex; gap: 8px; align-items: flex-start; }
+.rd-review-quote code { flex: 1; overflow-wrap: anywhere; }
+.rd-review-quote button { border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.rd-review-chat-compose { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--border); align-items: flex-end; }
+.rd-review-chat-compose textarea { flex: 1; resize: none; font: inherit; font-size: 0.8125rem; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); }
+/* Below 1000px of workspace width (not viewport: the folder view's details
+   panel and the context panel take their share) the chat stacks under the panes. */
+@container review (max-width: 999px) {
+  .rd-review-body { flex-direction: column; }
+  .rd-review-chat { width: auto; border-left: 0; border-top: 1px solid var(--border); max-height: 40%; }
+  .rd-review-chat.collapsed { width: auto; max-height: 34px; }
+  .rd-review-chat-tab { writing-mode: horizontal-tb; }
+}
+
+/* ── diff tab ── */
+.rd-diff { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.rd-diff-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 8px 22px; border-bottom: 1px solid var(--border); font-size: 0.75rem; color: var(--text-soft); flex: none; }
+.rd-diff-toolbar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.rd-diff-range { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.6875rem; color: var(--muted); }
+.rd-diff-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.rd-diff-seg button { border: 0; background: transparent; color: var(--text-soft); padding: 3px 9px; cursor: pointer; font: inherit; font-size: 0.6875rem; }
+.rd-diff-seg button[aria-pressed=true] { background: color-mix(in srgb, var(--brand-green) 16%, transparent); color: var(--brand-green-strong); }
+.rd-diff-progress { margin-left: auto; font-variant-numeric: tabular-nums; }
+.rd-diff-body { display: flex; flex: 1; min-height: 0; }
+.rd-diff-files { flex: none; width: clamp(220px, 30%, 300px); overflow: auto; border-right: 1px solid var(--border); padding: 8px 0 24px; }
+.rd-diff-group h3 { margin: 10px 14px 4px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.rd-diff-group h3 span { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.rd-diff-group.is-high h3 { color: var(--danger); }
+.rd-diff-group.is-read h3 { color: var(--amber-text); }
+.rd-diff-group.is-skim h3 { color: var(--muted); }
+.rd-diff-group ul { list-style: none; margin: 0; padding: 0; }
+.rd-diff-group li { display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 14px; font-size: 0.75rem; }
+.rd-diff-group li.selected { background: color-mix(in srgb, var(--brand-green) 12%, transparent); }
+.rd-diff-group li:hover { background: var(--bg-soft); }
+.rd-diff-file { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: inherit; font-size: 0.75rem; padding: 2px 0; display: flex; align-items: baseline; gap: 4px; overflow: hidden; }
+.rd-diff-file .dir { color: var(--muted); font-size: 0.6875rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; flex: 0 1 auto; min-width: 0; }
+.rd-diff-file .name { white-space: nowrap; }
+.rd-diff-stale { font-size: 0.625rem; color: var(--amber-text); background: var(--amber-chip); border-radius: 4px; padding: 0 4px; }
+.rd-diff-counts { font-size: 0.6875rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rd-diff-move { width: 18px; opacity: 0; border: 0; background: transparent; color: var(--text-soft); font-size: 0.6875rem; cursor: pointer; }
+.rd-diff-group li:hover .rd-diff-move, .rd-diff-move:focus { opacity: 1; width: auto; }
+.rd-diff-view { flex: 1; min-width: 0; overflow: auto; padding: 0 0 48px; }
+.rd-diff-file-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 18px 8px; position: sticky; top: 0; background: var(--card); z-index: 1; border-bottom: 1px solid var(--border); }
+.rd-diff-file-title strong { font-size: 0.8125rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.rd-diff-file-title small { display: block; color: var(--muted); font-size: 0.6875rem; margin-top: 2px; }
+.rd-diff-file-actions { display: flex; gap: 6px; flex: none; }
+.rd-diff-why { margin: 10px 18px; padding: 8px 12px; border-radius: 8px; font-size: 0.75rem; background: var(--bg-soft); border-left: 3px solid var(--border-strong); }
+.rd-diff-why.is-high { border-left-color: var(--danger); }
+.rd-diff-why.is-read { border-left-color: var(--wait); }
+.rd-diff-why.is-skim { border-left-color: var(--muted); }
+.rd-hunk { margin: 0 18px 14px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.rd-hunk-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 10px; background: var(--bg-soft); font-size: 0.6875rem; color: var(--muted); }
+.rd-hunk-head code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.rd-hunk-ask { border: 0; background: transparent; color: var(--brand-green-strong); cursor: pointer; font: inherit; font-size: 0.6875rem; white-space: nowrap; }
+.rd-hunk-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; line-height: 1.5; }
+.rd-hunk-table td { padding: 0 8px; vertical-align: top; }
+.rd-hunk-table td.num { width: 1%; min-width: 2.5em; text-align: right; color: var(--muted); user-select: none; font-size: 0.6875rem; }
+.rd-hunk-table td.sign { width: 1%; padding: 0 2px; color: var(--muted); user-select: none; }
+.rd-hunk-table td.text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.rd-hunk-table td.text code { font: inherit; background: transparent; padding: 0; }
+.rd-hunk-table tr.k\+ td, .rd-hunk-table td.k\+ { background: color-mix(in srgb, var(--brand-green) 14%, transparent); }
+.rd-hunk-table tr.k- td, .rd-hunk-table td.k- { background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.rd-hunk-table td.empty { background: var(--bg-soft); }
+.rd-hunk-note { color: var(--muted); font-style: italic; }
+/* Narrow workspace: the file list sits above the viewer instead of beside it. */
+@container review (max-width: 759px) {
+  .rd-diff-body { flex-direction: column; }
+  .rd-diff-files { width: auto; max-height: 200px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .rd-diff-file-head { position: static; }
+}

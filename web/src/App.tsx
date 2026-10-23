@@ -38,6 +38,8 @@ import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
 import { SessionFilesView } from "./SessionFilesView";
 import { PrList } from "./review/PrList";
+import { ReviewWorkspace } from "./review/ReviewWorkspace";
+import type { PrRow } from "./api";
 import { InboxView } from "./InboxView";
 import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
@@ -158,6 +160,9 @@ function Dashboard() {
     "terminal",
   );
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
+  // The PR open in the review workspace (PRs view); null shows the list.
+  const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
+  const openReview = (row: PrRow) => setReview({ repo: row.repo, ref: row.pr ? String(row.pr.number) : row.branch, from: row.session?.name });
   const [inboxFolder, setInboxFolder] = useState<string | null>(null);
   // The folder whose terminals are tiled fullscreen; null = grid closed.
   const [gridFolder, setGridFolder] = useState<string | null>(null);
@@ -512,8 +517,9 @@ function Dashboard() {
             )}
             {view === "prs" && (
               <div className="rd-messages-wrap rd-prs-wrap">
-                {selected ? <PrList key={selected.key} scope={{ kind: "session", key: selected.key, name: selected.label }} active={!towerOpen && selectedFolder === null} />
-                  : <p className="rd-panel-empty">Select a session to see its pull requests.</p>}
+                {selected && review && <ReviewWorkspace key={`${review.repo}:${review.ref}`} repo={review.repo} target={review.ref} from={review.from} onBack={() => setReview(null)} />}
+                {selected && !review && <PrList key={selected.key} scope={{ kind: "session", key: selected.key, name: selected.label }} active={!towerOpen && selectedFolder === null} onReview={openReview} />}
+                {!selected && <p className="rd-panel-empty">Select a session to see its pull requests.</p>}
               </div>
             )}
             {/* Keep recent views warm. Older browser views reconnect on demand;

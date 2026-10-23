@@ -373,6 +373,19 @@ export interface PrRow {
 export interface PrRepo { path: string; name: string; github: string | null; default_branch: string; connected: boolean; error: string | null; fetched_at: number }
 export interface PrListResult { rows: PrRow[]; repos: PrRepo[] }
 
+// Review workspace (spec §4 and §9): header and diff for one PR number or branch.
+export type Bucket = "high" | "read" | "skim";
+export interface DiffLine { kind: " " | "+" | "-" | "\\"; text: string }
+export interface DiffHunk { header: string; old_start: number; old_lines: number; new_start: number; new_lines: number; lines: DiffLine[] }
+export interface DiffFile {
+  path: string; old_path: string | null; status: "added" | "deleted" | "modified" | "renamed" | "copied"; binary: boolean;
+  additions: number; deletions: number; hunks: DiffHunk[]; truncated: boolean; total_lines: number;
+  bucket: Bucket; bucket_rule: Bucket; rules: { bucket: Bucket; id: string; reason: string }[];
+  hash: string; viewed: boolean; stale: boolean; changed_since: boolean | null; whitespace_only: boolean;
+}
+export interface ReviewDiff { base_sha: string; head_sha: string; since: string | null; whitespace: boolean; files: DiffFile[]; counts: { high: number; read: number; skim: number; viewed: number; changed_since: number } }
+export interface ReviewHeader { repo: string; repo_name: string; github: string | null; ref: string; branch: string; base: string; base_sha: string; head_sha: string; commits: number; pr: PrSummary | null; row: PrRow | null; previous_head: string | null }
+
 async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
   const response = await fetch(path, { method, cache: "no-store", headers: authHeaders() });
   const result = await response.json();
@@ -383,6 +396,18 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
 export const api = {
   folderStats: (folder: string) => artifactRequest<FolderStats>(`/folders/${encodeURIComponent(folder)}/stats`),
   sessionPrs: (key: string, refresh = false) => get<PrListResult>(`/sessions/${encodeURIComponent(key)}/prs${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),
+  reviewHeader: (repo: string, ref: string, refresh = false) => get<ReviewHeader>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),
+  reviewDiff: (repo: string, ref: string, options: { whitespace: boolean; since?: string | null }) => {
+    const query = new URLSearchParams({ w: options.whitespace ? "1" : "0" });
+    if (options.since) query.set("since", options.since);
+    return get<ReviewDiff>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/diff?${query}`, undefined, { authed: true });
+  },
+  markViewed: async (repo: string, ref: string, body: { path: string; hash: string; viewed?: boolean; bucket?: Bucket | "" }) => {
+    const res = await fetch(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/viewed`, { method: "PUT", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error ?? "Could not save viewed state");
+    return data as { hash?: string; viewed?: boolean; bucket?: Bucket };
+  },
   folderPrs: (folder: string, refresh = false) => get<PrListResult>(`/folders/${encodeURIComponent(folder)}/prs${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),
   updateArtifact: async (key: string, id: string, patch: { kind?: ArtifactKind; kept?: boolean }): Promise<{ artifact: Artifact }> => {
     const response = await fetch(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, { method: "PATCH", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(patch) });

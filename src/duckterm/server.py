@@ -16,8 +16,10 @@
     POST /sessions/:key/checkpoint   record what was done (prompts/files/tools/git + summary)
     GET  /sessions/:key/checkpoints   list checkpoint records
     POST /sessions/:key/spotlight     apply worktree changes onto the main checkout
-    GET  /sessions/:key/diff          git diff of the session's worktree
     GET  /sessions/:key/prs           pull requests from the session's branch
+    GET  /review/:repo/:ref           review workspace header (PR number or branch)
+    GET  /review/:repo/:ref/diff      base-branch diff with risk buckets and viewed state
+    PUT  /review/:repo/:ref/viewed    mark a file viewed or move it to another bucket
     GET  /folders/:path/prs           pull requests across the folder's sessions
     GET  /sessions/:key/output        SSE: live agent output (PTY) lines
     GET  /sessions/:key/terminal      WebSocket: raw PTY bytes <-> keystrokes/resize (xterm.js)
@@ -41,7 +43,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import sys
 import tempfile
 import time
@@ -108,6 +109,7 @@ from duckterm.persistence.saved_state import (
     transaction,
 )
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
+from duckterm.review.git import ReviewGitError as GitErrorReview
 from duckterm.runtimes import native_history, opencode_options
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
 from duckterm.runtimes.native_history import MessageSource, NativeSnapshot
@@ -244,7 +246,6 @@ _ROUTES: list[Route] = [
     Route("GET", "/tasks", lambda s, r, w, h, b, seg: s._folder_tasks(w, h)),
     Route("GET", "/update/status", lambda s, r, w, h, b, seg: s._update_status(w, h)),
     Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
-    Route("GET", "", lambda s, r, w, h, b, seg: s._diff(w, seg), **_mid("/sessions/", "/diff")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
           **_mid("/sessions/", "/events")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._session_enroll(w, seg, b),
@@ -754,6 +755,20 @@ class Server:
         if folder_message and method == ("GET" if folder_message[2] == "recipients" else "POST"):
             await self._folder_message(
                 writer, headers, urllib.parse.unquote(folder_message[1]), folder_message[2], body
+            )
+            return
+        review_url = urllib.parse.urlsplit(path)
+        review_match = re.fullmatch(r"/review/([^/]+)/([^/]+)(?:/(diff|viewed))?", review_url.path)
+        if review_match:
+            await self._review(
+                writer,
+                headers,
+                method,
+                urllib.parse.unquote(review_match[1]),
+                urllib.parse.unquote(review_match[2]),
+                review_match[3] or "",
+                urllib.parse.parse_qs(review_url.query),
+                body,
             )
             return
         prs_url = urllib.parse.urlsplit(path)
@@ -1495,6 +1510,56 @@ class Server:
         else:
             rows = self.history.artifacts.list_folder(folder, 501, include_removed=True)
             await _write_json(writer, 200, {"artifacts": rows[:500], "truncated": len(rows) > 500})
+
+    async def _review(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        method: str,
+        repo: str,
+        ref: str,
+        part: str,
+        query: dict[str, list[str]],
+        body: bytes,
+    ) -> None:
+        """Review workspace routes (docs/pr-review-platform-spec.md §9)."""
+        from duckterm.review import workspace
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        if not self._agents_md_dir_allowed(repo):
+            await _write_json(writer, 403, {"error": "repository outside the allowed roots"})
+            return
+        expected = {"": "GET", "diff": "GET", "viewed": "PUT"}
+        if expected.get(part) != method:
+            await _write_json(writer, 405, {"error": "method not allowed"})
+            return
+        flag = query.get("refresh", ["0"])[0] in ("1", "true")
+        try:
+            target = await asyncio.to_thread(workspace.resolve, repo, ref, refresh=flag)
+            if part == "":
+                result = await asyncio.to_thread(workspace.header, target)
+            elif part == "diff":
+                result = await asyncio.to_thread(
+                    workspace.diff_payload,
+                    target,
+                    since=query.get("since", [None])[0],
+                    whitespace=query.get("w", ["1"])[0] != "0",
+                )
+            else:
+                try:
+                    payload = json.loads(body or b"{}")
+                except json.JSONDecodeError:
+                    raise workspace.ReviewError(400, "invalid JSON body") from None
+                result = await asyncio.to_thread(workspace.mark_viewed, target, payload)
+        except workspace.ReviewError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except GitErrorReview as exc:
+            await _write_json(writer, 500, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
 
     async def _prs(
         self,
@@ -5177,24 +5242,6 @@ class Server:
             await _write_json(writer, 400, {"error": str(e)})
             return
         await _write_json(writer, 200, {"synced_files": files})
-
-    async def _diff(self, writer: asyncio.StreamWriter, session_key: str) -> None:
-        worktree = self._worktree_of(session_key)
-        if not worktree:
-            await _write_json(writer, 200, {"diff": ""})
-            return
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["git", "-C", worktree, "diff", "HEAD"],
-            capture_output=True,
-            text=True,
-        )
-        # A nonzero exit means the diff failed (bad repo, detached state). Don't
-        # report it as an empty diff — that reads as "no changes" in the UI.
-        if result.returncode != 0:
-            await _write_json(writer, 500, {"error": result.stderr.strip() or "git diff failed"})
-            return
-        await _write_json(writer, 200, {"diff": result.stdout})
 
     async def _input(self, writer: asyncio.StreamWriter, session_key: str, body: bytes) -> None:
         supervisor = self.orchestrator.get(session_key)

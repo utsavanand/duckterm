@@ -60,9 +60,41 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     const folderRow = folderList.getByRole("row").filter({ hasText: "duckterm/e2e-review" });
     await expect(folderRow.locator(".rd-pr-status")).toHaveText("Pushed, no PR", { timeout: 20_000 });
     await page.screenshot({ path: "/tmp/duckterm-pr-list-folder.png" });
-    // The From column opens the authoring session.
-    await folderRow.getByRole("button", { name: "pr-list-agent" }).click();
-    await expect(page.getByRole("region", { name: "Pull requests" })).toBeVisible();
+    // Review opens the workspace: the diff against main, bucketed, with viewed state.
+    await folderRow.getByRole("button", { name: "Review" }).click();
+    const workspace = page.getByRole("region", { name: "Review workspace" });
+    await expect(workspace.getByRole("heading", { name: "duckterm/e2e-review" })).toBeVisible();
+    const changed = workspace.getByRole("navigation", { name: "Changed files" });
+    await expect(changed.getByRole("heading", { level: 3 })).toHaveText(["Worth a read 1"]);
+    await expect(workspace.getByRole("article", { name: "feature.py" })).toContainText("Worth a read · Source file");
+    await expect(workspace.locator(".rd-hunk-table")).toContainText("def feature():");
+    await workspace.getByRole("button", { name: "Mark viewed" }).click();
+    await expect(workspace.getByText("1/1 viewed")).toBeVisible();
+    await page.screenshot({ path: "/tmp/duckterm-pr-review-diff.png" });
+
+    // A push that only reindents feature.py and adds a doc keeps feature.py
+    // viewed and flags what changed since this look.
+    writeFileSync(join(work, "feature.py"), "def feature():\n\treturn 1\n");
+    writeFileSync(join(work, "NOTES.md"), "# Notes\n");
+    git(work, "add", "feature.py", "NOTES.md");
+    git(work, "commit", "-q", "-m", "reindent and add notes");
+    git(work, "push", "-q", "origin", "duckterm/e2e-review");
+    await workspace.getByRole("button", { name: "← Pull requests" }).click();
+    await folderList.getByRole("button", { name: "Refresh" }).click();
+    await expect(folderList.getByRole("row").filter({ hasText: "duckterm/e2e-review" }).locator(".rd-prs-size")).toContainText("2 files", { timeout: 20_000 });
+    await folderList.getByRole("row").filter({ hasText: "duckterm/e2e-review" }).getByRole("button", { name: "Review" }).click();
+    await expect(changed.getByRole("heading", { level: 3 })).toHaveText(["Worth a read 1", "Safe to skim 1"]);
+    await expect(changed.getByRole("checkbox", { name: "Viewed feature.py" })).toBeChecked();
+    await expect(changed.getByRole("checkbox", { name: "Viewed NOTES.md" })).not.toBeChecked();
+    await expect(workspace.getByLabel(/Since my last look · 2 files/)).toBeVisible();
+    await expect(workspace.getByText("1/2 viewed")).toBeVisible();
+    // The chat panel collapses to a tab and reopens from a hunk.
+    await workspace.getByRole("button", { name: "Collapse chat" }).click();
+    await expect(workspace.getByRole("textbox", { name: "Ask about this pull request" })).toBeHidden();
+    await changed.getByRole("button", { name: /NOTES.md/ }).click();
+    await workspace.getByRole("button", { name: "Ask about this hunk" }).click();
+    await expect(workspace.getByRole("complementary", { name: "Review chat" })).toContainText("NOTES.md @@");
+    await page.screenshot({ path: "/tmp/duckterm-pr-review-since.png" });
   } finally {
     if (key) await apiDelete(`/sessions/${key}`);
     rmSync(root, { recursive: true, force: true });

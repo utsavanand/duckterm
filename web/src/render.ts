@@ -62,6 +62,9 @@ marked.use({
   },
 });
 
+// The same registered grammars, for views that highlight code line by line.
+export const highlighter = hljs;
+
 export function html(md: string): string {
   return DOMPurify.sanitize(marked.parse(md, { async: false }) as string);
 }

@@ -9,6 +9,8 @@ import "./folderView.css";
 import "./folderDetails.css";
 import { FolderDetails, FolderActions } from "./FolderDetails";
 import { PrList } from "./review/PrList";
+import { ReviewWorkspace } from "./review/ReviewWorkspace";
+import type { PrRow } from "./api";
 
 const TABS = ["chat", "artifacts", "prs"] as const;
 type Tab = (typeof TABS)[number];
@@ -23,6 +25,8 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
     media.addEventListener("change", collapse); return () => media.removeEventListener("change", collapse);
   }, []);
   const [tab, setTab] = useState<Tab>("chat");
+  const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
+  const openReview = (row: PrRow) => setReview({ repo: row.repo, ref: row.pr ? String(row.pr.number) : row.branch, from: row.session?.name });
   const tabs = useRef<HTMLDivElement>(null);
   return <section className={`rd-folder-view rd-folder-with-details${details ? " details-open" : ""}`} aria-label={`Folder ${folder}`}>
     <div className="rd-folder-main"><header className="rd-folder-heading"><button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button><small>Folder</small><h1>{folder.split("/").pop()}</h1><p>{folder} · Includes subfolders{desktop() ? " · This Mac" : ""}</p></header>
@@ -38,7 +42,7 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
     </div>
     <div id="folder-chat" role="tabpanel" aria-labelledby="folder-chat-tab" className="rd-folder-chat-panel" hidden={tab !== "chat"}><FolderChat key={folder} folder={folder} active={tab === "chat"} /></div>
     <div id="folder-artifacts" role="tabpanel" aria-labelledby="folder-artifacts-tab" className="rd-folder-artifacts-panel" hidden={tab !== "artifacts"}>{tab === "artifacts" && <ArtifactsView key={folder} folder={folder} />}</div>
-    <div id="folder-prs" role="tabpanel" aria-labelledby="folder-prs-tab" className="rd-folder-prs-panel" hidden={tab !== "prs"}>{tab === "prs" && <PrList key={folder} scope={{ kind: "folder", folder }} active={tab === "prs"} onOpenSession={actions.onOpenSession} />}</div>
+    <div id="folder-prs" role="tabpanel" aria-labelledby="folder-prs-tab" className="rd-folder-prs-panel" hidden={tab !== "prs"}>{tab === "prs" && review && <ReviewWorkspace key={`${review.repo}:${review.ref}`} repo={review.repo} target={review.ref} from={review.from} onBack={() => setReview(null)} />}{tab === "prs" && !review && <PrList key={folder} scope={{ kind: "folder", folder }} active={tab === "prs"} onOpenSession={actions.onOpenSession} onReview={openReview} />}</div>
     </div>{details && <FolderDetails key={folder} folder={folder} onClose={() => setDetails(false)} {...actions} />}
   </section>;
 }
