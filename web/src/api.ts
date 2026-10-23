@@ -389,6 +389,10 @@ export type CardStatus = "ready" | "pending" | "omitted" | "failed" | "later" | 
 export interface ReviewCard { id: string; number: number; title: string; status: CardStatus; reason?: string; data?: Record<string, unknown>; at?: number; sent?: { session: string; message_id: string; at: number }[] }
 export interface ReviewCards { head_sha: string | null; stale: boolean; running: boolean; cards: ReviewCard[] }
 export interface Citation { path: string; line: number }
+export interface Release { tag: string; at: number; sha: string; subject: string; previous: string | null; merges: { sha: string; subject: string; pr: number | null }[] }
+export interface ArchModule { id: string; name: string; lane: "Clients" | "Server" | "Runtime"; files: string[]; what: string }
+export interface ArchMap { tag: string; status: "ready" | "pending" | "omitted"; reason?: string; modules?: ArchModule[]; edges?: string[][]; at?: number }
+export interface ReleaseCompare { older: string; newer: string; marks: Record<string, "added" | "changed" | "removed" | "unchanged">; removed_modules: ArchModule[]; edges_added: string[][]; edges_removed: string[][]; files_changed: number }
 export interface ChatMessage { q: string; a: string; citations: Citation[]; hunk: string | null; files: string[]; at: number }
 
 async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
@@ -407,6 +411,9 @@ export const api = {
     if (options.since) query.set("since", options.since);
     return get<ReviewDiff>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/diff?${query}`, undefined, { authed: true });
   },
+  releases: (repo: string, ref: string) => get<{ releases: Release[]; maps: Record<string, string>; touched: string[]; shipped: string | null }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/releases`, undefined, { authed: true }),
+  archmap: (repo: string, ref: string, tag: string) => get<ArchMap>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/archmap/${encodeURIComponent(tag)}`, undefined, { authed: true }),
+  compareReleases: (repo: string, ref: string, older: string, newer: string) => get<ReleaseCompare>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/compare?${new URLSearchParams({ older, newer })}`, undefined, { authed: true }),
   reviewCards: (repo: string, ref: string) => get<ReviewCards>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/cards`, undefined, { authed: true }),
   regenerateCards: (repo: string, ref: string, cards?: string[]) => post<ReviewCards & { started: boolean }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/cards/regenerate`, cards ? { cards } : {}),
   reviewChat: (repo: string, ref: string) => get<{ messages: ChatMessage[]; suggestions: string[] }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/chat`, undefined, { authed: true }),

@@ -4,6 +4,7 @@ import { Modal } from "../ui";
 import { CardsPane } from "./CardsPane";
 import { ChatPanel } from "./ChatPanel";
 import { DiffPane, type DiffFocus } from "./DiffPane";
+import { HistoryPane } from "./HistoryPane";
 import { shortSha } from "./diffModel";
 import "./review.css";
 
@@ -93,7 +94,7 @@ export function ReviewWorkspace({ repo, target, from, onBack }: { repo: string; 
           {header && <CardsPane header={header} active={tab === "review"} openFile={openFile} ask={askQuestion} />}
         </div>
         <div id="review-history" role="tabpanel" aria-labelledby="review-history-tab" hidden={tab !== "history"} className="rd-review-panel">
-          <p className="rd-prs-empty">Release history arrives in a later build step.</p>
+          {header && <HistoryPane header={header} active={tab === "history"} />}
         </div>
       </div>
       <aside className={`rd-review-chat${chat ? "" : " collapsed"}`} aria-label="Review chat">

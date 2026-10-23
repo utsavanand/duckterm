@@ -22,6 +22,7 @@
     PUT  /review/:repo/:ref/viewed    mark a file viewed or move it to another bucket
     GET  /review/:repo/:ref/cards     review cards (generation starts on first open)
     POST /review/:repo/:ref/cards/regenerate, chat, ask, send, draft-review, github-review
+    GET  /review/:repo/:ref/releases, compare?older=&newer=, archmap/:tag   release history
     GET  /folders/:path/prs           pull requests across the folder's sessions
     GET  /sessions/:key/output        SSE: live agent output (PTY) lines
     GET  /sessions/:key/terminal      WebSocket: raw PTY bytes <-> keystrokes/resize (xterm.js)
@@ -111,6 +112,7 @@ from duckterm.persistence.saved_state import (
     transaction,
 )
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
+from duckterm.review import git as git_review
 from duckterm.review.git import ReviewGitError as GitErrorReview
 from duckterm.runtimes import native_history, opencode_options
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
@@ -442,7 +444,7 @@ class Server:
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore(conn=self.history._conn)
-        self._review_tasks: dict[str, asyncio.Task[None]] = {}
+        self._review_tasks: dict[str, asyncio.Task[Any]] = {}
         from duckterm.checkpoint_requests import CheckpointRequests
 
         self.checkpoint_requests = CheckpointRequests(self)
@@ -762,7 +764,8 @@ class Server:
             return
         review_url = urllib.parse.urlsplit(path)
         review_match = re.fullmatch(
-            r"/review/([^/]+)/([^/]+)(?:/(diff|viewed|cards|cards/regenerate|chat|ask|send|draft-review|github-review))?",
+            r"/review/([^/]+)/([^/]+)(?:/(diff|viewed|cards|cards/regenerate|chat|ask|send|"
+            r"draft-review|github-review|releases|compare|archmap/[^/]+))?",
             review_url.path,
         )
         if review_match:
@@ -1548,7 +1551,11 @@ class Server:
             "send": "POST",
             "draft-review": "POST",
             "github-review": "POST",
+            "releases": "GET",
+            "compare": "GET",
         }
+        if part.startswith("archmap/"):
+            expected[part] = "GET"
         if expected.get(part) != method:
             await _write_json(writer, 405, {"error": "method not allowed"})
             return
@@ -1575,6 +1582,8 @@ class Server:
                 )
             elif part == "viewed":
                 result = await asyncio.to_thread(workspace.mark_viewed, target, payload)
+            elif part in ("releases", "compare") or part.startswith("archmap/"):
+                result = await self._review_history(target, part, query)
             else:
                 result = await self._review_cards(target, part, payload)
         except workspace.ReviewError as exc:
@@ -1700,6 +1709,68 @@ class Server:
             except github.GitHubError as exc:
                 raise workspace.ReviewError(502, str(exc)) from exc
         raise workspace.ReviewError(404, "unknown review route")
+
+    async def _review_history(self, target: Any, part: str, query: dict[str, list[str]]) -> Any:
+        """Releases, module maps and comparisons (spec §7). Maps for the newest
+        releases are written in the background the first time the tab opens;
+        any other tag is written when it is first opened."""
+        from duckterm.review import history, workspace
+
+        repo, slug = target.repo, target.slug
+        if part == "releases":
+            rows = await asyncio.to_thread(history.releases, repo)
+            tags = [r["tag"] for r in rows]
+            status = await asyncio.to_thread(history.map_status, repo, slug, tags)
+            paths = (
+                await asyncio.to_thread(
+                    git_review.run,
+                    repo,
+                    "diff",
+                    "--name-only",
+                    f"{target.base_sha}..{target.head_ref}",
+                )
+            ).splitlines()
+            touched = await asyncio.to_thread(history.touched_releases, repo, rows, paths)
+            merged_sha = (target.pr or {}).get("merge_commit_sha")
+            shipped = None
+            if target.pr and target.pr.get("state") == "merged" and merged_sha:
+                shipped = await asyncio.to_thread(git_review.tag_containing, repo, merged_sha)
+            elif tags:
+                shipped = tags[-1]
+            self._start_maps(target, [t for t in reversed(tags) if status.get(t) == "missing"][:12])
+            for tag in tags:
+                if (
+                    status.get(tag) == "missing"
+                    and str(target.directory) + ":" + tag in self._review_tasks
+                ):
+                    status[tag] = "pending"
+            return {"releases": rows, "maps": status, "touched": touched, "shipped": shipped}
+        if part == "compare":
+            older, newer = query.get("older", [""])[0], query.get("newer", [""])[0]
+            first = await asyncio.to_thread(history.load_map, repo, slug, older)
+            second = await asyncio.to_thread(history.load_map, repo, slug, newer)
+            if not (first and second) or {first.get("status"), second.get("status")} != {"ready"}:
+                raise workspace.ReviewError(409, "Both releases need a module map first")
+            return await asyncio.to_thread(history.compare, repo, first, second)
+        tag = part[len("archmap/") :]
+        if not git_review.ref_exists(repo, f"refs/tags/{tag}"):
+            raise workspace.ReviewError(404, f"No tag {tag}")
+        existing = await asyncio.to_thread(history.load_map, repo, slug, tag)
+        if existing and existing.get("status") in ("ready", "omitted"):
+            return existing
+        self._start_maps(target, [tag])
+        return existing or {"tag": tag, "status": "pending"}
+
+    def _start_maps(self, target: Any, tags: list[str]) -> None:
+        from duckterm.review import history
+
+        for tag in tags:
+            key = f"{target.directory}:{tag}"
+            if key in self._review_tasks and not self._review_tasks[key].done():
+                continue
+            self._review_tasks[key] = asyncio.get_running_loop().create_task(
+                history.build_map(target.repo, target.slug, tag)
+            )
 
     async def _start_cards(self, target: Any, only: list[str] | None) -> None:
         from duckterm.review import author, cards, lists, workspace

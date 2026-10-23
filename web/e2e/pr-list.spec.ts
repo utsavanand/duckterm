@@ -26,6 +26,7 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
   git(work, "commit", "-q", "-m", "initial");
   git(work, "remote", "add", "origin", origin);
   git(work, "push", "-q", "-u", "origin", "main");
+  git(work, "-c", "tag.gpgsign=false", "-c", "tag.forceSignAnnotated=false", "tag", "-m", "first release", "v0.1.0");
   git(work, "checkout", "-q", "-b", "duckterm/e2e-review");
   writeFileSync(join(work, "feature.py"), "def feature():\n    return 1\n");
   git(work, "add", "feature.py");
@@ -119,6 +120,15 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     await expect(release).toContainText("No CI result yet; open a PR so checks run");
     await expect(release.getByText("pass").first()).toBeVisible();
     await page.screenshot({ path: "/tmp/duckterm-pr-review-cards.png" });
+    // History: one node per release tag; the map is omitted without a provider.
+    await workspace.getByRole("tab", { name: "History" }).click();
+    const timeline = workspace.getByRole("list", { name: "Releases" });
+    await expect(timeline.getByRole("listitem")).toHaveCount(1);
+    await expect(timeline).toContainText("v0.1.0");
+    await expect(workspace.getByText(/this change will ship after v0.1.0/)).toBeVisible();
+    await expect(workspace.getByText(/Module map omitted: Automatic preparation is disabled/)).toBeVisible({ timeout: 20_000 });
+    await page.screenshot({ path: "/tmp/duckterm-pr-review-history.png" });
+    await workspace.getByRole("tab", { name: "Review" }).click();
     // Chat (still open from the hunk question): the server's refusal shows inline.
     const panel = workspace.getByRole("complementary", { name: "Review chat" });
     await panel.getByRole("textbox", { name: "Ask about this pull request" }).fill("What changed?");

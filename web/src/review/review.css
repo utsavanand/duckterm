@@ -235,3 +235,43 @@
 .rd-card-trace li.is-abandon .rd-card-trace-kind { color: var(--danger); }
 .rd-card-trace li.is-verify .rd-card-trace-kind { color: var(--brand-green-strong); }
 .rd-card-trace li.is-prompt .rd-card-trace-kind { color: var(--amber-text); }
+
+/* ── history tab ── */
+.rd-history { padding: 0 22px 40px; }
+.rd-history-toolbar { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 0.75rem; color: var(--text-soft); }
+.rd-history-toolbar label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.rd-timeline { list-style: none; margin: 14px 0; padding: 12px 0 4px; display: flex; gap: 6px; overflow-x: auto; position: relative; }
+.rd-timeline::before { content: ""; position: absolute; left: 0; right: 0; top: 23px; height: 2px; background: var(--border); }
+.rd-timeline li { flex: none; position: relative; }
+.rd-timeline button { display: flex; flex-direction: column; align-items: center; gap: 3px; border: 0; background: transparent; color: var(--text-soft); cursor: pointer; font: inherit; font-size: 0.6875rem; padding: 2px 8px 6px; border-radius: 8px; min-width: 92px; }
+.rd-timeline button:hover { background: var(--bg-soft); }
+.rd-timeline li.selected button { color: var(--brand-green-strong); background: color-mix(in srgb, var(--brand-green) 12%, transparent); }
+.rd-timeline li.other button { color: var(--busy); background: color-mix(in srgb, var(--busy) 12%, transparent); }
+.rd-timeline-dot { width: 12px; height: 12px; border-radius: 50%; background: var(--border-strong); border: 2px solid var(--bg); box-shadow: 0 0 0 1px var(--border-strong); }
+.rd-timeline-dot[data-status=ready] { background: var(--brand-green-strong); box-shadow: 0 0 0 1px var(--brand-green-strong); }
+.rd-timeline-dot[data-status=pending] { background: var(--wait); box-shadow: 0 0 0 1px var(--wait); }
+.rd-timeline-dot[data-status=omitted] { background: var(--muted); }
+.rd-timeline li.shipped .rd-timeline-tag::after { content: " ★"; color: var(--wait); }
+.rd-timeline-tag { font-weight: 600; color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.rd-timeline-date, .rd-timeline-merges { color: var(--muted); }
+.rd-history-detail h3 { margin: 8px 0 2px; font-size: 0.9375rem; }
+.rd-history-detail h4 { margin: 18px 0 6px; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.rd-archmap-wrap { margin: 10px 0; overflow-x: auto; }
+.rd-archmap { width: 100%; max-width: 900px; height: auto; font-family: inherit; }
+.rd-archmap-lane { fill: var(--bg-soft); stroke: var(--border); }
+.rd-archmap-lane-label { fill: var(--muted); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; }
+.rd-archmap-node rect { fill: var(--card); stroke: var(--border-strong); }
+.rd-archmap-node.is-added rect { stroke: var(--brand-green-strong); stroke-width: 2; }
+.rd-archmap-node.is-changed rect { stroke: var(--wait); stroke-width: 2; }
+.rd-archmap-node.is-removed rect { stroke: var(--danger); stroke-dasharray: 5 4; fill: color-mix(in srgb, var(--danger) 8%, var(--card)); }
+.rd-archmap-node.is-unchanged rect { opacity: 0.7; }
+.rd-archmap-name { fill: var(--text); font-size: 12px; font-weight: 600; }
+.rd-archmap-what { fill: var(--muted); font-size: 10px; }
+.rd-archmap-edge { stroke: var(--border-strong); stroke-width: 1.2; opacity: 0.8; }
+.rd-archmap-edge.added { stroke: var(--brand-green-strong); stroke-width: 2; }
+.rd-archmap-edge.removed { stroke: var(--danger); stroke-dasharray: 5 4; }
+.rd-archmap-legend { display: flex; gap: 14px; font-size: 0.6875rem; color: var(--muted); margin: 4px 0 0; }
+.rd-archmap-legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; border: 2px solid var(--border-strong); vertical-align: -1px; }
+.rd-archmap-legend .is-added::before { border-color: var(--brand-green-strong); }
+.rd-archmap-legend .is-changed::before { border-color: var(--wait); }
+.rd-archmap-legend .is-removed::before { border-color: var(--danger); border-style: dashed; }
