@@ -90,7 +90,7 @@ def test_claims_pr_by_branch_and_reports_unpushed_work(
         lambda slug, token: [pull(5, "duckterm/aaa"), pull(6, "someone/else")],
     )
 
-    result = lists.build([session("s1", clone)], include_unclaimed=False)
+    result = lists.build([session("s1", clone)])
     assert [r["branch"] for r in result["rows"]] == ["duckterm/aaa"]
     row = result["rows"][0]
     assert row["pr"]["number"] == 5
@@ -104,7 +104,7 @@ def test_claims_pr_by_branch_and_reports_unpushed_work(
     assert result["repos"][0]["connected"] is True
 
 
-def test_folder_list_adds_unclaimed_open_prs_and_drops_stale_closed_ones(
+def test_folder_list_shows_only_its_own_sessions_prs(
     clone: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run(clone, "checkout", "-q", "-b", "duckterm/bbb")
@@ -115,15 +115,12 @@ def test_folder_list_adds_unclaimed_open_prs_and_drops_stale_closed_ones(
         lambda slug, token: [
             pull(9, "duckterm/bbb"),
             pull(10, "hand/made", author="utsav"),
-            pull(3, "old/closed", state="closed", updated_at="2025-01-01T00:00:00Z"),
+            pull(11, "another-session/branch"),
         ],
     )
-    result = lists.build([session("s2", clone)], include_unclaimed=True)
-    by_branch = {r["branch"]: r for r in result["rows"]}
-    assert set(by_branch) == {"duckterm/bbb", "hand/made"}
-    assert by_branch["hand/made"]["session"] is None
-    assert by_branch["hand/made"]["author"] == "utsav"
-    assert by_branch["duckterm/bbb"]["pr"]["number"] == 9
+    result = lists.build([session("s2", clone)])
+    assert [(r["branch"], r["pr"]["number"]) for r in result["rows"]] == [("duckterm/bbb", 9)]
+    assert result["rows"][0]["session"] == {"key": "s2", "name": "s2"}
 
 
 def test_no_pr_and_nothing_pushed_shows_unpushed_only_when_ahead(
@@ -131,10 +128,10 @@ def test_no_pr_and_nothing_pushed_shows_unpushed_only_when_ahead(
 ) -> None:
     monkeypatch.setattr(lists.github, "pulls", lambda slug, token: [])
     run(clone, "checkout", "-q", "-b", "duckterm/idle")
-    assert lists.build([session("s3", clone)], include_unclaimed=False)["rows"] == []
+    assert lists.build([session("s3", clone)])["rows"] == []
     commit(clone, "w.txt", "w\n", "work")
     lists._cache.clear()
-    rows = lists.build([session("s3", clone)], include_unclaimed=False)["rows"]
+    rows = lists.build([session("s3", clone)])["rows"]
     assert [(r["status"], r["label"]) for r in rows] == [("unpushed", "Not pushed")]
     assert rows[0]["compare_url"] is None
 
@@ -163,7 +160,7 @@ def test_merged_pr_names_the_release_tag(
             )
         ],
     )
-    row = lists.build([session("s4", clone)], include_unclaimed=False)["rows"][0]
+    row = lists.build([session("s4", clone)])["rows"][0]
     assert row["status"] == "merged"
     assert row["label"] == "Merged · v1.2.3"
     assert row["version"] == "v1.2.3"
@@ -178,7 +175,7 @@ def test_github_errors_keep_git_facts(clone: Path, monkeypatch: pytest.MonkeyPat
     run(clone, "checkout", "-q", "-b", "duckterm/ddd")
     commit(clone, "d.txt", "d\n", "d")
     run(clone, "push", "-q", "-u", "origin", "duckterm/ddd")
-    result = lists.build([session("s5", clone)], include_unclaimed=True)
+    result = lists.build([session("s5", clone)])
     assert result["rows"][0]["status"] == "pushed"
     assert (
         result["rows"][0]["compare_url"]
@@ -199,8 +196,8 @@ def test_cache_serves_within_ttl_and_refresh_bypasses_it(
     monkeypatch.setattr(lists.github, "pulls", pulls)
     run(clone, "checkout", "-q", "-b", "duckterm/eee")
     commit(clone, "e.txt", "e\n", "e")
-    lists.build([session("s6", clone)], include_unclaimed=False)
-    lists.build([session("s6", clone)], include_unclaimed=False)
+    lists.build([session("s6", clone)])
+    lists.build([session("s6", clone)])
     assert len(calls) == 1
-    lists.build([session("s6", clone)], include_unclaimed=False, refresh=True)
+    lists.build([session("s6", clone)], refresh=True)
     assert len(calls) == 2
