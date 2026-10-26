@@ -3,10 +3,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { UpdateDuckTerm, UpdateStatus } from "./UpdateDuckTerm";
 const state: UpdateStatus = { installed_version: "0.4.96", latest_version: "0.4.97", release_url: "https://github.com/utsavanand/duckterm/releases/tag/v0.4.97", update_available: true, install_available: false, reason: "In-app installation is not available yet.", check_status: "checked", check_error: null, operation: null };
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
-it("checks on open and explicit retry only, and never enables installation", async () => {
+it("checks on open and explicit retry only, and offers a real download link", async () => {
   const fetcher = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ...state, install_available: true }) }); vi.stubGlobal("fetch", fetcher);
   const view = render(<UpdateDuckTerm />); await screen.findByText("0.4.97 available");
-  const install = screen.getByRole("button", { name: "Install update" }); expect(install).toBeDisabled(); fireEvent.click(install);
+  expect(screen.queryByRole("button", { name: "Install update" })).toBeNull();
+  expect(screen.getByRole("link", { name: /Download update/ })).toHaveAttribute("href", state.release_url);
   vi.useFakeTimers(); act(() => vi.advanceTimersByTime(60000)); expect(fetcher).toHaveBeenCalledTimes(1); vi.useRealTimers();
   fireEvent.click(screen.getByRole("button", { name: "Check again" })); await screen.findByText("0.4.97 available"); expect(fetcher).toHaveBeenCalledTimes(2);
   view.unmount(); render(<UpdateDuckTerm />); await screen.findByText("0.4.97 available"); expect(fetcher).toHaveBeenCalledTimes(3);

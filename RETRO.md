@@ -1,3 +1,11 @@
+## 2026-10-25 — Existence is not reachability
+
+The connector Cancel button existed and passed a component test while the
+horizontal editor pushed it off the sidebar. Stack the editor fields, keep Close
+beside the heading, and assert controls fit inside the real panel viewport.
+The update action now links to the release download instead of styling an
+unavailable installation action as primary. Owner approved both previews.
+
 ## 2026-10-25 — A hook reply is not the lifecycle event
 
 Stop was persisted before replying to its HTTP caller, but restart scheduling

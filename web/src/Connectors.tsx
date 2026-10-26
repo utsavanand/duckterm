@@ -158,7 +158,9 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
         <span className="rd-connector-title">{c.title}</span>
         <span className="rd-connector-cred">{c.credential ? sourceNames[c.credential] ?? c.credential : "Not connected"}</span>
         {(!c.managed || c.hosted === false) && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => c.enabled ? change(c, "disable") : c.managed ? change(c, "enable") : edit(c)}>{c.enabled ? "Disable" : "Connect"}</button>}
+        {editing === c.name && <button className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Close ${c.title} connection settings`} onClick={() => { setEditing(null); setToken(""); setSecret(""); }}>Close</button>}
       </div>
+      {!c.managed && !c.credential && <div className="rd-connector-desc">Finished signing in? <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh credentials</button></div>}
       <div className="rd-connector-desc">{c.description}{c.name === "porkbun" ? ` · ${c.write_access ? "Write access enabled" : "Read-only"}` : ""}</div>
       <div className="rd-connector-desc">{c.identity ?? (c.credential ? "Identity not verified — reconnect to verify" : c.detail)}</div>
       {c.enabled && <div className="rd-connector-desc rd-connector-proof">
@@ -209,7 +211,6 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
             })}
           </fieldset>
           <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null || !source || harnesses.length === 0} onClick={() => change(c, "enable")}>Verify and enable</button>
-          <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => { setEditing(null); setToken(""); setSecret(""); }}>Cancel</button>
         </div>}
       </>}
     </div>)}
