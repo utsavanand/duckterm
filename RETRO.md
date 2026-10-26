@@ -1,3 +1,10 @@
+## 2026-10-25 — Floating CI environments can break a validated release
+
+The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,
+which the locked Playwright could not install on. Pin the browser job to its
+supported Ubuntu 24.04 image. Update DOMPurify to the patched 3.4.17 floor after
+the dependency audit blocked the release; never waive an audit to ship fixes.
+
 ## 2026-10-25 — Existence is not reachability
 
 The connector Cancel button existed and passed a component test while the
