@@ -1,3 +1,25 @@
+## 2026-10-25 — A hook reply is not the lifecycle event
+
+Stop was persisted before replying to its HTTP caller, but restart scheduling
+happened only after the reply succeeded. A disconnected hook client could leave
+valid completion evidence and an idle card with restart queued indefinitely.
+Schedule the accepted event in finally, retaining conversation, draft and
+activity checks. A regression disconnects the reply after queuing restart and
+proves completion, rather than making an idle label sufficient to kill a process.
+
+## 2026-10-25 — Polling needs an observable operation
+
+Clone held the same lock needed by status reads across its download and checkout,
+then left the journal at cloning on errors. Polling could neither show progress
+nor recover a lost reply. Read atomically published journals without that lock,
+record failures before publication, and let the UI reconcile terminal clone
+states without issuing a duplicate operation. Test with a blocked worker and a
+lost reply, not only an immediately resolved promise.
+
+Credential checks on window focus miss sign-in through an embedded terminal.
+Refresh only a visible, disconnected connector panel at a bounded interval,
+coalesce pending requests, and stop polling after credentials are found.
+
 ## 2026-10-21 — Distinguish key markers in source from key material
 
 ## 2026-10-20 — Launch metadata must survive every transport

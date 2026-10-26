@@ -816,8 +816,10 @@ def clone(
     destination: str,
     github_repository: str = "",
     auto_workspace: bool = False,
+    attempt_id: str = "",
 ) -> dict[str, Any]:
     check_url(url)
+    attempt_id = operation_id(attempt_id) if attempt_id else uuid.uuid4().hex
     if github_repository:
         from duckterm import github_projects
 
@@ -861,6 +863,7 @@ def clone(
             {
                 "id": identifier,
                 "stage": "cloning",
+                "attempt_id": attempt_id,
                 "github_repository": github_repository,
                 "url": url,
                 "branch": branch,

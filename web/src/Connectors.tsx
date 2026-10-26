@@ -41,6 +41,7 @@ const sourceNames: Record<string, string> = {
 
 export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
   const toast = useToast();
+  const panel = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<Connector[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -99,6 +100,19 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
     return () => { lifetime.current = epoch + 1; invalidate(); window.removeEventListener("focus", refresh); };
   }, [refresh, invalidate]);
 
+  // Authentication in the embedded terminal does not blur the app window.
+  // Check only while this panel is visible and credentials are missing. The
+  // shared pending guard coalesces manual, focus and timed refreshes.
+  const disconnected = rows.some(c => !c.managed && !c.credential);
+  useEffect(() => {
+    const visibleRefresh = () => {
+      if (document.visibilityState === "visible" && !panel.current?.closest("[hidden]")) refresh();
+    };
+    document.addEventListener("visibilitychange", visibleRefresh);
+    const timer = disconnected ? window.setInterval(visibleRefresh, 30000) : undefined;
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", visibleRefresh); };
+  }, [disconnected, refresh]);
+
   function edit(c: Connector) {
     setEditing(c.name);
     setSource(c.credential ?? (c.sources?.length === 1 ? c.sources[0] : ""));
@@ -135,7 +149,7 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
     }
   }
 
-  return <div className="rd-connectors">
+  return <div ref={panel} className="rd-connectors">
     <div className="rd-panel-head"><span>Connectors ({rows.length}) · {hostName(sessionKey)}</span><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh</button></div>
     <div className="rd-connector-desc">Enabled integrations are shared by agents on {hostName(sessionKey)}.</div>
     {rows.map(c => <div key={c.name} className="rd-connector">

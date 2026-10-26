@@ -41,3 +41,37 @@ it("does not apply a stale review after changing the destination component", asy
   await act(async () => resolve(snapshot));
   expect(screen.queryByText("Copy project")).toBeNull();
 });
+
+it.each(["failed", "ready"])("recovers clone %s status when its original reply is lost", async stage => {
+  const prepared = vi.fn();
+  let late!: (value: unknown) => void;
+  let attempt = "", polls = 0;
+  vi.mocked(destinationRequest).mockImplementation(async (_target, op, params) => {
+    if (op === "project-clone") { attempt = (params as { attempt_id: string }).attempt_id; return await new Promise(resolve => { late = resolve; }); }
+    if (op === "project-status") return { id: (params as { id: string }).id, attempt_id: stage === "failed" && polls++ === 0 ? "previous-attempt" : attempt, stage, destination: "/synthetic", error: "Synthetic download failure" };
+    return {};
+  });
+  render(<RemoteProject target="local" kind="clone" command="codex" onPrepared={prepared} onBusy={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("Repository URL"), { target: { value: "https://example.invalid/test.git" } });
+  fireEvent.change(screen.getByLabelText("Local destination folder"), { target: { value: "/synthetic" } });
+  fireEvent.click(screen.getByText("Review transfer"));
+  const clone = await screen.findByRole("button", { name: "Clone repository" });
+  fireEvent.click(screen.getByRole("checkbox"));
+  vi.useFakeTimers();
+  try {
+    fireEvent.click(clone);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    if (stage === "failed") {
+      expect(clone).toBeDisabled(); // A prior retry receipt cannot finish this attempt.
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+    }
+    expect(clone).toBeEnabled();
+    if (stage === "failed") {
+      expect(screen.getByRole("alert")).toHaveTextContent("Synthetic download failure");
+      expect(screen.queryByRole("status")).toBeNull();
+      expect(prepared).not.toHaveBeenCalled();
+    } else expect(prepared).toHaveBeenCalledTimes(1);
+    await act(async () => { late({ stage: "ready" }); });
+    expect(prepared).toHaveBeenCalledTimes(stage === "ready" ? 1 : 0);
+  } finally { vi.useRealTimers(); }
+});

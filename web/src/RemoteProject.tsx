@@ -8,7 +8,7 @@ import { SessionView } from "./types";
 
 const browseLocal = (path?: string) => destinationRequest<BrowseResult>("local", "browse", path ? { path } : {});
 
-export type PreparedProject = { id: string; destination: string; stage: string; session_key?: string; offset?: number; bytes?: number };
+export type PreparedProject = { id: string; destination: string; stage: string; error?: string; attempt_id?: string; session_key?: string; offset?: number; bytes?: number };
 type Review = { requirements?: string[]; linux_compatible?: boolean; setup?: string[]; fingerprint: string; source: string; bytes: number; entries: { path: string }[]; excluded: string[]; ignored: string[]; git: { kind: string }; conversation: { runtime?: string; id?: string; sha256?: string } };
 type Draft = { destination_source?: string; github_repository?: string; id: string; source: string; destination: string; url: string; branch: string; selected: string[] };
 
@@ -63,13 +63,26 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
   }
   async function transfer() {
     setBusy(true); onBusy(true); setError(""); setProgress(kind === "clone" ? "Cloning repository…" : "Preparing project…"); setPercentage(undefined);
-    let active = true;
-    let polling = false;
+    const attemptId = crypto.randomUUID().replaceAll("-", "");
+    let finished = false, polling = false;
+    let resolveStatus!: (value: PreparedProject) => void;
+    let rejectStatus!: (reason: Error) => void;
+    const terminalStatus = new Promise<PreparedProject>((resolve, reject) => {
+      resolveStatus = resolve; rejectStatus = reject;
+    });
     const poll = window.setInterval(() => {
-      if (polling) return;
+      if (!mounted.current) { clearInterval(poll); return; }
+      if (polling || finished) return;
       polling = true;
       destinationRequest<PreparedProject>(target, "project-status", { id: draft.id }).then(s => {
-        if (active && mounted.current && s.stage) {
+        if (!mounted.current || finished) return;
+        // Only clone has one destination operation throughout. Copy's status
+        // can refer to an earlier transfer phase and cannot settle its request.
+        if (kind === "clone" && s.id === draft.id) {
+          if (s.stage === "failed" && s.attempt_id === attemptId) { rejectStatus(new Error(s.error || "Clone failed; retry")); return; }
+          if (s.stage === "ready") { resolveStatus(s); return; }
+        }
+        if (s.stage) {
           const percent = s.stage === "receiving" ? Math.round(100 * (s.offset ?? 0) / (s.bytes || 1)) : undefined;
           setPercentage(percent);
           setProgress(percent !== undefined ? `Copying ${percent}%` : ({ cloning: "Cloning repository…", verifying: "Verifying project…", publishing: "Verifying project…", ready: "Project verified and ready" }[s.stage] ?? "Preparing project…"));
@@ -77,14 +90,16 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
       }).catch(() => undefined).finally(() => { polling = false; });
     }, 1000);
     try {
-      const result = await destinationRequest<PreparedProject>(target, kind === "copy" ? "project-transfer" : "project-clone", {
-        ...draft, source_session: sourceSession, fingerprint: review?.fingerprint, conversation_sha256: review?.conversation.sha256,
+      const requested = destinationRequest<PreparedProject>(target, kind === "copy" ? "project-transfer" : "project-clone", {
+        ...draft, ...(kind === "clone" ? { attempt_id: attemptId } : {}), source_session: sourceSession, fingerprint: review?.fingerprint, conversation_sha256: review?.conversation.sha256,
       });
+      const result = await Promise.race([requested, terminalStatus]);
+      finished = true;
       if (!mounted.current) return;
       setProgress("Project verified and ready");
       await onPrepared(result);
     } catch (e) { if (mounted.current) { setProgress(""); setPercentage(undefined); setError((e as Error).message); } }
-    finally { active = false; clearInterval(poll); if (mounted.current) setBusy(false); onBusy(false); }
+    finally { finished = true; clearInterval(poll); if (mounted.current) setBusy(false); onBusy(false); }
   }
   return <div>
     {kind === "copy" ? <><Field label="Source project on This Mac">

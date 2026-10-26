@@ -132,6 +132,7 @@ async def dispatch(server: "Server", operation: str, req: dict[str, Any]) -> dic
             str(req["destination"]),
             str(req.get("github_repository") or ""),
             req.get("auto_workspace") is True,
+            str(req.get("attempt_id") or ""),
         )
     if operation == "status":
         return await asyncio.to_thread(transfers.status, identifier)
