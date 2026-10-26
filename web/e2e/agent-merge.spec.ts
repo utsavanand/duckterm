@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { apiDelete, apiPatch, apiPost, base, expandFolder, seedSession } from "./helpers";
 
-test("configure a merge between independent agents, recover a lost response and preserve both sessions", async ({ page }) => {
+test("configure a child-to-parent merge, recover a lost response and preserve both sessions", async ({ page }) => {
   const folder = `Merge agents ${Date.now()}`, source = `agent-source-${Date.now()}`, target = `agent-target-${Date.now()}`;
   try {
-    await seedSession(source, { name: "Feature implementation", runtime: "generic", group: folder, test: true });
     await seedSession(target, { name: "Main development", runtime: "generic", group: folder, test: true });
+    await seedSession(source, { name: "Feature implementation", runtime: "generic", group: folder, test: true, parent_session_key: target });
     await apiPatch(`/sessions/${source}`, { notes: "Preserve the public API." });
     await apiPatch(`/sessions/${target}`, { notes: "Existing destination notes." });
     expect((await apiPost(`/sessions/${target}/collaboration`, { root: folder })).status).toBe(200);
@@ -20,6 +20,7 @@ test("configure a merge between independent agents, recover a lost response and 
     await row.click({ button: "right" });
     await page.getByRole("menuitem", { name: "Merge with agent", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Merge with agent", exact: true });
+    await expect(dialog.getByLabel("Destination agent").locator("option")).toHaveCount(2);
     await dialog.getByLabel("Destination agent").selectOption(target);
     await expect(dialog.getByLabel("Notes to append")).toHaveValue("Preserve the public API.");
     await dialog.getByRole("checkbox", { name: /Conversation context/ }).check();
@@ -72,14 +73,15 @@ test("different worktrees offer the exact committed code for review without chan
     git(repo, "worktree", "add", "-b", "feature", branch);
     writeFileSync(join(branch, "feature.txt"), "reviewed feature"); git(branch, "add", "feature.txt"); git(branch, "commit", "-m", "feature");
     const original = git(repo, "rev-parse", "HEAD"), reviewed = git(branch, "rev-parse", "HEAD");
-    await seedSession(source, { name: "Feature worktree", cwd: branch, runtime: "generic", group: folder, test: true });
     await seedSession(target, { name: "Main worktree", cwd: repo, runtime: "generic", group: folder, test: true });
+    await seedSession(source, { name: "Feature worktree", cwd: branch, runtime: "generic", group: folder, test: true, parent_session_key: target });
     expect((await apiPost(`/sessions/${target}/collaboration`, { root: folder })).status).toBe(200);
     await page.setViewportSize({ width: 1440, height: 1050 });
     await page.goto(base()); await expandFolder(page, folder);
     await page.locator(".rd-row", { has: page.getByText("Feature worktree", { exact: true }) }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "Merge with agent", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Merge with agent" });
+    await expect(dialog.getByLabel("Destination agent").locator("option")).toHaveCount(2);
     await dialog.getByLabel("Destination agent").selectOption(target);
     const option = dialog.getByRole("checkbox", { name: /Code from/ });
     await expect(option).toBeEnabled(); await expect(option).not.toBeChecked();
@@ -104,8 +106,8 @@ test("empty context recovery keeps drafts, isolates count selection, and never a
   const folder = `Merge recovery ${Date.now()}`, source = `recovery-source-${Date.now()}`, target = `recovery-target-${Date.now()}`;
   let checkpointCalls = 0, mergeCalls = 0, generated = false;
   try {
-    await seedSession(source, { name: "Recovery notes", runtime: "generic", group: folder, test: true });
     await seedSession(target, { name: "Recovery main", runtime: "generic", group: folder, test: true });
+    await seedSession(source, { name: "Recovery notes", runtime: "generic", group: folder, test: true, parent_session_key: target });
     expect((await apiPost(`/sessions/${target}/collaboration`, { root: folder })).status).toBe(200);
     await page.route(`**/sessions/${source}/checkpoint-plan`, route => route.fulfill({ json: { available_records: 8, processed_records: 0, pending_records: 8, default_records: 20, selected_records: 8, remaining_records: 0, batch_records: 20, order: "oldest_unprocessed_first", selection_plan: { source: "fixture" } } }));
     await page.route(`**/sessions/${source}/checkpoint`, async route => {
@@ -122,6 +124,7 @@ test("empty context recovery keeps drafts, isolates count selection, and never a
     await page.locator(".rd-row", { has: page.getByText("Recovery notes", { exact: true }) }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "Merge with agent", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Merge with agent", exact: true });
+    await expect(dialog.getByLabel("Destination agent").locator("option")).toHaveCount(2);
     await dialog.getByLabel("Destination agent").selectOption(target);
     await expect(dialog.getByText(/No saved conversation summary/)).toBeVisible();
     await dialog.getByRole("checkbox", { name: /^Conversation context/ }).check();

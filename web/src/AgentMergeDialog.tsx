@@ -21,7 +21,7 @@ export interface AgentMergeService {
   history: () => Promise<{ merges: AgentMergeRecord[] }>;
 }
 
-export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { service: AgentMergeService; sourceKey: string; sourceName: string; onClose: () => void }) {
+export function AgentMergeDialog({ service, sourceKey, parentKey, sourceName, onClose }: { service: AgentMergeService; sourceKey: string; parentKey: string; sourceName: string; onClose: () => void }) {
   const [targets, setTargets] = useState<MergeTarget[]>([]), [target, setTarget] = useState("");
   const [preview, setPreview] = useState<AgentMergePreview | null>(null);
   const [context, setContext] = useState(""), [notes, setNotes] = useState("");
@@ -41,10 +41,10 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
   useEffect(() => {
     let live = true;
     setLoading(true); setError("");
-    void service.targets().then(value => { if (live) { setTargets(value.destinations); setLoading(false); } }).catch(e => { if (live) { setError(`Could not load agents: ${e.message}. If this is a remote session, update DuckTerm on both computers.`); setLoading(false); } });
+    void service.targets().then(value => { if (live) { setTargets(value.destinations.filter(item => item.key === parentKey)); setLoading(false); } }).catch(e => { if (live) { setError(`Could not load agents: ${e.message}. If this is a remote session, update DuckTerm on both computers.`); setLoading(false); } });
     void service.history().then(value => { if (live) { setHistory(value.merges); setHistoryError(""); } }).catch(e => { if (live) setHistoryError(`Could not load recent merges: ${e.message}`); });
     return () => { live = false; };
-  }, [service, retry]);
+  }, [service, parentKey, retry]);
   useEffect(() => {
     let live = true;
     setPreview(null); setCode(false); setReviewing(false); setError("");
@@ -52,6 +52,7 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
     setLoading(true);
     void service.preview(target).then(value => {
       if (!live) return;
+      if (value.target.key !== parentKey) throw new Error("The destination is no longer this agent’s recorded parent");
       setPreview(value);
       // Refresh untouched source data independently; an intentionally cleared
       // draft is still an edit, and explicit checkbox choices stay explicit.
@@ -61,7 +62,7 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
       if (!edited.current.includeNotes && !edited.current.notes) setIncludeNotes(!!value.notes.trim());
     }).catch(e => { if (live) setError(`Could not prepare merge: ${e.message}`); }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, [service, target, retry]);
+  }, [service, parentKey, target, retry]);
   const recordId = record?.id;
   useEffect(() => {
     if (!recordId) return;
@@ -108,7 +109,7 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
   const emptyContext = includeContext && !context.trim(), emptyNotes = includeNotes && !notes.trim();
   const validation = !includeContext && !includeNotes && !code ? "Choose context, notes, or available code to include."
     : emptyContext || emptyNotes ? "Add text to each selected section, or deselect the empty sections." : "";
-  const valid = !!preview?.target.allowed && (includeContext || includeNotes || code) && (!includeContext || !!context.trim()) && (!includeNotes || !!notes.trim()) && (!code || preview.git.allowed);
+  const valid = target === parentKey && !!preview?.target.allowed && (includeContext || includeNotes || code) && (!includeContext || !!context.trim()) && (!includeNotes || !!notes.trim()) && (!code || preview.git.allowed);
   async function send() {
     if (sending.current || generationPending || !preview || !valid) return;
     const draft = { target, revision: preview.revision, context: includeContext ? context : null, notes: includeNotes ? notes : null, code };
@@ -131,12 +132,12 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
   }}><Modal title={record ? "Merge request saved" : reviewing ? "Review merge" : "Merge with agent"} onClose={close} width={660}>
     <div className="rd-merge-review rd-agent-merge" role="dialog" aria-modal="true" aria-label="Merge with agent" aria-busy={busy || loading || generationPending}>
       {!record && !reviewing && <>
-        <p>Bring selected context into another agent. Both sessions stay open.</p>
+        <p>Bring selected context into this child agent’s parent. Both sessions stay open.</p>
         <label className="rd-merge-label" htmlFor="merge-agent-target">Destination agent</label>
         <select autoFocus id="merge-agent-target" value={target} disabled={busy} onChange={e => setTarget(e.target.value)}><option value="">Choose an agent</option>{targets.map(item => <option key={item.key} value={item.key} disabled={!item.allowed}>{item.name} · {item.group}{item.allowed ? ` · ${item.state}` : ` — ${item.reason}`}</option>)}</select>
-        <p>Agents on this computer only. Cross-computer merges are not available yet.</p>
+        <p>Only this child agent’s recorded parent can receive the merge.</p>
         {loading && <p role="status">Preparing merge options…</p>}
-        {!loading && !targets.some(item => item.allowed) && <p>No available destination. Add another agent to a shared folder to give it an inbox.</p>}
+        {!loading && !targets.some(item => item.allowed) && <p>No available parent. The recorded parent must exist, be open, and have an inbox in a shared folder.</p>}
         {preview && <>
           <div className="rd-merge-route"><strong>{sourceName}</strong>→<strong>{preview.target.name}</strong></div>
           {!preview.target.allowed && <p role="alert">{preview.target.reason}</p>}
