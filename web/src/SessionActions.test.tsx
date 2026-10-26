@@ -60,3 +60,10 @@ it.each(["failed", "partial"] as const)("shows a %s summary outcome as an error 
   expect(toast).toHaveBeenLastCalledWith(state === "failed" ? "Summary update failed · The summary provider timed out" : "Checkpoint failed · summary incomplete", "err");
   expect(close).toHaveBeenCalledOnce();
 });
+
+it.each([undefined, "parent"])("offers merge with agent only for a recorded child (%s)", parentKey => {
+  const s = { key: "merge-source", label: "Source", state: "busy", startedAt: 1, runtime: "generic", parentKey } as SessionView;
+  render(<SessionActions session={s} anchor={{ key: s.key, x: 10, y: 10, trigger: document.body }} onClose={vi.fn()} onFork={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} onNotes={vi.fn()} />);
+  if (parentKey) expect(screen.getByRole("menuitem", { name: "Merge with agent" })).toBeEnabled();
+  else expect(screen.queryByRole("menuitem", { name: "Merge with agent" })).toBeNull();
+});

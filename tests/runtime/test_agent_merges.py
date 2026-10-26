@@ -1,4 +1,4 @@
-"""Reviewed independent-agent handoffs never mutate live worktrees or lifecycles."""
+"""Reviewed child-to-parent handoffs never mutate live worktrees or lifecycles."""
 
 import json
 import subprocess
@@ -17,7 +17,7 @@ def rig(tmp_path, monkeypatch):
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("DUCKTERM_ORACLE", "off")
     history = HistoryStore(tmp_path / "history.sqlite")
-    for key in ("source", "target", "other"):
+    for key in ("target", "source", "other"):
         history.record(
             {
                 "_id": key,
@@ -26,6 +26,7 @@ def rig(tmp_path, monkeypatch):
                 "event_type": "SessionStart",
                 "test": True,
                 "runtime": "generic",
+                "parent_session_key": "target" if key == "source" else None,
             }
         )
         history.set_meta(key, name=key, group="work", notes=key + " original notes")
@@ -231,3 +232,139 @@ def test_old_notes_editor_cannot_erase_a_merge(rig):
     )
     assert code == 409
     assert "From source" in history.session("target")["notes"]
+
+
+def test_only_recorded_parent_is_listed(rig):
+    history, server, auth = rig
+    targets = dispatch(server, "GET", "/sessions/source/agent-merge", auth)[1]["destinations"]
+    assert [item["key"] for item in targets] == ["target"]
+    assert targets[0]["allowed"]
+    assert dispatch(server, "GET", "/sessions/target/agent-merge", auth)[1]["destinations"] == []
+    history._conn.execute("UPDATE sessions SET state='archived' WHERE session_key='target'")
+    history._conn.commit()
+    targets = dispatch(server, "GET", "/sessions/source/agent-merge", auth)[1]["destinations"]
+    assert not targets[0]["allowed"]
+    assert "closed" in targets[0]["reason"]
+
+
+@pytest.mark.parametrize(
+    "relation",
+    [
+        "root",
+        "self",
+        "unrelated",
+        "sibling",
+        "grandparent",
+        "parent_to_child",
+        "missing_parent",
+        "closed_parent",
+    ],
+)
+def test_invalid_ancestry_cannot_preview_or_send(rig, relation):
+    history, server, auth = rig
+    draft = request(rig)
+    if relation == "root":
+        history._conn.execute(
+            "UPDATE sessions SET parent_session_key=NULL WHERE session_key='source'"
+        )
+    elif relation == "self":
+        draft["target"] = "source"
+    elif relation in ("unrelated", "sibling", "grandparent"):
+        draft["target"] = "other"
+        if relation == "sibling":
+            history._conn.execute(
+                "UPDATE sessions SET parent_session_key='target' WHERE session_key='other'"
+            )
+        if relation == "grandparent":
+            history._conn.execute(
+                "UPDATE sessions SET parent_session_key='other' WHERE session_key='target'"
+            )
+    elif relation == "parent_to_child":
+        history._conn.execute(
+            "UPDATE sessions SET parent_session_key=NULL WHERE session_key='source'"
+        )
+        history._conn.execute(
+            "UPDATE sessions SET parent_session_key='source' WHERE session_key='target'"
+        )
+    elif relation == "missing_parent":
+        history._conn.execute("DELETE FROM sessions WHERE session_key='target'")
+    else:
+        history._conn.execute("UPDATE sessions SET state='archived' WHERE session_key='target'")
+    history._conn.commit()
+    before = {
+        key: (history.session(key) or {}).get("notes") for key in ("source", "target", "other")
+    }
+    code, result = dispatch(
+        server,
+        "POST",
+        "/sessions/source/agent-merge/preview",
+        auth,
+        json.dumps({"target": draft["target"]}).encode(),
+    )
+    if relation == "closed_parent":
+        assert code == 200 and not result["target"]["allowed"]
+    else:
+        assert code in (404, 409), result
+    assert send(rig, draft)[0] in (404, 409)
+    assert history._conn.execute("SELECT count(*) FROM session_questions").fetchone()[0] == 0
+    assert (
+        history._conn.execute(
+            "SELECT count(*) FROM digest_items WHERE bucket=?", (agent_merges.BUCKET,)
+        ).fetchone()[0]
+        == 0
+    )
+    assert {key: (history.session(key) or {}).get("notes") for key in before} == before
+
+
+def test_parent_changed_while_git_read_is_rechecked(rig, monkeypatch):
+    history, _, _ = rig
+    draft = request(rig)
+
+    async def changed(fn, *args):
+        history._conn.execute(
+            "UPDATE sessions SET parent_session_key='other' WHERE session_key='source'"
+        )
+        history._conn.commit()
+        return {"allowed": False, "reason": "No code"}
+
+    monkeypatch.setattr(agent_merges.asyncio, "to_thread", changed)
+    assert send(rig, draft)[0] == 409
+    assert history.session("target")["notes"] == "target original notes"
+    assert history._conn.execute("SELECT count(*) FROM session_questions").fetchone()[0] == 0
+
+
+def test_saved_receipt_retry_after_relationship_change_does_not_deliver_again(rig):
+    history, _, _ = rig
+    draft = request(rig)
+    code, receipt = send(rig, draft)
+    assert code == 200
+    history._conn.execute("UPDATE sessions SET parent_session_key=NULL WHERE session_key='source'")
+    history._conn.commit()
+    assert send(rig, draft)[1]["id"] == receipt["id"]
+    assert send(rig, {**draft, "requestKey": "new"})[0] == 409
+    assert history._conn.execute("SELECT count(*) FROM session_questions").fetchone()[0] == 1
+    assert history.session("target")["notes"].count("From source") == 1
+
+
+def test_parent_change_before_delivery_transaction_rolls_back_message_and_notes(rig, monkeypatch):
+    history, server, _ = rig
+    draft = request(rig)
+    original = history.session_api.owner_message
+
+    def changed(*args, **kwargs):
+        history._conn.execute(
+            "UPDATE sessions SET parent_session_key='other' WHERE session_key='source'"
+        )
+        history._conn.commit()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(history.session_api, "owner_message", changed)
+    assert send(rig, draft)[0] == 409
+    assert history.session("target")["notes"] == "target original notes"
+    assert history._conn.execute("SELECT count(*) FROM session_questions").fetchone()[0] == 0
+    assert (
+        history._conn.execute(
+            "SELECT count(*) FROM digest_items WHERE bucket=?", (agent_merges.BUCKET,)
+        ).fetchone()[0]
+        == 0
+    )
