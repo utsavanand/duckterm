@@ -1,10 +1,11 @@
 """Pull request rows for a session or a folder.
 
 A row is a branch a session's worktree is on, joined with the pull request
-whose head is that branch. Git facts come from the local repository; PR facts
-come from GitHub and are cached per repository for CACHE_SECONDS so a list
-that polls every minute costs one page of pulls plus one check-runs and one
-reviews call per open PR.
+whose head is that branch. A folder lists only its own sessions' branches,
+never other pull requests in the same repository (owner ruling, 2026-10-26).
+Git facts come from the local repository; PR facts come from GitHub and are
+cached per repository for CACHE_SECONDS, so a list that polls every minute
+costs one page of pulls plus one check-runs and one reviews call per open PR.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ from duckterm.persistence.folder_chats import within
 from duckterm.review import git, github, status
 
 CACHE_SECONDS = 60
-RECENT_CLOSED_SECONDS = 14 * 24 * 3600
 
 _lock = threading.Lock()
 _cache: dict[str, dict[str, Any]] = {}
@@ -204,9 +204,7 @@ def _worktree_branch(row: dict[str, Any]) -> tuple[str, str] | None:
     return (repo, branch) if branch else None
 
 
-def build(
-    sessions: list[dict[str, Any]], *, include_unclaimed: bool, refresh: bool = False
-) -> dict[str, Any]:
+def build(sessions: list[dict[str, Any]], *, refresh: bool = False) -> dict[str, Any]:
     by_repo: dict[str, list[tuple[dict[str, Any], str]]] = {}
     for row in sessions:
         found = _worktree_branch(row)
@@ -216,11 +214,9 @@ def build(
     repos: list[dict[str, Any]] = []
     for repo, members in by_repo.items():
         state = _repo_state(repo, [b for _, b in members], refresh=refresh)
-        claimed: set[str] = set()
         for session_row, branch in members:
             if branch == state["default"]:
                 continue
-            claimed.add(branch)
             pr = _pull_for(state["pulls"], branch)
             session = {
                 "key": str(session_row["session_key"]),
@@ -229,18 +225,6 @@ def build(
             built = _row(repo, state, branch=branch, pr=pr, session=session, local=True)
             if built:
                 rows.append(built)
-        if include_unclaimed:
-            cutoff = time.time() - RECENT_CLOSED_SECONDS
-            for pull in state["pulls"]:
-                if pull["head"] in claimed:
-                    continue
-                updated = _iso_to_epoch(pull["updated_at"]) or 0
-                if pull["state"] != "open" and updated < cutoff:
-                    continue
-                claimed.add(pull["head"])
-                built = _row(repo, state, branch=pull["head"], pr=pull, session=None, local=False)
-                if built:
-                    rows.append(built)
         repos.append(
             {
                 "path": repo,
