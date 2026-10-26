@@ -76,7 +76,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
         working-directory: web
       - name: Keep apt packages for the cache
-        run: find /var/cache/apt/archives -name '*.deb' -exec cp {} ~/apt-debs/ \;
+        run: find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/apt-debs/ \;
       - name: Verify all browser workflows
         run: npm run e2e
         working-directory: web
