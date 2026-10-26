@@ -2004,9 +2004,7 @@ class Server:
                 await _write_json(writer, 404, {"error": "Folder no longer exists"})
                 return
             members = review_lists.folder_members(self.history, target)
-        result = await asyncio.to_thread(
-            review_lists.build, members, include_unclaimed=scope == "folders", refresh=refresh
-        )
+        result = await asyncio.to_thread(review_lists.build, members, refresh=refresh)
         for item in result["rows"]:
             number = (item.get("pr") or {}).get("number")
             record = (

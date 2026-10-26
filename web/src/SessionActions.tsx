@@ -71,7 +71,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
       {!archived && !ended && item(checkpointPending ? "Updating summary…" : "Checkpoint", () => void checkpoint(), false, checkpointPending)}
       {live && (s.branch || s.runtime === "claude-code") && item("Fork", () => { onFork(s.key); onClose(); })}
       {s.parentKey && !archived && item("Merge back", () => setDialog("merge"))}
-      {!archived && item("Merge with agent", () => setDialog("agent-merge"))}
+      {s.parentKey && !archived && item("Merge with agent", () => setDialog("agent-merge"))}
       <hr role="separator" />
       {!archived && !ended && item("Rename", () => setDialog("rename"))}
       {item("Notes", () => { onNotes(s.key); onClose(); })}
@@ -97,7 +97,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
       {!s.launched && !ended && !archived && item("Stop watching", () => setDialog("delete"))}
     </SessionActionMenu>
     {dialog === "folder" && onMoveFolder && <MoveSessionFolderDialog session={s} folders={folders} onMove={onMoveFolder} onClose={onClose} />}
-    {mergeService && <AgentMergeDialog service={mergeService} sourceName={s.label} onClose={onClose} />}
+    {mergeService && s.parentKey && <AgentMergeDialog key={`${s.key}:${s.parentKey}`} parentKey={splitSessionRef(s.parentKey).key} sourceKey={s.key} service={mergeService} sourceName={s.label} onClose={onClose} />}
     {forkService && <ForkMergeDialog service={forkService} onClose={onClose} onSaved={() => toast("Merge summary saved")} />}
     {(dialog === "rename" || dialog === "delete") && createPortal(<Modal title={dialog === "rename" ? "Rename session" : !s.launched && live ? "Stop watching session" : "Delete session permanently"} onClose={onClose}>
       <form className="rd-session-action-dialog" role="dialog" aria-label={dialog === "rename" ? "Rename session" : "Confirm session removal"} aria-modal="true" onKeyDown={e => {
