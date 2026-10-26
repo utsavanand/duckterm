@@ -37,6 +37,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             "currentTarget": desktopTarget,
             "testBuild": AppIdentity.isTest,
             "canCollaborate": true, "canReportBug": true,
+            "canApprove": ApprovalSigner.available,
             "targets": [["id": "local", "name": "This Mac"]] + desktopHosts.map {
                 ["id": $0.target, "name": "Remote — \($0.name)"]
             }
@@ -53,6 +54,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         config.userContentController.addUserScript(desktopScript())
         config.userContentController.add(self, name: "remoteSession")
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "launchRequest")
+        config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "approval")
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -82,6 +84,10 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
                                didReceive message: WKScriptMessage,
                                replyHandler: @escaping (Any?, String?) -> Void) {
         let origin = message.frameInfo.securityOrigin
+        if message.name == "approval" {
+            approvalRequest(message, origin: origin, replyHandler: replyHandler)
+            return
+        }
         guard message.webView === web, message.frameInfo.isMainFrame,
               origin.protocol == url.scheme, origin.host == url.host, origin.port == url.port,
               let body = message.body as? [String: Any],
@@ -98,6 +104,37 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         Task { @MainActor in
             do { replyHandler(try await handler(target, operation, params), nil) }
             catch { replyHandler(nil, error.localizedDescription) }
+        }
+    }
+
+    /// Touch ID approval: hand out the public key, or sign one server challenge.
+    /// Only the local dashboard's main frame may ask; the prompt text comes
+    /// from the payload the server will check, not from the page.
+    private func approvalRequest(_ message: WKScriptMessage, origin: WKSecurityOrigin,
+                                 replyHandler: @escaping (Any?, String?) -> Void) {
+        guard message.webView === web, message.frameInfo.isMainFrame,
+              origin.protocol == url.scheme, origin.host == url.host, origin.port == url.port,
+              url.host == "127.0.0.1" || url.host == "localhost",
+              let body = message.body as? [String: Any],
+              let operation = body["operation"] as? String else {
+            replyHandler(nil, "Invalid approval request"); return
+        }
+        Task { @MainActor in
+            do {
+                switch operation {
+                case "public-key":
+                    guard Set(body.keys) == ["operation"] else { throw ApprovalSigner.SignerError.malformed }
+                    replyHandler(try ApprovalSigner.publicKey(), nil)
+                case "sign":
+                    guard Set(body.keys) == ["operation", "payload"],
+                          let payload = body["payload"] as? String else { throw ApprovalSigner.SignerError.malformed }
+                    replyHandler(try await ApprovalSigner.sign(payload), nil)
+                default:
+                    replyHandler(nil, "Invalid approval request")
+                }
+            } catch {
+                replyHandler(nil, error.localizedDescription)
+            }
         }
     }
 

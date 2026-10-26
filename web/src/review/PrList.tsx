@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type PrListResult, type PrRow } from "../api";
+import { approvalLabel } from "./ApproveDialog";
 import "./review.css";
 
 export type PrScope = { kind: "session"; key: string; name: string } | { kind: "folder"; folder: string };
@@ -115,7 +116,7 @@ function Row({ row, folder, onOpenSession, onReview }: { row: PrRow; folder: boo
       <div className="rd-prs-title">{pr ? <a href={pr.url} target="_blank" rel="noreferrer">{pr.title}</a> : row.branch}</div>
       <span className="rd-prs-branch">{row.repo_name} · {row.branch} → {row.base}{row.unpushed_commits ? ` · ${row.unpushed_commits} unpushed` : ""}</span>
     </td>
-    <td><span className={`rd-pr-status is-${row.status}`}>{row.label}</span></td>
+    <td><span className={`rd-pr-status is-${row.status}`}>{row.label}</span>{row.approval && <small className="rd-pr-approval">{approvalLabel(row.approval)}</small>}</td>
     <td className="rd-prs-checks">{checks && checks.total ? <>
       {checks.failed ? <span className="failed">{checks.failed} failed</span> : checks.pending ? <span className="pending">{checks.pending} running</span> : <span>{checks.passed}/{checks.total} passed</span>}
     </> : "—"}</td>

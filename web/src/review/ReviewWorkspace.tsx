@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ReviewHeader } from "../api";
 import { Modal } from "../ui";
+import { ApproveDialog, approvalLabel } from "./ApproveDialog";
 import { CardsPane } from "./CardsPane";
 import { ChatPanel } from "./ChatPanel";
 import { DiffPane, type DiffFocus } from "./DiffPane";
@@ -10,7 +11,6 @@ import "./review.css";
 
 type Tab = "diff" | "review" | "history";
 const TABS: { id: Tab; label: string }[] = [{ id: "diff", label: "Diff" }, { id: "review", label: "Review" }, { id: "history", label: "History" }];
-type ReviewEvent = "APPROVE" | "REQUEST_CHANGES";
 
 export function ReviewWorkspace({ repo, target, from, onBack }: { repo: string; target: string; from?: string; onBack: () => void }) {
   const [header, setHeader] = useState<ReviewHeader | null>(null);
@@ -20,7 +20,8 @@ export function ReviewWorkspace({ repo, target, from, onBack }: { repo: string; 
   const [quote, setQuote] = useState("");
   const [pendingQuestion, setPendingQuestion] = useState("");
   const [focus, setFocus] = useState<DiffFocus | null>(null);
-  const [dialog, setDialog] = useState<{ event: ReviewEvent; body: string } | null>(null);
+  const [dialog, setDialog] = useState<{ body: string } | null>(null);
+  const [approving, setApproving] = useState(false);
   const [posting, setPosting] = useState(false);
   const [posted, setPosted] = useState<string | null>(null);
   const [dialogError, setDialogError] = useState("");
@@ -49,7 +50,7 @@ export function ReviewWorkspace({ repo, target, from, onBack }: { repo: string; 
     if (!dialog) return;
     setPosting(true); setDialogError("");
     try {
-      const result = await api.reviewGithub(repo, target, { event: dialog.event, body: dialog.body });
+      const result = await api.reviewGithub(repo, target, { event: "REQUEST_CHANGES", body: dialog.body });
       setPosted(result.url ?? "posted");
       setDialog(null);
       void load(true);
@@ -67,6 +68,7 @@ export function ReviewWorkspace({ repo, target, from, onBack }: { repo: string; 
           {row?.size ? ` · ${row.size.files} ${row.size.files === 1 ? "file" : "files"} ` : " "}
           {row?.size && <><span className="add">+{row.size.additions}</span> <span className="del">−{row.size.deletions}</span></>}
           {row && <> · <span className={`rd-pr-status is-${row.status}`}>{row.label}</span></>}
+          {row?.approval && <> · <span className="rd-pr-approval">{approvalLabel(row.approval)}</span></>}
           {row?.checks && row.checks.total > 0 && ` · checks ${row.checks.failed ? `${row.checks.failed} failed` : row.checks.pending ? `${row.checks.pending} running` : "passing"}`}
           {(header.session?.name ?? from) && ` · from ${header.session?.name ?? from}`}
           {` · head ${shortSha(header.head_sha)}`}
@@ -77,8 +79,8 @@ export function ReviewWorkspace({ repo, target, from, onBack }: { repo: string; 
       <div className="rd-review-actions">
         <button className="rd-btn rd-btn-ghost rd-btn-sm" aria-pressed={chat} onClick={() => setChat(open => !open)}>Chat</button>
         {github && <a className="rd-prs-link" href={github} target="_blank" rel="noreferrer">Open on GitHub</a>}
-        {canReview && <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setDialog({ event: "REQUEST_CHANGES", body: "" })}>Request changes</button>}
-        {canReview && <button className="rd-btn rd-btn-primary rd-btn-sm" onClick={() => setDialog({ event: "APPROVE", body: "" })}>Approve</button>}
+        {canReview && <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setDialog({ body: "" })}>Request changes</button>}
+        {canReview && pr && <button className="rd-btn rd-btn-primary rd-btn-sm" onClick={() => setApproving(true)}>Approve…</button>}
       </div>
     </header>
     <div className="rd-review-tabs" role="tablist" aria-label="Review views">
@@ -99,19 +101,20 @@ export function ReviewWorkspace({ repo, target, from, onBack }: { repo: string; 
       </div>
       <aside className={`rd-review-chat${chat ? "" : " collapsed"}`} aria-label="Review chat">
         {chat && header && <ChatPanel header={header} quote={quote} onClearQuote={clearQuote} onOpenFile={(path, line) => openFile(path, undefined, line)}
-          onDraft={body => setDialog({ event: "REQUEST_CHANGES", body })} onCollapse={() => setChat(false)} pendingQuestion={pendingQuestion} onQuestionTaken={questionTaken} />}
+          onDraft={body => setDialog({ body })} onCollapse={() => setChat(false)} pendingQuestion={pendingQuestion} onQuestionTaken={questionTaken} />}
         {chat && !header && <p className="rd-prs-empty">Loading…</p>}
         {!chat && <button className="rd-review-chat-tab" onClick={() => setChat(true)}>Chat</button>}
       </aside>
     </div>
-    {dialog && <Modal title={dialog.event === "APPROVE" ? "Approve on GitHub" : "Request changes on GitHub"} onClose={() => setDialog(null)}>
+    {approving && pr && <ApproveDialog repo={repo} target={target} prNumber={pr.number} onClose={() => setApproving(false)} onApproved={() => void load(true)} />}
+    {dialog && <Modal title="Request changes on GitHub" onClose={() => setDialog(null)}>
       <form className="rd-review-dialog" onSubmit={event => { event.preventDefault(); void post(); }}>
-        <p className="rd-card-meta">Posts a {dialog.event === "APPROVE" ? "review approval" : "request-changes review"} on {pr ? `#${pr.number}` : "this PR"} as you. Nothing is sent until you click Post.</p>
-        <textarea rows={10} aria-label="Review body" value={dialog.body} placeholder={dialog.event === "APPROVE" ? "Optional comment" : "What should change"} onChange={event => setDialog({ ...dialog, body: event.target.value })} />
+        <p className="rd-card-meta">Posts a request-changes review on {pr ? `#${pr.number}` : "this PR"} as you. Nothing is sent until you click Post.</p>
+        <textarea rows={10} aria-label="Review body" value={dialog.body} placeholder="What should change" onChange={event => setDialog({ ...dialog, body: event.target.value })} />
         {dialogError && <p className="rd-prs-note" role="alert">{dialogError}</p>}
         <div className="rd-review-dialog-actions">
           <button type="button" className="rd-btn rd-btn-ghost" onClick={() => setDialog(null)}>Cancel</button>
-          <button className="rd-btn rd-btn-primary" disabled={posting || (dialog.event !== "APPROVE" && !dialog.body.trim())}>{posting ? "Posting…" : dialog.event === "APPROVE" ? "Post approval" : "Post as review"}</button>
+          <button className="rd-btn rd-btn-primary" disabled={posting || !dialog.body.trim()}>{posting ? "Posting…" : "Post as review"}</button>
         </div>
       </form>
     </Modal>}

@@ -22,6 +22,10 @@
     PUT  /review/:repo/:ref/viewed    mark a file viewed or move it to another bucket
     GET  /review/:repo/:ref/cards     review cards (generation starts on first open)
     POST /review/:repo/:ref/cards/regenerate, chat, ask, send, draft-review, github-review
+    GET  /review/:repo/:ref/approval            Touch ID approval state and preconditions
+    POST /review/:repo/:ref/approval/challenge  a single-use payload for the Mac app to sign
+    POST /review/:repo/:ref/approval/submit     signed approval: hand to the release session
+    GET/POST /approval-key                      the bound Secure Enclave public key
     GET  /review/:repo/:ref/releases, compare?older=&newer=, archmap/:tag   release history
     GET  /folders/:path/prs           pull requests across the folder's sessions
     GET  /sessions/:key/output        SSE: live agent output (PTY) lines
@@ -113,6 +117,7 @@ from duckterm.persistence.saved_state import (
 )
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
 from duckterm.review import git as git_review
+from duckterm.review.approvals import ApprovalError
 from duckterm.review.git import ReviewGitError as GitErrorReview
 from duckterm.runtimes import native_history, opencode_options
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
@@ -248,6 +253,8 @@ _ROUTES: list[Route] = [
           **_mid("/approvals/", "/decision")),
     Route("GET", "/terminals", lambda s, r, w, h, b, seg: s._terminals(w)),
     Route("GET", "/tasks", lambda s, r, w, h, b, seg: s._folder_tasks(w, h)),
+    Route("GET", "/approval-key", lambda s, r, w, h, b, seg: s._approval_key(w, h, "GET", b)),
+    Route("POST", "/approval-key", lambda s, r, w, h, b, seg: s._approval_key(w, h, "POST", b)),
     Route("GET", "/update/status", lambda s, r, w, h, b, seg: s._update_status(w, h)),
     Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
@@ -765,7 +772,8 @@ class Server:
         review_url = urllib.parse.urlsplit(path)
         review_match = re.fullmatch(
             r"/review/([^/]+)/([^/]+)(?:/(diff|viewed|cards|cards/regenerate|chat|ask|send|"
-            r"draft-review|github-review|releases|compare|archmap/[^/]+))?",
+            r"draft-review|github-review|approval|approval/challenge|approval/submit|"
+            r"releases|compare|archmap/[^/]+))?",
             review_url.path,
         )
         if review_match:
@@ -1555,6 +1563,9 @@ class Server:
             "send": "POST",
             "draft-review": "POST",
             "github-review": "POST",
+            "approval": "GET",
+            "approval/challenge": "POST",
+            "approval/submit": "POST",
             "releases": "GET",
             "compare": "GET",
         }
@@ -1588,6 +1599,8 @@ class Server:
                 result = await asyncio.to_thread(workspace.mark_viewed, target, payload)
             elif part in ("releases", "compare") or part.startswith("archmap/"):
                 result = await self._review_history(target, part, query)
+            elif part.startswith("approval"):
+                result = await self._review_approval(target, part, payload)
             else:
                 result = await self._review_cards(target, part, payload)
         except workspace.ReviewError as exc:
@@ -1598,6 +1611,9 @@ class Server:
             return
         except GitErrorReview as exc:
             await _write_json(writer, 500, {"error": str(exc)})
+            return
+        except ApprovalError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
             return
         await _write_json(writer, 200, result)
 
@@ -1627,6 +1643,7 @@ class Server:
             "key": row["session_key"],
             "name": row.get("name") or row["session_key"],
             "progress": row.get("progress"),
+            "folder": row.get("grp") or "",
         }
 
     async def _review_cards(self, target: Any, part: str, payload: dict[str, Any]) -> Any:
@@ -1695,11 +1712,13 @@ class Server:
         if part == "github-review":
             event = payload.get("event")
             review_body = payload.get("body")
-            if event not in ("APPROVE", "REQUEST_CHANGES", "COMMENT"):
+            # Approval is Touch ID merge-and-release (approval/submit); this route
+            # holds only the install token, which agents also hold.
+            if event not in ("REQUEST_CHANGES", "COMMENT"):
                 raise workspace.ReviewError(
-                    400, "event must be APPROVE, REQUEST_CHANGES or COMMENT"
+                    400, "event must be REQUEST_CHANGES or COMMENT; approve with Touch ID"
                 )
-            if not isinstance(review_body, str) or (event != "APPROVE" and not review_body.strip()):
+            if not isinstance(review_body, str) or not review_body.strip():
                 raise workspace.ReviewError(400, "a review body is required")
             if not target.pr or not target.slug:
                 raise workspace.ReviewError(409, "This branch has no pull request on GitHub")
@@ -1713,6 +1732,168 @@ class Server:
             except github.GitHubError as exc:
                 raise workspace.ReviewError(502, str(exc)) from exc
         raise workspace.ReviewError(404, "unknown review route")
+
+    async def _approval_key(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], method: str, body: bytes
+    ) -> None:
+        """The Secure Enclave public key that approval signatures must match."""
+        from duckterm.review import approvals
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        try:
+            if method == "GET":
+                result = await asyncio.to_thread(approvals.key_status)
+            else:
+                try:
+                    payload = json.loads(body or b"{}")
+                except json.JSONDecodeError:
+                    raise ApprovalError(400, "invalid JSON body") from None
+                if not isinstance(payload, dict):
+                    raise ApprovalError(400, "body must be a JSON object")
+                result = await asyncio.to_thread(approvals.enroll, payload.get("public_key"))
+        except ApprovalError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
+
+    async def _approval_context(self, target: Any) -> dict[str, Any]:
+        """Everything Approve depends on, read fresh: the header row from git
+        and GitHub, the authoring and release sessions, and card 9's flags."""
+        from duckterm.review import approvals, cards, workspace
+
+        header = await asyncio.to_thread(workspace.header, target)
+        author = await self._review_author(target.branch)
+        release_row = (
+            approvals.release_session(self.history.sessions(), author["folder"]) if author else None
+        )
+        release = (
+            {
+                "key": release_row["session_key"],
+                "name": release_row.get("name") or release_row["session_key"],
+                "folder": release_row.get("grp") or "",
+            }
+            if release_row
+            else None
+        )
+        diff = await asyncio.to_thread(workspace.diff_payload, target, since=None, whitespace=True)
+        impact = cards.release_impact(
+            target,
+            {"paths": [f["path"] for f in diff["files"]], "files": diff["files"]},
+            header["row"],
+        )
+        flags = [
+            {"name": c["name"], "hits": c["hits"][:6]}
+            for c in impact["checks"]
+            if c["status"] == "fail" and c["hits"]
+        ]
+        checks = approvals.preconditions(header, author, release)
+        return {
+            "header": header,
+            "author": author,
+            "release": release,
+            "checks": checks,
+            "ready": all(c["ok"] for c in checks),
+            "flags": flags,
+        }
+
+    def _approval_progress(self, record: dict[str, Any] | None) -> dict[str, Any] | None:
+        """The approval record with its release task's live status and note."""
+        if not record:
+            return None
+        try:
+            task = self.history.folder_tasks.get(record["task_id"])
+        except APIError:
+            return {**record, "task": None}
+        return {**record, "task": {k: task[k] for k in ("status", "note", "updated_at")}}
+
+    async def _review_approval(self, target: Any, part: str, payload: dict[str, Any]) -> Any:
+        """Approve = merge and release, signed with Touch ID in the Mac app
+        (docs/specs/pr-widget-approve-delta-spec.md)."""
+        from duckterm.review import approvals, workspace
+
+        number = target.pr["number"] if target.pr else None
+        if part == "approval":
+            context = await self._approval_context(target)
+            record = (
+                await asyncio.to_thread(approvals.load_record, target.repo, target.slug, number)
+                if number
+                else None
+            )
+            return {
+                "checks": context["checks"],
+                "ready": context["ready"],
+                "flags": context["flags"],
+                "release": context["release"],
+                "author": context["author"]
+                and {k: context["author"][k] for k in ("key", "name", "folder")},
+                "head_sha": target.head_sha,
+                "key": await asyncio.to_thread(approvals.key_status),
+                "record": self._approval_progress(record),
+            }
+        if number is None:
+            raise ApprovalError(409, "This branch has no pull request on GitHub")
+        if part == "approval/challenge":
+            context = await self._approval_context(target)
+            failing = next((c for c in context["checks"] if not c["ok"]), None)
+            if failing:
+                raise ApprovalError(409, f"{failing['name']}: {failing['note']}")
+            if not (await asyncio.to_thread(approvals.key_status))["enrolled"]:
+                raise ApprovalError(409, "No Touch ID key is bound; open DuckTerm on this Mac")
+            issued = approvals.challenge(
+                {
+                    "repo": target.repo,
+                    "github": target.slug or "",
+                    "pr": str(number),
+                    "head": target.head_sha,
+                    "folder": context["author"]["folder"],
+                    "release": context["release"]["key"],
+                }
+            )
+            return {"payload": issued}
+        # approval/submit
+        payload_text = payload.get("payload")
+        if not isinstance(payload_text, str):
+            raise ApprovalError(400, "payload must be an approval challenge")
+        fields = approvals.take_challenge(payload_text)
+        if fields["repo"] != target.repo or fields["pr"] != str(number):
+            raise ApprovalError(409, "That approval was for a different pull request")
+        if not await asyncio.to_thread(approvals.verify, payload_text, payload.get("signature")):
+            raise ApprovalError(403, "The signature does not match this Mac's Touch ID key")
+        fresh = await asyncio.to_thread(workspace.resolve, target.repo, target.ref, refresh=True)
+        if fresh.head_sha != fields["head"]:
+            raise ApprovalError(409, "Head changed since approval; nothing was merged")
+        context = await self._approval_context(fresh)
+        failing = next((c for c in context["checks"] if not c["ok"]), None)
+        if failing:
+            raise ApprovalError(409, f"{failing['name']}: {failing['note']}")
+        if context["release"]["key"] != fields["release"]:
+            raise ApprovalError(409, "The release session changed since approval; approve again")
+        release_folder = context["release"]["folder"]
+        with self.history._conn:
+            task = self.history.folder_tasks.start(
+                release_folder,
+                fields["release"],
+                f"Merge and release PR #{fields['pr']} at {fields['head'][:12]}",
+            )
+            self.history.folder_tasks.update(task["id"], {"note": "approved with Touch ID"})
+        message_id = self.history.session_api.owner_message(
+            fields["release"],
+            approvals.release_message(fields, task["id"]),
+            request_key=f"approve:{fields['github']}:{fields['pr']}:{fields['head']}",
+        )
+        record = {
+            "pr": number,
+            "head_sha": fields["head"],
+            "release": context["release"],
+            "task_id": task["id"],
+            "message_id": message_id,
+            "approved_at": time.time(),
+            "fingerprint": (await asyncio.to_thread(approvals.key_status))["fingerprint"],
+        }
+        await asyncio.to_thread(approvals.save_record, target.repo, target.slug, number, record)
+        return self._approval_progress(record)
 
     async def _review_history(self, target: Any, part: str, query: dict[str, list[str]]) -> Any:
         """Releases, module maps and comparisons (spec §7). Maps for the newest
@@ -1810,6 +1991,7 @@ class Server:
         query: str,
     ) -> None:
         """Pull request rows for one session or one folder (docs/pr-review-platform-spec.md)."""
+        from duckterm.review import approvals
         from duckterm.review import lists as review_lists
 
         if not security.token_valid(headers, self.token):
@@ -1835,6 +2017,14 @@ class Server:
         result = await asyncio.to_thread(
             review_lists.build, members, include_unclaimed=scope == "folders", refresh=refresh
         )
+        for item in result["rows"]:
+            number = (item.get("pr") or {}).get("number")
+            record = (
+                await asyncio.to_thread(approvals.load_record, item["repo"], item["github"], number)
+                if number
+                else None
+            )
+            item["approval"] = self._approval_progress(record)
         await _write_json(writer, 200, result)
 
     async def _artifacts(
