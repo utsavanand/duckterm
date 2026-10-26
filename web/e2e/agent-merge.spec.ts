@@ -98,3 +98,62 @@ test("different worktrees offer the exact committed code for review without chan
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Exercise the real merge UI and existing count selector without calling a model.
+test("empty context recovery keeps drafts, isolates count selection, and never auto-sends", async ({ page }) => {
+  const folder = `Merge recovery ${Date.now()}`, source = `recovery-source-${Date.now()}`, target = `recovery-target-${Date.now()}`;
+  let checkpointCalls = 0, mergeCalls = 0, generated = false;
+  try {
+    await seedSession(source, { name: "Recovery notes", runtime: "generic", group: folder, test: true });
+    await seedSession(target, { name: "Recovery main", runtime: "generic", group: folder, test: true });
+    expect((await apiPost(`/sessions/${target}/collaboration`, { root: folder })).status).toBe(200);
+    await page.route(`**/sessions/${source}/checkpoint-plan`, route => route.fulfill({ json: { available_records: 8, processed_records: 0, pending_records: 8, default_records: 20, selected_records: 8, remaining_records: 0, batch_records: 20, order: "oldest_unprocessed_first", selection_plan: { source: "fixture" } } }));
+    await page.route(`**/sessions/${source}/checkpoint`, async route => {
+      checkpointCalls++; generated = true;
+      await route.fulfill({ json: { id: "fixture-checkpoint", saved: true, summary_update: { state: "updated" }, record: {}, summary: "Do not use response display text" } });
+    });
+    await page.route(`**/sessions/${source}/agent-merge**`, async route => {
+      if (route.request().method() === "POST" && new URL(route.request().url()).pathname.endsWith("/agent-merge")) { mergeCalls++; await route.abort(); return; }
+      const response = await route.fetch(); const data = await response.json();
+      if (generated && data.source && data.revision) { data.context = "Canonical saved summary after checkpoint"; data.revision = "after-checkpoint"; }
+      await route.fulfill({ response, json: data });
+    });
+    await page.setViewportSize({ width: 1440, height: 1050 }); await page.goto(base()); await expandFolder(page, folder);
+    await page.locator(".rd-row", { has: page.getByText("Recovery notes", { exact: true }) }).click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Merge with agent", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Merge with agent", exact: true });
+    await dialog.getByLabel("Destination agent").selectOption(target);
+    await expect(dialog.getByText(/No saved conversation summary/)).toBeVisible();
+    await dialog.getByRole("checkbox", { name: /^Conversation context/ }).check();
+    await dialog.getByRole("checkbox", { name: /^Notes/ }).check();
+    await expect(dialog.getByLabel("Context to send")).toHaveAttribute("aria-invalid", "true");
+    await expect(dialog.getByLabel("Notes to append")).toHaveAttribute("aria-invalid", "true");
+    await page.evaluate(() => document.documentElement.dataset.theme = "dark");
+    await page.screenshot({ path: "/tmp/merge-recovery-app-dark.png" });
+    await dialog.getByRole("button", { name: "Generate summary…" }).click();
+    const chooser = page.getByRole("dialog", { name: "Checkpoint", exact: true });
+    await expect(chooser.getByRole("button", { name: "Checkpoint 8 records" })).toBeEnabled();
+    await expect(dialog).toHaveCount(0);
+    await page.keyboard.press("Escape"); await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Generate summary…" })).toBeFocused();
+    expect(checkpointCalls).toBe(0);
+    await dialog.getByLabel("Notes to append").fill("Keep this owner draft.");
+    await dialog.getByRole("button", { name: "Generate summary…" }).click();
+    await chooser.getByRole("button", { name: "Checkpoint 8 records" }).click();
+    await expect(dialog.getByLabel("Context to send")).toHaveValue("Canonical saved summary after checkpoint");
+    await expect(dialog.getByLabel("Notes to append")).toHaveValue("Keep this owner draft.");
+    expect(checkpointCalls).toBe(1); expect(mergeCalls).toBe(0);
+    await dialog.getByRole("button", { name: "Review merge", exact: true }).click();
+    await expect(dialog.locator("pre").first()).toHaveText("Canonical saved summary after checkpoint");
+    expect(mergeCalls).toBe(0);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => document.documentElement.dataset.theme = "light");
+    await dialog.getByRole("button", { name: "Send merge request" }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: "/tmp/merge-recovery-app-light-narrow.png" });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(mergeCalls).toBe(0);
+  } finally {
+    await apiDelete(`/sessions/${source}`); await apiDelete(`/sessions/${target}`); await apiDelete(`/folders/${encodeURIComponent(folder)}`);
+  }
+});

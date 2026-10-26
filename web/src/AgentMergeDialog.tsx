@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { CheckpointDialog } from "./CheckpointDialog";
+import { CheckpointProgress } from "./CheckpointProgress";
+import { requestCheckpoint, checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
+import { checkpointNotice } from "./checkpointState";
+import type { CheckpointSelection } from "./api";
 import { Modal } from "./ui";
 import "./forkMerge.css";
 import "./agentMerge.css";
@@ -16,7 +21,7 @@ export interface AgentMergeService {
   history: () => Promise<{ merges: AgentMergeRecord[] }>;
 }
 
-export function AgentMergeDialog({ service, sourceName, onClose }: { service: AgentMergeService; sourceName: string; onClose: () => void }) {
+export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { service: AgentMergeService; sourceKey: string; sourceName: string; onClose: () => void }) {
   const [targets, setTargets] = useState<MergeTarget[]>([]), [target, setTarget] = useState("");
   const [preview, setPreview] = useState<AgentMergePreview | null>(null);
   const [context, setContext] = useState(""), [notes, setNotes] = useState("");
@@ -25,6 +30,12 @@ export function AgentMergeDialog({ service, sourceName, onClose }: { service: Ag
   const [error, setError] = useState(""), [historyError, setHistoryError] = useState("");
   const [retry, setRetry] = useState(0), [record, setRecord] = useState<AgentMergeRecord | null>(null), [history, setHistory] = useState<AgentMergeRecord[]>([]);
   const edited = useRef({ context: false, notes: false, includeContext: false, includeNotes: false }), sending = useRef(false), alive = useRef(true);
+  const [choosingSummary, setChoosingSummary] = useState(false), [generating, setGenerating] = useState(false);
+  const [summaryNotice, setSummaryNotice] = useState("");
+  const generatingRef = useRef(false), generateButton = useRef<HTMLButtonElement>(null);
+  const attempt = useCheckpointAttempt(sourceKey);
+  const checkpointRunning = attempt?.state === "running" || (attempt?.state === "unknown" && !!attempt.recovering);
+  const generationPending = generating || checkpointRunning;
   const submission = useRef<{ signature: string; requestKey: string }>();
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
@@ -75,9 +86,31 @@ export function AgentMergeDialog({ service, sourceName, onClose }: { service: Ag
     return () => { live = false; clearTimeout(timer); document.removeEventListener("visibilitychange", visibility); };
   }, [recordId, service]);
   const close = () => { if (!sending.current) onClose(); };
+  async function finishSummary(selection: CheckpointSelection | null) {
+    setChoosingSummary(false);
+    if (!selection || generatingRef.current) { requestAnimationFrame(() => generateButton.current?.focus()); return; }
+    generatingRef.current = true; setGenerating(true); setSummaryNotice("");
+    try {
+      const result = await requestCheckpoint(sourceKey, selection);
+      if (!alive.current) return;
+      setSummaryNotice(`${checkpointNotice(result)} Your edited fields are kept. Review the context before sending.`);
+      // The merge preview owns the canonical saved context, not the checkpoint
+      // response's display text. Reload it even after partial/failed work so
+      // any available saved revision can be reviewed without claiming success.
+      setRetry(n => n + 1);
+    } catch (cause) {
+      if (alive.current) setSummaryNotice(`${checkpointRequestError(cause)} Your draft is kept; nothing was sent to the destination.`);
+    } finally {
+      generatingRef.current = false;
+      if (alive.current) { setGenerating(false); requestAnimationFrame(() => generateButton.current?.focus()); }
+    }
+  }
+  const emptyContext = includeContext && !context.trim(), emptyNotes = includeNotes && !notes.trim();
+  const validation = !includeContext && !includeNotes && !code ? "Choose context, notes, or available code to include."
+    : emptyContext || emptyNotes ? "Add text to each selected section, or deselect the empty sections." : "";
   const valid = !!preview?.target.allowed && (includeContext || includeNotes || code) && (!includeContext || !!context.trim()) && (!includeNotes || !!notes.trim()) && (!code || preview.git.allowed);
   async function send() {
-    if (sending.current || !preview || !valid) return;
+    if (sending.current || generationPending || !preview || !valid) return;
     const draft = { target, revision: preview.revision, context: includeContext ? context : null, notes: includeNotes ? notes : null, code };
     const signature = JSON.stringify(draft);
     if (submission.current?.signature !== signature) submission.current = { signature, requestKey: crypto.randomUUID() };
@@ -86,6 +119,7 @@ export function AgentMergeDialog({ service, sourceName, onClose }: { service: Ag
     catch (e) { if (alive.current) setError(`Could not confirm the merge: ${(e as Error).message}. Your draft is kept. Retry unchanged to check the same request; it may already be saved.`); }
     finally { sending.current = false; if (alive.current) setBusy(false); }
   }
+  if (choosingSummary) return <CheckpointDialog request={{ key: sourceKey, name: sourceName, resolve: selection => void finishSummary(selection) }} onFinish={selection => void finishSummary(selection)} />;
   return createPortal(<div onKeyDown={event => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
     if (event.key === "Tab") {
@@ -95,7 +129,7 @@ export function AgentMergeDialog({ service, sourceName, onClose }: { service: Ag
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     }
   }}><Modal title={record ? "Merge request saved" : reviewing ? "Review merge" : "Merge with agent"} onClose={close} width={660}>
-    <div className="rd-merge-review rd-agent-merge" role="dialog" aria-modal="true" aria-label="Merge with agent" aria-busy={busy || loading}>
+    <div className="rd-merge-review rd-agent-merge" role="dialog" aria-modal="true" aria-label="Merge with agent" aria-busy={busy || loading || generationPending}>
       {!record && !reviewing && <>
         <p>Bring selected context into another agent. Both sessions stay open.</p>
         <label className="rd-merge-label" htmlFor="merge-agent-target">Destination agent</label>
@@ -107,13 +141,23 @@ export function AgentMergeDialog({ service, sourceName, onClose }: { service: Ag
           <div className="rd-merge-route"><strong>{sourceName}</strong>→<strong>{preview.target.name}</strong></div>
           {!preview.target.allowed && <p role="alert">{preview.target.reason}</p>}
           <label className="rd-agent-merge-choice"><input type="checkbox" checked={includeContext} onChange={e => { edited.current.includeContext = true; setIncludeContext(e.target.checked); }} />Conversation context<small>A reviewed summary. The original conversations remain separate.</small></label>
-          {includeContext && <textarea aria-label="Context to send" value={context} maxLength={12000} placeholder="Review or write the context the destination should receive" onChange={e => { edited.current.context = true; setContext(e.target.value); }} />}
-          {!context && <p>No saved conversation summary is available. Select Conversation context to write one.</p>}
+          {includeContext && <textarea aria-invalid={emptyContext} aria-describedby={emptyContext ? "merge-context-error" : undefined} aria-label="Context to send" value={context} maxLength={12000} placeholder="Review or write the context the destination should receive" onChange={e => { edited.current.context = true; setContext(e.target.value); }} />}
+          {emptyContext && <p id="merge-context-error" className="rd-agent-merge-validation">Write context to send, generate a summary below, or deselect Conversation context.</p>}
+          {!preview.context.trim() && <div className="rd-agent-merge-recovery">
+            <p>No saved conversation summary yet. Write context yourself, or generate a summary from this session’s recorded history.</p>
+            <button ref={generateButton} className="rd-btn" disabled={busy || loading || generationPending} onClick={() => { setSummaryNotice(""); setChoosingSummary(true); }}>Generate summary…</button>
+            <p>You’ll choose how much history to summarize before starting. This uses your configured checkpoint models; nothing is sent to {preview.target.name}.</p>
+          </div>}
+          {generationPending && <CheckpointProgress sessionKey={sourceKey} />}
+          {summaryNotice && <p role="status">{summaryNotice}</p>}
           <label className="rd-agent-merge-choice"><input type="checkbox" checked={includeNotes} onChange={e => { edited.current.includeNotes = true; setIncludeNotes(e.target.checked); }} />Notes<small>Append these notes once, preserving existing destination notes.</small></label>
-          {includeNotes && <textarea aria-label="Notes to append" value={notes} maxLength={12000} onChange={e => { edited.current.notes = true; setNotes(e.target.value); }} />}
+          {includeNotes && <textarea aria-invalid={emptyNotes} aria-describedby={emptyNotes ? "merge-notes-error" : undefined} placeholder="Write notes to append, or deselect Notes" aria-label="Notes to append" value={notes} maxLength={12000} onChange={e => { edited.current.notes = true; setNotes(e.target.value); }} />}
+          {emptyNotes && <p id="merge-notes-error" className="rd-agent-merge-validation">Write notes to append, or deselect Notes.</p>}
           <label className="rd-agent-merge-choice"><input type="checkbox" checked={code} disabled={!preview.git.allowed} onChange={e => setCode(e.target.checked)} />Code from the other worktree<small>Ask the destination agent to integrate the reviewed commits and report conflicts.</small></label>
-          {!preview.git.allowed && <p>{preview.git.reason}</p>}
+          {!preview.git.allowed && <p>{preview.git.reason} You can still send context or notes.</p>}
           {code && <GitReview git={preview.git} />}
+          <p className="rd-agent-merge-draft-status">Refresh updates untouched fields. Your edits and checkbox choices stay as you left them.</p>
+          {validation && <p role="status" className="rd-agent-merge-validation">{validation}</p>}
         </>}
       </>}
       {!record && reviewing && preview && <>
@@ -128,7 +172,7 @@ export function AgentMergeDialog({ service, sourceName, onClose }: { service: Ag
       {!record && !reviewing && history.length > 0 && <details><summary>Recent merge requests ({history.length})</summary>{history.map(item => <button type="button" className="rd-agent-merge-history" key={item.id} onClick={() => setRecord(item)}>{item.sourceName} → {item.targetName} · {item.delivery} · {new Date(item.createdAt).toLocaleString()}</button>)}</details>}
       {historyError && <p role="status">{historyError}</p>}
       {error && <p className="rd-merge-error" role="alert">{error}</p>}
-      <footer><button className="rd-btn" disabled={busy} onClick={close}>{record ? "Done" : "Cancel"}</button>{!record && <>{reviewing ? <button className="rd-btn" disabled={busy} onClick={() => setReviewing(false)}>Back</button> : <button className="rd-btn" disabled={busy || loading} onClick={() => setRetry(n => n + 1)}>Refresh preview</button>}<button className="rd-btn rd-btn-primary" disabled={busy || loading || !valid} onClick={() => reviewing ? void send() : setReviewing(true)}>{busy ? "Saving merge request…" : reviewing ? "Send merge request" : "Review merge"}</button></>}</footer>
+      <footer><button className="rd-btn" disabled={busy} onClick={close}>{record ? "Done" : "Cancel"}</button>{!record && <>{reviewing ? <button className="rd-btn" disabled={busy} onClick={() => setReviewing(false)}>Back</button> : <button className="rd-btn" disabled={busy || loading || generationPending} onClick={() => setRetry(n => n + 1)}>Refresh preview</button>}<button className="rd-btn rd-btn-primary" disabled={busy || loading || generationPending || !valid} onClick={() => reviewing ? void send() : setReviewing(true)}>{busy ? "Saving merge request…" : reviewing ? "Send merge request" : "Review merge"}</button></>}</footer>
     </div>
   </Modal></div>, document.body);
 }
