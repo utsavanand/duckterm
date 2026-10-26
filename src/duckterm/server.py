@@ -951,8 +951,12 @@ class Server:
         response = dict(event)
         if hook_output:
             response["hook_output"] = hook_output
-        await _write_json(writer, 200, response)
-        self.restarts.hook_finished(event)
+        try:
+            await _write_json(writer, 200, response)
+        finally:
+            # The accepted Stop is already durable. A disconnected hook client
+            # must not leave an idle session's restart queued forever.
+            self.restarts.hook_finished(event)
 
     def _inbox_hook_output(self, raw: dict[str, Any], key: str) -> dict[str, Any] | None:
         if self.restarts.pending(key):

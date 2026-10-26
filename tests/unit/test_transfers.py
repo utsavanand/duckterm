@@ -522,3 +522,77 @@ def test_progress_is_readable_while_clone_holds_operation_lock(homes):
         t.save(directory, {"id": identifier, "stage": "cloning"})
         result = pool.submit(t.status, identifier)
         assert result.result(timeout=1)["stage"] == "cloning"
+
+
+def test_clone_error_records_failed_state(tmp_path, homes, monkeypatch):
+    from duckterm import github_projects
+
+    dest = tmp_path / "empty"
+    dest.mkdir()
+    identifier = uuid.uuid4().hex
+
+    def fail(*args):
+        raise ValueError("Synthetic download failure before git checkout")
+
+    monkeypatch.setattr(github_projects, "clone", fail)
+    with pytest.raises(ValueError, match="Synthetic download failure"):
+        t.clone(identifier, "https://github.com/fixture/test.git", "", str(dest), "fixture/test")
+    assert list(dest.iterdir()) == []
+    assert t.status(identifier)["stage"] == "failed"
+    assert "error" in t.status(identifier)
+
+    import shutil
+
+    source = tmp_path / "source"
+    repo(source)
+    monkeypatch.setattr(
+        github_projects, "clone", lambda name, branch, stage: shutil.copytree(source, stage)
+    )
+    recovered = t.clone(
+        identifier, "https://github.com/fixture/test.git", "", str(dest), "fixture/test"
+    )
+    assert recovered["stage"] == "ready"
+    assert "error" not in recovered
+    assert (dest / "file.txt").is_file()
+
+
+def test_clone_status_remains_responsive_while_download_runs(tmp_path, homes, monkeypatch):
+    import concurrent.futures
+    import threading
+
+    from duckterm import github_projects
+
+    entered, release, status_started = threading.Event(), threading.Event(), threading.Event()
+    identifier = uuid.uuid4().hex
+    dest = tmp_path / "empty"
+    dest.mkdir()
+
+    def blocked(*args):
+        entered.set()
+        assert release.wait(5)
+        raise ValueError("Synthetic clone ended")
+
+    def status():
+        status_started.set()
+        return t.status(identifier)
+
+    monkeypatch.setattr(github_projects, "clone", blocked)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        clone = pool.submit(
+            t.clone,
+            identifier,
+            "https://github.com/fixture/test.git",
+            "",
+            str(dest),
+            "fixture/test",
+        )
+        assert entered.wait(2)
+        pending = pool.submit(status)
+        assert status_started.wait(2)
+        try:
+            assert pending.result(timeout=1)["stage"] == "cloning"
+        finally:
+            release.set()
+        with pytest.raises(ValueError, match="Synthetic clone ended"):
+            clone.result(timeout=2)
+        assert t.status(identifier)["stage"] == "failed"

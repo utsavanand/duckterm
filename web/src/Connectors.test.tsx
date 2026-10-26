@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, cleanup } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, cleanup } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { Connectors } from "./Connectors";
 import { api, Connector } from "./api";
@@ -135,4 +135,23 @@ it("says an agent is missing rather than implying the connector serves it", asyn
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [live] });
   render(<Connectors />);
   expect(await screen.findByText(/Codex \(not installed here\)/)).toBeVisible();
+});
+
+it("detects new credentials without window blur, but never polls a hidden panel", async () => {
+  const github = { ...row, name: "github", title: "GitHub", sources: ["gh-cli"] };
+  vi.mocked(api.connectors).mockResolvedValueOnce({ connectors: [github] }).mockResolvedValue({ connectors: [{ ...github, credential: "gh-cli" }] });
+  const visible = vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  vi.useFakeTimers();
+  const view = render(<div hidden><Connectors /></div>);
+  await act(async () => {});
+  expect(screen.getByText("Not connected")).toBeInTheDocument();
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(api.connectors).toHaveBeenCalledTimes(1);
+    view.container.firstElementChild!.removeAttribute("hidden");
+    await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+    expect(screen.getByText("GitHub CLI login on this computer")).toBeVisible();
+    await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+    expect(api.connectors).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); visible.mockRestore(); }
 });

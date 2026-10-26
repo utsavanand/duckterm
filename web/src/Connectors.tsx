@@ -41,6 +41,7 @@ const sourceNames: Record<string, string> = {
 
 export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
   const toast = useToast();
+  const panel = useRef<HTMLDivElement>(null);
   const [rows, setRows] = useState<Connector[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
@@ -99,6 +100,19 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
     return () => { lifetime.current = epoch + 1; invalidate(); window.removeEventListener("focus", refresh); };
   }, [refresh, invalidate]);
 
+  // Authentication in the embedded terminal does not blur the app window.
+  // Check only while this panel is visible and credentials are missing. The
+  // shared pending guard coalesces manual, focus and timed refreshes.
+  const disconnected = rows.some(c => !c.managed && !c.credential);
+  useEffect(() => {
+    const visibleRefresh = () => {
+      if (document.visibilityState === "visible" && !panel.current?.closest("[hidden]")) refresh();
+    };
+    document.addEventListener("visibilitychange", visibleRefresh);
+    const timer = disconnected ? window.setInterval(visibleRefresh, 30000) : undefined;
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", visibleRefresh); };
+  }, [disconnected, refresh]);
+
   function edit(c: Connector) {
     setEditing(c.name);
     setSource(c.credential ?? (c.sources?.length === 1 ? c.sources[0] : ""));
@@ -135,7 +149,7 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
     }
   }
 
-  return <div className="rd-connectors">
+  return <div ref={panel} className="rd-connectors">
     <div className="rd-panel-head"><span>Connectors ({rows.length}) · {hostName(sessionKey)}</span><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh</button></div>
     <div className="rd-connector-desc">Enabled integrations are shared by agents on {hostName(sessionKey)}.</div>
     {rows.map(c => <div key={c.name} className="rd-connector">
@@ -144,7 +158,9 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
         <span className="rd-connector-title">{c.title}</span>
         <span className="rd-connector-cred">{c.credential ? sourceNames[c.credential] ?? c.credential : "Not connected"}</span>
         {(!c.managed || c.hosted === false) && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => c.enabled ? change(c, "disable") : c.managed ? change(c, "enable") : edit(c)}>{c.enabled ? "Disable" : "Connect"}</button>}
+        {editing === c.name && <button className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Close ${c.title} connection settings`} onClick={() => { setEditing(null); setToken(""); setSecret(""); }}>Close</button>}
       </div>
+      {!c.managed && !c.credential && <div className="rd-connector-desc">Finished signing in? <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh credentials</button></div>}
       <div className="rd-connector-desc">{c.description}{c.name === "porkbun" ? ` · ${c.write_access ? "Write access enabled" : "Read-only"}` : ""}</div>
       <div className="rd-connector-desc">{c.identity ?? (c.credential ? "Identity not verified — reconnect to verify" : c.detail)}</div>
       {c.enabled && <div className="rd-connector-desc rd-connector-proof">
@@ -195,7 +211,6 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
             })}
           </fieldset>
           <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null || !source || harnesses.length === 0} onClick={() => change(c, "enable")}>Verify and enable</button>
-          <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => { setEditing(null); setToken(""); setSecret(""); }}>Cancel</button>
         </div>}
       </>}
     </div>)}

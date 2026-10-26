@@ -874,8 +874,14 @@ code,
 }
 .rd-connector-token {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 8px;
   margin: 8px 0 0 15px;
+}
+.rd-connector-token select, .rd-connector-token input, .rd-connector-token fieldset {
+  max-width: 100%;
+  min-width: 0;
 }
 .rd-connector-token input {
   flex: 1;
