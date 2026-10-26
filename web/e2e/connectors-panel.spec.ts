@@ -94,7 +94,7 @@ test("a failing connector shows the server's own reason, not a generic error", a
   }
 });
 
-test("connection editor and close control fit the sidebar", async ({ page }) => {
+test("connection editor and close control fit the sidebar", async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const result = await apiPost("/sessions/launch", { command: "python3 -u -c 'import sys; print(\"READY\"); [line for line in sys.stdin]'", cwd: "/tmp", name: "connector-layout-check", in_terminal: false, test: true });
   expect(result.status).toBe(200);
@@ -117,7 +117,7 @@ test("connection editor and close control fit the sidebar", async ({ page }) => 
         expect(box!.x + box!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width + 1);
       }
     }
-    await page.screenshot({ path: "/private/tmp/qa-connectors-implemented.png" });
+    await page.screenshot({ path: testInfo.outputPath("connector-editor.png") });
     await row.getByRole("button", { name: "Close GitHub connection settings" }).click();
     await expect(row.getByLabel("GitHub credential source")).toHaveCount(0);
   } finally { await apiDelete(`/sessions/${key}`); }
