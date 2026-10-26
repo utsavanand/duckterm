@@ -27,7 +27,8 @@ it("lists releases, shows the selected release's map, and marks the difference w
   expect(within(timeline).getAllByRole("listitem")).toHaveLength(2);
   // The newest release opens by default with its map and merges.
   expect(await screen.findByRole("heading", { name: "v0.4.173" })).toBeInTheDocument();
-  expect(screen.getByRole("img", { name: "Architecture at v0.4.173" })).toBeInTheDocument();
+  // The map comes from its own request, after the release list has rendered.
+  expect(await screen.findByRole("img", { name: "Architecture at v0.4.173" })).toBeInTheDocument();
   expect(screen.getByText(/this change will ship after v0.4.173/)).toBeInTheDocument();
   fireEvent.click(screen.getByLabelText(/Only releases that touched this PR's files/));
   expect(within(screen.getByRole("list", { name: "Releases" })).getAllByRole("listitem")).toHaveLength(1);
