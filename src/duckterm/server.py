@@ -56,7 +56,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from duckterm import bug_reports, connectors, suites, zsh_themes
+from duckterm import bug_reports, connectors, editions, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events, oracle
@@ -216,11 +216,12 @@ def _mid(prefix: str, suffix: str) -> dict[str, str]:
 # GETs that require the owner token despite the open-read policy. /connectors
 # reports which providers the owner connected, under which identity, and when
 # each was last used — a description of the owner, not of the UI's own state.
-_OWNER_READS = frozenset({"/connectors", "/checkpoint-settings"})
+_OWNER_READS = frozenset({"/connectors", "/checkpoint-settings", "/edition"})
 
 
 # fmt: off
 _ROUTES: list[Route] = [
+    Route("GET", "/edition", lambda s, r, w, h, b, seg: s._edition(w)),
     Route("GET", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w)),
     Route("POST", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w, b)),
     Route("POST", "", lambda s, r, w, h, b, seg: s._transfer(w, seg, b), prefix="/transfers/"),
@@ -410,6 +411,7 @@ _ROUTES: list[Route] = [
 
 class Server:
     def __init__(self, bus: EventBus | None = None, history: HistoryStore | None = None) -> None:
+        self.edition = editions.CURRENT_EDITION
         self._lifecycle_locks: dict[str, asyncio.Lock] = {}
         self._transfer_sources: set[str] = set()
         self._transfer_launches: set[str] = set()
@@ -878,6 +880,9 @@ class Server:
         # Grouped by concern. Each Route binds a (method, matcher) to a handler
         # and declares which args it wants — keeps dispatch declarative.
         return _ROUTES
+
+    async def _edition(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, self.edition.description())
 
     async def _dashboard(self, writer: asyncio.StreamWriter, path: str) -> None:
         """Serve the built React dashboard so there's one URL. The self-probe

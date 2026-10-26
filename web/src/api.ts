@@ -20,6 +20,12 @@ export function authHeaders(extra?: Record<string, string>): HeadersInit {
   return { "X-Duckterm-Token": TOKEN, ...extra };
 }
 
+// The backend owns the feature lists. This describes the local server, not a license.
+export interface EditionDescription {
+  id: "lite" | "code" | "full";
+  features: string[];
+}
+
 async function sharedFolder(action: "create" | "move" | "delete", old: string, next: string) {
   if (!desktop()?.canCollaborate) return null;
   const result = await destinationRequest<{ handled: boolean; pending: boolean }>("local", "collaboration-folder", { action, old, new: next });
@@ -403,6 +409,7 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
 }
 
 export const api = {
+  edition: () => get<EditionDescription>("/edition", undefined, { authed: true }),
   folderStats: (folder: string) => artifactRequest<FolderStats>(`/folders/${encodeURIComponent(folder)}/stats`),
   sessionPrs: (key: string, refresh = false) => get<PrListResult>(`/sessions/${encodeURIComponent(key)}/prs${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),
   reviewHeader: (repo: string, ref: string, refresh = false) => get<ReviewHeader>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),
