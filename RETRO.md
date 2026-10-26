@@ -35,24 +35,6 @@ Credential checks on window focus miss sign-in through an embedded terminal.
 Refresh only a visible, disconnected connector panel at a bounded interval,
 coalesce pending requests, and stop polling after credentials are found.
 
-## 2026-10-23 — A handler that raises closes the socket with no response
-
-The first PR-list request died in the browser as "Failed to fetch" with
-nothing in the server log. The handler had called the SQLite connection from
-`asyncio.to_thread`, and the thread error propagated out of the connection
-callback, which closes the writer before any JSON is written. Read rows on the
-loop thread and hand plain dicts to the worker; when a browser reports a
-network-level failure against a route that exists, reproduce it by calling
-the handler directly with a stubbed writer to see the traceback.
-
-## 2026-10-23 — Two writers, one temp file name
-
-The diff request and the background card writer both saved viewed.json
-through the same `.viewed.json.tmp`, so one rename removed the other's file
-and the second `os.replace` raised. Any load-modify-save on a shared JSON file
-needs a process lock and a unique temp name (`tempfile.mkstemp` in the same
-directory); a fixed temp path is only safe with a single writer.
-
 ## 2026-10-21 — Distinguish key markers in source from key material
 
 ## 2026-10-20 — Launch metadata must survive every transport
