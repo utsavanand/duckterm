@@ -57,12 +57,21 @@ export function PrList({ scope, active, onOpenSession, onReview }: {
     }
   }, [scope]);
   useEffect(() => { void load(false); }, [load]);
-  // GitHub is polled only while this list is on screen (spec §3).
+  // GitHub is polled only while this list is on screen (spec §3): the view is
+  // active and the window is not hidden. The 60 s rate-limit budget assumes it.
+  const [visible, setVisible] = useState(() => document.visibilityState !== "hidden");
   useEffect(() => {
-    if (!active) return;
+    const onChange = () => setVisible(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", onChange);
+    return () => document.removeEventListener("visibilitychange", onChange);
+  }, []);
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (!active || !visible) { resumed.current = true; return; }
+    if (resumed.current) { resumed.current = false; void load(false); }
     const timer = setInterval(() => void load(false), POLL_MS);
     return () => clearInterval(timer);
-  }, [active, load]);
+  }, [active, visible, load]);
 
   const rows = (data?.rows ?? []).filter(row => matches(row, filter));
   const repos = data?.repos ?? [];

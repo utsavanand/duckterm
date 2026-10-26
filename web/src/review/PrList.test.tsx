@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { api, type PrListResult, type PrRow } from "../api";
 import { PrList, ago } from "./PrList";
@@ -63,6 +63,34 @@ it("explains an empty list and surfaces load errors", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
   expect(await screen.findByText(/No pull requests yet/)).toBeInTheDocument();
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+});
+
+function setVisibility(value: "visible" | "hidden") {
+  Object.defineProperty(document, "visibilityState", { value, configurable: true });
+  document.dispatchEvent(new Event("visibilitychange"));
+}
+
+it("stops polling GitHub while the window is hidden and catches up once when it returns", async () => {
+  vi.useFakeTimers();
+  try {
+    vi.mocked(api.sessionPrs).mockResolvedValue(result);
+    render(<PrList scope={{ kind: "session", key: "s1", name: "ui-dev" }} active />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(api.sessionPrs).toHaveBeenCalledTimes(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(api.sessionPrs).toHaveBeenCalledTimes(2);
+    act(() => setVisibility("hidden"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(180_000); });
+    expect(api.sessionPrs).toHaveBeenCalledTimes(2);
+    act(() => setVisibility("visible"));
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(api.sessionPrs).toHaveBeenCalledTimes(3);
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(api.sessionPrs).toHaveBeenCalledTimes(4);
+  } finally {
+    setVisibility("visible");
+    vi.useRealTimers();
+  }
 });
 
 it("formats relative times in the unit the reader expects", () => {
