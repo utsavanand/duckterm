@@ -11,6 +11,10 @@ import Security
 ///
 /// The key's blob is only usable by this Mac's Secure Enclave and still asks
 /// for Touch ID when used, so it can live in a plain file.
+///
+/// Binding is the security boundary, so it never goes over HTTP, where every
+/// session's install token would reach it. The app writes the public key into
+/// the server's home once, at launch, when no key is bound yet.
 enum ApprovalSigner {
     static let header = "duckterm-approve v1"
     static let fields = ["repo", "github", "pr", "head", "folder", "release", "nonce", "expires"]
@@ -78,6 +82,39 @@ enum ApprovalSigner {
         try key.dataRepresentation.write(to: keyURL, options: [.atomic])
         try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: keyURL.path)
         return key
+    }
+
+    /// The file the server reads the bound key from.
+    static func boundKeyURL(environment: [String: String] = ProcessInfo.processInfo.environment) -> URL {
+        let home = environment["DUCKTERM_HOME"] ?? (NSHomeDirectory() + "/.duckterm")
+        return URL(fileURLWithPath: home).appendingPathComponent("approval-key.pem")
+    }
+
+    static func pem(_ der: Data) -> String {
+        let body = der.base64EncodedString()
+        let lines = stride(from: 0, to: body.count, by: 64).map { start -> String in
+            let from = body.index(body.startIndex, offsetBy: start)
+            return String(body[from..<(body.index(from, offsetBy: 64, limitedBy: body.endIndex) ?? body.endIndex)])
+        }
+        return (["-----BEGIN PUBLIC KEY-----"] + lines + ["-----END PUBLIC KEY-----", ""]).joined(separator: "\n")
+    }
+
+    /// Writes this Mac's public key as the bound key unless one is already
+    /// bound. An existing file is never replaced: rebinding means deleting it
+    /// by hand, and a key that isn't this Mac's shows as a mismatch in the
+    /// Approve dialog.
+    @discardableResult
+    static func bindIfUnbound(at file: URL = boundKeyURL()) throws -> Bool {
+        guard available else { return false }
+        // attributesOfItem does not follow a final symlink, so a planted link
+        // counts as bound and is never written through.
+        if (try? FileManager.default.attributesOfItem(atPath: file.path)) != nil { return false }
+        let der = try loadOrCreate().publicKey.derRepresentation
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o700])
+        guard FileManager.default.createFile(atPath: file.path, contents: Data(pem(der).utf8),
+                                             attributes: [.posixPermissions: 0o600]) else { throw SignerError.unavailable }
+        return true
     }
 
     /// Base64 DER SubjectPublicKeyInfo, created on first use. Reading the

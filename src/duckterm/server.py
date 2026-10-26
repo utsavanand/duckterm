@@ -25,7 +25,7 @@
     GET  /review/:repo/:ref/approval            Touch ID approval state and preconditions
     POST /review/:repo/:ref/approval/challenge  a single-use payload for the Mac app to sign
     POST /review/:repo/:ref/approval/submit     signed approval: hand to the release session
-    GET/POST /approval-key                      the bound Secure Enclave public key
+    GET  /approval-key                          the bound Secure Enclave public key (read-only)
     GET  /review/:repo/:ref/releases, compare?older=&newer=, archmap/:tag   release history
     GET  /folders/:path/prs           pull requests across the folder's sessions
     GET  /sessions/:key/output        SSE: live agent output (PTY) lines
@@ -253,8 +253,7 @@ _ROUTES: list[Route] = [
           **_mid("/approvals/", "/decision")),
     Route("GET", "/terminals", lambda s, r, w, h, b, seg: s._terminals(w)),
     Route("GET", "/tasks", lambda s, r, w, h, b, seg: s._folder_tasks(w, h)),
-    Route("GET", "/approval-key", lambda s, r, w, h, b, seg: s._approval_key(w, h, "GET", b)),
-    Route("POST", "/approval-key", lambda s, r, w, h, b, seg: s._approval_key(w, h, "POST", b)),
+    Route("GET", "/approval-key", lambda s, r, w, h, b, seg: s._approval_key(w, h)),
     Route("GET", "/update/status", lambda s, r, w, h, b, seg: s._update_status(w, h)),
     Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
@@ -1733,30 +1732,15 @@ class Server:
                 raise workspace.ReviewError(502, str(exc)) from exc
         raise workspace.ReviewError(404, "unknown review route")
 
-    async def _approval_key(
-        self, writer: asyncio.StreamWriter, headers: dict[str, str], method: str, body: bytes
-    ) -> None:
-        """The Secure Enclave public key that approval signatures must match."""
+    async def _approval_key(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
+        """The bound Secure Enclave public key, read-only. Binding never goes
+        over HTTP: the Mac app writes the key file (see review/approvals.py)."""
         from duckterm.review import approvals
 
         if not security.token_valid(headers, self.token):
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
-        try:
-            if method == "GET":
-                result = await asyncio.to_thread(approvals.key_status)
-            else:
-                try:
-                    payload = json.loads(body or b"{}")
-                except json.JSONDecodeError:
-                    raise ApprovalError(400, "invalid JSON body") from None
-                if not isinstance(payload, dict):
-                    raise ApprovalError(400, "body must be a JSON object")
-                result = await asyncio.to_thread(approvals.enroll, payload.get("public_key"))
-        except ApprovalError as exc:
-            await _write_json(writer, exc.status, {"error": str(exc)})
-            return
-        await _write_json(writer, 200, result)
+        await _write_json(writer, 200, await asyncio.to_thread(approvals.key_status))
 
     async def _approval_context(self, target: Any) -> dict[str, Any]:
         """Everything Approve depends on, read fresh: the header row from git
@@ -1777,16 +1761,21 @@ class Server:
             if release_row
             else None
         )
-        diff = await asyncio.to_thread(workspace.diff_payload, target, since=None, whitespace=True)
-        impact = cards.release_impact(
-            target,
-            {"paths": [f["path"] for f in diff["files"]], "files": diff["files"]},
-            header["row"],
-        )
+        # Card 9's path rules over the changed file names, not the full diff,
+        # since this runs on every open, challenge and submit.
+        paths = (
+            await asyncio.to_thread(
+                git_review.run, target.repo, "diff", "--name-only", target.base_sha, target.head_ref
+            )
+        ).splitlines()
         flags = [
-            {"name": c["name"], "hits": c["hits"][:6]}
-            for c in impact["checks"]
-            if c["status"] == "fail" and c["hits"]
+            {"name": name, "hits": hits[:6]}
+            for name, rule in (
+                ("Schema or data path", cards.SCHEMA_PATH),
+                ("Installer, updater or build path", cards.OPS_PATH),
+                ("Security or credential path", cards.SECURITY_PATH),
+            )
+            if (hits := [p for p in paths if rule.search(p)])
         ]
         checks = approvals.preconditions(header, author, release)
         return {
@@ -1876,6 +1865,7 @@ class Server:
                 release_folder,
                 fields["release"],
                 f"Merge and release PR #{fields['pr']} at {fields['head'][:12]}",
+                identity=approvals.task_id(),
             )
             self.history.folder_tasks.update(task["id"], {"note": "approved with Touch ID"})
         message_id = self.history.session_api.owner_message(

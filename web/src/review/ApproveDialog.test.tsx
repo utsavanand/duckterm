@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { api, type ApprovalRecord, type ApprovalState } from "../api";
 import { ApproveDialog, approvalLabel } from "./ApproveDialog";
 
-vi.mock("../api", () => ({ api: { approvalState: vi.fn(), approvalChallenge: vi.fn(), approvalSubmit: vi.fn(), bindApprovalKey: vi.fn() } }));
+vi.mock("../api", () => ({ api: { approvalState: vi.fn(), approvalChallenge: vi.fn(), approvalSubmit: vi.fn(), approvalKey: vi.fn() } }));
 afterEach(() => {
   cleanup();
   vi.resetAllMocks();
@@ -22,7 +22,7 @@ const state: ApprovalState = {
   flags: [{ name: "Security or credential path", hits: ["src/duckterm/review/approvals.py"] }],
   release: { key: "rel", name: "release-dev", folder: "Team" },
   author: { key: "dev", name: "pr-review-platform", folder: "Team/features" },
-  key: { enrolled: true, fingerprint: "ab12 cd34 ef56 7890", enrolled_at: 1 },
+  key: { enrolled: true, fingerprint: "ab12 cd34 ef56 7890", enrolled_at: 1, public_key: "PUBKEY", path: "/h/.duckterm/approval-key.pem", invalid: false },
 };
 const record: ApprovalRecord = {
   pr: 312, head_sha: head, task_id: "t1", message_id: "m1", approved_at: 2, fingerprint: "ab12 cd34 ef56 7890",
@@ -47,12 +47,12 @@ it("in a browser, shows the conditions and what the release touches but cannot a
   expect(screen.getByRole("note", { name: "Release touches" })).toHaveTextContent("Security or credential path: src/duckterm/review/approvals.py");
   expect(await screen.findByText(/works in the DuckTerm Mac app/)).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Approve with Touch ID" })).toBeDisabled();
-  expect(api.bindApprovalKey).not.toHaveBeenCalled();
+  expect(api.approvalKey).not.toHaveBeenCalled();
 });
 
 it("in the Mac app, binds the key, signs the server's challenge and hands it back", async () => {
   vi.mocked(api.approvalState).mockResolvedValue(state);
-  vi.mocked(api.bindApprovalKey).mockResolvedValue(state.key);
+  vi.mocked(api.approvalKey).mockResolvedValue(state.key);
   vi.mocked(api.approvalChallenge).mockResolvedValue({ payload: "duckterm-approve v1\n…" });
   vi.mocked(api.approvalSubmit).mockResolvedValue(record);
   const bridge = inMacApp(payload => payload.startsWith("duckterm-approve v1") ? "SIG" : "wrong");
@@ -60,7 +60,6 @@ it("in the Mac app, binds the key, signs the server's challenge and hands it bac
   render(<ApproveDialog repo="/r" target="312" prNumber={312} onClose={vi.fn()} onApproved={onApproved} />);
   const approve = screen.getByRole("button", { name: "Approve with Touch ID" });
   await vi.waitFor(() => expect(approve).toBeEnabled());
-  expect(api.bindApprovalKey).toHaveBeenCalledWith("PUBKEY");
   fireEvent.click(approve);
   expect(await screen.findByRole("status")).toHaveTextContent("Approved · release-dev: approved with Touch ID");
   expect(bridge).toHaveBeenCalledWith({ operation: "sign", payload: "duckterm-approve v1\n…" });
@@ -69,15 +68,24 @@ it("in the Mac app, binds the key, signs the server's challenge and hands it bac
   expect(screen.queryByRole("button", { name: "Approve with Touch ID" })).toBeNull();
 });
 
-it("stays disabled on a failing condition and shows why the key was refused", async () => {
+it("stays disabled on a failing condition and names a key that isn't this Mac's", async () => {
   vi.mocked(api.approvalState).mockResolvedValue({ ...state, ready: false, checks: [{ name: "CI green on this head", ok: false, note: "2 failing" }] });
-  vi.mocked(api.bindApprovalKey).mockRejectedValue(new Error("Approvals are bound to another key (ab12 cd34 ef56 7890)."));
+  vi.mocked(api.approvalKey).mockResolvedValue({ ...state.key, public_key: "SOMEONE-ELSES", fingerprint: "dead beef 0000 1111" });
   inMacApp(() => "never");
   render(<ApproveDialog repo="/r" target="312" prNumber={312} onClose={vi.fn()} onApproved={vi.fn()} />);
-  expect(await screen.findByRole("alert")).toHaveTextContent("bound to another key");
+  expect(await screen.findByRole("alert")).toHaveTextContent("isn't this Mac's Touch ID key (dead beef 0000 1111). If you didn't bind it, delete /h/.duckterm/approval-key.pem");
   expect(screen.getByText("CI green on this head").closest("li")).toHaveClass("is-fail");
   expect(screen.getByRole("button", { name: "Approve with Touch ID" })).toBeDisabled();
   expect(api.approvalChallenge).not.toHaveBeenCalled();
+});
+
+it("says when no key is bound yet instead of binding one from the page", async () => {
+  vi.mocked(api.approvalState).mockResolvedValue(state);
+  vi.mocked(api.approvalKey).mockResolvedValue({ ...state.key, enrolled: false, public_key: null, fingerprint: null });
+  inMacApp(() => "never");
+  render(<ApproveDialog repo="/r" target="312" prNumber={312} onClose={vi.fn()} onApproved={vi.fn()} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("No Touch ID key is bound yet. Quit and reopen DuckTerm");
+  expect(screen.getByRole("button", { name: "Approve with Touch ID" })).toBeDisabled();
 });
 
 it("labels each step the release session reports", () => {

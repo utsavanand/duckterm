@@ -34,9 +34,17 @@ export function ApproveDialog({ repo, target, prNumber, onClose, onApproved }: {
       } catch (cause) { if (alive.current) setError((cause as Error).message); }
       const signer = approvalSigner();
       if (!signer) { if (alive.current) setBound("unavailable"); return; }
+      // The Mac app binds its key at launch; the page only compares.
       try {
-        await api.bindApprovalKey(await signer.publicKey());
-        if (alive.current) setBound("bound");
+        const [key, mine] = await Promise.all([api.approvalKey(), signer.publicKey()]);
+        const problem = !key.enrolled
+          ? key.invalid
+            ? `The bound key file ${key.path} is not a valid key. Delete it and reopen DuckTerm.`
+            : "No Touch ID key is bound yet. Quit and reopen DuckTerm on this Mac to bind it."
+          : key.public_key !== mine
+            ? `Approvals are bound to a key that isn't this Mac's Touch ID key (${key.fingerprint}). If you didn't bind it, delete ${key.path} and reopen DuckTerm.`
+            : "";
+        if (alive.current) { setBound(problem ? "refused" : "bound"); setBindError(problem); }
       } catch (cause) { if (alive.current) { setBound("refused"); setBindError((cause as Error).message); } }
     })();
   }, [repo, target]);

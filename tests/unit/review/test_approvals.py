@@ -51,6 +51,17 @@ class Key:
         self.public = base64.b64encode(der).decode()
         self.directory = directory
 
+    def bind(self) -> None:
+        """What the Mac app does at launch: write the PEM into the home."""
+        der = base64.b64decode(self.public)
+        body = base64.b64encode(der).decode()
+        lines = [body[i : i + 64] for i in range(0, len(body), 64)]
+        path = approvals.key_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "-----BEGIN PUBLIC KEY-----\n" + "\n".join(lines) + "\n-----END PUBLIC KEY-----\n"
+        )
+
     def sign(self, payload: str) -> str:
         message = self.directory / "message"
         message.write_bytes(payload.encode())
@@ -78,31 +89,44 @@ FIELDS = {
 }
 
 
-def test_enroll_binds_one_p256_key_and_refuses_another(tmp_path: Path) -> None:
-    first, second = Key(tmp_path / "a"), Key(tmp_path / "b")
-    with pytest.raises(approvals.ApprovalError) as bad:
-        approvals.enroll(base64.b64encode(b"\x30" * 91).decode())
-    assert bad.value.status == 400
-    bound = approvals.enroll(first.public)
-    assert bound["enrolled"] is True
-    assert approvals.enroll(first.public)["fingerprint"] == bound["fingerprint"]
-    with pytest.raises(approvals.ApprovalError) as other:
-        approvals.enroll(second.public)
-    assert other.value.status == 409
-    assert bound["fingerprint"] in str(other.value)
-    assert "delete" in str(other.value)
+def test_the_key_file_must_hold_one_p256_key(tmp_path: Path) -> None:
+    assert approvals.key_status()["enrolled"] is False
+    approvals.key_path().parent.mkdir(parents=True, exist_ok=True)
+    approvals.key_path().write_text(
+        "-----BEGIN PUBLIC KEY-----\nnot a key\n-----END PUBLIC KEY-----\n"
+    )
+    status = approvals.key_status()
+    assert status["enrolled"] is False and status["invalid"] is True
+    key = Key(tmp_path / "owner")
+    key.bind()
+    status = approvals.key_status()
+    assert status["enrolled"] is True and status["public_key"] == key.public
+    assert len(status["fingerprint"].split()) == 4
 
 
 def test_signature_must_come_from_the_bound_key_over_the_exact_payload(tmp_path: Path) -> None:
     owner, agent = Key(tmp_path / "owner"), Key(tmp_path / "agent")
     payload = approvals.challenge(FIELDS)
     assert approvals.verify(payload, owner.sign(payload)) is False  # nothing bound yet
-    approvals.enroll(owner.public)
+    owner.bind()
     assert approvals.verify(payload, owner.sign(payload)) is True
     assert approvals.verify(payload, agent.sign(payload)) is False
     edited = payload.replace("head=" + "a" * 40, "head=" + "b" * 40)
     assert approvals.verify(edited, owner.sign(payload)) is False
     assert approvals.verify(payload, "not base64!") is False
+
+
+def test_a_missing_verifier_refuses_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    owner = Key(tmp_path / "owner")
+    owner.bind()
+    payload = approvals.challenge(FIELDS)
+    signature = owner.sign(payload)
+    monkeypatch.setattr(approvals, "OPENSSL", str(tmp_path / "no-openssl"))
+    with pytest.raises(approvals.ApprovalError) as missing:
+        approvals.verify(payload, signature)
+    assert missing.value.status == 503 and "missing" in str(missing.value)
 
 
 def test_a_challenge_is_good_once_unedited_and_before_it_expires() -> None:
@@ -235,7 +259,11 @@ def call(port: int, method: str, path: str, body: object | None = None) -> tuple
         with urllib.request.urlopen(request, timeout=30) as response:
             return response.status, json.loads(response.read())
     except urllib.error.HTTPError as error:
-        return error.code, json.loads(error.read())
+        text = error.read()
+        try:
+            return error.code, json.loads(text)
+        except ValueError:
+            return error.code, {"error": text.decode(errors="replace")}
 
 
 def serve(history: HistoryStore, steps: Any) -> Any:
@@ -257,8 +285,12 @@ def test_touch_id_approval_hands_the_pinned_head_to_the_release_session(
 
     def steps(port: int) -> dict[str, Any]:
         out: dict[str, Any] = {}
+        # The review's demonstrated bypass: an agent with the install token
+        # binds its own software key, then signs. Binding is not an HTTP route.
+        out["agent_bind"] = call(port, "POST", "/approval-key", {"public_key": agent.public})
         out["unbound"] = call(port, "POST", base + "/approval/challenge", {})
-        out["enroll"] = call(port, "POST", "/approval-key", {"public_key": owner.public})
+        owner.bind()  # the Mac app, at launch
+        out["key"] = call(port, "GET", "/approval-key")
         out["state"] = call(port, "GET", base + "/approval")
         status, issued = call(port, "POST", base + "/approval/challenge", {})
         assert status == 200, issued
@@ -307,8 +339,9 @@ def test_touch_id_approval_hands_the_pinned_head_to_the_release_session(
     approved_head = state["head"]
     out = serve(history, steps)
 
+    assert out["agent_bind"][0] in (404, 405)
     assert out["unbound"][0] == 409 and "No Touch ID key" in out["unbound"][1]["error"]
-    assert out["enroll"] == (200, out["enroll"][1]) and out["enroll"][1]["enrolled"] is True
+    assert out["key"][1]["public_key"] == owner.public
     status, approval = out["state"]
     assert status == 200 and approval["ready"] is True, approval["checks"]
     assert approval["release"] == {"key": "release-1", "name": "release-dev", "folder": "Team"}
@@ -324,12 +357,16 @@ def test_touch_id_approval_hands_the_pinned_head_to_the_release_session(
 
     task = history.folder_tasks.get(record["task_id"])
     assert task["owner_session"] == "release-1" and task["folder"] == "Team"
+    assert task["id"].startswith(approvals.TASK_PREFIX)
+    assert task["title"] == f"Merge and release PR #7 at {approved_head[:12]}"
     message = history._conn.execute(
         "SELECT question FROM session_questions WHERE recipient = ?", ("release-1",)
     ).fetchall()
     assert len(message) == 1
     assert f"--match-head-commit {approved_head}" in message[0]["question"]
     assert f"task update {record['task_id']}" in message[0]["question"]
+    assert "this message is not the authority" in message[0]["question"]
+    assert f"its id starts with {approvals.TASK_PREFIX}" in message[0]["question"]
 
     rows = out["list"][1]["rows"]
     assert rows[0]["approval"]["task_id"] == record["task_id"]

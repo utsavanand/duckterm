@@ -377,7 +377,7 @@ export interface ApprovalRecord {
   release: { key: string; name: string; folder: string };
   task: { status: "in_progress" | "done" | "parked"; note: string; updated_at: number } | null;
 }
-export interface ApprovalKey { enrolled: boolean; fingerprint: string | null; enrolled_at: number | null }
+export interface ApprovalKey { enrolled: boolean; fingerprint: string | null; enrolled_at: number | null; public_key: string | null; path: string; invalid: boolean }
 export interface ApprovalState {
   ready: boolean; checks: { name: string; ok: boolean; note: string }[]; flags: { name: string; hits: string[] }[];
   release: { key: string; name: string; folder: string } | null; author: { key: string; name: string; folder: string } | null;
@@ -437,7 +437,6 @@ export const api = {
   approvalChallenge: (repo: string, ref: string) => post<{ payload: string }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/approval/challenge`, {}),
   approvalSubmit: (repo: string, ref: string, body: { payload: string; signature: string }) => post<ApprovalRecord>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/approval/submit`, body),
   approvalKey: () => get<ApprovalKey>("/approval-key", undefined, { authed: true }),
-  bindApprovalKey: (publicKey: string) => post<ApprovalKey>("/approval-key", { public_key: publicKey }),
   reviewGithub: (repo: string, ref: string, body: { event: "REQUEST_CHANGES" | "COMMENT"; body: string }) => post<{ id: number | null; url: string | null; state: string | null }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/github-review`, body),
   markViewed: async (repo: string, ref: string, body: { path: string; hash: string; viewed?: boolean; bucket?: Bucket | "" }) => {
     const res = await fetch(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/viewed`, { method: "PUT", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
