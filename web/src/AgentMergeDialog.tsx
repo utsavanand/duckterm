@@ -24,7 +24,7 @@ export function AgentMergeDialog({ service, sourceName, onClose }: { service: Ag
   const [loading, setLoading] = useState(true), [busy, setBusy] = useState(false), [reviewing, setReviewing] = useState(false);
   const [error, setError] = useState(""), [historyError, setHistoryError] = useState("");
   const [retry, setRetry] = useState(0), [record, setRecord] = useState<AgentMergeRecord | null>(null), [history, setHistory] = useState<AgentMergeRecord[]>([]);
-  const initialized = useRef(false), sending = useRef(false), alive = useRef(true);
+  const edited = useRef({ context: false, notes: false, includeContext: false, includeNotes: false }), sending = useRef(false), alive = useRef(true);
   const submission = useRef<{ signature: string; requestKey: string }>();
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
@@ -42,7 +42,12 @@ export function AgentMergeDialog({ service, sourceName, onClose }: { service: Ag
     void service.preview(target).then(value => {
       if (!live) return;
       setPreview(value);
-      if (!initialized.current) { setContext(value.context); setNotes(value.notes); setIncludeContext(!!value.context.trim()); setIncludeNotes(!!value.notes.trim()); initialized.current = true; }
+      // Refresh untouched source data independently; an intentionally cleared
+      // draft is still an edit, and explicit checkbox choices stay explicit.
+      if (!edited.current.context) setContext(value.context);
+      if (!edited.current.notes) setNotes(value.notes);
+      if (!edited.current.includeContext && !edited.current.context) setIncludeContext(!!value.context.trim());
+      if (!edited.current.includeNotes && !edited.current.notes) setIncludeNotes(!!value.notes.trim());
     }).catch(e => { if (live) setError(`Could not prepare merge: ${e.message}`); }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, [service, target, retry]);
@@ -101,11 +106,11 @@ export function AgentMergeDialog({ service, sourceName, onClose }: { service: Ag
         {preview && <>
           <div className="rd-merge-route"><strong>{sourceName}</strong>→<strong>{preview.target.name}</strong></div>
           {!preview.target.allowed && <p role="alert">{preview.target.reason}</p>}
-          <label className="rd-agent-merge-choice"><input type="checkbox" checked={includeContext} onChange={e => setIncludeContext(e.target.checked)} />Conversation context<small>A reviewed summary. The original conversations remain separate.</small></label>
-          {includeContext && <textarea aria-label="Context to send" value={context} maxLength={12000} placeholder="Review or write the context the destination should receive" onChange={e => setContext(e.target.value)} />}
+          <label className="rd-agent-merge-choice"><input type="checkbox" checked={includeContext} onChange={e => { edited.current.includeContext = true; setIncludeContext(e.target.checked); }} />Conversation context<small>A reviewed summary. The original conversations remain separate.</small></label>
+          {includeContext && <textarea aria-label="Context to send" value={context} maxLength={12000} placeholder="Review or write the context the destination should receive" onChange={e => { edited.current.context = true; setContext(e.target.value); }} />}
           {!context && <p>No saved conversation summary is available. Select Conversation context to write one.</p>}
-          <label className="rd-agent-merge-choice"><input type="checkbox" checked={includeNotes} onChange={e => setIncludeNotes(e.target.checked)} />Notes<small>Append these notes once, preserving existing destination notes.</small></label>
-          {includeNotes && <textarea aria-label="Notes to append" value={notes} maxLength={12000} onChange={e => setNotes(e.target.value)} />}
+          <label className="rd-agent-merge-choice"><input type="checkbox" checked={includeNotes} onChange={e => { edited.current.includeNotes = true; setIncludeNotes(e.target.checked); }} />Notes<small>Append these notes once, preserving existing destination notes.</small></label>
+          {includeNotes && <textarea aria-label="Notes to append" value={notes} maxLength={12000} onChange={e => { edited.current.notes = true; setNotes(e.target.value); }} />}
           <label className="rd-agent-merge-choice"><input type="checkbox" checked={code} disabled={!preview.git.allowed} onChange={e => setCode(e.target.checked)} />Code from the other worktree<small>Ask the destination agent to integrate the reviewed commits and report conflicts.</small></label>
           {!preview.git.allowed && <p>{preview.git.reason}</p>}
           {code && <GitReview git={preview.git} />}
