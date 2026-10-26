@@ -133,7 +133,7 @@ test("empty context recovery keeps drafts, isolates count selection, and never a
     // token previously made the light-theme label nearly invisible.
     for (const theme of ["dark", "light"]) {
       await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
-      const contrast = await dialog.getByRole("button", { name: "Generate summary…" }).evaluate(button => {
+      const contrast = () => dialog.getByRole("button", { name: "Generate summary…" }).evaluate(button => {
         const style = getComputedStyle(button);
         const luminance = (color: string) => {
           const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(value => {
@@ -145,7 +145,7 @@ test("empty context recovery keeps drafts, isolates count selection, and never a
         const foreground = luminance(style.color), background = luminance(style.backgroundColor);
         return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
       });
-      expect(contrast, `${theme} secondary button contrast`).toBeGreaterThanOrEqual(4.5);
+      await expect.poll(contrast, { message: `${theme} secondary button contrast after transition` }).toBeGreaterThanOrEqual(4.5);
     }
     await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
     await page.screenshot({ path: "/tmp/merge-recovery-app-dark.png" });
