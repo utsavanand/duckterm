@@ -1,3 +1,13 @@
+## 2026-10-26 — CI drifts while a branch is green locally
+
+A PR opened five days after main's last green run failed two jobs with no
+code change behind either: `ubuntu-latest` had moved to 26.04, where
+Playwright has no Chromium build, and `npm audit` had picked up advisories
+for dompurify and vitest published in the gap. A local gate cannot see
+either. Pin the browser job to a named runner image and expect a dependency
+bump in any PR that lands more than a few days after the previous one; check
+the PR's own checks before calling it ready, not the local gate.
+
 ## 2026-10-23 — A handler that raises closes the socket with no response
 
 The first PR-list request died in the browser as "Failed to fetch" with
