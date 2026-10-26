@@ -16,7 +16,14 @@
     POST /sessions/:key/checkpoint   record what was done (prompts/files/tools/git + summary)
     GET  /sessions/:key/checkpoints   list checkpoint records
     POST /sessions/:key/spotlight     apply worktree changes onto the main checkout
-    GET  /sessions/:key/diff          git diff of the session's worktree
+    GET  /sessions/:key/prs           pull requests from the session's branch
+    GET  /review/:repo/:ref           review workspace header (PR number or branch)
+    GET  /review/:repo/:ref/diff      base-branch diff with risk buckets and viewed state
+    PUT  /review/:repo/:ref/viewed    mark a file viewed or move it to another bucket
+    GET  /review/:repo/:ref/cards     review cards (generation starts on first open)
+    POST /review/:repo/:ref/cards/regenerate, chat, ask, send, draft-review, github-review
+    GET  /review/:repo/:ref/releases, compare?older=&newer=, archmap/:tag   release history
+    GET  /folders/:path/prs           pull requests across the folder's sessions
     GET  /sessions/:key/output        SSE: live agent output (PTY) lines
     GET  /sessions/:key/terminal      WebSocket: raw PTY bytes <-> keystrokes/resize (xterm.js)
     POST /sessions/:key/input         write to the agent's stdin (terminal-attach)
@@ -39,7 +46,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import sys
 import tempfile
 import time
@@ -106,6 +112,8 @@ from duckterm.persistence.saved_state import (
     transaction,
 )
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
+from duckterm.review import git as git_review
+from duckterm.review.git import ReviewGitError as GitErrorReview
 from duckterm.runtimes import native_history, opencode_options
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
 from duckterm.runtimes.native_history import MessageSource, NativeSnapshot
@@ -242,7 +250,6 @@ _ROUTES: list[Route] = [
     Route("GET", "/tasks", lambda s, r, w, h, b, seg: s._folder_tasks(w, h)),
     Route("GET", "/update/status", lambda s, r, w, h, b, seg: s._update_status(w, h)),
     Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
-    Route("GET", "", lambda s, r, w, h, b, seg: s._diff(w, seg), **_mid("/sessions/", "/diff")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
           **_mid("/sessions/", "/events")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._session_enroll(w, seg, b),
@@ -437,6 +444,7 @@ class Server:
         # Per-session (last digest ts, event_count) — debounces progress refreshes.
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore(conn=self.history._conn)
+        self._review_tasks: dict[str, asyncio.Task[Any]] = {}
         from duckterm.checkpoint_requests import CheckpointRequests
 
         self.checkpoint_requests = CheckpointRequests(self)
@@ -752,6 +760,31 @@ class Server:
         if folder_message and method == ("GET" if folder_message[2] == "recipients" else "POST"):
             await self._folder_message(
                 writer, headers, urllib.parse.unquote(folder_message[1]), folder_message[2], body
+            )
+            return
+        review_url = urllib.parse.urlsplit(path)
+        review_match = re.fullmatch(
+            r"/review/([^/]+)/([^/]+)(?:/(diff|viewed|cards|cards/regenerate|chat|ask|send|"
+            r"draft-review|github-review|releases|compare|archmap/[^/]+))?",
+            review_url.path,
+        )
+        if review_match:
+            await self._review(
+                writer,
+                headers,
+                method,
+                urllib.parse.unquote(review_match[1]),
+                urllib.parse.unquote(review_match[2]),
+                review_match[3] or "",
+                urllib.parse.parse_qs(review_url.query),
+                body,
+            )
+            return
+        prs_url = urllib.parse.urlsplit(path)
+        prs_match = re.fullmatch(r"/(sessions|folders)/(.+)/prs", prs_url.path)
+        if prs_match and method == "GET":
+            await self._prs(
+                writer, headers, prs_match[1], urllib.parse.unquote(prs_match[2]), prs_url.query
             )
             return
         folder_view = re.fullmatch(r"/folders/(.+)/(chat|artifacts|stats)", path)
@@ -1490,6 +1523,319 @@ class Server:
         else:
             rows = self.history.artifacts.list_folder(folder, 501, include_removed=True)
             await _write_json(writer, 200, {"artifacts": rows[:500], "truncated": len(rows) > 500})
+
+    async def _review(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        method: str,
+        repo: str,
+        ref: str,
+        part: str,
+        query: dict[str, list[str]],
+        body: bytes,
+    ) -> None:
+        """Review workspace routes (docs/pr-review-platform-spec.md §9)."""
+        from duckterm.review import workspace
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        if not self._agents_md_dir_allowed(repo):
+            await _write_json(writer, 403, {"error": "repository outside the allowed roots"})
+            return
+        expected = {
+            "": "GET",
+            "diff": "GET",
+            "viewed": "PUT",
+            "cards": "GET",
+            "cards/regenerate": "POST",
+            "chat": "GET",
+            "ask": "POST",
+            "send": "POST",
+            "draft-review": "POST",
+            "github-review": "POST",
+            "releases": "GET",
+            "compare": "GET",
+        }
+        if part.startswith("archmap/"):
+            expected[part] = "GET"
+        if expected.get(part) != method:
+            await _write_json(writer, 405, {"error": "method not allowed"})
+            return
+        flag = query.get("refresh", ["0"])[0] in ("1", "true")
+        try:
+            payload: dict[str, Any] = {}
+            if method in ("PUT", "POST"):
+                try:
+                    payload = json.loads(body or b"{}")
+                except json.JSONDecodeError:
+                    raise workspace.ReviewError(400, "invalid JSON body") from None
+                if not isinstance(payload, dict):
+                    raise workspace.ReviewError(400, "body must be a JSON object")
+            target = await asyncio.to_thread(workspace.resolve, repo, ref, refresh=flag)
+            if part == "":
+                result = await asyncio.to_thread(workspace.header, target)
+                result["session"] = await self._review_author(target.branch)
+            elif part == "diff":
+                result = await asyncio.to_thread(
+                    workspace.diff_payload,
+                    target,
+                    since=query.get("since", [None])[0],
+                    whitespace=query.get("w", ["1"])[0] != "0",
+                )
+            elif part == "viewed":
+                result = await asyncio.to_thread(workspace.mark_viewed, target, payload)
+            elif part in ("releases", "compare") or part.startswith("archmap/"):
+                result = await self._review_history(target, part, query)
+            else:
+                result = await self._review_cards(target, part, payload)
+        except workspace.ReviewError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        except GitErrorReview as exc:
+            await _write_json(writer, 500, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
+
+    async def _review_author(self, branch: str) -> dict[str, Any] | None:
+        """The session whose checkout is on this PR's head branch, with its
+        digest. Rows are read on the loop thread; the git look-ups run in a
+        worker, the same claim rule the PR lists use."""
+        from duckterm.review import lists
+
+        rows = [r for r in self.history.sessions() if r.get("worktree_path") or r.get("cwd")]
+        rows.sort(key=lambda r: bool(r.get("ended_at")))
+
+        def find() -> dict[str, Any] | None:
+            for row in rows:
+                if row.get("branch") == branch:
+                    return row
+            for row in rows:
+                found = lists._worktree_branch(row)
+                if found and found[1] == branch:
+                    return row
+            return None
+
+        row = await asyncio.to_thread(find)
+        if row is None:
+            return None
+        return {
+            "key": row["session_key"],
+            "name": row.get("name") or row["session_key"],
+            "progress": row.get("progress"),
+        }
+
+    async def _review_cards(self, target: Any, part: str, payload: dict[str, Any]) -> Any:
+        """Cards, chat, send and GitHub review for one review target."""
+        from duckterm.review import cards, chat, github, workspace
+
+        key = str(target.directory)
+        if part == "cards":
+            loaded = cards.load(target)
+            running = key in self._review_tasks and not self._review_tasks[key].done()
+            if (loaded["stale"] or loaded["head_sha"] is None) and not running:
+                await self._start_cards(target, None)
+                loaded = cards.load(target)
+                running = True
+            loaded["running"] = running
+            return loaded
+        if part == "cards/regenerate":
+            if key in self._review_tasks and not self._review_tasks[key].done():
+                raise workspace.ReviewError(409, "Cards are already being generated")
+            only = payload.get("cards")
+            if only is not None and not (
+                isinstance(only, list) and all(isinstance(c, str) for c in only)
+            ):
+                raise workspace.ReviewError(400, "cards must be a list of card ids")
+            await self._start_cards(target, only)
+            return {"started": True, **cards.load(target), "running": True}
+        if part == "chat":
+            return {"messages": chat.transcript(target), "suggestions": chat.SUGGESTIONS}
+        if part == "ask":
+            question = payload.get("question")
+            if not isinstance(question, str) or not question.strip() or len(question) > 8000:
+                raise workspace.ReviewError(400, "question must be 1 to 8000 characters")
+            hunk = payload.get("hunk")
+            author = await self._review_author(target.branch)
+            digest = author.get("progress") if author else None
+            diff = await asyncio.to_thread(
+                workspace.diff_payload, target, since=None, whitespace=True
+            )
+            return await chat.ask(
+                target,
+                diff,
+                question.strip(),
+                hunk=hunk if isinstance(hunk, str) else None,
+                digest=digest if isinstance(digest, str) else None,
+            )
+        if part == "draft-review":
+            return {"body": chat.draft_review(target)}
+        if part == "send":
+            session = payload.get("session")
+            card = payload.get("card")
+            items = payload.get("items")
+            if not isinstance(session, str) or self.history.session(session) is None:
+                raise workspace.ReviewError(404, "no such session")
+            if not isinstance(card, str) or not isinstance(items, list) or not items:
+                raise workspace.ReviewError(400, "card and a non-empty items list are required")
+            title = next((t for c, _, t in cards.CARDS if c == card), card)
+            text = (
+                f"Review of {target.branch} ({target.head_sha[:7]}), card {title}:\n"
+                + "\n".join(f"- {str(item)[:2000]}" for item in items[:40])
+            )
+            message_id = self.history.session_api.owner_message(
+                session, text, request_key=f"review:{target.head_sha}:{card}:{int(time.time())}"
+            )
+            await asyncio.to_thread(chat.record_sent, target, card, session, message_id)
+            return {"delivered": "inbox", "message_id": message_id, "session": session}
+        if part == "github-review":
+            event = payload.get("event")
+            review_body = payload.get("body")
+            if event not in ("APPROVE", "REQUEST_CHANGES", "COMMENT"):
+                raise workspace.ReviewError(
+                    400, "event must be APPROVE, REQUEST_CHANGES or COMMENT"
+                )
+            if not isinstance(review_body, str) or (event != "APPROVE" and not review_body.strip()):
+                raise workspace.ReviewError(400, "a review body is required")
+            if not target.pr or not target.slug:
+                raise workspace.ReviewError(409, "This branch has no pull request on GitHub")
+            token, reason = await asyncio.to_thread(github.token)
+            if not token:
+                raise workspace.ReviewError(409, reason or "GitHub is not connected")
+            try:
+                return await asyncio.to_thread(
+                    github.post_review, target.slug, target.pr["number"], event, review_body, token
+                )
+            except github.GitHubError as exc:
+                raise workspace.ReviewError(502, str(exc)) from exc
+        raise workspace.ReviewError(404, "unknown review route")
+
+    async def _review_history(self, target: Any, part: str, query: dict[str, list[str]]) -> Any:
+        """Releases, module maps and comparisons (spec §7). Maps for the newest
+        releases are written in the background the first time the tab opens;
+        any other tag is written when it is first opened."""
+        from duckterm.review import history, workspace
+
+        repo, slug = target.repo, target.slug
+        if part == "releases":
+            rows = await asyncio.to_thread(history.releases, repo)
+            tags = [r["tag"] for r in rows]
+            status = await asyncio.to_thread(history.map_status, repo, slug, tags)
+            paths = (
+                await asyncio.to_thread(
+                    git_review.run,
+                    repo,
+                    "diff",
+                    "--name-only",
+                    f"{target.base_sha}..{target.head_ref}",
+                )
+            ).splitlines()
+            touched = await asyncio.to_thread(history.touched_releases, repo, rows, paths)
+            merged_sha = (target.pr or {}).get("merge_commit_sha")
+            shipped = None
+            if target.pr and target.pr.get("state") == "merged" and merged_sha:
+                shipped = await asyncio.to_thread(git_review.tag_containing, repo, merged_sha)
+            elif tags:
+                shipped = tags[-1]
+            self._start_maps(target, [t for t in reversed(tags) if status.get(t) == "missing"][:12])
+            for tag in tags:
+                if (
+                    status.get(tag) == "missing"
+                    and str(target.directory) + ":" + tag in self._review_tasks
+                ):
+                    status[tag] = "pending"
+            return {"releases": rows, "maps": status, "touched": touched, "shipped": shipped}
+        if part == "compare":
+            older, newer = query.get("older", [""])[0], query.get("newer", [""])[0]
+            first = await asyncio.to_thread(history.load_map, repo, slug, older)
+            second = await asyncio.to_thread(history.load_map, repo, slug, newer)
+            if not (first and second) or {first.get("status"), second.get("status")} != {"ready"}:
+                raise workspace.ReviewError(409, "Both releases need a module map first")
+            return await asyncio.to_thread(history.compare, repo, first, second)
+        tag = part[len("archmap/") :]
+        if not git_review.ref_exists(repo, f"refs/tags/{tag}"):
+            raise workspace.ReviewError(404, f"No tag {tag}")
+        existing = await asyncio.to_thread(history.load_map, repo, slug, tag)
+        if existing and existing.get("status") in ("ready", "omitted"):
+            return existing
+        self._start_maps(target, [tag])
+        return existing or {"tag": tag, "status": "pending"}
+
+    def _start_maps(self, target: Any, tags: list[str]) -> None:
+        from duckterm.review import history
+
+        for tag in tags:
+            key = f"{target.directory}:{tag}"
+            if key in self._review_tasks and not self._review_tasks[key].done():
+                continue
+            self._review_tasks[key] = asyncio.get_running_loop().create_task(
+                history.build_map(target.repo, target.slug, tag)
+            )
+
+    async def _start_cards(self, target: Any, only: list[str] | None) -> None:
+        from duckterm.review import author, cards, lists, workspace
+
+        # Session data is read here, on the loop thread, before the worker runs.
+        owner = await self._review_author(target.branch)
+        author_facts = author.facts(self.history, owner["key"]) if owner else None
+
+        async def run() -> None:
+            diff = await asyncio.to_thread(
+                workspace.diff_payload, target, since=None, whitespace=True
+            )
+            state = lists._repo_state(target.repo, [], refresh=False)
+            row = await asyncio.to_thread(
+                lists._row,
+                target.repo,
+                state,
+                branch=target.branch,
+                pr=target.pr,
+                session=None,
+                local=True,
+            )
+            await cards.generate_all(target, diff, row, only=only, author_facts=author_facts)
+
+        self._review_tasks[str(target.directory)] = asyncio.get_running_loop().create_task(run())
+
+    async def _prs(
+        self,
+        writer: asyncio.StreamWriter,
+        headers: dict[str, str],
+        scope: str,
+        target: str,
+        query: str,
+    ) -> None:
+        """Pull request rows for one session or one folder (docs/pr-review-platform-spec.md)."""
+        from duckterm.review import lists as review_lists
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        refresh = urllib.parse.parse_qs(query).get("refresh", ["0"])[0] in ("1", "true")
+        # Rows are read here, on the loop thread; the git and GitHub work below
+        # runs in a worker and never touches the SQLite connection.
+        if scope == "sessions":
+            row = self.history.session(target)
+            if row is None:
+                await _write_json(writer, 404, {"error": "no such session"})
+                return
+            members = [row]
+        else:
+            if not valid_folder(target):
+                await _write_json(writer, 400, {"error": "Invalid folder path"})
+                return
+            if target not in self.history.folders():
+                await _write_json(writer, 404, {"error": "Folder no longer exists"})
+                return
+            members = review_lists.folder_members(self.history, target)
+        result = await asyncio.to_thread(
+            review_lists.build, members, include_unclaimed=scope == "folders", refresh=refresh
+        )
+        await _write_json(writer, 200, result)
 
     async def _artifacts(
         self,
@@ -5136,24 +5482,6 @@ class Server:
             await _write_json(writer, 400, {"error": str(e)})
             return
         await _write_json(writer, 200, {"synced_files": files})
-
-    async def _diff(self, writer: asyncio.StreamWriter, session_key: str) -> None:
-        worktree = self._worktree_of(session_key)
-        if not worktree:
-            await _write_json(writer, 200, {"diff": ""})
-            return
-        result = await asyncio.to_thread(
-            subprocess.run,
-            ["git", "-C", worktree, "diff", "HEAD"],
-            capture_output=True,
-            text=True,
-        )
-        # A nonzero exit means the diff failed (bad repo, detached state). Don't
-        # report it as an empty diff — that reads as "no changes" in the UI.
-        if result.returncode != 0:
-            await _write_json(writer, 500, {"error": result.stderr.strip() or "git diff failed"})
-            return
-        await _write_json(writer, 200, {"diff": result.stdout})
 
     async def _input(self, writer: asyncio.StreamWriter, session_key: str, body: bytes) -> None:
         supervisor = self.orchestrator.get(session_key)

@@ -356,6 +356,45 @@ export interface Artifact {
 export interface FolderArtifact extends Artifact { session_name: string; session_state: string; folder: string }
 export interface ArtifactContent extends Artifact { content_base64: string }
 
+// Pull request rows for the session PRs tab and the folder Pull requests tab
+// (docs/pr-review-platform-spec.md §3). Rows come from GET /sessions/:key/prs
+// and GET /folders/:path/prs; status is derived server-side.
+export type PrStatus = "unpushed" | "pushed" | "draft" | "open" | "changes_requested" | "ci_failing" | "conflict" | "ready" | "merged" | "closed";
+export interface PrSummary { number: number; title: string; body: string; url: string; state: "open" | "merged" | "closed"; draft: boolean; author: string; head: string; head_sha: string; base: string; merge_commit_sha: string | null; merged_at: string | null; updated_at: string | null; created_at: string | null }
+export interface PrRow {
+  repo: string; repo_name: string; github: string | null; branch: string; base: string;
+  session: { key: string; name: string } | null; author: string | null; pr: PrSummary | null;
+  status: PrStatus; label: string; needs_you: boolean; version: string | null;
+  checks: { total: number; failed: number; pending: number; passed: number } | null;
+  review: "none" | "approved" | "changes_requested"; conflict: boolean | null; pushed: boolean; unpushed_commits: number;
+  ahead: number | null; behind: number | null; size: { files: number; additions: number; deletions: number } | null;
+  updated_at: number | null; compare_url: string | null;
+}
+export interface PrRepo { path: string; name: string; github: string | null; default_branch: string; connected: boolean; error: string | null; fetched_at: number }
+export interface PrListResult { rows: PrRow[]; repos: PrRepo[] }
+
+// Review workspace (spec §4 and §9): header and diff for one PR number or branch.
+export type Bucket = "high" | "read" | "skim";
+export interface DiffLine { kind: " " | "+" | "-" | "\\"; text: string }
+export interface DiffHunk { header: string; old_start: number; old_lines: number; new_start: number; new_lines: number; lines: DiffLine[] }
+export interface DiffFile {
+  path: string; old_path: string | null; status: "added" | "deleted" | "modified" | "renamed" | "copied"; binary: boolean;
+  additions: number; deletions: number; hunks: DiffHunk[]; truncated: boolean; total_lines: number;
+  bucket: Bucket; bucket_rule: Bucket; rules: { bucket: Bucket; id: string; reason: string }[];
+  hash: string; viewed: boolean; stale: boolean; changed_since: boolean | null; whitespace_only: boolean;
+}
+export interface ReviewDiff { base_sha: string; head_sha: string; since: string | null; whitespace: boolean; files: DiffFile[]; counts: { high: number; read: number; skim: number; viewed: number; changed_since: number } }
+export interface ReviewHeader { repo: string; repo_name: string; github: string | null; ref: string; branch: string; base: string; base_sha: string; head_sha: string; commits: number; pr: PrSummary | null; row: PrRow | null; previous_head: string | null; session: { key: string; name: string; progress: string | null } | null }
+export type CardStatus = "ready" | "pending" | "omitted" | "failed" | "later" | "stale";
+export interface ReviewCard { id: string; number: number; title: string; status: CardStatus; reason?: string; data?: Record<string, unknown>; at?: number; sent?: { session: string; message_id: string; at: number }[] }
+export interface ReviewCards { head_sha: string | null; stale: boolean; running: boolean; cards: ReviewCard[] }
+export interface Citation { path: string; line: number }
+export interface Release { tag: string; at: number; sha: string; subject: string; previous: string | null; merges: { sha: string; subject: string; pr: number | null }[] }
+export interface ArchModule { id: string; name: string; lane: "Clients" | "Server" | "Runtime"; files: string[]; what: string }
+export interface ArchMap { tag: string; status: "ready" | "pending" | "omitted"; reason?: string; modules?: ArchModule[]; edges?: string[][]; at?: number }
+export interface ReleaseCompare { older: string; newer: string; marks: Record<string, "added" | "changed" | "removed" | "unchanged">; removed_modules: ArchModule[]; edges_added: string[][]; edges_removed: string[][]; files_changed: number }
+export interface ChatMessage { q: string; a: string; citations: Citation[]; hunk: string | null; files: string[]; at: number }
+
 async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
   const response = await fetch(path, { method, cache: "no-store", headers: authHeaders() });
   const result = await response.json();
@@ -365,6 +404,30 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
 
 export const api = {
   folderStats: (folder: string) => artifactRequest<FolderStats>(`/folders/${encodeURIComponent(folder)}/stats`),
+  sessionPrs: (key: string, refresh = false) => get<PrListResult>(`/sessions/${encodeURIComponent(key)}/prs${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),
+  reviewHeader: (repo: string, ref: string, refresh = false) => get<ReviewHeader>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),
+  reviewDiff: (repo: string, ref: string, options: { whitespace: boolean; since?: string | null }) => {
+    const query = new URLSearchParams({ w: options.whitespace ? "1" : "0" });
+    if (options.since) query.set("since", options.since);
+    return get<ReviewDiff>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/diff?${query}`, undefined, { authed: true });
+  },
+  releases: (repo: string, ref: string) => get<{ releases: Release[]; maps: Record<string, string>; touched: string[]; shipped: string | null }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/releases`, undefined, { authed: true }),
+  archmap: (repo: string, ref: string, tag: string) => get<ArchMap>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/archmap/${encodeURIComponent(tag)}`, undefined, { authed: true }),
+  compareReleases: (repo: string, ref: string, older: string, newer: string) => get<ReleaseCompare>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/compare?${new URLSearchParams({ older, newer })}`, undefined, { authed: true }),
+  reviewCards: (repo: string, ref: string) => get<ReviewCards>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/cards`, undefined, { authed: true }),
+  regenerateCards: (repo: string, ref: string, cards?: string[]) => post<ReviewCards & { started: boolean }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/cards/regenerate`, cards ? { cards } : {}),
+  reviewChat: (repo: string, ref: string) => get<{ messages: ChatMessage[]; suggestions: string[] }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/chat`, undefined, { authed: true }),
+  reviewAsk: (repo: string, ref: string, body: { question: string; hunk?: string | null }) => post<ChatMessage>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/ask`, body),
+  reviewSend: (repo: string, ref: string, body: { card: string; items: string[]; session: string }) => post<{ delivered: string; message_id: string; session: string }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/send`, body),
+  reviewDraft: (repo: string, ref: string) => post<{ body: string }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/draft-review`),
+  reviewGithub: (repo: string, ref: string, body: { event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string }) => post<{ id: number | null; url: string | null; state: string | null }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/github-review`, body),
+  markViewed: async (repo: string, ref: string, body: { path: string; hash: string; viewed?: boolean; bucket?: Bucket | "" }) => {
+    const res = await fetch(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/viewed`, { method: "PUT", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error ?? "Could not save viewed state");
+    return data as { hash?: string; viewed?: boolean; bucket?: Bucket };
+  },
+  folderPrs: (folder: string, refresh = false) => get<PrListResult>(`/folders/${encodeURIComponent(folder)}/prs${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),
   updateArtifact: async (key: string, id: string, patch: { kind?: ArtifactKind; kept?: boolean }): Promise<{ artifact: Artifact }> => {
     const response = await fetch(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, { method: "PATCH", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(patch) });
     const value = await response.json(); if (!response.ok) throw new Error(value.error || "Could not update artifact"); return value;

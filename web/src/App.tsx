@@ -37,6 +37,9 @@ import { HarnessesModal } from "./HarnessesModal";
 import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
 import { SessionFilesView } from "./SessionFilesView";
+import { PrList } from "./review/PrList";
+import { ReviewWorkspace } from "./review/ReviewWorkspace";
+import type { PrRow } from "./api";
 import { InboxView } from "./InboxView";
 import { MessageFolderModal } from "./MessageFolderModal";
 import { useInboxCounts } from "./useInboxCounts";
@@ -153,10 +156,13 @@ function Dashboard() {
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
   const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<{ key: string; revision: string; checkpoint?: string } | null>(null);
-  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory">(
+  const [view, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory" | "prs">(
     "terminal",
   );
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
+  // The PR open in the review workspace (PRs view); null shows the list.
+  const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
+  const openReview = (row: PrRow) => setReview({ repo: row.repo, ref: row.pr ? String(row.pr.number) : row.branch, from: row.session?.name });
   const [inboxFolder, setInboxFolder] = useState<string | null>(null);
   // The folder whose terminals are tiled fullscreen; null = grid closed.
   const [gridFolder, setGridFolder] = useState<string | null>(null);
@@ -464,6 +470,9 @@ function Dashboard() {
               <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")}>
                 Artifacts
               </button>
+              <button className={view === "prs" ? "active" : ""} onClick={() => setView("prs")}>
+                PRs
+              </button>
               <span id="rd-shell-toggle" />
             </div>
             {selected && (view === "terminal" || view === "messages") && (
@@ -504,6 +513,13 @@ function Dashboard() {
               <div className="rd-messages-wrap rd-files-wrap">
                 {selected ? <SessionFilesView session={selected} />
                   : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
+              </div>
+            )}
+            {view === "prs" && (
+              <div className="rd-messages-wrap rd-prs-wrap">
+                {selected && review && <ReviewWorkspace key={`${review.repo}:${review.ref}`} repo={review.repo} target={review.ref} from={review.from} onBack={() => setReview(null)} />}
+                {selected && !review && <PrList key={selected.key} scope={{ kind: "session", key: selected.key, name: selected.label }} active={!towerOpen && selectedFolder === null} onReview={openReview} />}
+                {!selected && <p className="rd-panel-empty">Select a session to see its pull requests.</p>}
               </div>
             )}
             {/* Keep recent views warm. Older browser views reconnect on demand;
