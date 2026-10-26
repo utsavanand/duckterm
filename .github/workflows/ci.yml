@@ -42,7 +42,7 @@ jobs:
       - run: npm run build
 
   browser:
-    # ubuntu-latest moved to 26.04 on 2026-10-26; Playwright has no Chromium build for it yet.
+    # Playwright 1.60 supports Ubuntu 24.04; latest now resolves to 26.04.
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

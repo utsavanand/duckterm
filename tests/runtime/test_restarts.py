@@ -528,3 +528,33 @@ def test_real_isolated_terminal_restarts_under_same_key(
 
         subprocess.run(["tmux", "-L", socket, "kill-server"], capture_output=True)
         store.close()
+
+
+def test_stop_hook_disconnected_reply_still_schedules_queued_restart(rig):
+    server, _, _, calls = rig
+
+    class DisconnectedWriter(Writer):
+        async def drain(self):
+            raise ConnectionResetError("Synthetic hook client disconnected")
+
+    async def run():
+        await server.restarts.request("a", "new-model")
+        with pytest.raises(ConnectionResetError):
+            await server._ingest(
+                DisconnectedWriter(),
+                json.dumps(
+                    {
+                        "event_type": "Stop",
+                        "session_key": "a",
+                        "session_id": A,
+                        "stop_hook_active": False,
+                        "test": True,
+                    }
+                ).encode(),
+            )
+        assert server.restarts.turn_finished("a")
+        await drain(server)
+        assert server.restarts.read("a")["status"] == "completed"
+        assert calls[0] == ("stop", "a")
+
+    asyncio.run(run())

@@ -93,3 +93,32 @@ test("a failing connector shows the server's own reason, not a generic error", a
     await apiDelete(`/sessions/${key}`);
   }
 });
+
+test("connection editor and close control fit the sidebar", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const result = await apiPost("/sessions/launch", { command: "python3 -u -c 'import sys; print(\"READY\"); [line for line in sys.stdin]'", cwd: "/tmp", name: "connector-layout-check", in_terminal: false, test: true });
+  expect(result.status).toBe(200);
+  const key = String(result.body.session_key);
+  try {
+    await page.route("**/connectors", route => route.fulfill({ json: { connectors: [{ name: "github", title: "GitHub", description: "Repos, PRs, issues", credential: null, identity: null, sources: ["gh-cli", "stored"], write_access: false, revoke_url: "https://github.com/settings/applications", installed: {}, enabled: false, ready: false, detail: null }] } }));
+    await page.goto("/");
+    await page.locator(".rd-row-name", { hasText: "connector-layout-check" }).click();
+    const pane = page.locator(".rd-context-pane");
+    await pane.getByRole("tab", { name: "Connectors", exact: true }).click();
+    const row = pane.locator(".rd-connector", { hasText: "GitHub" });
+    await row.getByRole("button", { name: "Connect", exact: true }).click();
+    for (const width of [1440, 1024]) {
+      await page.setViewportSize({ width, height: 900 });
+      const bounds = await pane.boundingBox();
+      for (const control of [row.getByRole("button", { name: "Close GitHub connection settings" }), row.getByLabel("GitHub credential source"), row.getByRole("button", { name: "Verify and enable" })]) {
+        await expect(control).toBeInViewport();
+        const box = await control.boundingBox();
+        expect(box!.x).toBeGreaterThanOrEqual(bounds!.x);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(bounds!.x + bounds!.width + 1);
+      }
+    }
+    await page.screenshot({ path: testInfo.outputPath("connector-editor.png") });
+    await row.getByRole("button", { name: "Close GitHub connection settings" }).click();
+    await expect(row.getByLabel("GitHub credential source")).toHaveCount(0);
+  } finally { await apiDelete(`/sessions/${key}`); }
+});

@@ -1,12 +1,39 @@
-## 2026-10-26 — CI drifts while a branch is green locally
+## 2026-10-25 — Floating CI environments can break a validated release
 
-A PR opened five days after main's last green run failed two jobs with no
-code change behind either: `ubuntu-latest` had moved to 26.04, where
-Playwright has no Chromium build, and `npm audit` had picked up advisories
-for dompurify and vitest published in the gap. A local gate cannot see
-either. Pin the browser job to a named runner image and expect a dependency
-bump in any PR that lands more than a few days after the previous one; check
-the PR's own checks before calling it ready, not the local gate.
+The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,
+which the locked Playwright could not install on. Pin the browser job to its
+supported Ubuntu 24.04 image. Update DOMPurify to the patched 3.4.17 floor after
+the dependency audit blocked the release; never waive an audit to ship fixes.
+
+## 2026-10-25 — Existence is not reachability
+
+The connector Cancel button existed and passed a component test while the
+horizontal editor pushed it off the sidebar. Stack the editor fields, keep Close
+beside the heading, and assert controls fit inside the real panel viewport.
+The update action now links to the release download instead of styling an
+unavailable installation action as primary. Owner approved both previews.
+
+## 2026-10-25 — A hook reply is not the lifecycle event
+
+Stop was persisted before replying to its HTTP caller, but restart scheduling
+happened only after the reply succeeded. A disconnected hook client could leave
+valid completion evidence and an idle card with restart queued indefinitely.
+Schedule the accepted event in finally, retaining conversation, draft and
+activity checks. A regression disconnects the reply after queuing restart and
+proves completion, rather than making an idle label sufficient to kill a process.
+
+## 2026-10-25 — Polling needs an observable operation
+
+Clone held the same lock needed by status reads across its download and checkout,
+then left the journal at cloning on errors. Polling could neither show progress
+nor recover a lost reply. Read atomically published journals without that lock,
+record failures before publication, and let the UI reconcile terminal clone
+states without issuing a duplicate operation. Test with a blocked worker and a
+lost reply, not only an immediately resolved promise.
+
+Credential checks on window focus miss sign-in through an embedded terminal.
+Refresh only a visible, disconnected connector panel at a bounded interval,
+coalesce pending requests, and stop polling after credentials are found.
 
 ## 2026-10-23 — A handler that raises closes the socket with no response
 

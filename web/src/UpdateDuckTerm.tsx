@@ -43,9 +43,8 @@ export function UpdateDuckTerm() {
     {!checking && (error || status?.check_status === "failed") && <p role="alert">Couldn’t check for updates. {error || status?.check_error}</p>}
     <p>Updates the CLI/server. The Mac app may need a separate download.</p>
     <p>Checks GitHub when you open Settings or choose Check again.</p>
-    <div className="rd-update-actions"><button className="rd-btn rd-btn-sm rd-btn-primary" disabled title="Live installation is disabled until the updater is ready">Install update</button><button className="rd-btn rd-btn-sm" disabled={checking} onClick={() => setAttempt(n => n + 1)}>Check again</button></div>
+    <div className="rd-update-actions"><a className="rd-btn rd-btn-sm rd-btn-primary" href={link} target="_blank" rel="noreferrer">Download update ↗</a><button className="rd-btn rd-btn-sm" disabled={checking} onClick={() => setAttempt(n => n + 1)}>Check again</button></div>
     <p>{status?.backup_running ? "A backup is running. Updates must wait until it finishes." : status?.reason || "In-app installation is not available yet."}</p>
-    <a href={link} target="_blank" rel="noreferrer">Release notes and downloads ↗</a>
     {operation && <div className="rd-update-progress" role="status">
       <strong>{verified ? `Updated to ${operation.target_version}` : operation.outcome === "failed" ? "Update failed" : operation.outcome === "succeeded" ? "Awaiting version verification" : `Updating to ${operation.target_version}`}</strong>
       <ol>{["snapshot", "install", "restart", "verify"].map(step => <li key={step} aria-current={operation.phase === step ? "step" : undefined}>{step}</li>)}</ol>

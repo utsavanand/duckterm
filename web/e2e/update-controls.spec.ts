@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("Settings exposes honest disabled update controls at desktop and narrow widths", async ({ page }) => {
+test("Settings exposes manual update download controls at desktop and narrow widths", async ({ page }) => {
   let checks = 0, installs = 0;
   page.on("request", request => { if (request.url().includes("/update/status")) checks++; if (request.url().includes("/update/install")) installs++; });
   await page.setViewportSize({ width: 1440, height: 1000 }); await page.emulateMedia({ colorScheme: "dark" }); await page.goto("/");
@@ -9,7 +9,8 @@ test("Settings exposes honest disabled update controls at desktop and narrow wid
   const update = page.getByRole("region", { name: "Update DuckTerm" });
   await update.scrollIntoViewIfNeeded();
   await expect(update).toContainText("Installed"); await expect(update).toContainText("Couldn’t check for updates.");
-  await expect(update.getByRole("button", { name: "Install update" })).toBeDisabled();
+  await expect(update.getByRole("button", { name: "Install update" })).toHaveCount(0);
+  await expect(update.getByRole("link", { name: /Download update/ })).toHaveAttribute("href", /^https:\/\/github.com\/utsavanand\/duckterm\/releases/);
   await page.screenshot({ path: "/tmp/duckterm-update-controls-dark.png" });
   expect(checks).toBe(1); expect(installs).toBe(0);
   await page.keyboard.press("Escape"); await page.getByRole("button", { name: "Settings", exact: true }).click(); await update.scrollIntoViewIfNeeded();
