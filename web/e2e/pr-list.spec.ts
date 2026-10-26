@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { apiDelete, apiPatch, apiPost, base, expandFolder } from "./helpers";
 
+// The test server never calls a model. Where a Claude or Codex CLI is installed the
+// summarizer switch refuses; where none is installed (CI) the provider lookup does.
+const NO_MODEL = "(?:Automatic preparation is disabled on this host|No Claude Code or Codex CLI is installed)";
+
 // A session working in a git checkout whose branch is pushed to a local
 // `origin` but has no pull request: the lists must show it from git facts
 // alone, with GitHub reported as not connected rather than failing.
@@ -103,7 +107,7 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     const strip = workspace.getByRole("tablist", { name: "Review cards" });
     await expect(strip.getByRole("tab")).toHaveCount(10);
     await expect(strip.getByRole("tab", { name: /Release impact/ })).toContainText("Low risk if", { timeout: 20_000 });
-    await expect(strip.getByRole("tab", { name: /Intent vs diff/ })).toContainText("Omitted: Automatic preparation is disabled", { timeout: 30_000 });
+    await expect(strip.getByRole("tab", { name: /Intent vs diff/ })).toContainText(new RegExp(`Omitted: ${NO_MODEL}`), { timeout: 30_000 });
     // The fixture commits lack the problem / fix / how-tested subject: one mechanical finding.
     await expect(strip.getByRole("tab", { name: /Guardrails/ })).toContainText("1 finding", { timeout: 30_000 });
     await expect(strip.getByRole("tab", { name: /^6 Tests/ })).toContainText("0 slop · no coverage report");
@@ -112,7 +116,7 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     await expect(strip.getByRole("tab", { name: /How the author got here/ })).toContainText("0 turns · 0 commits");
     await strip.getByRole("tab", { name: /Guardrails/ }).click();
     const guard = workspace.getByRole("tabpanel", { name: "7 Guardrails" });
-    await expect(guard).toContainText("Slop-rule review omitted: Automatic preparation is disabled");
+    await expect(guard).toContainText(new RegExp(`Slop-rule review omitted: ${NO_MODEL}`));
     await expect(guard).toContainText("Commit messages: problem / fix / how-tested");
     await expect(guard).toContainText("reindent and add notes");
     await strip.getByRole("tab", { name: /Release impact/ }).click();
@@ -126,14 +130,14 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     await expect(timeline.getByRole("listitem")).toHaveCount(1);
     await expect(timeline).toContainText("v0.1.0");
     await expect(workspace.getByText(/this change will ship after v0.1.0/)).toBeVisible();
-    await expect(workspace.getByText(/Module map omitted: Automatic preparation is disabled/)).toBeVisible({ timeout: 20_000 });
+    await expect(workspace.getByText(new RegExp(`Module map omitted: ${NO_MODEL}`))).toBeVisible({ timeout: 20_000 });
     await page.screenshot({ path: "/tmp/duckterm-pr-review-history.png" });
     await workspace.getByRole("tab", { name: "Review" }).click();
     // Chat (still open from the hunk question): the server's refusal shows inline.
     const panel = workspace.getByRole("complementary", { name: "Review chat" });
     await panel.getByRole("textbox", { name: "Ask about this pull request" }).fill("What changed?");
     await panel.getByRole("button", { name: "Ask", exact: true }).click();
-    await expect(panel.getByRole("alert")).toContainText("Automatic preparation is disabled", { timeout: 20_000 });
+    await expect(panel.getByRole("alert")).toContainText(new RegExp(NO_MODEL), { timeout: 20_000 });
   } finally {
     if (key) await apiDelete(`/sessions/${key}`);
     rmSync(root, { recursive: true, force: true });
