@@ -129,6 +129,25 @@ test("empty context recovery keeps drafts, isolates count selection, and never a
     await expect(dialog.getByLabel("Context to send")).toHaveAttribute("aria-invalid", "true");
     await expect(dialog.getByLabel("Notes to append")).toHaveAttribute("aria-invalid", "true");
     await page.evaluate(() => document.documentElement.dataset.theme = "dark");
+    // Check the rendered secondary buttons in both palettes: a dark-only surface
+    // token previously made the light-theme label nearly invisible.
+    for (const theme of ["dark", "light"]) {
+      await page.evaluate(value => { document.documentElement.dataset.theme = value; }, theme);
+      const contrast = await dialog.getByRole("button", { name: "Generate summary…" }).evaluate(button => {
+        const style = getComputedStyle(button);
+        const luminance = (color: string) => {
+          const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(value => {
+            const channel = value / 255;
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+          });
+          return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+        };
+        const foreground = luminance(style.color), background = luminance(style.backgroundColor);
+        return (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05);
+      });
+      expect(contrast, `${theme} secondary button contrast`).toBeGreaterThanOrEqual(4.5);
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
     await page.screenshot({ path: "/tmp/merge-recovery-app-dark.png" });
     await dialog.getByRole("button", { name: "Generate summary…" }).click();
     const chooser = page.getByRole("dialog", { name: "Checkpoint", exact: true });

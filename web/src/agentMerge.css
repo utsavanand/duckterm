@@ -12,4 +12,4 @@
 .rd-agent-merge .rd-agent-merge-validation { color: var(--amber-text); }
 .rd-agent-merge textarea[aria-invalid="true"] { border-color: var(--amber-text); }
 .rd-agent-merge-draft-status { border-top: 1px solid var(--border); padding-top: 12px; }
-.rd-agent-merge .rd-btn:not(.rd-btn-primary) { background: var(--bg-soft); color: var(--text); border: 1px solid var(--border-strong); }
+.rd-agent-merge .rd-btn:not(.rd-btn-primary) { background: var(--card); color: var(--text); border: 1px solid var(--border-strong); }
