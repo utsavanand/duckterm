@@ -128,6 +128,13 @@ def edition_rig(tmp_path, monkeypatch):
         ("GET", "/file?path=example.py", b""),
         ("POST", "/file", b"{}"),
         ("POST", "/snapshots", b"{}"),
+        # Routes match the raw path, so a folder named "Tests?x=" is reachable
+        # with its query-looking part unencoded.
+        ("GET", "/folders/Tests?x=/chat", b""),
+        ("GET", "/folders/Tests?x=/stats", b""),
+        ("GET", "/folders/Tests?x=/recipients", b""),
+        ("POST", "/folders/Tests?x=/dispatch", b"{}"),
+        ("GET", "/sessions/agent?x=/digest", b""),
     ],
 )
 def test_lite_rejects_optional_work_before_handlers(edition_rig, method, path, body):

@@ -113,8 +113,13 @@ def request_feature(method: str, url: str, body: bytes = b"") -> str | None:
     Authorization remains the dispatcher's responsibility. Query strings do not
     change a feature's availability; folder names may contain encoded slashes.
     Core terminal, lifecycle, approval, message and directory routes remain core.
+    Routes match the raw path, so "/folders/a?b=/chat" reaches folder chat for a
+    folder named "a?b=" although its parsed path is "/folders/a"; classify both.
     """
-    path = urlsplit(url).path
+    return _path_feature(method, urlsplit(url).path, body) or _path_feature(method, url, body)
+
+
+def _path_feature(method: str, path: str, body: bytes) -> str | None:
     if path.startswith("/api/v1/session/"):
         suffix = path.removeprefix("/api/v1/session/")
         if suffix == "artifacts" or suffix.startswith("artifacts/"):
