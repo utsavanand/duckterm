@@ -11,7 +11,14 @@ if TYPE_CHECKING:
 LIMIT = 1000
 
 
-def snapshot(server: "Server", host_id: str, now: int, cursor: str | None = None) -> dict[str, Any]:
+def snapshot(
+    server: "Server",
+    host_id: str,
+    now: int,
+    cursor: str | None = None,
+    *,
+    initial_cursor: str | None = None,
+) -> dict[str, Any]:
     rows = [row for row in server.history.sessions() if row["state"] not in AT_REST_STATES]
     rows.sort(
         key=lambda row: (
@@ -36,6 +43,11 @@ def snapshot(server: "Server", host_id: str, now: int, cursor: str | None = None
     ]
     recent = server.bus.recent(500)
     position = next((i for i, event in enumerate(recent) if event["_id"] == cursor), None)
+    # An empty ring still needs a cursor: otherwise the first later event is
+    # mistaken for history from before pairing. The marker belongs to this
+    # bridge lifetime; a full ring means it may have overrun and must reset.
+    if initial_cursor is not None and cursor == initial_cursor and len(recent) < 500:
+        position = -1
     reset = cursor is not None and position is None
     live = {row["session_key"] for row in rows}
     notices = []
@@ -70,7 +82,7 @@ def snapshot(server: "Server", host_id: str, now: int, cursor: str | None = None
         "sessions": sessions,
         "folders": folders[:LIMIT],
         "truncated": len(rows) > LIMIT or len(folders) > LIMIT,
-        "cursor": recent[-1]["_id"] if recent else None,
+        "cursor": recent[-1]["_id"] if recent else initial_cursor,
         "reset": reset,
         "notices": notices,
         "notification_delivery": "foreground_refresh",

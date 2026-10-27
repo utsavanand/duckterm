@@ -8,7 +8,9 @@ public enum DuckyError: LocalizedError {
         case .invalidInvitation: return "This Ducky invitation is invalid. Create a new invitation on your Mac."
         case .expiredInvitation: return "This invitation has expired. Create a new invitation on your Mac."
         case .invalidResponse: return "The Mac returned an unsupported response. Your last view may be out of date."
-        case .unavailable(let code): return code == 403 ? "Access is unapproved, expired, disabled or revoked. Check Ducky devices on your Mac." : "The Mac is unavailable. Try refreshing."
+        case .unavailable(403): return "Access is unapproved, expired or revoked. Check Ducky devices on your Mac."
+        case .unavailable(503): return "Ducky is unavailable on your Mac. Check whether it is enabled, then refresh."
+        case .unavailable: return "The Mac is unavailable. Try refreshing."
         case .credentialStorage: return "Ducky could not save its device credential in Keychain."
         }
     }

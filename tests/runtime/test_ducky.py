@@ -157,6 +157,33 @@ def test_notifications_are_observed_turns_and_attention_with_replay_detection(ap
     assert reset["reset"] is True and reset["notices"] == []
 
 
+def test_first_notification_after_an_empty_snapshot_is_delivered_without_replay(app):
+    server, _ = app
+    initial = snapshot(server, "host", 100, initial_cursor="emptyring")
+    assert initial["cursor"] == "emptyring" and initial["notices"] == []
+    attention = server.bus.publish(
+        {
+            "event_type": "Notification",
+            "notification_type": "permission_prompt",
+            "session_key": "a",
+            "test": True,
+        }
+    )
+    current = snapshot(server, "host", 200, initial["cursor"], initial_cursor="emptyring")
+    assert [notice["id"] for notice in current["notices"]] == [attention["_id"]]
+    assert not current["reset"]
+    assert (
+        snapshot(server, "host", 300, current["cursor"], initial_cursor="emptyring")["notices"]
+        == []
+    )
+    restarted = snapshot(server, "host", 300, initial["cursor"], initial_cursor="newbridge")
+    assert restarted["reset"] and restarted["notices"] == []
+    for _ in range(500):
+        server.bus.publish({"event_type": "Notification", "session_key": "a", "test": True})
+    overrun = snapshot(server, "host", 400, initial["cursor"], initial_cursor="emptyring")
+    assert overrun["reset"] and overrun["notices"] == []
+
+
 def test_bridge_rejects_desktop_reads_mutations_and_cross_credential_use(app):
     server, root = app
     (root / "ducky-bridge.json").write_text("{}")
@@ -250,6 +277,10 @@ def test_tls_pairing_snapshot_and_disable_on_real_socket(app):
             code, data = await request("GET", "/v1/snapshot", auth=token)
             assert code == 200 and data["sessions"][0]["name"] == "Coding agent"
             (root / "ducky-bridge.json").unlink()
+            assert (await request("GET", "/v1/snapshot", auth=token))[0] == 503
+            (root / "ducky-bridge.json").write_text(json.dumps(config))
+            assert (await request("GET", "/v1/snapshot", auth=token))[0] == 200
+            bridge.grants.revoke(pending["id"])
             assert (await request("GET", "/v1/snapshot", auth=token))[0] == 403
         finally:
             await bridge.close()

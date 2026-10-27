@@ -165,6 +165,24 @@ final class SessionModelTests: XCTestCase {
         XCTAssertNil(m.snapshot)
     }
 
+    func testDisabledBridgeKeepsPairingAndRecoversWhenEnabled() async {
+        store = FakeStore(paired(hostA))
+        let m = model()
+        await m.restore()
+        let credential = store.saved?.token
+        transports[0].snapshots = [.failure(DuckyError.unavailable(503))]
+        await m.refresh()
+        XCTAssertEqual(m.phase, .stale)
+        XCTAssertEqual(m.snapshot?.sessions.map(\.name), ["discounts"])
+        XCTAssertEqual(store.saved?.token, credential)
+        XCTAssertTrue(m.error?.contains("enabled") == true)
+        await m.refresh()
+        XCTAssertEqual(m.phase, .live)
+        XCTAssertEqual(transports.count, 1)
+        XCTAssertEqual(transports[0].claims, 0)
+        XCTAssertEqual(store.saved?.token, credential)
+    }
+
     func testRevokedDeviceDropsItsSnapshot() async {
         store = FakeStore(paired(hostA))
         let m = model()

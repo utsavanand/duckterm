@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import secrets
 import ssl
 import time
 from collections import deque
@@ -30,6 +31,7 @@ class Bridge:
         self.listener: asyncio.Server | None = None
         self.connections: set[asyncio.StreamWriter] = set()
         self.claims: deque[float] = deque()
+        self.initial_cursor = secrets.token_hex(16)
 
     async def dispatch(
         self, method: str, target: str, headers: dict[str, str], body: bytes
@@ -42,7 +44,7 @@ class Bridge:
         if parsed.scheme or parsed.netloc or parsed.fragment:
             return 400, {"error": "Invalid request target"}
         if not (self.directory / "ducky-bridge.json").is_file():
-            return 403, {"error": "Ducky access is disabled"}
+            return 503, {"error": "Ducky access is disabled"}
         try:
             if method == "POST" and target == "/v1/pair":
                 now = time.monotonic()
@@ -82,7 +84,13 @@ class Bridge:
             cursor = query.get("cursor", [None])[0]
             if cursor is not None and (not cursor.isalnum() or len(cursor) > 64):
                 raise ValueError("Invalid event cursor")
-            return 200, snapshot(self.server, device["host_id"], int(time.time() * 1000), cursor)
+            return 200, snapshot(
+                self.server,
+                device["host_id"],
+                int(time.time() * 1000),
+                cursor,
+                initial_cursor=self.initial_cursor,
+            )
         except Denied as exc:
             return 403, {"error": str(exc)}
         except (ValueError, TypeError):
