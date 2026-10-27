@@ -40,17 +40,14 @@ The output records the revision, working-tree status, platform and configuration
   This measures event-stream initialization, not complete browser reconnection.
   The driver validates the init event shape and rejects frames over 16 MiB.
 - **Burst (opt-in):** `--scenarios burst` uses the same output volume without
-  pacing. A viewer disconnect or missing output fails the trial. On base
-  `20bea03` (v0.4.178), 16-session bursts reproduced early viewer closure while
-  one-session bursts and paced 16-session output passed. A separate reproduction
-  on `7d305c0` traced the closure to the 32-chunk viewer queue filling: the
-  WebSocket consumer takes more scheduling turns per chunk than the buffered
-  producer. Candidate fix `4125123` coalesces already-queued live chunks and
-  passed three burst and three paced 16-session trials with exact payload and
-  cleanup checks. Those results validate that candidate, not its release or
-  installation status; verify the tested checkout contains the fix (or its
-  integrated equivalent). The script retains the same workload and failure
-  assertions and does not reconnect over missing output.
+  pacing. A viewer disconnect or missing output fails the trial. Up to v0.4.178,
+  16-session bursts closed viewers early while one-session bursts and paced
+  16-session output passed: the 32-chunk viewer queue filled because the
+  WebSocket consumer took more scheduling turns per chunk than the buffered
+  producer. The terminal stream now sends already-queued live chunks together,
+  and three burst and three paced 16-session trials pass with exact payload and
+  cleanup checks. The script keeps the same workload and failure assertions and
+  does not reconnect over missing output.
 
 Use `--sessions 40` for a larger fleet or `--scenarios idle output` to select work.
 A quick correctness run can use `--sessions 2 --clients 1 --rounds 1 --interval 0
