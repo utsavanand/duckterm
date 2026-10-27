@@ -25,7 +25,8 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
         guard base.scheme == "http", base.host == "127.0.0.1" else {
             throw Failure.message("Invalid destination")
         }
-        var paths = ["browse": "/browse", "branches": "/branches", "themes": "/zsh-themes", "launch": "/sessions/launch", "opencode-options": "/runtimes/opencode/launch-options"]
+        var paths = ["browse": "/browse", "branches": "/branches", "themes": "/zsh-themes", "launch": "/sessions/launch", "opencode-options": "/runtimes/opencode/launch-options", "edition": "/edition"]
+        if operation == "edition" && !params.isEmpty { throw Failure.message("Invalid edition parameters") }
         if operation == "opencode-options" && !params.isEmpty { throw Failure.message("Invalid OpenCode options parameters") }
         let transfers = ["mkdir", "repositories", "preview", "prepare", "chunk", "begin", "receive", "finish", "clone", "launch", "status", "preflight", "link", "continue"]
         for name in transfers { paths["transfer-" + name] = "/transfers/" + name }
@@ -37,7 +38,7 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
             components.queryItems = [URLQueryItem(name: "path", value: folder)]
         }
         var request = URLRequest(url: components.url!)
-        request.timeoutInterval = 30
+        request.timeoutInterval = operation == "edition" ? 2 : 30
         if operation.hasPrefix("transfer-") {
             request.timeoutInterval = 240
             request.httpMethod = "POST"
@@ -83,8 +84,8 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
 
     func perform(base: URL, operation: String, params: [String: Any]) async throws -> Any {
         var request = try Self.request(base: base, operation: operation, params: params)
-        let token = try await token(base: base)
-        if request.httpMethod == "POST" { request.setValue(token, forHTTPHeaderField: "X-Duckterm-Token") }
+        let token = try await token(base: base, attempts: operation == "edition" ? 1 : 30)
+        if request.httpMethod == "POST" || operation == "edition" { request.setValue(token, forHTTPHeaderField: "X-Duckterm-Token") }
         let (data, response): (Data, URLResponse)
         do { (data, response) = try await session.data(for: request) }
         catch {
