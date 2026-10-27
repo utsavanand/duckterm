@@ -17,8 +17,8 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 test("session PRs tab and folder Pull requests tab list a pushed branch without a PR", async ({ page }) => {
-  // Pull request review is Code only; the server refuses its routes in Full.
-  test.skip(SERVER_EDITION !== "code", "needs RD_TEST_EDITION=code");
+  // Lite refuses the pull request routes; Code and Full serve them.
+  test.skip(SERVER_EDITION === "lite", "needs RD_TEST_EDITION=code or full");
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ colorScheme: "dark" });
