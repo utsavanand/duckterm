@@ -17,9 +17,9 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
   notifyOn: boolean;
   onNotify: () => void;
   notificationHelp?: string;
-  voiceLevel: VoiceLevel;
-  onVoiceLevel: (level: VoiceLevel) => void;
-  voice: {
+  voiceLevel?: VoiceLevel;
+  onVoiceLevel?: (level: VoiceLevel) => void;
+  voice?: {
     voices: VoiceChoice[];
     selected: string | null;
     ready: boolean;
@@ -83,7 +83,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
           <label>Desktop notifications<input type="checkbox" checked={notifyOn} disabled={!notificationsAvailable} onChange={onNotify} aria-describedby="header-notification-help" /></label>
           <p id="header-notification-help">{notificationHelp ?? (notificationsAvailable ? "Notify when an agent needs an answer." : "Desktop notifications are unavailable in this browser.")}</p>
         </div>
-        <div className="rd-header-notifications">
+        {voice && onVoiceLevel && <div className="rd-header-notifications">
           <label>Voice announcements<select value={voice.ready ? voiceLevel : "off"} disabled={!voice.ready} onChange={(event) => onVoiceLevel(event.target.value as VoiceLevel)} aria-describedby="header-voice-help">
             {VOICE_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
           </select></label>
@@ -94,7 +94,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
           </p>
           <VoicePicker voices={voice.voices} selected={voice.selected} onSelect={voice.onSelect} onPreview={voice.onPreview} />
           <NaturalVoicePanel status={voice.local} fallbackReason={voice.fallbackReason} onInstall={voice.onInstall} onRemove={voice.onRemove} />
-        </div>
+        </div>}
         <div className="rd-header-menu-divider" />
         {has("inbox") && <button className="rd-header-menu-item" onClick={() => action("collaboration")}>Collaboration <span aria-hidden="true">›</span></button>}
         {has("checkpoints") && <button className="rd-header-menu-item" onClick={() => action("checkpointing")}>Checkpointing <span aria-hidden="true">›</span></button>}

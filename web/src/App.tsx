@@ -164,8 +164,8 @@ function Dashboard() {
   const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory" | "prs">(
     "terminal",
   );
-  // The Files tab is the Explorer; Full adds registered artifacts to it.
-  const viewFeature = { history: has("checkpoints"), memory: has("checkpoints"), inbox: has("inbox"),
+  // The Explorer tab; Full adds registered artifacts to it as Artifacts.
+  const viewFeature = { history: has("checkpoints") || has("context"), memory: has("context"), inbox: has("inbox"),
     artifacts: has("explorer") || has("artifacts"), prs: has("pr_review") } as Record<string, boolean>;
   const view = viewFeature[chosenView] === false ? "terminal" : chosenView;
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
@@ -287,9 +287,10 @@ function Dashboard() {
   // recurring-review nudge. Re-fetched when the editor closes (a save may
   // have promoted/rejected them all).
   const [ruleCandidates, setRuleCandidates] = useState(0);
-  const agentsMd = has("file_editing");
+  // Manual AGENTS.md editing is core; rule candidates are generated from context.
+  const candidates = has("context");
   useEffect(() => {
-    if (!agentsMd || !agentsMdDir || modal === "agentsmd") return;
+    if (!candidates || !agentsMdDir || modal === "agentsmd") return;
     let stale = false;
     sessionFetch(selected?.key ?? "", `/agents-md?dir=${encodeURIComponent(agentsMdDir)}`)
       .then((r) => r.json())
@@ -303,7 +304,7 @@ function Dashboard() {
     return () => {
       stale = true;
     };
-  }, [agentsMd, agentsMdDir, modal, selected?.key]);
+  }, [candidates, agentsMdDir, modal, selected?.key]);
 
   return (
     <div className="rd-app" data-density={density}>
@@ -339,7 +340,7 @@ function Dashboard() {
           Oracle
           {relayOpen > 0 && <span className="rd-rules-badge" aria-label={`${relayOpen} need you`}>{relayOpen}</span>}
         </button>}
-        {agentsMd && <button
+        <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
           onClick={() => setModal("agentsmd")}
           disabled={!agentsMdDir}
@@ -352,10 +353,10 @@ function Dashboard() {
           }
         >
           AGENTS.md
-          {ruleCandidates > 0 && (
+          {candidates && ruleCandidates > 0 && (
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
-        </button>}
+        </button>
         <DashboardMenus theme={theme} onTheme={setTheme} sessions={sessions} density={density} onDensity={setDensity} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
           if (action === "bugreport") {
             try { if (openNativeBugReport()) return; }
@@ -478,7 +479,7 @@ function Dashboard() {
                 Inbox{selected && inboxCounts[selected.key] ? ` (${inboxCounts[selected.key]})` : ""}
               </button>}
               {viewFeature.artifacts && <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")}>
-                {has("artifacts") ? "Artifacts" : "Files"}
+                {has("artifacts") ? "Artifacts" : "Explorer"}
               </button>}
               {viewFeature.prs && <button className={view === "prs" ? "active" : ""} onClick={() => setView("prs")}>
                 PRs
@@ -614,7 +615,7 @@ function Dashboard() {
           }}
         />
       )}
-      {modal === "agentsmd" && agentsMd && agentsMdDir && (
+      {modal === "agentsmd" && agentsMdDir && (
         <AgentsMdModal sessionKey={selected?.key} dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
       {modal === "bugreport" && <BugReport session={bugSession} onClose={() => setModal(null)} />}

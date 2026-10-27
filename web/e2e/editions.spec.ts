@@ -50,7 +50,8 @@ test("Lite runs the core session flows without any advanced control or request",
     await open(page, folder, "lite-agent");
     const views = page.locator(".rd-view-toggle");
     await expect(views.getByRole("button")).toHaveText(["Terminal", "Messages", /Shell/]);
-    for (const name of ["Oracle", "AGENTS.md"]) await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Oracle", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "AGENTS.md", exact: true })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Connectors" })).toHaveCount(0);
     await expect(page.getByRole("button", { name: `View interactions in ${folder}` })).toHaveCount(0);
 
@@ -61,11 +62,12 @@ test("Lite runs the core session flows without any advanced control or request",
     await views.getByRole("button", { name: "Terminal" }).click();
     const menu = await sessionMenu(page);
     await expect(menu.getByRole("menuitem", { name: "Rename" })).toBeVisible();
-    for (const name of ["Checkpoint", "Move to remote"]) await expect(menu.getByRole("menuitem", { name })).toHaveCount(0);
+    for (const name of ["Checkpoint", "Move to remote", "Merge back", "Merge with agent"]) await expect(menu.getByRole("menuitem", { name })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Settings" }).click();
     for (const name of ["Collaboration", "Checkpointing"]) await expect(page.getByRole("button", { name: new RegExp(`^${name}`) })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /^Harnesses/ })).toBeVisible();
+    await expect(page.getByText("Voice announcements")).toHaveCount(0);
     await page.keyboard.press("Escape");
 
     // Clicking a folder name opens no folder page (folder chat is not in Lite).
@@ -77,16 +79,16 @@ test("Lite runs the core session flows without any advanced control or request",
   expect(requests.filter(path => ADVANCED.some(pattern => pattern.test(path)))).toEqual([]);
 });
 
-test("Code browses files without artifact requests and offers pull requests but not the Oracle", async ({ page }) => {
+test("Code's Explorer browses files without artifact requests and offers pull requests but not the Oracle", async ({ page }) => {
   await routeEdition(page, "code", CODE);
   const requests = recordRequests(page);
   await withSession("code-agent", async folder => {
     await open(page, folder, "code-agent");
     const views = page.locator(".rd-view-toggle");
-    for (const name of ["Timeline", "Files", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
+    for (const name of ["Timeline", "Explorer", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
     await expect(views.getByRole("button", { name: /^Inbox/ })).toBeVisible();
     for (const name of ["Artifacts", "Oracle"]) await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
-    await views.getByRole("button", { name: "Files" }).click();
+    await views.getByRole("button", { name: "Explorer" }).click();
     const files = page.getByRole("region", { name: "Session files" });
     await files.getByRole("button", { name: /notes.txt/ }).click();
     await expect(files).toContainText("EDITION_FILE");

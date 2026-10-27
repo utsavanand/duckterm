@@ -42,8 +42,8 @@ const tab = (name: string) => screen.queryByRole("button", { name: new RegExp(`^
 it("Lite shows the core session views and makes no advanced requests", async () => {
   await mount(LITE, "lite");
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 3100)); });
-  for (const name of ["Terminal", "Messages"]) expect(tab(name)).toBeInTheDocument();
-  for (const name of ["Timeline", "Inbox", "Artifacts", "Files", "PRs", "Oracle", "AGENTS.md"]) expect(tab(name)).not.toBeInTheDocument();
+  for (const name of ["Terminal", "Messages", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
+  for (const name of ["Timeline", "Inbox", "Artifacts", "Explorer", "PRs", "Oracle"]) expect(tab(name)).not.toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: "Connectors" })).not.toBeInTheDocument();
   expect(probe.tree.onOpenInbox).toBeUndefined();
   expect(probe.tree.onOpenFolder).toBeUndefined();
@@ -52,9 +52,9 @@ it("Lite shows the core session views and makes no advanced requests", async () 
   expect(probe.requests.filter(path => ADVANCED.some(pattern => pattern.test(path)))).toEqual([]);
 }, 10_000);
 
-it("Code has the Explorer as Files and pull requests, but no Oracle or artifacts", async () => {
+it("Code has the Explorer and pull requests, but no Oracle or artifacts", async () => {
   await mount(CODE, "code");
-  for (const name of ["Terminal", "Messages", "Timeline", "Inbox", "Files", "PRs", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
+  for (const name of ["Terminal", "Messages", "Timeline", "Inbox", "Explorer", "PRs", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
   for (const name of ["Artifacts", "Oracle"]) expect(tab(name)).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Connectors" })).toBeInTheDocument();
   expect(probe.requests.filter(path => /^\/relay|\/artifacts/.test(path))).toEqual([]);
