@@ -12,6 +12,7 @@ import resource
 import shlex
 import shutil
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -20,7 +21,7 @@ import uuid
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[1] / "src"
-AGENT = """import json, os, sys, termios
+AGENT = """import json, os, sys, termios, time
 from pathlib import Path
 settings = termios.tcgetattr(0)
 settings[3] &= ~termios.ECHO
@@ -30,8 +31,10 @@ Path(os.environ["DUCKTERM_HOME"], "ready-" + os.environ["DUCKTERM_SESSION_KEY"])
 for line in sys.stdin:
     request = json.loads(line)
     print("[busy]", flush=True)
-    for _ in range(request["lines"]):
+    for index in range(request["lines"]):
         print("x" * request["width"])
+        if request["delay"] and (index + 1) % request["batch"] == 0:
+            time.sleep(request["delay"])
     print("[idle] BENCH_DONE", flush=True)
 """
 
@@ -67,6 +70,19 @@ def summarize_latencies(values):
         "p95_ms": percentile(values, 0.95),
         "max_ms": max(values) if values else None,
     }
+
+
+def input_frame(payload):
+    """One masked client binary frame, as sent by the browser terminal."""
+    mask = os.urandom(4)
+    size = len(payload)
+    if size < 126:
+        header = bytes([0x82, 0x80 | size])
+    elif size < 65536:
+        header = bytes([0x82, 0xFE]) + struct.pack(">H", size)
+    else:
+        header = bytes([0x82, 0xFF]) + struct.pack(">Q", size)
+    return header + mask + bytes(value ^ mask[i % 4] for i, value in enumerate(payload))
 
 
 def difference(before, after):
@@ -192,6 +208,7 @@ async def worker(args):
                             "notification_type": "benchmark",
                             "session_key": keys[index % len(keys)],
                             "test": True,
+                            "benchmark_index": index,
                             "message": "x" * request["bytes"],
                         }
                     )
@@ -255,18 +272,39 @@ async def connection(port, token, path, body=None, websocket=False):
         raise
 
 
+async def read_init(reader):
+    # Default replay exceeds StreamReader's 64 KiB readuntil limit. Read bounded
+    # chunks instead; keep the whole-frame timeout in request().
+    raw = bytearray()
+    while b"\n\n" not in raw:
+        chunk = await reader.read(8192)
+        if not chunk:
+            raise RuntimeError("reconnect closed before delivering an init event")
+        raw.extend(chunk)
+        if len(raw) > 16 * 1024 * 1024:
+            raise RuntimeError("reconnect init exceeds the 16 MiB benchmark limit")
+    frame = bytes(raw).split(b"\n\n", 1)[0] + b"\n\n"
+    data = b"\n".join(line[5:].lstrip() for line in frame.splitlines() if line.startswith(b"data:"))
+    value = json.loads(data)
+    if (
+        not isinstance(value, dict)
+        or value.get("type") != "init"
+        or not isinstance(value.get("events"), list)
+    ):
+        raise RuntimeError("reconnect did not deliver an init event")
+    return frame, value
+
+
 async def request(port, token, path, body=None, sse=False):
     start = time.monotonic()
     reader, writer = await connection(port, token, path, body)
     try:
         if sse:
-            raw = await asyncio.wait_for(reader.readuntil(b"\n\n"), 10)
-            if b'"init"' not in raw:
-                raise RuntimeError("reconnect did not deliver an init event")
+            raw, value = await asyncio.wait_for(read_init(reader), 10)
         else:
             raw = await asyncio.wait_for(reader.read(), 10)
-            json.loads(raw)
-        return (time.monotonic() - start) * 1000, len(raw)
+            value = json.loads(raw)
+        return (time.monotonic() - start) * 1000, len(raw), value
     finally:
         writer.close()
         await writer.wait_closed()
@@ -281,7 +319,8 @@ async def workload(args, scenario, ready, token):
         async def poll():
             nonlocal received
             for _ in range(args.rounds):
-                latency, size = await request(port, token, "/sessions")
+                latency, size, value = await request(port, token, "/sessions")
+                validate_sessions(value, ready["keys"])
                 latencies.append(latency)
                 received += size
                 await asyncio.sleep(args.interval)
@@ -292,7 +331,8 @@ async def workload(args, scenario, ready, token):
         async def reconnect():
             nonlocal received
             for _ in range(args.rounds):
-                latency, size = await request(port, token, "/stream", sse=True)
+                latency, size, value = await request(port, token, "/stream", sse=True)
+                validate_replay(value, args.replay_events, args.event_bytes)
                 latencies.append(latency)
                 received += size
                 await asyncio.sleep(args.interval)
@@ -317,12 +357,19 @@ async def workload(args, scenario, ready, token):
                     if frame[0] == 2:
                         initial = (initial + frame[1])[-4096:]
                 start = time.monotonic()
-                await request(
-                    port,
-                    token,
-                    f"/sessions/{key}/input",
-                    {"text": json.dumps({"lines": args.lines, "width": args.width}) + "\n"},
-                )
+                payload = (
+                    json.dumps(
+                        {
+                            "lines": args.lines,
+                            "width": args.width,
+                            "batch": args.batch_lines,
+                            "delay": 0 if scenario == "burst" else args.batch_delay,
+                        }
+                    )
+                    + "\n"
+                ).encode()
+                writer.write(input_frame(payload))
+                await writer.drain()
                 tail = b""
                 payload_bytes = 0
                 while b"[idle] BENCH_DONE" not in tail:
@@ -342,6 +389,22 @@ async def workload(args, scenario, ready, token):
 
         await asyncio.gather(*(output(key) for key in ready["keys"]))
     return {"latency": summarize_latencies(latencies), "received_bytes": received}
+
+
+def validate_sessions(value, keys):
+    rows = value.get("sessions", []) if isinstance(value, dict) else []
+    if len(rows) != len(keys) or {row.get("session_key") for row in rows} != set(keys):
+        raise RuntimeError("idle response did not contain the expected session identities")
+    if not all(row.get("test") for row in rows):
+        raise RuntimeError("idle response contained an unflagged test session")
+
+
+def validate_replay(value, count, size):
+    rows = [row for row in value["events"] if row.get("notification_type") == "benchmark"]
+    if len(rows) != count or [row.get("benchmark_index") for row in rows] != list(range(count)):
+        raise RuntimeError("reconnect replay did not contain the expected fixture events")
+    if any(row.get("message") != "x" * size or row.get("test") is not True for row in rows):
+        raise RuntimeError("reconnect replay payload did not match the fixture")
 
 
 async def trial(args, scenario):
@@ -387,7 +450,7 @@ async def trial(args, scenario):
                     process.stdin,
                     {
                         "op": "stats",
-                        "output_complete": scenario == "output",
+                        "output_complete": scenario in ("output", "burst"),
                     },
                 )
                 cleanup = await exchange(process.stdout, process.stdin, {"op": "stop"})
@@ -401,7 +464,9 @@ async def trial(args, scenario):
                 **result,
                 **cleanup,
                 "validated_payload_bytes": (
-                    args.sessions * args.lines * args.width if scenario == "output" else None
+                    args.sessions * args.lines * args.width
+                    if scenario in ("output", "burst")
+                    else None
                 ),
             }
         except BaseException:
@@ -477,6 +542,8 @@ def main():
     parser.add_argument("--warmup", type=float, default=6)
     parser.add_argument("--lines", type=int, default=1024)
     parser.add_argument("--width", type=int, default=120)
+    parser.add_argument("--batch-lines", type=int, default=32)
+    parser.add_argument("--batch-delay", type=float, default=0.02)
     parser.add_argument("--replay-events", type=int, default=100)
     parser.add_argument("--event-bytes", type=int, default=1024)
     parser.add_argument("--repeat", type=int, default=3)
@@ -484,11 +551,15 @@ def main():
     parser.add_argument(
         "--scenarios",
         nargs="+",
-        choices=("idle", "output", "reconnect"),
+        choices=("idle", "output", "reconnect", "burst"),
         default=["idle", "output", "reconnect"],
     )
     parser.add_argument("--output", type=Path, default=Path("/tmp/duckterm-server-benchmark.json"))
     args = parser.parse_args()
+    if not all(math.isfinite(value) for value in (args.interval, args.warmup, args.batch_delay)):
+        parser.error("intervals must be finite")
+    if args.replay_events > 100:
+        parser.error("replay-events must be at most 100, the server init replay limit")
     if (
         min(
             args.sessions,
@@ -499,9 +570,10 @@ def main():
             args.repeat,
             args.replay_events,
             args.event_bytes,
+            args.batch_lines,
         )
         < 1
-        or min(args.interval, args.warmup) < 0
+        or min(args.interval, args.warmup, args.batch_delay) < 0
     ):
         parser.error("counts must be positive; intervals must be nonnegative")
     if not shutil.which("tmux"):

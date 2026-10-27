@@ -120,3 +120,40 @@ def test_failed_workload_removes_its_owned_namespace(monkeypatch):
     )
     assert result.returncode != 0
     assert os.environ["DUCKTERM_TMUX_SOCKET"] != owned["namespace"]
+
+
+@pytest.mark.parametrize("size", [0, 125, 126, 65536])
+def test_benchmark_input_frames_follow_browser_masking(size):
+    from duckterm.transport.websocket import read_frame
+
+    payload = b"x" * size
+    encoded = benchmark.input_frame(payload)
+    assert encoded[1] & 0x80
+
+    async def decode():
+        reader = asyncio.StreamReader()
+        reader.feed_data(encoded)
+        reader.feed_eof()
+        return await read_frame(reader)
+
+    assert asyncio.run(decode()) == (2, payload)
+
+
+def test_missing_workload_content_is_rejected():
+    with pytest.raises(RuntimeError, match="session identities"):
+        benchmark.validate_sessions({"sessions": []}, ["bench-0"])
+    with pytest.raises(RuntimeError, match="fixture events"):
+        benchmark.validate_replay({"events": []}, 1, 16)
+    row = {"notification_type": "benchmark", "benchmark_index": 0, "test": True, "message": "short"}
+    with pytest.raises(RuntimeError, match="payload"):
+        benchmark.validate_replay({"events": [row]}, 1, 16)
+
+
+@pytest.mark.parametrize("option", ["--interval", "--warmup", "--batch-delay"])
+@pytest.mark.parametrize("value", ["nan", "inf"])
+def test_nonfinite_timing_is_rejected_before_starting_workers(monkeypatch, capsys, option, value):
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), option, value])
+    with pytest.raises(SystemExit) as error:
+        benchmark.main()
+    assert error.value.code == 2
+    assert "intervals must be finite" in capsys.readouterr().err

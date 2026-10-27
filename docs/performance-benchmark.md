@@ -23,17 +23,28 @@ The output records the revision, working-tree status, platform and configuration
   `/sessions` five times, sleeping two seconds after each request. This includes
   background terminal monitoring and dashboard-style polling, not a zero-client
   idle measurement. `--clients`, `--rounds` and `--interval` set this schedule.
-- **Output:** each terminal emits 1,024 lines of 120 ASCII payload bytes. A real
+- **Output:** each terminal emits 1,024 lines of 120 ASCII payload bytes, with a
+  20-millisecond pause after each batch of 32 lines. A real
   terminal WebSocket consumes the initial screen before triggering output, then
   verifies the exact payload count and completion marker. Measurement continues
   until the server's background output tails also consume the marker. Latency is
-  input-request to receipt of the completion marker; total phase CPU also includes
-  attachment and background drain. `--lines` and `--width` set the payload.
+  WebSocket input-send to receipt of the completion marker; total phase CPU also includes
+  attachment and background drain. `--lines` and `--width` set the payload; `--batch-lines` and
+  `--batch-delay` set the output cadence.
 - **Reconnect:** each client opens `/stream`, reads its initial SSE event, then
   disconnects, using the same count and cadence as the idle workload. Before
   measurement, 100 synthetic notifications with 1,024-byte message fields seed
-  the event history. `--replay-events` and `--event-bytes` set the fixture size.
+  the event history. `--replay-events` (1–100) and `--event-bytes` set the fixture size.
+  The client verifies fixture indices, count and message contents; idle requests
+  likewise verify the exact test-session identities.
   This measures event-stream initialization, not complete browser reconnection.
+  The driver validates the init event shape and rejects frames over 16 MiB.
+- **Burst (opt-in):** `--scenarios burst` uses the same output volume without
+  pacing. A viewer disconnect or missing output fails the trial. Current-main
+  16-session bursts have reproduced early viewer closure, while one-session
+  bursts and paced 16-session output pass. This is an open capacity/backpressure
+  finding, not a successful timing result or a diagnosed production root cause.
+  The script does not change stream policy or reconnect over missing output.
 
 Use `--sessions 40` for a larger fleet or `--scenarios idle output` to select work.
 A quick correctness run can use `--sessions 2 --clients 1 --rounds 1 --interval 0
