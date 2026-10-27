@@ -35,11 +35,13 @@ final class FakeTransport: DuckyTransport {
     var status = "active"
     var snapshots: [Result<HostSnapshot, Error>] = []
     var claims = 0, statusReads = 0, snapshotReads = 0, closed = false
+    var claimError: Error?
     var hold: CheckedContinuation<Void, Never>?
     var holdNextSnapshot = false
     init(host: PairedHost) { self.host = host }
     func claim(_ invitation: Invitation, name: String) async throws -> PairStatus {
         claims += 1
+        if let claimError { throw claimError }
         return try pairStatus("pending")
     }
     func pairingStatus() async throws -> PairStatus {
@@ -60,10 +62,15 @@ final class FakeTransport: DuckyTransport {
 final class FakeStore: CredentialStoring {
     var saved: PairedHost?
     var forgets = 0
+    var forgetError: Error?
     init(_ saved: PairedHost? = nil) { self.saved = saved }
     func save(_ host: PairedHost) throws { saved = host }
     func load() throws -> PairedHost? { saved }
-    func forget() throws { forgets += 1; saved = nil }
+    func forget() throws {
+        forgets += 1
+        if let forgetError { throw forgetError }
+        saved = nil
+    }
 }
 
 /// Lets a test step the poll loop one interval at a time.
@@ -78,11 +85,14 @@ final class SessionModelTests: XCTestCase {
     var transports: [FakeTransport] = []
     var store = FakeStore()
     var firstSnapshots: [Result<HostSnapshot, Error>] = []
+    var claimError: Error?
     let clock = Clock()
 
     private func model() -> SessionModel {
         SessionModel(credentials: store, makeTransport: { [unowned self] host in
-            let next = FakeTransport(host: host); next.snapshots = firstSnapshots; transports.append(next); return next
+            let next = FakeTransport(host: host)
+            next.snapshots = firstSnapshots; next.claimError = claimError
+            transports.append(next); return next
         }, pause: { [clock] in try await clock.pause() })
     }
 
@@ -235,5 +245,83 @@ final class SessionModelTests: XCTestCase {
         XCTAssertEqual(m.phase, .awaitingApproval)
         XCTAssertNil(m.snapshot)
         XCTAssertTrue(transports[0].closed)
+    }
+
+    func testOverlappingRefreshesShareOneRequestAndApplyItOnce() async {
+        store = FakeStore(paired(hostA))
+        let m = model()
+        await m.restore()
+        transports[0].snapshots = [.success(makeSnapshot(agents: ["held"])), .success(makeSnapshot(agents: ["later"]))]
+        transports[0].holdNextSnapshot = true
+        let timer = Task { await m.refresh() }
+        await settle()
+        let pull = Task { await m.refresh() }
+        await settle()
+        XCTAssertEqual(transports[0].snapshotReads, 2) // restore + the one shared refresh
+        transports[0].hold?.resume()
+        await timer.value; await pull.value
+        XCTAssertEqual(m.snapshot?.sessions.map(\.name), ["held"])
+        await m.refresh()
+        XCTAssertEqual(m.snapshot?.sessions.map(\.name), ["later"])
+    }
+
+    func testBackgroundMarksLiveStaleAndDiscardsItsInFlightResponse() async {
+        store = FakeStore(paired(hostA))
+        let m = model()
+        await m.restore()
+        transports[0].snapshots = [.success(makeSnapshot(agents: ["late"]))]
+        transports[0].holdNextSnapshot = true
+        let inFlight = Task { await m.refresh() }
+        await settle()
+        m.enterBackground()
+        XCTAssertEqual(m.phase, .stale)
+        transports[0].hold?.resume()
+        await inFlight.value
+        XCTAssertEqual(m.phase, .stale)
+        XCTAssertEqual(m.snapshot?.sessions.map(\.name), ["discounts"])
+    }
+
+    func testForegroundIsStaleUntilAFreshResponseArrives() async {
+        store = FakeStore(paired(hostA))
+        let m = model()
+        await m.restore()
+        m.enterBackground()
+        transports[0].snapshots = [.failure(URLError(.timedOut))]
+        m.enterForeground()
+        XCTAssertEqual(m.phase, .stale)
+        await settle()
+        XCTAssertEqual(m.phase, .stale)
+        clock.tick(); await settle()
+        XCTAssertEqual(m.phase, .live)
+    }
+
+    func testForgetKeepsThePairingVisibleWhenKeychainKeepsTheCredential() async {
+        store = FakeStore(paired(hostA))
+        let m = model()
+        await m.restore()
+        store.forgetError = DuckyError.credentialStorage(-25300)
+        m.forget()
+        XCTAssertEqual(m.phase, .live)
+        XCTAssertEqual(m.host?.hostID, hostA)
+        XCTAssertNotNil(m.error)
+        XCTAssertFalse(transports[0].closed)
+        XCTAssertEqual(try store.load()?.hostID, hostA)
+    }
+
+    func testFailedClaimForAnotherMacLeavesTheCurrentOneRefreshing() async {
+        store = FakeStore(paired(hostA))
+        let m = model()
+        await m.restore()
+        m.enterForeground(); await settle()
+        let reads = transports[0].snapshotReads
+        claimError = DuckyError.unavailable(403)
+        await m.pair(link: invitationLink(host: hostB), name: "Test iPhone")
+        XCTAssertEqual(m.host?.hostID, hostA)
+        XCTAssertEqual(m.phase, .live)
+        XCTAssertNotNil(m.error)
+        XCTAssertEqual(store.saved?.hostID, hostA)
+        XCTAssertTrue(transports[1].closed)
+        clock.tick(); await settle()
+        XCTAssertEqual(transports[0].snapshotReads, reads + 1)
     }
 }
