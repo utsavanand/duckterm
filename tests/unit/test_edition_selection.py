@@ -113,3 +113,29 @@ def test_restart_rejects_bad_saved_edition_before_stopping_server(home, monkeypa
     monkeypatch.setattr(cli, "_duckterm_responds", lambda *args: pytest.fail("server touched"))
     assert cli.main(["restart"]) == 1
     assert not (home / "state.sqlite").exists()
+
+
+@pytest.mark.parametrize("saved, inherited", [(editions.LITE, "full"), (editions.CODE, "full")])
+def test_old_full_terminal_cannot_run_voice_after_switching_edition(
+    home, monkeypatch, saved, inherited
+):
+    editions.remember(saved)
+    monkeypatch.setenv("DUCKTERM_EDITION", inherited)
+    monkeypatch.setattr(cli, "_voice", lambda *args: pytest.fail("excluded voice ran"))
+    assert cli.main(["voice", "install"]) == 1
+
+
+def test_old_full_terminal_cannot_create_checkpoint_in_lite(home, monkeypatch):
+    editions.remember(editions.LITE)
+    monkeypatch.setenv("DUCKTERM_EDITION", "full")
+    monkeypatch.setattr(cli, "_snapshot", lambda *args: pytest.fail("excluded checkpoint ran"))
+    assert cli.main(["snapshot"]) == 1
+
+
+def test_old_lite_terminal_uses_current_full_edition_in_standalone_handler(home, monkeypatch):
+    editions.remember(editions.FULL)
+    monkeypatch.setenv("DUCKTERM_EDITION", "lite")
+    observed = []
+    monkeypatch.setattr(cli, "_voice", lambda *args: observed.append(editions.configured()) or 0)
+    assert cli.main(["voice", "status"]) == 0
+    assert observed == [editions.FULL]

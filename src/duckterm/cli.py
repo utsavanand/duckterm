@@ -552,11 +552,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command in optional or args.command in {"serve", "restart"}:
         try:
             edition = editions.configured(
-                prefer_saved=args.command == "restart" and not args.edition
+                prefer_saved=args.command in optional
+                or (args.command == "restart" and not args.edition)
             )
             feature = optional.get(args.command)
             if feature and not edition.includes(feature):
                 raise ValueError(f"{feature} is unavailable in Duckterm {edition.name.title()}")
+            if feature:
+                # Standalone handlers and children must use the same selection
+                # even when invoked from a terminal launched in an older edition.
+                os.environ["DUCKTERM_EDITION"] = edition.name
         except ValueError as exc:
             print(f"duckterm: {exc}", file=sys.stderr)
             return 1
