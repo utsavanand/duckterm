@@ -83,15 +83,16 @@ export function useRelay(enabled = true): RelayState & { refresh: () => void; lo
 }
 
 // Just the open count, for the topbar's Oracle button.
-export function useRelayCount(): number {
+export function useRelayCount(enabled = true): number {
   const [open, setOpen] = useState(0);
   useEffect(() => {
+    if (!enabled) { setOpen(0); return; }
     let stopped = false;
     const stop = poll(async (signal) => {
       const r = await api.relayCount(signal);
       if (!stopped && !signal.aborted) setOpen(r.open);
     }, 5000);
     return () => { stopped = true; stop(); };
-  }, []);
+  }, [enabled]);
   return open;
 }

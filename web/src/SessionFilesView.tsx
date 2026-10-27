@@ -14,12 +14,13 @@ type Filter = "all" | "registered" | "copies";
 const order = (a: FileEntry, b: FileEntry) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 const shortDate = (ts: number) => new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 const mediaLabel = (type: string) => type === "text/markdown" ? "Markdown" : type === "text/html" ? "HTML" : type.startsWith("image/") ? "Image" : type.startsWith("text/") ? "Text" : "File";
-export function SessionFilesView({ session }: { session: SessionView }) {
+// Without artifacts this is the plain Explorer: no registry, saved copies or feedback.
+export function SessionFilesView({ session, artifacts = true }: { session: SessionView; artifacts?: boolean }) {
   const [revision, setRevision] = useState(0);
   // Host/root changes invalidate every cache, request, selection and object URL.
-  return <Files key={JSON.stringify([session.key, session.host, session.cwd, session.worktreePath, revision])} session={session} refresh={() => setRevision(n => n + 1)} />;
+  return <Files key={JSON.stringify([session.key, session.host, session.cwd, session.worktreePath, revision, artifacts])} session={session} artifacts={artifacts} refresh={() => setRevision(n => n + 1)} />;
 }
-function Files({ session, refresh }: { session: SessionView; refresh: () => void }) {
+function Files({ session, artifacts, refresh }: { session: SessionView; artifacts: boolean; refresh: () => void }) {
   const container = useRef<HTMLElement>(null);
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
@@ -47,6 +48,7 @@ function Files({ session, refresh }: { session: SessionView; refresh: () => void
   const pendingDirs = useRef(new Set<string>());
   const loadRef = useRef<(path: string) => void>(() => {});
   async function savedFallback() {
+    if (!artifacts) return;
     try {
       const result = await api.artifacts(savedKey);
       if (alive.current) { setRegistry(result.artifacts.filter(a => !a.removed_at).map(a => ({ ...a, path: null, source_state: "unavailable", content_only: true }))); setRegistryError(""); }
@@ -63,16 +65,17 @@ function Files({ session, refresh }: { session: SessionView; refresh: () => void
       const result = await sessionFiles.list(session, path, cursor, controller.signal);
       if (!alive.current) return;
       if (!result.available) {
-        if (path === ".") { setUnavailable(fileReason(result.reason)); setRegistry(result.artifacts?.filter(a => !a.removed_at) ?? null); setSelection(null); if (!result.artifacts) void savedFallback(); }
+        if (path === ".") { setUnavailable(fileReason(result.reason)); setRegistry(artifacts ? result.artifacts?.filter(a => !a.removed_at) ?? null : null); setSelection(null); if (!result.artifacts) void savedFallback(); }
         setDirectories(d => ({ ...d, [path]: { error: fileReason(result.reason) } })); return;
       }
       if (root.current && result.root !== root.current) {
         setUnavailable("The session’s working directory changed. Refresh before browsing."); setSelection(null); setRegistry(null); setDirectories({}); return;
       }
       root.current = result.root; setRootPath(result.root);
-      setRegistry(result.artifacts.filter(a => !a.removed_at)); setRegistryError("");
+      if (artifacts) { setRegistry(result.artifacts.filter(a => !a.removed_at)); setRegistryError(""); }
+      const listed = artifacts ? result.entries : result.entries.map(entry => ({ ...entry, artifact: null }));
       if (cursor && result.next_cursor === cursor) throw new Error("The directory did not advance. Refresh before loading more.");
-      const entries = more && previous ? [...new Map([...previous.entries, ...result.entries].map(e => [e.path, e])).values()].sort(order) : result.entries;
+      const entries = more && previous ? [...new Map([...previous.entries, ...listed].map(e => [e.path, e])).values()].sort(order) : listed;
       setDirectories(d => ({ ...d, [path]: { page: { ...result, entries }, loading: false } }));
     } catch (error) {
       if (!alive.current || controller.signal.aborted) return;
@@ -130,8 +133,8 @@ function Files({ session, refresh }: { session: SessionView; refresh: () => void
   }
   return <section ref={container} className={`rd-session-files${narrow ? " narrow" : ""}`} aria-label="Session files">
     <header className="rd-files-heading"><div><h2>Files <span>Read-only</span></h2><p>{rootPath || (local ? session.worktreePath || session.cwd || "No working directory recorded" : "Remote workspace")}</p></div><button className="rd-btn rd-btn-sm" onClick={refresh}>Refresh</button></header>
-    <div className="rd-files-toolbar"><div role="group" aria-label="Files filter">{([['all', 'All files'], ['registered', 'Registered'], ['copies', 'Saved copies']] as const).map(([id, title]) => <button key={id} aria-pressed={filter === id} disabled={id !== 'copies' && !canBrowse} onClick={() => { setFilter(id); setQuery(""); setSavedLimit(40); }}>{title}</button>)}</div><input aria-label={filter === "all" ? "Filter loaded files" : "Filter registered artifacts"} placeholder={filter === "all" ? "Filter loaded files…" : "Filter registered artifacts…"} value={query} onChange={e => setQuery(e.target.value)} /></div>
-    {!canBrowse && filter !== "copies" ? <div className="rd-files-unavailable"><h3>{unavailable}</h3><p>{!local ? "These files live on another machine. No local files are shown in their place." : "No directory is shown. Saved artifact copies are separate from files on disk."}</p><button className="rd-btn" onClick={() => setFilter("copies")}>View saved copies</button></div> : <div className={`rd-files-layout${reading ? " reading" : ""}`}>
+    <div className="rd-files-toolbar">{artifacts && <div role="group" aria-label="Files filter">{([['all', 'All files'], ['registered', 'Registered'], ['copies', 'Saved copies']] as const).map(([id, title]) => <button key={id} aria-pressed={filter === id} disabled={id !== 'copies' && !canBrowse} onClick={() => { setFilter(id); setQuery(""); setSavedLimit(40); }}>{title}</button>)}</div>}<input aria-label={filter === "all" ? "Filter loaded files" : "Filter registered artifacts"} placeholder={filter === "all" ? "Filter loaded files…" : "Filter registered artifacts…"} value={query} onChange={e => setQuery(e.target.value)} /></div>
+    {!canBrowse && filter !== "copies" ? <div className="rd-files-unavailable"><h3>{unavailable}</h3><p>{!local ? "These files live on another machine. No local files are shown in their place." : artifacts ? "No directory is shown. Saved artifact copies are separate from files on disk." : "No directory is shown."}</p>{artifacts && <button className="rd-btn" onClick={() => setFilter("copies")}>View saved copies</button>}</div> : <div className={`rd-files-layout${reading ? " reading" : ""}`}>
       <nav className="rd-files-tree" aria-label="Files and saved copies"><div className="rd-files-columns"><span>Name</span><span>Size</span><span>Modified</span></div><div className="rd-files-scroll">
         {filter === "all" ? query ? <>{loaded.filter(e => matches(e.path)).map(e => row(e, 0, true))}{!loaded.some(e => matches(e.path)) && <p className="rd-files-note">No matching loaded files. Unexpanded folders have not been searched.</p>}</> : directory(".") : <>
           {registryError && <p className="rd-files-note" role="alert">Saved artifact metadata unavailable: {registryError}</p>}
@@ -141,7 +144,7 @@ function Files({ session, refresh }: { session: SessionView; refresh: () => void
           {(filter === "registered" ? registered : copies).length > savedLimit && <button className="rd-files-more" onClick={() => setSavedLimit(n => n + 40)}>Show more saved artifacts</button>}
         </>}
       </div><p className="rd-files-footnote">{filter === "all" ? "Ignore rules applied · expand folders to load them · filter searches loaded paths only" : filter === "registered" ? "Selected session’s registrations · saved sizes may differ from current files" : "Saved snapshots · outside-root paths are not checked for existence"}</p></nav>
-      {selection ? <FileReader key={selection.kind + ":" + (selection.kind === "file" ? selection.file.path : selection.file.id)} session={session} savedKey={savedKey} selection={selection} back={() => setReading(false)} saved={a => choose({ kind: "saved", file: a })} /> : <section className="rd-file-reader"><p className="rd-files-note">Choose a file or saved artifact to read it.</p></section>}
+      {selection ? <FileReader key={selection.kind + ":" + (selection.kind === "file" ? selection.file.path : selection.file.id)} session={session} savedKey={savedKey} selection={selection} back={() => setReading(false)} saved={a => choose({ kind: "saved", file: a })} /> : <section className="rd-file-reader"><p className="rd-files-note">{artifacts ? "Choose a file or saved artifact to read it." : "Choose a file to read it."}</p></section>}
     </div>}
   </section>;
 }

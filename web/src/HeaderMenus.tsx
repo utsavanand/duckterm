@@ -6,6 +6,7 @@ import "./headerMenus.css";
 import { VOICE_LEVELS, VoiceChoice, VoiceLevel } from "./voice";
 import { NaturalVoicePanel, VoicePicker } from "./VoiceControl";
 import { LocalVoiceStatus } from "./api";
+import { useEdition } from "./edition";
 
 type Menu = "settings" | "new";
 export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNotify, notificationHelp, voiceLevel, onVoiceLevel, voice, onAction }: {
@@ -36,6 +37,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
   const settingsButton = useRef<HTMLButtonElement>(null);
   const newButton = useRef<HTMLButtonElement>(null);
   const notificationsAvailable = "Notification" in window;
+  const { has } = useEdition();
 
   useEffect(() => {
     if (!open) return;
@@ -94,8 +96,8 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
           <NaturalVoicePanel status={voice.local} fallbackReason={voice.fallbackReason} onInstall={voice.onInstall} onRemove={voice.onRemove} />
         </div>
         <div className="rd-header-menu-divider" />
-        <button className="rd-header-menu-item" onClick={() => action("collaboration")}>Collaboration <span aria-hidden="true">›</span></button>
-        <button className="rd-header-menu-item" onClick={() => action("checkpointing")}>Checkpointing <span aria-hidden="true">›</span></button>
+        {has("inbox") && <button className="rd-header-menu-item" onClick={() => action("collaboration")}>Collaboration <span aria-hidden="true">›</span></button>}
+        {has("checkpoints") && <button className="rd-header-menu-item" onClick={() => action("checkpointing")}>Checkpointing <span aria-hidden="true">›</span></button>}
         <button className="rd-header-menu-item" onClick={() => action("bugreport")}>Report a bug <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" title="Manage skill kits for your projects" onClick={() => action("harnesses")}>Harnesses <span aria-hidden="true">›</span></button>

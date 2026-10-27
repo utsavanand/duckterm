@@ -5,20 +5,22 @@ import { ARTIFACT_KINDS } from "./artifactKinds";
 import { compact } from "./tower";
 import { Widgets, WidgetType } from "./Widgets";
 import { WidgetStreams } from "./widgetStreams";
+import { useFeature } from "./edition";
 export interface FolderActions { onOpenSession?: (key: string) => void; onGrid?: () => void; onMessage?: () => void; onNewSession?: () => void; }
 export function FolderDetails({ folder, onClose, onOpenSession, onGrid, onMessage, onNewSession }: FolderActions & { folder: string; onClose: () => void }) {
   const [source] = useState(() => new WidgetStreams());
   const [retry, setRetry] = useState(0), [error, setError] = useState("");
   const [updated, setUpdated] = useState<number | null>(null);
   const open = useRef(onOpenSession); open.current = onOpenSession;
-  const [registry] = useState<WidgetType[]>(() => [
+  const artifacts = useFeature("artifacts");
+  const [registry] = useState(() => ([
     tasksWidget(key => open.current?.(key)),
     { type: "folder-stats", title: "Activity", slots: ["folder"], streams: ["folder-stats"], render: ({ streams }) => <Activity stats={streams["folder-stats"].status === "ready" ? streams["folder-stats"].value as FolderStats : null} onOpen={key => open.current?.(key)} /> },
     { type: "artifacts-by-kind", title: "Artifacts by kind", slots: ["folder"], streams: ["artifacts-by-kind"], render: ({ streams }) => {
       const data = streams["artifacts-by-kind"].status === "ready" ? streams["artifacts-by-kind"].value as FolderStats["artifacts"] : null;
       return data && <div className="rd-folder-kind-counts">{Object.entries(ARTIFACT_KINDS).map(([key, label]) => <div key={key}><span>{label}</span><strong>{data.by_kind[key as keyof typeof ARTIFACT_KINDS] ?? 0}</strong></div>)}<p>{data.available} available · {data.removed} removed<br />Removed files are included in kind counts.</p></div>;
     } },
-  ]);
+  ] as WidgetType[]).filter(widget => artifacts || widget.type !== "artifacts-by-kind"));
   useEffect(() => {
     const refresh = () => setRetry(n => n + 1); window.addEventListener("folder-stats-refresh", refresh);
     return () => window.removeEventListener("folder-stats-refresh", refresh);

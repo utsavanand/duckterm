@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, LocalVoiceStatus } from "./api";
 import { useRelay } from "./relay";
+import { useFeature } from "./edition";
 import {
   announce,
   Announcer,
@@ -77,7 +78,9 @@ export function useVoice(sessions: VoiceSession[], injected?: Speaker) {
   const active: VoiceLevel = ready ? level : "off";
   const [spoken, setSpoken] = useState<string | null>(null);
   const [paused, setPaused] = useState(() => level !== "off" && needsGesture());
-  const relay = useRelay(active !== "off");
+  // Relay notes are the Oracle's; without it voice announces session waits only.
+  const oracle = useFeature("oracle");
+  const relay = useRelay(active !== "off" && oracle);
   const typingAt = useRef(0);
   const previous = useRef<VoiceSnapshot | null>(null);
   const [tick, setTick] = useState(0);

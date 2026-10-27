@@ -24,8 +24,31 @@ declare global {
   }
 }
 
+// null until the edition loads. The edition decides whether other computers
+// exist for this dashboard; every host list, launch target and remote poll
+// reads them through desktop().
+let remoteWorkspaces: boolean | null = null;
+
+export function allowRemoteWorkspaces(allowed: boolean | null): void {
+  if (allowed === remoteWorkspaces) return;
+  remoteWorkspaces = allowed;
+  window.dispatchEvent(new Event("desktop-targets-changed"));
+}
+
+// A computer the Mac app knows but desktop() hides: "pending" until the edition loads.
+export function hiddenHost(host: string): "pending" | "hidden" | null {
+  if (remoteWorkspaces === true || !window.__rubbertermDesktop?.targets.some(t => t.id === host)) return null;
+  return remoteWorkspaces === null ? "pending" : "hidden";
+}
+
 export function desktop(): Desktop | undefined {
-  return window.__rubbertermDesktop;
+  const bridge = window.__rubbertermDesktop;
+  if (!bridge || remoteWorkspaces === true) return bridge;
+  return { ...bridge, currentTarget: "local", launchTarget: undefined, targets: bridge.targets.filter(t => t.id === "local") };
+}
+
+export function clearLaunchDraft(): void {
+  delete window.__rubbertermDesktop?.draft;
 }
 
 export function selectLaunchTarget(target: string, draft: LaunchDraft | Record<string, never>, sessionKey?: string): void {

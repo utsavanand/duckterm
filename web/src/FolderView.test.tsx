@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { FolderView } from "./FolderView";
+import { edition, FULL } from "./test/editions";
 vi.mock("./api", () => ({ api: { folderChat: vi.fn(), fleetAsk: vi.fn(), folderArtifacts: vi.fn(), folderRecipients: vi.fn(), folderDispatch: vi.fn() } }));
 vi.mock("./FolderDetails", () => ({ FolderDetails: () => <aside>Folder details</aside> }));
 vi.mock("./ArtifactsView", () => ({ ArtifactsView: ({ folder }: { folder: string }) => <p>Files from {folder}</p> }));
@@ -10,7 +11,7 @@ afterEach(() => { cleanup(); vi.resetAllMocks(); });
 it("sends only the selected folder and keeps the answer when switching tabs", async () => {
   vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.fleetAsk).mockResolvedValue({ answer: "Ready", exchange: { q: "Status?", a: "Ready", at: 1 }, sessions: [] });
-  render(<FolderView folder="Website/Research" />);
+  render(<FolderView folder="Website/Research" />, { wrapper: edition(FULL) });
   await act(async () => {});
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "Status?" } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
@@ -26,7 +27,7 @@ it("ignores in-flight answers after changing folders", async () => {
   let finish!: (value: Awaited<ReturnType<typeof api.fleetAsk>>) => void;
   vi.mocked(api.folderChat).mockImplementation(folder => Promise.resolve({ messages: [{ q: folder, a: folder + " history", at: 1 }] }));
   vi.mocked(api.fleetAsk).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
-  const view = render(<FolderView folder="a" />);
+  const view = render(<FolderView folder="a" />, { wrapper: edition(FULL) });
   await screen.findByText("a history");
   fireEvent.click(screen.getByRole("button", { name: "What needs my attention?" }));
   view.rerender(<FolderView folder="b" />);
@@ -38,7 +39,7 @@ it("ignores in-flight answers after changing folders", async () => {
 it("preserves a failed question and lets history failures retry", async () => {
   vi.mocked(api.folderChat).mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ messages: [] });
   vi.mocked(api.fleetAsk).mockRejectedValue(new Error("summarizer unavailable"));
-  render(<FolderView folder="a" />);
+  render(<FolderView folder="a" />, { wrapper: edition(FULL) });
   fireEvent.click(await screen.findByRole("button", { name: "Retry" }));
   await act(async () => {});
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "Keep my question" } });
@@ -54,7 +55,7 @@ const recipients = { identity: "folder-id", sessions: [
 async function openPicker() {
   vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.folderRecipients).mockResolvedValue(recipients);
-  render(<FolderView folder="Website" />);
+  render(<FolderView folder="Website" />, { wrapper: edition(FULL) });
   await act(async () => {});
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "@" } });
   await screen.findByRole("option", { name: /ui-dev/ });

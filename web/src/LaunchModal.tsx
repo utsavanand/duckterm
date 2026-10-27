@@ -7,6 +7,7 @@ import { desktop, destinationRequest } from "./desktop";
 import { RemoteProject, PreparedProject } from "./RemoteProject";
 import { OpenCodeModel, OpenCodeSupport, openCodeCommand, useOpenCodeOptions, validOpenCodeModel } from "./OpenCodeOptions";
 import { Button, Field, inputStyle, Modal, useToast } from "./ui";
+import { useFeature } from "./edition";
 
 // New session: a command (runtime is inferred from it), a path picked by
 // browsing the filesystem (git-detected), an optional name + prompt.
@@ -95,9 +96,10 @@ export function LaunchModal({
   // The new agent won't see them (candidates don't render) — surfacing the
   // count here is the moment the user most cares about the folder's rules.
   const [pendingRules, setPendingRules] = useState(0);
+  const rules = useFeature("file_editing");
   useEffect(() => {
     setPendingRules(0);
-    if (!path || elsewhere) return;
+    if (!rules || !path || elsewhere) return;
     let stale = false;
     fetch(`/agents-md?dir=${encodeURIComponent(path)}`)
       .then((r) => r.json())
@@ -111,7 +113,7 @@ export function LaunchModal({
     return () => {
       stale = true;
     };
-  }, [path, elsewhere]);
+  }, [rules, path, elsewhere]);
 
   // When a git folder is picked and the user wants a worktree, fetch the
   // branches to base off (local + remote, fetched fresh on the server).

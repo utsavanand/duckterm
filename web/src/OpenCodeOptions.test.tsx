@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { LaunchModal } from "./LaunchModal";
+import { allowRemoteWorkspaces } from "./desktop";
 import { openCodeCommand, validOpenCodeModel, type OpenCodeLaunchOptions } from "./OpenCodeOptions";
 
 vi.mock("./api", () => ({ api: {
@@ -15,10 +16,11 @@ const available: OpenCodeLaunchOptions = {
   capabilities: [{ id: "fork", label: "Fork conversation", available: false, reason: "Not supported yet." }],
 };
 beforeEach(() => {
+  allowRemoteWorkspaces(true);
   vi.mocked(api.openCodeOptions).mockReset().mockResolvedValue(available);
   vi.mocked(api.launch).mockReset().mockResolvedValue({ session_key: "fixture" });
 });
-afterEach(() => { cleanup(); delete window.__rubbertermDesktop; delete window.webkit; });
+afterEach(() => { cleanup(); allowRemoteWorkspaces(null); delete window.__rubbertermDesktop; delete window.webkit; });
 
 async function form() {
   await act(async () => { render(<LaunchModal folders={[]} onClose={vi.fn()} onCreated={vi.fn()} />); });

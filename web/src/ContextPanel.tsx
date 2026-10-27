@@ -12,12 +12,15 @@ import { checkpointStatus, checkpointCanRetry } from "./checkpointState";
 import { chooseCheckpoint } from "./checkpointSelection";
 import { checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
 import { SessionPanelSection } from "./SessionPanelSection";
+import { useEdition } from "./edition";
 
 // Right pane: context about the selected agent's terminal. If the session is on
 // a git branch, show a git view (branch, repo, and the working-tree diff). If
 // not, show the folder it's running in. (Approvals render above this in App.)
 export function ContextPanel({ session, active = true, onCheckpointTimeline, onMemory, onCheckpointMemory }: { session: SessionView; active?: boolean; onCheckpointTimeline?: () => void; onMemory?: (revision?: string) => void; onCheckpointMemory?: (id: string) => void }) {
   const toast = useToast();
+  const { has } = useEdition();
+  const checkpoints = has("checkpoints"), context = has("context"), git = has("git_changes");
   const [diff, setDiff] = useState<string>("");
   const [branches, setBranches] = useState<string[]>([]);
   const [acting, setActing] = useState<string | null>(null);
@@ -70,7 +73,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
     setLastCheckpoint(null); setContextEvidence(null); setActivity(null); setActivityState("loading"); setActing(null); setSummaryOpen(false); checkpointGeneration.current++;
   }, [session.key]);
   useEffect(() => {
-    if (!active) return;
+    if (!active || !(checkpoints || context)) return;
     let live = true, pending = false;
     const load = () => {
       if (!live || pending || document.visibilityState === "hidden") return;
@@ -86,7 +89,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
     document.addEventListener("visibilitychange", load);
     window.addEventListener("duckterm-checkpoint", updated);
     return () => { live = false; clearInterval(timer); document.removeEventListener("visibilitychange", load); window.removeEventListener("duckterm-checkpoint", updated); };
-  }, [session.key, active]);
+  }, [session.key, active, checkpoints, context]);
 
   useEffect(() => {
     setDiffOpen(false); // a new session starts with the diff collapsed
@@ -96,7 +99,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
 
   useEffect(() => {
     // The diff is heavy and rarely needed — fetch it only when opened.
-    if (!onBranch || !diffOpen) return;
+    if (!git || !onBranch || !diffOpen) return;
     setDiff("");
     fetch(`/sessions/${session.key}/diff`)
       .then((r) => r.json())
@@ -104,16 +107,16 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
         setDiff(d.error ? `git diff failed: ${d.error}` : (d.diff ?? "")),
       )
       .catch(() => setDiff(""));
-  }, [session.key, onBranch, diffOpen]);
+  }, [session.key, git, onBranch, diffOpen]);
 
   useEffect(() => {
-    if (!onBranch || !dir) return;
+    if (!git || !onBranch || !dir) return;
     setBranches([]);
     sessionFetch(session.key, `/branches?path=${encodeURIComponent(dir)}`)
       .then((r) => r.json())
       .then((d: { branches?: string[] }) => setBranches(d.branches ?? []))
       .catch(() => setBranches([]));
-  }, [dir, onBranch, session.key]);
+  }, [dir, git, onBranch, session.key]);
 
   return (
     <div className="rd-context">
@@ -121,11 +124,11 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
         <div className="rd-session-overview-title"><Duck key={session.key} pose={poseFor(state, !!session.attentionSince)} size={28} celebrating={session.celebration} />
           <h2>{session.label}</h2><span className="rd-session-overview-state">{sessionStateLabel(state)}</span></div>
         <div className="rd-section-purpose">{session.group || "Ungrouped"}{session.branch && <> / {session.branch}</>}</div>
-        {session.progress?.summary ? <button className={`rd-session-work${summaryOpen ? " open" : ""}`} aria-expanded={summaryOpen} onClick={() => setSummaryOpen(o => !o)} title={summaryOpen ? "Collapse current work" : "Expand current work"}><span className="rd-session-work-text">{session.progress.summary}</span></button>
+        {has("summaries") && session.progress?.summary ? <button className={`rd-session-work${summaryOpen ? " open" : ""}`} aria-expanded={summaryOpen} onClick={() => setSummaryOpen(o => !o)} title={summaryOpen ? "Collapse current work" : "Expand current work"}><span className="rd-session-work-text">{session.progress.summary}</span></button>
           : <p className="rd-session-work open">{duckPhrase(session, state)}</p>}
         <div className="rd-session-overview-model">{harness} <span>·</span> <strong>{session.model || "Model not reported yet"}</strong></div>
       </header>
-      <SessionPanelSection key={`memory-${session.key}`} title="Saved memory" initiallyOpen status={<CheckpointAgeValue sessionKey={session.key} />}>
+      {checkpoints && <SessionPanelSection key={`memory-${session.key}`} title="Saved memory" initiallyOpen status={<CheckpointAgeValue sessionKey={session.key} />}>
         <p className="rd-section-purpose">Knowledge kept for future sessions.</p>
         <div className="rd-session-metrics"><div><span>Last successful save</span><strong><CheckpointAgeValue sessionKey={session.key} /></strong></div>
           <div><span>Events since saved capture</span><strong className={eventCount === null ? "rd-value-unavailable" : undefined}>{activityLabel}</strong></div></div>
@@ -138,14 +141,14 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
         <div className="rd-section-actions">{lastCheckpoint && onCheckpointMemory && <button className="rd-timeline-link" onClick={() => onCheckpointMemory(lastCheckpoint.id)}>Read checkpoint result ↗</button>}{onMemory && <button className="rd-timeline-link" onClick={() => onMemory()}>Read saved memory ↗</button>}
           <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!!checkpointRunning || !!session.hostOffline} onClick={checkpoint}>Checkpoint</button></div>
         <details className="rd-section-disclosure rd-section-help"><summary>About saved memory</summary><p>Checkpoint saves a durable summary. A failed result does not certify readiness; saved memory may have advanced before a final source check failed.</p><p>Counts use the last successful checkpoint’s captured history boundary, including events recorded while that save was running. Events are recorded activity, not conversation turns or unsummarized records; older summary gaps may still exist.</p>{activity?.event_filter && <p>{activity.event_filter === "work-v1" ? "Uses the saved work-event filter; attendance and status-only notifications are excluded." : "Uses the saved all-events filter, including status observations."}</p>}</details>
-      </SessionPanelSection>
-      <SessionPanelSection key={`context-${session.key}`} title="Active context" initiallyOpen status={tokens ? `${tokens} tokens` : "Unknown"}>
+      </SessionPanelSection>}
+      {context && <SessionPanelSection key={`context-${session.key}`} title="Active context" initiallyOpen status={tokens ? `${tokens} tokens` : "Unknown"}>
         <p className="rd-section-purpose">Conversation currently used by the agent.</p>
         <div className="rd-session-context-total"><strong>{tokens ?? "Unknown"}</strong>{tokens && <span>tokens reported</span>}</div>
         <dl className="rd-session-facts"><div><dt>Context window</dt><dd>{capacity !== null ? `${capacity.toLocaleString()} tokens` : noEvidence}</dd></div><div><dt>Last compaction</dt><dd>{compactedAt ? <time dateTime={compactedAt}>{new Date(compactedAt).toLocaleString()}</time> : noEvidence}</dd></div></dl>
         <div className="rd-section-actions rd-section-separated"><span>Shorten the active conversation.<br />Saved memory stays separate.</span><button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!compactAvailable || acting !== null || !!session.hostOffline} title={compactAvailable ? "Types /compact into the agent’s terminal" : "Requires a running Claude Code or Codex terminal"} onClick={compact}>{acting === "compact" ? "Sending…" : "Compact"}</button></div>
         <details className="rd-section-disclosure rd-section-help"><summary>About context &amp; compaction</summary><p>Window size and completed compaction come only from this conversation’s native transcript. A high token count or a drop in usage does not prove compaction. Missing values mean there is no verified report available.</p>{contextEvidence?.history_scope === "recent" && <p>Only recent history was inspected. A missing compaction marker does not mean the conversation has never been compacted.</p>}<p>Compact asks the harness to condense its active conversation. It does not create a DuckTerm checkpoint.</p></details>
-      </SessionPanelSection>
+      </SessionPanelSection>}
       <SessionPanelSection key={`workspace-${session.key}`} title="Workspace" status={session.branch ? `${session.repoName || "Repository"} / ${session.branch}` : "Folder"}>
       {onBranch ? (
         <div className="rd-context-git">
@@ -159,7 +162,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
               <span aria-hidden="true">⑂</span> {session.branch}
             </span>
           </div>
-          <div className="rd-context-git-actions">
+          {git && <div className="rd-context-git-actions">
             {localBranches.length > 0 && (
               <button
                 className="rd-context-toggle"
@@ -176,7 +179,7 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
             >
               Working-tree diff {diffOpen ? "▾" : "▸"}
             </button>
-          </div>
+          </div>}
           {branchesOpen && (
             <ul className="rd-branch-list">
               {localBranches.map((b) => (
@@ -199,9 +202,9 @@ export function ContextPanel({ session, active = true, onCheckpointTimeline, onM
           <code className="rd-context-path">{session.cwd ?? "—"}</code>
         </div>
       )}
-      {dir && <div className="rd-section-actions"><button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => setEditingFile(true)}>Edit file</button></div>}
+      {dir && has("file_editing") && <div className="rd-section-actions"><button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={() => setEditingFile(true)}>Edit file</button></div>}
       </SessionPanelSection>
-      {editingFile && dir && (
+      {editingFile && dir && has("file_editing") && (
         <FileEditModal sessionKey={session.key} dir={dir} onClose={() => setEditingFile(false)} />
       )}
     </div>
