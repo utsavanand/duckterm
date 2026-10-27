@@ -64,14 +64,16 @@ _CODE_MODULE = re.compile(
     r"(?:credentials|secrets?|tokens?)\.(?:py|pyi|js|jsx|ts|tsx|go|rs|java|kt|cs|rb|swift|c|h|cpp|hpp)",
     re.I,
 )
-# A quoted marker in source code is not key material. Keep rejecting standalone
-# headers (including truncated keys) and encoded payloads embedded in strings.
+# Exempt only immediately quoted marker literals. Other header occurrences
+# remain blocked regardless of comment syntax; embedded payloads still match.
 _KEY_HEADER = rb"-----BEGIN (?:PRIVATE KEY|OPENSSH PRIVATE KEY|RSA PRIVATE KEY)-----"
 _KEY_SPACE = rb"(?:[ \t\r\n]|\\r|\\n)*"
 PRIVATE_KEY = re.compile(
-    rb"(?m)^[ \t]*"
+    rb"""(?<!["'`])"""
     + _KEY_HEADER
-    + rb"[ \t]*\r?$|"
+    + rb"|"
+    + _KEY_HEADER
+    + rb"""(?!["'`])|"""
     + _KEY_HEADER
     + _KEY_SPACE
     + rb"(?:[A-Za-z0-9+/=]"

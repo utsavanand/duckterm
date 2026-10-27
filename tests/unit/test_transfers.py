@@ -138,6 +138,59 @@ def test_private_key_material_is_still_blocked(tmp_path, homes, kind, style):
         t.scan(source, [])
 
 
+@pytest.mark.parametrize("cloned", [False, True])
+@pytest.mark.parametrize("kind", ["PRIVATE KEY", "OPENSSH PRIVATE KEY", "RSA PRIVATE KEY"])
+@pytest.mark.parametrize(
+    "prefix,suffix",
+    [
+        ("# ", ""),
+        ("// ", ""),
+        ("-- ", ""),
+        ("% ", ""),
+        ("> ", ""),
+        ("<!-- ", " -->"),
+        ("/* ", " */"),
+        (" * ", ""),
+        ("; ", ""),
+        ("key: ", ""),
+        ("", " trailing annotation"),
+    ],
+)
+def test_wrapped_private_key_is_blocked(tmp_path, homes, cloned, kind, prefix, suffix):
+    source = tmp_path / "project"
+    source.mkdir()
+    header = "-----BEGIN " + kind + "-----"
+    payload = "QUJD" * 24  # Synthetic bytes only, not a usable key.
+    (source / "example.txt").write_text(prefix + header + suffix + "\r\n# " + payload)
+    with pytest.raises(ValueError, match="Private key detected"):
+        t.scan(source, [], cloned=cloned)
+
+
+@pytest.mark.parametrize("cloned", [False, True])
+@pytest.mark.parametrize("quote", [chr(34), chr(39), chr(96)])
+def test_only_immediately_quoted_key_markers_are_exempt(tmp_path, homes, cloned, quote):
+    source = tmp_path / "project"
+    source.mkdir()
+    header = "-----BEGIN " + "PRIVATE KEY-----"
+    path = source / "example.txt"
+    path.write_text("# marker = " + quote + header + quote)
+    assert t.scan(source, [], cloned=cloned)["entries"]
+    for content in (quote + header, header + quote, quote + header + " " + quote):
+        path.write_text(content)
+        with pytest.raises(ValueError, match="Private key detected"):
+            t.scan(source, [], cloned=cloned)
+
+
+@pytest.mark.parametrize("cloned", [False, True])
+def test_marker_literal_does_not_hide_a_later_wrapped_key(tmp_path, homes, cloned):
+    source = tmp_path / "project"
+    source.mkdir()
+    header = "-----BEGIN " + "PRIVATE KEY-----"
+    (source / "example.txt").write_text('marker = "' + header + '"\n> ' + header)
+    with pytest.raises(ValueError, match="Private key detected"):
+        t.scan(source, [], cloned=cloned)
+
+
 @pytest.mark.parametrize("name", ["tokens.py", "credentials.ts", "secrets.rs"])
 def test_tracked_code_module_names_are_not_credential_exports(tmp_path, homes, name):
     source = tmp_path / "project"
