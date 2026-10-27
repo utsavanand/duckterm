@@ -1035,9 +1035,9 @@ class SessionAPI:
         self, method: str, url: str, headers: dict[str, str], body: bytes
     ) -> tuple[int, dict[str, Any]]:
         key = self.authenticate(headers)
-        feature = editions.request_feature(method, url, body)
-        if feature and not self.edition.includes(feature):
-            raise APIError(403, f"{feature} is unavailable in this Duckterm edition")
+        for feature in editions.request_features(method, url, body):
+            if not self.edition.includes(feature):
+                raise APIError(403, f"{feature} is unavailable in this Duckterm edition")
         self._sweep()
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path.removeprefix("/api/v1/session")

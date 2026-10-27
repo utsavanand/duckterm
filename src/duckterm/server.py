@@ -622,10 +622,10 @@ class Server:
             from duckterm.collaboration.api import session as collaboration_session
 
             try:
-                feature = editions.request_feature(method, path, body)
-                if feature and not self.edition.includes(feature):
-                    self.history.session_api.authenticate(headers)
-                    self.require_feature(feature)
+                for feature in editions.request_features(method, path, body):
+                    if not self.edition.includes(feature):
+                        self.history.session_api.authenticate(headers)
+                        self.require_feature(feature)
                 if urllib.parse.urlsplit(path).path.startswith("/api/v1/session/memory/"):
                     result = await self.memory.session_request(method, path, headers, body)
                     status = 200
@@ -664,19 +664,21 @@ class Server:
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
-        feature = editions.request_feature(method, path, body)
-        if feature and not self.edition.includes(feature):
-            await _write_json(
-                writer,
-                403,
-                {
-                    "error": f"{feature} is unavailable in Duckterm {self.edition.name.title()}",
-                    "code": "feature_unavailable",
-                    "feature": feature,
-                    "edition": self.edition.name,
-                },
-            )
-            return
+        for feature in editions.request_features(method, path, body):
+            if not self.edition.includes(feature):
+                await _write_json(
+                    writer,
+                    403,
+                    {
+                        "error": (
+                            f"{feature} is unavailable in Duckterm {self.edition.name.title()}"
+                        ),
+                        "code": "feature_unavailable",
+                        "feature": feature,
+                        "edition": self.edition.name,
+                    },
+                )
+                return
 
         if urllib.parse.urlsplit(path).path.startswith("/collaboration/"):
             from duckterm.collaboration.api import owner as collaboration_owner

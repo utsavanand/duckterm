@@ -207,13 +207,16 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _restart(host: str, port: int) -> int:
+def _restart(host: str, port: int, *, edition: str | None = None) -> int:
     """Stop the old server completely before opening its SQLite database."""
     import signal
     import subprocess
     import time
 
-    editions.configured()  # Validate before stopping a working server.
+    # Old terminals retain their original environment after an edition change.
+    # Validate and select the last successful startup before stopping anything.
+    selected = editions.PRESETS[edition] if edition else editions.configured(prefer_saved=True)
+    os.environ["DUCKTERM_EDITION"] = selected.name
     if _duckterm_responds(host, port):
         print(f"stopping the server on :{port}…", file=sys.stderr)
         try:
@@ -545,7 +548,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
     if args.command in optional or args.command in {"serve", "restart"}:
         try:
-            edition = editions.configured()
+            edition = editions.configured(
+                prefer_saved=args.command == "restart" and not args.edition
+            )
             feature = optional.get(args.command)
             if feature and not edition.includes(feature):
                 raise ValueError(f"{feature} is unavailable in Duckterm {edition.name.title()}")
@@ -559,7 +564,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "serve":
         return _serve(args.host, args.port, reload=args.reload)
     if args.command == "restart":
-        return _restart(args.host, args.port)
+        return _restart(args.host, args.port, edition=args.edition)
     if args.command == "launch":
         return _launch(args.agent_command, args.cwd, args.session_key, args.prompt)
     if args.command == "run":

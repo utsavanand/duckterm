@@ -39,6 +39,10 @@ step "vitest"
 npx vitest run >> "$LOG" 2>&1
 if [ "${1:-}" != "--fast" ]; then
   step "playwright e2e"
-  PATH="$(cd .. && pwd)/.venv/bin:$PATH" npm run e2e >> "$LOG" 2>&1
+  PATH="$(cd .. && pwd)/.venv/bin:$PATH" RD_TEST_EDITION=full npm run e2e >> "$LOG" 2>&1
+  step "Lite browser workflows"
+  PATH="$(cd .. && pwd)/.venv/bin:$PATH" RD_TEST_EDITION=lite npm run e2e -- e2e/editions.spec.ts >> "$LOG" 2>&1
+  step "Code browser workflows and PR review"
+  PATH="$(cd .. && pwd)/.venv/bin:$PATH" RD_TEST_EDITION=code npm run e2e -- e2e/editions.spec.ts e2e/pr-list.spec.ts >> "$LOG" 2>&1
 fi
 echo "==> GATE PASSED (log: $LOG)"

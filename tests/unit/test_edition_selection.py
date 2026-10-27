@@ -86,3 +86,30 @@ def test_cli_edition_option_is_startup_only(home, monkeypatch):
     assert received == [editions.LITE]
     # Configuration is published only when a real server successfully listens.
     assert json.loads((home / "edition.json").read_text()) == {"id": "full"}
+
+
+@pytest.mark.parametrize("saved", [editions.LITE, editions.CODE, editions.FULL])
+@pytest.mark.parametrize("requested", [None, "lite", "code", "full"])
+def test_restart_keeps_saved_edition_despite_old_terminal_environment(
+    home, monkeypatch, saved, requested
+):
+    editions.remember(saved)
+    monkeypatch.setenv("DUCKTERM_EDITION", "code" if saved is editions.LITE else "lite")
+    monkeypatch.setattr(cli, "_duckterm_responds", lambda *args: False)
+    selected = []
+    monkeypatch.setattr(
+        cli, "_serve", lambda *args, **kwargs: selected.append(editions.configured()) or 0
+    )
+    args = ["restart"] + (["--edition", requested] if requested else [])
+    assert cli.main(args) == 0
+    assert selected == [editions.PRESETS[requested] if requested else saved]
+    # The mocked server has not bound, so restart has not published a new edition.
+    assert json.loads((home / "edition.json").read_text()) == {"id": saved.name}
+
+
+def test_restart_rejects_bad_saved_edition_before_stopping_server(home, monkeypatch):
+    (home / "edition.json").write_text('{"id":"unknown"}')
+    monkeypatch.setenv("DUCKTERM_EDITION", "full")
+    monkeypatch.setattr(cli, "_duckterm_responds", lambda *args: pytest.fail("server touched"))
+    assert cli.main(["restart"]) == 1
+    assert not (home / "state.sqlite").exists()

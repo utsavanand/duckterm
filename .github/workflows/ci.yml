@@ -59,9 +59,21 @@ jobs:
         working-directory: web
       - run: npx playwright install --with-deps chromium
         working-directory: web
-      - name: Verify all browser workflows
+      - name: Verify Full browser workflows
         run: npm run e2e
         working-directory: web
+        env:
+          RD_TEST_EDITION: full
+      - name: Verify Lite browser workflows
+        run: npm run e2e -- e2e/editions.spec.ts
+        working-directory: web
+        env:
+          RD_TEST_EDITION: lite
+      - name: Verify Code browser workflows and PR review
+        run: npm run e2e -- e2e/editions.spec.ts e2e/pr-list.spec.ts
+        working-directory: web
+        env:
+          RD_TEST_EDITION: code
 
       - name: Retain browser failure evidence
         if: failure()
