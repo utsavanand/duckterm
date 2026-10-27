@@ -356,3 +356,16 @@ def test_lite_approval_detection_keeps_status_without_oracle_actions(edition_rig
     assert server.history.session("agent")["state"] == "waiting"
     assert not server.relay.notes
     assert approval in server.approvals.pending()
+
+
+def test_lite_stop_revokes_old_grants_without_reenrolling(edition_rig):
+    server, _, _ = edition_rig(FULL)
+    enrolled = server.history.session_api.enroll("agent", {"root": "Tests"})
+    credentials = {"authorization": "Bearer " + enrolled["token"]}
+    server.history.session_api.edition = LITE
+    server.history.set_state("agent", "stopped", now=2)
+    # Returning to a coding edition must not resurrect a stopped agent's grant.
+    server.history.session_api.edition = CODE
+    with pytest.raises(APIError) as error:
+        server.history.session_api.authenticate(credentials)
+    assert error.value.status == 401

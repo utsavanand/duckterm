@@ -739,8 +739,6 @@ class SessionAPI:
 
     def revoke(self, key: str, *, cancel_pending: bool = True) -> None:
         """Invalidate credentials; a resumable stop preserves request deadlines."""
-        if not self.edition.includes("inbox"):
-            return
         session_credentials.credential_path(key, self.credential_dir).unlink(missing_ok=True)
         self.conn.execute(
             "UPDATE session_api_members SET token_hash = ? WHERE session_key = ?",
