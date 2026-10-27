@@ -24,12 +24,12 @@ if TYPE_CHECKING:
 
 
 class Service:
-    def __init__(self, history: HistoryStore) -> None:
+    def __init__(self, history: HistoryStore, *, enabled: bool = True) -> None:
         self.history = history
         self.path = history.session_api.credential_dir.parent / "collaboration.sqlite"
         self.store: Store | None = None
         self.error: str | None = None
-        if self.path.exists():
+        if enabled and self.path.exists():
             try:
                 self.store = Store(self.path)
             except (OSError, ValueError, sqlite3.Error):

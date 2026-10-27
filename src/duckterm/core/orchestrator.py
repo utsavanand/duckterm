@@ -133,12 +133,15 @@ class SessionSupervisor:
             self.bus.publish(event)
 
     async def start(self) -> None:
+        edition = self._history.session_api.edition if self._history is not None else None
         prompt = session_instructions.launch_prompt(
             self.runtime.name,
             self.session_key,
             self.initial_prompt,
             home=Path(self._env["DUCKTERM_SESSION_TOKEN_FILE"]).parent.parent,
             cwd=Path(self.cwd),
+            collaboration=edition is None or edition.includes("inbox"),
+            artifacts=edition is None or edition.includes("artifacts"),
         )
         self._preparation = await self.runtime.prepare_launch(
             cwd=Path(self.cwd),
@@ -904,6 +907,7 @@ class Orchestrator:
 
         agent_env = dict(env or {})
         if self.history is not None:
+            agent_env["DUCKTERM_EDITION"] = self.history.session_api.edition.name
             agent_env["DUCKTERM_SESSION_TOKEN_FILE"] = str(
                 session_credentials.credential_path(key, self.history.session_api.credential_dir)
             )
