@@ -3,8 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiDelete, apiPatch, apiPost, base, expandFolder, routeEdition } from "./helpers";
-import { CODE } from "../src/test/editionFeatures";
+import { apiDelete, apiPatch, apiPost, base, expandFolder, SERVER_EDITION } from "./helpers";
 
 // The test server never calls a model. Where a Claude or Codex CLI is installed the
 // summarizer switch refuses; where none is installed (CI) the provider lookup does.
@@ -18,6 +17,8 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 test("session PRs tab and folder Pull requests tab list a pushed branch without a PR", async ({ page }) => {
+  // Pull request review is Code only; the server refuses its routes in Full.
+  test.skip(SERVER_EDITION !== "code", "needs RD_TEST_EDITION=code");
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ colorScheme: "dark" });
@@ -45,8 +46,6 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     key = String(launched.body.session_key);
     await apiPatch(`/sessions/${key}`, { group: folder });
 
-    // Pull request review is a Code feature.
-    await routeEdition(page, "code", CODE);
     await page.goto(base());
     await expandFolder(page, folder);
     await page.locator(".rd-row-name", { hasText: "pr-list-agent" }).click();

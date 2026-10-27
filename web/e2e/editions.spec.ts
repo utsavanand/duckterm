@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiDelete, apiPatch, apiPost, base, expandFolder, routeEdition, sessionMenu } from "./helpers";
+import { apiDelete, apiPatch, apiPost, base, expandFolder, forEdition, sessionMenu } from "./helpers";
 import { CODE, FULL, LITE } from "../src/test/editionFeatures";
 
 // Endpoint families that belong to features outside Lite.
@@ -44,7 +44,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("Lite runs the core session flows without any advanced control or request", async ({ page }) => {
-  await routeEdition(page, "lite", LITE);
+  await forEdition(page, "lite", LITE);
   const requests = recordRequests(page);
   await withSession("lite-agent", async folder => {
     await open(page, folder, "lite-agent");
@@ -80,7 +80,7 @@ test("Lite runs the core session flows without any advanced control or request",
 });
 
 test("Code's Explorer browses files without artifact requests and offers pull requests but not the Oracle", async ({ page }) => {
-  await routeEdition(page, "code", CODE);
+  await forEdition(page, "code", CODE);
   const requests = recordRequests(page);
   await withSession("code-agent", async folder => {
     await open(page, folder, "code-agent");
@@ -100,7 +100,7 @@ test("Code's Explorer browses files without artifact requests and offers pull re
 });
 
 test("Full keeps its views and excludes pull request review", async ({ page }) => {
-  await routeEdition(page, "full", FULL);
+  await forEdition(page, "full", FULL);
   const requests = recordRequests(page);
   await withSession("full-agent", async folder => {
     await open(page, folder, "full-agent");
