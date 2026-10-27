@@ -1,8 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type ApprovalRecord, type ApprovalState } from "../api";
+import { api, type ApprovalKey, type ApprovalRecord, type ApprovalState } from "../api";
 import { approvalSigner } from "../desktop";
 import { Modal } from "../ui";
 import { shortSha } from "./diffModel";
+
+/** Why approvals would not verify against this Mac's key, or "" when they would. */
+export function approvalKeyProblem(key: ApprovalKey, mine: string): string {
+  if (!key.enrolled) {
+    return key.invalid
+      ? `The bound key file ${key.path} is not a valid key. Delete it and reopen DuckTerm.`
+      : "No Touch ID key is bound yet. Quit and reopen DuckTerm on this Mac to bind it.";
+  }
+  return key.public_key !== mine
+    ? `Approvals are bound to a key that isn't this Mac's Touch ID key (${key.fingerprint}). If you didn't bind it, delete ${key.path} and reopen DuckTerm.`
+    : "";
+}
 
 export function approvalLabel(record: ApprovalRecord): string {
   const task = record.task;
@@ -37,13 +49,7 @@ export function ApproveDialog({ repo, target, prNumber, onClose, onApproved }: {
       // The Mac app binds its key at launch; the page only compares.
       try {
         const [key, mine] = await Promise.all([api.approvalKey(), signer.publicKey()]);
-        const problem = !key.enrolled
-          ? key.invalid
-            ? `The bound key file ${key.path} is not a valid key. Delete it and reopen DuckTerm.`
-            : "No Touch ID key is bound yet. Quit and reopen DuckTerm on this Mac to bind it."
-          : key.public_key !== mine
-            ? `Approvals are bound to a key that isn't this Mac's Touch ID key (${key.fingerprint}). If you didn't bind it, delete ${key.path} and reopen DuckTerm.`
-            : "";
+        const problem = approvalKeyProblem(key, mine);
         if (alive.current) { setBound(problem ? "refused" : "bound"); setBindError(problem); }
       } catch (cause) { if (alive.current) { setBound("refused"); setBindError((cause as Error).message); } }
     })();

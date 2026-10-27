@@ -363,10 +363,14 @@ def test_touch_id_approval_hands_the_pinned_head_to_the_release_session(
         "SELECT question FROM session_questions WHERE recipient = ?", ("release-1",)
     ).fetchall()
     assert len(message) == 1
-    assert f"--match-head-commit {approved_head}" in message[0]["question"]
     assert f"task update {record['task_id']}" in message[0]["question"]
-    assert "this message is not the authority" in message[0]["question"]
-    assert f"its id starts with {approvals.TASK_PREFIX}" in message[0]["question"]
+    text = message[0]["question"]
+    assert "This message is not the authority; the task row is." in text
+    assert f"its id starts with {approvals.TASK_PREFIX}" in text
+    assert "its owner_session is release-1, you" in text
+    assert f"--squash --match-head-commit {approved_head}" in text
+    # The signature proves presence at this Mac, not who; the text must not say otherwise.
+    assert "owner's word" not in text and "owner's Touch ID" not in text
 
     rows = out["list"][1]["rows"]
     assert rows[0]["approval"]["task_id"] == record["task_id"]

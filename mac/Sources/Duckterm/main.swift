@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDiagnostics.shared.record("Application launched")
         Task.detached(priority: .utility) {
             do {
-                if try ApprovalSigner.bindIfUnbound() { AppDiagnostics.shared.record("Approval key bound") }
+                if let bound = try ApprovalSigner.bindIfUnbound() { AppDiagnostics.shared.record("Approval key bound: \(bound)") }
             } catch { AppDiagnostics.shared.record("Approval key not bound") }
         }
         window = DashboardWindow(url: server.url)

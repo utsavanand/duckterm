@@ -99,22 +99,33 @@ enum ApprovalSigner {
         return (["-----BEGIN PUBLIC KEY-----"] + lines + ["-----END PUBLIC KEY-----", ""]).joined(separator: "\n")
     }
 
+    /// The server's fingerprint format: the first 16 hex digits of SHA-256 over
+    /// the DER key, in groups of four.
+    static func fingerprint(_ der: Data) -> String {
+        let hex = SHA256.hash(data: der).map { String(format: "%02x", $0) }.joined().prefix(16)
+        return stride(from: 0, to: 16, by: 4).map { start in
+            String(hex.dropFirst(start).prefix(4))
+        }.joined(separator: " ")
+    }
+
     /// Writes this Mac's public key as the bound key unless one is already
     /// bound. An existing file is never replaced: rebinding means deleting it
     /// by hand, and a key that isn't this Mac's shows as a mismatch in the
     /// Approve dialog.
+    /// Returns the fingerprint it bound, or nil when it left an existing file
+    /// alone; the caller logs it so "was this always the key?" is answerable.
     @discardableResult
-    static func bindIfUnbound(at file: URL = boundKeyURL()) throws -> Bool {
-        guard available else { return false }
+    static func bindIfUnbound(at file: URL = boundKeyURL()) throws -> String? {
+        guard available else { return nil }
         // attributesOfItem does not follow a final symlink, so a planted link
         // counts as bound and is never written through.
-        if (try? FileManager.default.attributesOfItem(atPath: file.path)) != nil { return false }
+        if (try? FileManager.default.attributesOfItem(atPath: file.path)) != nil { return nil }
         let der = try loadOrCreate().publicKey.derRepresentation
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
         guard FileManager.default.createFile(atPath: file.path, contents: Data(pem(der).utf8),
                                              attributes: [.posixPermissions: 0o600]) else { throw SignerError.unavailable }
-        return true
+        return fingerprint(der)
     }
 
     /// Base64 DER SubjectPublicKeyInfo, created on first use. Reading the

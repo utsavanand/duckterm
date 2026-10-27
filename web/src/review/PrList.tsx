@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type PrListResult, type PrRow } from "../api";
-import { approvalLabel } from "./ApproveDialog";
+import { approvalSigner } from "../desktop";
+import { approvalKeyProblem, approvalLabel } from "./ApproveDialog";
 import "./review.css";
 
 export type PrScope = { kind: "session"; key: string; name: string } | { kind: "folder"; folder: string };
@@ -74,6 +75,21 @@ export function PrList({ scope, active, onOpenSession, onReview }: {
     return () => clearInterval(timer);
   }, [active, visible, load]);
 
+  // In the Mac app, a bound key that isn't this Mac's shows here, before the
+  // owner is mid-approval. "Not bound yet" stays in the Approve dialog: the
+  // app binds at launch, so that is normal for a moment.
+  const [keyProblem, setKeyProblem] = useState("");
+  useEffect(() => {
+    const signer = approvalSigner();
+    if (!signer) return;
+    void (async () => {
+      try {
+        const [key, mine] = await Promise.all([api.approvalKey(), signer.publicKey()]);
+        if (alive.current && (key.enrolled || key.invalid)) setKeyProblem(approvalKeyProblem(key, mine));
+      } catch { /* the dialog reports a failure to read the key */ }
+    })();
+  }, []);
+
   const rows = (data?.rows ?? []).filter(row => matches(row, filter));
   const repos = data?.repos ?? [];
   const problems = repos.filter(repo => repo.error || !repo.connected);
@@ -91,6 +107,7 @@ export function PrList({ scope, active, onOpenSession, onReview }: {
       </div>
     </div>
     {error && <p className="rd-prs-note" role="alert">{error}</p>}
+    {keyProblem && <p className="rd-prs-note" role="alert">{keyProblem}</p>}
     {problems.map(repo => <p key={repo.path} className="rd-prs-note" role="status"><strong>{repo.name}</strong>{repo.error ?? "GitHub is not connected, so only local branch facts are shown."}</p>)}
     {!data && !error && <p className="rd-prs-empty" role="status">Reading branches and pull requests…</p>}
     {data && rows.length === 0 && <p className="rd-prs-empty">{data.rows.length === 0

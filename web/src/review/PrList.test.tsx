@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { api, type PrListResult, type PrRow } from "../api";
 import { PrList, ago } from "./PrList";
 
-vi.mock("../api", () => ({ api: { sessionPrs: vi.fn(), folderPrs: vi.fn() } }));
+vi.mock("../api", () => ({ api: { sessionPrs: vi.fn(), folderPrs: vi.fn(), approvalKey: vi.fn() } }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
 const base: PrRow = {
@@ -90,6 +90,40 @@ it("stops polling GitHub while the window is hidden and catches up once when it 
   } finally {
     setVisibility("visible");
     vi.useRealTimers();
+  }
+});
+
+it("in the Mac app, names a bound approval key that isn't this Mac's above the list", async () => {
+  vi.mocked(api.sessionPrs).mockResolvedValue(result);
+  vi.mocked(api.approvalKey).mockResolvedValue({ enrolled: true, fingerprint: "dead beef 0000 1111", enrolled_at: 1, public_key: "PLANTED", path: "/h/.duckterm/approval-key.pem", invalid: false });
+  window.__rubbertermDesktop = { currentTarget: "local", targets: [], canApprove: true };
+  window.webkit = { messageHandlers: { approval: { postMessage: async () => "THIS-MAC" } } };
+  try {
+    render(<PrList scope={{ kind: "session", key: "s1", name: "ui-dev" }} active={false} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("isn't this Mac's Touch ID key (dead beef 0000 1111)");
+  } finally {
+    delete window.__rubbertermDesktop;
+    delete window.webkit;
+  }
+});
+
+it("shows no key note in a browser or when the bound key is this Mac's", async () => {
+  vi.mocked(api.sessionPrs).mockResolvedValue(result);
+  vi.mocked(api.approvalKey).mockResolvedValue({ enrolled: true, fingerprint: "ab12 cd34 ef56 7890", enrolled_at: 1, public_key: "THIS-MAC", path: "/h/.duckterm/approval-key.pem", invalid: false });
+  render(<PrList scope={{ kind: "session", key: "s1", name: "ui-dev" }} active={false} />);
+  await screen.findAllByRole("row");
+  expect(api.approvalKey).not.toHaveBeenCalled();
+  cleanup();
+  window.__rubbertermDesktop = { currentTarget: "local", targets: [], canApprove: true };
+  window.webkit = { messageHandlers: { approval: { postMessage: async () => "THIS-MAC" } } };
+  try {
+    render(<PrList scope={{ kind: "session", key: "s1", name: "ui-dev" }} active={false} />);
+    await screen.findAllByRole("row");
+    await vi.waitFor(() => expect(api.approvalKey).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).toBeNull();
+  } finally {
+    delete window.__rubbertermDesktop;
+    delete window.webkit;
   }
 });
 

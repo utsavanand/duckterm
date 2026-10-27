@@ -44,11 +44,16 @@ final class ApprovalSignerTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let file = dir.appendingPathComponent("approval-key.pem")
         try "existing".write(to: file, atomically: true, encoding: .utf8)
-        XCTAssertFalse(try ApprovalSigner.bindIfUnbound(at: file))
+        XCTAssertNil(try ApprovalSigner.bindIfUnbound(at: file))
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "existing")
         let link = dir.appendingPathComponent("linked.pem")
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: dir.appendingPathComponent("nowhere"))
-        XCTAssertFalse(try ApprovalSigner.bindIfUnbound(at: link))
+        XCTAssertNil(try ApprovalSigner.bindIfUnbound(at: link))
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appendingPathComponent("nowhere").path))
+    }
+
+    func testFingerprintMatchesTheServerFormat() {
+        // Python: hashlib.sha256(bytes([7]) * 91).hexdigest()[:16], grouped by four.
+        XCTAssertEqual(ApprovalSigner.fingerprint(Data(repeating: 7, count: 91)), "8293 b476 f1dc e10e")
     }
 }

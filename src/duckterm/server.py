@@ -1870,7 +1870,7 @@ class Server:
             self.history.folder_tasks.update(task["id"], {"note": "approved with Touch ID"})
         message_id = self.history.session_api.owner_message(
             fields["release"],
-            approvals.release_message(fields, task["id"]),
+            approvals.release_message(fields, task["id"], fields["release"]),
             request_key=f"approve:{fields['github']}:{fields['pr']}:{fields['head']}",
         )
         record = {
