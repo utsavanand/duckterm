@@ -6,9 +6,15 @@ import { effectiveState } from "./sessions";
 import { SessionView } from "./types";
 import { COMPLETION_SETTLE_MS } from "./voice";
 import { useNow } from "./useNow";
+import { useFeature } from "./edition";
 
 type Props = Omit<ComponentProps<typeof HeaderMenus>, "voiceLevel" | "onVoiceLevel" | "voice"> & { sessions: SessionView[] };
+// Voice announcements are the Oracle's; without it the menus have no voice.
 export function DashboardMenus({ sessions, ...props }: Props) {
+  return useFeature("oracle") ? <VoiceDashboardMenus sessions={sessions} {...props} /> : <HeaderMenus {...props} />;
+}
+
+function VoiceDashboardMenus({ sessions, ...props }: Props) {
   // Voice's 90-second completion grace and its own five-second scheduler must
   // keep working in the background, without re-rendering the terminal tree.
   const now = useNow(1000, true, false);

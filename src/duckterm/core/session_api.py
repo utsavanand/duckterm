@@ -15,6 +15,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from duckterm import editions
 from duckterm.helpers import session_credentials
 from duckterm.persistence import mail_analytics
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
@@ -180,7 +181,14 @@ def _inbox_view(view: str, alias: str = "") -> str:
 
 
 class SessionAPI:
-    def __init__(self, conn: sqlite3.Connection, credential_dir: Path) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        credential_dir: Path,
+        *,
+        edition: editions.EditionConfig | None = None,
+    ) -> None:
+        self.edition = edition or editions.configured()
         self.before_retire: Callable[[], None] = lambda: None
         self.conn = conn
         self.credential_dir = credential_dir
@@ -216,6 +224,8 @@ class SessionAPI:
 
     def backfill(self) -> int:
         """Idempotent startup migration, also repairing a missing capability file."""
+        if not self.edition.includes("inbox"):
+            return 0
         count = 0
         for row in self.conn.execute("SELECT session_key, state FROM sessions").fetchall():
             if row["state"] not in AT_REST_STATES:
@@ -224,6 +234,8 @@ class SessionAPI:
         return count
 
     def ensure(self, key: str) -> int:
+        if not self.edition.includes("inbox"):
+            return 0
         session = self._session(key)
         row = self.conn.execute(
             "SELECT * FROM session_api_members WHERE session_key = ?", (key,)
@@ -805,8 +817,7 @@ class SessionAPI:
             raise APIError(401, "session credential is no longer active") from exc
         return key
 
-    @staticmethod
-    def _public(member: dict[str, Any]) -> dict[str, Any]:
+    def _public(self, member: dict[str, Any]) -> dict[str, Any]:
         try:
             progress = json.loads(member.get("progress") or "{}")
             if not isinstance(progress, dict):
@@ -839,10 +850,12 @@ class SessionAPI:
             "capabilities": [
                 "inbox.read",
                 "answers.explicit",
-                "artifacts.register",
-                "artifacts.list",
-                "artifacts.read",
-            ],
+            ]
+            + (
+                ["artifacts.register", "artifacts.list", "artifacts.read"]
+                if self.edition.includes("artifacts")
+                else []
+            ),
         }
 
     def _peer(self, sender: str, recipient: str, *, live: bool = True) -> dict[str, Any]:
@@ -1022,6 +1035,9 @@ class SessionAPI:
         self, method: str, url: str, headers: dict[str, str], body: bytes
     ) -> tuple[int, dict[str, Any]]:
         key = self.authenticate(headers)
+        for feature in editions.request_features(method, url, body):
+            if not self.edition.includes(feature):
+                raise APIError(403, f"{feature} is unavailable in this Duckterm edition")
         self._sweep()
         parsed = urllib.parse.urlsplit(url)
         path = parsed.path.removeprefix("/api/v1/session")

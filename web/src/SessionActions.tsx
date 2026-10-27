@@ -19,6 +19,7 @@ import { useNow } from "./useNow";
 import { Modal, useToast } from "./ui";
 import { RestartControls } from "./RestartControls";
 import { SessionActionMenu, type SessionActionAnchor } from "./SessionActionMenu";
+import { useEdition } from "./edition";
 
 export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, onRename, onNotes, onUngroup, folders = [], onMoveFolder }: {
   session: SessionView; anchor: SessionActionAnchor; onClose: () => void;
@@ -28,6 +29,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
   folders?: string[]; onMoveFolder?: (folder: string) => Promise<void>;
 }) {
   const toast = useToast();
+  const { has } = useEdition();
   const state = effectiveState(s, useNow());
   const archived = ["archived", "merged"].includes(state);
   const ended = state === "terminated";
@@ -61,17 +63,17 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
   }
 
   const item = (label: string, action: () => void, danger = false, blocked = false) => <button role="menuitem" className={danger ? "rd-btn-danger" : ""} disabled={disabled || blocked} onClick={action}>{label}</button>;
-  const canMove = resumable && splitSessionRef(s.key).host === "local" && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "");
+  const canMove = has("remote_workspaces") && resumable && splitSessionRef(s.key).host === "local" && desktop()?.currentTarget === "local" && ["claude-code", "codex"].includes(s.runtime ?? "");
   return <>
     <SessionActionMenu anchor={anchor} label={s.label} expanded={!!dialog || restartExpanded} onClose={onClose}>
       {s.launched && <fieldset disabled={disabled}><RestartControls session={s} showActions={live} menu onExpanded={setRestartExpanded} onDismiss={onClose} onActionComplete={onClose} /></fieldset>}
       {resumable && <button role="menuitem" disabled={disabled || recoveryBlocked || identityBlocksResume(s)}
         title={identityBlocksResume(s) ? "Choose a conversation in the session’s recovery panel before resuming" : undefined}
         onClick={async () => { await resumeSession(); onClose(); }}>{resuming ? "Resuming…" : "Resume"}</button>}
-      {!archived && !ended && item(checkpointPending ? "Updating summary…" : "Checkpoint", () => void checkpoint(), false, checkpointPending)}
+      {has("checkpoints") && !archived && !ended && item(checkpointPending ? "Updating summary…" : "Checkpoint", () => void checkpoint(), false, checkpointPending)}
       {live && (s.branch || s.runtime === "claude-code") && item("Fork", () => { onFork(s.key); onClose(); })}
-      {s.parentKey && !archived && item("Merge back", () => setDialog("merge"))}
-      {s.parentKey && !archived && item("Merge with agent", () => setDialog("agent-merge"))}
+      {has("handoff") && s.parentKey && !archived && item("Merge back", () => setDialog("merge"))}
+      {has("handoff") && s.parentKey && !archived && item("Merge with agent", () => setDialog("agent-merge"))}
       <hr role="separator" />
       {!archived && !ended && item("Rename", () => setDialog("rename"))}
       {item("Notes", () => { onNotes(s.key); onClose(); })}

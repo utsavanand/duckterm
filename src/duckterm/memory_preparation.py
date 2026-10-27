@@ -133,6 +133,7 @@ class MemoryPreparation:
             self.cheap_validate(job)
 
     async def start(self, key: str, body: dict[str, Any]) -> dict[str, Any]:
+        self.server.require_feature("handoff")
         if set(body) not in ({"request_key", "binding"}, {"request_key", "binding", "selection"}):
             raise APIError(400, "Supply request_key and binding, with an optional record selection")
         selection = body.get("selection")

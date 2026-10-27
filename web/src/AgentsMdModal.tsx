@@ -2,6 +2,7 @@ import { sessionFetch } from "./hostTransport";
 import { useEffect, useState } from "react";
 import { authHeaders } from "./api";
 import { Button, Modal, useToast } from "./ui";
+import { useFeature } from "./edition";
 
 // The typed rule set for one folder (docs/agents-template.md):
 // .duckterm-rules.json is the source of truth, AGENTS.md is rendered from it
@@ -52,6 +53,8 @@ export function AgentsMdModal({
   onClose: () => void;
 }) {
   const toast = useToast();
+  // Editing rules is core; generating candidates from corrections needs context.
+  const suggestions = useFeature("context");
   const [rules, setRules] = useState<Rule[]>([]);
   const [legacyText, setLegacyText] = useState<string | null>(null); // hand-written AGENTS.md, not yet typed
   const [draft, setDraft] = useState("");
@@ -289,9 +292,9 @@ export function AgentsMdModal({
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 12 }}>
-        <Button variant="ghost" onClick={suggest} disabled={suggesting || unavailable}>
+        {suggestions && <Button variant="ghost" onClick={suggest} disabled={suggesting || unavailable}>
           {suggesting ? "Observing…" : "Suggest from corrections"}
-        </Button>
+        </Button>}
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>

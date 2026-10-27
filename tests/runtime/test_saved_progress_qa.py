@@ -9,9 +9,11 @@ from types import SimpleNamespace
 import pytest
 
 from duckterm.core.saved_progress import ProgressCoordinator
+from duckterm.editions import FULL
 from duckterm.persistence.digests import DigestStore
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.saved_state import MARKER_FORMAT, event_source
+from duckterm.server import Server
 
 
 @pytest.fixture
@@ -31,12 +33,14 @@ def rig(tmp_path, monkeypatch):
     digests = DigestStore(conn=history._conn)
     transcript = [{"role": "user", "text": "Preserve my current work"}]
     server = SimpleNamespace(
+        edition=FULL,
         history=history,
         digests=digests,
         _progress_transcript=lambda *args: list(transcript),
         _message_source=lambda key: None,
         orchestrator=SimpleNamespace(get=lambda key: None),
     )
+    server.require_feature = Server.require_feature.__get__(server)
     coordinator = ProgressCoordinator(server)
     yield history, digests, coordinator, transcript
     history.purge_test_sessions()

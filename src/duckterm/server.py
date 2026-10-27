@@ -56,7 +56,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from duckterm import bug_reports, connectors, suites, zsh_themes
+from duckterm import bug_reports, connectors, editions, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events, oracle
@@ -216,11 +216,12 @@ def _mid(prefix: str, suffix: str) -> dict[str, str]:
 # GETs that require the owner token despite the open-read policy. /connectors
 # reports which providers the owner connected, under which identity, and when
 # each was last used — a description of the owner, not of the UI's own state.
-_OWNER_READS = frozenset({"/connectors", "/checkpoint-settings"})
+_OWNER_READS = frozenset({"/connectors", "/checkpoint-settings", "/edition"})
 
 
 # fmt: off
 _ROUTES: list[Route] = [
+    Route("GET", "/edition", lambda s, r, w, h, b, seg: s._edition(w)),
     Route("GET", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w)),
     Route("POST", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w, b)),
     Route("POST", "", lambda s, r, w, h, b, seg: s._transfer(w, seg, b), prefix="/transfers/"),
@@ -409,12 +410,21 @@ _ROUTES: list[Route] = [
 
 
 class Server:
-    def __init__(self, bus: EventBus | None = None, history: HistoryStore | None = None) -> None:
+    def __init__(
+        self,
+        bus: EventBus | None = None,
+        history: HistoryStore | None = None,
+        *,
+        edition: editions.EditionConfig | None = None,
+    ) -> None:
+        self.edition = edition or editions.configured()
         self._lifecycle_locks: dict[str, asyncio.Lock] = {}
         self._transfer_sources: set[str] = set()
         self._transfer_launches: set[str] = set()
-        self.history = history if history is not None else HistoryStore()
-        self.history.folder_chats.recover()
+        self.history = history if history is not None else HistoryStore(edition=self.edition)
+        self.history.session_api.edition = self.edition
+        if self.edition.includes("folder_chat"):
+            self.history.folder_chats.recover()
         self.history.layouts.recover()
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
@@ -460,7 +470,9 @@ class Server:
         # often and an unchanged transcript can't have new usage.
         from duckterm.collaboration.service import Service as CollaborationService
 
-        self.collaboration = CollaborationService(self.history)
+        self.collaboration = CollaborationService(
+            self.history, enabled=self.edition.includes("inbox")
+        )
         self._context_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         from duckterm.restarts import Restarts
 
@@ -589,6 +601,7 @@ class Server:
             from duckterm.collaboration.api import body_json
 
             try:
+                self.require_feature("inbox")
                 if method != "POST" or not self.collaboration.store:
                     raise APIError(404, "Collaboration coordinator unavailable")
                 authorization = headers.get("authorization", "")
@@ -609,6 +622,10 @@ class Server:
             from duckterm.collaboration.api import session as collaboration_session
 
             try:
+                for feature in editions.request_features(method, path, body):
+                    if not self.edition.includes(feature):
+                        self.history.session_api.authenticate(headers)
+                        self.require_feature(feature)
                 if urllib.parse.urlsplit(path).path.startswith("/api/v1/session/memory/"):
                     result = await self.memory.session_request(method, path, headers, body)
                     status = 200
@@ -621,6 +638,11 @@ class Server:
                     )
             except APIError as exc:
                 status, result = exc.status, {"error": str(exc)}
+            if urllib.parse.urlsplit(path).path in {
+                "/api/v1/session/self",
+                "/api/v1/session/inbox",
+            }:
+                result["features"] = sorted(self.edition.features)
             await _write_json(writer, status, result)
             return
         # A presented agent credential must never fall through to owner routes.
@@ -641,6 +663,22 @@ class Server:
         ):
             await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
+
+        for feature in editions.request_features(method, path, body):
+            if not self.edition.includes(feature):
+                await _write_json(
+                    writer,
+                    403,
+                    {
+                        "error": (
+                            f"{feature} is unavailable in Duckterm {self.edition.name.title()}"
+                        ),
+                        "code": "feature_unavailable",
+                        "feature": feature,
+                        "edition": self.edition.name,
+                    },
+                )
+                return
 
         if urllib.parse.urlsplit(path).path.startswith("/collaboration/"):
             from duckterm.collaboration.api import owner as collaboration_owner
@@ -879,6 +917,13 @@ class Server:
         # and declares which args it wants — keeps dispatch declarative.
         return _ROUTES
 
+    async def _edition(self, writer: asyncio.StreamWriter) -> None:
+        await _write_json(writer, 200, self.edition.description())
+
+    def require_feature(self, feature: str) -> None:
+        if not self.edition.includes(feature):
+            raise APIError(403, f"{feature} is unavailable in Duckterm {self.edition.name.title()}")
+
     async def _dashboard(self, writer: asyncio.StreamWriter, path: str) -> None:
         """Serve the built React dashboard so there's one URL. The self-probe
         header rides on every response. Falls back to a hint if not built."""
@@ -992,6 +1037,8 @@ class Server:
             self.restarts.hook_finished(event)
 
     def _inbox_hook_output(self, raw: dict[str, Any], key: str) -> dict[str, Any] | None:
+        if not self.edition.includes("inbox"):
+            return None
         if self.restarts.pending(key):
             return None
         if raw.get("event_type") != events.STOP or raw.get("stop_hook_active") is not False:
@@ -1114,6 +1161,7 @@ class Server:
     def _session_env(self, key: str) -> dict[str, str]:
         return {
             **session_credentials.launch_env(key),
+            "DUCKTERM_EDITION": self.edition.name,
             "DUCKTERM_SESSION_TOKEN_FILE": str(
                 session_credentials.credential_path(key, self.history.session_api.credential_dir)
             ),
@@ -1121,7 +1169,12 @@ class Server:
 
     def _collaboration_prompt(self, runtime: str, key: str, prompt: str = "") -> str:
         return session_instructions.launch_prompt(
-            runtime, key, prompt, home=self.history.session_api.credential_dir.parent
+            runtime,
+            key,
+            prompt,
+            home=self.history.session_api.credential_dir.parent,
+            collaboration=self.edition.includes("inbox"),
+            artifacts=self.edition.includes("artifacts"),
         )
 
     async def _introduce_collaboration(
@@ -1154,7 +1207,9 @@ class Server:
         self.history.session_api.ensure(session_key)
         prompt = (
             session_instructions.introduction(
-                session_key, home=self.history.session_api.credential_dir.parent
+                session_key,
+                home=self.history.session_api.credential_dir.parent,
+                artifacts=self.edition.includes("artifacts"),
             )
             + "\n\nRead these instructions, then continue the user's current task."
         )
@@ -1402,7 +1457,11 @@ class Server:
                 "sent": sum(row["sent"] for row in mail["daily"]),
                 "answered": sum(row["answered"] for row in mail["daily"]),
             }
-        artifacts = self.history.artifacts.list_folder(folder, -1, include_removed=True)
+        artifacts = (
+            self.history.artifacts.list_folder(folder, -1, include_removed=True)
+            if self.edition.includes("artifacts")
+            else []
+        )
         counts: dict[str, int] = {}
         for artifact in artifacts:
             counts[artifact["kind"]] = counts.get(artifact["kind"], 0) + 1
@@ -1766,6 +1825,7 @@ class Server:
         return existing or {"tag": tag, "status": "pending"}
 
     def _start_maps(self, target: Any, tags: list[str]) -> None:
+        self.require_feature("pr_review")
         from duckterm.review import history
 
         for tag in tags:
@@ -1777,6 +1837,7 @@ class Server:
             )
 
     async def _start_cards(self, target: Any, only: list[str] | None) -> None:
+        self.require_feature("pr_review")
         from duckterm.review import author, cards, lists, workspace
 
         # Session data is read here, on the loop thread, before the worker runs.
@@ -3636,6 +3697,8 @@ class Server:
         }
 
     def _relay_observe(self, event: dict[str, Any]) -> None:
+        if not self.edition.includes("oracle"):
+            return
         key = str(event.get("session_key") or event.get("session_id") or "")
         et = event.get("event_type")
         if not key or event.get("reconciled"):
@@ -3713,6 +3776,17 @@ class Server:
     def _relay_sync_approvals(self) -> None:
         """Keep approval notes in step with the approval registry, and let
         approval rules answer blocking requests."""
+        if not self.edition.includes("oracle"):
+            # Detect a visible terminal approval without Oracle notes/rules.
+            for approval in self.approvals.pending():
+                if (
+                    not approval.blocking
+                    and approval.tool_name != "AskUserQuestion"
+                    and approval.id not in self._relay_confirmed
+                    and self._relay_harness(approval.session_key).auto_approves_requests
+                ):
+                    self._relay_watch(approval.id, approval.session_key)
+            return
         pending = [a for a in self.approvals.pending() if a.tool_name != "AskUserQuestion"]
         pending_ids = {a.id for a in pending}
         tracked = {n.get("approval_id") for n in self.relay.notes if n["kind"] == "approval"}
@@ -3844,7 +3918,8 @@ class Server:
             elif harness.detect_state(screen) != "busy" and a.id not in self._relay_logged:
                 self._relay_logged.add(a.id)
                 self._mark_waiting(a.session_key)
-                self._log_missed_prompt(a, plain_screen(screen), now)
+                if self.edition.includes("oracle"):
+                    self._log_missed_prompt(a, plain_screen(screen), now)
 
     def _log_missed_prompt(self, a: Approval, screen: str, now: int) -> None:
         path = self.relay.path.with_name("relay-missed-prompts.json")
@@ -3884,6 +3959,8 @@ class Server:
     async def _relay_detect_question(self, key: str, at: int) -> None:
         """Did this turn end waiting on the owner? A word-cue filter, then one
         classifier call (core/relay.py documents both and how they measured)."""
+        if not self.edition.includes("oracle"):
+            return
         row = self.history.session(key)
         if row is None or (row.get("runtime") or "") not in self._RELAY_RUNTIMES:
             return
@@ -5276,6 +5353,7 @@ class Server:
     ) -> dict[str, Any]:
         from duckterm import checkpoint_settings, memory_checkpoint, memory_continuity
 
+        self.require_feature("checkpoints")
         captured = await self.progress_coordinator.capture(session_key)
         if captured is None:
             raise APIError(409, "Session changed while capturing checkpoint; try again")
@@ -5943,28 +6021,43 @@ class Server:
         # this guards the case where they were misconfigured to collide.)
         lock = _acquire_home_lock()
         try:
-            refreshed = session_instructions.refresh_guides()
+            refreshed = session_instructions.refresh_guides(
+                collaboration=self.edition.includes("inbox"),
+                artifacts=self.edition.includes("artifacts"),
+            )
             if refreshed:
                 print(f"refreshed {refreshed} stale session instruction file(s)")
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
             server = await asyncio.start_server(self.handle, host, port)
+            try:
+                editions.remember(self.edition)
+            except BaseException:
+                server.close()
+                await server.wait_closed()
+                raise
             actual_port = server.sockets[0].getsockname()[1]
-            self.history.session_api.set_url(f"http://127.0.0.1:{actual_port}")
+            if self.edition.includes("inbox"):
+                self.history.session_api.set_url(f"http://127.0.0.1:{actual_port}")
             if on_listening is not None:
                 on_listening(host, port)
             self.archives.recover()
             sweeper = asyncio.create_task(self._sweep_dead_loop())
-            collaboration_worker = asyncio.create_task(self.collaboration.run())
+            collaboration_worker = (
+                asyncio.create_task(self.collaboration.run())
+                if self.edition.includes("inbox")
+                else None
+            )
             async with server:
                 try:
                     await server.serve_forever()
                 finally:
                     sweeper.cancel()
-                    collaboration_worker.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await collaboration_worker
+                    if collaboration_worker is not None:
+                        collaboration_worker.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await collaboration_worker
                     await self.collaboration.close()
                     self.voice.stop()
                     await self.archives.close()
@@ -6046,7 +6139,18 @@ class Server:
                     await self._relay_check_stuck(int(time.time() * 1000))
                 except Exception:
                     traceback.print_exc()
-            if ticks % 3 == 0 and os.environ.get("DUCKTERM_ORACLE") != "off":
+            if ticks % 3 == 0 and (
+                not self.edition.includes("oracle") or os.environ.get("DUCKTERM_ORACLE") == "off"
+            ):
+                try:
+                    await self._clear_stale_waiting(int(time.time() * 1000))
+                except Exception:
+                    traceback.print_exc()
+            if (
+                ticks % 3 == 0
+                and self.edition.includes("oracle")
+                and os.environ.get("DUCKTERM_ORACLE") != "off"
+            ):
                 # An exception here would end this loop, silently stopping both
                 # Oracle and the dead-session sweep below.
                 try:
@@ -6091,12 +6195,16 @@ class Server:
     async def _oracle_tick(self) -> None:
         """Paste an inbox reminder into idle agents whose mail would otherwise
         wait until the owner happens to look. Gates live in core/oracle.py."""
+        if not self.edition.includes("oracle"):
+            return
         async with self._oracle_lock:
             await self._oracle_pass()
 
     async def _oracle_pass(self) -> None:
         now = int(time.time() * 1000)
         await self._clear_stale_waiting(now)
+        if not self.edition.includes("oracle"):
+            return
         for row in self.history.sessions():
             key = str(row["session_key"])
             sup = self.orchestrator.get(key)

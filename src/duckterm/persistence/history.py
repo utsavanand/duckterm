@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
+from duckterm import editions
 from duckterm.core import events
 from duckterm.core.session_api import SessionAPI
 from duckterm.helpers import paths
@@ -293,7 +294,10 @@ _SESSIONS_COLUMNS = {
 
 
 class HistoryStore:
-    def __init__(self, db_path: Path | None = None) -> None:
+    def __init__(
+        self, db_path: Path | None = None, *, edition: editions.EditionConfig | None = None
+    ) -> None:
+        edition = edition or editions.configured()
         path = db_path if db_path is not None else paths.db_path()
         self.folder_chats = FolderChats(path.parent / "folder-chats.json", self.folders)
         self.layouts = Layouts(path.parent / "layouts.json", self.folders)
@@ -340,7 +344,9 @@ class HistoryStore:
         self._conn.commit()
         migrate(self._conn, path.parent)
         self.folder_tasks = FolderTasks(self._conn)
-        self.session_api = SessionAPI(self._conn, path.parent / "session-credentials")
+        self.session_api = SessionAPI(
+            self._conn, path.parent / "session-credentials", edition=edition
+        )
         from duckterm.core.fork_merges import ForkMerges
 
         self.fork_merges = ForkMerges(self)
@@ -352,7 +358,8 @@ class HistoryStore:
         # Stamp the current version after migrating so a later older binary is
         # refused. (Can't parameterize a PRAGMA; the value is our own int.)
         self._conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
-        self.session_api._sweep()
+        if self.session_api.edition.includes("inbox"):
+            self.session_api._sweep()
         # Retention: hooks write thousands of event rows a day and nothing
         # else ever deletes them — sweep everything older than 30 days at
         # startup so the DB doesn't grow without bound. Session rows stay.

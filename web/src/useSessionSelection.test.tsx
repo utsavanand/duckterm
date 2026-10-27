@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { sessionRef } from "./hostTransport";
 import { SessionView } from "./types";
 import { useSessionSelection } from "./useSessionSelection";
+import { allowRemoteWorkspaces } from "./desktop";
 
 const remoteKey = sessionRef("qa-remote", "same");
 const local: SessionView = { key: "same", label: "Local", state: "busy", lastEventType: "SessionStart", startedAt: 1, updatedAt: 1, eventCount: 1 };
@@ -12,9 +13,10 @@ const mount = (rows: SessionView[], loadedHosts: string[]) => renderHook(
   { initialProps: { rows, loadedHosts } },
 );
 beforeEach(() => {
+  allowRemoteWorkspaces(true);
   window.__rubbertermDesktop = { currentTarget: "local", targets: [{id:"local",name:"This Mac"},{id:"qa-remote",name:"Remote"}] };
 });
-afterEach(() => { cleanup(); localStorage.clear(); delete window.__rubbertermDesktop; vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); allowRemoteWorkspaces(null); localStorage.clear(); delete window.__rubbertermDesktop; vi.restoreAllMocks(); });
 
 it("restores a remote choice across remount and local-first offline startup with colliding IDs", () => {
   const first = mount([local, remote], ["local", "qa-remote"]);

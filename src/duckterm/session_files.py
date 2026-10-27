@@ -306,7 +306,11 @@ async def handle(
         if row is None:
             raise APIError(404, "Session is unavailable on this host")
         root = row.get("worktree_path") or row.get("cwd")
-        artifacts = server.history.artifacts.list(key) if operation == "files" else []
+        artifacts = (
+            server.history.artifacts.list(key)
+            if operation == "files" and server.edition.includes("artifacts")
+            else []
+        )
         if not isinstance(root, str) or "\x00" in root or not Path(root).is_absolute():
             await write_json(
                 writer,

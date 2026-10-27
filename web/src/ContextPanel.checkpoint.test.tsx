@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, CheckpointRecord, CheckpointActivity, ContextEvidence } from "./api";
 import { ContextPanel } from "./ContextPanel";
+import { edition, FULL } from "./test/editions";
 import type { SessionView } from "./types";
 const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
 vi.mock("./api", () => ({ api: { checkpoints: vi.fn(), checkpoint: vi.fn(), sendInput: vi.fn() } }));
@@ -13,7 +14,7 @@ const cp: CheckpointRecord = { id: "c", label: "manual", created_at: 1000, summa
 beforeEach(() => { vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [cp] }); Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" }); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 it("groups checkpoint information and actions separately from active context", async () => {
-  render(<ContextPanel session={session} />);
+  render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
   fireEvent.click(await screen.findByText("Latest attempt · Summary unavailable"));
   expect(screen.getByText(new Date(cp.created_at).toLocaleString())).toBeInTheDocument();
   expect(screen.getByText("Summary unavailable")).toBeInTheDocument();
@@ -23,14 +24,14 @@ it("groups checkpoint information and actions separately from active context", a
 it("ignores a checkpoint fetch from a previous session", async () => {
   let finish!: (value: { checkpoints: CheckpointRecord[] }) => void;
   vi.mocked(api.checkpoints).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue({ checkpoints: [] });
-  const view = render(<ContextPanel session={session} />);
+  const view = render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
   view.rerender(<ContextPanel session={{ ...session, key: "two" }} />);
   await act(async () => { finish({ checkpoints: [cp] }); });
   expect(screen.queryByLabelText("Latest checkpoint")).toBeNull();
 });
 
 it("does not invent event counts or infer compaction from lifetime events and model usage", async () => {
-  render(<ContextPanel session={{ ...session, eventCount: 40000, contextTokens: 334881, model: "claude-opus-5" }} />);
+  render(<ContextPanel session={{ ...session, eventCount: 40000, contextTokens: 334881, model: "claude-opus-5" }} />, { wrapper: edition(FULL) });
   await screen.findByText("Latest attempt · Summary unavailable");
   expect(screen.getByText("Events since saved capture").nextElementSibling).toHaveTextContent("Not provided by this server");
   expect(screen.getByText("Last compaction").nextElementSibling).toHaveTextContent("Not provided by this server");
@@ -40,7 +41,7 @@ it("does not invent event counts or infer compaction from lifetime events and mo
   expect(api.checkpoint).not.toHaveBeenCalled();
 });
 it("keeps zero reported context distinct from unknown", () => {
-  const view = render(<ContextPanel session={{ ...session, contextTokens: 0 }} />);
+  const view = render(<ContextPanel session={{ ...session, contextTokens: 0 }} />, { wrapper: edition(FULL) });
   expect(screen.getByText("0")).toBeVisible();
   view.rerender(<ContextPanel session={{ ...session, contextTokens: undefined }} />);
   expect(screen.queryByText("tokens reported")).toBeNull();
@@ -49,7 +50,7 @@ it("keeps zero reported context distinct from unknown", () => {
 const activity = (count: number): CheckpointActivity => ({ state: "known", checkpoint_id: "saved", events_since_capture: count, event_filter: "work-v1", reason: null });
 it.each([0, 1026])("shows measured activity %s despite a newer failed attempt and lifetime totals", async count => {
   vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [cp], checkpoint_activity: activity(count) });
-  render(<ContextPanel session={{ ...session, eventCount: 90000 }} />);
+  render(<ContextPanel session={{ ...session, eventCount: 90000 }} />, { wrapper: edition(FULL) });
   await screen.findByText("Latest attempt · Summary unavailable");
   expect(screen.getByText("Events since saved capture").nextElementSibling).toHaveTextContent(count.toLocaleString());
   expect(api.checkpoint).not.toHaveBeenCalled();
@@ -59,13 +60,13 @@ it.each([
   { ...activity(0), state: "unknown" as const, events_since_capture: null, reason: "boundary_missing" },
 ])("distinguishes absent evidence: $state", async value => {
   vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [], checkpoint_activity: value });
-  render(<ContextPanel session={session} />);
+  render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
   await screen.findByText(value.state === "never" ? "No successful checkpoint yet" : "Capture boundary unavailable");
   expect(screen.getByText("Events since saved capture").nextElementSibling).not.toHaveTextContent(/^0$/);
 });
 it("clears a previously measured count when refresh fails", async () => {
   vi.mocked(api.checkpoints).mockResolvedValueOnce({ checkpoints: [], checkpoint_activity: activity(1026) }).mockRejectedValue(new Error("offline"));
-  render(<ContextPanel session={session} />);
+  render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
   await screen.findByText("1,026");
   act(() => { window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: session.key })); });
   await screen.findByText("Couldn’t load activity");
@@ -74,7 +75,7 @@ it("clears a previously measured count when refresh fails", async () => {
 it("ignores activity returned after selection changes", async () => {
   let finish!: (value: Awaited<ReturnType<typeof api.checkpoints>>) => void;
   vi.mocked(api.checkpoints).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue({ checkpoints: [], checkpoint_activity: activity(2) });
-  const view = render(<ContextPanel session={session} />);
+  const view = render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
   view.rerender(<ContextPanel session={{ ...session, key: "two" }} />);
   await act(async () => { finish({ checkpoints: [cp], checkpoint_activity: activity(1026) }); });
   expect(screen.getByText("Events since saved capture").nextElementSibling).toHaveTextContent(/^2$/);
@@ -84,7 +85,7 @@ it("ignores activity returned after selection changes", async () => {
 const evidence: ContextEvidence = { state: "available", reason: null, context_window_tokens: 258400, last_compaction_at: "2026-10-19T10:00:00Z", history_scope: "recent" };
 it("shows explicit native capacity and compaction, then clears evidence when the host fails", async () => {
   vi.mocked(api.checkpoints).mockResolvedValueOnce({ checkpoints: [], context_evidence: evidence }).mockRejectedValue(new Error("offline"));
-  render(<ContextPanel session={session} />);
+  render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
   await screen.findByText("258,400 tokens");
   expect(screen.getByText("Last compaction").nextElementSibling?.querySelector("time")).toHaveAttribute("datetime", evidence.last_compaction_at);
   expect(screen.getByText(/Only recent history was inspected/)).toBeInTheDocument();
@@ -96,7 +97,7 @@ it("shows explicit native capacity and compaction, then clears evidence when the
 it("does not retain another session’s context evidence after a late response", async () => {
   let finish!: (value: Awaited<ReturnType<typeof api.checkpoints>>) => void;
   vi.mocked(api.checkpoints).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue({ checkpoints: [] });
-  const view = render(<ContextPanel session={session} />);
+  const view = render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
   view.rerender(<ContextPanel session={{ ...session, key: "two" }} />);
   await act(async () => { finish({ checkpoints: [], context_evidence: evidence }); });
   expect(screen.queryByText("258,400 tokens")).toBeNull();

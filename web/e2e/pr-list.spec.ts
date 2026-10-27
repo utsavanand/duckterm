@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiDelete, apiPatch, apiPost, base, expandFolder } from "./helpers";
+import { apiDelete, apiPatch, apiPost, base, expandFolder, SERVER_EDITION } from "./helpers";
 
 // The test server never calls a model. Where a Claude or Codex CLI is installed the
 // summarizer switch refuses; where none is installed (CI) the provider lookup does.
@@ -17,6 +17,8 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 test("session PRs tab and folder Pull requests tab list a pushed branch without a PR", async ({ page }) => {
+  // Lite refuses the pull request routes; Code and Full serve them.
+  test.skip(SERVER_EDITION === "lite", "needs RD_TEST_EDITION=code or full");
   test.setTimeout(90_000);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.emulateMedia({ colorScheme: "dark" });

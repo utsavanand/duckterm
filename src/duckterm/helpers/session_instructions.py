@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from duckterm import prompts
@@ -18,18 +19,32 @@ LAUNCH_RUNTIMES = SUPPORTED_RUNTIMES | {"opencode"}
 GUIDE = prompts.load("session_collaboration")
 
 
-def refresh_guides(home: Path | None = None) -> int:
+def guide(*, collaboration: bool = True, artifacts: bool = True) -> str:
+    if not collaboration:
+        return (
+            "Duckterm session collaboration is unavailable in this edition.\n"
+            "Continue the user's task using the terminal and project instructions.\n"
+        )
+    if artifacts:
+        return GUIDE
+    return re.sub(r"## Generated artifacts\n.*?(?=## Exchange questions)", "", GUIDE, flags=re.S)
+
+
+def refresh_guides(
+    home: Path | None = None, *, collaboration: bool = True, artifacts: bool = True
+) -> int:
     """Rewrite every session's instruction file that differs from GUIDE.
     Files are written when a session is introduced, so long-running sessions
     kept stale rules (five-minute expiry) for days after they changed."""
     root = (home if home is not None else instance.home()) / "session-instructions"
-    stale = [p for p in root.glob("*/collaboration.md") if p.read_text() != GUIDE]
+    text = guide(collaboration=collaboration, artifacts=artifacts)
+    stale = [p for p in root.glob("*/collaboration.md") if p.read_text() != text]
     for path in stale:
-        session_credentials.write_private_text(path, GUIDE)
+        session_credentials.write_private_text(path, text)
     return len(stale)
 
 
-def introduction(key: str, *, home: Path | None = None) -> str:
+def introduction(key: str, *, home: Path | None = None, artifacts: bool = True) -> str:
     root = home if home is not None else instance.home()
     # Hash keys so even legacy identifiers cannot escape the instruction directory.
     path = (
@@ -38,7 +53,7 @@ def introduction(key: str, *, home: Path | None = None) -> str:
         / hashlib.sha256(key.encode()).hexdigest()
         / "collaboration.md"
     )
-    session_credentials.write_private_text(path, GUIDE)
+    session_credentials.write_private_text(path, guide(artifacts=artifacts))
     return (
         "Duckterm session capability:\n"
         "You have a session card and an inbox for collaborating with other sessions "
@@ -78,15 +93,24 @@ def scoped_rules(cwd: Path, runtime: str, model: str | None = None) -> str:
 
 
 def launch_prompt(
-    runtime: str, key: str, prompt: str, *, home: Path | None = None, cwd: Path | None = None
+    runtime: str,
+    key: str,
+    prompt: str,
+    *,
+    home: Path | None = None,
+    cwd: Path | None = None,
+    collaboration: bool = True,
+    artifacts: bool = True,
 ) -> str:
     if runtime not in LAUNCH_RUNTIMES:
         return prompt
-    intro = introduction(key, home=home)
+    intro = introduction(key, home=home, artifacts=artifacts) if collaboration else ""
     if cwd is not None:
         rules = scoped_rules(cwd, runtime)
         if rules:
-            intro = intro + "\n\n" + rules
+            intro = "\n\n".join(part for part in (intro, rules) if part)
+    if not intro:
+        return prompt
     if prompt:
         return intro + "\n\nContinue with the user's task below.\n\nUser's task:\n" + prompt
     return intro + "\n\nRead these instructions, then await the user's task."

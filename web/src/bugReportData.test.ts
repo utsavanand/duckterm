@@ -13,7 +13,15 @@ it("uses the selected remote for context, exact submission, and binary downloads
   expect(bridge.mock.calls[1][0]).toMatchObject({ target: "remote", params: { path: "/bugreport/submit", body: JSON.stringify({ summary: "Subject", body: "Exact body\r\n", attachments: [{ name: "a.bin", content_base64: "/wCA" }] }) } });
   bridge.mockResolvedValue({ status: 200, base64: "/wCA", contentType: "application/zip" });
   const bundle = await bugReport.bundle(session, "/bugreport/bundles/" + "a".repeat(32));
-  expect(new Uint8Array(await bundle.arrayBuffer())).toEqual(new Uint8Array([255, 0, 128]));
+  // Node/jsdom versions differ in which Blob Response returns. Read its actual bytes.
+  const bytes = typeof bundle.arrayBuffer === "function" ? await bundle.arrayBuffer()
+    : await new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsArrayBuffer(bundle);
+    });
+  expect(new Uint8Array(bytes)).toEqual(new Uint8Array([255, 0, 128]));
   await expect(bugReport.bundle(session, "https://example.test/report")).rejects.toThrow("Invalid report download link");
   expect(bridge).toHaveBeenCalledTimes(3);
 });

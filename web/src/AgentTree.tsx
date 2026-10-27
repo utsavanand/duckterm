@@ -13,6 +13,7 @@ import { Duck, poseFor } from "./Duck";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
 import { SessionView } from "./types";
 import { useToast } from "./ui";
+import { useFeature } from "./edition";
 
 // The left panel: every session as a row, with forks nested under their parent
 // via parentKey. Keep Focus pins beside sessions; session actions live in the right-click menu.
@@ -57,7 +58,7 @@ export function AgentTree({
   onSessionMoved: (key: string, group: string) => void;
   onOpenGrid: (folder: string) => void;
   onNewSessionIn: (folder: string) => void;
-  onOpenFolderInbox: (folder: string) => void;
+  onOpenFolderInbox?: (folder: string) => void;
   folderThemes: Record<string, string>;
   onOpenFolderAppearance?: (folder: string) => void;
 }) {
@@ -252,7 +253,7 @@ export function AgentTree({
       onNewSession={() => onNewSessionIn(path)}
       onUnnest={path.includes("/") ? () => moveFolder(path, "") : undefined}
       onOpenGrid={() => onOpenGrid(path)}
-      onOpenInbox={() => onOpenFolderInbox(path)}
+      onOpenInbox={onOpenFolderInbox && (() => onOpenFolderInbox(path))}
       theme={folderThemes[path]}
       onOpenAppearance={() => onOpenFolderAppearance?.(path)}
     >
@@ -340,7 +341,7 @@ function GroupHeader({
   onNewSession: () => void;
   onUnnest?: () => void; // set only for nested folders
   onOpenGrid: () => void;
-  onOpenInbox: () => void;
+  onOpenInbox?: () => void;
   theme: string | undefined;
   onOpenAppearance: () => void;
   children: ReactNode;
@@ -393,7 +394,7 @@ function GroupHeader({
           {leaf}
         </button>
         <span className="rd-group-count">{count}</span>
-        <button
+        {onOpenInbox && <button
           className="rd-group-phone"
           title={desktop() ? "View this folder’s interactions on This Mac" : "View folder interactions"}
           aria-label={`View interactions in ${name}`}
@@ -402,7 +403,7 @@ function GroupHeader({
           <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
             <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .3 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.4 1.8.6 2.8.7a2 2 0 0 1 1.8 2.1z" />
           </svg>
-        </button>
+        </button>}
         <button className={`rd-group-theme-wrap${theme ? " set" : ""}`} aria-label={`Terminal colors for ${name}`} title={`Terminal colors for ${name}`} onClick={onOpenAppearance}>🎨</button>
         <button
           className="rd-group-grid"
@@ -568,7 +569,8 @@ function TreeRow({
   const effState = effectiveState(s, now);
   const live = !["terminated", "stopped", "interrupted", "archived"].includes(effState);
   const stateLabel = sessionStateLabel(effState);
-  const ctxLevel = contextLevel(s.contextTokens, s.model);
+  const context = useFeature("context");
+  const ctxLevel = context ? contextLevel(s.contextTokens, s.model) : null;
   const hasChildren = node.children.length > 0;
   const [collapsed, setCollapsed] = useState(false);
   return (

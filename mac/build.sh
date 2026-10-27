@@ -16,6 +16,7 @@ cd "$(dirname "$0")"
 
 TEST_BUILD=0
 RUN_APP=0
+EDITION=full
 # Both the binary's deployment target and Info.plist read this. Without an
 # explicit -target, swiftc stamps the BUILD machine's OS as the minimum, and
 # the app refuses to launch on older macOS despite what Info.plist says.
@@ -24,14 +25,19 @@ for arg in "$@"; do
   case "$arg" in
     --test) TEST_BUILD=1 ;;
     --run) RUN_APP=1 ;;
-    *) echo "Usage: $0 [--test] [--run]" >&2; exit 2 ;;
+    --edition=lite|--edition=code|--edition=full) EDITION="${arg#--edition=}" ;;
+    *) echo "Usage: $0 [--test] [--run] [--edition=lite|code|full]" >&2; exit 2 ;;
   esac
 done
 APP_NAME="DuckTerm"
 BUNDLE_ID="com.rubberduckhq.rubberterm"
 ICON_NAME="AppIcon"
+case "$EDITION" in
+  lite) APP_NAME="DuckTerm Lite" ;;
+  code) APP_NAME="DuckTerm Code" ;;
+esac
 if [[ "$TEST_BUILD" == 1 ]]; then
-  APP_NAME="DuckTerm Test"
+  APP_NAME="$APP_NAME Test"
   BUNDLE_ID="com.rubberduckhq.rubberterm.test"
   ICON_NAME="AppIconTest"
 fi
@@ -80,6 +86,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key><string>${APP_NAME}</string>
   <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
+  <key>DucktermEdition</key><string>${EDITION}</string>
   <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
