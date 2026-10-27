@@ -56,9 +56,7 @@ SHARED_CODING = frozenset(
     }
 )
 CODE = EditionConfig("code", LITE.features | SHARED_CODING | {"pr_review"})
-FULL = EditionConfig(
-    "full", LITE.features | SHARED_CODING | {"oracle", "remote_workspaces", "artifacts"}
-)
+FULL = EditionConfig("full", CODE.features | {"oracle", "remote_workspaces", "artifacts"})
 
 # Existing installations keep Full unless explicitly configured otherwise.
 CURRENT_EDITION = FULL

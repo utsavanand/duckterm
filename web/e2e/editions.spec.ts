@@ -99,19 +99,16 @@ test("Code's Explorer browses files without artifact requests and offers pull re
   expect(requests.filter(path => /\/artifacts|\/relay|\/oracle/.test(path))).toEqual([]);
 });
 
-test("Full keeps its views and excludes pull request review", async ({ page }) => {
+test("Full keeps every view, including pull request review", async ({ page }) => {
   await forEdition(page, "full", FULL);
-  const requests = recordRequests(page);
   await withSession("full-agent", async folder => {
     await open(page, folder, "full-agent");
     const views = page.locator(".rd-view-toggle");
-    for (const name of ["Timeline", "Artifacts"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
+    for (const name of ["Timeline", "Artifacts", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Oracle", exact: true })).toBeVisible();
-    await expect(views.getByRole("button", { name: "PRs", exact: true })).toHaveCount(0);
     await page.locator(".rd-group-name", { hasText: folder }).click();
-    await expect(page.getByRole("region", { name: `Folder ${folder}` }).getByRole("tab")).toHaveText(["Chat", "Artifacts"]);
+    await expect(page.getByRole("region", { name: `Folder ${folder}` }).getByRole("tab")).toHaveText(["Chat", "Artifacts", "Pull requests"]);
   });
-  expect(requests.filter(path => /\/prs\b|\/review\//.test(path))).toEqual([]);
 });
 
 test("an unavailable edition keeps only the core instead of assuming Full", async ({ page }) => {
