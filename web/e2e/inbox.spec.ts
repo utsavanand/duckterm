@@ -33,7 +33,8 @@ test("Inbox beside Timeline shows real session questions and replies", async ({ 
   await page.locator(".rd-row-name", { hasText: "Client implementation" }).click();
   const tabs = page.locator(".rd-view-toggle > button");
   await expect(page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" })).toBeVisible();
-  await expect(tabs).toHaveText(["Terminal", "Messages", "Timeline", "Inbox (1)", "Artifacts", "PRs"]);
+  // The server is Full, which has no pull request review.
+  await expect(tabs).toHaveText(["Terminal", "Messages", "Timeline", "Inbox (1)", "Artifacts"]);
   await page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" }).click();
   await expect(page.locator(".rd-session-card")).not.toHaveAttribute("open", "");
   await page.locator(".rd-session-card > summary").click();

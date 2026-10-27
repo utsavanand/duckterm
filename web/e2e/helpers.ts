@@ -127,7 +127,8 @@ export async function expandFolder(page: Page, path: string) {
   const parts = path.split("/");
   for (let i = 0; i < parts.length; i++) {
     const name = parts.slice(0, i + 1).join("/");
-    const head = page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `View interactions in ${name}`, exact: true }) });
+    // Every edition has folder colors; folder interactions are not in Lite.
+    const head = page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `Terminal colors for ${name}`, exact: true }) });
     const caret = head.locator(".rd-group-caret");
     await expect(caret).toBeVisible();
     if (await caret.textContent() === "▸") await caret.click();
@@ -147,4 +148,11 @@ export async function sessionMenu(page: Page) {
   if (!(await menu.isVisible())) await page.locator(".rd-row.selected").click({ button: "right" });
   await expect(menu).toBeVisible();
   return menu;
+}
+
+// The server has no edition switch; browser checks of Lite and Code describe
+// the edition to the dashboard only. The backend enforces its own edition.
+export async function routeEdition(page: Page, id: "lite" | "code" | "full", features: string[]) {
+  await page.route("**/edition", route => route.request().method() === "GET"
+    ? route.fulfill({ json: { id, features } }) : route.fallback());
 }

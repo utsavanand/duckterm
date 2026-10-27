@@ -3,7 +3,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiDelete, apiPatch, apiPost, base, expandFolder } from "./helpers";
+import { apiDelete, apiPatch, apiPost, base, expandFolder, routeEdition } from "./helpers";
+import { CODE } from "../src/test/editionFeatures";
 
 // The test server never calls a model. Where a Claude or Codex CLI is installed the
 // summarizer switch refuses; where none is installed (CI) the provider lookup does.
@@ -44,6 +45,8 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     key = String(launched.body.session_key);
     await apiPatch(`/sessions/${key}`, { group: folder });
 
+    // Pull request review is a Code feature.
+    await routeEdition(page, "code", CODE);
     await page.goto(base());
     await expandFolder(page, folder);
     await page.locator(".rd-row-name", { hasText: "pr-list-agent" }).click();
