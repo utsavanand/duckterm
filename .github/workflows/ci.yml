@@ -53,12 +53,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # The Azure Ubuntu mirror has taken 12+ minutes to serve Playwright's
+      # system packages, leaving too little of the timeout for the tests.
+      # Reuse the downloaded .debs and the Chromium build between runs.
+      - name: Restore cached Playwright packages and browser
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/apt-debs
+            ~/.cache/ms-playwright
+          key: playwright-ubuntu-24.04-${{ hashFiles('web/package-lock.json') }}
+      - name: Reuse cached apt packages
+        run: |
+          echo 'APT::Keep-Downloaded-Packages "true";' | sudo tee /etc/apt/apt.conf.d/99-keep-debs
+          sudo rm -f /etc/apt/apt.conf.d/docker-clean
+          mkdir -p ~/apt-debs
+          find ~/apt-debs -name '*.deb' -exec sudo cp {} /var/cache/apt/archives/ \;
       - run: sudo apt-get update && sudo apt-get install -y tmux
       - run: pip install -e ".[dev]"
       - run: npm ci
         working-directory: web
       - run: npx playwright install --with-deps chromium
         working-directory: web
+      - name: Keep apt packages for the cache
+        run: find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/apt-debs/ \;
       - name: Verify all browser workflows
         run: npm run e2e
         working-directory: web
