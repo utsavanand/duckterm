@@ -300,3 +300,50 @@ def test_broken_optional_bridge_does_not_stop_the_desktop(app, monkeypatch):
                 await task
 
     asyncio.run(run())
+
+
+def test_identity_replacement_recovers_address_and_revokes_old_phones(tmp_path):
+    configure(tmp_path, "192.168.1.20", 4431)
+    grants = Grants(tmp_path)
+    old_token, device = paired(grants)
+    grants.approve(device["id"])
+    old_invite = grants.invite()
+    old_cert = (tmp_path / "ducky-cert.pem").read_bytes()
+    with pytest.raises(ValueError, match="setup --replace"):
+        configure(tmp_path, "192.168.1.35", 4431)
+    assert grants.authenticate(old_token)["status"] == "active"
+    configure(tmp_path, "192.168.1.35", 4431, replace=True)
+    assert (tmp_path / "ducky-cert.pem").read_bytes() != old_cert
+    assert json.loads((tmp_path / "ducky-bridge.json").read_text())["address"] == "192.168.1.35"
+    assert grants.devices() == []
+    with pytest.raises(Denied):
+        grants.authenticate(old_token)
+    with pytest.raises(Denied):
+        grants.claim(old_invite["invite"], secrets.token_urlsafe(32), "Old invite")
+    new_invite = grants.invite()
+    assert new_invite["host_id"] != old_invite["host_id"]
+    assert (
+        grants.claim(new_invite["invite"], secrets.token_urlsafe(32), "New phone")["status"]
+        == "pending"
+    )
+
+
+def test_failed_certificate_generation_preserves_existing_access(tmp_path, monkeypatch):
+    import subprocess
+
+    from duckterm.mobile import cli
+
+    configure(tmp_path, "127.0.0.1", 4431)
+    grants = Grants(tmp_path)
+    token, device = paired(grants)
+    grants.approve(device["id"])
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()}
+
+    def failed(*args, **kwargs):
+        raise subprocess.TimeoutExpired("openssl", 30)
+
+    monkeypatch.setattr(cli.subprocess, "run", failed)
+    with pytest.raises(subprocess.TimeoutExpired):
+        configure(tmp_path, "192.168.1.35", 4431, replace=True)
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()} == before
+    assert grants.authenticate(token)["status"] == "active"

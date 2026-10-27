@@ -32,12 +32,15 @@ def address(value: str) -> str:
     return str(ip)
 
 
-def configure(directory: Path, host: str, port: int) -> None:
+def configure(directory: Path, host: str, port: int, *, replace: bool = False) -> None:
     host = address(host)
     if not 1024 <= port <= 65535:
         raise ValueError("Ducky port must be between 1024 and 65535")
-    if (directory / "ducky-cert.pem").exists():
-        raise ValueError("This host already has a Ducky identity; use enable to resume it")
+    if (directory / "ducky-cert.pem").exists() and not replace:
+        raise ValueError(
+            "This host already has a Ducky identity; use enable to resume it, or "
+            "setup --replace to change its address/certificate and require phones to pair again"
+        )
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     # OpenSSL only creates the local TLS identity. The running server remains
     # Python stdlib; neither generation nor use contacts an external service.
@@ -69,6 +72,11 @@ def configure(directory: Path, host: str, port: int) -> None:
             capture_output=True,
             timeout=30,
         )
+        # Generate successfully before invalidating working access. After this
+        # point any interrupted replacement stays disabled until retried.
+        (directory / "ducky-bridge.json").unlink(missing_ok=True)
+        if replace:
+            Grants(directory).reset()
         private_write(directory / "ducky-key.pem", (root / "key.pem").read_text())
         private_write(directory / "ducky-cert.pem", (root / "cert.pem").read_text())
     private_write(
@@ -112,6 +120,11 @@ def add_parser(sub: Any) -> None:
     )
     setup.add_argument("--address", required=True, help="this Mac's private network IP")
     setup.add_argument("--port", type=int, default=4430)
+    setup.add_argument(
+        "--replace",
+        action="store_true",
+        help="replace the TLS identity/address and revoke all phones and invitations",
+    )
     for name in ("enable", "disable", "invite", "devices"):
         commands.add_parser(name)
     for name in ("approve", "revoke"):
@@ -123,8 +136,12 @@ def run(args: argparse.Namespace) -> int:
     grants = Grants(directory)
     try:
         if args.ducky_command == "setup":
-            configure(directory, args.address, args.port)
-            print("Ducky enabled. Restart Duckterm to start its separate TLS listener.")
+            configure(directory, args.address, args.port, replace=args.replace)
+            if args.replace:
+                print("Ducky identity replaced. Previous phones and invitations are revoked.")
+                print("Restart Duckterm, create a new invitation, and pair your iPhone again.")
+            else:
+                print("Ducky enabled. Restart Duckterm to start its separate TLS listener.")
         elif args.ducky_command == "enable":
             enable(directory)
             print("Ducky enabled. Restart Duckterm to start the listener.")

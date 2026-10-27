@@ -53,6 +53,12 @@ class Grants:
         finally:
             os.close(fd)
 
+    def reset(self) -> None:
+        """Explicit identity replacement invalidates every old invitation and device."""
+        with self.locked(write=True) as state:
+            state.clear()
+            state.update(version=1, host_id=uuid.uuid4().hex, invites={}, devices={})
+
     def invite(self, *, now: int | None = None) -> dict[str, Any]:
         now = int(time.time()) if now is None else now
         secret = secrets.token_urlsafe(32)
