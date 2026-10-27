@@ -74,7 +74,12 @@ import { EditionProvider, useEdition } from "./edition";
 function Dashboard() {
   const { sessions: sourceSessions, connected, loadedHosts, removeSessions, patchSession } =
     useEventStream();
-  const { has } = useEdition();
+  const { has, refresh: refreshEdition } = useEdition();
+  const wasConnected = useRef(false);
+  useEffect(() => {
+    if (connected && !wasConnected.current) refreshEdition();
+    wasConnected.current = connected;
+  }, [connected, refreshEdition]);
   const inboxCounts = useInboxCounts(has("inbox"));
   const archives = useArchiveRequests();
   const sidePanels = useSidePanels();

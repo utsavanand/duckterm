@@ -6,7 +6,7 @@ import { EditionProvider, useEdition } from "./edition";
 import { sessionRef } from "./hostTransport";
 import { SessionView } from "./types";
 import { useSessionSelection } from "./useSessionSelection";
-import { FULL, LITE } from "./test/editions";
+import { CODE, FULL, LITE } from "./test/editions";
 
 function Probe() {
   const { has, id } = useEdition();
@@ -56,4 +56,30 @@ it("keeps a saved remote selection while its computer is hidden, and restores it
   act(() => allowRemoteWorkspaces(true));
   view.rerender({ rows: [local, { key: remote, state: "idle" } as SessionView] });
   expect(view.result.current.selectedKey).toBe(remote);
+});
+
+it.each([
+  ["an unknown id", { id: "enterprise", features: ["oracle"] }],
+  ["features that are not strings", { id: "full", features: [1] }],
+  ["no features", { id: "full" }],
+])("treats a description with %s as unavailable, not as a crash or Full", async (_name, body) => {
+  vi.spyOn(api, "edition").mockResolvedValue(body as never);
+  const errors: string[] = [];
+  render(<EditionProvider onError={message => errors.push(message)}><Probe /></EditionProvider>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByText("none oracle:false explorer:false")).toBeInTheDocument();
+  expect(errors).toEqual(["Malformed edition description"]);
+});
+
+it("rereads the edition on focus, following a server restarted in another edition and dropping features on failure", async () => {
+  const edition = vi.spyOn(api, "edition").mockResolvedValueOnce({ id: "full", features: FULL })
+    .mockResolvedValueOnce({ id: "code", features: CODE }).mockRejectedValueOnce(new Error("Unavailable"));
+  render(<EditionProvider><Probe /></EditionProvider>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByText("full oracle:true explorer:true")).toBeInTheDocument();
+  await act(async () => { window.dispatchEvent(new Event("focus")); await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByText("code oracle:false explorer:true")).toBeInTheDocument();
+  await act(async () => { window.dispatchEvent(new Event("focus")); await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByText("none oracle:false explorer:false")).toBeInTheDocument();
+  expect(edition).toHaveBeenCalledTimes(3);
 });
