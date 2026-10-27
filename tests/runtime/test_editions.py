@@ -40,12 +40,12 @@ def test_editions_keep_the_agreed_core_and_separate_the_full_additions():
     }
     assert LITE.features < CODE.features
     assert LITE.features < FULL.features
-    assert CODE.features - FULL.features == {"pr_review"}
+    assert CODE.features < FULL.features
     assert FULL.features - CODE.features == {"oracle", "remote_workspaces", "artifacts"}
     for feature in ("explorer", "inbox", "folder_chat", "checkpoints", "connectors"):
         assert CODE.includes(feature)
         assert not LITE.includes(feature)
-    for feature in ("checks", "pr_review", "ducky", "unknown"):
+    for feature in ("checks", "ducky", "unknown"):
         assert not FULL.includes(feature)
     assert CURRENT_EDITION is FULL
 
@@ -165,7 +165,7 @@ def test_restricted_editions_reject_full_features(edition_rig, edition, method, 
 
 
 @pytest.mark.parametrize("edition", [LITE, CODE, FULL])
-def test_pr_review_is_code_only_before_review_or_github_work(edition_rig, monkeypatch, edition):
+def test_lite_refuses_pr_review_before_review_or_github_work(edition_rig, monkeypatch, edition):
     server, owner, _ = edition_rig(edition)
     review = AsyncMock()
     lists = AsyncMock()
@@ -182,12 +182,12 @@ def test_pr_review_is_code_only_before_review_or_github_work(edition_rig, monkey
         ]:
             writer = Writer()
             await server._dispatch(method, path, asyncio.StreamReader(), writer, owner, b"{}")
-            if edition is not CODE:
+            if edition is LITE:
                 assert b"403" in writer.data.split(b"\r\n", 1)[0]
 
     asyncio.run(run())
-    assert review.await_count == (3 if edition is CODE else 0)
-    assert lists.await_count == (2 if edition is CODE else 0)
+    assert review.await_count == (0 if edition is LITE else 3)
+    assert lists.await_count == (0 if edition is LITE else 2)
 
 
 def test_code_keeps_folder_answers_without_global_oracle(edition_rig, monkeypatch):
@@ -382,7 +382,6 @@ def test_lite_stop_revokes_old_grants_without_reenrolling(edition_rig):
     ("edition", "path", "missing"),
     [
         (CODE, "/folders/Tests/chat?x=/artifacts", "artifacts"),
-        (FULL, "/folders/Tests/chat?x=/prs", "pr_review"),
         (CODE, "/sessions/agent/digest?x=/artifacts", "artifacts"),
     ],
 )

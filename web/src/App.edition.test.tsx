@@ -60,10 +60,9 @@ it("Code has the Explorer and pull requests, but no Oracle or artifacts", async 
   expect(probe.requests.filter(path => /^\/relay|\/artifacts/.test(path))).toEqual([]);
 });
 
-it("Full keeps today's views except pull request review", async () => {
+it("Full keeps every view, including pull request review", async () => {
   await mount(FULL);
-  for (const name of ["Terminal", "Messages", "Timeline", "Inbox", "Artifacts", "Oracle", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
-  expect(tab("PRs")).not.toBeInTheDocument();
+  for (const name of ["Terminal", "Messages", "Timeline", "Inbox", "Artifacts", "Oracle", "AGENTS.md", "PRs"]) expect(tab(name)).toBeInTheDocument();
   expect(probe.requests).toContain("/relay/count");
 });
 
