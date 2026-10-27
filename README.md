@@ -40,8 +40,11 @@ want parallel attempts, and fork — including conversation forks for Claude Cod
 
 ## Install
 
-**Recommended: install the CLI, then open the dashboard in your browser.**
-The optional [Mac app](#mac-app) uses the same installation and data.
+**DuckTerm Lite is the public download.** Install the CLI, then open Lite in
+your browser or use the optional [Mac app](#mac-app). Code and Full distribution
+is invite-only. Features described elsewhere in this repository vary by edition;
+Lite includes folders, workstreams, coding-agent sessions, forks, terminals, Shell,
+Messages and session status.
 
 You need macOS or Linux, Python 3.11+, tmux, and at least one installed,
 signed-in agent CLI (`claude`, `codex`, or `copilot`). Your agents use their
@@ -59,8 +62,8 @@ install Python 3.11+, pipx, and tmux using your distribution's package manager.
 Then install the published wheel:
 
 ```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.177/duckterm-0.4.177-py3-none-any.whl
-duckterm serve
+pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.178/duckterm-0.4.178-py3-none-any.whl
+duckterm serve --edition lite
 ```
 
 The dashboard opens at **http://127.0.0.1:4300**. Leave that terminal running.
@@ -72,8 +75,8 @@ not currently PyPI; `pipx install duckterm` is not a supported installation path
 1. In the dashboard, choose **New → New session**.
 2. Choose an installed agent and the project directory you want it to work in.
 3. Launch the session and type your task into its terminal.
-4. Use folders to organize agents, **Edit file** for project files, and
-   **Connectors** to configure the services your agents need.
+4. Use folders to organize agents, **Messages** to read their conversations,
+   and **Shell** for project commands.
 
 For agent event reporting, install hooks for the agent you use **before launching
 new sessions**. Run the applicable command in another terminal:
@@ -145,11 +148,14 @@ certificate. See [shared connector setup and enrollment](docs/shared-connectors.
 ## Mac app
 
 On **Apple Silicon Macs running macOS 13+**, install the CLI above, then download
-[DuckTerm-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/latest/download/DuckTerm-macos-arm64.zip),
-unzip it, and move **DuckTerm.app** to **Applications**.
+[DuckTerm-Lite-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/latest/download/DuckTerm-Lite-macos-arm64.zip),
+unzip it, and move **DuckTerm Lite.app** to **Applications**. The app and CLI
+must come from the same release.
 
 The app opens the dashboard in a native window with a Dock icon and notifications.
-It starts the local server when needed, or connects to one already running.
+It starts Lite when needed, or connects to an existing Lite server. If another
+edition is running, the app explains how to switch while retaining sessions and
+settings. Existing installations keep their selected edition until you switch.
 It is signed with a Developer ID and notarized by Apple, so it opens without a
 security override.
 The browser installation works without the app. Intel Mac users can use the
