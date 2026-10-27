@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { readOwnedState } from "./run-state";
 import { join } from "node:path";
@@ -150,9 +150,15 @@ export async function sessionMenu(page: Page) {
   return menu;
 }
 
-// The server has no edition switch; browser checks of Lite and Code describe
-// the edition to the dashboard only. The backend enforces its own edition.
-export async function routeEdition(page: Page, id: "lite" | "code" | "full", features: string[]) {
+type Edition = "lite" | "code" | "full";
+// The test server's edition: Full unless RD_TEST_EDITION starts it as another.
+export const SERVER_EDITION = (process.env.RD_TEST_EDITION ?? "full") as Edition;
+
+// With RD_TEST_EDITION the real server enforces its edition and specs for other
+// editions skip. Without it, the edition is described to the dashboard only,
+// which checks the UI but not the server's own refusals.
+export async function forEdition(page: Page, id: Edition, features: string[]) {
+  if (process.env.RD_TEST_EDITION) { test.skip(SERVER_EDITION !== id, `needs a ${id} server`); return; }
   await page.route("**/edition", route => route.request().method() === "GET"
     ? route.fulfill({ json: { id, features } }) : route.fallback());
 }

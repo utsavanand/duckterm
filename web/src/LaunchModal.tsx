@@ -96,7 +96,7 @@ export function LaunchModal({
   // The new agent won't see them (candidates don't render) — surfacing the
   // count here is the moment the user most cares about the folder's rules.
   const [pendingRules, setPendingRules] = useState(0);
-  const rules = useFeature("file_editing");
+  const rules = useFeature("context");
   useEffect(() => {
     setPendingRules(0);
     if (!rules || !path || elsewhere) return;

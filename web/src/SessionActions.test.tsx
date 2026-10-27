@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { SessionActions } from "./SessionActions";
-import { edition, FULL } from "./test/editions";
+import { CODE, edition, FULL, LITE } from "./test/editions";
 import type { SessionView } from "./types";
 import { beginRecoveryUndo, finishRecoveryUndo, setRecoveryResumeAllowed, useRecoveryResumeBlocked } from "./resumeReadiness";
 import { destinationRequest } from "./desktop";
@@ -67,4 +67,10 @@ it.each([undefined, "parent"])("offers merge with agent only for a recorded chil
   render(<SessionActions session={s} anchor={{ key: s.key, x: 10, y: 10, trigger: document.body }} onClose={vi.fn()} onFork={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} onNotes={vi.fn()} />, { wrapper: edition(FULL) });
   if (parentKey) expect(screen.getByRole("menuitem", { name: "Merge with agent" })).toBeEnabled();
   else expect(screen.queryByRole("menuitem", { name: "Merge with agent" })).toBeNull();
+});
+it.each([["Lite", LITE, 0], ["Code", CODE, 1]] as const)("%s offers merge-back and checkpoint actions only with handoff and checkpoints", (_name, features, count) => {
+  const s = { key: "fork", parentKey: "parent", label: "Fork", state: "idle", startedAt: 1, launched: true, runtime: "generic" } as SessionView;
+  render(<SessionActions session={s} anchor={{ key: s.key, x: 10, y: 10, trigger: document.body }} onClose={vi.fn()} onFork={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} onNotes={vi.fn()} />, { wrapper: edition(features) });
+  for (const name of ["Merge back", "Merge with agent", "Checkpoint"]) expect(screen.queryAllByRole("menuitem", { name })).toHaveLength(count);
+  expect(screen.getByRole("menuitem", { name: "Rename" })).toBeInTheDocument();
 });

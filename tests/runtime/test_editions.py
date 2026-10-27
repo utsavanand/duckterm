@@ -128,6 +128,13 @@ def edition_rig(tmp_path, monkeypatch):
         ("GET", "/file?path=example.py", b""),
         ("POST", "/file", b"{}"),
         ("POST", "/snapshots", b"{}"),
+        # Routes match the raw path, so a folder named "Tests?x=" is reachable
+        # with its query-looking part unencoded.
+        ("GET", "/folders/Tests?x=/chat", b""),
+        ("GET", "/folders/Tests?x=/stats", b""),
+        ("GET", "/folders/Tests?x=/recipients", b""),
+        ("POST", "/folders/Tests?x=/dispatch", b"{}"),
+        ("GET", "/sessions/agent?x=/digest", b""),
     ],
 )
 def test_lite_rejects_optional_work_before_handlers(edition_rig, method, path, body):
@@ -369,3 +376,28 @@ def test_lite_stop_revokes_old_grants_without_reenrolling(edition_rig):
     with pytest.raises(APIError) as error:
         server.history.session_api.authenticate(credentials)
     assert error.value.status == 401
+
+
+@pytest.mark.parametrize(
+    ("edition", "path", "missing"),
+    [
+        (CODE, "/folders/Tests/chat?x=/artifacts", "artifacts"),
+        (FULL, "/folders/Tests/chat?x=/prs", "pr_review"),
+        (CODE, "/sessions/agent/digest?x=/artifacts", "artifacts"),
+    ],
+)
+def test_allowed_parsed_path_cannot_hide_a_restricted_raw_route(
+    edition_rig, edition, path, missing
+):
+    server, owner, _ = edition_rig(edition)
+    code, response = dispatch(server, "GET", path, owner)
+    assert code == 403
+    assert response["feature"] == missing
+
+
+def test_session_api_query_cannot_hide_artifacts_in_code(edition_rig):
+    server, _, _ = edition_rig(CODE)
+    enrolled = server.history.session_api.enroll("agent", {"root": "Tests"})
+    agent = {"authorization": "Bearer " + enrolled["token"]}
+    with pytest.raises(APIError, match="artifacts is unavailable"):
+        server.history.session_api.handle("GET", "/api/v1/session/artifacts?x=/memory", agent, b"")

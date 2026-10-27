@@ -72,8 +72,8 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
         onClick={async () => { await resumeSession(); onClose(); }}>{resuming ? "Resuming…" : "Resume"}</button>}
       {has("checkpoints") && !archived && !ended && item(checkpointPending ? "Updating summary…" : "Checkpoint", () => void checkpoint(), false, checkpointPending)}
       {live && (s.branch || s.runtime === "claude-code") && item("Fork", () => { onFork(s.key); onClose(); })}
-      {s.parentKey && !archived && item("Merge back", () => setDialog("merge"))}
-      {s.parentKey && !archived && item("Merge with agent", () => setDialog("agent-merge"))}
+      {has("handoff") && s.parentKey && !archived && item("Merge back", () => setDialog("merge"))}
+      {has("handoff") && s.parentKey && !archived && item("Merge with agent", () => setDialog("agent-merge"))}
       <hr role="separator" />
       {!archived && !ended && item("Rename", () => setDialog("rename"))}
       {item("Notes", () => { onNotes(s.key); onClose(); })}

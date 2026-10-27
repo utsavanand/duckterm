@@ -65,19 +65,23 @@ CURRENT_EDITION = FULL
 PRESETS: dict[str, EditionConfig] = {edition.name: edition for edition in (LITE, CODE, FULL)}
 
 
-def configured() -> EditionConfig:
+def configured(*, prefer_saved: bool = False) -> EditionConfig:
     """Environment wins; otherwise use this instance's last successful startup.
 
-    This is feature configuration, not a license or authorization boundary.
+    Restarts prefer the saved selection because long-lived terminals may carry
+    an environment inherited from a previous edition. Explicit CLI selection
+    still wins. This is feature configuration, not a license boundary.
     Invalid configuration never silently enables the unrestricted product.
     """
     name = os.environ.get("DUCKTERM_EDITION")
-    if name is None:
+    if prefer_saved or name is None:
         path = instance.home() / "edition.json"
         try:
             data = json.loads(path.read_text())
         except FileNotFoundError:
-            return CURRENT_EDITION
+            if name is None:
+                return CURRENT_EDITION
+            data = {"id": name}
         except (OSError, ValueError) as exc:
             raise ValueError(f"Cannot read edition configuration at {path}") from exc
         if not isinstance(data, dict):
@@ -107,14 +111,27 @@ def remember(edition: EditionConfig) -> None:
             os.unlink(temporary)
 
 
-def request_feature(method: str, url: str, body: bytes = b"") -> str | None:
+def request_features(method: str, url: str, body: bytes = b"") -> tuple[str, ...]:
     """Classify optional HTTP entry points before they invoke any feature work.
 
     Authorization remains the dispatcher's responsibility. Query strings do not
     change a feature's availability; folder names may contain encoded slashes.
     Core terminal, lifecycle, approval, message and directory routes remain core.
+    Routes match the raw path, so "/folders/a?b=/chat" reaches folder chat for a
+    folder named "a?b=" although its parsed path is "/folders/a"; classify both.
     """
-    path = urlsplit(url).path
+    # Either interpretation may reach a handler. Require both when they differ;
+    # an allowed folder chat prefix must not hide a raw artifacts/PR suffix.
+    paths = [urlsplit(url).path, url]
+    if url.startswith("/sessions/"):
+        # Prefix/suffix routes accept slashes inside the captured session key.
+        # Check the final operation as well as nested routes such as /memory/*.
+        paths.append("/sessions/_/" + url.rsplit("/", 1)[-1])
+    features = (_path_feature(method, path, body) for path in paths)
+    return tuple(dict.fromkeys(feature for feature in features if feature))
+
+
+def _path_feature(method: str, path: str, body: bytes) -> str | None:
     if path.startswith("/api/v1/session/"):
         suffix = path.removeprefix("/api/v1/session/")
         if suffix == "artifacts" or suffix.startswith("artifacts/"):
