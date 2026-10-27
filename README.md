@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="web/public/favicon.svg" width="72" alt="DuckTerm logo" />
+<img src="web/src/assets/duckmark.svg" width="72" alt="DuckTerm logo" />
 
 # DuckTerm
 
