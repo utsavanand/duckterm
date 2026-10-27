@@ -1,14 +1,12 @@
-import { sessionFetch, hostName } from "./hostTransport";
+import { hostName } from "./hostTransport";
 import { useCallback, useEffect, useState } from "react";
-import { api, authHeaders } from "./api";
+import { api } from "./api";
 import { Button, Field, inputStyle, Modal, useToast } from "./ui";
 
 interface Harness {
   name: string;
   path: string;
   description?: string;
-  args_choices?: Record<string, string[]>;
-  uninstallable?: boolean;
   compatible?: string[];
   error?: string;
 }
@@ -19,26 +17,19 @@ interface HarnessItem {
   description: string;
 }
 
-// Installable harnesses: suites of skills, hooks, and sub-agents (uv-suite is
-// the canonical one) registered by path and installed into a project folder.
-// The installer's output is shown verbatim — success or failure, you see what
-// it did.
+// Skill kits (uv-suite is the canonical one) registered by path, with what
+// each contains. Duckterm never runs a kit's own install script — installing
+// returns with the declarative component format.
 export function HarnessesModal({
-  defaultDir,
   sessionKey = "",
   onClose,
 }: {
-  defaultDir: string | null;
   sessionKey?: string;
   onClose: () => void;
 }) {
   const toast = useToast();
   const [harnesses, setHarnesses] = useState<Harness[]>([]);
   const [regPath, setRegPath] = useState("");
-  const [busy, setBusy] = useState<string | null>(null);
-  const [output, setOutput] = useState<{ name: string; text: string } | null>(
-    null,
-  );
 
   const refresh = useCallback(() =>
     api
@@ -53,11 +44,11 @@ export function HarnessesModal({
     if (!regPath.trim()) return;
     try {
       const r = await api.registerHarness(regPath.trim(), sessionKey);
-      toast(`Registered ${r.name}`);
+      toast(`Added ${r.name}`);
       setRegPath("");
       refresh();
     } catch (e) {
-      toast(`Register failed: ${(e as Error).message}`, "err");
+      toast(`Add failed: ${(e as Error).message}`, "err");
     }
   }
 
@@ -70,64 +61,26 @@ export function HarnessesModal({
     }
   }
 
-  async function run(
-    h: Harness,
-    action: "install" | "uninstall",
-    dir: string,
-    args: string[],
-  ) {
-    setBusy(h.name);
-    setOutput(null);
-    try {
-      const res = await sessionFetch(sessionKey,
-        `/harnesses/${encodeURIComponent(h.name)}/${action}`,
-        {
-          method: "POST",
-          headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({ dir, args }),
-        },
-      );
-      const d = (await res.json()) as {
-        ok?: boolean;
-        output?: string;
-        error?: string;
-      };
-      setOutput({ name: h.name, text: d.output ?? d.error ?? "" });
-      toast(
-        d.ok
-          ? `${action === "install" ? "Installed" : "Uninstalled"} ${h.name}`
-          : `${action} failed`,
-        d.ok ? undefined : "err",
-      );
-    } finally {
-      setBusy(null);
-    }
-  }
-
   return (
-    <Modal title={`Harnesses · ${hostName(sessionKey)}`} onClose={onClose}>
+    <Modal title={`Skill kits · ${hostName(sessionKey)}`} onClose={onClose}>
       <p className="rd-harness-hint">
-        A harness is an installable suite — skills, hooks, sub-agents,
-        guardrails — that agents in a folder pick up. Register one by its
-        directory (it needs a <code>duckterm-harness.json</code> or an{" "}
-        <code>install.sh</code>), then install it into a project.
+        A skill kit is a collection of skills, hooks, sub-agents and
+        guardrails that agents in a project pick up. Add one by its folder (it
+        needs a <code>duckterm-harness.json</code>) to see what it contains.
+        DuckTerm doesn't install kits yet — use the kit's own instructions.
       </p>
       {harnesses.map((h) => (
         <HarnessRow
           key={h.name}
           harness={h}
-          defaultDir={defaultDir}
           sessionKey={sessionKey}
-          busy={busy === h.name}
-          output={output?.name === h.name ? output.text : null}
           onRemove={() => deregister(h.name)}
-          onRun={(action, dir, args) => run(h, action, dir, args)}
         />
       ))}
       {harnesses.length === 0 && (
-        <p className="rd-panel-empty">No harnesses registered yet.</p>
+        <p className="rd-panel-empty">No skill kits added yet.</p>
       )}
-      <Field label="Register a harness (directory path)">
+      <Field label="Add a skill kit (folder path)">
         <div style={{ display: "flex", gap: 8 }}>
           <input
             style={{ ...inputStyle, flex: 1 }}
@@ -137,7 +90,7 @@ export function HarnessesModal({
             onKeyDown={(e) => e.key === "Enter" && register()}
           />
           <Button onClick={register} disabled={!regPath.trim()}>
-            Register
+            Add
           </Button>
         </div>
       </Field>
@@ -147,23 +100,13 @@ export function HarnessesModal({
 
 function HarnessRow({
   harness,
-  defaultDir,
   sessionKey = "",
-  busy,
-  output,
-  onRun,
   onRemove,
 }: {
   harness: Harness;
-  defaultDir: string | null;
   sessionKey?: string;
-  busy: boolean;
-  output: string | null;
-  onRun: (action: "install" | "uninstall", dir: string, args: string[]) => void;
   onRemove: () => void;
 }) {
-  const [dir, setDir] = useState(defaultDir ?? "");
-  const [args, setArgs] = useState("");
   const [items, setItems] = useState<HarnessItem[] | null>(null);
   const [showContents, setShowContents] = useState(false);
 
@@ -179,16 +122,6 @@ function HarnessRow({
       }
     }
   }
-  const choiceFlags = Object.keys(harness.args_choices ?? {});
-  const [choices, setChoices] = useState<Record<string, string>>({});
-
-  // Manifest-declared pickers first (e.g. --persona sport), then free text.
-  const argv = [
-    ...choiceFlags.flatMap((flag) =>
-      choices[flag] ? [flag, choices[flag]] : [],
-    ),
-    ...(args ? args.split(/\s+/) : []),
-  ];
 
   return (
     <div className="rd-harness">
@@ -199,7 +132,8 @@ function HarnessRow({
         </span>
         <button
           className="rd-group-del"
-          title="Remove from the registry (uninstalls nothing)"
+          title="Remove from this list (uninstalls nothing)"
+          aria-label={`Remove ${harness.name} from this list`}
           onClick={onRemove}
         >
           ✕
@@ -209,7 +143,7 @@ function HarnessRow({
       <div className="rd-harness-compat">
         {harness.compatible && harness.compatible.length > 0
           ? `works with ${harness.compatible.join(", ")}`
-          : "compatibility not declared — assume any harness"}
+          : "compatibility not declared"}
         <button className="rd-harness-contents-toggle" onClick={toggleContents}>
           {showContents ? "hide contents" : "view contents"}
         </button>
@@ -245,54 +179,6 @@ function HarnessRow({
           )}
         </div>
       )}
-      <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
-        <input
-          style={{ ...inputStyle, flex: 2, minWidth: 180 }}
-          value={dir}
-          placeholder="target project folder"
-          onChange={(e) => setDir(e.target.value)}
-        />
-        {choiceFlags.map((flag) => (
-          <select
-            key={flag}
-            style={{ ...inputStyle, flex: 1, minWidth: 120 }}
-            value={choices[flag] ?? ""}
-            title={flag}
-            onChange={(e) =>
-              setChoices((c) => ({ ...c, [flag]: e.target.value }))
-            }
-          >
-            <option value="">{flag} (default)</option>
-            {harness.args_choices![flag].map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </select>
-        ))}
-        <input
-          style={{ ...inputStyle, flex: 1, minWidth: 120 }}
-          value={args}
-          placeholder="extra args"
-          onChange={(e) => setArgs(e.target.value)}
-        />
-        <Button
-          onClick={() => onRun("install", dir, argv)}
-          disabled={busy || !dir.trim() || Boolean(harness.error)}
-        >
-          {busy ? "Working…" : "Install"}
-        </Button>
-        {harness.uninstallable && (
-          <Button
-            variant="ghost"
-            onClick={() => onRun("uninstall", dir, argv)}
-            disabled={busy || !dir.trim()}
-          >
-            Uninstall
-          </Button>
-        )}
-      </div>
-      {output !== null && <pre className="rd-harness-output">{output}</pre>}
     </div>
   );
 }

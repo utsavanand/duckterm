@@ -161,7 +161,7 @@ export function applyEvent(
     ptyOwned: prev?.ptyOwned || (e.launched === true && e.pty_owned !== false),
     contextTokens: prev?.contextTokens,
     model: prev?.model,
-    metaHarnesses: prev?.metaHarnesses,
+    skillKits: prev?.skillKits,
     conversationIdentity: prev?.conversationIdentity,
     startedAt: prev?.startedAt ?? e._ts,
     updatedAt: e._ts,
