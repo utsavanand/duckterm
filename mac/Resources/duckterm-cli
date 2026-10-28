@@ -11,11 +11,9 @@ RESOURCES=$(CDPATH= cd -- "$(dirname -- "$ENTRY")/.." && pwd)
 export DUCKTERM_BUNDLED_TMUX="$RESOURCES/tmux/bin/tmux"
 export DUCKTERM_BUNDLED_CLI="$RESOURCES/bin/duckterm"
 export DUCKTERM_BUNDLED_JQ="$RESOURCES/jq/bin/jq"
-# build.sh stamps this app's desktop profile. An explicit target, or an enrolled
-# session whose credentials the backend verifies, keeps its own server.
-if [ -z "${DUCKTERM_DESKTOP_PROFILE-}${DUCKTERM_INSTANCE-}${DUCKTERM_HOME-}${DUCKTERM_PORT-}${DUCKTERM_URL-}${DUCKTERM_TMUX_SOCKET-}${DUCKTERM_SESSION_KEY-}" ]; then
-  export DUCKTERM_DESKTOP_PROFILE=@DESKTOP_PROFILE@
-fi
+# build.sh stamps this app's desktop profile. The CLI applies it only when the
+# caller has no explicit target and no verified enrolled session.
+export DUCKTERM_APP_PROFILE=@DESKTOP_PROFILE@
 # -I ignores user Python variables and site packages without changing the
 # environment inherited by coding agents. -B keeps the signed bundle immutable.
 exec "$RESOURCES/python/bin/python3.13" -I -B -m duckterm.cli "$@"

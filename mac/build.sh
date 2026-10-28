@@ -141,7 +141,10 @@ info['DucktermBundledRuntime'] = True
 profile = json.loads(sys.argv[4])
 info['DucktermProfile'] = profile['profile_id']
 info['DucktermHome'] = profile['home_name']
+info['DucktermTmuxSocket'] = profile['tmux_socket']
 info['DucktermPort'] = profile['port']
+if profile['instance_id']:
+    info['DucktermInstance'] = profile['instance_id']
 if sys.argv[3] == '1':
     info['DucktermTestBuild'] = True
     if remote_host := os.environ.get('DUCKTERM_TEST_REMOTE_HOST'):

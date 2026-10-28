@@ -1,4 +1,4 @@
-"""The Mac app's CLI targets its own app unless the caller already chose a server."""
+"""The Mac app's CLI names its app profile; Python decides whether to apply it."""
 
 import os
 import subprocess
@@ -39,13 +39,15 @@ def run(cli: Path, **extra: str) -> dict[str, str]:
     return dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
 
 
-def test_defaults_to_the_stamped_app_profile(app_cli):
-    assert run(app_cli)["DUCKTERM_DESKTOP_PROFILE"] == "test-lite"
+def test_names_the_stamped_app_profile(app_cli):
+    seen = run(app_cli)
+    assert seen["DUCKTERM_APP_PROFILE"] == "test-lite"
+    assert "DUCKTERM_DESKTOP_PROFILE" not in seen
 
 
 @pytest.mark.parametrize("target", TARGETS)
-def test_explicit_target_or_enrolled_session_is_kept(app_cli, target):
+def test_explicit_target_and_enrollment_reach_python_unchanged(app_cli, target):
+    # The shell never parses credentials or chooses a target itself.
     seen = run(app_cli, **{target: "chosen"})
     assert seen[target] == "chosen"
-    if target != "DUCKTERM_DESKTOP_PROFILE":
-        assert "DUCKTERM_DESKTOP_PROFILE" not in seen
+    assert seen["DUCKTERM_APP_PROFILE"] == "test-lite"

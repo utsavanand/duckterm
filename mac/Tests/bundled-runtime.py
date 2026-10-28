@@ -1,10 +1,11 @@
 """Run a relocated app with an empty home and no Python/CLI on PATH.
 
-Requires macOS GUI access. Uses the real app/ServerProcess and bundled backend;
-only the copied bundle's test identity/instance change. No production data used.
+Requires macOS GUI access and a Test build (mac/build.sh --test [--edition=...]).
+Uses the real app/ServerProcess, bundled backend and the build's own test profile,
+in a private HOME and TMUX_TMPDIR. Only the copied bundle's ID changes, so its
+preferences stay apart from an installed Test app. No production data used.
 """
 
-import hashlib
 import json
 import os
 import plistlib
@@ -21,34 +22,42 @@ from contextlib import suppress
 from pathlib import Path
 
 source = Path(sys.argv[1]).resolve()
-with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
+# Socket paths are limited to 104 bytes, so tmux gets a short private directory.
+with (
+    tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch,
+    tempfile.TemporaryDirectory(prefix="dt-tmux-", dir="/tmp") as tmux_dir,
+):
     root = Path(scratch)
     home = root / "empty-home"
     home.mkdir()
     app = root / "Relocated App.app"
     shutil.copytree(source, app, symlinks=True)
     contents = app / "Contents"
-    instance = "bundle-" + uuid.uuid4().hex[:12]
-    port = 4310 + int.from_bytes(hashlib.sha256(instance.encode()).digest()[:4], "big") % 600
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", port))
     info_path = contents / "Info.plist"
     info = plistlib.loads(info_path.read_bytes())
+    if info.get("DucktermTestBuild") is not True:
+        sys.exit("Build with mac/build.sh --test; only Test builds honor a private HOME")
+    port = info["DucktermPort"]
+    try:
+        with socket.socket() as sock:
+            # As the server binds: closing connections must not read as in use.
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("127.0.0.1", port))
+    except OSError:
+        sys.exit(f"Port {port} is in use; quit {info['CFBundleName']} or its server first")
+    state_home = home / info["DucktermHome"]
+    tmux_socket = info["DucktermTmuxSocket"]
     info.update(
-        CFBundleIdentifier="com.duckterm.smoke." + instance,
-        DucktermTestBuild=True,
+        CFBundleIdentifier=info["CFBundleIdentifier"] + ".smoke." + uuid.uuid4().hex[:12],
         DucktermTestSystemTools=False,
-        DucktermTestInstance=instance,
-        DucktermPort=port,
-        DucktermHome=".duckterm-" + instance,
     )
-    info.pop("DucktermProfile", None)
     info_path.write_bytes(plistlib.dumps(info))
     subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
     env = {
         "HOME": str(home),
         "PATH": "/usr/bin:/bin",
         "TMPDIR": scratch,
+        "TMUX_TMPDIR": tmux_dir,
         "PYTHONHOME": "/does-not-exist",
         "PYTHONPATH": "/does-not-exist",
         "DUCKTERM_NO_KEYCHAIN": "1",
@@ -72,7 +81,6 @@ with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
     )
     children = []
     bundled_tmux = str(contents / "Resources/tmux/bin/tmux")
-    tmux_socket = "duckterm-" + instance
     try:
         for _ in range(100):
             if native.poll() is not None:
@@ -99,9 +107,18 @@ with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
             for line in rows.splitlines()
             if len(line.split(None, 2)) == 3
         ), "Native process did not launch bundled Python"
-        assert (home / (".duckterm-" + instance) / "db.sqlite").is_file()
-        state_home = home / (".duckterm-" + instance)
+        assert (state_home / "db.sqlite").is_file()
         token = (state_home / "token").read_text().strip()
+        edition = urllib.request.Request(
+            f"http://127.0.0.1:{port}/edition", headers={"X-Duckterm-Token": token}
+        )
+        with urllib.request.urlopen(edition, timeout=5) as response:
+            identity = json.load(response)["instance"]
+        assert identity["profile_id"] == info["DucktermProfile"], identity
+        assert Path(identity["home"]) == state_home.resolve(), identity
+        assert (identity["tmux_socket"], identity["port"]) == (tmux_socket, port), identity
+        marker = json.loads((state_home / "profile.json").read_text())
+        assert marker["profile_id"] == info["DucktermProfile"], marker
         request = urllib.request.Request(
             f"http://127.0.0.1:{port}/sessions/launch",
             data=json.dumps(
@@ -117,20 +134,6 @@ with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
         )
         with urllib.request.urlopen(request, timeout=10) as response:
             key = json.load(response)["session_key"]
-        # Resolve the instance's socket scheme from the bundled helper.
-        probe_env = dict(env, DUCKTERM_INSTANCE=instance)
-        probe_env.pop("PYTHONHOME")
-        tmux_socket = subprocess.check_output(
-            [
-                str(contents / "Resources/python/bin/python3.13"),
-                "-I",
-                "-B",
-                "-c",
-                "from duckterm.helpers.instance import tmux_socket; print(tmux_socket())",
-            ],
-            env=probe_env,
-            text=True,
-        ).strip()
         pane = subprocess.check_output(
             [
                 bundled_tmux,
@@ -153,6 +156,7 @@ with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
                     "version": version,
                     "dashboard": 200,
                     "bundled_child": True,
+                    "profile": info["DucktermProfile"],
                     "relocated": True,
                     "empty_home": True,
                     "signature_unchanged": True,

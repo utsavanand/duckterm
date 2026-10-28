@@ -384,7 +384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let response = try await launchAPI.perform(base: server.url, operation: "edition", params: [:])
             let current = try DesktopEdition(response: response)
-            try current.validate(edition: AppIdentity.edition, profile: AppIdentity.profile, port: AppIdentity.localPort)
+            try current.validate(edition: AppIdentity.edition, profile: AppIdentity.profile)
             applyEdition(current)
             return current
         } catch {
