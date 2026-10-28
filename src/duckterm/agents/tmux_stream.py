@@ -17,6 +17,7 @@ _GUARD = re.compile(rb"%(begin|end|error) (\d+ \d+ \d+)\Z")
 _ESCAPE = re.compile(rb"\\(?:([0-3][0-7]{2})|(\\))")
 _MAX_SNAPSHOT = 8 * 1024 * 1024
 _MAX_QUEUED_CHUNKS = 32
+_COALESCE_BYTES = 64 * 1024
 _SGR = re.compile(rb"\x1b\[[0-9;:]*m")
 
 
@@ -288,7 +289,28 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             chunk = await queue.get()
             if chunk is None:
                 break
-            yield chunk
+            if isinstance(chunk, Snapshot):
+                # Keep the repaint separate: its dimensions precede its bytes
+                # on the WebSocket, and live output must not lose that boundary.
+                yield chunk
+                continue
+            # The WebSocket consumer uses __anext__ tasks and asyncio.wait;
+            # handing it one chunk per turn lets a buffered producer outrun a
+            # fast network reader. Drain already-ready bytes together, without
+            # waiting for more output or increasing the stalled-viewer queue.
+            chunks = [chunk]
+            size = len(chunk)
+            ended = False
+            while size < _COALESCE_BYTES and not queue.empty():
+                following = queue.get_nowait()
+                if following is None:
+                    ended = True
+                    break
+                chunks.append(following)
+                size += len(following)
+            yield b"".join(chunks)
+            if ended:
+                break
     finally:
         if not reader.done():
             reader.cancel()
