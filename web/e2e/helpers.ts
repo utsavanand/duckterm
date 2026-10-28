@@ -1,4 +1,4 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { readOwnedState } from "./run-state";
 import { join } from "node:path";
@@ -127,7 +127,8 @@ export async function expandFolder(page: Page, path: string) {
   const parts = path.split("/");
   for (let i = 0; i < parts.length; i++) {
     const name = parts.slice(0, i + 1).join("/");
-    const head = page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `View interactions in ${name}`, exact: true }) });
+    // Every edition has folder colors; folder interactions are not in Lite.
+    const head = page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `Terminal colors for ${name}`, exact: true }) });
     const caret = head.locator(".rd-group-caret");
     await expect(caret).toBeVisible();
     if (await caret.textContent() === "▸") await caret.click();
@@ -147,4 +148,17 @@ export async function sessionMenu(page: Page) {
   if (!(await menu.isVisible())) await page.locator(".rd-row.selected").click({ button: "right" });
   await expect(menu).toBeVisible();
   return menu;
+}
+
+type Edition = "lite" | "code" | "full";
+// The test server's edition: Full unless RD_TEST_EDITION starts it as another.
+export const SERVER_EDITION = (process.env.RD_TEST_EDITION ?? "full") as Edition;
+
+// With RD_TEST_EDITION the real server enforces its edition and specs for other
+// editions skip. Without it, the edition is described to the dashboard only,
+// which checks the UI but not the server's own refusals.
+export async function forEdition(page: Page, id: Edition, features: string[]) {
+  if (process.env.RD_TEST_EDITION) { test.skip(SERVER_EDITION !== id, `needs a ${id} server`); return; }
+  await page.route("**/edition", route => route.request().method() === "GET"
+    ? route.fulfill({ json: { id, features } }) : route.fallback());
 }

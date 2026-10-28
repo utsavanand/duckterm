@@ -10,12 +10,13 @@ Follow the [README quick start](../README.md#install) for the current release
 wheel and Mac app download. Install with pipx to keep DuckTerm isolated from
 other Python packages. The command is `duckterm`; the product is DuckTerm.
 
-Open **DuckTerm.app** to start the local server and dashboard automatically.
+Open **DuckTerm Lite.app** to start the Lite server and dashboard automatically.
 The app finds tools installed in the standard Homebrew and `~/.local/bin`
-directories and reuses an existing server if one is running. No Terminal
-command is needed when using the app.
+directories and reuses an existing Lite server if one is running. If another
+edition is active, the app explains how to switch; it does not stop that server
+automatically. No Terminal command is needed for an ordinary app launch.
 
-For browser-only use, `duckterm serve` runs in the foreground and opens
+For browser-only Lite use, `duckterm serve --edition lite` runs in the foreground and opens
 http://127.0.0.1:4300. Keep its terminal open while using the browser.
 
 Opening the app reconnects terminals that are still running. After a Mac
@@ -75,7 +76,8 @@ pipx install --force /absolute/path/to/duckterm-VERSION-py3-none-any.whl
 ```
 
 Quit the Mac app or stop the foreground server with Ctrl-C, then reopen the app
-or run `duckterm serve`. Reload open browser tabs to load the new dashboard.
+or run `duckterm serve` to retain the saved edition (`duckterm serve --edition lite`
+to select Lite). Reload open browser tabs to load the new dashboard.
 When upgrading the native app, also replace the old app in Applications with
 the app from the matching release. The CLI and native shell are separate downloads.
 
@@ -105,6 +107,6 @@ relevant `duckterm doctor` output. Remove private project paths and account deta
 pipx uninstall duckterm
 ```
 
-Remove DuckTerm.app from Applications if installed. Data under `~/.duckterm`
+Remove the installed DuckTerm app from Applications if present. Data under `~/.duckterm`
 is retained. To remove hooks, run `duckterm uninstall-hooks --agent AGENT --global`
 for each configured agent **before** uninstalling the CLI.

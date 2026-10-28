@@ -310,6 +310,7 @@ class ProgressCoordinator:
     ) -> SummaryUpdate:
         from duckterm import memory_continuity
 
+        self.server.require_feature("summaries")
         captured = captured or await self.capture(key)
         if captured is None:
             return SummaryUpdate.failed("source_changed", diagnostic="capture:unstable")

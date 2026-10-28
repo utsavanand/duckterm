@@ -7,6 +7,7 @@ import "./restart.css";
 import { ModelMenu } from "./ModelMenu";
 import { MemorySwitchPanel } from "./MemorySwitchPanel";
 import { memorySwitchAvailable } from "./memorySwitchTransport";
+import { useFeature } from "./edition";
 
 const harnessName = (name: string) => ({ "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini CLI" }[name] || name);
 type DialogMode = "restart" | "model" | "harness";
@@ -41,7 +42,8 @@ function SessionRestartControls({ children, session, showActions = true, menu = 
   const currentModel = status?.model || session.model || "";
   const currentHarness = options?.current.harness || session.runtime || "generic";
   const switching = mode === "harness";
-  const memoryAvailable = memorySwitchAvailable(options);
+  // Without handoff, switching harness is the plain restart switch.
+  const memoryAvailable = useFeature("handoff") && memorySwitchAvailable(options);
   const selected = options?.harnesses.find(choice => choice.name === harness);
   const pending = status?.status === "queued" || status?.status === "restarting";
   const refresh = useCallback(async () => {

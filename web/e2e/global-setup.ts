@@ -76,6 +76,8 @@ export default async function globalSetup() {
         DUCKTERM_NO_TERMINAL: "1",
         DUCKTERM_NO_BROWSER: "1",
         DUCKTERM_TMUX_SOCKET: tmuxSocket,
+        // RD_TEST_EDITION runs the real server as Lite or Code; never inherit the user's.
+        DUCKTERM_EDITION: process.env.RD_TEST_EDITION ?? "full",
         PYTHONPATH: join(REPO, "src"),
       },
       stdio: "inherit",

@@ -240,8 +240,12 @@ class Restarts:
             },
             "resume_restart": {"available": False},
             "harnesses": [],
-            "supports_interrupt_switch": True,
-            "memory_switch": {"version": 1, "available": current in {"codex", "claude-code"}},
+            "supports_interrupt_switch": self.server.edition.includes("handoff"),
+            "memory_switch": {
+                "version": 1,
+                "available": self.server.edition.includes("handoff")
+                and current in {"codex", "claude-code"},
+            },
         }
         common_error = None
         try:
@@ -299,7 +303,11 @@ class Restarts:
             return entry
 
         result["harnesses"] = await asyncio.gather(
-            *(choice(name, binary) for name, binary in LAUNCH_BINARIES.items())
+            *(
+                choice(name, binary)
+                for name, binary in LAUNCH_BINARIES.items()
+                if name == current or self.server.edition.includes("handoff")
+            )
         )
         return result
 
@@ -407,6 +415,8 @@ class Restarts:
         input_stamp = sup.last_owner_input_ms
         target = harness or str(row.get("runtime") or "generic")
         switching = target != row.get("runtime")
+        if switching or memory is not None:
+            self.server.require_feature("handoff")
         if interrupt and not switching:
             raise APIError(400, "Immediate interruption is only available for a harness switch")
         if model:
@@ -570,6 +580,8 @@ class Restarts:
             if self.read(key).get("source_harness", row.get("runtime")) != row.get("runtime"):
                 raise APIError(409, "The harness changed while restart was pending.")
             switching = harness is not None and harness != row.get("runtime")
+            if switching or self.read(key).get("memory"):
+                self.server.require_feature("handoff")
             if interrupt and not switching:
                 raise APIError(409, "The target changed. Review and retry the switch.")
             if interrupt:

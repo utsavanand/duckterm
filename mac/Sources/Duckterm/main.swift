@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var bugReport: BugReportController?
     private var capturingReport = false
     private var notified: [String: Set<String>] = [:]
+    private var edition: DesktopEdition?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
@@ -32,10 +33,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window = DashboardWindow(url: server.url)
         window?.onReportBug = { [weak self] in self?.reportBug(nil) }
-        window?.desktopHosts = hosts
+        window?.desktopHosts = []
         sessionTransport.onTerminal = { [weak self] event in self?.window?.dispatch(name: "remote-terminal", detail: event) }
         sessionTransport.onTerminalData = { [weak self] event in await self?.window?.dispatchAndWait(name: "remote-terminal", detail: event) }
-        window?.onPageReset = { [weak self] in self?.sessionTransport.close() }
+        window?.onPageReset = { [weak self] in
+            self?.sessionTransport.close()
+            Task { @MainActor [weak self] in _ = try? await self?.refreshEdition() }
+        }
         if hosts.isEmpty, AppIdentity.isTest,
            let alias = Bundle.main.object(forInfoDictionaryKey: "DucktermTestRemoteHost") as? String,
            let host = try? RemoteHost(name: alias, target: alias) {
@@ -44,13 +48,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window?.onChooseLaunchTarget = { [weak self] target, draft, sessionKey in
             guard let self else { return }
-            if target == "add" { self.addHost(launchDraft: draft); return }
-            let host = self.hosts.first { $0.target == target }
-            guard target == "local" || host != nil else { return }
-            self.connectHost(host, launchDraft: draft.isEmpty ? nil : draft, selectedSession: sessionKey)
+            Task {
+                do {
+                    if target != "local" { try await self.requireFeature("remote_workspaces") }
+                    if target == "add" { self.addHost(launchDraft: draft); return }
+                    let host = self.hosts.first { $0.target == target }
+                    guard target == "local" || host != nil else { return }
+                    self.connectHost(host, launchDraft: draft.isEmpty ? nil : draft, selectedSession: sessionKey)
+                } catch { self.showConnectionError(error) }
+            }
         }
         window?.onLaunchRequest = { [weak self] target, operation, params in
             guard let self else { throw LaunchDestination.Failure.message("App closed") }
+            if let feature = DesktopEdition.requiredFeature(target: target, operation: operation) {
+                try await self.requireFeature(feature)
+            }
             if operation == "collaboration-preview" || operation == "collaboration-connect" {
                 guard let coordinator = self.hosts.first(where: { $0.target == target }) else {
                     throw LaunchDestination.Failure.message("Choose a saved remote coordinator")
@@ -211,13 +223,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return try await self.launchAPI.perform(base: base, operation: operation, params: params)
         }
-        window?.desktopHosts = hosts
-        window?.show()  // open the dashboard window on launch
+        window?.desktopHosts = edition?.includes("remote_workspaces") == true ? hosts : []
         NSApp.activate(ignoringOtherApps: true)
 
-        window?.setTitle(AppIdentity.name)
         Task {
-            _ = await ensureLocalServer()
+            guard await ensureLocalServer() else {
+                showConnectionError(LaunchDestination.Failure.message(server.startupError))
+                return
+            }
+            _ = try? await refreshEdition()
+            window?.show()
+            window?.setTitle(AppIdentity.name)
             startPolling()
         }
     }
@@ -236,7 +252,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Re-open the window if the user clicks the Dock icon after closing it.
     func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag { window?.show() }
+        if !flag {
+            Task {
+                if await ensureLocalServer() { window?.show() }
+                else { showConnectionError(LaunchDestination.Failure.message(server.startupError)) }
+            }
+        }
         return true
     }
 
@@ -249,6 +270,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startPolling(host: String = "local", base: URL? = nil) {
+        guard host == "local" || edition?.includes("remote_workspaces") == true else { return }
         guard pollers[host] == nil else { return }
         let p = SessionPoller(base: base ?? server.url)
         p.onUpdate = { [weak self] _, waiting in
@@ -260,6 +282,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func flushCollaboration(source: URL? = nil) async {
+        guard (try? await refreshEdition())?.includes("inbox") == true else { return }
         guard let target = UserDefaults.standard.string(forKey: "collaborationCoordinatorTarget"),
               let host = hosts.first(where: { $0.target == target }) else { return }
         if launchConnections[target] == nil {
@@ -273,6 +296,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showSettings(_ sender: Any?) {
+        guard edition?.includes("remote_workspaces") == true else { return }
         let alert = NSAlert()
         alert.messageText = "Settings"
         alert.informativeText = "Manage the computers available when you create a session."
@@ -282,6 +306,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func chooseHost(_ sender: Any?) {
+        guard edition?.includes("remote_workspaces") == true else { return }
         let alert = NSAlert()
         alert.messageText = "Remote computers"
         alert.informativeText = "Remote agents keep running when you close Duckterm. SSH authentication must already be configured."
@@ -313,6 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func addHost(launchDraft: [String: String]? = nil) {
+        guard edition?.includes("remote_workspaces") == true else { return }
         let alert = NSAlert()
         alert.messageText = "Add remote host"
         alert.informativeText = "Enter an alias from ~/.ssh/config or user@hostname. Run ssh to this host in Terminal first to authorize access and verify its host key. Duckterm must be serving on remote port 4300."
@@ -331,9 +357,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func connectHost(_ host: RemoteHost?, launchDraft: [String: String]? = nil, selectedSession: String? = nil) {
+        guard host == nil || edition?.includes("remote_workspaces") == true else { return }
         // A host is a launch/session destination, never the dashboard origin.
         // Existing WKWebView, terminals, local server and sidebar stay mounted.
-        window?.desktopHosts = hosts
+        window?.desktopHosts = edition?.includes("remote_workspaces") == true ? hosts : []
         window?.desktopTarget = "local"
         window?.launchDraft = launchDraft
         window?.launchTarget = host?.target ?? "local"
@@ -356,6 +383,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = "Could not connect"
         alert.informativeText = error.localizedDescription
         alert.runModal()
+    }
+
+    private func refreshEdition() async throws -> DesktopEdition {
+        do {
+            let response = try await launchAPI.perform(base: server.url, operation: "edition", params: [:])
+            let current = try DesktopEdition(response: response)
+            try current.validate(expected: AppIdentity.edition)
+            applyEdition(current)
+            return current
+        } catch {
+            applyEdition(nil)
+            throw error
+        }
+    }
+
+    private func requireFeature(_ feature: String) async throws {
+        guard await ensureLocalServer() else { throw LaunchDestination.Failure.message("Local server is unavailable") }
+        let current = try await refreshEdition()
+        guard current.includes(feature) else {
+            throw LaunchDestination.Failure.message("This action is unavailable in Duckterm \(current.id.capitalized)")
+        }
+    }
+
+    private func applyEdition(_ current: DesktopEdition?) {
+        guard edition != current else { return }
+        edition = current
+        window?.desktopHosts = current?.includes("remote_workspaces") == true ? hosts : []
+        if current?.includes("remote_workspaces") != true {
+            sessionTransport.close()
+            for key in Array(pollers.keys) where key != "local" {
+                pollers.removeValue(forKey: key)?.stop()
+                notified.removeValue(forKey: key)
+            }
+            launchConnections.values.forEach { $0.stop() }
+            launchConnections.removeAll()
+        }
+        window?.refreshDesktop()
     }
 
     private func notifyWaiting(_ waiting: [Session], host: String) {

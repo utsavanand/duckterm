@@ -5,6 +5,7 @@ import { api } from "./api";
 import { effectiveState } from "./sessions";
 import { SessionView, viewFromPersisted } from "./types";
 import { VoiceSession, Speaker } from "./voice";
+import { FULL } from "./test/editions";
 
 const probe = vi.hoisted(() => ({
   terminal: vi.fn(), connectors: vi.fn(), voice: [] as VoiceSession[],
@@ -33,6 +34,7 @@ beforeEach(() => {
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.stubGlobal("fetch", vi.fn(async (path: string) => ({ ok: true, json: async () => String(path).includes("archive-requests") ? { requests: probe.requests } : String(path).endsWith("/shell") ? { open: false } : { pins: [] } })));
   vi.spyOn(api, "voiceStatus").mockResolvedValue({ state: "absent", size: "310 MB" });
+  vi.spyOn(api, "edition").mockResolvedValue({ id: "full", features: FULL });
   probe.sessions = Array.from({ length: 30 }, (_, i) => ({
     ...viewFromPersisted({ session_key: `test-${i}`, name: `test-${i}`, state: "busy", started_at: 1, updated_at: 100_000, event_count: 1 } as never),
     group: "Team", ptyOwned: true, idleSince: 100_000,

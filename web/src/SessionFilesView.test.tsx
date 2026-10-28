@@ -110,3 +110,24 @@ it("clears selection and revokes its download when the recorded root changes", a
   expect(screen.queryByRole("link", { name: "Download" })).not.toBeInTheDocument();
   expect(URL.revokeObjectURL).toHaveBeenCalled();
 });
+it("browses and reads files without any registered-artifact request when the edition has no artifacts", async () => {
+  const registered = { ...saved, path: "notes.txt", source_state: "present" as const };
+  vi.mocked(sessionFiles.list).mockResolvedValue(page([{ ...file, artifact: registered }], { artifacts: [registered] }));
+  render(<SessionFilesView session={session} artifacts={false} />);
+  fireEvent.click(await screen.findByRole("button", { name: /notes.txt/ }));
+  await screen.findByText("current");
+  expect(screen.queryByRole("group", { name: "Files filter" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Registered artifact")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "View saved version" })).not.toBeInTheDocument();
+  expect(api.artifacts).not.toHaveBeenCalled();
+  expect(api.artifact).not.toHaveBeenCalled();
+});
+it("does not fall back to saved copies without artifacts when the directory is unavailable", async () => {
+  vi.mocked(sessionFiles.list).mockResolvedValue({ available: false, reason: "missing" });
+  render(<SessionFilesView session={session} artifacts={false} />);
+  await screen.findByText("No directory is shown.");
+  expect(screen.queryByRole("button", { name: "View saved copies" })).not.toBeInTheDocument();
+  render(<SessionFilesView session={{ ...session, host: "server" }} artifacts={false} />);
+  await screen.findByText("Remote — not browsable here");
+  expect(api.artifacts).not.toHaveBeenCalled();
+});

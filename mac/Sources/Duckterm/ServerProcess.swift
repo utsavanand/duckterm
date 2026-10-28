@@ -6,6 +6,7 @@ import Foundation
 final class ServerProcess {
     let url = URL(string: "http://127.0.0.1:\(AppIdentity.localPort)")!
     private var task: Process?
+    private(set) var startupError = "The local server could not start. Check that the Duckterm CLI is installed and up to date."
 
     /// Resolve the CLI with the same PATH its child tools will inherit.
     private func findBinary(environment: [String: String]) -> String? {
@@ -43,6 +44,7 @@ final class ServerProcess {
     /// running (an external `duckterm serve` is reused, not duplicated).
     func start() async -> Bool {
         if await isUp() {
+            guard await matchesEdition() else { return false }
             AppDiagnostics.shared.record("Connected to existing local server")
             return true
         }
@@ -54,6 +56,10 @@ final class ServerProcess {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: bin)
         proc.arguments = AppIdentity.isTest ? ["-m", "duckterm.cli", "serve"] : ["serve"]
+        if let edition = AppIdentity.edition {
+            proc.arguments?.append(contentsOf: ["--edition", edition])
+            env["DUCKTERM_EDITION"] = edition
+        }
         // The app IS the dashboard window — without this, serve would also
         // open the default browser on the same URL.
         if AppIdentity.isTest {
@@ -78,13 +84,28 @@ final class ServerProcess {
         task = proc
         for _ in 0..<40 {  // up to ~8s for the server to bind
             if await isUp() {
+                guard await matchesEdition() else { return false }
                 AppDiagnostics.shared.record("Local server ready")
                 return true
             }
+            if !proc.isRunning { break }
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
         AppDiagnostics.shared.record("Server startup timed out")
         return false
+    }
+
+    private func matchesEdition() async -> Bool {
+        guard AppIdentity.edition != nil else { return true }
+        do {
+            let response = try await LaunchDestination().perform(base: url, operation: "edition", params: [:])
+            try DesktopEdition(response: response).validate(expected: AppIdentity.edition)
+            return true
+        } catch {
+            startupError = error.localizedDescription
+            AppDiagnostics.shared.record("Local server edition could not be verified")
+            return false
+        }
     }
 
     func stop() {

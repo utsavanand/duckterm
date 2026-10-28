@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { desktop } from "./desktop";
+import { desktop, hiddenHost } from "./desktop";
 import { sessionRef, splitSessionRef } from "./hostTransport";
 import { SessionView } from "./types";
 
@@ -54,6 +54,8 @@ export function useSessionSelection(sessions: SessionView[], defaultKey: string 
     }
     if (key) {
       const { host } = splitSessionRef(key);
+      // A computer hidden by the edition keeps its saved choice for an edition with remote workspaces.
+      if (hiddenHost(host)) return;
       const configured = host === "local" || desktop()?.targets.some(t => t.id === host);
       // A local snapshot cannot invalidate a remote choice. Wait for the
       // selected host's first successful snapshot, however long it is offline.
@@ -62,5 +64,6 @@ export function useSessionSelection(sessions: SessionView[], defaultKey: string 
     if (key !== defaultKey) selectSession(defaultKey);
   }, [selection, sessions, defaultKey, loadedHosts, targetsRevision, selectSession]);
 
-  return { selectedKey: selection.key, selectSession };
+  const hidden = selection.key !== null && hiddenHost(splitSessionRef(selection.key).host) === "hidden";
+  return { selectedKey: hidden ? defaultKey : selection.key, selectSession };
 }

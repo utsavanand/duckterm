@@ -1,16 +1,19 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { sessionRef } from "./hostTransport";
 import { api } from "./api";
 import { LaunchModal } from "./LaunchModal";
+import { allowRemoteWorkspaces } from "./desktop";
 
 vi.mock("./api", () => ({ api: {
   setGroup: vi.fn().mockResolvedValue({ updated: true }),
   zshThemes: vi.fn().mockResolvedValue({ themes: [] }),
   browse: vi.fn().mockResolvedValue({ path: "/Users/test", parent: null, is_git: false, entries: [] }),
 } }));
+beforeEach(() => allowRemoteWorkspaces(true));
 afterEach(() => {
   cleanup();
+  allowRemoteWorkspaces(null);
   delete window.__rubbertermDesktop;
   delete window.webkit;
 });

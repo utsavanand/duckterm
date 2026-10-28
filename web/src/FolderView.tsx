@@ -11,10 +11,12 @@ import { FolderDetails, FolderActions } from "./FolderDetails";
 import { PrList } from "./review/PrList";
 import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import type { PrRow } from "./api";
+import { Feature, useEdition } from "./edition";
 
 const TABS = ["chat", "artifacts", "prs"] as const;
 type Tab = (typeof TABS)[number];
 const TAB_LABELS: Record<Tab, string> = { chat: "Chat", artifacts: "Artifacts", prs: "Pull requests" };
+const TAB_FEATURES: Record<Tab, Feature> = { chat: "folder_chat", artifacts: "artifacts", prs: "pr_review" };
 
 // Folder panels are ordinary internal components; sessions remain in the tree.
 export function FolderView({ folder, ...actions }: { folder: string } & FolderActions) {
@@ -28,21 +30,23 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
   const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
   const openReview = (row: PrRow) => setReview({ repo: row.repo, ref: row.pr ? String(row.pr.number) : row.branch, from: row.session?.name });
   const tabs = useRef<HTMLDivElement>(null);
+  const { has } = useEdition();
+  const shown = TABS.filter(name => has(TAB_FEATURES[name]));
   return <section className={`rd-folder-view rd-folder-with-details${details ? " details-open" : ""}`} aria-label={`Folder ${folder}`}>
     <div className="rd-folder-main"><header className="rd-folder-heading"><button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button><small>Folder</small><h1>{folder.split("/").pop()}</h1><p>{folder} · Includes subfolders{desktop() ? " · This Mac" : ""}</p></header>
     <div ref={tabs} className="rd-folder-tabs" role="tablist" aria-label="Folder views" onKeyDown={event => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
-      const index = TABS.indexOf(tab);
-      const next = event.key === "Home" ? TABS[0] : event.key === "End" ? TABS[TABS.length - 1] : TABS[(index + (event.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
+      const index = shown.indexOf(tab);
+      const next = event.key === "Home" ? shown[0] : event.key === "End" ? shown[shown.length - 1] : shown[(index + (event.key === "ArrowRight" ? 1 : shown.length - 1)) % shown.length];
       setTab(next);
       tabs.current?.querySelector<HTMLButtonElement>(`#folder-${next}-tab`)?.focus();
     }}>
-      {TABS.map(name => <button key={name} id={`folder-${name}-tab`} role="tab" aria-controls={`folder-${name}`} aria-selected={tab === name} tabIndex={tab === name ? 0 : -1} onClick={() => setTab(name)}>{TAB_LABELS[name]}</button>)}
+      {shown.map(name => <button key={name} id={`folder-${name}-tab`} role="tab" aria-controls={`folder-${name}`} aria-selected={tab === name} tabIndex={tab === name ? 0 : -1} onClick={() => setTab(name)}>{TAB_LABELS[name]}</button>)}
     </div>
     <div id="folder-chat" role="tabpanel" aria-labelledby="folder-chat-tab" className="rd-folder-chat-panel" hidden={tab !== "chat"}><FolderChat key={folder} folder={folder} active={tab === "chat"} /></div>
-    <div id="folder-artifacts" role="tabpanel" aria-labelledby="folder-artifacts-tab" className="rd-folder-artifacts-panel" hidden={tab !== "artifacts"}>{tab === "artifacts" && <ArtifactsView key={folder} folder={folder} />}</div>
-    <div id="folder-prs" role="tabpanel" aria-labelledby="folder-prs-tab" className="rd-folder-prs-panel" hidden={tab !== "prs"}>{tab === "prs" && review && <ReviewWorkspace key={`${review.repo}:${review.ref}`} repo={review.repo} target={review.ref} from={review.from} onBack={() => setReview(null)} />}{tab === "prs" && !review && <PrList key={folder} scope={{ kind: "folder", folder }} active={tab === "prs"} onOpenSession={actions.onOpenSession} onReview={openReview} />}</div>
+    <div id="folder-artifacts" role="tabpanel" aria-labelledby="folder-artifacts-tab" className="rd-folder-artifacts-panel" hidden={tab !== "artifacts"}>{tab === "artifacts" && has("artifacts") && <ArtifactsView key={folder} folder={folder} />}</div>
+    <div id="folder-prs" role="tabpanel" aria-labelledby="folder-prs-tab" className="rd-folder-prs-panel" hidden={tab !== "prs"}>{tab === "prs" && has("pr_review") && review && <ReviewWorkspace key={`${review.repo}:${review.ref}`} repo={review.repo} target={review.ref} from={review.from} onBack={() => setReview(null)} />}{tab === "prs" && has("pr_review") && !review && <PrList key={folder} scope={{ kind: "folder", folder }} active={tab === "prs"} onOpenSession={actions.onOpenSession} onReview={openReview} />}</div>
     </div>{details && <FolderDetails key={folder} folder={folder} onClose={() => setDetails(false)} {...actions} />}
   </section>;
 }

@@ -12,7 +12,7 @@ import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
 
-from duckterm import __version__
+from duckterm import __version__, editions
 from duckterm.core import events
 from duckterm.helpers import instance
 
@@ -39,6 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default=os.environ.get("DUCKTERM_HOST", DEFAULT_HOST))
     serve.add_argument("--port", type=int, default=instance.port())
     serve.add_argument(
+        "--edition", choices=list(editions.PRESETS), help="desktop features for this instance"
+    )
+    serve.add_argument(
         "--reload",
         action="store_true",
         help="dev: restart the server when a source file changes (watches src/duckterm)",
@@ -50,6 +53,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     restart.add_argument("--host", default=os.environ.get("DUCKTERM_HOST", DEFAULT_HOST))
     restart.add_argument("--port", type=int, default=instance.port())
+    restart.add_argument(
+        "--edition", choices=list(editions.PRESETS), help="desktop features after restarting"
+    )
 
     launch = sub.add_parser("launch", help="launch a supervised agent in a running server")
     launch.add_argument(
@@ -201,12 +207,16 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
-def _restart(host: str, port: int) -> int:
+def _restart(host: str, port: int, *, edition: str | None = None) -> int:
     """Stop the old server completely before opening its SQLite database."""
     import signal
     import subprocess
     import time
 
+    # Old terminals retain their original environment after an edition change.
+    # Validate and select the last successful startup before stopping anything.
+    selected = editions.PRESETS[edition] if edition else editions.configured(prefer_saved=True)
+    os.environ["DUCKTERM_EDITION"] = selected.name
     if _duckterm_responds(host, port):
         print(f"stopping the server on :{port}…", file=sys.stderr)
         try:
@@ -525,6 +535,33 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+    if selected := getattr(args, "edition", None):
+        os.environ["DUCKTERM_EDITION"] = selected
+    optional = {
+        "voice": "oracle",
+        "snapshot": "checkpoints",
+        "connector-run": "connectors",
+        "connector-serve": "connectors",
+        "connector-service": "connectors",
+        "connector-attach": "connectors",
+        "connector-admin": "connectors",
+    }
+    if args.command in optional or args.command in {"serve", "restart"}:
+        try:
+            edition = editions.configured(
+                prefer_saved=args.command in optional
+                or (args.command == "restart" and not args.edition)
+            )
+            feature = optional.get(args.command)
+            if feature and not edition.includes(feature):
+                raise ValueError(f"{feature} is unavailable in Duckterm {edition.name.title()}")
+            if feature:
+                # Standalone handlers and children must use the same selection
+                # even when invoked from a terminal launched in an older edition.
+                os.environ["DUCKTERM_EDITION"] = edition.name
+        except ValueError as exc:
+            print(f"duckterm: {exc}", file=sys.stderr)
+            return 1
     if args.command in {"session", "memory"}:
         from duckterm import session_client
 
@@ -532,7 +569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "serve":
         return _serve(args.host, args.port, reload=args.reload)
     if args.command == "restart":
-        return _restart(args.host, args.port)
+        return _restart(args.host, args.port, edition=args.edition)
     if args.command == "launch":
         return _launch(args.agent_command, args.cwd, args.session_key, args.prompt)
     if args.command == "run":

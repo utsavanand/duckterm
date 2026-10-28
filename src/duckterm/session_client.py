@@ -274,7 +274,9 @@ def main(args: argparse.Namespace) -> int:
                 "duckterm session reply REQUEST_ID --file answer.txt. Read the next page "
                 "with --before next_cursor. Answered/expired/cancelled requests need no action."
             )
-        if action in {"self", "inbox"}:
+        if action in {"self", "inbox"} and (
+            "features" not in result or "artifacts" in result["features"]
+        ):
             result["artifact_instructions"] = (
                 "Automatically register user-facing files you generate with "
                 "duckterm session artifact /absolute/path --title 'Useful title'. "

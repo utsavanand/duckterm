@@ -6,6 +6,7 @@ import "./headerMenus.css";
 import { VOICE_LEVELS, VoiceChoice, VoiceLevel } from "./voice";
 import { NaturalVoicePanel, VoicePicker } from "./VoiceControl";
 import { LocalVoiceStatus } from "./api";
+import { useEdition } from "./edition";
 
 type Menu = "settings" | "new";
 export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNotify, notificationHelp, voiceLevel, onVoiceLevel, voice, onAction }: {
@@ -16,9 +17,9 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
   notifyOn: boolean;
   onNotify: () => void;
   notificationHelp?: string;
-  voiceLevel: VoiceLevel;
-  onVoiceLevel: (level: VoiceLevel) => void;
-  voice: {
+  voiceLevel?: VoiceLevel;
+  onVoiceLevel?: (level: VoiceLevel) => void;
+  voice?: {
     voices: VoiceChoice[];
     selected: string | null;
     ready: boolean;
@@ -36,6 +37,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
   const settingsButton = useRef<HTMLButtonElement>(null);
   const newButton = useRef<HTMLButtonElement>(null);
   const notificationsAvailable = "Notification" in window;
+  const { has } = useEdition();
 
   useEffect(() => {
     if (!open) return;
@@ -81,7 +83,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
           <label>Desktop notifications<input type="checkbox" checked={notifyOn} disabled={!notificationsAvailable} onChange={onNotify} aria-describedby="header-notification-help" /></label>
           <p id="header-notification-help">{notificationHelp ?? (notificationsAvailable ? "Notify when an agent needs an answer." : "Desktop notifications are unavailable in this browser.")}</p>
         </div>
-        <div className="rd-header-notifications">
+        {voice && onVoiceLevel && <div className="rd-header-notifications">
           <label>Voice announcements<select value={voice.ready ? voiceLevel : "off"} disabled={!voice.ready} onChange={(event) => onVoiceLevel(event.target.value as VoiceLevel)} aria-describedby="header-voice-help">
             {VOICE_LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
           </select></label>
@@ -92,10 +94,10 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
           </p>
           <VoicePicker voices={voice.voices} selected={voice.selected} onSelect={voice.onSelect} onPreview={voice.onPreview} />
           <NaturalVoicePanel status={voice.local} fallbackReason={voice.fallbackReason} onInstall={voice.onInstall} onRemove={voice.onRemove} />
-        </div>
+        </div>}
         <div className="rd-header-menu-divider" />
-        <button className="rd-header-menu-item" onClick={() => action("collaboration")}>Collaboration <span aria-hidden="true">›</span></button>
-        <button className="rd-header-menu-item" onClick={() => action("checkpointing")}>Checkpointing <span aria-hidden="true">›</span></button>
+        {has("inbox") && <button className="rd-header-menu-item" onClick={() => action("collaboration")}>Collaboration <span aria-hidden="true">›</span></button>}
+        {has("checkpoints") && <button className="rd-header-menu-item" onClick={() => action("checkpointing")}>Checkpointing <span aria-hidden="true">›</span></button>}
         <button className="rd-header-menu-item" onClick={() => action("bugreport")}>Report a bug <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" title="Manage skill kits for your projects" onClick={() => action("harnesses")}>Harnesses <span aria-hidden="true">›</span></button>

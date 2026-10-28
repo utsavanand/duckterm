@@ -4,11 +4,12 @@ import { hostFetch } from "./hostTransport";
 import { authHeaders } from "./api";
 
 // Poll each host independently: a slow/offline remote never blocks local data.
-export function useHostData<T>(path: string, interval = 3000) {
+export function useHostData<T>(path: string, interval = 3000, enabled = true) {
   const [data, setData] = useState<Record<string, T>>({});
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision(n => n + 1), []);
   useEffect(() => {
+    if (!enabled) { setData({}); return; }
     let stopped = false;
     const hosts = desktop()?.targets.map(h => h.id) ?? ["local"];
     setData(previous => Object.fromEntries(Object.entries(previous).filter(([host]) => hosts.includes(host))));
@@ -25,6 +26,6 @@ export function useHostData<T>(path: string, interval = 3000) {
     hosts.forEach(host => void poll(host));
     window.addEventListener("desktop-targets-changed", refresh);
     return () => { stopped = true; timers.forEach(clearTimeout); window.removeEventListener("desktop-targets-changed", refresh); };
-  }, [path, interval, revision, refresh]);
+  }, [path, interval, revision, refresh, enabled]);
   return { data, refresh };
 }
