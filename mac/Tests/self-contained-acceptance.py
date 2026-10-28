@@ -223,9 +223,12 @@ def main() -> int:
         probe = root / "pane-probe.json"
         marker = "sc-accept-pane-marker"
         line = (
-            'printf \'{"duckterm":"%s","pythonpath":"%s","pythonhome":"%s","version":"%s"}\' '
+            'printf \'{"duckterm":"%s","pythonpath":"%s","pythonhome":"%s","version":"%s",'
+            '"jq":"%s","jq_ok":"%s"}\' '
             '"$(command -v duckterm)" "${PYTHONPATH-}" "${PYTHONHOME-}" '
-            f"\"$(duckterm --version 2>&1)\" > '{probe}'; echo {marker}\n"
+            '"$(duckterm --version 2>&1)" "${DUCKTERM_BUNDLED_JQ-}" '
+            '"$(echo 1 | "${DUCKTERM_BUNDLED_JQ:-false}" -c . 2>&1)" '
+            f"> '{probe}'; echo {marker}\n"
         )
         request(base, token, "POST", f"/sessions/{key}/input", {"text": line})
         wait_for(probe.exists, 15)
@@ -240,6 +243,12 @@ def main() -> int:
             "agent CLI matches the bundle version",
             seen.get("version") == version,
             str(seen.get("version")),
+        )
+        # macOS 15 ships /usr/bin/jq, so only the named bundled path proves anything.
+        check(
+            "agents get this bundle's jq for hook approvals and notices",
+            seen.get("jq", "").startswith(resources) and seen.get("jq_ok") == "1",
+            f"{seen.get('jq')} -> {seen.get('jq_ok')}",
         )
         check(
             "no bundle path injected into agent PYTHONPATH/PYTHONHOME",
