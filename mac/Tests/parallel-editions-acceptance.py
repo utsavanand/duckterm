@@ -163,6 +163,64 @@ def pane_run(app: App, key: str, script: str, out: Path) -> dict:
         return {}
 
 
+def snapshot(path: Path) -> dict[str, str]:
+    import hashlib
+
+    if path.is_symlink():
+        return {".": "symlink:" + os.readlink(path)}
+    return {
+        str(p.relative_to(path)): hashlib.sha256(p.read_bytes()).hexdigest()
+        for p in sorted(path.rglob("*"))
+        if p.is_file()
+    }
+
+
+def ownership_cases(app: App) -> None:
+    """An existing workspace the app didn't create is refused and left as it was."""
+    pid = app.profile["profile_id"]
+    other = app.home.parent / "someone-elses-workspace"
+    cases = {
+        "an unmarked existing home": lambda: (
+            app.home.mkdir(),
+            (app.home / "db.sqlite").write_bytes(b"user data"),
+            (app.home / "token").write_text("user-token\n"),
+        ),
+        "a home marked for another profile": lambda: (
+            app.home.mkdir(),
+            (app.home / "profile.json").write_text(
+                json.dumps({"format": 1, "profile_id": "other", "edition": app.edition}) + "\n"
+            ),
+        ),
+        "a symlinked home": lambda: (
+            other.mkdir(),
+            (other / "db.sqlite").write_bytes(b"user data"),
+            app.home.symlink_to(other),
+        ),
+    }
+    for label, make in cases.items():
+        make()
+        before, outside = snapshot(app.home), snapshot(other) if other.exists() else {}
+        run = subprocess.run(
+            [str(app.cli), "serve", "--edition", app.edition],
+            env=app.env,
+            capture_output=True,
+            text=True,
+            timeout=40,
+        )
+        check(
+            f"{pid}: {label} is refused and left unchanged",
+            run.returncode != 0
+            and not port_busy(int(app.profile["port"]))
+            and snapshot(app.home) == before
+            and (snapshot(other) if other.exists() else {}) == outside,
+            run.stderr.strip()[-200:],
+        )
+        if app.home.is_symlink():
+            app.home.unlink()
+        shutil.rmtree(app.home, ignore_errors=True)
+        shutil.rmtree(other, ignore_errors=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("apps", nargs="+", type=Path, help="app bundles to run side by side")
@@ -226,9 +284,23 @@ def main() -> int:
             check("all profile ports are free on this machine (refusing to run)", False, busy)
             return 1
 
+        # 1b. Ownership: never adopt a workspace the app didn't create.
+        ownership_cases(apps[-1])
+
         # 2. Coexistence: every server up at once, each describing its own instance.
         for app in apps:
             check(f"{app.profile['profile_id']}: server starts", app.start(), app.log)
+        for app in apps:
+            if app.profile["profile_id"] == "full":
+                continue  # the legacy Full workspace deliberately has no marker
+            marker = app.home / "profile.json"
+            want = {"format": 1, "profile_id": app.profile["profile_id"], "edition": app.edition}
+            got = json.loads(marker.read_text()) if marker.exists() else None
+            check(
+                f"{app.profile['profile_id']}: new home carries its ownership marker",
+                got == want,
+                got,
+            )
         for app in apps:
             status, edition = app.get("/edition")
             inst = edition.get("instance", {}) if isinstance(edition, dict) else {}
