@@ -1,4 +1,5 @@
 import json
+import shlex
 from pathlib import Path
 
 import pytest
@@ -318,19 +319,25 @@ def test_startup_repair_repoints_moved_app_hooks_and_keeps_everything_else(
     assert sorted(hooks_install.repair_moved_app_hooks()) == sorted([settings, copilot])
 
     after = json.loads(settings.read_text())
-    expected = json.loads(json.dumps(claude).replace(old, str(current)).replace(pipx, str(current)))
+    expected = json.loads(json.dumps(claude))
+    for groups in expected["hooks"].values():
+        for group in groups:
+            for hook in group["hooks"]:
+                argv = shlex.split(hook["command"])
+                if argv[0] in {old, pipx}:
+                    hook["command"] = shlex.join([str(current), *argv[1:]])
     assert after == expected  # same events, matchers, timeouts, async flags and order
     assert after["model"] == "opus" and after["permissions"] == {"allow": ["Bash"]}
     assert custom in after["hooks"]["Stop"][1]["hooks"]
     # A pipx install's registered hook now runs this app's script, not a stale copy.
     pipx_group = after["hooks"]["Notification"][-1]["hooks"][0]
-    assert pipx_group["command"] == f'"{current}" Notification claude-code'
+    assert shlex.split(pipx_group["command"]) == [str(current), "Notification", "claude-code"]
     commands = [
         e["command"]
         for entries in json.loads(copilot.read_text())["hooks"].values()
         for e in entries
     ]
-    assert commands and all(c.startswith(f'"{current}" ') for c in commands)
+    assert commands and all(shlex.split(c)[0] == str(current) for c in commands)
 
     before = settings.read_bytes(), copilot.read_bytes()
     assert hooks_install.repair_moved_app_hooks() == []  # idempotent
@@ -377,4 +384,35 @@ def test_startup_repair_only_runs_for_an_app_bundle_on_the_default_home(
     before = settings.read_bytes()
 
     assert hooks_install.repair_moved_app_hooks() == []
+    assert settings.read_bytes() == before
+
+
+def test_repaired_commands_keep_shell_metacharacters_in_app_names_as_data(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    from duckterm.agents.hooks_install import claude_style_build
+
+    hooks_install, current = _repair_rig(
+        tmp_path, monkeypatch, here='Odd $HOME `id` "Quoted" Name.app'
+    )
+    settings = tmp_path / ".claude/settings.json"
+    settings.parent.mkdir()
+    old = f"/Applications/DuckTerm.app/{APP_SCRIPT}"
+    settings.write_text(json.dumps(claude_style_build({}, old, "claude-code")))
+
+    assert hooks_install.repair_moved_app_hooks() == [settings]
+    command = json.loads(settings.read_text())["hooks"]["Stop"][0]["hooks"][0]["command"]
+    assert shlex.split(command) == [str(current), "Stop", "claude-code"]
+    # The shell sees exactly that argv: no expansion, no command substitution.
+    argv = subprocess.run(
+        ["bash", "-c", f'set -- {command}; printf "%s\\n" "$@"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    assert argv == [str(current), "Stop", "claude-code"]
+    before = settings.read_bytes()
+    assert hooks_install.repair_moved_app_hooks() == []  # recognized as current, idempotent
     assert settings.read_bytes() == before

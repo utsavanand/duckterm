@@ -295,7 +295,8 @@ def _repoint(config: dict[str, Any], script: Path) -> bool:
             if not (_in_app_bundle(path) or _in_pipx_venv(path)):
                 continue
             _, event, runtime = shlex.split(command)
-            entry[key] = f'"{script}" {event} {runtime}'
+            # A relocated app's name may hold $, ` or quotes; keep the argv as data.
+            entry[key] = shlex.join([str(script), event, runtime])
             changed = True
         for child in entry.get("hooks", []) if isinstance(entry.get("hooks"), list) else []:
             visit(child)
