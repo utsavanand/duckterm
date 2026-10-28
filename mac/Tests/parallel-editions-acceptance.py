@@ -494,6 +494,9 @@ def main() -> int:
     if not args.release:
         print("NOTE  provisional run: --release not given, manifest keys not required\n")
     originals_before = {str(p.resolve()): bundle_state(p.resolve()) for p in args.apps}
+    # Equality alone would accept two equally broken signatures.
+    unsigned = [path for path, (signed, _) in originals_before.items() if not signed]
+    check("original bundles: valid signature before use", not unsigned, unsigned)
 
     # Short private socket dir: macOS caps socket paths near 104 bytes.
     tmux_dir = Path(tempfile.mkdtemp(prefix="pe-", dir="/tmp"))
