@@ -64,11 +64,20 @@ def _hook_invocation(command: str) -> Path | None:
 
 
 def _is_ours(command: str) -> bool:
-    """Require our loaded script or the exact package path in a known pipx venv."""
+    """Require our loaded script, the exact package path in a known pipx venv, or
+    the exact package path inside a DuckTerm app bundle at any location."""
     path = _hook_invocation(command)
-    if path is None or not path.is_absolute():
+    if path is None or not path.is_absolute() or ".." in path.parts:
         return False
     if path == hook_script_path():
+        return True
+    # A moved or renamed app, or another edition's app, left hooks at its old
+    # bundle path; without this a reinstall would add a second set beside them.
+    if re.fullmatch(
+        r"/.+\.app/Contents/Resources/python/lib/python[0-9]+\.[0-9]+"
+        r"/site-packages/duckterm/hooks/duckterm-hook\.sh",
+        path.as_posix(),
+    ):
         return True
     roots = [Path.home() / ".local/pipx", Path.home() / ".local/share/pipx"]
     if os.environ.get("PIPX_HOME"):

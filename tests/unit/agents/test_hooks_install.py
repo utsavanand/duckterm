@@ -217,3 +217,57 @@ def test_deleted_known_pipx_package_script_remains_recognizable(
     assert not script.exists()
     assert _is_ours(f'"{script}" Stop claude-code')
     assert not _is_ours(f'"{script.parent / ".." / "duckterm-hook.sh"}" Stop claude-code')
+
+
+APP_SCRIPT = (
+    "Contents/Resources/python/lib/python3.13/site-packages/duckterm/hooks/duckterm-hook.sh"
+)
+
+
+def test_hooks_from_another_app_location_are_replaced_not_duplicated(tmp_path: Path) -> None:
+    from duckterm.agents.hooks_install import claude_style_build
+
+    full = f"/Applications/DuckTerm.app/{APP_SCRIPT}"
+    lite = f"/Users/me/Downloads/Dir With Spaces/DuckTerm Lite.app/{APP_SCRIPT}"
+    config = claude_style_build({}, full, "claude-code")
+    config = claude_style_build(config, lite, "claude-code")
+    for event in _EVENTS:
+        commands = [h["command"] for e in config["hooks"][event] for h in e["hooks"]]
+        assert commands == [f'"{lite}" {event} claude-code']
+
+
+def test_uninstall_removes_hooks_left_by_a_deleted_app(tmp_path: Path) -> None:
+    path = settings_path(global_scope=False, project_dir=tmp_path)
+    path.parent.mkdir()
+    gone = f"/Applications/Old Copy/DuckTerm.app/{APP_SCRIPT}"
+    custom = {"type": "command", "command": "/custom/user-tools/duckterm-hook.sh Stop claude-code"}
+    stale = {"type": "command", "command": f'"{gone}" Stop claude-code'}
+    config = {
+        "hooks": {
+            "Stop": [
+                {"matcher": "*", "hooks": [stale]},
+                {"matcher": "*", "hooks": [custom]},
+            ]
+        }
+    }
+    path.write_text(json.dumps(config))
+    uninstall(global_scope=False, project_dir=tmp_path)
+    assert json.loads(path.read_text())["hooks"]["Stop"] == [{"matcher": "*", "hooks": [custom]}]
+
+
+def test_app_bundle_ownership_requires_the_exact_package_layout() -> None:
+    from duckterm.agents.hooks_install import _is_ours
+
+    assert _is_ours(f'"/Applications/DuckTerm Code.app/{APP_SCRIPT}" PostToolUse codex')
+    for value in [
+        f'"/Applications/DuckTerm.app/{APP_SCRIPT}" PostToolUse unknown-runtime',
+        f'"/Applications/DuckTerm.app/{APP_SCRIPT}" Stop claude-code extra',
+        f'"Applications/DuckTerm.app/{APP_SCRIPT}" Stop claude-code',
+        f'"/Applications/DuckTerm.app/../Other.app/{APP_SCRIPT}" Stop claude-code',
+        '"/Applications/DuckTerm.app/Contents/Resources/duckterm-hook.sh" Stop claude-code',
+        '"/Applications/Tool.app/Contents/Resources/python/lib/python3.13'
+        '/site-packages/other/hooks/duckterm-hook.sh" Stop claude-code',
+        '"/opt/DuckTerm/Contents/Resources/python/lib/python3.13'
+        '/site-packages/duckterm/hooks/duckterm-hook.sh" Stop claude-code',
+    ]:
+        assert not _is_ours(value), value
