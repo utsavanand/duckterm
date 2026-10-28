@@ -300,3 +300,13 @@ def test_restart_mismatched_pidfile_leaves_listener_running(monkeypatch):
     (instance.home() / "server.pid").write_text("42")
     assert cli._restart("127.0.0.1", 4300) == 1
     assert (instance.home() / "server.pid").read_text() == "42"
+
+
+def test_workspace_cli_cannot_create_an_unmarked_desktop_home(monkeypatch):
+    select(monkeypatch, "code")
+    assert cli.main(["purge-test"]) == 1
+    assert not instance.home().exists()
+    instance.home().mkdir()
+    (instance.home() / "foreign.txt").write_text("keep")
+    assert cli.main(["install-hooks", "--global", "--agent", "claude-code"]) == 1
+    assert list(instance.home().iterdir()) == [instance.home() / "foreign.txt"]

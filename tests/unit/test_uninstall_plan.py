@@ -77,3 +77,20 @@ def test_custom_same_basename_is_not_offered_for_removal(tmp_path, monkeypatch):
     assert result["owned_commands"] == 0
     assert result["unverified_commands"] == 1
     assert path.read_text() == original
+
+
+def test_inventory_reports_shared_and_foreign_hook_registrations(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / ".duckterm"))
+    monkeypatch.delenv("DUCKTERM_INSTANCE", raising=False)
+    hooks_install.install(global_scope=True, project_dir=tmp_path, agent="claude-code")
+    monkeypatch.setenv("DUCKTERM_INSTANCE", "code")
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / ".duckterm-code"))
+    assert inspect_hook("claude-code")["state"] == "unchanged"
+    hooks_install.install(global_scope=True, project_dir=tmp_path, agent="claude-code")
+    assert inspect_hook("claude-code")["state"] == "shared"
+    hooks_install.uninstall(global_scope=True, project_dir=tmp_path, agent="claude-code")
+    assert inspect_hook("claude-code")["state"] == "unchanged"
+    monkeypatch.delenv("DUCKTERM_INSTANCE")
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / ".duckterm"))
+    assert inspect_hook("claude-code")["state"] == "removable"

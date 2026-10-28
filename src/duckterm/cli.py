@@ -672,6 +672,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if selected := getattr(args, "edition", None):
         os.environ["DUCKTERM_EDITION"] = selected
+    if instance.configured_profile() is not None:
+        from duckterm.helpers import profile_state
+
+        try:
+            instance.validate_desktop_context(editions.configured().name)
+            new_home = profile_state.validate_home()
+            if new_home and args.command not in {
+                "serve",
+                "restart",
+                "doctor",
+                "install-hooks",
+                "uninstall-hooks",
+                "uninstall",
+            }:
+                raise ValueError("Open this edition's app before using workspace commands")
+        except ValueError as exc:
+            print(f"duckterm: {exc}", file=sys.stderr)
+            return 1
     optional = {
         "voice": "oracle",
         "snapshot": "checkpoints",

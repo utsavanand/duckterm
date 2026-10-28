@@ -6047,9 +6047,9 @@ class Server:
         try:
             # CLI startup also reserves the port before opening the database.
             server = (
-                await asyncio.start_server(self.handle, sock=reserved_socket)
+                await asyncio.start_server(self.handle, sock=reserved_socket, start_serving=False)
                 if reserved_socket is not None
-                else await asyncio.start_server(self.handle, host, port)
+                else await asyncio.start_server(self.handle, host, port, start_serving=False)
             )
             self._bound_port = server.sockets[0].getsockname()[1]
             refreshed = session_instructions.refresh_guides(
@@ -6061,8 +6061,14 @@ class Server:
             from duckterm.agents.hooks_install import repair_moved_app_hooks
 
             try:
-                for path in repair_moved_app_hooks():
-                    print(f"repointed DuckTerm hooks in {path} at this app")
+                projects = {
+                    Path(value)
+                    for row in self.history.sessions()
+                    for key in ("cwd", "worktree_path")
+                    if isinstance(value := row.get(key), str) and Path(value).is_absolute()
+                }
+                for path in repair_moved_app_hooks(project_dirs=projects):
+                    print(f"repointed DuckTerm hooks in {path} at the shared handler")
             except (OSError, ValueError) as exc:  # a user's own config; never block startup
                 print(f"left hook configuration unchanged: {exc}", file=sys.stderr)
             adopted = await self.orchestrator.reconcile()
@@ -6077,6 +6083,7 @@ class Server:
             actual_port = server.sockets[0].getsockname()[1]
             if self.edition.includes("inbox"):
                 self.history.session_api.set_url(f"http://127.0.0.1:{actual_port}")
+            await server.start_serving()
             if on_listening is not None:
                 on_listening(host, port)
             self.archives.recover()
