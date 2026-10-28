@@ -14,6 +14,7 @@ with no DUCKTERM_INSTANCE and no overrides, behaviour is exactly as before.
 """
 
 import hashlib
+import json
 import os
 import re
 from pathlib import Path
@@ -74,12 +75,31 @@ def desktop_profile(edition: str, *, test: bool = False) -> DesktopProfile:
 
 def configured_profile() -> DesktopProfile | None:
     raw = os.environ.get("DUCKTERM_DESKTOP_PROFILE", "")
+    marker = None
     if not raw:
-        return None
+        path = home() / "profile.json"
+        try:
+            marker = json.loads(path.read_text())
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Cannot verify desktop workspace ownership at {path}") from exc
+        if not isinstance(marker, dict) or marker.get("format") != 1:
+            raise ValueError(f"Unknown desktop workspace ownership at {path}")
+        profile_id = marker.get("profile_id")
+        if not isinstance(profile_id, str):
+            raise ValueError(f"Unknown desktop profile at {path}")
+        raw = profile_id
     for test in (False, True):
         for edition in ("full", "lite", "code"):
             profile = desktop_profile(edition, test=test)
             if profile["profile_id"] == raw:
+                if marker is not None and marker != {
+                    "format": 1,
+                    "profile_id": raw,
+                    "edition": edition,
+                }:
+                    raise ValueError("Conflicting desktop workspace ownership marker")
                 return profile
     raise ValueError(f"Unknown Duckterm desktop profile: {raw!r}")
 
@@ -186,7 +206,6 @@ def heartbeat_url() -> str:
 
 if __name__ == "__main__":
     import argparse
-    import json
 
     parser = argparse.ArgumentParser(description="Generate desktop profile build metadata")
     parser.add_argument("--desktop-profile", choices=("full", "lite", "code"), required=True)

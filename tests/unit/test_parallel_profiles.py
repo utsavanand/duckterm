@@ -310,3 +310,17 @@ def test_workspace_cli_cannot_create_an_unmarked_desktop_home(monkeypatch):
     (instance.home() / "foreign.txt").write_text("keep")
     assert cli.main(["install-hooks", "--global", "--agent", "claude-code"]) == 1
     assert list(instance.home().iterdir()) == [instance.home() / "foreign.txt"]
+
+
+def test_global_cli_cannot_change_a_desktop_owned_home_to_another_edition(monkeypatch):
+    select(monkeypatch, "code")
+    instance.home().mkdir()
+    profile_state.remember_new_home()
+    marker = (instance.home() / "profile.json").read_bytes()
+    monkeypatch.delenv("DUCKTERM_DESKTOP_PROFILE")
+    monkeypatch.delenv("DUCKTERM_APP_PROFILE")
+    monkeypatch.delenv("DUCKTERM_EDITION")
+    assert instance.configured_profile()["profile_id"] == "code"
+    monkeypatch.setattr(cli, "_restart", lambda *a, **k: pytest.fail("foreign restart"))
+    assert cli.main(["restart", "--edition", "full"]) == 1
+    assert (instance.home() / "profile.json").read_bytes() == marker

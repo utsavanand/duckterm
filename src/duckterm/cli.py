@@ -672,7 +672,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     if selected := getattr(args, "edition", None):
         os.environ["DUCKTERM_EDITION"] = selected
-    if instance.configured_profile() is not None:
+    try:
+        profile = instance.configured_profile()
+    except ValueError as exc:
+        print(f"duckterm: {exc}", file=sys.stderr)
+        return 1
+    if profile is not None:
         from duckterm.helpers import profile_state
 
         try:
