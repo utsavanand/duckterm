@@ -94,6 +94,8 @@ def test_crash_between_payload_and_receipt_fails_closed(plugin):
 
 
 def test_file_drop_transport_uses_actual_global_config_and_never_json_parser(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
     class Probe:
         name = "probe"
         hook_spec = HookSpec(

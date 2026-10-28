@@ -22,6 +22,25 @@ EVENT_TYPE="${1:-Unknown}"
 # Which agent this hook is for (claude-code | codex | copilot). Defaults to
 # claude-code so older installs that pass only the event type keep working.
 RUNTIME="${2:-claude-code}"
+# A partial target must never pair another edition's URL with Full's token (or
+# another edition's token with Full's URL). The launcher supplies the complete
+# instance context. Older explicit HOME+URL pairs remain compatible. An
+# unscoped external agent always retains the legacy Full destination.
+if [ -z "${DUCKTERM_INSTANCE:-}${DUCKTERM_DESKTOP_PROFILE:-}${DUCKTERM_HOME:-}" ] \
+  && [ "${DUCKTERM_URL:-}" = "http://127.0.0.1:4300" ] \
+  && [ "${DUCKTERM_PORT:-4300}" = "4300" ] \
+  && [ "${DUCKTERM_TMUX_SOCKET:-duckterm}" = "duckterm" ]; then
+  # Already-running legacy Full panes received only the default URL. Their
+  # destination is unambiguous; preserve them across the first parallel upgrade.
+  DUCKTERM_HOME="$HOME/.duckterm"
+fi
+if [ -n "${DUCKTERM_INSTANCE:-}${DUCKTERM_DESKTOP_PROFILE:-}" ]; then
+  [ -n "${DUCKTERM_HOME:-}" ] && [ -n "${DUCKTERM_URL:-}" ] \
+    && [ -n "${DUCKTERM_PORT:-}" ] || exit 0
+fi
+if [ -n "${DUCKTERM_HOME:-}${DUCKTERM_URL:-}${DUCKTERM_PORT:-}${DUCKTERM_TMUX_SOCKET:-}" ]; then
+  [ -n "${DUCKTERM_HOME:-}" ] && [ -n "${DUCKTERM_URL:-}" ] || exit 0
+fi
 INPUT=$(cat)
 URL="${DUCKTERM_URL:-http://127.0.0.1:4300}"
 # Set by Duckterm when it launches the agent in a terminal, so the agent's
@@ -35,7 +54,10 @@ SESSION_KEY="${DUCKTERM_SESSION_KEY:-}"
 # no DUCKTERM_BUNDLED_JQ, or one naming a path that is gone. Then the app's
 # named jq, then PATH.
 JQ=""
-if [[ "${BASH_SOURCE[0]}" =~ ^(/.+\.app/Contents/Resources)/python/lib/python[0-9]+\.[0-9]+/site-packages/duckterm/hooks/duckterm-hook\.sh$ ]] \
+if [ "${BASH_SOURCE[0]}" = "$HOME/.duckterm-hooks/v1/duckterm-hook.sh" ] \
+  && [ -x "$HOME/.duckterm-hooks/v1/jq" ]; then
+  JQ="$HOME/.duckterm-hooks/v1/jq"
+elif [[ "${BASH_SOURCE[0]}" =~ ^(/.+\.app/Contents/Resources)/python/lib/python[0-9]+\.[0-9]+/site-packages/duckterm/hooks/duckterm-hook\.sh$ ]] \
   && [ -x "${BASH_REMATCH[1]}/jq/bin/jq" ]; then
   JQ="${BASH_REMATCH[1]}/jq/bin/jq"
 elif [ -n "${DUCKTERM_BUNDLED_JQ:-}" ] && [ -x "$DUCKTERM_BUNDLED_JQ" ]; then

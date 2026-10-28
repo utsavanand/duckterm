@@ -4,12 +4,28 @@ from pathlib import Path
 
 import pytest
 
+from duckterm.agents.hook_dispatch import shared_script_path
 from duckterm.agents.hooks_install import (
     _EVENTS,
     install,
     settings_path,
     uninstall,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_profile(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    for name in (
+        "DUCKTERM_HOME",
+        "DUCKTERM_INSTANCE",
+        "DUCKTERM_DESKTOP_PROFILE",
+        "DUCKTERM_PORT",
+        "DUCKTERM_URL",
+        "DUCKTERM_TMUX_SOCKET",
+        "DUCKTERM_BUNDLED_JQ",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def read_settings(project: Path) -> dict:
@@ -43,7 +59,11 @@ def test_install_keeps_shell_metacharacters_in_script_path_as_data(
     from duckterm.agents import hooks_install
 
     script = tmp_path / 'Odd $HOME `id` "Quoted" Name.app' / "duckterm-hook.sh"
+    source = hooks_install.hook_script_path().read_bytes()
+    script.parent.mkdir(parents=True)
+    script.write_bytes(source)
     monkeypatch.setattr(hooks_install, "hook_script_path", lambda: script)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: script.parent))
     path = install(global_scope=False, project_dir=tmp_path, agent=agent)
     config = json.loads(path.read_text())
     hook = (
@@ -57,7 +77,7 @@ def test_install_keeps_shell_metacharacters_in_script_path_as_data(
         text=True,
         check=True,
     ).stdout.splitlines()
-    assert argv == [str(script), "Stop", agent]
+    assert argv == [str(shared_script_path()), "Stop", agent]
     before = path.read_bytes()
     install(global_scope=False, project_dir=tmp_path, agent=agent)
     assert path.read_bytes() == before
@@ -312,8 +332,14 @@ def _repair_rig(tmp_path: Path, monkeypatch, *, here: str = "New Place/DuckTerm.
     monkeypatch.delenv("DUCKTERM_HOME", raising=False)
     monkeypatch.delenv("DUCKTERM_INSTANCE", raising=False)
     current = tmp_path / here / APP_SCRIPT
+    current.parent.mkdir(parents=True)
+    current.write_bytes(hooks_install.hook_script_path().read_bytes())
+    jq = tmp_path / here / "Contents/Resources/jq/bin/jq"
+    jq.parent.mkdir(parents=True)
+    jq.write_text("#!/bin/sh\nexit 0\n")
+    jq.chmod(0o700)
     monkeypatch.setattr(hooks_install, "hook_script_path", lambda: current)
-    return hooks_install, current
+    return hooks_install, shared_script_path()
 
 
 def test_startup_repair_repoints_moved_app_hooks_and_keeps_everything_else(

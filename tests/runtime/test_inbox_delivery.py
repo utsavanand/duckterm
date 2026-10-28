@@ -253,10 +253,11 @@ def test_stop_shell_forwards_only_hook_response_and_loop_guard(tmp_path):
         capture_output=True,
         check=True,
         env={
-            **os.environ,
+            **{key: value for key, value in os.environ.items() if not key.startswith("DUCKTERM_")},
             "PATH": str(binary) + os.pathsep + os.environ["PATH"],
             "DUCKTERM_INTERNAL": "",
             "DUCKTERM_HOME": str(tmp_path),
+            "DUCKTERM_URL": "http://127.0.0.1:9",
             "CAPTURE": str(capture),
         },
     )
