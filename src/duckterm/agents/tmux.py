@@ -26,6 +26,7 @@ from duckterm.helpers.private_files import private_write
 from duckterm.helpers.runtime import module_command
 
 _PREFIX = "rd_"
+_BUNDLED_TOOLS = ("DUCKTERM_BUNDLED_CLI", "DUCKTERM_BUNDLED_JQ", "DUCKTERM_BUNDLED_TMUX")
 
 
 def socket_name() -> str:
@@ -145,11 +146,18 @@ def spawn(
     under claude's own session_id and the launched-only ingest drops those
     events as foreign."""
     target = target_for(session_id)
+    # The persistent tmux server keeps the environment of whichever backend
+    # started it. Name this backend's app tools explicitly, and drop ones it
+    # lacks, so a moved, translocated or replaced app never leaves new panes
+    # pointing at a vanished bundle. These are paths, never secrets.
+    tools = {name: os.environ[name] for name in _BUNDLED_TOOLS if os.environ.get(name)}
+    env = {**tools, **(env or {})}
     # Automated callers often export NO_COLOR for their own command logs.
     # A persistent tmux server retains it even after that caller is gone.
     # Interactive panes should use ANSI colors unless this launch opts out.
-    if "NO_COLOR" not in (env or {}):
-        command = "unset NO_COLOR; " + command
+    unset = [name for name in ("NO_COLOR", *_BUNDLED_TOOLS) if name not in env]
+    if unset:
+        command = f"unset {' '.join(unset)}; " + command
     env_args: list[str] = []
     for k, v in (env or {}).items():
         env_args += ["-e", f"{k}={v}"]
