@@ -37,7 +37,15 @@ final class ServerProcess {
         }
         proc.environment = Self.profileEnvironment(inheriting: env, profile: AppIdentity.profile)
         proc.standardOutput = FileHandle.nullDevice
-        proc.standardError = FileHandle.nullDevice
+        // Drain stderr for the server's lifetime, keeping only the tail that
+        // explains a refusal (a workspace or port owned by someone else).
+        let log = StartupLog()
+        let errors = Pipe()
+        errors.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil } else { log.append(data) }
+        }
+        proc.standardError = errors
         do {
             try proc.run()
         } catch {
@@ -54,6 +62,15 @@ final class ServerProcess {
             }
             if !proc.isRunning { break }
             try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        if !proc.isRunning {
+            errors.fileHandleForReading.readabilityHandler = nil
+            log.append(errors.fileHandleForReading.readDataToEndOfFile())
+            if let reason = Self.startupReason(stderr: log.text, port: AppIdentity.localPort) {
+                startupError = reason
+                AppDiagnostics.shared.record("Server refused to start")
+                return false
+            }
         }
         AppDiagnostics.shared.record("Server startup timed out")
         return false
@@ -88,6 +105,19 @@ final class ServerProcess {
         }
     }
 
+    /// The backend reports a refusal as "duckterm: <reason>"; a foreign program
+    /// on the port surfaces as a bind error.
+    static func startupReason(stderr: String, port: Int) -> String? {
+        let lines = stderr.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+        if let line = lines.last(where: { $0.hasPrefix("duckterm: ") }) {
+            return String(line.dropFirst("duckterm: ".count))
+        }
+        if stderr.contains("Address already in use") {
+            return "Port \(port) is in use by another program. Quit it, then reopen this app."
+        }
+        return nil
+    }
+
     func stop() {
         task?.terminate()
         task = nil
@@ -100,5 +130,23 @@ final class ServerProcess {
             let http = resp as? HTTPURLResponse
         else { return false }
         return http.statusCode == 200 && http.value(forHTTPHeaderField: "X-Duckterm") == "1"
+    }
+}
+
+/// Bounded and thread-safe: the pipe handler runs off the main thread.
+final class StartupLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tail = ""
+
+    func append(_ data: Data) {
+        lock.lock()
+        tail = String((tail + String(decoding: data, as: UTF8.self)).suffix(4096))
+        lock.unlock()
+    }
+
+    var text: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return tail
     }
 }

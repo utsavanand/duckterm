@@ -53,4 +53,21 @@ final class ServerProcessTests: XCTestCase {
         XCTAssertEqual(AppIdentity.userHome(isTest: false, environment: env).path, NSHomeDirectory())
         XCTAssertEqual(AppIdentity.userHome(isTest: true, environment: ["HOME": "relative"]).path, NSHomeDirectory())
     }
+
+    func testRefusalExplainsItselfInsteadOfTimingOut() {
+        let refused = "Traceback...\nduckterm: Existing workspace /Users/me/.duckterm-lite is not owned by this desktop profile.\n"
+        XCTAssertEqual(ServerProcess.startupReason(stderr: refused, port: 4519),
+                       "Existing workspace /Users/me/.duckterm-lite is not owned by this desktop profile.")
+        XCTAssertEqual(ServerProcess.startupReason(stderr: "OSError: [Errno 48] Address already in use", port: 4519),
+                       "Port 4519 is in use by another program. Quit it, then reopen this app.")
+        XCTAssertNil(ServerProcess.startupReason(stderr: "serving on http://127.0.0.1:4519\n", port: 4519))
+    }
+
+    func testStartupLogKeepsOnlyTheTail() {
+        let log = StartupLog()
+        log.append(Data(String(repeating: "x", count: 10_000).utf8))
+        log.append(Data("\nduckterm: last reason\n".utf8))
+        XCTAssertEqual(log.text.count, 4096)
+        XCTAssertTrue(log.text.hasSuffix("duckterm: last reason\n"))
+    }
 }

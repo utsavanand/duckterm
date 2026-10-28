@@ -9,6 +9,7 @@ preferences stay apart from an installed Test app. No production data used.
 import json
 import os
 import plistlib
+import pwd
 import shutil
 import signal
 import socket
@@ -22,6 +23,28 @@ from contextlib import suppress
 from pathlib import Path
 
 source = Path(sys.argv[1]).resolve()
+# Preferences and WebKit storage follow the real account home and bundle ID,
+# whatever $HOME says. A unique copy ID keeps them apart; prove it and clean up.
+LIBRARY = Path(pwd.getpwuid(os.getuid()).pw_dir) / "Library"
+
+
+def storage(bundle_id: str) -> dict[str, tuple[int, float]]:
+    """Every per-bundle store macOS or WebKit keeps: file count and latest change."""
+    found = {}
+    for path in (
+        LIBRARY / "Preferences" / f"{bundle_id}.plist",
+        LIBRARY / "WebKit" / bundle_id,
+        LIBRARY / "Caches" / bundle_id,
+        LIBRARY / "HTTPStorages" / bundle_id,
+        LIBRARY / "HTTPStorages" / f"{bundle_id}.binarycookies",
+        LIBRARY / "Saved Application State" / f"{bundle_id}.savedState",
+    ):
+        if path.exists():
+            files = [path, *path.rglob("*")] if path.is_dir() else [path]
+            found[str(path)] = (len(files), max(f.lstat().st_mtime for f in files))
+    return found
+
+
 # Socket paths are limited to 104 bytes, so tmux gets a short private directory.
 with (
     tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch,
@@ -46,12 +69,15 @@ with (
     except OSError:
         sys.exit(f"Port {port} is in use; quit {info['CFBundleName']} or its server first")
     state_home = home / info["DucktermHome"]
+    real_id = info["CFBundleIdentifier"]
+    real_before = storage(real_id)
     tmux_socket = info["DucktermTmuxSocket"]
     info.update(
         CFBundleIdentifier=info["CFBundleIdentifier"] + ".smoke." + uuid.uuid4().hex[:12],
         DucktermTestSystemTools=False,
     )
     info_path.write_bytes(plistlib.dumps(info))
+    copy_id = info["CFBundleIdentifier"]
     subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
     env = {
         "HOME": str(home),
@@ -188,8 +214,22 @@ with (
         for pid in set(children):
             with suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGTERM)
+        used = storage(copy_id)
         subprocess.run(
-            ["/usr/bin/defaults", "delete", info["CFBundleIdentifier"]],
+            ["/usr/bin/defaults", "delete", copy_id],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        for path in map(Path, used):
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+        isolation = {
+            "copy_storage_used": sorted(p.replace(str(LIBRARY), "~/Library") for p in used),
+            "copy_storage_removed": storage(copy_id) == {},
+            "real_test_app_storage_unchanged": storage(real_id) == real_before,
+        }
+        print(json.dumps(isolation))
+        if not (isolation["copy_storage_removed"] and isolation["real_test_app_storage_unchanged"]):
+            sys.exit("Test storage was not isolated")
