@@ -739,14 +739,14 @@ def main() -> int:
             and all(a.tmux("ls").stdout == panes[a.profile["profile_id"]] for a in rest),
         )
 
+        # 6b. An app's CLI used from a plain terminal targets its own profile.
+        # Before the hook phase, which deletes one app to test removal.
+        for app in apps:
+            plain_terminal_cli(app)
+
         # 7. Shared hooks: one app-independent handler, membership per profile.
         symlinked_home_install(apps[-1], root)
         shared_hooks(apps, root, keys)
-
-        # 7b. An app's CLI used from a plain terminal targets its own profile.
-        for app in apps:
-            if app.app.exists():
-                plain_terminal_cli(app)
 
         # 7c. The legacy workspace and its live agent were never touched.
         legacy_after = (snapshot(home / ".duckterm"), legacy_pane(apps[0]))
