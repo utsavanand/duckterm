@@ -96,6 +96,25 @@ def test_profiles_share_one_hook_and_uninstall_only_their_membership(home, monke
     assert hook_dispatch.shared_script_path().is_file()
 
 
+def test_home_alias_does_not_change_hook_membership(home, monkeypatch):
+    actual = home / "physical-home"
+    actual.mkdir()
+    alias = home / "home-alias"
+    alias.symlink_to(actual, target_is_directory=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: alias))
+    profile(monkeypatch, "code")
+    path = install(alias)
+    owner = hook_dispatch.profile_key()
+    before = path.read_bytes()
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: actual))
+    canonical = actual / ".claude/settings.json"
+    assert hook_dispatch.registered_profiles(canonical, "claude-code") == {owner}
+    install(actual)
+    assert canonical.read_bytes() == before
+    uninstall(actual)
+    assert read_config(actual) == {}
+
+
 def test_legacy_hooks_remain_full_owned_when_code_registers(home, monkeypatch):
     path = home / ".claude/settings.json"
     path.parent.mkdir()
@@ -174,7 +193,10 @@ def test_shared_handler_upgrade_requires_a_higher_revision(home, monkeypatch):
     hook_dispatch.ensure_shared_script(source)
     assert script.read_bytes() == source.read_bytes()
     assert script.stat().st_mode & 0o777 == 0o700
-    assert json.loads(script.with_name("assets.json").read_text())["revision"] == 2
+    assert (
+        json.loads(script.with_name("assets.json").read_text())["revision"]
+        == hook_dispatch.REVISION
+    )
     assert b"fixture license notice" in script.with_name("NOTICES.txt").read_bytes()
 
 
@@ -289,6 +311,17 @@ def test_removed_apps_leave_stop_and_approval_hooks_working(delivery, home):
     assert "fixture-full-token" in calls.read_text()
     decision = json.loads(run_hook(script, env, "PermissionRequest").stdout)
     assert decision["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+
+
+def test_shared_jq_is_used_with_a_symlinked_home(delivery, home):
+    script, env, calls = delivery
+    (home / ".duckterm").mkdir()
+    (home / ".duckterm/token").write_text("fixture-token")
+    alias = home / "home-alias"
+    alias.symlink_to(home, target_is_directory=True)
+    env.update(HOME=str(alias), PATH=str(home / "fake") + ":/bin")
+    assert json.loads(run_hook(script, env).stdout) == {"notice": "inbox"}
+    assert "fixture-token" in calls.read_text()
 
 
 def test_explicit_code_context_uses_only_code_endpoint_and_token(delivery, home, monkeypatch):

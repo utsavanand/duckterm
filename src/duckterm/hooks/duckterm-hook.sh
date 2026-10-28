@@ -54,9 +54,11 @@ SESSION_KEY="${DUCKTERM_SESSION_KEY:-}"
 # no DUCKTERM_BUNDLED_JQ, or one naming a path that is gone. Then the app's
 # named jq, then PATH.
 JQ=""
-if [ "${BASH_SOURCE[0]}" = "$HOME/.duckterm-hooks/v1/duckterm-hook.sh" ] \
-  && [ -x "$HOME/.duckterm-hooks/v1/jq" ]; then
-  JQ="$HOME/.duckterm-hooks/v1/jq"
+SHARED_HOME=$(cd -- "$HOME" 2>/dev/null && pwd -P)
+if [ -n "$SHARED_HOME" ] \
+  && [ "${BASH_SOURCE[0]}" = "$SHARED_HOME/.duckterm-hooks/v1/duckterm-hook.sh" ] \
+  && [ -x "$SHARED_HOME/.duckterm-hooks/v1/jq" ]; then
+  JQ="$SHARED_HOME/.duckterm-hooks/v1/jq"
 elif [[ "${BASH_SOURCE[0]}" =~ ^(/.+\.app/Contents/Resources)/python/lib/python[0-9]+\.[0-9]+/site-packages/duckterm/hooks/duckterm-hook\.sh$ ]] \
   && [ -x "${BASH_REMATCH[1]}/jq/bin/jq" ]; then
   JQ="${BASH_REMATCH[1]}/jq/bin/jq"

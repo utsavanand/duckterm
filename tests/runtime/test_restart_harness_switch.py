@@ -460,6 +460,7 @@ def test_real_hook_forwards_switch_generation_without_network(tmp_path, with_jq)
         **os.environ,
         "PATH": str(tools),
         "DUCKTERM_HOME": str(tmp_path / "duckterm"),
+        "DUCKTERM_URL": "http://127.0.0.1:49111",
         "DUCKTERM_SESSION_KEY": "synthetic-test",
         "DUCKTERM_HARNESS_GENERATION": "b" * 32,
     }

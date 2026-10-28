@@ -20,12 +20,20 @@ from duckterm.helpers import instance
 
 # Increment when changing the shared script or its pinned jq. An older app may
 # use a newer v1 handler, but must never replace it with an older handler.
-REVISION = 1
+REVISION = 2
 LEGACY_FULL = "legacy-full"
 
 
 def shared_script_path() -> Path:
-    return Path.home() / ".duckterm-hooks/v1/duckterm-hook.sh"
+    return Path.home().resolve() / ".duckterm-hooks/v1/duckterm-hook.sh"
+
+
+def _config_path(path: Path) -> Path:
+    absolute = path.absolute()
+    home = Path.home().absolute()
+    return (
+        home.resolve() / absolute.relative_to(home) if absolute.is_relative_to(home) else absolute
+    )
 
 
 def profile_key() -> str:
@@ -173,7 +181,7 @@ class Registrations:
 
     @staticmethod
     def _key(path: Path, runtime: str) -> str:
-        value = json.dumps([os.path.abspath(path), runtime])
+        value = json.dumps([str(_config_path(path)), runtime])
         return hashlib.sha256(value.encode()).hexdigest()
 
     def members(self, path: Path, runtime: str, *, legacy: bool) -> set[str]:
@@ -188,7 +196,7 @@ class Registrations:
         key = self._key(path, runtime)
         if members:
             self.entries[key] = {
-                "path": os.path.abspath(path),
+                "path": str(_config_path(path)),
                 "runtime": runtime,
                 "profiles": sorted(members),
             }
