@@ -244,6 +244,16 @@ def test_code_startup_never_claims_legacy_full_or_custom_entries(home, monkeypat
     assert dispatch(home).stdout.splitlines()[0] == "full"
 
 
+def test_hosted_startup_does_not_register_runtime_or_touch_harness_config(home, monkeypatch):
+    config_path = mcp_install.claude_install("github", "duckterm", ["connector-run", "github"])
+    before = config_path.read_bytes()
+    monkeypatch.setenv("DUCKTERM_HOSTED", "1")
+    monkeypatch.setattr(connectors, "_duckterm_bin", lambda: pytest.fail("desktop CLI resolved"))
+    connectors.refresh_runtime_registration()
+    assert config_path.read_bytes() == before
+    assert not connector_dispatch.launcher_path().parent.exists()
+
+
 def test_code_connect_preserves_existing_legacy_full_runtime(home, monkeypatch):
     old = fake_cli(home, "full", compiled=False)
     mcp_install.claude_install("github", str(old), ["connector-run", "github"])

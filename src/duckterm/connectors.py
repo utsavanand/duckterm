@@ -242,6 +242,8 @@ def refresh_runtime_registration() -> None:
     Called after the server has established home ownership. No credentials are
     loaded, no connector is enabled and no foreign membership is claimed.
     """
+    if os.environ.get("DUCKTERM_HOSTED"):
+        return  # Hosted harness registrations remain administrator-managed.
     connector_dispatch.register_runtime(_duckterm_bin())
     for name in NAMES:
         for harness in HARNESSES:
