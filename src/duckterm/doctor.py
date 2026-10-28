@@ -74,12 +74,13 @@ def _check_server(url: str) -> Result:
     return Result(
         "fail",
         f"{url} is answered by something that isn't Duckterm",
-        "free the port or pick another: duckterm serve --port 4300",
+        "identify the application using this address before stopping it; "
+        "desktop editions need their assigned port",
     )
 
 
 def _check_token() -> Result:
-    """The hook reads ~/.duckterm/token to authenticate its POSTs."""
+    """The hook reads its owning workspace's token to authenticate its POSTs."""
     path = paths.home() / "token"
     if not path.exists():
         return Result(
@@ -90,9 +91,7 @@ def _check_token() -> Result:
     try:
         readable = bool(path.read_text().strip())
     except OSError as e:
-        return Result(
-            "fail", f"token file unreadable: {e}", "check permissions on ~/.duckterm/token"
-        )
+        return Result("fail", f"token file unreadable: {e}", f"check permissions on {path}")
     return Result("ok" if readable else "fail", "auth token present")
 
 
