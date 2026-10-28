@@ -23,6 +23,7 @@ from pathlib import Path
 
 from duckterm.helpers import instance, pane_log
 from duckterm.helpers.private_files import private_write
+from duckterm.helpers.runtime import module_command
 
 _PREFIX = "rd_"
 
@@ -229,9 +230,7 @@ def spawn_piped(
             "-t",
             exact_target(target, pane=True),
             "-o",
-            shlex.join(
-                [sys.executable, "-m", "duckterm.helpers.pane_log", pipe_path, str(completion)]
-            ),
+            shlex.join(module_command("duckterm.helpers.pane_log", pipe_path, str(completion))),
         )
         if not ok:
             raise ValueError(f"Cannot attach terminal output: {error.strip()}")
