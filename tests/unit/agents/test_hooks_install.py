@@ -34,6 +34,35 @@ def test_install_is_idempotent(tmp_path: Path) -> None:
     assert len(settings["hooks"]["Stop"]) == 1
 
 
+@pytest.mark.parametrize("agent", ["claude-code", "codex", "copilot"])
+def test_install_keeps_shell_metacharacters_in_script_path_as_data(
+    tmp_path: Path, monkeypatch, agent: str
+) -> None:
+    import subprocess
+
+    from duckterm.agents import hooks_install
+
+    script = tmp_path / 'Odd $HOME `id` "Quoted" Name.app' / "duckterm-hook.sh"
+    monkeypatch.setattr(hooks_install, "hook_script_path", lambda: script)
+    path = install(global_scope=False, project_dir=tmp_path, agent=agent)
+    config = json.loads(path.read_text())
+    hook = (
+        config["hooks"]["agentStop"][0]
+        if agent == "copilot"
+        else config["hooks"]["Stop"][0]["hooks"][0]
+    )
+    argv = subprocess.run(
+        ["bash", "-c", f'set -- {hook["command"]}; printf "%s\\n" "$@"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    assert argv == [str(script), "Stop", agent]
+    before = path.read_bytes()
+    install(global_scope=False, project_dir=tmp_path, agent=agent)
+    assert path.read_bytes() == before
+
+
 def test_install_preserves_existing_user_hooks(tmp_path: Path) -> None:
     claude = tmp_path / ".claude"
     claude.mkdir()
@@ -236,7 +265,7 @@ def test_hooks_from_another_app_location_are_replaced_not_duplicated(tmp_path: P
     config = claude_style_build(config, lite, "claude-code")
     for event in _EVENTS:
         commands = [h["command"] for e in config["hooks"][event] for h in e["hooks"]]
-        assert commands == [f'"{lite}" {event} claude-code']
+        assert [shlex.split(command) for command in commands] == [[lite, event, "claude-code"]]
 
 
 def test_uninstall_removes_hooks_left_by_a_deleted_app(tmp_path: Path) -> None:

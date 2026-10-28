@@ -130,7 +130,7 @@ def claude_style_build(config: dict[str, Any], script: str, runtime: str) -> dic
         plain_timeout = 3 if runtime == "codex" else 5
         hook: dict[str, Any] = {
             "type": "command",
-            "command": f'"{script}" {event} {runtime}',
+            "command": shlex.join([script, event, runtime]),
             "timeout": _BLOCKING_TIMEOUT if blocking else plain_timeout,
         }
         if supports_async:
@@ -202,7 +202,7 @@ def copilot_build(config: dict[str, Any], script: str, runtime: str) -> dict[str
                 # `command` is Copilot's cross-platform fallback; pass the
                 # canonical event name (so the server's vocabulary is uniform)
                 # and the runtime so events are attributed to copilot.
-                "command": f'"{script}" {canonical} {runtime}',
+                "command": shlex.join([script, canonical, runtime]),
                 "timeoutSec": 5,
             }
         )
