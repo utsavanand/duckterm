@@ -87,8 +87,11 @@ def _is_ours(command: str) -> bool:
         return True
     # A moved or renamed app, or another edition's app, left hooks at its old
     # bundle path; without this a reinstall would add a second set beside them.
-    if _in_app_bundle(path):
-        return True
+    return _in_app_bundle(path) or _in_pipx_venv(path)
+
+
+def _in_pipx_venv(path: Path) -> bool:
+    """The exact hook script location inside a known pipx venv for duckterm."""
     roots = [Path.home() / ".local/pipx", Path.home() / ".local/share/pipx"]
     if os.environ.get("PIPX_HOME"):
         roots.append(Path(os.environ["PIPX_HOME"]))
@@ -272,8 +275,9 @@ def install(*, global_scope: bool, project_dir: Path, agent: str = "claude-code"
 
 
 def _repoint(config: dict[str, Any], script: Path) -> bool:
-    """Rewrite app-bundle hook commands from another location to `script`, in place.
-    Event, runtime, ordering and every other field stay as registered."""
+    """Rewrite managed hook commands (another app bundle, or a known pipx venv) to
+    `script`, in place. Event, runtime, ordering and every other field stay as
+    registered."""
     hooks = _hook_groups(config)
     changed = False
 
@@ -286,7 +290,9 @@ def _repoint(config: dict[str, Any], script: Path) -> bool:
             if not isinstance(command, str):
                 continue
             path = _hook_invocation(command)
-            if path is None or path == script or not _in_app_bundle(path):
+            if path is None or path == script:
+                continue
+            if not (_in_app_bundle(path) or _in_pipx_venv(path)):
                 continue
             _, event, runtime = shlex.split(command)
             entry[key] = f'"{script}" {event} {runtime}'
@@ -301,12 +307,13 @@ def _repoint(config: dict[str, Any], script: Path) -> bool:
 
 
 def repair_moved_app_hooks() -> list[Path]:
-    """Point already-registered global hooks at this app after it moved or was renamed.
+    """Point already-registered global hooks at this app after it moved, was
+    renamed, or replaced a pipx install.
 
     Runs only when this process is itself an app bundle using the default state
     home, so test instances and pipx installs never touch user configuration. It
-    never adds hooks: missing files, files without DuckTerm entries, pipx entries
-    and custom commands are left exactly as they are.
+    never adds hooks: missing files, files without DuckTerm entries and custom
+    commands are left exactly as they are.
     """
     from duckterm.agents.hook_files import _lock, _read, _write
     from duckterm.harnesses import REGISTRY

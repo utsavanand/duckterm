@@ -29,10 +29,16 @@ URL="${DUCKTERM_URL:-http://127.0.0.1:4300}"
 # a duplicate session under Claude's own id. Empty for self-started sessions.
 SESSION_KEY="${DUCKTERM_SESSION_KEY:-}"
 
-# A bundled DuckTerm app ships its own jq and names it here, so blocking
-# approvals and Stop notices work on a Mac without jq; otherwise use PATH.
+# A bundled DuckTerm app ships its own jq, so blocking approvals and Stop
+# notices work on a Mac without jq. Prefer the jq beside this script when the
+# script sits in an app bundle: a pane started before an upgrade or a move has
+# no DUCKTERM_BUNDLED_JQ, or one naming a path that is gone. Then the app's
+# named jq, then PATH.
 JQ=""
-if [ -n "${DUCKTERM_BUNDLED_JQ:-}" ] && [ -x "$DUCKTERM_BUNDLED_JQ" ]; then
+if [[ "${BASH_SOURCE[0]}" =~ ^(/.+\.app/Contents/Resources)/python/lib/python[0-9]+\.[0-9]+/site-packages/duckterm/hooks/duckterm-hook\.sh$ ]] \
+  && [ -x "${BASH_REMATCH[1]}/jq/bin/jq" ]; then
+  JQ="${BASH_REMATCH[1]}/jq/bin/jq"
+elif [ -n "${DUCKTERM_BUNDLED_JQ:-}" ] && [ -x "$DUCKTERM_BUNDLED_JQ" ]; then
   JQ="$DUCKTERM_BUNDLED_JQ"
 elif command -v jq >/dev/null 2>&1; then
   JQ=jq

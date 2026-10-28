@@ -87,3 +87,57 @@ def test_unusable_bundled_jq_falls_back_to_path(rig) -> None:
     env["DUCKTERM_BUNDLED_JQ"] = str(root / "missing/jq")
     assert json.loads(run_hook(env, "Stop")) == STOP_OUTPUT
     assert not marker.exists()
+
+
+def _relocated_app(root: Path, app: str, jq: str, marker: Path) -> Path:
+    """The real hook script copied into an app bundle layout, with its own jq."""
+    resources = root / app / "Contents/Resources"
+    script = resources / "python/lib/python3.13/site-packages/duckterm/hooks/duckterm-hook.sh"
+    script.parent.mkdir(parents=True)
+    shutil.copy(SCRIPT, script)
+    executable(resources / "jq/bin/jq", f'#!/bin/sh\n: > "{marker}"\nexec "{jq}" "$@"\n')
+    return script
+
+
+def run_script(script: Path, env: dict[str, str], event: str) -> str:
+    result = subprocess.run(
+        ["bash", str(script), event, "claude-code"],
+        input='{"session_id":"s","tool_name":"Bash","stop_hook_active":false}',
+        text=True,
+        capture_output=True,
+        env=env,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+@pytest.mark.parametrize("named", ["stale", "absent"])
+def test_relocated_app_script_uses_its_own_jq_without_env_or_path(rig, named: str) -> None:
+    env, _, root = rig
+    jq = shutil.which("jq")
+    assert jq
+    marker = root / "adjacent-jq-ran"
+    script = _relocated_app(root, "Moved Here/DuckTerm Lite.app", jq, marker)
+    if named == "stale":
+        env["DUCKTERM_BUNDLED_JQ"] = str(
+            root / "Old Place/DuckTerm.app/Contents/Resources/jq/bin/jq"
+        )
+    else:
+        env.pop("DUCKTERM_BUNDLED_JQ")
+    # PATH still has only the broken jq first: success proves the adjacent one ran.
+    assert json.loads(run_script(script, env, "Stop")) == STOP_OUTPUT
+    decision = json.loads(run_script(script, env, "PermissionRequest"))
+    assert decision["hookSpecificOutput"]["decision"]["behavior"] == "allow"
+    assert marker.exists()
+
+
+def test_adjacent_jq_requires_the_exact_app_layout(rig) -> None:
+    env, _, root = rig
+    jq = shutil.which("jq")
+    assert jq
+    marker = root / "adjacent-jq-ran"
+    script = _relocated_app(root, "Not An App/Contents", jq, marker)
+    env.pop("DUCKTERM_BUNDLED_JQ")
+    run_script(script, env, "Stop")  # the broken PATH jq is all that is left
+    assert not marker.exists()

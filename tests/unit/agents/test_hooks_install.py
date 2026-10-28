@@ -318,12 +318,13 @@ def test_startup_repair_repoints_moved_app_hooks_and_keeps_everything_else(
     assert sorted(hooks_install.repair_moved_app_hooks()) == sorted([settings, copilot])
 
     after = json.loads(settings.read_text())
-    expected = json.loads(json.dumps(claude).replace(old, str(current)))
+    expected = json.loads(json.dumps(claude).replace(old, str(current)).replace(pipx, str(current)))
     assert after == expected  # same events, matchers, timeouts, async flags and order
     assert after["model"] == "opus" and after["permissions"] == {"allow": ["Bash"]}
     assert custom in after["hooks"]["Stop"][1]["hooks"]
+    # A pipx install's registered hook now runs this app's script, not a stale copy.
     pipx_group = after["hooks"]["Notification"][-1]["hooks"][0]
-    assert pipx_group["command"] == f'"{pipx}" Notification claude-code'
+    assert pipx_group["command"] == f'"{current}" Notification claude-code'
     commands = [
         e["command"]
         for entries in json.loads(copilot.read_text())["hooks"].values()
