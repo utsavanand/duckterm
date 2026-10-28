@@ -63,6 +63,20 @@ def _hook_invocation(command: str) -> Path | None:
     return None
 
 
+def _in_app_bundle(path: Path) -> bool:
+    """The exact hook script location inside a DuckTerm app bundle, wherever the app is."""
+    return (
+        path.is_absolute()
+        and ".." not in path.parts
+        and re.fullmatch(
+            r"/.+\.app/Contents/Resources/python/lib/python[0-9]+\.[0-9]+"
+            r"/site-packages/duckterm/hooks/duckterm-hook\.sh",
+            path.as_posix(),
+        )
+        is not None
+    )
+
+
 def _is_ours(command: str) -> bool:
     """Require our loaded script, the exact package path in a known pipx venv, or
     the exact package path inside a DuckTerm app bundle at any location."""
@@ -73,11 +87,7 @@ def _is_ours(command: str) -> bool:
         return True
     # A moved or renamed app, or another edition's app, left hooks at its old
     # bundle path; without this a reinstall would add a second set beside them.
-    if re.fullmatch(
-        r"/.+\.app/Contents/Resources/python/lib/python[0-9]+\.[0-9]+"
-        r"/site-packages/duckterm/hooks/duckterm-hook\.sh",
-        path.as_posix(),
-    ):
+    if _in_app_bundle(path):
         return True
     roots = [Path.home() / ".local/pipx", Path.home() / ".local/share/pipx"]
     if os.environ.get("PIPX_HOME"):
@@ -259,6 +269,71 @@ def install(*, global_scope: bool, project_dir: Path, agent: str = "claude-code"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(config, indent=2) + "\n")
     return path
+
+
+def _repoint(config: dict[str, Any], script: Path) -> bool:
+    """Rewrite app-bundle hook commands from another location to `script`, in place.
+    Event, runtime, ordering and every other field stay as registered."""
+    hooks = _hook_groups(config)
+    changed = False
+
+    def visit(entry: Any) -> None:
+        nonlocal changed
+        if not isinstance(entry, dict):
+            return
+        for key in ("command", "bash", "powershell"):
+            command = entry.get(key)
+            if not isinstance(command, str):
+                continue
+            path = _hook_invocation(command)
+            if path is None or path == script or not _in_app_bundle(path):
+                continue
+            _, event, runtime = shlex.split(command)
+            entry[key] = f'"{script}" {event} {runtime}'
+            changed = True
+        for child in entry.get("hooks", []) if isinstance(entry.get("hooks"), list) else []:
+            visit(child)
+
+    for entries in hooks.values():
+        for entry in entries:
+            visit(entry)
+    return changed
+
+
+def repair_moved_app_hooks() -> list[Path]:
+    """Point already-registered global hooks at this app after it moved or was renamed.
+
+    Runs only when this process is itself an app bundle using the default state
+    home, so test instances and pipx installs never touch user configuration. It
+    never adds hooks: missing files, files without DuckTerm entries, pipx entries
+    and custom commands are left exactly as they are.
+    """
+    from duckterm.agents.hook_files import _lock, _read, _write
+    from duckterm.harnesses import REGISTRY
+    from duckterm.helpers import instance
+
+    script = hook_script_path()
+    if not _in_app_bundle(script) or instance.home() != Path.home() / ".duckterm":
+        return []
+    repaired = []
+    for runtime in REGISTRY.values():
+        spec = runtime.hook_spec
+        if spec is None or spec.transport != "config-entry":
+            continue
+        path = spec.path(global_scope=True, project_dir=Path.home())
+        if not path.is_file():
+            continue  # never leave a lock file beside a config we have nothing to repair in
+        with _lock(path, create=False) as directory:
+            if directory is None:
+                continue
+            raw = _read(path.name, directory)
+            if raw is None:
+                continue
+            config = json.loads(raw)
+            if isinstance(config, dict) and _repoint(config, script):
+                _write(path.name, (json.dumps(config, indent=2) + "\n").encode(), directory)
+                repaired.append(path)
+    return repaired
 
 
 def uninstall(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
