@@ -50,11 +50,11 @@ struct DesktopEdition: Equatable {
         guard let profile else { return }
         guard let instance else {
             // A server predating profiles is only ever the legacy Full workspace.
-            guard profile.id == "full" else { throw conflict }
+            guard profile.isCanonicalFull else { throw conflict }
             return
         }
         // The global CLI's Full server reports no profile but the same legacy facets.
-        let sameProfile = instance.profile == profile.id || (instance.profile == nil && profile.id == "full")
+        let sameProfile = instance.profile == profile.id || (instance.profile == nil && profile.isCanonicalFull)
         guard sameProfile, instance.instance == profile.instance,
               URL(fileURLWithPath: instance.home).resolvingSymlinksInPath() == profile.home.resolvingSymlinksInPath(),
               instance.tmuxSocket == profile.tmuxSocket, instance.port == profile.port else { throw conflict }

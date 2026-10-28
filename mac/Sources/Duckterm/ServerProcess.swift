@@ -110,7 +110,11 @@ final class ServerProcess {
     static func startupReason(stderr: String, port: Int) -> String? {
         let lines = stderr.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
         if let line = lines.last(where: { $0.hasPrefix("duckterm: ") }) {
-            return String(line.dropFirst("duckterm: ".count))
+            // Shown in an alert: printable text only, one line, bounded.
+            let printable = line.dropFirst("duckterm: ".count).unicodeScalars
+                .map { CharacterSet.controlCharacters.contains($0) ? " " : String($0) }.joined()
+            let reason = printable.split(separator: " ").joined(separator: " ")
+            return reason.isEmpty ? nil : String(reason.prefix(300))
         }
         if stderr.contains("Address already in use") {
             return "Port \(port) is in use by another program. Quit it, then reopen this app."

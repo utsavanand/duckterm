@@ -39,7 +39,8 @@ final class DesktopEditionTests: XCTestCase {
     private let lite = AppProfile(id: "lite", edition: "lite", instance: "lite",
                                   home: URL(fileURLWithPath: "/Users/me/.duckterm-lite"), tmuxSocket: "duckterm-lite", port: 4519)
     private let full = AppProfile(id: "full", edition: "full", instance: nil,
-                                  home: URL(fileURLWithPath: "/Users/me/.duckterm"), tmuxSocket: "duckterm", port: 4300)
+                                  home: URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".duckterm"),
+                                  tmuxSocket: "duckterm", port: 4300)
 
     private func server(_ id: String, _ profile: AppProfile, profileID: Any? = nil, instance: Any? = nil,
                         home: String? = nil, socket: String? = nil, port: Int? = nil) throws -> DesktopEdition {
@@ -114,5 +115,21 @@ final class DesktopEditionTests: XCTestCase {
             XCTAssertThrowsError(try DesktopEdition(response: ["id": "lite", "features": [], "instance": instance]))
         }
         XCTAssertNoThrow(try DesktopEdition(response: ["id": "lite", "features": [], "instance": good]))
+    }
+
+    func testLegacyServerNeedsEveryCanonicalFullFacet() throws {
+        let legacy = try DesktopEdition(response: ["id": "full", "features": ["terminal"]])
+        XCTAssertTrue(full.isCanonicalFull)
+        let variants = [
+            AppProfile(id: "full", edition: "full", instance: nil, home: full.home, tmuxSocket: "duckterm", port: 4301),
+            AppProfile(id: "full", edition: "full", instance: nil, home: full.home, tmuxSocket: "duckterm-x", port: 4300),
+            AppProfile(id: "full", edition: "full", instance: "x", home: full.home, tmuxSocket: "duckterm", port: 4300),
+            AppProfile(id: "full", edition: "full", instance: nil, home: URL(fileURLWithPath: "/tmp/.duckterm"), tmuxSocket: "duckterm", port: 4300),
+        ]
+        for profile in variants {
+            XCTAssertFalse(profile.isCanonicalFull)
+            XCTAssertThrowsError(try legacy.validate(edition: "full", profile: profile))
+            XCTAssertThrowsError(try server("full", profile, profileID: NSNull()).validate(edition: "full", profile: profile))
+        }
     }
 }

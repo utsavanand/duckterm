@@ -70,4 +70,13 @@ final class ServerProcessTests: XCTestCase {
         XCTAssertEqual(log.text.count, 4096)
         XCTAssertTrue(log.text.hasSuffix("duckterm: last reason\n"))
     }
+
+    func testRefusalReasonIsSanitizedAndBounded() {
+        let hostile = "duckterm: bad\u{1b}[31m workspace\tname " + String(repeating: "y", count: 1000)
+        let reason = ServerProcess.startupReason(stderr: hostile, port: 4519)!
+        XCTAssertFalse(reason.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) })
+        XCTAssertTrue(reason.hasPrefix("bad [31m workspace name y"))
+        XCTAssertEqual(reason.count, 300)
+        XCTAssertNil(ServerProcess.startupReason(stderr: "duckterm: \u{7}\n", port: 4519))
+    }
 }

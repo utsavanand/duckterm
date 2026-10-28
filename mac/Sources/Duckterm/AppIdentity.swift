@@ -13,6 +13,13 @@ struct AppProfile: Equatable {
 
     var url: String { "http://127.0.0.1:\(port)" }
 
+    /// Exactly the workspace servers predating profiles used; nothing else may
+    /// accept such a server, including a Full Test or custom Full profile.
+    var isCanonicalFull: Bool {
+        id == "full" && edition == "full" && instance == nil && port == 4300 && tmuxSocket == "duckterm"
+            && home.standardizedFileURL == URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".duckterm")
+    }
+
     /// The complete context the backend validates; the empty instance clears a stale one.
     var environment: [String: String] {
         [
