@@ -39,8 +39,10 @@ with tempfile.TemporaryDirectory(prefix="duckterm-bundle-smoke-") as scratch:
         DucktermTestBuild=True,
         DucktermTestSystemTools=False,
         DucktermTestInstance=instance,
-        DucktermTestPort=port,
+        DucktermPort=port,
+        DucktermHome=".duckterm-" + instance,
     )
+    info.pop("DucktermProfile", None)
     info_path.write_bytes(plistlib.dumps(info))
     subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
     env = {

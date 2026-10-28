@@ -38,10 +38,52 @@ final class DesktopEditionTests: XCTestCase {
 
     func testNamedAppCannotReuseAnotherEditionServer() throws {
         let full = try DesktopEdition(response: ["id": "full", "features": ["terminal"]])
-        XCTAssertNoThrow(try full.validate(expected: "full"))
-        XCTAssertNoThrow(try full.validate(expected: nil))
-        XCTAssertThrowsError(try full.validate(expected: "lite"))
-        XCTAssertThrowsError(try full.validate(expected: "code"))
-        XCTAssertThrowsError(try full.validate(expected: "invalid"))
+        XCTAssertNoThrow(try full.validate(edition: "full", profile: nil, port: 4300))
+        XCTAssertNoThrow(try full.validate(edition: nil, profile: nil, port: 4300))
+        for other in ["lite", "code", "invalid"] {
+            XCTAssertThrowsError(try full.validate(edition: other, profile: nil, port: 4300))
+        }
+    }
+
+    private func server(_ id: String, profile: String, port: Int) throws -> DesktopEdition {
+        try DesktopEdition(response: [
+            "id": id, "features": ["terminal"],
+            "instance": ["profile_id": profile, "port": port, "instance_id": profile, "identity_version": 1],
+        ])
+    }
+
+    func testAppOnlyUsesTheServerOfItsOwnProfile() throws {
+        XCTAssertNoThrow(try server("lite", profile: "lite", port: 4519).validate(edition: "lite", profile: "lite", port: 4519))
+        XCTAssertNoThrow(try server("lite", profile: "test-lite", port: 4700).validate(edition: "lite", profile: "test-lite", port: 4700))
+        // Same edition but another profile or port, e.g. a test build's server.
+        XCTAssertThrowsError(try server("lite", profile: "test-lite", port: 4519).validate(edition: "lite", profile: "lite", port: 4519))
+        XCTAssertThrowsError(try server("lite", profile: "lite", port: 4800).validate(edition: "lite", profile: "lite", port: 4519))
+        XCTAssertThrowsError(try server("code", profile: "code", port: 4800).validate(edition: "lite", profile: "lite", port: 4800))
+    }
+
+    func testPreProfileServerIsAcceptedOnlyAsLegacyFull() throws {
+        let legacyFull = try DesktopEdition(response: ["id": "full", "features": ["terminal"]])
+        XCTAssertNil(legacyFull.profile)
+        XCTAssertNoThrow(try legacyFull.validate(edition: "full", profile: "full", port: 4300))
+        XCTAssertThrowsError(try legacyFull.validate(edition: "full", profile: "test", port: 4300))
+        let legacyLite = try DesktopEdition(response: ["id": "lite", "features": ["terminal"]])
+        XCTAssertThrowsError(try legacyLite.validate(edition: "lite", profile: "lite", port: 4519))
+        XCTAssertThrowsError(try legacyLite.validate(edition: "full", profile: "full", port: 4300))
+    }
+
+    func testConflictNamesTheRunningAppWithoutSuggestingTakeover() throws {
+        do {
+            try server("code", profile: "test-code", port: 4519).validate(edition: "lite", profile: "lite", port: 4519)
+            XCTFail("expected a conflict")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Port 4519 is in use by DuckTerm Code Test"))
+            XCTAssertFalse(error.localizedDescription.contains("restart"))
+        }
+    }
+
+    func testMalformedInstanceIsRejected() {
+        for instance: Any in ["lite", ["profile_id": "lite"], ["port": 4519], ["profile_id": 1, "port": 4519]] {
+            XCTAssertThrowsError(try DesktopEdition(response: ["id": "lite", "features": [], "instance": instance]))
+        }
     }
 }

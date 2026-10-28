@@ -34,18 +34,11 @@ final class ServerProcess {
         proc.arguments = ["-I", "-B", "-m", "duckterm.cli", "serve"]
         if let edition = AppIdentity.edition {
             proc.arguments?.append(contentsOf: ["--edition", edition])
-            env["DUCKTERM_EDITION"] = edition
         }
-        // The app IS the dashboard window — without this, serve would also
-        // open the default browser on the same URL.
-        if AppIdentity.isTest {
-            for key in ["DUCKTERM_HOME", "DUCKTERM_TMUX_SOCKET", "DUCKTERM_URL", "DUCKTERM_PORT", "DUCKTERM_HOSTED"] {
-                env.removeValue(forKey: key)
-            }
-            env["DUCKTERM_INSTANCE"] = Bundle.main.object(forInfoDictionaryKey: "DucktermTestInstance") as? String ?? "test"
-        }
-        env["DUCKTERM_NO_BROWSER"] = "1"
-        proc.environment = env
+        proc.environment = Self.profileEnvironment(
+            inheriting: env, profile: AppIdentity.profile, edition: AppIdentity.edition,
+            testInstance: AppIdentity.isTest ? Bundle.main.object(forInfoDictionaryKey: "DucktermTestInstance") as? String : nil,
+            port: AppIdentity.localPort)
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = FileHandle.nullDevice
         do {
@@ -69,11 +62,36 @@ final class ServerProcess {
         return false
     }
 
+    /// Inherited instance facets (from launchctl, a terminal or another app)
+    /// must never point this app's server at another profile's home or port.
+    /// A test harness may instead name a private instance and port of its own.
+    static func profileEnvironment(
+        inheriting environment: [String: String], profile: String?, edition: String?,
+        testInstance: String? = nil, port: Int
+    ) -> [String: String] {
+        var result = environment
+        for key in ["DUCKTERM_HOME", "DUCKTERM_TMUX_SOCKET", "DUCKTERM_PORT", "DUCKTERM_URL",
+                    "DUCKTERM_INSTANCE", "DUCKTERM_DESKTOP_PROFILE", "DUCKTERM_EDITION", "DUCKTERM_HOSTED"] {
+            result.removeValue(forKey: key)
+        }
+        if let testInstance {
+            result["DUCKTERM_INSTANCE"] = testInstance
+            result["DUCKTERM_PORT"] = String(port)
+        } else {
+            result["DUCKTERM_DESKTOP_PROFILE"] = profile
+        }
+        result["DUCKTERM_EDITION"] = edition
+        // The app is the dashboard window; serve must not also open a browser.
+        result["DUCKTERM_NO_BROWSER"] = "1"
+        return result
+    }
+
     private func matchesEdition() async -> Bool {
         guard AppIdentity.edition != nil else { return true }
         do {
             let response = try await LaunchDestination().perform(base: url, operation: "edition", params: [:])
-            try DesktopEdition(response: response).validate(expected: AppIdentity.edition)
+            try DesktopEdition(response: response).validate(
+                edition: AppIdentity.edition, profile: AppIdentity.profile, port: AppIdentity.localPort)
             return true
         } catch {
             startupError = error.localizedDescription

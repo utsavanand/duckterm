@@ -13,12 +13,15 @@ mac/build.sh --test --run
 
 The result is `mac/build/DuckTerm Test.app`, with a purple duck and **TEST**
 badge. Its Dock name, app menu, and window titles identify it as DuckTerm Test.
-Its bundle ID is `com.rubberduckhq.rubberterm.test`, so it can run alongside
-DuckTerm with separate saved host preferences, notifications, and WebKit data.
+Add `--edition=lite` or `--edition=code` for DuckTerm Lite Test or Code Test.
+Every edition and its Test build has its own bundle ID, home, tmux socket and
+port, resolved by `src/duckterm/helpers/instance.py --desktop-profile` and written
+to Info.plist, so all six can run side by side with separate saved host
+preferences, notifications, and WebKit data.
 
 Both production and Test builds package the private Python runtime, this
 worktree's backend, a fresh dashboard, tmux and hook tools. The local Test
-backend uses `DUCKTERM_INSTANCE=test`, with
+Full backend uses the `test` profile, with
 `~/.duckterm-test`, its own derived port, and the `duckterm-test` tmux socket.
 It never falls back to the installed production CLI. Test bundles are for local
 QA, not redistribution; their backend runs with the same private interpreter

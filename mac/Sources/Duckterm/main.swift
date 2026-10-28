@@ -384,7 +384,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let response = try await launchAPI.perform(base: server.url, operation: "edition", params: [:])
             let current = try DesktopEdition(response: response)
-            try current.validate(expected: AppIdentity.edition)
+            try current.validate(edition: AppIdentity.edition, profile: AppIdentity.profile, port: AppIdentity.localPort)
             applyEdition(current)
             return current
         } catch {
@@ -489,8 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         }
                         return
                     }
-                    let home = ProcessInfo.processInfo.environment["DUCKTERM_HOME"] ?? (NSHomeDirectory() + "/.duckterm")
-                    let path = try ClipboardImage.save(png, in: URL(fileURLWithPath: home).appendingPathComponent("pastes"))
+                    let path = try ClipboardImage.save(png, in: AppIdentity.home.appendingPathComponent("pastes"))
                     let data = try JSONSerialization.data(withJSONObject: [path.path, target])
                     let json = String(decoding: data, as: UTF8.self)
                     self.window?.evaluate("window.__rtPasteImage && window.__rtPasteImage(...\(json))") { accepted in
