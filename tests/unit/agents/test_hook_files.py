@@ -139,3 +139,26 @@ def test_parent_replaced_after_validation_cannot_redirect_writes(plugin, tmp_pat
     install_file(plugin, MARKER + b"upgrade")
     assert sentinel.read_text() == "user plugin"
     assert sorted(p.name for p in outside.iterdir()) == [plugin.name]
+
+
+def test_relocated_home_keeps_managed_directories_guarded(tmp_path, monkeypatch):
+    root = tmp_path.resolve()
+    actual = root / "actual/user"
+    actual.mkdir(parents=True)
+    alias = root / "linked"
+    alias.symlink_to(actual.parent, target_is_directory=True)
+    home = alias / "user"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    plugin = home / ".opencode/plugins/duckterm.js"
+    install_file(plugin, MARKER + b"original")
+    assert (actual / ".opencode/plugins/duckterm.js").read_bytes() == MARKER + b"original"
+    uninstall_file(plugin)
+    assert not plugin.exists()
+
+    outside = root / "outside"
+    outside.mkdir()
+    plugin.parent.rename(plugin.parent.with_name("original-plugins"))
+    plugin.parent.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="unsafe plugin directory"):
+        install_file(plugin, MARKER + b"must not escape")
+    assert list(outside.iterdir()) == []

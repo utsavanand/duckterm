@@ -50,9 +50,15 @@ def _write(name: str, data: bytes, directory: int, *, mode: int = 0o600) -> None
 
 @contextlib.contextmanager
 def _lock(path: Path, *, create: bool) -> Iterator[int | None]:
-    # Walk through directory descriptors with NOFOLLOW. A replaced parent can
-    # never redirect reads, temporary files, writes or unlink to another tree.
+    # A relocated home (or /tmp-backed fixture) can have symlinked ancestors.
+    # Resolve that trusted prefix only; configuration directories below it
+    # must still pass the descriptor-based NOFOLLOW walk.
     absolute = path.absolute()
+    home = Path.home().absolute()
+    if absolute.is_relative_to(home):
+        absolute = home.resolve() / absolute.relative_to(home)
+    # A replaced configuration parent can never redirect reads, temporary
+    # files, writes or unlink to another tree.
     directory = os.open(absolute.anchor, os.O_RDONLY | os.O_DIRECTORY)
     lock = None
     try:

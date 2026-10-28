@@ -50,6 +50,22 @@ def test_install_is_idempotent(tmp_path: Path) -> None:
     assert len(settings["hooks"]["Stop"]) == 1
 
 
+def test_global_install_and_uninstall_support_relocated_home(tmp_path, monkeypatch):
+    root = tmp_path.resolve()
+    actual = root / "real/user"
+    actual.mkdir(parents=True)
+    alias = root / "link"
+    alias.symlink_to(actual.parent, target_is_directory=True)
+    home = alias / "user"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    path = install(global_scope=True, project_dir=root)
+    assert path.resolve() == actual / ".claude/settings.json"
+    assert read_settings(actual)["hooks"]
+    assert (actual / ".duckterm-hooks/v1/duckterm-hook.sh").is_file()
+    uninstall(global_scope=True, project_dir=root)
+    assert read_settings(actual) == {}
+
+
 @pytest.mark.parametrize("agent", ["claude-code", "codex", "copilot"])
 def test_install_keeps_shell_metacharacters_in_script_path_as_data(
     tmp_path: Path, monkeypatch, agent: str
