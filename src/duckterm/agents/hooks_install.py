@@ -255,6 +255,10 @@ def _spec(agent: str) -> tuple[str, HookSpec]:
 
 def settings_path(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
     _, spec = _spec(agent)
+    # The selected project is a trusted root, like the user's home. Resolve its
+    # ancestors before guarding the configuration directories underneath it.
+    if not global_scope:
+        project_dir = project_dir.resolve()
     return spec.path(global_scope=global_scope, project_dir=project_dir)
 
 
@@ -262,7 +266,7 @@ def install(*, global_scope: bool, project_dir: Path, agent: str = "claude-code"
     from duckterm.agents.hook_files import _lock, _read, _write, install_file
 
     name, spec = _spec(agent)
-    path = spec.path(global_scope=global_scope, project_dir=project_dir)
+    path = settings_path(global_scope=global_scope, project_dir=project_dir, agent=agent)
     owner = hook_dispatch.profile_key()
     with hook_dispatch.registrations(create=True) as registry:
         if spec.transport == "file-drop":
@@ -361,7 +365,8 @@ def repair_moved_app_hooks(project_dirs: Iterable[Path] = ()) -> list[Path]:
             continue
         paths = [spec.path(global_scope=True, project_dir=Path.home())]
         paths.extend(
-            spec.path(global_scope=False, project_dir=project) for project in known_projects
+            spec.path(global_scope=False, project_dir=project.resolve())
+            for project in known_projects
         )
         for path in dict.fromkeys(paths):
             if not path.is_file():
@@ -389,7 +394,7 @@ def repair_moved_app_hooks(project_dirs: Iterable[Path] = ()) -> list[Path]:
 
 def uninstall(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
     name, spec = _spec(agent)
-    path = spec.path(global_scope=global_scope, project_dir=project_dir)
+    path = settings_path(global_scope=global_scope, project_dir=project_dir, agent=agent)
     # Reuse the existing descriptor-based lock/write implementation. This refuses
     # symlink parents and replaces the file atomically without truncating it.
     from duckterm.agents.hook_files import _lock, _read, _write, uninstall_file

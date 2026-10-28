@@ -67,6 +67,32 @@ def test_global_install_and_uninstall_support_relocated_home(tmp_path, monkeypat
 
 
 @pytest.mark.parametrize("agent", ["claude-code", "codex", "copilot"])
+def test_project_hooks_support_symlinked_project_ancestors(tmp_path, agent):
+    root = tmp_path.resolve()
+    actual = root / "real/project"
+    actual.mkdir(parents=True)
+    alias = root / "linked-project-parent"
+    alias.symlink_to(actual.parent, target_is_directory=True)
+    project = alias / "project"
+    path = install(global_scope=False, project_dir=project, agent=agent)
+    assert path.is_file()
+    assert path.is_relative_to(actual)
+    uninstall(global_scope=False, project_dir=project, agent=agent)
+    assert not json.loads(path.read_text()).get("hooks")
+
+
+def test_project_config_symlink_is_still_refused(tmp_path):
+    project = tmp_path.resolve() / "project"
+    project.mkdir()
+    outside = tmp_path.resolve() / "outside"
+    outside.mkdir()
+    (project / ".claude").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="unsafe plugin directory"):
+        install(global_scope=False, project_dir=project)
+    assert list(outside.iterdir()) == []
+
+
+@pytest.mark.parametrize("agent", ["claude-code", "codex", "copilot"])
 def test_install_keeps_shell_metacharacters_in_script_path_as_data(
     tmp_path: Path, monkeypatch, agent: str
 ) -> None:
