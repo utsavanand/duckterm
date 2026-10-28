@@ -36,7 +36,17 @@ def _use_keychain() -> bool:
 
 
 def _keychain_service(name: str) -> str:
-    return f"duckterm-connector-{name}"
+    import hashlib
+
+    from duckterm.helpers import instance
+
+    root = instance.home().resolve()
+    if root == (Path.home() / ".duckterm").resolve():
+        return f"duckterm-connector-{name}"
+    # Home, rather than only the short instance id, also isolates explicit
+    # custom profiles with no DUCKTERM_INSTANCE. Full's existing names survive.
+    scope = hashlib.sha256(str(root).encode()).hexdigest()[:24]
+    return f"duckterm-connector-{scope}-{name}"
 
 
 def _secret_file(name: str) -> Path:

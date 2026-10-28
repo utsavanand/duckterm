@@ -161,8 +161,25 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _serve(host: str, port: int, reload: bool = False) -> int:
-    from duckterm.server import Server
+def _serve(host: str, port: int, reload: bool = False, *, recover: bool = False) -> int:
+    import socket
+
+    from duckterm.helpers import profile_state
+
+    selected = editions.configured()
+    instance.validate_desktop_context(selected.name)
+    try:
+        new_home = profile_state.validate_home()
+    except ValueError as exc:
+        print(f"duckterm: {exc}", file=sys.stderr)
+        return 1
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        print("duckterm: server must bind a loopback host", file=sys.stderr)
+        return 1
+    if instance.configured_profile() and port != instance.port():
+        print("duckterm: port conflicts with the desktop profile", file=sys.stderr)
+        return 1
+    os.environ["DUCKTERM_PORT"] = str(port)
 
     if reload:
         from duckterm.dev_reload import watch_and_reexec
@@ -170,13 +187,57 @@ def _serve(host: str, port: int, reload: bool = False) -> int:
         watch_and_reexec()  # background thread; re-execs this process on a .py change
 
     try:
-        asyncio.run(Server().serve(host, port, on_listening=_print_listening))
+        # Bind BEFORE opening SQLite, reconciling terminals, or changing hooks.
+        # Holding this socket closes the preflight race with a competing launch.
+        with socket.socket(socket.AF_INET6 if host == "::1" else socket.AF_INET) as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((host, port))
+            listener.listen(100)
+            listener.setblocking(False)
+            from duckterm.server import Server, _acquire_home_lock, _release_home_lock
+
+            if new_home:
+                try:
+                    instance.home().mkdir(mode=0o700)
+                except FileExistsError:
+                    new_home = profile_state.validate_home()
+            lock = _acquire_home_lock()
+            try:
+                if new_home:
+                    profile_state.remember_new_home()
+                if recover:
+                    from duckterm.persistence.history import HistoryStore
+
+                    store = HistoryStore()
+                    try:
+                        cleared = store.clear_tombstones()
+                    finally:
+                        store.close()
+                    if cleared:
+                        print(
+                            f"cleared {cleared} deletion(s) — live agents will re-appear",
+                            file=sys.stderr,
+                        )
+                asyncio.run(
+                    Server(edition=selected).serve(
+                        host,
+                        port,
+                        on_listening=_print_listening,
+                        reserved_socket=listener,
+                        home_lock=lock,
+                    )
+                )
+            finally:
+                _release_home_lock(lock)
     except KeyboardInterrupt:
         return 0
     except OSError as e:
         if e.errno != errno.EADDRINUSE:
             raise
         _print_port_in_use(host, port)
+        return 1
+    except ValueError as exc:
+        print(f"duckterm: {exc}", file=sys.stderr)
         return 1
     return 0
 
@@ -213,11 +274,31 @@ def _restart(host: str, port: int, *, edition: str | None = None) -> int:
     import subprocess
     import time
 
+    from duckterm.helpers import profile_state
+
     # Old terminals retain their original environment after an edition change.
     # Validate and select the last successful startup before stopping anything.
     selected = editions.PRESETS[edition] if edition else editions.configured(prefer_saved=True)
     os.environ["DUCKTERM_EDITION"] = selected.name
+    instance.validate_desktop_context(selected.name)
+    try:
+        profile_state.validate_home()
+    except ValueError as exc:
+        print(f"duckterm: {exc}", file=sys.stderr)
+        return 1
+    if host not in {"127.0.0.1", "localhost", "::1"}:
+        print("duckterm: restart requires a loopback host", file=sys.stderr)
+        return 1
+    if instance.configured_profile() and port != instance.port():
+        print("duckterm: port conflicts with the desktop profile", file=sys.stderr)
+        return 1
     if _duckterm_responds(host, port):
+        if not _restart_identity_matches(host, port):
+            print(
+                f"Cannot verify this workspace owns the server on :{port}; left it running",
+                file=sys.stderr,
+            )
+            return 1
         print(f"stopping the server on :{port}…", file=sys.stderr)
         try:
             old_pids = _listening_pids(port)
@@ -226,6 +307,16 @@ def _restart(host: str, port: int, *, edition: str | None = None) -> int:
             return 1
         if not old_pids:
             print(f"server on :{port} changed; retry restart", file=sys.stderr)
+            return 1
+        try:
+            owner_pid = int((instance.home() / "server.pid").read_text())
+        except (OSError, ValueError):
+            owner_pid = 0
+        if old_pids != {owner_pid}:
+            print(
+                f"Cannot verify the listening process owns {instance.home()}; left it running",
+                file=sys.stderr,
+            )
             return 1
         for pid in old_pids:
             try:
@@ -252,18 +343,9 @@ def _restart(host: str, port: int, *, edition: str | None = None) -> int:
             return 1
     else:
         print(f"no server running on :{port}; starting one", file=sys.stderr)
-    # Recover tombstoned sessions only after the previous process has closed
-    # its SQLite handle. Close this short-lived connection before starting serve.
-    from duckterm.persistence.history import HistoryStore
-
-    store = HistoryStore()
-    try:
-        cleared = store.clear_tombstones()
-    finally:
-        store.close()
-    if cleared:
-        print(f"cleared {cleared} deletion(s) — live agents will re-appear", file=sys.stderr)
-    return _serve(host, port)
+    # Recovery waits until serve owns BOTH the port and the home. A non-Duckterm
+    # listener must not cause tombstone/DB writes before bind reports failure.
+    return _serve(host, port, recover=True)
 
 
 def _print_listening(host: str, port: int) -> None:
@@ -289,11 +371,57 @@ def _print_port_in_use(host: str, port: int) -> None:
             file=sys.stderr,
         )
     print(
-        f"\nFree the port or pick another:\n"
-        f"  lsof -ti :{port} | xargs kill\n"
-        f"  duckterm serve --port {port + 100}",
+        "\nInspect the existing process before stopping it. For a separate custom workspace, "
+        "use a distinct DUCKTERM_INSTANCE and an unused port. "
+        "Desktop editions keep their own ports.",
         file=sys.stderr,
     )
+
+
+def _restart_identity_matches(host: str, port: int) -> bool:
+    """Read-only authenticated proof; never create a token during discovery."""
+    from duckterm.helpers import security
+
+    try:
+        token = (instance.home() / "token").read_text().strip()
+        if not token:
+            return False
+        request = urllib.request.Request(
+            f"http://{host}:{port}/edition", headers={security.TOKEN_HEADER: token}
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            payload = json.load(response)
+        identity = payload.get("instance")
+        if identity is None:
+            # Published legacy servers have no identity document. Accept only
+            # the default workspace; the caller separately verifies its pidfile.
+            profile = instance.configured_profile()
+            return (
+                payload.get("id") in editions.PRESETS
+                and (profile is None or payload.get("id") == profile["edition"])
+                and instance.instance_id() is None
+                and instance.home().resolve() == (Path.home() / ".duckterm").resolve()
+                and port == 4300
+            )
+        expected = instance.description()
+        profile = instance.configured_profile()
+        if profile is not None and (
+            payload.get("id") != profile["edition"]
+            or not isinstance(identity, dict)
+            or identity.get("profile_id")
+            not in ({"full", None} if profile["profile_id"] == "full" else {profile["profile_id"]})
+        ):
+            return False
+        return (
+            isinstance(identity, dict)
+            and all(
+                identity.get(key) == expected[key]
+                for key in ("identity_version", "instance_id", "home", "tmux_socket")
+            )
+            and identity.get("port") == port
+        )
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def _duckterm_responds(host: str, port: int) -> bool:
@@ -530,6 +658,13 @@ def _doctor() -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    from duckterm.helpers.desktop_cli import apply_app_profile
+
+    try:
+        apply_app_profile()
+    except (OSError, ValueError) as exc:
+        print(f"duckterm: {exc}", file=sys.stderr)
+        return 1
     parser = build_parser()
     args = parser.parse_args(argv if argv is not None else sys.argv[1:])
     if args.command is None:

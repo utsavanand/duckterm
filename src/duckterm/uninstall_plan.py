@@ -13,6 +13,7 @@ from typing import Any
 
 from duckterm.agents import hook_files, hooks_install
 from duckterm.harnesses import installable_agents
+from duckterm.helpers import instance
 
 
 @contextlib.contextmanager
@@ -135,6 +136,14 @@ def inventory(data_root: Path, projects: list[Path]) -> dict[str, Any]:
     paths = list(dict.fromkeys(p.absolute() for p in projects))
     hooks = [inspect_hook(agent) for agent in installable_agents()]
     hooks.extend(inspect_hook(agent, project=p) for p in paths for agent in installable_agents())
+    profile = instance.configured_profile()
+    manual_steps = ["pipx uninstall duckterm", "Move DuckTerm.app to Trash"]
+    if profile is not None:
+        manual_steps = [
+            f"Quit {profile['app_name']} and move only {profile['app_name']}.app to Trash",
+            f"Keep {data_root} unless you explicitly choose to delete this workspace",
+            "Keep the shared CLI, shared hook dispatcher, and other editions' apps and data",
+        ]
     return {
         "dry_run": True,
         "hooks": hooks,
@@ -145,8 +154,5 @@ def inventory(data_root: Path, projects: list[Path]) -> dict[str, Any]:
             "Connector cleanup and process shutdown must be verified before package removal.",
             "No files were changed and no processes were stopped.",
         ],
-        "remaining_manual_steps_after_cleanup": [
-            "pipx uninstall duckterm",
-            "Move DuckTerm.app to Trash",
-        ],
+        "remaining_manual_steps_after_cleanup": manual_steps,
     }
