@@ -38,7 +38,7 @@ MANIFEST = {
     "DucktermProfile": "profile_id",
     "DucktermEdition": "edition",
     "DucktermInstance": "instance_id",
-    "DucktermHomeName": "home_name",
+    "DucktermHome": "home_name",
     "DucktermTmuxSocket": "tmux_socket",
     "DucktermPort": "port",
     "CFBundleIdentifier": "bundle_id",
@@ -290,6 +290,58 @@ def our_commands(settings: Path) -> dict[str, list[list[str]]]:
     return found
 
 
+def legacy_tmux(app: App, *args: str) -> subprocess.CompletedProcess[str]:
+    """The legacy single-install socket, inside the run's private TMUX_TMPDIR."""
+    return subprocess.run(
+        [str(App.tmux_binary), "-L", "duckterm", *args],
+        env=app.env,
+        capture_output=True,
+        text=True,
+    )
+
+
+def legacy_pane(app: App) -> str:
+    out = legacy_tmux(app, "list-panes", "-a", "-F", "#{pane_pid}")
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def seed_legacy(home: Path, app: App) -> tuple[dict[str, str], str]:
+    """A public single-install Lite user: data in ~/.duckterm and a running agent."""
+    legacy = home / ".duckterm"
+    legacy.mkdir()
+    (legacy / "edition.json").write_text('{"id": "lite"}\n')
+    (legacy / "db.sqlite").write_bytes(b"legacy user data")
+    (legacy / "token").write_text("legacy-token\n")
+    legacy_tmux(app, "new-session", "-d", "-s", "rd_legacy", "sleep 100000")
+    pane = legacy_pane(app)
+    check("legacy fixture: live pane on the legacy socket", bool(pane))
+    return snapshot(legacy), pane
+
+
+def plain_terminal_cli(app: App) -> None:
+    """The app's own CLI, run with no DUCKTERM_* context, reaches its own server."""
+    pid = app.profile["profile_id"]
+    if "DUCKTERM_APP_PROFILE" not in app.cli.read_text(errors="replace"):
+        # Without the default it would target the legacy :4300, which may be a
+        # real server on this machine, so it is not executed.
+        check(
+            f"{pid}: app CLI wrapper sets its own profile default",
+            False,
+            "wrapper has no DUCKTERM_APP_PROFILE; not executed",
+        )
+        return
+    plain = {k: v for k, v in app.env.items() if not k.startswith("DUCKTERM_")}
+    run = subprocess.run(
+        [str(app.cli), "doctor"], env=plain, capture_output=True, text=True, timeout=60
+    )
+    out = run.stdout + run.stderr
+    check(
+        f"{pid}: app CLI from a plain terminal targets its own server",
+        f"server reachable at {app.base}" in out and ":4300" not in out,
+        out.strip()[-200:],
+    )
+
+
 def symlinked_home_install(app: App, root: Path) -> None:
     """A home reached through a symlinked ancestor (relocated home folders, and
     every macOS temp dir via /var -> /private/var) must still accept hooks."""
@@ -514,6 +566,8 @@ def main() -> int:
 
         # 1b. Ownership: never adopt a workspace the app didn't create.
         ownership_cases(apps[-1])
+        # 1c. A legacy single-install workspace (Lite selected) with a live agent.
+        legacy = seed_legacy(home, apps[0])
 
         # 2. Coexistence: every server up at once, each describing its own instance.
         for app in apps:
@@ -686,6 +740,19 @@ def main() -> int:
         symlinked_home_install(apps[-1], root)
         shared_hooks(apps, root, keys)
 
+        # 7b. An app's CLI used from a plain terminal targets its own profile.
+        for app in apps:
+            if app.app.exists():
+                plain_terminal_cli(app)
+
+        # 7c. The legacy workspace and its live agent were never touched.
+        legacy_after = (snapshot(home / ".duckterm"), legacy_pane(apps[0]))
+        check(
+            "legacy ~/.duckterm files and its live tmux pane are untouched",
+            legacy_after == legacy,
+            {"files_same": legacy_after[0] == legacy[0], "pane": (legacy[1], legacy_after[1])},
+        )
+
         # 8. Connector credentials are namespaced per profile (no Keychain access).
         results = [
             app.run_python(
@@ -704,12 +771,16 @@ def main() -> int:
         reaped = {a.profile.get("profile_id"): a.stop() for a in apps}
         for app in apps:
             app.tmux("kill-server")
+        if apps:
+            legacy_tmux(apps[0], "kill-server")
         time.sleep(1)
         # Prove nothing is still running before deleting the evidence.
         listening = [
             a.profile.get("port") for a in apps if port_busy(int(a.profile.get("port", 0)))
         ]
         live_sockets = [a.profile.get("tmux_socket") for a in apps if a.tmux("ls").returncode == 0]
+        if apps and legacy_tmux(apps[0], "ls").returncode == 0:
+            live_sockets.append("duckterm (legacy fixture)")
         shutil.rmtree(root, ignore_errors=True)
         shutil.rmtree(tmux_dir, ignore_errors=True)
         originals_after = {str(a.source): bundle_state(a.source) for a in apps}
