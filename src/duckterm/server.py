@@ -6071,6 +6071,15 @@ class Server:
                     print(f"repointed DuckTerm hooks in {path} at the shared handler")
             except (OSError, ValueError) as exc:  # a user's own config; never block startup
                 print(f"left hook configuration unchanged: {exc}", file=sys.stderr)
+            if self.edition.includes("connectors"):
+                try:
+                    connectors.refresh_runtime_registration()
+                except (OSError, ValueError, RuntimeError) as exc:
+                    print(
+                        f"could not refresh connector launch paths: {exc}; "
+                        "reconnect the affected connector from this workspace",
+                        file=sys.stderr,
+                    )
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
