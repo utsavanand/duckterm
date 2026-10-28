@@ -13,7 +13,7 @@ from duckterm import connectors
 @pytest.fixture
 def isolated(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "duckterm"))
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / ".duckterm"))
     monkeypatch.setattr(
         connectors, "_gh_cli_token", Mock(side_effect=AssertionError("token lookup"))
     )
@@ -24,10 +24,19 @@ def isolated(tmp_path: Path, monkeypatch):
 def test_legacy_poll_reads_once_until_config_changes(isolated, monkeypatch):
     home = isolated
     claude = home / ".claude.json"
-    claude.write_text(json.dumps({"mcpServers": {"github": {}}, "padding": "x" * 200_000}))
-    real_claude = connectors.mcp_install.claude_installed
+    claude.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "github": {"command": "duckterm", "args": ["connector-run", "github"]}
+                },
+                "padding": "x" * 200_000,
+            }
+        )
+    )
+    real_claude = connectors._claude_registered
     read = Mock(wraps=real_claude)
-    monkeypatch.setattr(connectors.mcp_install, "claude_installed", read)
+    monkeypatch.setattr(connectors, "_claude_registered", read)
     watcher = connectors._RunnerPolicy("github")
     for _ in range(100):
         assert watcher.read() == {"enabled": True, "generation": "legacy"}
@@ -37,14 +46,16 @@ def test_legacy_poll_reads_once_until_config_changes(isolated, monkeypatch):
     assert read.call_count == 2
     codex = home / ".codex" / "config.toml"
     codex.parent.mkdir()
-    codex.write_text('[mcp_servers.github]\ncommand="stub"\n')
+    codex.write_text('[mcp_servers.github]\ncommand="duckterm"\nargs=["connector-run", "github"]\n')
     assert watcher.read()["enabled"] is True
     codex.unlink()
     assert watcher.read()["enabled"] is False
 
 
 def test_policy_creation_replacement_and_removal_invalidate(isolated):
-    (isolated / ".claude.json").write_text('{"mcpServers": {"github": {}}}')
+    (isolated / ".claude.json").write_text(
+        '{"mcpServers": {"github": {"command": "duckterm", "args": ["connector-run", "github"]}}}'
+    )
     watcher = connectors._RunnerPolicy("github")
     assert watcher.read()["generation"] == "legacy"
     connectors._save_policy("github", {"enabled": True, "generation": "a"})
@@ -64,10 +75,8 @@ def test_policy_creation_replacement_and_removal_invalidate(isolated):
 
 def test_explicit_policy_poll_does_not_reparse_or_read_harness_configs(isolated, monkeypatch):
     connectors._save_policy("github", {"enabled": True, "generation": "a"})
-    monkeypatch.setattr(
-        connectors.mcp_install, "claude_installed", Mock(side_effect=AssertionError)
-    )
-    monkeypatch.setattr(connectors.mcp_install, "codex_installed", Mock(side_effect=AssertionError))
+    monkeypatch.setattr(connectors, "_claude_registered", Mock(side_effect=AssertionError))
+    monkeypatch.setattr(connectors, "_codex_registered", Mock(side_effect=AssertionError))
     parse = Mock(wraps=json.loads)
     monkeypatch.setattr(connectors.json, "loads", parse)
     watcher = connectors._RunnerPolicy("github")
@@ -91,15 +100,17 @@ def test_malformed_changed_policy_does_not_reuse_enabled_state(isolated):
 
 def test_change_during_read_is_checked_again_next_tick(isolated, monkeypatch):
     path = isolated / ".claude.json"
-    path.write_text('{"mcpServers": {"github": {}}}')
-    original = connectors.mcp_install.claude_installed
+    path.write_text(
+        '{"mcpServers": {"github": {"command": "duckterm", "args": ["connector-run", "github"]}}}'
+    )
+    original = connectors._claude_registered
 
     def racing_read(name, *, home):
         enabled = original(name, home=home)
         path.write_text('{"mcpServers": {}}')
         return enabled
 
-    monkeypatch.setattr(connectors.mcp_install, "claude_installed", racing_read)
+    monkeypatch.setattr(connectors, "_claude_registered", racing_read)
     watcher = connectors._RunnerPolicy("github")
     assert watcher.read()["enabled"] is True
     assert watcher.read()["enabled"] is False
@@ -131,7 +142,9 @@ def test_legacy_supervisor_stops_on_config_removal_without_repeated_token_lookup
     server.chmod(0o700)
     monkeypatch.setenv("PATH", str(bin_dir))
     config = isolated / ".claude.json"
-    config.write_text('{"mcpServers": {"github": {}}}')
+    config.write_text(
+        '{"mcpServers": {"github": {"command": "duckterm", "args": ["connector-run", "github"]}}}'
+    )
     proc = subprocess.Popen([sys.executable, "-m", "duckterm.cli", "connector-run", "github"])
     try:
         deadline = time.monotonic() + 5

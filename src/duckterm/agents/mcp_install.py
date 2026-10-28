@@ -14,6 +14,7 @@ touch.
 import json
 import tomllib
 from pathlib import Path
+from typing import Any
 
 from duckterm.helpers.private_files import private_write
 
@@ -143,3 +144,162 @@ def codex_installed(name: str, *, home: Path | None = None) -> bool:
     except tomllib.TOMLDecodeError:
         return False
     return name in config.get("mcp_servers", {})
+
+
+# Profile-owned Duckterm registrations. The generic writers above are retained
+# for callers deliberately managing an arbitrary MCP entry; connectors use only
+# the guarded operations below.
+
+
+def _managed_path(harness: str, home: Path | None) -> Path:
+    if harness not in {"claude-code", "codex"}:
+        raise ValueError(f"Unknown connector harness: {harness}")
+    # Resolve the trusted HOME prefix, never a configuration directory below
+    # it. Membership must survive switching HOME to its canonical spelling.
+    root = (home or Path.home()).resolve()
+    return _claude_path(root) if harness == "claude-code" else _codex_path(root)
+
+
+def _managed_config(raw: bytes | None, harness: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    config = (
+        (json.loads(raw) if harness == "claude-code" else tomllib.loads(raw.decode()))
+        if raw
+        else {}
+    )
+    key = "mcpServers" if harness == "claude-code" else "mcp_servers"
+    if not isinstance(config, dict) or not isinstance(config.get(key, {}), dict):
+        raise ValueError("Invalid MCP configuration; leaving it unchanged")
+    return config, config.get(key, {})
+
+
+def _toml_value(value: Any) -> str:
+    if isinstance(value, str):
+        return _toml_str(value)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, int | float):
+        return repr(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
+    if isinstance(value, dict):
+        return (
+            "{ " + ", ".join(f"{_toml_str(k)} = {_toml_value(v)}" for k, v in value.items()) + " }"
+        )
+    raise ValueError("Unsupported custom MCP option; leaving configuration unchanged")
+
+
+def _managed_text(
+    raw: bytes | None, config: dict[str, Any], harness: str, name: str, entry: dict[str, Any] | None
+) -> bytes:
+    if harness == "claude-code":
+        servers = config.setdefault("mcpServers", {})
+        if entry is None:
+            servers.pop(name, None)
+        else:
+            servers[name] = entry
+        return (json.dumps(config, indent=2) + "\n").encode()
+    candidate = _strip_codex_sections(raw.decode() if raw else "", name)
+    if entry is not None:
+        candidate += f"[mcp_servers.{name}]\n"
+        candidate += "".join(f"{_toml_str(k)} = {_toml_value(v)}\n" for k, v in entry.items())
+    parsed = tomllib.loads(candidate)
+    # Alternate quoted/dotted table syntax that our narrow textual stripper
+    # cannot safely edit is refused, never silently duplicated or removed.
+    expected = dict(config)
+    expected["mcp_servers"] = dict(config.get("mcp_servers", {}))
+    if entry is None:
+        expected["mcp_servers"].pop(name, None)
+        if not expected["mcp_servers"] and "mcp_servers" not in parsed:
+            expected.pop("mcp_servers")
+    else:
+        expected["mcp_servers"][name] = entry
+    if parsed != expected:
+        raise ValueError("Cannot safely edit this MCP table syntax; leaving it unchanged")
+    return candidate.encode()
+
+
+def managed_install(name: str, harness: str, *, home: Path | None = None) -> Path:
+    from duckterm.agents import connector_dispatch, hook_dispatch
+    from duckterm.agents.hook_files import _lock, _read, _write
+
+    path = _managed_path(harness, home)
+    runtime = f"mcp:{harness}:{name}"
+    with (
+        hook_dispatch.registrations(create=True) as registry,
+        _lock(path, create=True) as directory,
+    ):
+        assert directory is not None
+        raw = _read(path.name, directory)
+        config, servers = _managed_config(raw, harness)
+        old = servers.get(name)
+        if old is not None and not connector_dispatch.owned_entry(old, name):
+            raise ValueError(f"{name} already has a custom MCP definition; leaving it unchanged")
+        legacy = old is not None and old.get("command") != str(connector_dispatch.launcher_path())
+        members = registry.members(path, runtime, legacy=legacy)
+        if legacy:
+            assert old is not None
+            connector_dispatch.preserve_legacy_runtime(old)
+        entry = {
+            **(old or {}),
+            "command": str(connector_dispatch.launcher_path()),
+            "args": ["connector-run", name],
+        }
+        if harness == "codex":
+            inherited = entry.get("env_vars", [])
+            if not isinstance(inherited, list) or not all(isinstance(v, str) for v in inherited):
+                raise ValueError(
+                    "Unsupported custom MCP environment forwarding; leaving it unchanged"
+                )
+            entry["env_vars"] = list(dict.fromkeys([*inherited, *connector_dispatch.CONTEXT]))
+        candidate = _managed_text(raw, config, harness, name, entry)
+        # Publish membership first: a crash must not leave a migrated shared
+        # command with no record that the previous Full registration existed.
+        registry.save(path, runtime, members | {hook_dispatch.profile_key()})
+        _write(path.name, candidate, directory)
+    return path
+
+
+def managed_remove(name: str, harness: str, *, home: Path | None = None) -> bool:
+    from duckterm.agents import connector_dispatch, hook_dispatch
+    from duckterm.agents.hook_files import _lock, _read, _write
+
+    path = _managed_path(harness, home)
+    runtime = f"mcp:{harness}:{name}"
+    with (
+        hook_dispatch.registrations(create=False) as registry,
+        _lock(path, create=False) as directory,
+    ):
+        if directory is None:
+            return False
+        raw = _read(path.name, directory)
+        config, servers = _managed_config(raw, harness)
+        old = servers.get(name)
+        if not connector_dispatch.owned_entry(old, name):
+            return False  # A custom definition, even with our name, is never ours.
+        members = registry.members(
+            path, runtime, legacy=old["command"] != str(connector_dispatch.launcher_path())
+        )
+        owner = hook_dispatch.profile_key()
+        if owner not in members:
+            return False
+        if members == {owner}:
+            _write(path.name, _managed_text(raw, config, harness, name, None), directory)
+        registry.save(path, runtime, members - {owner})
+    return True
+
+
+def managed_installed(name: str, harness: str, *, home: Path | None = None) -> bool:
+    from duckterm.agents import connector_dispatch, hook_dispatch
+
+    path = _managed_path(harness, home)
+    try:
+        _, servers = _managed_config(path.read_bytes(), harness)
+        entry = servers.get(name)
+        if not connector_dispatch.owned_entry(entry, name):
+            return False
+        legacy = entry["command"] != str(connector_dispatch.launcher_path())
+        return hook_dispatch.profile_key() in hook_dispatch.registered_profiles(
+            path, f"mcp:{harness}:{name}", legacy=legacy
+        )
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
