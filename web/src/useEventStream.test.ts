@@ -275,3 +275,28 @@ it("canonical folder snapshots replace stale optimistic groups including ungroup
   expect(state.sessions.get("s1")?.group).toBeUndefined();
   expect(state.sessions.get("s1")?.state).toBe("busy");
 });
+
+
+describe("reported context snapshots", () => {
+  const row: PersistedSession = { session_key: "s1", state: "busy", event_count: 1,
+    started_at: 1, updated_at: 2, runtime: "codex", model: "unlisted-codex-model",
+    context_tokens: 110_000, context_window_tokens: 128_000 };
+  it("keeps capacity through hook events, then replaces the entire context snapshot on refresh", () => {
+    let state = reduce(emptyState(), { kind: "seed", sessions: [row] });
+    expect(state.sessions.get("s1")).toMatchObject({ contextTokens: 110_000, contextWindowTokens: 128_000 });
+    state = reduce(state, { kind: "event", event: ev({ event_type: "PreToolUse", _ts: 3 }) });
+    expect(state.sessions.get("s1")?.contextWindowTokens).toBe(128_000);
+    state = reduce(state, { kind: "seed", sessions: [{ ...row, context_tokens: 20_000, context_window_tokens: 256_000, model: "another-reported-model" }] });
+    expect(state.sessions.get("s1")).toMatchObject({ contextTokens: 20_000, contextWindowTokens: 256_000, model: "another-reported-model" });
+    state = reduce(state, { kind: "seed", sessions: [{ ...row, context_tokens: null, context_window_tokens: null, model: null }] });
+    expect(state.sessions.get("s1")?.contextWindowTokens).toBeUndefined();
+    expect(state.sessions.get("s1")?.contextTokens).toBeUndefined();
+    expect(state.sessions.get("s1")?.model).toBeUndefined();
+  });
+  it("maps reported capacity in remote snapshots and clears it for older servers", () => {
+    let state = reduce(emptyState(), { kind: "remote-snapshot", host: "test-host", label: "Test host", sessions: [row], groups: {} });
+    expect(state.sessions.get("s1")?.contextWindowTokens).toBe(128_000);
+    state = reduce(state, { kind: "remote-snapshot", host: "test-host", label: "Test host", sessions: [{ ...row, context_window_tokens: undefined }], groups: {} });
+    expect(state.sessions.get("s1")?.contextWindowTokens).toBeUndefined();
+  });
+});

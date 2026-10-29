@@ -96,8 +96,9 @@ export interface SessionView {
   attentionSince?: number; // set when it asked for the owner; cleared only when the owner attends
   launched?: boolean; // true if Duckterm launched it (owns the tab); else watched
   ptyOwned?: boolean; // Duckterm owns a live PTY (in-process launch) — terminal-attachable
-  contextTokens?: number; // current context size (claude-code), the compact-soon signal
-  model?: string; // model id from the transcript (claude-code)
+  contextTokens?: number; // current context size reported by the harness
+  contextWindowTokens?: number; // reported capacity; do not infer from a token total
+  model?: string; // model id from the transcript
   metaHarnesses?: string[]; // installed suites this session runs under
   group?: string; // folder label for organizing the left panel; undefined = ungrouped
   subagents?: SubAgent[]; // sub-agents spawned via the Task tool, for the tree
@@ -148,6 +149,7 @@ export interface PersistedSession {
   grp?: string | null;
   subagents?: SubAgent[];
   context_tokens?: number | null; // server-computed from the transcript tail
+  context_window_tokens?: number | null; // harness-reported capacity, when available
   model?: string | null; // model id of the last assistant call
   suites?: string[]; // skill kits detected for this session (e.g. uv-suite)
 }
@@ -233,6 +235,7 @@ export function viewFromPersisted(s: PersistedSession): SessionView {
     group: s.grp ?? undefined,
     subagents: s.subagents ?? undefined,
     contextTokens: s.context_tokens ?? undefined,
+    contextWindowTokens: s.context_window_tokens ?? undefined,
     model: s.model ?? undefined,
     metaHarnesses: s.suites ?? undefined,
   };
