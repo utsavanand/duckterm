@@ -169,8 +169,34 @@ def _serve(host: str, port: int, reload: bool = False) -> int:
 
         watch_and_reexec()  # background thread; re-execs this process on a .py change
 
+    async def run() -> None:
+        import signal
+
+        loop = asyncio.get_running_loop()
+        task = asyncio.current_task()
+        assert task is not None
+        stopping = False
+
+        def stop() -> None:
+            nonlocal stopping
+            # A repeated signal must not cancel the resource cleanup itself.
+            if not stopping:
+                stopping = True
+                task.cancel()
+
+        previous = signal.getsignal(signal.SIGTERM)
+        loop.add_signal_handler(signal.SIGTERM, stop)
+        try:
+            await Server().serve(host, port, on_listening=_print_listening)
+        except asyncio.CancelledError:
+            if not stopping:
+                raise
+        finally:
+            loop.remove_signal_handler(signal.SIGTERM)
+            signal.signal(signal.SIGTERM, previous)
+
     try:
-        asyncio.run(Server().serve(host, port, on_listening=_print_listening))
+        asyncio.run(run())
     except KeyboardInterrupt:
         return 0
     except OSError as e:
