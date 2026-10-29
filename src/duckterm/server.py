@@ -6207,6 +6207,13 @@ class Server:
             )
             if refreshed:
                 print(f"refreshed {refreshed} stale session instruction file(s)")
+            from duckterm.agents.hooks_install import repair_moved_app_hooks
+
+            try:
+                for path in repair_moved_app_hooks():
+                    print(f"repointed DuckTerm hooks in {path} at this app")
+            except (OSError, ValueError) as exc:  # a user's own config; never block startup
+                print(f"left hook configuration unchanged: {exc}", file=sys.stderr)
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")

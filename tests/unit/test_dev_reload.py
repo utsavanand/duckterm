@@ -31,3 +31,24 @@ def test_changed_path_detects_a_deleted_file() -> None:
     before = {"a.py": 1.0, "b.py": 2.0}
     after = {"a.py": 1.0}
     assert changed_path(before, after) == "b.py"
+
+
+def test_reload_retains_embedded_interpreter_flags(monkeypatch):
+    import pytest
+
+    from duckterm import dev_reload
+
+    original = ["python", "-I", "-B", "-m", "duckterm.cli", "serve", "--reload"]
+    monkeypatch.setattr(dev_reload.sys, "orig_argv", original)
+    monkeypatch.setattr(dev_reload.time, "sleep", lambda _: None)
+    monkeypatch.setattr(dev_reload, "_source_mtimes", lambda: {"server.py": 2.0})
+    captured = []
+
+    def reexec(executable, arguments):
+        captured.append((executable, arguments))
+        raise InterruptedError("reexec observed")
+
+    monkeypatch.setattr(dev_reload.os, "execv", reexec)
+    with pytest.raises(InterruptedError, match="reexec observed"):
+        dev_reload._watch({"server.py": 1.0})
+    assert captured == [(dev_reload.sys.executable, [dev_reload.sys.executable, *original[1:]])]

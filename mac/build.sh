@@ -45,10 +45,8 @@ APP="build/$APP_NAME.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
 
-if [[ "$TEST_BUILD" == 1 ]]; then
-  echo "==> building Test dashboard"
-  (cd ../web && npm run build --silent)
-fi
+echo "==> building dashboard"
+(cd ../web && npm run build --silent)
 
 echo "==> compiling"
 rm -rf "$APP"
@@ -99,35 +97,41 @@ cat > "$CONTENTS/Info.plist" <<PLIST
 </plist>
 PLIST
 
-if [[ "$TEST_BUILD" == 1 ]]; then
-  # Snapshot this worktree's backend; never fall back to the installed production CLI.
-  "${PYTHON:-../.venv/bin/python}" - "$CONTENTS" <<'PYBUILD'
+echo "==> bundling private Python and tmux"
+bash bundle-python.sh "$CONTENTS/Resources"
+bash bundle-tmux.sh "$CONTENTS/Resources"
+bash bundle-jq.sh "$CONTENTS/Resources"
+
+# Copy only the package and fresh web build. Build tools never import Duckterm.
+"${PYTHON:-../.venv/bin/python}" - "$CONTENTS" "$VERSION" "$TEST_BUILD" <<'PYBUILD'
 import os, plistlib, runpy, shutil, sys
 from pathlib import Path
-contents = Path(sys.argv[1])
-shutil.copytree('../src/duckterm', contents / 'Resources/backend/duckterm',
-                ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-dashboard = contents / 'Resources/backend/duckterm/dashboard'
-if dashboard.exists():
-    shutil.rmtree(dashboard)
-shutil.copytree('../web/dist', dashboard)
+contents = Path(sys.argv[1]).resolve()
+root = Path.cwd().parent
+package = contents / 'Resources/python/lib/python3.13/site-packages/duckterm'
+shutil.copytree(root / 'src/duckterm', package,
+                ignore=shutil.ignore_patterns('__pycache__', '*.pyc', 'dashboard', '_build.py'))
+shutil.copytree(root / 'web/dist', package / 'dashboard')
+shutil.copy2(root / 'LICENSE', contents / 'Resources/LICENSE-duckterm')
+collect = runpy.run_path(str(root / 'scripts/stamp_build.py'))['collect']
+values = collect(root, sys.argv[2])
+(package / '_build.py').write_text(
+    '\n'.join(f'{key} = {value!r}' for key, value in values.items()) + '\n')
 with (contents / 'Info.plist').open('rb') as f:
     info = plistlib.load(f)
-info['DucktermTestBuild'] = True
-if remote_host := os.environ.get('DUCKTERM_TEST_REMOTE_HOST'):
-    info['DucktermTestRemoteHost'] = remote_host
-info['DucktermTestPython'] = os.path.abspath(sys.executable)
-# Compute the existing instance scheme without inheriting per-facet overrides.
-for key in ('DUCKTERM_PORT', 'DUCKTERM_URL', 'DUCKTERM_HOME', 'DUCKTERM_TMUX_SOCKET'):
-    os.environ.pop(key, None)
-os.environ['DUCKTERM_INSTANCE'] = 'test'
-# Read the stdlib-only helper from this checkout; no installed package is needed.
-instance = runpy.run_path('../src/duckterm/helpers/instance.py')
-info['DucktermTestPort'] = instance['port']()
+info['DucktermBundledRuntime'] = True
+if sys.argv[3] == '1':
+    info['DucktermTestBuild'] = True
+    if remote_host := os.environ.get('DUCKTERM_TEST_REMOTE_HOST'):
+        info['DucktermTestRemoteHost'] = remote_host
+    for key in ('DUCKTERM_PORT', 'DUCKTERM_URL', 'DUCKTERM_HOME', 'DUCKTERM_TMUX_SOCKET'):
+        os.environ.pop(key, None)
+    os.environ['DUCKTERM_INSTANCE'] = 'test'
+    instance = runpy.run_path(str(root / 'src/duckterm/helpers/instance.py'))
+    info['DucktermTestPort'] = instance['port']()
 with (contents / 'Info.plist').open('wb') as f:
     plistlib.dump(info, f)
 PYBUILD
-fi
 
 # Optional support recipient is supplied at build time, never committed to source.
 # Read the environment directly so the address is never logged or parsed as code.
@@ -151,7 +155,8 @@ if [[ "$built_minos" != "$MIN_MACOS" ]]; then
 fi
 
 echo "==> ad-hoc signing (runs locally; not notarized for distribution)"
-codesign --force --deep --sign - "$APP"
+"${PYTHON:-../.venv/bin/python}" verify-bundle.py "$APP"
+bash sign-bundle.sh "$APP" -
 
 echo "==> done: $APP"
 if [[ "$RUN_APP" == 1 ]]; then

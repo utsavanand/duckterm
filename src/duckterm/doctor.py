@@ -12,6 +12,7 @@ whether the Codex hook is *installed and current*, not whether it's *trusted*
 points you at /hooks rather than claiming a trust state it can't prove.
 """
 
+import os
 import shutil
 import urllib.request
 from dataclasses import dataclass
@@ -38,7 +39,10 @@ def _check_system_deps() -> list[Result]:
         ("jq", "the hook's blocking-approval path"),
         ("curl", "the hook posts events"),
     ):
-        if shutil.which(tool):
+        bundled = os.environ.get("DUCKTERM_BUNDLED_JQ", "") if tool == "jq" else ""
+        if bundled and os.access(bundled, os.X_OK):
+            out.append(Result("ok", f"{tool} bundled with the app"))
+        elif shutil.which(tool):
             out.append(Result("ok", f"{tool} installed"))
         else:
             out.append(

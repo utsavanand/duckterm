@@ -63,13 +63,35 @@ def _hook_invocation(command: str) -> Path | None:
     return None
 
 
+def _in_app_bundle(path: Path) -> bool:
+    """The exact hook script location inside a DuckTerm app bundle, wherever the app is."""
+    return (
+        path.is_absolute()
+        and ".." not in path.parts
+        and re.fullmatch(
+            r"/.+\.app/Contents/Resources/python/lib/python[0-9]+\.[0-9]+"
+            r"/site-packages/duckterm/hooks/duckterm-hook\.sh",
+            path.as_posix(),
+        )
+        is not None
+    )
+
+
 def _is_ours(command: str) -> bool:
-    """Require our loaded script or the exact package path in a known pipx venv."""
+    """Require our loaded script, the exact package path in a known pipx venv, or
+    the exact package path inside a DuckTerm app bundle at any location."""
     path = _hook_invocation(command)
-    if path is None or not path.is_absolute():
+    if path is None or not path.is_absolute() or ".." in path.parts:
         return False
     if path == hook_script_path():
         return True
+    # A moved or renamed app, or another edition's app, left hooks at its old
+    # bundle path; without this a reinstall would add a second set beside them.
+    return _in_app_bundle(path) or _in_pipx_venv(path)
+
+
+def _in_pipx_venv(path: Path) -> bool:
+    """The exact hook script location inside a known pipx venv for duckterm."""
     roots = [Path.home() / ".local/pipx", Path.home() / ".local/share/pipx"]
     if os.environ.get("PIPX_HOME"):
         roots.append(Path(os.environ["PIPX_HOME"]))
@@ -108,7 +130,7 @@ def claude_style_build(config: dict[str, Any], script: str, runtime: str) -> dic
         plain_timeout = 3 if runtime == "codex" else 5
         hook: dict[str, Any] = {
             "type": "command",
-            "command": f'"{script}" {event} {runtime}',
+            "command": shlex.join([script, event, runtime]),
             "timeout": _BLOCKING_TIMEOUT if blocking else plain_timeout,
         }
         if supports_async:
@@ -180,7 +202,7 @@ def copilot_build(config: dict[str, Any], script: str, runtime: str) -> dict[str
                 # `command` is Copilot's cross-platform fallback; pass the
                 # canonical event name (so the server's vocabulary is uniform)
                 # and the runtime so events are attributed to copilot.
-                "command": f'"{script}" {canonical} {runtime}',
+                "command": shlex.join([script, canonical, runtime]),
                 "timeoutSec": 5,
             }
         )
@@ -250,6 +272,76 @@ def install(*, global_scope: bool, project_dir: Path, agent: str = "claude-code"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(config, indent=2) + "\n")
     return path
+
+
+def _repoint(config: dict[str, Any], script: Path) -> bool:
+    """Rewrite managed hook commands (another app bundle, or a known pipx venv) to
+    `script`, in place. Event, runtime, ordering and every other field stay as
+    registered."""
+    hooks = _hook_groups(config)
+    changed = False
+
+    def visit(entry: Any) -> None:
+        nonlocal changed
+        if not isinstance(entry, dict):
+            return
+        for key in ("command", "bash", "powershell"):
+            command = entry.get(key)
+            if not isinstance(command, str):
+                continue
+            path = _hook_invocation(command)
+            if path is None or path == script:
+                continue
+            if not (_in_app_bundle(path) or _in_pipx_venv(path)):
+                continue
+            _, event, runtime = shlex.split(command)
+            # A relocated app's name may hold $, ` or quotes; keep the argv as data.
+            entry[key] = shlex.join([str(script), event, runtime])
+            changed = True
+        for child in entry.get("hooks", []) if isinstance(entry.get("hooks"), list) else []:
+            visit(child)
+
+    for entries in hooks.values():
+        for entry in entries:
+            visit(entry)
+    return changed
+
+
+def repair_moved_app_hooks() -> list[Path]:
+    """Point already-registered global hooks at this app after it moved, was
+    renamed, or replaced a pipx install.
+
+    Runs only when this process is itself an app bundle using the default state
+    home, so test instances and pipx installs never touch user configuration. It
+    never adds hooks: missing files, files without DuckTerm entries and custom
+    commands are left exactly as they are.
+    """
+    from duckterm.agents.hook_files import _lock, _read, _write
+    from duckterm.harnesses import REGISTRY
+    from duckterm.helpers import instance
+
+    script = hook_script_path()
+    if not _in_app_bundle(script) or instance.home() != Path.home() / ".duckterm":
+        return []
+    repaired = []
+    for runtime in REGISTRY.values():
+        spec = runtime.hook_spec
+        if spec is None or spec.transport != "config-entry":
+            continue
+        path = spec.path(global_scope=True, project_dir=Path.home())
+        if not path.is_file():
+            continue  # never leave a lock file beside a config we have nothing to repair in
+        with _lock(path, create=False) as directory:
+            if directory is None:
+                continue
+            raw = _read(path.name, directory)
+            if raw is None:
+                continue
+            config = json.loads(raw)
+            if isinstance(config, dict) and _repoint(config, script):
+                _write(path.name, (json.dumps(config, indent=2) + "\n").encode(), directory)
+                repaired.append(path)
+    return repaired
 
 
 def uninstall(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
