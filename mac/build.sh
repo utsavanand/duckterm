@@ -32,11 +32,21 @@ done
 # Names, bundle IDs, homes, sockets and ports come from the backend's
 # stdlib-only resolver, run as a file, so the app and CLI can never disagree.
 PROFILE_ARGS=(--desktop-profile "$EDITION")
-ICON_NAME="AppIcon"
+ICON_COMMAND="node make-icon.mjs --edition=$EDITION"
+case "$EDITION" in
+  full) ICON_NAME="AppIcon" ;;
+  lite) ICON_NAME="AppIconLite" ;;
+  code) ICON_NAME="AppIconCode" ;;
+esac
 if [[ "$TEST_BUILD" == 1 ]]; then
   PROFILE_ARGS+=(--test)
-  ICON_NAME="AppIconTest"
+  ICON_NAME="${ICON_NAME}Test"
+  ICON_COMMAND+=" --test"
 fi
+[[ -s "Resources/$ICON_NAME.icns" ]] || {
+  echo "error: missing $EDITION icon Resources/$ICON_NAME.icns; regenerate it with $ICON_COMMAND" >&2
+  exit 1
+}
 PROFILE_JSON="$("${PYTHON:-../.venv/bin/python}" ../src/duckterm/helpers/instance.py "${PROFILE_ARGS[@]}")"
 PROFILE_SHELL="$("${PYTHON:-../.venv/bin/python}" - "$PROFILE_JSON" "$EDITION" <<'PYPROFILE'
 import json, shlex, sys
@@ -75,16 +85,9 @@ swiftc -O -target "arm64-apple-macos${MIN_MACOS}" \
   Sources/Duckterm/*.swift
 
 echo "==> bundling app icon"
-# Regenerate the icns from the dashboard duck so the app icon never drifts from
-# the brand mark. Skips if node/playwright isn't available (uses the checked-in
-# icns as-is). Needs web/node_modules (run `npm ci` in web/ once).
-if command -v node >/dev/null 2>&1 && [ -d ../web/node_modules/playwright ]; then
-  if [[ "$TEST_BUILD" == 1 ]]; then
-    node make-icon.mjs --test
-  else
-    node make-icon.mjs || echo "   (icon regen failed; using existing AppIcon.icns)"
-  fi
-fi
+# Edition icons are generated and reviewed together with their SVG sources.
+# Normal builds copy the exact checked-in resource, never rewrite source assets
+# or fall back to another edition when an icon is missing.
 cp "Resources/$ICON_NAME.icns" "$CONTENTS/Resources/AppIcon.icns"
 
 echo "==> writing Info.plist"

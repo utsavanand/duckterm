@@ -89,9 +89,23 @@ mac/build.sh --test
 mac/build.sh
 ```
 
-The icon generator requires Node and `web/node_modules/playwright`. Test icon
-rendering must succeed or have a previously generated `AppIconTest.icns`; the
-build must not silently use the production icon.
+Native builds copy the checked-in icon for the selected edition and Test flag.
+Lite uses the duckling, Code uses the laptop duck, and Full keeps the original.
+Test icons retain the purple duck and **TEST** badge. A missing selected icon
+stops the build; another edition's icon is never substituted. Builds do not
+regenerate or modify tracked icon resources.
+
+When changing an approved SVG, regenerate its production and Test resources
+with Node and `web/node_modules/playwright` (including its Chromium browser):
+
+```sh
+node mac/make-icon.mjs --edition=lite
+node mac/make-icon.mjs --edition=lite --test
+```
+
+Use `--edition=code` or `--edition=full` for the others. The edition argument is
+required. Add `--output=/absolute/path/review.icns` to render a review copy
+without replacing the checked-in resource.
 
 ## Install
 
