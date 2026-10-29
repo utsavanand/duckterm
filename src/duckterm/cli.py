@@ -159,6 +159,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     session_client.add_parser(sub)
     session_client.add_memory_parser(sub)
+    from duckterm.mobile.cli import add_parser as add_ducky_parser
+
+    add_ducky_parser(sub)
     return parser
 
 
@@ -753,6 +756,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from duckterm import session_client
 
         return session_client.main(args)
+    if args.command == "ducky":
+        from duckterm.mobile.cli import run as run_ducky
+
+        return run_ducky(args)
     if args.command == "serve":
         return _serve(args.host, args.port, reload=args.reload)
     if args.command == "restart":
