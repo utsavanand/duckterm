@@ -108,6 +108,8 @@ def test_unowned_and_archived_sessions_cannot_open(rig):
 
 
 def test_real_shell_stream_isolated_env_cwd_reconnect_and_close(rig, tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+
     if not tmux.has_tmux():
         pytest.skip("tmux unavailable")
 
@@ -120,9 +122,11 @@ def test_real_shell_stream_isolated_env_cwd_reconnect_and_close(rig, tmp_path, m
         assert sup is not None
         try:
             # tmux retains globals from its creator, not just the current process.
-            for name in ["DUCKTERM_SESSION_KEY", "DUCKTERM_SESSION_TOKEN_FILE", "DUCKTERM_URL"]:
+            expected_context = instance.launch_env()
+            for name in ["DUCKTERM_SESSION_KEY", "DUCKTERM_SESSION_TOKEN_FILE"]:
                 monkeypatch.setenv(name, "fake-session-secret")
                 assert tmux._tmux("set-environment", "-g", name, "fake-session-secret")[0]
+            assert tmux._tmux("set-environment", "-g", "DUCKTERM_URL", "fake-session-secret")[0]
             assert tmux._tmux("set-environment", "-g", "HOME", str(tmp_path))[0]
             assert not (await rig.shells.status("shell-test"))["open"]
             first = await rig.shells.open("shell-test")
@@ -158,7 +162,10 @@ def test_real_shell_stream_isolated_env_cwd_reconnect_and_close(rig, tmp_path, m
             await stream.aclose()  # collapse/disconnect leaves shell alive
             await wait_for(lambda: idle(rig.shells))
             values = json.loads(output.read_text())
-            assert values == {"cwd": str(tmp_path), "env": {"DUCKTERM_INTERNAL": "1"}}
+            assert values == {
+                "cwd": str(tmp_path),
+                "env": {"DUCKTERM_INTERNAL": "1", **expected_context},
+            }
             assert rig.history.events_for("shell-test") == before
             assert rig.bus.recent() == bus_before
             assert rig.history._conn.total_changes == timeline_before

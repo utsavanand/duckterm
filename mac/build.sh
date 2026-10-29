@@ -29,18 +29,46 @@ for arg in "$@"; do
     *) echo "Usage: $0 [--test] [--run] [--edition=lite|code|full]" >&2; exit 2 ;;
   esac
 done
-APP_NAME="DuckTerm"
-BUNDLE_ID="com.rubberduckhq.rubberterm"
-ICON_NAME="AppIcon"
+# Names, bundle IDs, homes, sockets and ports come from the backend's
+# stdlib-only resolver, run as a file, so the app and CLI can never disagree.
+PROFILE_ARGS=(--desktop-profile "$EDITION")
+ICON_COMMAND="node make-icon.mjs --edition=$EDITION"
 case "$EDITION" in
-  lite) APP_NAME="DuckTerm Lite" ;;
-  code) APP_NAME="DuckTerm Code" ;;
+  full) ICON_NAME="AppIcon" ;;
+  lite) ICON_NAME="AppIconLite" ;;
+  code) ICON_NAME="AppIconCode" ;;
 esac
 if [[ "$TEST_BUILD" == 1 ]]; then
-  APP_NAME="$APP_NAME Test"
-  BUNDLE_ID="com.rubberduckhq.rubberterm.test"
-  ICON_NAME="AppIconTest"
+  PROFILE_ARGS+=(--test)
+  ICON_NAME="${ICON_NAME}Test"
+  ICON_COMMAND+=" --test"
 fi
+[[ -s "Resources/$ICON_NAME.icns" ]] || {
+  echo "error: missing $EDITION icon Resources/$ICON_NAME.icns; regenerate it with $ICON_COMMAND" >&2
+  exit 1
+}
+PROFILE_JSON="$("${PYTHON:-../.venv/bin/python}" ../src/duckterm/helpers/instance.py "${PROFILE_ARGS[@]}")"
+PROFILE_SHELL="$("${PYTHON:-../.venv/bin/python}" - "$PROFILE_JSON" "$EDITION" <<'PYPROFILE'
+import json, shlex, sys
+try:
+    profile = json.loads(sys.argv[1])
+except ValueError:
+    sys.exit("helpers/instance.py --desktop-profile returned no profile")
+fields = {"profile_id": str, "edition": str, "home_name": str, "tmux_socket": str,
+          "port": int, "bundle_id": str, "app_name": str}
+for key, kind in fields.items():
+    if not isinstance(profile.get(key), kind) or profile[key] in ("", 0):
+        sys.exit(f"desktop profile field {key} is missing or invalid: {profile.get(key)!r}")
+if profile["edition"] != sys.argv[2]:
+    sys.exit(f"desktop profile edition {profile['edition']} does not match {sys.argv[2]}")
+if profile.get("instance_id") is not None and not isinstance(profile["instance_id"], str):
+    sys.exit("desktop profile instance_id must be a string or null")
+print(f"PROFILE_ID={shlex.quote(profile['profile_id'])}")
+print(f"APP_NAME={shlex.quote(profile['app_name'])}")
+print(f"BUNDLE_ID={shlex.quote(profile['bundle_id'])}")
+PYPROFILE
+)"
+eval "$PROFILE_SHELL"
 APP="build/$APP_NAME.app"
 CONTENTS="$APP/Contents"
 MACOS="$CONTENTS/MacOS"
@@ -57,16 +85,9 @@ swiftc -O -target "arm64-apple-macos${MIN_MACOS}" \
   Sources/Duckterm/*.swift
 
 echo "==> bundling app icon"
-# Regenerate the icns from the dashboard duck so the app icon never drifts from
-# the brand mark. Skips if node/playwright isn't available (uses the checked-in
-# icns as-is). Needs web/node_modules (run `npm ci` in web/ once).
-if command -v node >/dev/null 2>&1 && [ -d ../web/node_modules/playwright ]; then
-  if [[ "$TEST_BUILD" == 1 ]]; then
-    node make-icon.mjs --test
-  else
-    node make-icon.mjs || echo "   (icon regen failed; using existing AppIcon.icns)"
-  fi
-fi
+# Edition icons are generated and reviewed together with their SVG sources.
+# Normal builds copy the exact checked-in resource, never rewrite source assets
+# or fall back to another edition when an icon is missing.
 cp "Resources/$ICON_NAME.icns" "$CONTENTS/Resources/AppIcon.icns"
 
 echo "==> writing Info.plist"
@@ -103,8 +124,8 @@ bash bundle-tmux.sh "$CONTENTS/Resources"
 bash bundle-jq.sh "$CONTENTS/Resources"
 
 # Copy only the package and fresh web build. Build tools never import Duckterm.
-"${PYTHON:-../.venv/bin/python}" - "$CONTENTS" "$VERSION" "$TEST_BUILD" <<'PYBUILD'
-import os, plistlib, runpy, shutil, sys
+"${PYTHON:-../.venv/bin/python}" - "$CONTENTS" "$VERSION" "$TEST_BUILD" "$PROFILE_JSON" <<'PYBUILD'
+import json, os, plistlib, runpy, shutil, sys
 from pathlib import Path
 contents = Path(sys.argv[1]).resolve()
 root = Path.cwd().parent
@@ -120,15 +141,23 @@ values = collect(root, sys.argv[2])
 with (contents / 'Info.plist').open('rb') as f:
     info = plistlib.load(f)
 info['DucktermBundledRuntime'] = True
+profile = json.loads(sys.argv[4])
+info['DucktermProfile'] = profile['profile_id']
+info['DucktermHome'] = profile['home_name']
+info['DucktermTmuxSocket'] = profile['tmux_socket']
+info['DucktermPort'] = profile['port']
+if profile['instance_id']:
+    info['DucktermInstance'] = profile['instance_id']
 if sys.argv[3] == '1':
     info['DucktermTestBuild'] = True
     if remote_host := os.environ.get('DUCKTERM_TEST_REMOTE_HOST'):
         info['DucktermTestRemoteHost'] = remote_host
-    for key in ('DUCKTERM_PORT', 'DUCKTERM_URL', 'DUCKTERM_HOME', 'DUCKTERM_TMUX_SOCKET'):
-        os.environ.pop(key, None)
-    os.environ['DUCKTERM_INSTANCE'] = 'test'
-    instance = runpy.run_path(str(root / 'src/duckterm/helpers/instance.py'))
-    info['DucktermTestPort'] = instance['port']()
+# The app CLI defaults to this app's profile; see Resources/duckterm-cli.
+cli = contents / 'Resources/bin/duckterm'
+stamped = cli.read_text().replace('@DESKTOP_PROFILE@', profile['profile_id'])
+if '@DESKTOP_PROFILE@' in stamped or profile['profile_id'] not in stamped:
+    sys.exit('could not stamp the app CLI profile')
+cli.write_text(stamped)
 with (contents / 'Info.plist').open('wb') as f:
     plistlib.dump(info, f)
 PYBUILD

@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from duckterm.agents.hook_dispatch import shared_script_path
 from duckterm.agents.hooks_install import hook_script_path, settings_path
 from duckterm.helpers import paths
 
@@ -40,7 +41,10 @@ def _check_system_deps() -> list[Result]:
         ("curl", "the hook posts events"),
     ):
         bundled = os.environ.get("DUCKTERM_BUNDLED_JQ", "") if tool == "jq" else ""
-        if bundled and os.access(bundled, os.X_OK):
+        shared = shared_script_path().with_name("jq")
+        if tool == "jq" and shared.is_file() and os.access(shared, os.X_OK):
+            out.append(Result("ok", "jq available in shared hook runtime"))
+        elif bundled and os.access(bundled, os.X_OK):
             out.append(Result("ok", f"{tool} bundled with the app"))
         elif shutil.which(tool):
             out.append(Result("ok", f"{tool} installed"))
@@ -70,12 +74,13 @@ def _check_server(url: str) -> Result:
     return Result(
         "fail",
         f"{url} is answered by something that isn't Duckterm",
-        "free the port or pick another: duckterm serve --port 4300",
+        "identify the application using this address before stopping it; "
+        "desktop editions need their assigned port",
     )
 
 
 def _check_token() -> Result:
-    """The hook reads ~/.duckterm/token to authenticate its POSTs."""
+    """The hook reads its owning workspace's token to authenticate its POSTs."""
     path = paths.home() / "token"
     if not path.exists():
         return Result(
@@ -86,9 +91,7 @@ def _check_token() -> Result:
     try:
         readable = bool(path.read_text().strip())
     except OSError as e:
-        return Result(
-            "fail", f"token file unreadable: {e}", "check permissions on ~/.duckterm/token"
-        )
+        return Result("fail", f"token file unreadable: {e}", f"check permissions on {path}")
     return Result("ok" if readable else "fail", "auth token present")
 
 
@@ -111,7 +114,7 @@ def _check_hook_installed(agent: str) -> Result:
             f"{agent}: settings exist but no Duckterm hook",
             f"install: duckterm install-hooks --agent {agent} --global",
         )
-    if script not in blob:
+    if script not in blob and str(shared_script_path()) not in blob:
         return Result(
             "fail",
             f"{agent}: hook points at a different/old script path",

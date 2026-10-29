@@ -47,7 +47,8 @@ def test_restart_starts_a_server_when_none_is_running(monkeypatch) -> None:  # t
     monkeypatch.setattr(cli, "_duckterm_responds", lambda h, p: False)
     served: dict = {}
 
-    def fake_serve(host: str, port: int) -> int:
+    def fake_serve(host: str, port: int, *, recover: bool = False) -> int:
+        assert recover
         served["hp"] = (host, port)
         return 0
 
@@ -126,6 +127,8 @@ def test_restart_waits_for_old_process_exit_after_http_stops(monkeypatch) -> Non
     alive = True
     listeners = iter([{42}, set()])
     monkeypatch.setattr(cli, "_duckterm_responds", lambda h, p: True)
+    monkeypatch.setattr(cli, "_restart_identity_matches", lambda h, p: True)
+    (cli.instance.home() / "server.pid").write_text("42")
     monkeypatch.setattr(cli, "_listening_pids", lambda p: next(listeners))
 
     def kill(pid: int, signal: int) -> None:
@@ -153,9 +156,16 @@ def test_restart_waits_for_old_process_exit_after_http_stops(monkeypatch) -> Non
     monkeypatch.setattr(cli, "_pid_alive", lambda p: alive)
     monkeypatch.setattr("time.sleep", sleep)
     monkeypatch.setattr(history, "HistoryStore", Store)
-    monkeypatch.setattr(cli, "_serve", lambda h, p: steps.append("serve") or 0)
+
+    def serve(host, port, *, recover):
+        assert not alive
+        assert recover
+        steps.append("serve")
+        return 0
+
+    monkeypatch.setattr(cli, "_serve", serve)
     assert cli._restart("127.0.0.1", 4300) == 0
-    assert steps == ["signal", "wait", "open_db", "clear", "close_db", "serve"]
+    assert steps == ["signal", "wait", "serve"]  # recovery waits for serve's bind + home lock
 
 
 def test_restart_refuses_to_open_db_while_old_process_is_alive(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -163,6 +173,8 @@ def test_restart_refuses_to_open_db_while_old_process_is_alive(monkeypatch) -> N
     import duckterm.persistence.history as history
 
     monkeypatch.setattr(cli, "_duckterm_responds", lambda h, p: True)
+    monkeypatch.setattr(cli, "_restart_identity_matches", lambda h, p: True)
+    (cli.instance.home() / "server.pid").write_text("42")
     monkeypatch.setattr(cli, "_listening_pids", lambda p: {42})
     monkeypatch.setattr(cli.os, "kill", lambda pid, sig: None)
     monkeypatch.setattr(cli, "_pid_alive", lambda pid: True)
@@ -180,6 +192,8 @@ def test_restart_refuses_second_listener_before_opening_db(monkeypatch) -> None:
 
     listeners = iter([{42}, {88}])
     monkeypatch.setattr(cli, "_duckterm_responds", lambda h, p: True)
+    monkeypatch.setattr(cli, "_restart_identity_matches", lambda h, p: True)
+    (cli.instance.home() / "server.pid").write_text("42")
     monkeypatch.setattr(cli, "_listening_pids", lambda p: next(listeners))
     monkeypatch.setattr(cli.os, "kill", lambda pid, sig: None)
     monkeypatch.setattr(cli, "_pid_alive", lambda pid: False)

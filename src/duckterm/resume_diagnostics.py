@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from duckterm.agents.hook_dispatch import shared_script_path
 from duckterm.agents.hooks_install import hook_script_path
 from duckterm.harnesses import REGISTRY
 from duckterm.persistence.history import HistoryStore
@@ -103,7 +104,10 @@ def hook_status(runtime: str, cwd: Path | None) -> str:
                                 # Configured does not establish trust or delivery.
                                 found.append(
                                     "configured"
-                                    if str(hook_script_path()) in command
+                                    if any(
+                                        str(script) in command
+                                        for script in (hook_script_path(), shared_script_path())
+                                    )
                                     else "stale reference"
                                 )
         except FileNotFoundError:
@@ -117,7 +121,8 @@ def render(data: dict[str, Any]) -> dict[str, str]:
     """Only file metadata/settings reads here; safe to run in a worker thread."""
     lines = [
         "Read-only snapshot; does not prove hooks are trusted or working.",
-        "jq present: " + ("yes" if shutil.which("jq") else "no"),
+        "jq present: "
+        + ("yes" if shutil.which("jq") or shared_script_path().with_name("jq").is_file() else "no"),
     ]
     for runtime in REGISTRY:
         if REGISTRY[runtime].hook_spec:

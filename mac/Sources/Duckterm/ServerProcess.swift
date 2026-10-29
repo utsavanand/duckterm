@@ -34,20 +34,18 @@ final class ServerProcess {
         proc.arguments = ["-I", "-B", "-m", "duckterm.cli", "serve"]
         if let edition = AppIdentity.edition {
             proc.arguments?.append(contentsOf: ["--edition", edition])
-            env["DUCKTERM_EDITION"] = edition
         }
-        // The app IS the dashboard window — without this, serve would also
-        // open the default browser on the same URL.
-        if AppIdentity.isTest {
-            for key in ["DUCKTERM_HOME", "DUCKTERM_TMUX_SOCKET", "DUCKTERM_URL", "DUCKTERM_PORT", "DUCKTERM_HOSTED"] {
-                env.removeValue(forKey: key)
-            }
-            env["DUCKTERM_INSTANCE"] = Bundle.main.object(forInfoDictionaryKey: "DucktermTestInstance") as? String ?? "test"
-        }
-        env["DUCKTERM_NO_BROWSER"] = "1"
-        proc.environment = env
+        proc.environment = Self.profileEnvironment(inheriting: env, profile: AppIdentity.profile)
         proc.standardOutput = FileHandle.nullDevice
-        proc.standardError = FileHandle.nullDevice
+        // Drain stderr for the server's lifetime, keeping only the tail that
+        // explains a refusal (a workspace or port owned by someone else).
+        let log = StartupLog()
+        let errors = Pipe()
+        errors.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if data.isEmpty { handle.readabilityHandler = nil } else { log.append(data) }
+        }
+        proc.standardError = errors
         do {
             try proc.run()
         } catch {
@@ -65,21 +63,63 @@ final class ServerProcess {
             if !proc.isRunning { break }
             try? await Task.sleep(nanoseconds: 200_000_000)
         }
+        if !proc.isRunning {
+            errors.fileHandleForReading.readabilityHandler = nil
+            log.append(errors.fileHandleForReading.readDataToEndOfFile())
+            if let reason = Self.startupReason(stderr: log.text, port: AppIdentity.localPort) {
+                startupError = reason
+                AppDiagnostics.shared.record("Server refused to start")
+                return false
+            }
+        }
         AppDiagnostics.shared.record("Server startup timed out")
         return false
+    }
+
+    /// Inherited profile facets or a shell's session enrollment (from launchctl,
+    /// a terminal or an agent pane) must never retarget this app's server.
+    static func profileEnvironment(inheriting environment: [String: String], profile: AppProfile?) -> [String: String] {
+        var result = environment
+        for key in ["DUCKTERM_HOME", "DUCKTERM_TMUX_SOCKET", "DUCKTERM_PORT", "DUCKTERM_URL",
+                    "DUCKTERM_INSTANCE", "DUCKTERM_DESKTOP_PROFILE", "DUCKTERM_APP_PROFILE", "DUCKTERM_EDITION",
+                    "DUCKTERM_HOSTED", "DUCKTERM_HOST", "DUCKTERM_SESSION_KEY", "DUCKTERM_SESSION_TOKEN_FILE",
+                    "DUCKTERM_INTERNAL"] {
+            result.removeValue(forKey: key)
+        }
+        result.merge(profile?.environment ?? [:]) { _, new in new }
+        // The app is the dashboard window; serve must not also open a browser.
+        result["DUCKTERM_NO_BROWSER"] = "1"
+        return result
     }
 
     private func matchesEdition() async -> Bool {
         guard AppIdentity.edition != nil else { return true }
         do {
             let response = try await LaunchDestination().perform(base: url, operation: "edition", params: [:])
-            try DesktopEdition(response: response).validate(expected: AppIdentity.edition)
+            try DesktopEdition(response: response).validate(edition: AppIdentity.edition, profile: AppIdentity.profile)
             return true
         } catch {
             startupError = error.localizedDescription
             AppDiagnostics.shared.record("Local server edition could not be verified")
             return false
         }
+    }
+
+    /// The backend reports a refusal as "duckterm: <reason>"; a foreign program
+    /// on the port surfaces as a bind error.
+    static func startupReason(stderr: String, port: Int) -> String? {
+        let lines = stderr.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
+        if let line = lines.last(where: { $0.hasPrefix("duckterm: ") }) {
+            // Shown in an alert: printable text only, one line, bounded.
+            let printable = line.dropFirst("duckterm: ".count).unicodeScalars
+                .map { CharacterSet.controlCharacters.contains($0) ? " " : String($0) }.joined()
+            let reason = printable.split(separator: " ").joined(separator: " ")
+            return reason.isEmpty ? nil : String(reason.prefix(300))
+        }
+        if stderr.contains("Address already in use") {
+            return "Port \(port) is in use by another program. Quit it, then reopen this app."
+        }
+        return nil
     }
 
     func stop() {
@@ -94,5 +134,23 @@ final class ServerProcess {
             let http = resp as? HTTPURLResponse
         else { return false }
         return http.statusCode == 200 && http.value(forHTTPHeaderField: "X-Duckterm") == "1"
+    }
+}
+
+/// Bounded and thread-safe: the pipe handler runs off the main thread.
+final class StartupLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var tail = ""
+
+    func append(_ data: Data) {
+        lock.lock()
+        tail = String((tail + String(decoding: data, as: UTF8.self)).suffix(4096))
+        lock.unlock()
+    }
+
+    var text: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return tail
     }
 }

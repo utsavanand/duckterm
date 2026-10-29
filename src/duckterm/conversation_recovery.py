@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from duckterm import conversation_files
-from duckterm.agents import hooks_install
+from duckterm.agents import hook_dispatch, hooks_install
 from duckterm.core.session_api import APIError
 from duckterm.harnesses import REGISTRY, runtime_for
 from duckterm.helpers import security
@@ -38,11 +38,10 @@ def hook_status(runtime: str, cwd: str) -> dict[str, Any]:
             config = json.loads(path.read_text())
             if not isinstance(config, dict):
                 return {"status": "unknown", "canInstall": False}
-            expected = spec.build(
-                copy.deepcopy(config), str(hooks_install.hook_script_path()), runtime
-            )
-            if config == expected:
-                return {"status": "configured", "canInstall": False}
+            for script in (hook_dispatch.shared_script_path(), hooks_install.hook_script_path()):
+                expected = spec.build(copy.deepcopy(config), str(script), runtime)
+                if config == expected:
+                    return {"status": "configured", "canInstall": False}
     except (OSError, ValueError, TypeError, AttributeError):
         return {"status": "unknown", "canInstall": False}
     return {"status": "missing", "canInstall": True}

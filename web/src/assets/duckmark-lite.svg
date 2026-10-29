@@ -1,0 +1,19 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="DuckTerm Lite">
+  <defs>
+    <linearGradient id="lite-body" x1="16" y1="10" x2="48" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD32B"/><stop offset="1" stop-color="#E0AD00"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#0d0f14"/>
+  <g fill="url(#lite-body)">
+    <ellipse cx="29.5" cy="46" rx="16.5" ry="10.5"/>
+    <circle cx="36.5" cy="26" r="17"/>
+  </g>
+  <path fill="#F47C16" d="M49.5 23c5 .2 8 1.9 7.9 4.3-.1 2.4-3.4 4-8.3 3.8-1.2-2.7-1.1-5.4.4-8.1z"/>
+  <path d="M50 27.3h6.9" stroke="#D9620A" stroke-width="1.2" stroke-linecap="round" opacity=".45"/>
+  <path d="M22 45.5c3.6 3.6 9.7 3.7 13.8.3" stroke="#E0AD00" stroke-width="2.6" stroke-linecap="round" opacity=".75"/>
+  <circle cx="40" cy="23.2" r="3.9" fill="#22242b"/>
+  <circle cx="41.6" cy="21.6" r="1.45" fill="#fff"/>
+  <ellipse cx="32.9" cy="30.7" rx="3.5" ry="2.2" fill="#F47C16" opacity=".28"/>
+  <ellipse cx="29.5" cy="17.4" rx="5.5" ry="3.2" fill="#fff" opacity=".30" transform="rotate(-24 29.5 17.4)"/>
+</svg>

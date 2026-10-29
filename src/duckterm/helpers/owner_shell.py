@@ -3,8 +3,11 @@
 import os
 import sys
 
+from duckterm.helpers import instance
+
 
 def clean_environment() -> None:
+    context = instance.launch_env()
     for name in list(os.environ):
         if name.startswith(
             ("DUCKTERM_", "RUBBERDUCK_", "UVS_SESSION", "CODEX_SESSION")
@@ -16,6 +19,9 @@ def clean_environment() -> None:
             os.environ.pop(name, None)
     # Installed DuckTerm hooks must be inert for programs launched in this shell.
     os.environ["DUCKTERM_INTERNAL"] = "1"
+    # Preserve the workspace target while removing agent identity and secrets.
+    # Hooks remain inert; an explicit CLI command still addresses this edition.
+    os.environ.update(context)
 
 
 if __name__ == "__main__":

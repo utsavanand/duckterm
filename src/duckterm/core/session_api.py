@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm import editions
-from duckterm.helpers import session_credentials
+from duckterm.helpers import instance, session_credentials
 from duckterm.persistence import mail_analytics
 from duckterm.persistence.artifacts import MAX_REQUEST_BYTES as MAX_ARTIFACT_REQUEST_BYTES
 from duckterm.persistence.artifacts import ArtifactError, ArtifactStore
@@ -220,7 +220,13 @@ class SessionAPI:
         )
 
     def set_url(self, url: str) -> None:
-        session_credentials.write_private(self.credential_dir / "server.json", {"url": url})
+        identity = instance.description()
+        identity["home"] = str(self.credential_dir.resolve().parent)
+        identity["url"] = url
+        identity["port"] = urllib.parse.urlsplit(url).port
+        session_credentials.write_private(
+            self.credential_dir / "server.json", {"url": url, "instance": identity}
+        )
 
     def backfill(self) -> int:
         """Idempotent startup migration, also repairing a missing capability file."""
