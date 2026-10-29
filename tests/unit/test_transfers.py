@@ -182,6 +182,20 @@ def test_only_immediately_quoted_key_markers_are_exempt(tmp_path, homes, cloned,
 
 
 @pytest.mark.parametrize("cloned", [False, True])
+@pytest.mark.parametrize(
+    "left,right",
+    [(chr(a), chr(b)) for a in (34, 39, 96) for b in (34, 39, 96) if a != b],
+)
+def test_mismatched_quotes_do_not_exempt_key_headers(tmp_path, homes, cloned, left, right):
+    source = tmp_path / "project"
+    source.mkdir()
+    header = "-----BEGIN " + "PRIVATE KEY-----"
+    (source / "example.txt").write_text(left + header + right)
+    with pytest.raises(ValueError, match="Private key detected"):
+        t.scan(source, [], cloned=cloned)
+
+
+@pytest.mark.parametrize("cloned", [False, True])
 def test_marker_literal_does_not_hide_a_later_wrapped_key(tmp_path, homes, cloned):
     source = tmp_path / "project"
     source.mkdir()
