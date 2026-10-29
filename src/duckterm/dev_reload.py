@@ -45,7 +45,9 @@ def _watch(initial: dict[str, float]) -> None:
                 file=sys.stderr,
                 flush=True,
             )
-            os.execv(sys.executable, [sys.executable, *sys.argv])
+            # orig_argv retains interpreter flags and -m, including the app's
+            # import isolation and protection against writes to signed files.
+            os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
 
 
 def watch_and_reexec() -> None:

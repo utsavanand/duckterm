@@ -182,8 +182,10 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
     """
     pane_target = tmux.exact_target(target, pane=True)
     target = tmux.exact_target(target)
-    proc = await asyncio.create_subprocess_exec(
-        *tmux.client_command(
+    # A cold client selection probes the socket; keep the event loop draining output.
+    try:
+        command = await asyncio.to_thread(
+            tmux.client_command,
             "-C",
             "attach-session",
             "-f",
@@ -224,7 +226,12 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             "-C",
             "-t",
             pane_target,
-        ),
+        )
+    except RuntimeError as exc:
+        print(f"[duckterm] terminal stream unavailable: {exc}", file=sys.stderr)
+        return
+    proc = await asyncio.create_subprocess_exec(
+        *command,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,

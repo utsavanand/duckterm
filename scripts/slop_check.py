@@ -23,6 +23,8 @@ SKIP_DIRS = {
     ".venv",
     "node_modules",
     "dist",
+    "build",
+    ".build",
     ".duckterm",
     "__pycache__",
     ".claude",

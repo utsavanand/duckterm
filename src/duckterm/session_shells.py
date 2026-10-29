@@ -8,13 +8,13 @@ import pwd
 import re
 import shlex
 import subprocess
-import sys
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from duckterm.agents import tmux, tmux_stream
 from duckterm.core.session_api import APIError
+from duckterm.helpers.runtime import module_command
 
 if TYPE_CHECKING:
     from duckterm.server import Server
@@ -101,7 +101,7 @@ def _spawn(key: str, cwd: str) -> None:
     # The helper runs inside tmux, after tmux's global environment inheritance.
     # Linux /bin/sh may retain a launcher parent without explicit exec.
     # Keep pane_pid attached to the interactive shell for foreground checks.
-    command = "exec " + shlex.join([sys.executable, "-m", "duckterm.helpers.owner_shell", shell])
+    command = "exec " + shlex.join(module_command("duckterm.helpers.owner_shell", shell))
     # Publish ownership in the creation command queue, before discovery can
     # mistake this sibling for an agent. A suffix alone is not ownership.
     tmux.spawn(

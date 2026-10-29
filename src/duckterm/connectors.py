@@ -235,6 +235,10 @@ def _duckterm_bin() -> str:
     commands without a login shell, so PATH lookup is not reliable there. The
     pipx shim comes first: it survives upgrades and repo moves, while a dev
     venv's path dies with its checkout (see RETRO.md, hooks-127)."""
+    # The native app supplies a CLI matching its backend, independent of pipx.
+    bundled = os.environ.get("DUCKTERM_BUNDLED_CLI")
+    if bundled and Path(bundled).is_file() and os.access(bundled, os.X_OK):
+        return bundled
     shim = Path.home() / ".local" / "bin" / "duckterm"
     if shim.is_file():
         return str(shim)
