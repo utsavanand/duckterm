@@ -26,6 +26,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         AppDiagnostics.shared.record("Application launched")
+        Task.detached(priority: .utility) {
+            do {
+                if let bound = try ApprovalSigner.bindIfUnbound() { AppDiagnostics.shared.record("Approval key bound: \(bound)") }
+            } catch { AppDiagnostics.shared.record("Approval key not bound") }
+        }
         window = DashboardWindow(url: server.url)
         window?.onReportBug = { [weak self] in self?.reportBug(nil) }
         window?.desktopHosts = []

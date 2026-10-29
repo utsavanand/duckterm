@@ -375,6 +375,19 @@ export interface PrRow {
   review: "none" | "approved" | "changes_requested"; conflict: boolean | null; pushed: boolean; unpushed_commits: number;
   ahead: number | null; behind: number | null; size: { files: number; additions: number; deletions: number } | null;
   updated_at: number | null; compare_url: string | null;
+  approval?: ApprovalRecord | null;
+}
+// Touch ID approval = merge and release (docs/specs/pr-widget-approve-delta-spec.md).
+export interface ApprovalRecord {
+  pr: number; head_sha: string; task_id: string; message_id: string; approved_at: number; fingerprint: string | null;
+  release: { key: string; name: string; folder: string };
+  task: { status: "in_progress" | "done" | "parked"; note: string; updated_at: number } | null;
+}
+export interface ApprovalKey { enrolled: boolean; fingerprint: string | null; enrolled_at: number | null; public_key: string | null; path: string; invalid: boolean }
+export interface ApprovalState {
+  ready: boolean; checks: { name: string; ok: boolean; note: string }[]; flags: { name: string; hits: string[] }[];
+  release: { key: string; name: string; folder: string } | null; author: { key: string; name: string; folder: string } | null;
+  head_sha: string; key: ApprovalKey; record: ApprovalRecord | null;
 }
 export interface PrRepo { path: string; name: string; github: string | null; default_branch: string; connected: boolean; error: string | null; fetched_at: number }
 export interface PrListResult { rows: PrRow[]; repos: PrRepo[] }
@@ -427,7 +440,11 @@ export const api = {
   reviewAsk: (repo: string, ref: string, body: { question: string; hunk?: string | null }) => post<ChatMessage>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/ask`, body),
   reviewSend: (repo: string, ref: string, body: { card: string; items: string[]; session: string }) => post<{ delivered: string; message_id: string; session: string }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/send`, body),
   reviewDraft: (repo: string, ref: string) => post<{ body: string }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/draft-review`),
-  reviewGithub: (repo: string, ref: string, body: { event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT"; body: string }) => post<{ id: number | null; url: string | null; state: string | null }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/github-review`, body),
+  approvalState: (repo: string, ref: string) => get<ApprovalState>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/approval`, undefined, { authed: true }),
+  approvalChallenge: (repo: string, ref: string) => post<{ payload: string }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/approval/challenge`, {}),
+  approvalSubmit: (repo: string, ref: string, body: { payload: string; signature: string }) => post<ApprovalRecord>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/approval/submit`, body),
+  approvalKey: () => get<ApprovalKey>("/approval-key", undefined, { authed: true }),
+  reviewGithub: (repo: string, ref: string, body: { event: "REQUEST_CHANGES" | "COMMENT"; body: string }) => post<{ id: number | null; url: string | null; state: string | null }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/github-review`, body),
   markViewed: async (repo: string, ref: string, body: { path: string; hash: string; viewed?: boolean; bucket?: Bucket | "" }) => {
     const res = await fetch(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/viewed`, { method: "PUT", headers: authHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));

@@ -7,6 +7,7 @@ type Desktop = {
   testBuild?: boolean;
   canReportBug?: boolean;
   canCollaborate?: boolean;
+  canApprove?: boolean;
   targets: { id: string; name: string }[];
   draft?: LaunchDraft;
   selectedSession?: string;
@@ -19,6 +20,7 @@ declare global {
       messageHandlers?: {
         remoteSession?: { postMessage: (message: unknown) => void };
         launchRequest?: { postMessage: (message: unknown) => Promise<unknown> };
+        approval?: { postMessage: (message: unknown) => Promise<unknown> };
       };
     };
   }
@@ -75,4 +77,15 @@ export function openNativeBugReport(): boolean {
   if (!desktop()?.canReportBug || !bridge) return false;
   bridge.postMessage({ action: "report-bug" });
   return true;
+}
+
+// Touch ID approval lives in the Mac app: the Secure Enclave key signs one
+// server challenge per click. Browsers have no bridge and cannot approve.
+export function approvalSigner(): { publicKey: () => Promise<string>; sign: (payload: string) => Promise<string> } | null {
+  const bridge = window.webkit?.messageHandlers?.approval;
+  if (!desktop()?.canApprove || !bridge) return null;
+  return {
+    publicKey: async () => await bridge.postMessage({ operation: "public-key" }) as string,
+    sign: async (payload: string) => await bridge.postMessage({ operation: "sign", payload }) as string,
+  };
 }
