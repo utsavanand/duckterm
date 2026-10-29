@@ -62,11 +62,11 @@ it.each(["failed", "partial"] as const)("shows a %s summary outcome as an error 
   expect(close).toHaveBeenCalledOnce();
 });
 
-it.each([undefined, "parent"])("offers merge with agent only for a recorded child (%s)", parentKey => {
+it.each([undefined, "parent"])("offers general merge for any session and merge back only for a child (%s)", parentKey => {
   const s = { key: "merge-source", label: "Source", state: "busy", startedAt: 1, runtime: "generic", parentKey } as SessionView;
   render(<SessionActions session={s} anchor={{ key: s.key, x: 10, y: 10, trigger: document.body }} onClose={vi.fn()} onFork={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} onNotes={vi.fn()} />, { wrapper: edition(FULL) });
-  if (parentKey) expect(screen.getByRole("menuitem", { name: "Merge with agent" })).toBeEnabled();
-  else expect(screen.queryByRole("menuitem", { name: "Merge with agent" })).toBeNull();
+  expect(screen.getByRole("menuitem", { name: "Merge with agent" })).toBeEnabled();
+  expect(screen.queryAllByRole("menuitem", { name: "Merge back" })).toHaveLength(parentKey ? 1 : 0);
 });
 it.each([["Lite", LITE, 0], ["Code", CODE, 1]] as const)("%s offers merge-back and checkpoint actions only with handoff and checkpoints", (_name, features, count) => {
   const s = { key: "fork", parentKey: "parent", label: "Fork", state: "idle", startedAt: 1, launched: true, runtime: "generic" } as SessionView;
