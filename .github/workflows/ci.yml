@@ -112,3 +112,5 @@ jobs:
         run: |
           scripts/test_mac_bug_report.sh
           scripts/test_mac_clipboard.sh
+      - name: Signed app archive extraction
+        run: python3 mac/Tests/archive-bundle.py
