@@ -11,7 +11,7 @@ const receipt: AgentMergeRecord = { id: "merge", source: "source", sourceName: "
 function fixture() {
   const service: AgentMergeService = { targets: vi.fn().mockResolvedValue({ destinations: [preview.target, { ...preview.target, key: "other", name: "Other" }] }), preview: vi.fn().mockResolvedValue(preview), send: vi.fn().mockResolvedValue(receipt), history: vi.fn().mockResolvedValue({ merges: [] }) };
   const close = vi.fn();
-  render(<AgentMergeDialog parentKey="target" sourceKey="source" service={service} sourceName="Source" onClose={close} />);
+  render(<AgentMergeDialog sourceKey="source" service={service} sourceName="Source" onClose={close} />);
   return { service, close };
 }
 async function choose() {
@@ -39,19 +39,19 @@ it("reviews choices and retries an uncertain send without duplicate request iden
   expect(calls[0][0]).toMatchObject({ context: " Owner edited context \n", notes: null, code: false, target: "target", revision: "v1" });
 });
 
-it("filters unrelated destinations even when an older server returns them", async () => {
+it("offers unrelated destinations as well as the parent", async () => {
   fixture();
   await screen.findByRole("option", { name: /Destination/ });
-  expect(screen.queryByRole("option", { name: /Other/ })).toBeNull();
-  expect(screen.getAllByRole("option")).toHaveLength(2);
+  expect(screen.getByRole("option", { name: /Other/ })).toBeEnabled();
+  expect(screen.getAllByRole("option")).toHaveLength(3);
 });
 
-it("rejects a preview naming a different parent without sending", async () => {
+it("rejects a preview naming a different destination without sending", async () => {
   const { service } = fixture();
   vi.mocked(service.preview).mockResolvedValue({ ...preview, target: { ...preview.target, key: "other" } });
   await screen.findByRole("option", { name: /Destination/ });
   fireEvent.change(screen.getByLabelText("Destination agent"), { target: { value: "target" } });
-  await screen.findByText(/destination is no longer this agent’s recorded parent/);
+  await screen.findByText(/preview does not match the selected destination/);
   expect(screen.getByRole("button", { name: "Review merge" })).toBeDisabled();
   expect(service.send).not.toHaveBeenCalled();
 });
@@ -244,4 +244,22 @@ it("a failed refresh prevents stale revision sends and retains drafts for retry"
   fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
   fireEvent.click(screen.getByRole("button", { name: "Send merge request" }));
   await waitFor(() => expect(service.send).toHaveBeenCalledWith(expect.objectContaining({ revision: "fresh", context: "My draft survives" })));
+});
+
+
+it("changing destinations keeps edits but requires the new destination preview before sending", async () => {
+  const { service } = fixture();
+  await choose();
+  fireEvent.change(screen.getByLabelText("Context to send"), { target: { value: "Owner draft" } });
+  let finish!: (value: AgentMergePreview) => void;
+  vi.mocked(service.preview).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.change(screen.getByLabelText("Destination agent"), { target: { value: "other" } });
+  expect(screen.getByRole("button", { name: "Review merge" })).toBeDisabled();
+  expect(service.send).not.toHaveBeenCalled();
+  await act(async () => { finish({ ...preview, target: { ...preview.target, key: "other", name: "Other" }, revision: "other-v1" }); });
+  expect(screen.getByLabelText("Context to send")).toHaveValue("Owner draft");
+  fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
+  expect(screen.getByText("Other", { selector: "strong" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Send merge request" }));
+  await waitFor(() => expect(service.send).toHaveBeenCalledWith(expect.objectContaining({ target: "other", revision: "other-v1", context: "Owner draft" })));
 });

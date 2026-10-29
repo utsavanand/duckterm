@@ -134,3 +134,69 @@ def test_current_binding_uses_exact_recorded_id(monkeypatch, tmp_path):
         {"runtime": "codex", "cwd": "/tmp/project"}, {"status": "recorded", "native_id": "native"}
     )
     assert result["context_window_tokens"] == 258400
+
+
+def codex_usage(used, cached=201856, total=23639388):
+    row = usage(258400)
+    row["payload"]["info"].update(
+        last_token_usage={"input_tokens": used, "cached_input_tokens": cached},
+        total_token_usage={"input_tokens": total},
+    )
+    return row
+
+
+def test_codex_occupancy_is_latest_input_including_cache_not_lifetime_spend(tmp_path):
+    path = write(
+        tmp_path / "log",
+        [
+            meta(),
+            {"type": "turn_context", "payload": {"model": "old-model"}},
+            codex_usage(210000),
+            {"type": "turn_context", "payload": {"model": "gpt-6-astra"}},
+            codex_usage(202390),
+        ],
+    )
+    result = read(path)
+    assert result["context_tokens"] == 202390
+    assert result["context_window_tokens"] == 258400
+    assert result["model"] == "gpt-6-astra"
+    assert result["context_tokens"] / result["context_window_tokens"] == pytest.approx(
+        0.7832, abs=0.0001
+    )
+
+
+@pytest.mark.parametrize("bad", [None, -1, True, "202390", 1.5, 2**53])
+def test_invalid_latest_usage_is_unknown_not_an_old_count(tmp_path, bad):
+    path = write(tmp_path / "log", [meta(), codex_usage(202390), codex_usage(bad)])
+    assert read(path)["context_tokens"] is None
+    assert read(path)["context_window_tokens"] == 258400
+
+
+def test_zero_is_valid_and_new_missing_usage_does_not_reuse_old_count(tmp_path):
+    path = write(tmp_path / "log", [meta(), codex_usage(0)])
+    assert read(path)["context_tokens"] == 0
+    with path.open("a") as stream:
+        stream.write(json.dumps(usage(258400)) + "\n")
+    assert read(path)["context_tokens"] is None
+
+
+@pytest.mark.parametrize("model", [None, "", "   ", 42, "m" * 257])
+def test_invalid_latest_model_does_not_reuse_previous_turn_model(tmp_path, model):
+    path = write(
+        tmp_path / "log",
+        [
+            meta(),
+            {"type": "turn_context", "payload": {"model": "old"}},
+        ],
+    )
+    assert read(path)["model"] == "old"
+    with path.open("a") as stream:
+        stream.write(json.dumps({"type": "turn_context", "payload": {"model": model}}) + "\n")
+    assert read(path)["model"] is None
+
+
+def test_unverified_identity_does_not_expose_model_or_usage(tmp_path):
+    path = write(tmp_path / "log", [meta(), codex_usage(202390)])
+    result = read(path, identity="different")
+    assert result["context_tokens"] is None
+    assert result["model"] is None

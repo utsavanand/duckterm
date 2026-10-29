@@ -1,4 +1,4 @@
-"""Read explicit native compaction/capacity evidence without invoking an agent."""
+"""Read explicit native context and compaction evidence without invoking an agent."""
 
 from __future__ import annotations
 
@@ -21,6 +21,8 @@ def unavailable(reason: str) -> dict[str, Any]:
         "state": "unavailable",
         "reason": reason,
         "context_window_tokens": None,
+        "context_tokens": None,
+        "model": None,
         "last_compaction_at": None,
         "history_scope": None,
     }
@@ -82,13 +84,21 @@ def _read(
         "state": "available",
         "reason": None,
         "context_window_tokens": None,
+        "context_tokens": None,
+        "model": None,
         "last_compaction_at": None,
         "history_scope": "recent" if offset else "complete",
     }
     capacity_seen = False
+    model_seen = False
     compaction_seen = False
     for row in reversed(records):
         payload = row.get("payload")
+        if runtime == "codex" and not model_seen and row.get("type") == "turn_context":
+            model_seen = True
+            model = payload.get("model") if isinstance(payload, dict) else None
+            if isinstance(model, str) and model.strip() and len(model) <= 256:
+                result["model"] = model.strip()
         if not compaction_seen:
             compacted = (
                 runtime == "claude-code"
@@ -117,6 +127,12 @@ def _read(
             capacity = info.get("model_context_window") if isinstance(info, dict) else None
             if type(capacity) is int and 0 < capacity <= 2**53 - 1:
                 result["context_window_tokens"] = capacity
+            usage = info.get("last_token_usage") if isinstance(info, dict) else None
+            used = usage.get("input_tokens") if isinstance(usage, dict) else None
+            # This is occupancy from the latest call, not cumulative spend.
+            # Codex input_tokens already includes cached_input_tokens.
+            if type(used) is int and 0 <= used <= 2**53 - 1:
+                result["context_tokens"] = used
     return result
 
 

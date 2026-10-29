@@ -1,4 +1,4 @@
-"""Reviewed child-to-parent handoffs, stored atomically with their inbox delivery.
+"""Reviewed agent handoffs, stored atomically with their inbox delivery.
 
 Uses a reserved bucket in the existing canonical SQLite store. No new schema,
 agent lifecycle change, conversation identity rewrite or automatic Git mutation.
@@ -27,13 +27,6 @@ def _row(server: "Server", key: str) -> dict[str, Any]:
     if row is None:
         raise APIError(404, "Session no longer exists")
     return row
-
-
-def _require_parent(source: dict[str, Any], target: str) -> None:
-    if not source.get("parent_session_key"):
-        raise APIError(409, "Only child agents can merge into their recorded parent.")
-    if target == source["session_key"] or source["parent_session_key"] != target:
-        raise APIError(409, "A child agent can merge only into its recorded parent.")
 
 
 def _destination(server: "Server", source: str, row: dict[str, Any]) -> dict[str, Any]:
@@ -84,7 +77,8 @@ def _context(server: "Server", row: dict[str, Any]) -> str:
 
 async def preview(server: "Server", source: str, target: str) -> dict[str, Any]:
     left = _row(server, source)
-    _require_parent(left, target)
+    if source == target:
+        raise APIError(409, "Choose a different agent.")
     right = _row(server, target)
     paths = (
         left.get("worktree_path") or left.get("cwd"),
@@ -93,11 +87,10 @@ async def preview(server: "Server", source: str, target: str) -> dict[str, Any]:
     git = await asyncio.to_thread(snapshot, *paths)
     # Git reads yield. Reject deleted/replaced sessions or changed worktree bindings.
     current_left, current_right = _row(server, source), _row(server, target)
-    _require_parent(current_left, target)
     if any(
         old.get(field) != new.get(field)
         for old, new in ((left, current_left), (right, current_right))
-        for field in ("started_at", "cwd", "worktree_path", "parent_session_key")
+        for field in ("started_at", "cwd", "worktree_path")
     ):
         raise APIError(409, "A session changed while preparing the merge. Review again.")
     destination = _destination(server, source, current_right)
@@ -237,7 +230,10 @@ async def send(server: "Server", source: str, request: dict[str, Any]) -> dict[s
         conn = server.history._conn
 
         def save(mid: str) -> None:
-            _require_parent(_row(server, source), target)
+            _row(server, source)
+            destination = _destination(server, source, _row(server, target))
+            if not destination["allowed"]:
+                raise APIError(409, destination["reason"])
             # The broker calls this inside its message INSERT transaction. Notes,
             # the receipt and delivery intent either all commit, or none do.
             if notes is not None:
@@ -281,14 +277,14 @@ async def handle(
         await write_json(writer, 401, {"error": "owner credential required"})
         return
     try:
-        source_row = _row(server, source)
+        _row(server, source)
         if operation == "targets":
             result = {
                 "destinations": [
                     _destination(server, source, dict(row))
                     for row in server.history._conn.execute(
-                        "SELECT * FROM sessions WHERE session_key = ? AND session_key != ?",
-                        (source_row.get("parent_session_key"), source),
+                        "SELECT * FROM sessions WHERE session_key != ? ORDER BY name, session_key",
+                        (source,),
                     )
                 ]
             }

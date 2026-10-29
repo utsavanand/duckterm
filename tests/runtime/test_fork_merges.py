@@ -159,6 +159,27 @@ def test_owner_only_and_invalid_requests(rig):
     assert h._conn.execute("SELECT count(*) FROM fork_merges").fetchone()[0] == 0
 
 
+def test_merge_back_remains_parent_only_when_general_merge_is_available(rig):
+    h, server, auth = rig
+    code, preview = dispatch(server, "GET", "/sessions/child/merge", auth)
+    assert code == 200 and preview["parent"]["key"] == "parent"
+    # The parent-only route never accepts an arbitrary destination override.
+    code, _ = dispatch(
+        server,
+        "POST",
+        "/sessions/child/merge",
+        auth,
+        json.dumps(
+            {"target": "other", "summary": "Reviewed", "keepOpen": True, "requestKey": "x"}
+        ).encode(),
+    )
+    assert code == 400
+    assert h._conn.execute("SELECT count(*) FROM fork_merges").fetchone()[0] == 0
+    assert h._conn.execute("SELECT count(*) FROM session_questions").fetchone()[0] == 0
+    code, _ = dispatch(server, "GET", "/sessions/parent/merge", auth)
+    assert code == 404
+
+
 def test_stop_failure_retries_same_note_and_blocks_resume(rig, monkeypatch):
     h, server, auth = rig
 

@@ -2183,12 +2183,13 @@ class Server:
                     k: transfer.get(k) for k in ("id", "stage", "target", "session_key")
                 }
             s["subagents"] = subagents.get(str(s.get("session_key") or ""), [])
-            stats = self._transcript_stats_for(s)
+            stats = await self._transcript_stats_for(s)
             s["context_tokens"] = stats.get("context_tokens")
+            s["context_window_tokens"] = stats.get("context_window_tokens")
             live_model = stats.get("model")
             if live_model and live_model != s.get("model"):
                 # Persist so rule scopes like "claude-code/fable-5" still match
-                # after the transcript is gone (codex exposes none -> stays NULL).
+                # after the transcript is gone.
                 self.history.set_model(str(s["session_key"]), str(live_model))
             s["model"] = live_model or s.get("model")
             s["suites"] = self._suites_for(s.get("worktree_path") or s.get("cwd"))
@@ -2256,9 +2257,24 @@ class Server:
         ):
             row["state"] = "busy"
 
-    def _transcript_stats_for(self, row: dict[str, Any]) -> dict[str, Any]:
-        """Live transcript-tail stats for a claude-code session: current
-        context size (the checkpoint/compact signal) and the model in use."""
+    async def _transcript_stats_for(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Current context size and model from the recorded conversation."""
+        if row.get("runtime") == "codex":
+            from duckterm import context_evidence
+
+            key = str(row["session_key"])
+            identity = self.history.native_identity(key)
+            evidence = await asyncio.to_thread(context_evidence.project, row, identity)
+            current = self.history.session(key)
+            if self.history.native_identity(key) != identity or any(
+                (current or {}).get(k) != row.get(k)
+                for k in ("runtime", "cwd", "worktree_path", "restart_json")
+            ):
+                return {}
+            return {
+                field: evidence.get(field)
+                for field in ("context_tokens", "context_window_tokens", "model")
+            }
         if row.get("runtime") == "opencode":
             control = self.history.restart_control(str(row["session_key"]))
             observation = control.get("opencode_observation") or {}
@@ -3518,7 +3534,7 @@ class Server:
         name = str(row.get("name") or row.get("source_app") or key)
         # A question that names a session gets a deeper look at that session.
         focus = name.lower() in question.lower()
-        stats = self._transcript_stats_for(row)
+        stats = await self._transcript_stats_for(row)
         meta = [
             f"folder: {row.get('grp') or '-'}",
             f"state: {row.get('state') or '?'}",
@@ -6027,6 +6043,13 @@ class Server:
             )
             if refreshed:
                 print(f"refreshed {refreshed} stale session instruction file(s)")
+            from duckterm.agents.hooks_install import repair_moved_app_hooks
+
+            try:
+                for path in repair_moved_app_hooks():
+                    print(f"repointed DuckTerm hooks in {path} at this app")
+            except (OSError, ValueError) as exc:  # a user's own config; never block startup
+                print(f"left hook configuration unchanged: {exc}", file=sys.stderr)
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")

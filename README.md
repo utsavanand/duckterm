@@ -40,15 +40,20 @@ want parallel attempts, and fork — including conversation forks for Claude Cod
 
 ## Install
 
-**DuckTerm Lite is the public download.** Install the CLI, then open Lite in
-your browser or use the optional [Mac app](#mac-app). Code and Full distribution
-is invite-only. Features described elsewhere in this repository vary by edition;
-Lite includes folders, workstreams, coding-agent sessions, forks, terminals, Shell,
-Messages and session status.
+**DuckTerm Lite is the public download.** On Apple Silicon Macs running macOS 13+,
+[download the app](https://github.com/utsavanand/duckterm/releases/latest/download/DuckTerm-Lite-macos-arm64.zip),
+unzip it, move **DuckTerm Lite.app** to **Applications**, and open it. Python,
+tmux, the dashboard and its local backend are included. No Homebrew, pipx or
+separate backend installation is required for the app.
 
-You need macOS or Linux, Python 3.11+, tmux, and at least one installed,
-signed-in agent CLI (`claude`, `codex`, or `copilot`). Your agents use their
-existing accounts.
+Code and Full distribution is invite-only. Lite includes folders, workstreams,
+coding-agent sessions, forks, terminals, Shell, Messages and session status.
+Install and sign in to your chosen coding agent separately; Git is needed for
+Git workstreams. Your agents use their existing tools, environments and accounts.
+
+### Browser-only installation
+
+On macOS or Linux, browser-only use needs Python 3.11+, pipx and tmux.
 
 On macOS with [Homebrew](https://brew.sh) already installed:
 
@@ -62,7 +67,7 @@ install Python 3.11+, pipx, and tmux using your distribution's package manager.
 Then install the published wheel:
 
 ```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.178/duckterm-0.4.178-py3-none-any.whl
+pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.181/duckterm-0.4.181-py3-none-any.whl
 duckterm serve --edition lite
 ```
 
@@ -91,6 +96,10 @@ duckterm install-hooks --agent codex --global
 These commands update that agent's user-level configuration. Hook capabilities
 vary by runtime; Codex approval prompts must still be answered in its terminal.
 Run `duckterm doctor` to check dependencies, hooks, and server connectivity.
+For an app-only installation, use
+`"/Applications/DuckTerm Lite.app/Contents/Resources/bin/duckterm"` in place of
+`duckterm` in these commands. The app also makes that CLI available inside new
+DuckTerm agent terminals. It does not replace a CLI installed with pipx.
 See [installation, upgrades, and troubleshooting](docs/installation.md) for help.
 
 ## Features
@@ -147,10 +156,11 @@ certificate. See [shared connector setup and enrollment](docs/shared-connectors.
 
 ## Mac app
 
-On **Apple Silicon Macs running macOS 13+**, install the CLI above, then download
+On **Apple Silicon Macs running macOS 13+**, download
 [DuckTerm-Lite-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/latest/download/DuckTerm-Lite-macos-arm64.zip),
-unzip it, and move **DuckTerm Lite.app** to **Applications**. The app and CLI
-must come from the same release.
+unzip it, and move **DuckTerm Lite.app** to **Applications**. Its private Python,
+backend, tmux and hook tools are packaged together and updated with the app.
+Your installed Python and project virtual environments are unchanged.
 
 The app opens the dashboard in a native window with a Dock icon and notifications.
 It starts Lite when needed, or connects to an existing Lite server. If another
@@ -159,7 +169,7 @@ settings. Existing installations keep their selected edition until you switch.
 It is signed with a Developer ID and notarized by Apple, so it opens without a
 security override.
 The browser installation works without the app. Intel Mac users can use the
-browser or [build the native app from source](mac/README.md).
+browser installation. See [native build instructions](mac/README.md) for development.
 
 ## How it works
 

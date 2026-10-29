@@ -1,5 +1,8 @@
 import json
+import shlex
 from pathlib import Path
+
+import pytest
 
 from duckterm.agents.hooks_install import (
     _EVENTS,
@@ -29,6 +32,35 @@ def test_install_is_idempotent(tmp_path: Path) -> None:
     settings = read_settings(tmp_path)
     # Running twice must not duplicate the entry.
     assert len(settings["hooks"]["Stop"]) == 1
+
+
+@pytest.mark.parametrize("agent", ["claude-code", "codex", "copilot"])
+def test_install_keeps_shell_metacharacters_in_script_path_as_data(
+    tmp_path: Path, monkeypatch, agent: str
+) -> None:
+    import subprocess
+
+    from duckterm.agents import hooks_install
+
+    script = tmp_path / 'Odd $HOME `id` "Quoted" Name.app' / "duckterm-hook.sh"
+    monkeypatch.setattr(hooks_install, "hook_script_path", lambda: script)
+    path = install(global_scope=False, project_dir=tmp_path, agent=agent)
+    config = json.loads(path.read_text())
+    hook = (
+        config["hooks"]["agentStop"][0]
+        if agent == "copilot"
+        else config["hooks"]["Stop"][0]["hooks"][0]
+    )
+    argv = subprocess.run(
+        ["bash", "-c", f'set -- {hook["command"]}; printf "%s\\n" "$@"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    assert argv == [str(script), "Stop", agent]
+    before = path.read_bytes()
+    install(global_scope=False, project_dir=tmp_path, agent=agent)
+    assert path.read_bytes() == before
 
 
 def test_install_preserves_existing_user_hooks(tmp_path: Path) -> None:
@@ -217,3 +249,199 @@ def test_deleted_known_pipx_package_script_remains_recognizable(
     assert not script.exists()
     assert _is_ours(f'"{script}" Stop claude-code')
     assert not _is_ours(f'"{script.parent / ".." / "duckterm-hook.sh"}" Stop claude-code')
+
+
+APP_SCRIPT = (
+    "Contents/Resources/python/lib/python3.13/site-packages/duckterm/hooks/duckterm-hook.sh"
+)
+
+
+def test_hooks_from_another_app_location_are_replaced_not_duplicated(tmp_path: Path) -> None:
+    from duckterm.agents.hooks_install import claude_style_build
+
+    full = f"/Applications/DuckTerm.app/{APP_SCRIPT}"
+    lite = f"/Users/me/Downloads/Dir With Spaces/DuckTerm Lite.app/{APP_SCRIPT}"
+    config = claude_style_build({}, full, "claude-code")
+    config = claude_style_build(config, lite, "claude-code")
+    for event in _EVENTS:
+        commands = [h["command"] for e in config["hooks"][event] for h in e["hooks"]]
+        assert [shlex.split(command) for command in commands] == [[lite, event, "claude-code"]]
+
+
+def test_uninstall_removes_hooks_left_by_a_deleted_app(tmp_path: Path) -> None:
+    path = settings_path(global_scope=False, project_dir=tmp_path)
+    path.parent.mkdir()
+    gone = f"/Applications/Old Copy/DuckTerm.app/{APP_SCRIPT}"
+    custom = {"type": "command", "command": "/custom/user-tools/duckterm-hook.sh Stop claude-code"}
+    stale = {"type": "command", "command": f'"{gone}" Stop claude-code'}
+    config = {
+        "hooks": {
+            "Stop": [
+                {"matcher": "*", "hooks": [stale]},
+                {"matcher": "*", "hooks": [custom]},
+            ]
+        }
+    }
+    path.write_text(json.dumps(config))
+    uninstall(global_scope=False, project_dir=tmp_path)
+    assert json.loads(path.read_text())["hooks"]["Stop"] == [{"matcher": "*", "hooks": [custom]}]
+
+
+def test_app_bundle_ownership_requires_the_exact_package_layout() -> None:
+    from duckterm.agents.hooks_install import _is_ours
+
+    assert _is_ours(f'"/Applications/DuckTerm Code.app/{APP_SCRIPT}" PostToolUse codex')
+    for value in [
+        f'"/Applications/DuckTerm.app/{APP_SCRIPT}" PostToolUse unknown-runtime',
+        f'"/Applications/DuckTerm.app/{APP_SCRIPT}" Stop claude-code extra',
+        f'"Applications/DuckTerm.app/{APP_SCRIPT}" Stop claude-code',
+        f'"/Applications/DuckTerm.app/../Other.app/{APP_SCRIPT}" Stop claude-code',
+        '"/Applications/DuckTerm.app/Contents/Resources/duckterm-hook.sh" Stop claude-code',
+        '"/Applications/Tool.app/Contents/Resources/python/lib/python3.13'
+        '/site-packages/other/hooks/duckterm-hook.sh" Stop claude-code',
+        '"/opt/DuckTerm/Contents/Resources/python/lib/python3.13'
+        '/site-packages/duckterm/hooks/duckterm-hook.sh" Stop claude-code',
+    ]:
+        assert not _is_ours(value), value
+
+
+def _repair_rig(tmp_path: Path, monkeypatch, *, here: str = "New Place/DuckTerm.app"):
+    from duckterm.agents import hooks_install
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.delenv("DUCKTERM_HOME", raising=False)
+    monkeypatch.delenv("DUCKTERM_INSTANCE", raising=False)
+    current = tmp_path / here / APP_SCRIPT
+    monkeypatch.setattr(hooks_install, "hook_script_path", lambda: current)
+    return hooks_install, current
+
+
+def test_startup_repair_repoints_moved_app_hooks_and_keeps_everything_else(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from duckterm.agents.hooks_install import claude_style_build, copilot_build
+
+    hooks_install, current = _repair_rig(tmp_path, monkeypatch)
+    old = f"/Applications/Old Name.app/{APP_SCRIPT}"
+    custom = {"type": "command", "command": "/custom/user-tools/duckterm-hook.sh Stop claude-code"}
+    pipx = (
+        f"{tmp_path}/.local/pipx/venvs/duckterm/lib/python3.13/site-packages/duckterm/hooks/"
+        "duckterm-hook.sh"
+    )
+    claude = claude_style_build(
+        {"model": "opus", "permissions": {"allow": ["Bash"]}}, old, "claude-code"
+    )
+    claude["hooks"]["Stop"].append({"matcher": "*", "hooks": [custom]})
+    claude["hooks"]["Notification"].append(
+        {
+            "matcher": "*",
+            "hooks": [{"type": "command", "command": f'"{pipx}" Notification claude-code'}],
+        }
+    )
+    settings = tmp_path / ".claude/settings.json"
+    settings.parent.mkdir()
+    settings.write_text(json.dumps(claude))
+    copilot = tmp_path / ".copilot/hooks/duckterm.json"
+    copilot.parent.mkdir(parents=True)
+    copilot.write_text(json.dumps(copilot_build({}, old, "copilot")))
+
+    assert sorted(hooks_install.repair_moved_app_hooks()) == sorted([settings, copilot])
+
+    after = json.loads(settings.read_text())
+    expected = json.loads(json.dumps(claude))
+    for groups in expected["hooks"].values():
+        for group in groups:
+            for hook in group["hooks"]:
+                argv = shlex.split(hook["command"])
+                if argv[0] in {old, pipx}:
+                    hook["command"] = shlex.join([str(current), *argv[1:]])
+    assert after == expected  # same events, matchers, timeouts, async flags and order
+    assert after["model"] == "opus" and after["permissions"] == {"allow": ["Bash"]}
+    assert custom in after["hooks"]["Stop"][1]["hooks"]
+    # A pipx install's registered hook now runs this app's script, not a stale copy.
+    pipx_group = after["hooks"]["Notification"][-1]["hooks"][0]
+    assert shlex.split(pipx_group["command"]) == [str(current), "Notification", "claude-code"]
+    commands = [
+        e["command"]
+        for entries in json.loads(copilot.read_text())["hooks"].values()
+        for e in entries
+    ]
+    assert commands and all(shlex.split(c)[0] == str(current) for c in commands)
+
+    before = settings.read_bytes(), copilot.read_bytes()
+    assert hooks_install.repair_moved_app_hooks() == []  # idempotent
+    assert (settings.read_bytes(), copilot.read_bytes()) == before
+
+
+def test_startup_repair_never_adds_hooks_or_touches_unrelated_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    hooks_install, _ = _repair_rig(tmp_path, monkeypatch)
+    (tmp_path / ".codex").mkdir()  # directory without a config file
+    settings = tmp_path / ".claude/settings.json"
+    settings.parent.mkdir()
+    original = (
+        '{ "hooks": { "Stop": [ { "matcher": "*", '
+        '"hooks": [ { "type": "command", "command": "say done" } ] } ] } }\n'
+    )
+    settings.write_text(original)
+
+    assert hooks_install.repair_moved_app_hooks() == []
+    assert settings.read_text() == original
+    assert not (tmp_path / ".codex/hooks.json").exists()
+    assert sorted(p.name for p in (tmp_path / ".codex").iterdir()) == []
+
+
+@pytest.mark.parametrize("case", ["not-a-bundle", "isolated-home"])
+def test_startup_repair_only_runs_for_an_app_bundle_on_the_default_home(
+    tmp_path: Path, monkeypatch, case: str
+) -> None:
+    from duckterm.agents.hooks_install import claude_style_build
+
+    hooks_install, _ = _repair_rig(tmp_path, monkeypatch)
+    if case == "not-a-bundle":
+        monkeypatch.setattr(
+            hooks_install, "hook_script_path", lambda: tmp_path / "src/duckterm-hook.sh"
+        )
+    else:
+        monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "test-instance"))
+    settings = tmp_path / ".claude/settings.json"
+    settings.parent.mkdir()
+    settings.write_text(
+        json.dumps(claude_style_build({}, f"/Applications/Old.app/{APP_SCRIPT}", "claude-code"))
+    )
+    before = settings.read_bytes()
+
+    assert hooks_install.repair_moved_app_hooks() == []
+    assert settings.read_bytes() == before
+
+
+def test_repaired_commands_keep_shell_metacharacters_in_app_names_as_data(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import subprocess
+
+    from duckterm.agents.hooks_install import claude_style_build
+
+    hooks_install, current = _repair_rig(
+        tmp_path, monkeypatch, here='Odd $HOME `id` "Quoted" Name.app'
+    )
+    settings = tmp_path / ".claude/settings.json"
+    settings.parent.mkdir()
+    old = f"/Applications/DuckTerm.app/{APP_SCRIPT}"
+    settings.write_text(json.dumps(claude_style_build({}, old, "claude-code")))
+
+    assert hooks_install.repair_moved_app_hooks() == [settings]
+    command = json.loads(settings.read_text())["hooks"]["Stop"][0]["hooks"][0]["command"]
+    assert shlex.split(command) == [str(current), "Stop", "claude-code"]
+    # The shell sees exactly that argv: no expansion, no command substitution.
+    argv = subprocess.run(
+        ["bash", "-c", f'set -- {command}; printf "%s\\n" "$@"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    assert argv == [str(current), "Stop", "claude-code"]
+    before = settings.read_bytes()
+    assert hooks_install.repair_moved_app_hooks() == []  # recognized as current, idempotent
+    assert settings.read_bytes() == before
