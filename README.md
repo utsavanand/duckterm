@@ -25,7 +25,7 @@ branch each is on, and having no way to ask "what has that session actually
 done?"
 
 DuckTerm launches each agent into a tmux-backed PTY it owns and renders it in
-the browser with xterm.js — a real terminal you type into, not a transcript
+the Mac app with xterm.js — a real terminal you type into, not a transcript
 viewer. Around the terminals it shows what a terminal can't:
 
 - which session **needs you right now** (hook-driven state: busy / waiting / idle)
@@ -51,29 +51,7 @@ coding-agent sessions, forks, terminals, Shell, Messages and session status.
 Install and sign in to your chosen coding agent separately; Git is needed for
 Git workstreams. Your agents use their existing tools, environments and accounts.
 
-### Browser-only installation
-
-On macOS or Linux, browser-only use needs Python 3.11+, pipx and tmux.
-
-On macOS with [Homebrew](https://brew.sh) already installed:
-
-```sh
-brew install pipx tmux
-pipx ensurepath
-```
-
-Open a new terminal so `pipx` and installed commands are on your PATH. On Linux,
-install Python 3.11+, pipx, and tmux using your distribution's package manager.
-Then install the published wheel:
-
-```sh
-pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.181/duckterm-0.4.181-py3-none-any.whl
-duckterm serve --edition lite
-```
-
-The dashboard opens at **http://127.0.0.1:4300**. Leave that terminal running.
-DuckTerm is distributed through [GitHub Releases](https://github.com/utsavanand/duckterm/releases),
-not currently PyPI; `pipx install duckterm` is not a supported installation path.
+For other platforms or CLI setup, see [installation documentation](docs/installation.md#browser-and-cli-installation).
 
 ## Your first session
 
@@ -168,8 +146,8 @@ edition is running, the app explains how to switch while retaining sessions and
 settings. Existing installations keep their selected edition until you switch.
 It is signed with a Developer ID and notarized by Apple, so it opens without a
 security override.
-The browser installation works without the app. Intel Mac users can use the
-browser installation. See [native build instructions](mac/README.md) for development.
+For Intel Mac, Linux, or Windows setup, see the [installation documentation](docs/installation.md#browser-and-cli-installation).
+See [native build instructions](mac/README.md) for development.
 
 ## How it works
 
