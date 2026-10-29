@@ -72,6 +72,12 @@ def configured(*, prefer_saved: bool = False) -> EditionConfig:
     Invalid configuration never silently enables the unrestricted product.
     """
     name = os.environ.get("DUCKTERM_EDITION")
+    profile = instance.configured_profile()
+    if profile is not None:
+        if name is not None and name != profile["edition"]:
+            raise ValueError(f"Conflicting edition for Duckterm profile {profile['profile_id']}")
+        instance.validate_desktop_context(profile["edition"])
+        return PRESETS[profile["edition"]]
     if prefer_saved or name is None:
         path = instance.home() / "edition.json"
         try:

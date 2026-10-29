@@ -25,21 +25,30 @@ def stale_server(monkeypatch, tmp_path):
     stale = {name: f"/Volumes/Old/DuckTerm.app/{name}" for name in TOOLS}
     subprocess.run(
         [binary, "-L", socket, "-f", "/dev/null", "new-session", "-d", "-s", "rd_old", "/bin/cat"],
-        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin", **stale},
+        env={
+            "HOME": str(tmp_path),
+            "PATH": "/usr/bin:/bin",
+            **({"TMUX_TMPDIR": os.environ["TMUX_TMPDIR"]} if "TMUX_TMPDIR" in os.environ else {}),
+            **stale,
+        },
         check=True,
     )
     tmux._bundled_selection.cache_clear()
-    path = subprocess.run(
-        [binary, "-L", socket, "display-message", "-p", "#{socket_path}"],
-        capture_output=True,
-        text=True,
-        check=True,
-    ).stdout.strip()
-    yield binary, socket, stale
-    subprocess.run([binary, "-L", socket, "kill-server"], capture_output=True)
-    # kill-server can leave the socket file behind.
-    Path(path).unlink(missing_ok=True)
-    tmux._bundled_selection.cache_clear()
+    path = None
+    try:
+        path = subprocess.run(
+            [binary, "-L", socket, "display-message", "-p", "#{socket_path}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        yield binary, socket, stale
+    finally:
+        subprocess.run([binary, "-L", socket, "kill-server"], capture_output=True)
+        # kill-server can leave the socket file behind.
+        if path:
+            Path(path).unlink(missing_ok=True)
+        tmux._bundled_selection.cache_clear()
 
 
 def pids(binary, socket, target):

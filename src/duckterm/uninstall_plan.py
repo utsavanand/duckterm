@@ -11,8 +11,9 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from duckterm.agents import hook_files, hooks_install
+from duckterm.agents import hook_dispatch, hook_files, hooks_install
 from duckterm.harnesses import installable_agents
+from duckterm.helpers import instance
 
 
 @contextlib.contextmanager
@@ -57,7 +58,7 @@ def _owned_count(config: dict[str, Any], *, unverified: bool = False) -> int:
 
 
 def inspect_hook(agent: str, *, project: Path | None = None) -> dict[str, Any]:
-    _, spec = hooks_install._spec(agent)
+    runtime, spec = hooks_install._spec(agent)
     path = spec.path(global_scope=project is None, project_dir=project or Path.cwd())
     result: dict[str, Any] = {
         "agent": agent,
@@ -66,6 +67,21 @@ def inspect_hook(agent: str, *, project: Path | None = None) -> dict[str, Any]:
         "state": "absent",
         "owned_commands": 0,
     }
+
+    def scoped() -> dict[str, Any]:
+        if result["state"] == "removable":
+            members = hook_dispatch.registered_profiles(path, runtime)
+            owner = hook_dispatch.profile_key()
+            if owner not in members:
+                result.update(state="unchanged", reason="Registered by another Duckterm workspace")
+            elif members - {owner}:
+                result.update(
+                    state="shared",
+                    reason="Detach this workspace registration; "
+                    "keep shared hooks for other workspaces",
+                )
+        return result
+
     try:
         with _directory(path) as fd:
             if fd is None:
@@ -74,7 +90,7 @@ def inspect_hook(agent: str, *, project: Path | None = None) -> dict[str, Any]:
                 raw = hook_files._owned(path.name, "." + path.name + ".duckterm-owned.json", fd)
                 if raw is not None:
                     result.update(state="removable", owned_commands=1)
-                return result
+                return scoped()
             raw = hook_files._read(path.name, fd)
             if raw is None:
                 return result
@@ -91,6 +107,7 @@ def inspect_hook(agent: str, *, project: Path | None = None) -> dict[str, Any]:
                 unverified_commands=ambiguous,
                 reason="Custom or historical hook paths require manual ownership review",
             )
+        return scoped()
     except (OSError, ValueError, TypeError):
         # Never include source text or parser excerpts: config can contain secrets.
         result.update(
@@ -135,6 +152,14 @@ def inventory(data_root: Path, projects: list[Path]) -> dict[str, Any]:
     paths = list(dict.fromkeys(p.absolute() for p in projects))
     hooks = [inspect_hook(agent) for agent in installable_agents()]
     hooks.extend(inspect_hook(agent, project=p) for p in paths for agent in installable_agents())
+    profile = instance.configured_profile()
+    manual_steps = ["pipx uninstall duckterm", "Move DuckTerm.app to Trash"]
+    if profile is not None:
+        manual_steps = [
+            f"Quit {profile['app_name']} and move only {profile['app_name']}.app to Trash",
+            f"Keep {data_root} unless you explicitly choose to delete this workspace",
+            "Keep the shared CLI, shared hook dispatcher, and other editions' apps and data",
+        ]
     return {
         "dry_run": True,
         "hooks": hooks,
@@ -145,8 +170,5 @@ def inventory(data_root: Path, projects: list[Path]) -> dict[str, Any]:
             "Connector cleanup and process shutdown must be verified before package removal.",
             "No files were changed and no processes were stopped.",
         ],
-        "remaining_manual_steps_after_cleanup": [
-            "pipx uninstall duckterm",
-            "Move DuckTerm.app to Trash",
-        ],
+        "remaining_manual_steps_after_cleanup": manual_steps,
     }

@@ -14,7 +14,7 @@ root = Path(os.environ["HOME"])
 
 
 class FixtureServer(server_module.Server):
-    async def serve(self, host, port, on_listening=None):
+    async def serve(self, host, port, on_listening=None, **kwargs):
         transport = Transport("synthetic-coordinator")
         transport.process = await asyncio.create_subprocess_exec(
             sys.executable,
@@ -45,7 +45,7 @@ class FixtureServer(server_module.Server):
         def listening(host, port):
             (root / "ready.json").write_text(json.dumps({"tunnel_pid": pid}))
 
-        await super().serve(host, port, on_listening=listening)
+        await super().serve(host, port, on_listening=listening, **kwargs)
 
 
 server_module.Server = FixtureServer

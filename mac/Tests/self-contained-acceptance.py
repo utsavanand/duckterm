@@ -105,13 +105,17 @@ def main() -> int:
         "CFBundleShortVersionString"
     ]
 
-    root = Path(tempfile.mkdtemp(prefix="duckterm-sc-"))
+    # Resolved: hook locks refuse symlinked components such as /var -> /private/var.
+    root = Path(tempfile.mkdtemp(prefix="duckterm-sc-")).resolve()
     app = root / "Dir With Spaces" / source.name
     second = root / "Another Place" / source.name
     home = root / "home"
     work = root / "work"
     shadow = root / "shadow"
     socket_name = f"sc-accept-{os.getpid()}"
+    # A private, short tmux directory: never the owner's sockets, and socket
+    # paths must stay under the 104-byte limit.
+    tmux_dir = Path(tempfile.mkdtemp(prefix="dt-sc-", dir="/tmp"))
     port = free_port()
     server: subprocess.Popen[bytes] | None = None
     try:
@@ -155,6 +159,7 @@ def main() -> int:
             "DUCKTERM_HOME": str(home / ".duckterm"),
             "DUCKTERM_PORT": str(port),
             "DUCKTERM_TMUX_SOCKET": socket_name,
+            "TMUX_TMPDIR": str(tmux_dir),
             "DUCKTERM_NO_BROWSER": "1",
             "DUCKTERM_RELEASE_CHECK": "off",
         }
@@ -290,9 +295,17 @@ def main() -> int:
             commands = [
                 h["command"] for e in hooks.get("PostToolUse", []) for h in e.get("hooks", [])
             ]
+        # One shared handler outside any bundle, so moving or removing one app
+        # cannot break the hooks the other editions rely on.
+        shared = home / ".duckterm-hooks/v1"
         check(
-            "hooks install and point into this bundle",
-            run.returncode == 0 and len(commands) == 1 and resources in commands[0],
+            "hooks install to the shared handler with its own jq, not into this bundle",
+            run.returncode == 0
+            and len(commands) == 1
+            and str(shared / "duckterm-hook.sh") in commands[0]
+            and resources not in commands[0]
+            and os.access(shared / "duckterm-hook.sh", os.X_OK)
+            and os.access(shared / "jq", os.X_OK),
             f"{run.stderr.strip()} {commands}",
         )
 
@@ -373,11 +386,15 @@ def main() -> int:
         tmuxes = [str(p) for p in app.rglob("tmux") if p.is_file() and os.access(p, os.X_OK)]
         for binary in [*tmuxes, shutil.which("tmux")]:
             if binary:
-                subprocess.run([binary, "-L", socket_name, "kill-server"], capture_output=True)
+                subprocess.run(
+                    [binary, "-L", socket_name, "kill-server"],
+                    env={"TMUX_TMPDIR": str(tmux_dir)},
+                    capture_output=True,
+                )
         # Pane shells write their history as tmux kills them; let them finish first.
         time.sleep(1)
         shutil.rmtree(root, ignore_errors=True)
-        Path(f"/private/tmp/tmux-{os.getuid()}/{socket_name}").unlink(missing_ok=True)
+        shutil.rmtree(tmux_dir, ignore_errors=True)
     print(f"\n{len(FAILURES)} failure(s)" if FAILURES else "\nall checks passed")
     return 1 if FAILURES else 0
 

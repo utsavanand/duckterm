@@ -39,9 +39,9 @@ def write_private_text(path: Path, text: str) -> None:
 
 def launch_env(key: str) -> dict[str, str]:
     return {
+        **instance.launch_env(),
         "DUCKTERM_SESSION_KEY": key,
         "DUCKTERM_SESSION_TOKEN_FILE": str(credential_path(key)),
-        "DUCKTERM_URL": instance.server_url(),
     }
 
 

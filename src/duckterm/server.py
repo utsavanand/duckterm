@@ -45,11 +45,13 @@ wants direct control of the response stream. Zero runtime dependencies.
 
 import asyncio
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shlex
+import socket
 import sys
 import tempfile
 import time
@@ -58,7 +60,7 @@ import urllib.parse
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from duckterm import bug_reports, connectors, editions, suites, zsh_themes
 from duckterm.agents import tmux
@@ -424,6 +426,7 @@ class Server:
         edition: editions.EditionConfig | None = None,
     ) -> None:
         self.edition = edition or editions.configured()
+        instance.validate_desktop_context(self.edition.name)
         self._lifecycle_locks: dict[str, asyncio.Lock] = {}
         self._transfer_sources: set[str] = set()
         self._transfer_launches: set[str] = set()
@@ -925,7 +928,10 @@ class Server:
         return _ROUTES
 
     async def _edition(self, writer: asyncio.StreamWriter) -> None:
-        await _write_json(writer, 200, self.edition.description())
+        identity = instance.description()
+        identity["port"] = getattr(self, "_bound_port", instance.port())
+        identity["url"] = f"http://127.0.0.1:{identity['port']}"
+        await _write_json(writer, 200, {**self.edition.description(), "instance": identity})
 
     def require_feature(self, feature: str) -> None:
         if not self.edition.includes(feature):
@@ -3456,9 +3462,23 @@ class Server:
         if row is None:
             return None
         wt = row.get("worktree_path")
-        if not wt or "/.duckterm/worktrees/" not in str(wt):
+        if not isinstance(wt, str) or not wt:
             return None
-        return Path(str(wt))
+        managed_root = paths.worktrees_dir()
+        if managed_root.is_symlink():
+            return None
+        root = managed_root.resolve()
+        candidate = Path(wt)
+        if not candidate.is_absolute():
+            return None
+        try:
+            resolved = candidate.resolve()
+            relative = resolved.relative_to(root)
+        except (OSError, ValueError, RuntimeError):
+            return None
+        # Neither a lookalike path nor a symlink escaping our managed root is
+        # authority to delete a checkout. Never remove the managed root itself.
+        return resolved if relative.parts else None
 
     def _worktree_unmerged(self, row: dict[str, Any] | None) -> int:
         """Count commits on the worktree branch not yet in main. Returns -1 when
@@ -6206,6 +6226,9 @@ class Server:
         host: str,
         port: int,
         on_listening: Callable[[str, int], None] | None = None,
+        *,
+        reserved_socket: socket.socket | None = None,
+        home_lock: Path | None = None,
     ) -> None:
         if host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("Duckterm must bind a loopback host (127.0.0.1, localhost, or ::1)")
@@ -6215,8 +6238,16 @@ class Server:
         # first's live agents. The pidfile turns that silent corruption into a
         # clear error. (Per-instance home/socket/port normally prevent overlap;
         # this guards the case where they were misconfigured to collide.)
-        lock = _acquire_home_lock()
+        lock = home_lock or _acquire_home_lock()
+        server: asyncio.Server | None = None
         try:
+            # CLI startup also reserves the port before opening the database.
+            server = (
+                await asyncio.start_server(self.handle, sock=reserved_socket, start_serving=False)
+                if reserved_socket is not None
+                else await asyncio.start_server(self.handle, host, port, start_serving=False)
+            )
+            self._bound_port = server.sockets[0].getsockname()[1]
             refreshed = session_instructions.refresh_guides(
                 collaboration=self.edition.includes("inbox"),
                 artifacts=self.edition.includes("artifacts"),
@@ -6226,14 +6257,28 @@ class Server:
             from duckterm.agents.hooks_install import repair_moved_app_hooks
 
             try:
-                for path in repair_moved_app_hooks():
-                    print(f"repointed DuckTerm hooks in {path} at this app")
+                projects = {
+                    Path(value)
+                    for row in self.history.sessions()
+                    for key in ("cwd", "worktree_path")
+                    if isinstance(value := row.get(key), str) and Path(value).is_absolute()
+                }
+                for path in repair_moved_app_hooks(project_dirs=projects):
+                    print(f"repointed DuckTerm hooks in {path} at the shared handler")
             except (OSError, ValueError) as exc:  # a user's own config; never block startup
                 print(f"left hook configuration unchanged: {exc}", file=sys.stderr)
+            if self.edition.includes("connectors"):
+                try:
+                    connectors.refresh_runtime_registration()
+                except (OSError, ValueError, RuntimeError) as exc:
+                    print(
+                        f"could not refresh connector launch paths: {exc}; "
+                        "reconnect the affected connector from this workspace",
+                        file=sys.stderr,
+                    )
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
-            server = await asyncio.start_server(self.handle, host, port)
             try:
                 editions.remember(self.edition)
             except BaseException:
@@ -6243,6 +6288,7 @@ class Server:
             actual_port = server.sockets[0].getsockname()[1]
             if self.edition.includes("inbox"):
                 self.history.session_api.set_url(f"http://127.0.0.1:{actual_port}")
+            await server.start_serving()
             if on_listening is not None:
                 on_listening(host, port)
             self.archives.recover()
@@ -6269,7 +6315,11 @@ class Server:
                     await self.restarts.close()
                     await self.progress_coordinator.close()
         finally:
-            _release_home_lock(lock)
+            if server is not None:
+                server.close()
+                await server.wait_closed()
+            if home_lock is None:
+                _release_home_lock(lock)
 
     # ── Oracle voice ──
     # Speech runs in a separately installed worker (duckterm/voice/service.py);
@@ -6518,6 +6568,9 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+_HOME_LOCKS: dict[Path, TextIO] = {}
+
+
 def _acquire_home_lock() -> Path:
     """Claim this DUCKTERM_HOME for one server. Writes a pidfile; if it already
     names a live process, raise so the second server fails loudly instead of
@@ -6525,18 +6578,30 @@ def _acquire_home_lock() -> Path:
     home = instance.home()
     home.mkdir(parents=True, exist_ok=True)
     lock = home / "server.pid"
+    guard = (home / "server.lock").open("a+")
+    try:
+        fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        guard.close()
+        raise SystemExit(f"another DuckTerm server already owns {home}") from None
     if lock.exists():
         try:
             other = int(lock.read_text().strip() or "0")
         except ValueError:
             other = 0
         if other and other != os.getpid() and _pid_alive(other):
+            guard.close()
             raise SystemExit(
                 f"another DuckTerm server (pid {other}) already owns "
                 f"{home} — run it with a distinct DUCKTERM_INSTANCE, or stop that one."
             )
         # Stale pidfile (process gone / crashed): reclaim it.
-    lock.write_text(str(os.getpid()))
+    try:
+        lock.write_text(str(os.getpid()))
+    except BaseException:
+        guard.close()
+        raise
+    _HOME_LOCKS[lock] = guard
     return lock
 
 
@@ -6546,6 +6611,9 @@ def _release_home_lock(lock: Path) -> None:
     with contextlib.suppress(OSError, ValueError):
         if int(lock.read_text().strip() or "0") == os.getpid():
             lock.unlink()
+    guard = _HOME_LOCKS.pop(lock, None)
+    if guard is not None:
+        guard.close()
 
 
 def _branch_name(name: str | None) -> str:

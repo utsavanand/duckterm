@@ -8,7 +8,9 @@ import type { SessionActionAnchor } from "./SessionActionMenu";
 import { useDesktopNotifications } from "./useDesktopNotifications";
 import { SidebarFilterToggle } from "./SidebarFilters";
 import { useSidebarFilters } from "./sidebarFilterState";
-import duckMark from "./assets/duckmark.svg?no-inline";
+import fullDuckMark from "./assets/duckmark.svg?no-inline";
+import liteDuckMark from "./assets/duckmark-lite.svg?no-inline";
+import codeDuckMark from "./assets/duckmark-code.svg?no-inline";
 import { ArchiveUndo, useArchiveRequests } from "./ArchiveUndo";
 import { sessionFetch, sessionRef } from "./hostTransport";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -74,7 +76,18 @@ import { EditionProvider, useEdition } from "./edition";
 function Dashboard() {
   const { sessions: sourceSessions, connected, loadedHosts, removeSessions, patchSession } =
     useEventStream();
-  const { has, refresh: refreshEdition } = useEdition();
+  const { id: editionId, has, refresh: refreshEdition } = useEdition();
+  const duckMark = editionId === "lite" ? liteDuckMark : editionId === "code" ? codeDuckMark : fullDuckMark;
+  useEffect(() => {
+    const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (!icon) return;
+    const previous = icon.getAttribute("href");
+    icon.setAttribute("href", duckMark);
+    return () => {
+      if (previous === null) icon.removeAttribute("href");
+      else icon.setAttribute("href", previous);
+    };
+  }, [duckMark]);
   const wasConnected = useRef(false);
   useEffect(() => {
     if (connected && !wasConnected.current) refreshEdition();

@@ -19,7 +19,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
-from duckterm.agents import mcp_install
+from duckterm.agents import connector_dispatch, mcp_install
+from duckterm.helpers import instance
 from duckterm.helpers.private_files import private_write
 
 _GITHUB_ENV = "GITHUB_PERSONAL_ACCESS_TOKEN"
@@ -36,7 +37,17 @@ def _use_keychain() -> bool:
 
 
 def _keychain_service(name: str) -> str:
-    return f"duckterm-connector-{name}"
+    import hashlib
+
+    from duckterm.helpers import instance
+
+    root = instance.home().resolve()
+    if root == (Path.home() / ".duckterm").resolve():
+        return f"duckterm-connector-{name}"
+    # Home, rather than only the short instance id, also isolates explicit
+    # custom profiles with no DUCKTERM_INSTANCE. Full's existing names survive.
+    scope = hashlib.sha256(str(root).encode()).hexdigest()[:24]
+    return f"duckterm-connector-{scope}-{name}"
 
 
 def _secret_file(name: str) -> Path:
@@ -95,6 +106,14 @@ def _policy_path(name: str) -> Path:
     return _secret_file(name).with_suffix(".json")
 
 
+def _claude_registered(name: str, *, home: Path | None = None) -> bool:
+    return mcp_install.managed_installed(name, "claude-code", home=home)
+
+
+def _codex_registered(name: str, *, home: Path | None = None) -> bool:
+    return mcp_install.managed_installed(name, "codex", home=home)
+
+
 def policy(name: str, *, home: Path | None = None) -> dict[str, object]:
     path = _policy_path(name)
     if path.exists():
@@ -103,8 +122,8 @@ def policy(name: str, *, home: Path | None = None) -> dict[str, object]:
             raise RuntimeError("invalid connector policy")
         return value
     # Preserve legacy installed behavior visibly until the user changes it.
-    installed = mcp_install.claude_installed(name, home=home) or mcp_install.codex_installed(
-        name, home=home
+    installed = connector_dispatch.is_legacy_full() and (
+        _claude_registered(name, home=home) or _codex_registered(name, home=home)
     )
     source = None
     if installed:
@@ -199,8 +218,8 @@ def harness_choice(name: str, *, home: Path | None = None) -> list[str]:
     registered = [
         harness
         for harness, installed in (
-            ("claude-code", mcp_install.claude_installed(name, home=home)),
-            ("codex", mcp_install.codex_installed(name, home=home)),
+            ("claude-code", _claude_registered(name, home=home)),
+            ("codex", _codex_registered(name, home=home)),
         )
         if installed
     ]
@@ -208,18 +227,28 @@ def harness_choice(name: str, *, home: Path | None = None) -> list[str]:
 
 
 def _install(name: str, *, home: Path | None = None, harnesses: list[str] | None = None) -> None:
-    command, args = _duckterm_bin(), ["connector-run", name]
+    connector_dispatch.register_runtime(_duckterm_bin())
     wanted = harnesses if harnesses is not None else harness_choice(name, home=home)
-    for harness, install, remove in (
-        ("claude-code", mcp_install.claude_install, mcp_install.claude_remove),
-        ("codex", mcp_install.codex_install, mcp_install.codex_remove),
-    ):
+    for harness in HARNESSES:
         if harness in wanted:
-            install(name, command, args, home=home)
+            mcp_install.managed_install(name, harness, home=home)
         else:
-            # Deselecting must withdraw an existing entry, or the harness keeps
-            # serving the connector from a registration nobody can see.
-            remove(name, home=home)
+            mcp_install.managed_remove(name, harness, home=home)
+
+
+def refresh_runtime_registration() -> None:
+    """Refresh only this profile's executable and existing managed entries.
+
+    Called after the server has established home ownership. No credentials are
+    loaded, no connector is enabled and no foreign membership is claimed.
+    """
+    if os.environ.get("DUCKTERM_HOSTED"):
+        return  # Hosted harness registrations remain administrator-managed.
+    connector_dispatch.register_runtime(_duckterm_bin())
+    for name in NAMES:
+        for harness in HARNESSES:
+            if mcp_install.managed_installed(name, harness):
+                mcp_install.managed_install(name, harness)
 
 
 def railway_logged_in() -> bool:
@@ -237,8 +266,10 @@ def _duckterm_bin() -> str:
     venv's path dies with its checkout (see RETRO.md, hooks-127)."""
     # The native app supplies a CLI matching its backend, independent of pipx.
     bundled = os.environ.get("DUCKTERM_BUNDLED_CLI")
-    if bundled and Path(bundled).is_file() and os.access(bundled, os.X_OK):
-        return bundled
+    if bundled:
+        if Path(bundled).is_file() and os.access(bundled, os.X_OK):
+            return bundled
+        raise RuntimeError("This edition's app moved or was removed; reopen it before connecting")
     shim = Path.home() / ".local" / "bin" / "duckterm"
     if shim.is_file():
         return str(shim)
@@ -328,8 +359,8 @@ def enable(
     try:
         _install(name, home=home, harnesses=chosen)
     except Exception:
-        mcp_install.claude_remove(name, home=home)
-        mcp_install.codex_remove(name, home=home)
+        mcp_install.managed_remove(name, "claude-code", home=home)
+        mcp_install.managed_remove(name, "codex", home=home)
         raise
     _save_policy(
         name,
@@ -366,8 +397,8 @@ def disable(name: str, *, home: Path | None = None) -> dict[str, object]:
     if os.environ.get("DUCKTERM_HOSTED"):
         raise RuntimeError("Disable hosted connectors through the connector administrator")
     _save_policy(name, {**current, "enabled": False, "generation": uuid.uuid4().hex})
-    mcp_install.claude_remove(name, home=home)
-    mcp_install.codex_remove(name, home=home)
+    mcp_install.managed_remove(name, "claude-code", home=home)
+    mcp_install.managed_remove(name, "codex", home=home)
     return status(name, home=home)
 
 
@@ -403,8 +434,8 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
         return next(row for row in list_status(home=home) if row["name"] == name)
     current = policy(name, home=home)
     installed = {
-        "claude-code": mcp_install.claude_installed(name, home=home),
-        "codex": mcp_install.codex_installed(name, home=home),
+        "claude-code": _claude_registered(name, home=home),
+        "codex": _codex_registered(name, home=home),
     }
     chosen = harness_choice(name, home=home)
     source = current.get("source")
@@ -483,15 +514,15 @@ def list_status(*, home: Path | None = None) -> list[dict[str, object]]:
             "description": "Provided by your shared connector host",
             "credential": "shared-host" if remote.get(name, {}).get("enabled") else None,
             "installed": {
-                "claude-code": mcp_install.claude_installed(name, home=home),
-                "codex": mcp_install.codex_installed(name, home=home),
+                "claude-code": _claude_registered(name, home=home),
+                "codex": _codex_registered(name, home=home),
             },
             "enabled": bool(remote.get(name, {}).get("enabled"))
             and all(
                 (
-                    mcp_install.claude_installed(name, home=home)
+                    _claude_registered(name, home=home)
                     if harness == "claude-code"
-                    else mcp_install.codex_installed(name, home=home)
+                    else _codex_registered(name, home=home)
                 )
                 for harness in harness_choice(name, home=home)
             ),
@@ -570,10 +601,13 @@ class _RunnerPolicy:
     def read(self) -> dict[str, object]:
         policy_stamp = self._stamp(self.path)
         signature: tuple[object, ...] = (policy_stamp,)
-        if policy_stamp is None:
+        if policy_stamp is None and connector_dispatch.is_legacy_full():
+            from duckterm.agents import hook_dispatch
+
             signature += (
                 self._stamp(mcp_install._claude_path(self.home)),
                 self._stamp(mcp_install._codex_path(self.home)),
+                self._stamp(hook_dispatch.shared_script_path().parent / "registrations.json"),
             )
         if signature == self.signature:
             return self.current
@@ -586,8 +620,11 @@ class _RunnerPolicy:
             # Existing children need only enabled/generation. In particular, do
             # not call policy(): its legacy branch runs `gh auth token`.
             current = {
-                "enabled": mcp_install.claude_installed(self.name, home=self.home)
-                or mcp_install.codex_installed(self.name, home=self.home),
+                "enabled": connector_dispatch.is_legacy_full()
+                and (
+                    _claude_registered(self.name, home=self.home)
+                    or _codex_registered(self.name, home=self.home)
+                ),
                 "generation": "legacy",
             }
         self.current = current
@@ -645,7 +682,8 @@ def verify(name: str, *, timeout: float = 30.0) -> dict[str, object]:
     """
     if name not in NAMES:
         raise ValueError(f"unknown connector {name!r}")
-    argv = [_duckterm_bin(), "connector-run", name]
+    command = connector_dispatch.register_runtime(_duckterm_bin())
+    argv = [str(command), "connector-run", name]
     deadline = time.monotonic() + timeout
     proc = subprocess.Popen(
         argv,
@@ -654,6 +692,7 @@ def verify(name: str, *, timeout: float = 30.0) -> dict[str, object]:
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
+        env={**os.environ, **instance.launch_env()},
     )
     replies: dict[int, dict[str, object]] = {}
 

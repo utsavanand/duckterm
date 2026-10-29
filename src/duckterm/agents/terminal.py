@@ -17,7 +17,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from duckterm.helpers import session_credentials
+from duckterm.helpers import instance, session_credentials
 
 MAC_TERMINALS = ("iterm", "terminal")
 
@@ -54,6 +54,7 @@ def open_in_terminal(
     session name) so you can find it among other tabs."""
     if env and env.get("DUCKTERM_SESSION_KEY"):
         env = {**session_credentials.launch_env(env["DUCKTERM_SESSION_KEY"]), **env}
+    env = {**instance.launch_env(), **(env or {})}
     exports = "".join(f"export {k}={_q(v)}; " for k, v in (env or {}).items())
     agent = " ".join(_q(a) for a in argv)
     if heartbeat is not None:

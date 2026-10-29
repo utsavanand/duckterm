@@ -30,10 +30,13 @@ def _read(name: str, directory: int) -> bytes | None:
     return data
 
 
-def _write(name: str, data: bytes, directory: int) -> None:
+def _write(name: str, data: bytes, directory: int, *, mode: int = 0o600) -> None:
     temporary = ".duckterm-" + secrets.token_hex(16)
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
     try:
+        # Set the final mode before publishing: executable hook assets must not
+        # briefly become non-executable between replacement and chmod.
+        os.fchmod(fd, mode)
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
             stream.flush()
@@ -47,9 +50,15 @@ def _write(name: str, data: bytes, directory: int) -> None:
 
 @contextlib.contextmanager
 def _lock(path: Path, *, create: bool) -> Iterator[int | None]:
-    # Walk through directory descriptors with NOFOLLOW. A replaced parent can
-    # never redirect reads, temporary files, writes or unlink to another tree.
+    # A relocated home (or /tmp-backed fixture) can have symlinked ancestors.
+    # Resolve that trusted prefix only; configuration directories below it
+    # must still pass the descriptor-based NOFOLLOW walk.
     absolute = path.absolute()
+    home = Path.home().absolute()
+    if absolute.is_relative_to(home):
+        absolute = home.resolve() / absolute.relative_to(home)
+    # A replaced configuration parent can never redirect reads, temporary
+    # files, writes or unlink to another tree.
     directory = os.open(absolute.anchor, os.O_RDONLY | os.O_DIRECTORY)
     lock = None
     try:
@@ -69,12 +78,15 @@ def _lock(path: Path, *, create: bool) -> Iterator[int | None]:
             os.close(directory)
             directory = child
         try:
-            lock = os.open(
-                "." + path.name + ".duckterm-lock",
-                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK,
-                0o600,
-                dir_fd=directory,
-            )
+            name = "." + path.name + ".duckterm-lock"
+            flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
+            try:
+                lock = os.open(name, flags | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=directory)
+            except FileExistsError:
+                # Separate creation from opening. Concurrent O_CREAT opens on
+                # macOS can fail with ENOENT while another process creates the
+                # same file; an exclusive create has an unambiguous loser.
+                lock = os.open(name, flags, dir_fd=directory)
         except OSError as exc:
             raise ValueError("Refusing unsafe plugin lock") from exc
         if not stat.S_ISREG(os.fstat(lock).st_mode):

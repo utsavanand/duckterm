@@ -4,12 +4,28 @@ from pathlib import Path
 
 import pytest
 
+from duckterm.agents.hook_dispatch import shared_script_path
 from duckterm.agents.hooks_install import (
     _EVENTS,
     install,
     settings_path,
     uninstall,
 )
+
+
+@pytest.fixture(autouse=True)
+def isolated_profile(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    for name in (
+        "DUCKTERM_HOME",
+        "DUCKTERM_INSTANCE",
+        "DUCKTERM_DESKTOP_PROFILE",
+        "DUCKTERM_PORT",
+        "DUCKTERM_URL",
+        "DUCKTERM_TMUX_SOCKET",
+        "DUCKTERM_BUNDLED_JQ",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 def read_settings(project: Path) -> dict:
@@ -34,6 +50,48 @@ def test_install_is_idempotent(tmp_path: Path) -> None:
     assert len(settings["hooks"]["Stop"]) == 1
 
 
+def test_global_install_and_uninstall_support_relocated_home(tmp_path, monkeypatch):
+    root = tmp_path.resolve()
+    actual = root / "real/user"
+    actual.mkdir(parents=True)
+    alias = root / "link"
+    alias.symlink_to(actual.parent, target_is_directory=True)
+    home = alias / "user"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    path = install(global_scope=True, project_dir=root)
+    assert path.resolve() == actual / ".claude/settings.json"
+    assert read_settings(actual)["hooks"]
+    assert (actual / ".duckterm-hooks/v1/duckterm-hook.sh").is_file()
+    uninstall(global_scope=True, project_dir=root)
+    assert read_settings(actual) == {}
+
+
+@pytest.mark.parametrize("agent", ["claude-code", "codex", "copilot"])
+def test_project_hooks_support_symlinked_project_ancestors(tmp_path, agent):
+    root = tmp_path.resolve()
+    actual = root / "real/project"
+    actual.mkdir(parents=True)
+    alias = root / "linked-project-parent"
+    alias.symlink_to(actual.parent, target_is_directory=True)
+    project = alias / "project"
+    path = install(global_scope=False, project_dir=project, agent=agent)
+    assert path.is_file()
+    assert path.is_relative_to(actual)
+    uninstall(global_scope=False, project_dir=project, agent=agent)
+    assert not json.loads(path.read_text()).get("hooks")
+
+
+def test_project_config_symlink_is_still_refused(tmp_path):
+    project = tmp_path.resolve() / "project"
+    project.mkdir()
+    outside = tmp_path.resolve() / "outside"
+    outside.mkdir()
+    (project / ".claude").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(ValueError, match="unsafe plugin directory"):
+        install(global_scope=False, project_dir=project)
+    assert list(outside.iterdir()) == []
+
+
 @pytest.mark.parametrize("agent", ["claude-code", "codex", "copilot"])
 def test_install_keeps_shell_metacharacters_in_script_path_as_data(
     tmp_path: Path, monkeypatch, agent: str
@@ -43,7 +101,11 @@ def test_install_keeps_shell_metacharacters_in_script_path_as_data(
     from duckterm.agents import hooks_install
 
     script = tmp_path / 'Odd $HOME `id` "Quoted" Name.app' / "duckterm-hook.sh"
+    source = hooks_install.hook_script_path().read_bytes()
+    script.parent.mkdir(parents=True)
+    script.write_bytes(source)
     monkeypatch.setattr(hooks_install, "hook_script_path", lambda: script)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: script.parent))
     path = install(global_scope=False, project_dir=tmp_path, agent=agent)
     config = json.loads(path.read_text())
     hook = (
@@ -57,7 +119,7 @@ def test_install_keeps_shell_metacharacters_in_script_path_as_data(
         text=True,
         check=True,
     ).stdout.splitlines()
-    assert argv == [str(script), "Stop", agent]
+    assert argv == [str(shared_script_path()), "Stop", agent]
     before = path.read_bytes()
     install(global_scope=False, project_dir=tmp_path, agent=agent)
     assert path.read_bytes() == before
@@ -312,8 +374,14 @@ def _repair_rig(tmp_path: Path, monkeypatch, *, here: str = "New Place/DuckTerm.
     monkeypatch.delenv("DUCKTERM_HOME", raising=False)
     monkeypatch.delenv("DUCKTERM_INSTANCE", raising=False)
     current = tmp_path / here / APP_SCRIPT
+    current.parent.mkdir(parents=True)
+    current.write_bytes(hooks_install.hook_script_path().read_bytes())
+    jq = tmp_path / here / "Contents/Resources/jq/bin/jq"
+    jq.parent.mkdir(parents=True)
+    jq.write_text("#!/bin/sh\nexit 0\n")
+    jq.chmod(0o700)
     monkeypatch.setattr(hooks_install, "hook_script_path", lambda: current)
-    return hooks_install, current
+    return hooks_install, shared_script_path()
 
 
 def test_startup_repair_repoints_moved_app_hooks_and_keeps_everything_else(

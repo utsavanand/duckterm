@@ -188,6 +188,7 @@ def test_the_hook_forwards_copilots_tool_args(tmp_path) -> None:
             "PATH": str(binary) + os.pathsep + os.environ["PATH"],
             "DUCKTERM_INTERNAL": "",
             "DUCKTERM_HOME": str(tmp_path),
+            "DUCKTERM_URL": "http://127.0.0.1:49111",
             "CAPTURE": str(capture),
         },
     )

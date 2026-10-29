@@ -151,7 +151,7 @@ def spawn(
     # lacks, so a moved, translocated or replaced app never leaves new panes
     # pointing at a vanished bundle. These are paths, never secrets.
     tools = {name: os.environ[name] for name in _BUNDLED_TOOLS if os.environ.get(name)}
-    env = {**tools, **(env or {})}
+    env = {**tools, **instance.launch_env(), **(env or {})}
     # Automated callers often export NO_COLOR for their own command logs.
     # A persistent tmux server retains it even after that caller is gone.
     # Interactive panes should use ANSI colors unless this launch opts out.

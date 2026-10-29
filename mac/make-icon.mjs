@@ -1,9 +1,7 @@
-// Render the dashboard duck (web/src/assets/duckmark.svg) into AppIcon.icns so the
-// Mac app icon stays in sync with the brand mark. The icns has no other source —
-// without this it drifts (it was frozen as an older, tailed duck).
-//
-// Usage: node make-icon.mjs   (run from mac/, needs web/node_modules playwright)
-import { chromium } from "../web/node_modules/playwright/index.mjs";
+// Render an approved edition SVG into its checked-in native icon. Normal
+// builds only copy these resources; generation is an explicit maintenance step.
+// Usage: node mac/make-icon.mjs --edition=lite|code|full [--test] [--output=PATH]
+// Requires web/node_modules/playwright and its Chromium browser.
 import {
   mkdtempSync,
   readFileSync,
@@ -12,13 +10,40 @@ import {
   mkdirSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const testBuild = process.argv.includes("--test");
-let svg = readFileSync(join(here, "../web/src/assets/duckmark.svg"), "utf8");
+const usage =
+  "Usage: node mac/make-icon.mjs --edition=lite|code|full [--test] [--output=PATH]";
+let edition;
+let testBuild = false;
+let output;
+for (const arg of process.argv.slice(2)) {
+  if (/^--edition=(lite|code|full)$/.test(arg) && edition === undefined) {
+    edition = arg.slice("--edition=".length);
+  } else if (arg === "--test" && !testBuild) {
+    testBuild = true;
+  } else if (
+    arg.startsWith("--output=") &&
+    arg.length > "--output=".length &&
+    output === undefined
+  ) {
+    output = resolve(arg.slice("--output=".length));
+  } else {
+    console.error(`Invalid or duplicate argument: ${arg}\n${usage}`);
+    process.exit(2);
+  }
+}
+if (edition === undefined) {
+  console.error(`Missing required --edition argument.\n${usage}`);
+  process.exit(2);
+}
+const sourceName = edition === "full" ? "duckmark.svg" : `duckmark-${edition}.svg`;
+const resourceName = `AppIcon${edition === "full" ? "" : edition[0].toUpperCase() + edition.slice(1)}${testBuild ? "Test" : ""}.icns`;
+output ??= join(here, "Resources", resourceName);
+let svg = readFileSync(join(here, "../web/src/assets", sourceName), "utf8");
 
 if (testBuild) {
   // A purple duck plus a high-contrast badge distinguishes Test in the Dock.
@@ -26,7 +51,6 @@ if (testBuild) {
     .replaceAll("#E0AD00", "#6D28D9")
     .replace("</svg>", '<rect x="6" y="46" width="42" height="15" rx="5" fill="#F5F3FF"/><text x="27" y="57" text-anchor="middle" fill="#5B21B6" font-family="Arial,sans-serif" font-weight="900" font-size="11">TEST</text></svg>');
 }
-const outputName = testBuild ? "AppIconTest.icns" : "AppIcon.icns";
 
 // iconutil expects exactly these names/sizes.
 const sizes = [
@@ -46,28 +70,29 @@ const work = mkdtempSync(join(tmpdir(), "rdicon-"));
 const iconset = join(work, "AppIcon.iconset");
 mkdirSync(iconset);
 
-const browser = await chromium.launch();
-const page = await browser.newPage();
-for (const [name, px] of sizes) {
-  await page.setViewportSize({ width: px, height: px });
-  await page.setContent(
-    `<style>html,body{margin:0}svg{display:block}</style>` +
-      svg
-        .replace(/width="\d+"/, `width="${px}"`)
-        .replace(/height="\d+"/, `height="${px}"`),
-  );
-  const el = await page.$("svg");
-  const buf = await el.screenshot({ omitBackground: true });
-  writeFileSync(join(iconset, `${name}.png`), buf);
+let browser;
+try {
+  const { chromium } = await import("../web/node_modules/playwright/index.mjs");
+  browser = await chromium.launch();
+  const page = await browser.newPage();
+  for (const [name, px] of sizes) {
+    await page.setViewportSize({ width: px, height: px });
+    await page.setContent(
+      `<style>html,body{margin:0}svg{display:block}</style>` +
+        svg
+          .replace(/width="\d+"/, `width="${px}"`)
+          .replace(/height="\d+"/, `height="${px}"`),
+    );
+    const el = await page.$("svg");
+    const buf = await el.screenshot({ omitBackground: true });
+    writeFileSync(join(iconset, `${name}.png`), buf);
+  }
+  const generated = join(work, "AppIcon.icns");
+  execFileSync("iconutil", ["-c", "icns", iconset, "-o", generated]);
+  mkdirSync(dirname(output), { recursive: true });
+  writeFileSync(output, readFileSync(generated));
+  console.log(`wrote ${output} from web/src/assets/${sourceName}${testBuild ? " (Test)" : ""}`);
+} finally {
+  await browser?.close();
+  rmSync(work, { recursive: true, force: true });
 }
-await browser.close();
-
-execFileSync("iconutil", [
-  "-c",
-  "icns",
-  iconset,
-  "-o",
-  join(here, "Resources", outputName),
-]);
-rmSync(work, { recursive: true, force: true });
-console.log(`wrote mac/Resources/${outputName} from web/src/assets/duckmark.svg`);
