@@ -64,6 +64,14 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
               origin.protocol == url.scheme, origin.host == url.host,
               origin.port == url.port,
               let body = message.body as? [String: Any] else { return }
+        if body["action"] as? String == "copy-terminal-text" {
+            guard Set(body.keys) == ["action", "text"], NSApp.isActive,
+                  window?.isKeyWindow == true,
+                  let text = body["text"] as? String, text.utf8.count <= 65536 else { return }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            return
+        }
         if body["action"] as? String == "report-bug" {
             guard Set(body.keys) == ["action"] else { return }
             onReportBug?()
