@@ -570,7 +570,7 @@ function TreeRow({
   const live = !["terminated", "stopped", "interrupted", "archived"].includes(effState);
   const stateLabel = sessionStateLabel(effState);
   const context = useFeature("context");
-  const ctxLevel = context ? contextLevel(s.contextTokens, s.model) : null;
+  const ctxLevel = context ? contextLevel(s.contextTokens, s.model, s.contextWindowTokens) : null;
   const hasChildren = node.children.length > 0;
   const [collapsed, setCollapsed] = useState(false);
   return (
