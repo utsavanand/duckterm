@@ -798,14 +798,20 @@ async def generate_card(card: str, ctx: dict[str, Any], ready: dict[str, Any]) -
     if not backend.ready():
         raise APIError(503, "No Claude Code or Codex CLI is installed to write review cards")
     prompt = prompt_for(card, ctx, ready)
-    reply = (await backend.complete(prompt, tier="deep", schema=SCHEMAS[card])).text
+    reply = (
+        await backend.complete(prompt, tier="deep", schema=SCHEMAS[card], feature=f"pr-card-{card}")
+    ).text
     value = _parse_reply(reply)
     if value is None or not _valid(card, value):
         repair = (
             "\n\nYour previous reply was not valid JSON for the schema. "
             "Return only the JSON object."
         )
-        reply = (await backend.complete(prompt + repair, tier="deep", schema=SCHEMAS[card])).text
+        reply = (
+            await backend.complete(
+                prompt + repair, tier="deep", schema=SCHEMAS[card], feature=f"pr-card-{card}"
+            )
+        ).text
         value = _parse_reply(reply)
         if value is None or not _valid(card, value):
             raise APIError(502, "The model did not return a card matching the schema")

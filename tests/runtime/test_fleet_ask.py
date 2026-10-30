@@ -185,3 +185,40 @@ def test_headless_launch_persists_the_name_for_the_digest(
             await server.orchestrator.stop("fleet-named")
 
     assert asyncio.run(scenario()) == "digest-me"
+
+
+def test_fleet_ask_bounds_the_prompt_in_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every Oracle mode caps the question and stops adding digests at the
+    byte budget, telling the model how many sessions it did not see."""
+    monkeypatch.setenv("DUCKTERM_SUMMARIZER_CMD", "cat")
+    # A fixture digest is about 60 bytes: room for one, not two.
+    monkeypatch.setattr(Server, "_ORACLE_DIGEST_BYTES", 100)
+
+    async def scenario() -> list[tuple[int, dict[str, object]]]:
+        server = Server(history=HistoryStore(tmp_path / "db.sqlite"))
+        try:
+            for key in ("fleet-a", "fleet-b"):
+                await server.orchestrator.launch(
+                    runtime=GenericRuntime("cat"), cwd=str(tmp_path), session_key=key, test=True
+                )
+            srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+            port = srv.sockets[0].getsockname()[1]
+            async with srv:
+                return [
+                    await asyncio.to_thread(_ask, port, {"question": "x" * 8001}),
+                    await asyncio.to_thread(_ask, port, {"question": "who is busy?"}),
+                ]
+        finally:
+            await server.orchestrator.stop("fleet-a")
+            await server.orchestrator.stop("fleet-b")
+
+    (long_status, long_body), (status, body) = asyncio.run(scenario())
+    assert long_status == 400 and "8000" in str(long_body["error"])
+    assert status == 200
+    # The global Oracle replays earlier exchanges, which can hold other digests.
+    answer = str(body["answer"]).split("Earlier exchanges:")[0]
+    assert answer.count("### ") == 1
+    assert "1 more running sessions were left out" in answer
