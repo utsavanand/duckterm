@@ -6,7 +6,7 @@ import { api, Connector } from "./api";
 vi.mock("./api", () => ({ api: { connectors: vi.fn(), enableConnector: vi.fn(), disableConnector: vi.fn(), forgetConnector: vi.fn(), verifyConnector: vi.fn() } }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
-const row: Connector = { name: "porkbun", title: "Porkbun", description: "DNS", credential: null, identity: null, sources: ["stored"], write_access: false, enabled: false, installed: {}, ready: false, detail: null, managed: false, revoke_url: "https://porkbun.com/account/api", last_used: null, use_count: 0, harnesses: ["claude-code", "codex"], harnesses_present: { "claude-code": true, codex: true } };
+const row: Connector = { name: "porkbun", title: "Porkbun", description: "DNS", credential: null, stored_secret: false, identity: null, sources: ["stored"], write_access: false, enabled: false, installed: {}, ready: false, detail: null, managed: false, revoke_url: "https://porkbun.com/account/api", last_used: null, use_count: 0, harnesses: ["claude-code", "codex"], harnesses_present: { "claude-code": true, codex: true } };
 
 it("requires a separate write opt-in and sends read-only by default", async () => {
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [row] });
@@ -23,13 +23,40 @@ it("requires a separate write opt-in and sends read-only by default", async () =
 });
 
 it("disable preserves credentials and does not call forget", async () => {
-  vi.mocked(api.connectors).mockResolvedValue({ connectors: [{ ...row, credential: "stored", enabled: true }] });
-  vi.mocked(api.disableConnector).mockResolvedValue({ ...row, credential: "stored", enabled: false });
+  vi.mocked(api.connectors).mockResolvedValue({ connectors: [{ ...row, credential: "stored", stored_secret: true, enabled: true }] });
+  vi.mocked(api.disableConnector).mockResolvedValue({ ...row, credential: "stored", stored_secret: true, enabled: false });
   render(<Connectors />);
   fireEvent.click(await screen.findByText("Disable"));
   await waitFor(() => expect(api.disableConnector).toHaveBeenCalledWith("porkbun", ""));
   expect(api.forgetConnector).not.toHaveBeenCalled();
   expect(await screen.findByText("Forget stored credentials")).toBeVisible();
+});
+
+it("hides Forget and Revoke when the credential is a provider CLI login", async () => {
+  // Forget disables the connector and deletes a secret that was never stored,
+  // so offering it for a gh-cli login breaks a working connector for nothing.
+  const github: Connector = { ...row, name: "github", title: "GitHub", description: "Repos", credential: "gh-cli", stored_secret: false, enabled: true, sources: ["gh-cli", "stored"], revoke_url: "https://github.com/settings/applications" };
+  vi.mocked(api.connectors).mockResolvedValue({ connectors: [github] });
+  render(<Connectors />);
+  expect(await screen.findByText("Change connection")).toBeVisible();
+  expect(screen.queryByText("Forget stored credentials")).toBeNull();
+  expect(screen.queryByText(/Revoke at GitHub/)).toBeNull();
+  expect(screen.getByText(/Duckterm stores no credential for it/)).toBeVisible();
+});
+
+it("keeps Forget and Revoke when Duckterm holds the credential itself", async () => {
+  vi.mocked(api.connectors).mockResolvedValue({ connectors: [{ ...row, credential: "stored", stored_secret: true, enabled: true }] });
+  render(<Connectors />);
+  expect(await screen.findByText("Forget stored credentials")).toBeVisible();
+  expect(screen.getByText(/Revoke at Porkbun/)).toBeVisible();
+});
+
+it("can still forget a secret that outlived its connection", async () => {
+  // Saved, then never enabled: credential is null but the key is still on disk.
+  vi.mocked(api.connectors).mockResolvedValue({ connectors: [{ ...row, credential: null, stored_secret: true }] });
+  render(<Connectors />);
+  expect(await screen.findByText("Forget stored credentials")).toBeVisible();
+  expect(screen.queryByText("Change connection")).toBeNull();
 });
 
 it("does not expose secret administration on the hosted agent dashboard", async () => {
