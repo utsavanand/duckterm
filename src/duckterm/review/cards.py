@@ -861,11 +861,17 @@ async def generate_group(name: str, group: list[str], ctx: dict[str, Any]) -> di
         )
     ).text
     value = _parse_reply(reply) or {}
-    return {
-        card: finish(card, ctx, value[card])
+    parts = {
+        card: value[card]
         for card in group
         if isinstance(value.get(card), dict) and _valid(card, value[card])
     }
+    # A grouped reply sometimes comes back valid but with every card empty (seen
+    # on an 82k-character diff; a rerun answered fully). A real answer always has
+    # rows, since guardrails lists each rule it checked, so write them singly.
+    if parts and not any(v for part in parts.values() for v in part.values()):
+        return {}
+    return {card: finish(card, ctx, part) for card, part in parts.items()}
 
 
 def load(target: Target) -> dict[str, Any]:
