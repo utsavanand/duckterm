@@ -63,7 +63,7 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
     if (!text || sending || nativeHistory) return;
     setSending(true);
     try {
-      await api.sendInput(sessionKey, text + "\n");
+      await api.submitFollowUp(sessionKey, text);
       setFollowUp("");
       toast("Sent to the agent");
     } catch (e) {
@@ -323,7 +323,7 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
           aria-label="Follow-up message"
           value={followUp}
           placeholder={nativeHistory ? "Continue in the OpenCode terminal" : "send a follow-up to the agent…"}
-          disabled={nativeHistory}
+          disabled={nativeHistory || sending}
           onChange={(e) => setFollowUp(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.nativeEvent.isComposing) sendFollowUp();

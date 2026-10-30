@@ -9,6 +9,27 @@ import pytest
 from duckterm import doctor
 
 
+@pytest.fixture(autouse=True)
+def isolated_shared_hook(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # A real Mac installation may already provide jq in ~/.duckterm-hooks.
+    # Missing-dependency probes must never consult that host-owned runtime.
+    monkeypatch.setattr(doctor, "shared_script_path", lambda: tmp_path / "hooks/duckterm-hook.sh")
+
+
+def test_shared_hook_jq_satisfies_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    shared = doctor.shared_script_path().with_name("jq")
+    shared.parent.mkdir(parents=True)
+    shared.write_text("#!/bin/sh\n")
+    shared.chmod(0o755)
+    monkeypatch.delenv("DUCKTERM_BUNDLED_JQ", raising=False)
+    monkeypatch.setattr(
+        doctor.shutil, "which", lambda tool: None if tool == "jq" else "/usr/bin/" + tool
+    )
+    jq = next(r for r in doctor._check_system_deps() if "jq" in r.title)
+    assert jq.status == "ok"
+    assert "shared hook runtime" in jq.title
+
+
 def test_missing_jq_is_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DUCKTERM_BUNDLED_JQ", raising=False)
     monkeypatch.setattr(doctor.shutil, "which", lambda t: None if t == "jq" else "/usr/bin/" + t)

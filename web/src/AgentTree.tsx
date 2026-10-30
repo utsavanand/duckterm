@@ -1,3 +1,6 @@
+import { sameSiblings, useSidebarOrder } from "./sidebarOrder";
+import { useSidebarDrag, type SidebarDrag } from "./useSidebarDrag";
+import "./sidebarOrder.css";
 import { sessionStateLabel } from "./sessions";
 import { sidebarFolders } from "./sidebarFolders";
 import { openSessionActions } from "./SessionActionMenu";
@@ -7,7 +10,7 @@ import { desktop } from "./desktop";
 import { SessionPin } from "./SessionPin";
 import { SessionLocationDuck } from "./SessionLocationDuck";
 import { HelperAgents } from "./HelperAgents";
-import { ReactNode, useEffect, useState, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
+import { ReactNode, useEffect, useRef, useState, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
 import { api } from "./api";
 import { Duck, poseFor } from "./Duck";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
@@ -63,7 +66,9 @@ export function AgentTree({
   onOpenFolderAppearance?: (folder: string) => void;
 }) {
   const { filters, toggle, clear, saveError, expanded } = filterControls;
-  const visibleSessions = sidebarSessions(sessions);
+  const ordering = useSidebarOrder(sessions);
+  const visibleSessions = sidebarSessions(ordering.sessions);
+  const dragRoot = useRef<HTMLDivElement | null>(null);
   const archivedSessions = sessions.filter(s => ["archived", "merged"].includes(s.state));
   const localArchives = useState(false);
   const [archivesOpen, setArchivesOpen] = expansion?.archives ?? localArchives;
@@ -82,6 +87,15 @@ export function AgentTree({
   const folders = sidebarFolders(savedFolders, sessions);
   const toast = useToast();
   const roots = buildForest(visibleSessions);
+  const drag = useSidebarDrag(dragRoot, visibleSessions, ordering.reorder, moveToGroup);
+  function moveByKey(key: string, direction: number) {
+    const source = visibleSessions.find(s => s.key === key);
+    if (!source) return;
+    const siblings = visibleSessions.filter(s => sameSiblings(source, s));
+    const index = siblings.findIndex(s => s.key === key);
+    const target = siblings[index + direction];
+    if (target) { ordering.reorder(key, target.key, direction > 0); drag.announce(`${source.label} reordered.`); }
+  }
 
   // Drop a session onto a folder header (or the ungrouped zone) to move it there.
   async function moveToGroup(key: string, group: string) {
@@ -201,6 +215,8 @@ export function AgentTree({
       node={node}
       depth={0}
       indent={indent}
+      drag={drag}
+      onMoveBy={moveByKey}
       now={now}
       selectedKey={selectedKey} contextKey={contextKey}
       onOpen={onOpen}
@@ -242,6 +258,7 @@ export function AgentTree({
         return next;
       })}
       selected={selectedFolder === path}
+      pointerOver={drag.drop !== null && "group" in drag.drop && drag.drop.group === path}
       onOpen={() => onOpenFolder?.(path)}
       depth={depth}
       count={subtreeCount(path)}
@@ -263,7 +280,7 @@ export function AgentTree({
   );
 
   return (
-    <div className="rd-sidebar-content" ref={node => { if (node && expansion) node.scrollTop = expansion.scroll.current.content; }}
+    <div className="rd-sidebar-content" ref={node => { dragRoot.current = node; if (node && expansion) node.scrollTop = expansion.scroll.current.content; }}
       onScroll={event => { if (expansion) expansion.scroll.current.content = event.currentTarget.scrollTop; }} onKeyDown={event => {
       if (event.key === "Escape" && filtering) {
         event.preventDefault();
@@ -273,6 +290,8 @@ export function AgentTree({
         else event.currentTarget.closest(".rd-agents")?.querySelector<HTMLButtonElement>(".rd-filter-toggle")?.focus();
       }
     }}>
+    <div className="rd-order-announcement" role="status" aria-live="polite">{drag.message}</div>
+    {ordering.error && <p className="rd-order-error" role="alert">{ordering.error}</p>}
     <SidebarFilters sessions={visibleSessions} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} expanded={expanded} />
     <div className="rd-tree" ref={node => { if (node && expansion) node.scrollTop = expansion.scroll.current.tree; }}
       onScroll={event => { if (expansion) expansion.scroll.current.tree = event.currentTarget.scrollTop; }}>
@@ -289,6 +308,7 @@ export function AgentTree({
         onDropSession={moveToGroup}
         onDropFolder={moveFolder}
         active={hasFolders}
+        pointerOver={drag.drop !== null && "group" in drag.drop && drag.drop.group === ""}
       >
         {ungrouped.map((n) => renderNode(n, 0))}
       </DropZone>
@@ -325,6 +345,7 @@ function GroupHeader({
   theme,
   onOpenAppearance,
   children,
+  pointerOver = false,
 }: {
   name: string;
   collapsed: boolean;
@@ -345,13 +366,15 @@ function GroupHeader({
   theme: string | undefined;
   onOpenAppearance: () => void;
   children: ReactNode;
+  pointerOver?: boolean;
 }) {
   const [over, setOver] = useState(false);
   const leaf = name.split("/").pop();
   return (
-    <div className={`rd-group${over ? " drop-over" : ""}`}>
+    <div className={`rd-group${over || pointerOver ? " drop-over" : ""}`}>
       <div
         className={`rd-group-head${selected ? " selected" : ""}`}
+        data-session-drop-group={name}
         style={{ paddingLeft: 14 + depth * 16 }}
         draggable
         onDragStart={(e) => {
@@ -481,17 +504,19 @@ function DropZone({
   onDropFolder,
   active,
   children,
+  pointerOver = false,
 }: {
   group: string;
   onDropSession: (key: string, group: string) => void;
   onDropFolder: (name: string, parent: string) => void;
   active: boolean;
   children: ReactNode;
+  pointerOver?: boolean;
 }) {
   const [over, setOver] = useState(false);
   return (
     <div
-      className={`rd-dropzone${active ? " has-groups" : ""}${over ? " drop-over" : ""}`}
+      className={`rd-dropzone${active ? " has-groups" : ""}${over || pointerOver ? " drop-over" : ""}`}
       onDragOver={(e) => {
         if (
           active &&
@@ -512,7 +537,7 @@ function DropZone({
         if (folder) onDropFolder(folder, "");
       }}
     >
-      {active && <div className="rd-dropzone-label">Ungrouped</div>}
+      {active && <div className="rd-dropzone-label" data-session-drop-group="">Ungrouped</div>}
       {children}
     </div>
   );
@@ -553,7 +578,11 @@ function TreeRow({
   onOpen,
   onOpenInbox,
   onPin,
+  drag,
+  onMoveBy,
 }: {
+  drag?: SidebarDrag;
+  onMoveBy?: (key: string, direction: number) => void;
   node: Node;
   depth: number;
   indent?: number; // folder depth — visual offset only, unlike fork `depth`
@@ -573,8 +602,9 @@ function TreeRow({
   const ctxLevel = context ? contextLevel(s.contextTokens, s.model, s.contextWindowTokens) : null;
   const hasChildren = node.children.length > 0;
   const [collapsed, setCollapsed] = useState(false);
+  const drop = drag?.drop && "key" in drag.drop && drag.drop.key === s.key ? drag.drop : null;
   return (
-    <>
+    <div className={`rd-session-family${drag?.dragKey === s.key ? " rd-order-dragging" : ""}${drop ? (drop.after ? " rd-order-after" : " rd-order-before") : ""}`}>
       <div
         className={`rd-row${live ? "" : " terminated"}${ctxLevel ? ` ctx-${ctxLevel}` : ""}${s.key === selectedKey ? " selected" : ""}${s.key === contextKey ? " context-target" : ""}${s.inboxPending ? " has-inbox" : ""}`}
         title={`${s.label} · ${s.branch ? `${s.repoName ?? "repo"} · ${s.branch}` : (s.cwd ?? "—")} · ${s.runtime ?? "agent"} · ${stateLabel} · ${s.eventCount} events`}
@@ -584,22 +614,30 @@ function TreeRow({
         aria-haspopup="menu"
         aria-expanded={s.key === contextKey}
         data-session-key={s.key}
+        data-sidebar-order-key={drag ? s.key : undefined}
+        aria-description={drag ? "Drag to reorder. Alt and arrow keys move within the folder or parent." : undefined}
+        {...(drag?.bindings(s) ?? {})}
+        onClickCapture={e => { if (drag?.consumeClick(s.key, e.detail)) { e.preventDefault(); e.stopPropagation(); } }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); openSessionActions({ key: s.key, x: e.clientX, y: e.clientY, trigger: e.currentTarget }); }}
         onKeyDown={e => {
           if (e.target !== e.currentTarget) return;
-          if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+          if (onMoveBy && e.altKey && ["ArrowUp", "ArrowDown"].includes(e.key)) {
+            e.preventDefault(); e.stopPropagation(); onMoveBy(s.key, e.key === "ArrowUp" ? -1 : 1);
+          } else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
             e.preventDefault(); e.stopPropagation(); const rect = e.currentTarget.getBoundingClientRect();
             openSessionActions({ key: s.key, x: rect.left + 24, y: rect.bottom, trigger: e.currentTarget });
           } else if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(s.key); }
         }}
         // Only root sessions are draggable into groups; forks follow their parent.
-        draggable={depth === 0 && !s.parentKey && !["archived", "merged"].includes(effState)}
+        draggable={!drag && depth === 0 && !s.parentKey && !["archived", "merged"].includes(effState)}
         onDragStart={(e) => {
+          if (drag) { e.preventDefault(); return; }
           e.dataTransfer.setData("text/rd-session", s.key);
           e.dataTransfer.effectAllowed = "move";
         }}
       >
         <div className="rd-row-main">
+          {drag && <span className="rd-order-grip" aria-hidden="true">⠿</span>}
           {hasChildren ? (
             <button
               className="rd-row-collapse"
@@ -663,7 +701,7 @@ function TreeRow({
         <div className="rd-row-density-detail">
           {s.runtime ?? "agent"} · {effState === "waiting" ? "Waiting for input" : s.lastTool && effState === "busy" ? `Running ${s.lastTool}` : stateLabel}
         </div>
-        {s.subagents && <HelperAgents agents={s.subagents} sessionKey={s.key} />}
+        {s.subagents && <HelperAgents agents={s.subagents} sessionKey={s.key} showCompleted={false} />}
       </div>
       {!collapsed &&
         node.children.map((child) => (
@@ -672,6 +710,8 @@ function TreeRow({
             node={child}
             depth={depth + 1}
             indent={indent}
+            drag={drag}
+            onMoveBy={onMoveBy}
             now={now}
             selectedKey={selectedKey} contextKey={contextKey}
             onOpen={onOpen}
@@ -679,6 +719,6 @@ function TreeRow({
       onPin={onPin}
           />
         ))}
-    </>
+    </div>
   );
 }

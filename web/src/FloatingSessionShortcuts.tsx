@@ -14,6 +14,7 @@ const SESSION_PIN_LIMIT = 10;
 const pinIcon = <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m16 3 5 5-4 1-3 5 1 3-3-1-5 3-1 4-5-5 4-1 3-5-1-3 3 1z" transform="translate(1 -1) scale(.9)" /></svg>;
 const initials = (label: string) => label.trim().split(/[\s_-]+/).slice(0, 2).map(part => Array.from(part)[0] || "").join("").toLocaleUpperCase() || "•";
 const hostOf = (session: SessionView) => splitSessionRef(session.key).host;
+const groupOf = (session: SessionView) => `folder:${JSON.stringify([hostOf(session), session.group || ""])}`;
 const locationOf = (session: SessionView) => [session.group || "Ungrouped", session.hostLabel || hostName(session.key)].join(" · ");
 
 function ShortcutState({ session }: { session: SessionView }) {
@@ -37,14 +38,18 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
     const leave = () => {
       if (!inside || timer !== undefined) return;
       // Cross transparent gaps without flicker; their clicks still reach the terminal.
-      timer = setTimeout(() => { inside = false; timer = undefined; setHovered(false); }, 180);
+      timer = setTimeout(() => { inside = false; timer = undefined; setHovered(false); }, 700);
     };
     const move = (event: PointerEvent) => {
-      if (event.target instanceof Node && root.current?.contains(event.target)) {
+      const bounds = root.current?.getBoundingClientRect();
+      const margin = inside ? 12 : 0;
+      const inBounds = bounds && event.clientX >= bounds.left - margin && event.clientX <= bounds.right + margin
+        && event.clientY >= bounds.top - margin && event.clientY <= bounds.bottom + margin;
+      if (inBounds || (event.target instanceof Node && root.current?.contains(event.target))) {
         clearTimeout(timer); timer = undefined; inside = true; setHovered(true);
       } else leave();
     };
-    // Observe actual DOM targets: the picker is portaled outside this floating rail.
+    // Include transparent gaps and a small safe margin without intercepting terminal clicks.
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerleave", leave);
     window.addEventListener("blur", leave);
@@ -63,7 +68,9 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
   const search = useRef<HTMLInputElement>(null);
   const id = useId();
   const [position, setPosition] = useState({ left: 8, top: 8, width: 310, maxHeight: 400 });
-  const pins = orderShortcuts(sessions.filter(s => s.pinned), preferences.order);
+  const ordered = orderShortcuts(sessions.filter(s => s.pinned), preferences.order);
+  const groups = [...new Set(ordered.map(groupOf))].map(key => ({ key, sessions: ordered.filter(s => groupOf(s) === key) }));
+  const pins = groups.flatMap(group => group.sessions);
   const customSession = pins.find(s => s.key === customizing?.key);
   const folderLabel = (s: SessionView) => `${s.group || "Ungrouped"} / ${s.label}`;
   const colorOf = (key: string): ShortcutColor => Object.hasOwn(preferences.colors, key) ? preferences.colors[key] : "None";
@@ -73,16 +80,28 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
     (anchor?.isConnected ? anchor : add.current)?.focus({ preventScroll: true });
   }
   function reorder(key: string, target: string, after: boolean) {
-    if (key === target || !pins.some(s => s.key === key) || !pins.some(s => s.key === target)) return;
-    const order = pins.map(s => s.key).filter(k => k !== key);
-    order.splice(order.indexOf(target) + (after ? 1 : 0), 0, key);
+    if (key === target) return;
+    let order: string[];
+    const sourceGroup = groups.find(g => g.key === key), targetGroup = groups.find(g => g.key === target);
+    if (sourceGroup && targetGroup) {
+      const next = groups.filter(g => g.key !== key);
+      next.splice(next.findIndex(g => g.key === target) + (after ? 1 : 0), 0, sourceGroup);
+      order = next.flatMap(g => g.sessions.map(s => s.key));
+      setAnnouncement(`${sourceGroup.sessions[0].group || "Ungrouped"}, folder position ${next.indexOf(sourceGroup) + 1} of ${next.length}`);
+    } else {
+      const source = pins.find(s => s.key === key), destination = pins.find(s => s.key === target);
+      if (!source || !destination || groupOf(source) !== groupOf(destination)) return;
+      order = pins.map(s => s.key).filter(k => k !== key);
+      order.splice(order.indexOf(target) + (after ? 1 : 0), 0, key);
+      setAnnouncement(`${folderLabel(source)}, position ${order.indexOf(key) + 1} of ${order.length}`);
+    }
     update(previous => ({ ...previous, order: [...order, ...previous.order.filter(k => !order.includes(k))].slice(0, 2000) }));
-    const label = pins.find(s => s.key === key)!;
-    setAnnouncement(`${folderLabel(label)}, position ${order.indexOf(key) + 1} of ${order.length}`);
   }
   function move(key: string, direction: -1 | 1) {
-    const index = pins.findIndex(s => s.key === key), target = pins[index + direction];
-    if (index >= 0 && target) reorder(key, target.key, direction > 0);
+    const group = groups.find(g => g.key === key);
+    const keys = group ? groups.map(g => g.key) : pins.filter(s => groupOf(s) === groupOf(pins.find(p => p.key === key)!)).map(s => s.key);
+    const index = keys.indexOf(key), target = keys[index + direction];
+    if (index >= 0 && target) reorder(key, target, direction > 0);
   }
   const { bindings: dragBindings, consumeClick, dragKey, drop } = useShortcutDrag(root, reorder, () => { setCustomizing(null); setOpen(false); });
   useEffect(() => {
@@ -154,20 +173,29 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
       onChange={e => { const display = e.target.value === "expanded" ? "expanded" : "hover"; update(previous => ({ ...previous, display })); }}>
       <option value="hover">Expand on hover</option><option value="expanded">Always expanded</option></select><button ref={add} aria-label="Choose sessions to pin" aria-expanded={open} aria-controls={id}
       title="Choose sessions to pin" onClick={() => { setCustomizing(null); setQuery(""); setOpen(!open); }}>+</button></div>
-    <div className="rd-shortcut-list">{pins.map(s => <div className={`rd-shortcut-tab${s.key === selected.key ? " active" : ""}${dragKey === s.key ? " dragging" : ""}${drop?.key === s.key ? drop.after ? " drop-after" : " drop-before" : ""}`} key={s.key} data-key={s.key}
+    <div className="rd-shortcut-list">{groups.map(group => <section key={group.key} data-key={group.key}
+      className={`rd-shortcut-group${dragKey === group.key ? " dragging" : ""}${drop?.key === group.key ? drop.after ? " drop-after" : " drop-before" : ""}`}>
+      <button className="rd-shortcut-group-heading" {...dragBindings(group.key, "group")}
+        aria-label={`Reorder folder ${locationOf(group.sessions[0])}`} title="Drag folder to reorder · Alt + ↑ / ↓"
+        aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+        onKeyDown={event => { if (event.altKey && ["ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); move(group.key, event.key === "ArrowUp" ? -1 : 1); } }}>
+        <span>{group.sessions[0].group || "Ungrouped"}{hostOf(group.sessions[0]) !== "local" && <small>{group.sessions[0].hostLabel || hostName(group.sessions[0].key)}</small>}</span><span>{group.sessions.length}</span>
+      </button>
+      {group.sessions.map(s => <div className={`rd-shortcut-tab${s.key === selected.key ? " active" : ""}${dragKey === s.key ? " dragging" : ""}${drop?.key === s.key ? drop.after ? " drop-after" : " drop-before" : ""}`} key={s.key} data-key={s.key} {...dragBindings(s.key)}
+      onClickCapture={event => { if (consumeClick(s.key, event.detail)) { event.preventDefault(); event.stopPropagation(); } }}
       data-color={colorOf(s.key)} style={{ "--shortcut-color": SHORTCUT_COLORS[colorOf(s.key)] || undefined } as CSSProperties}>
-      <button className="rd-shortcut-grip" {...dragBindings(s.key)} aria-label={`Reorder ${folderLabel(s)}`} title="Drag to reorder · Alt + ↑ / ↓ with keyboard" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+      <button className="rd-shortcut-grip" draggable={false} aria-label={`Reorder ${folderLabel(s)}`} title="Drag to reorder · Alt + ↑ / ↓ with keyboard" aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         onKeyDown={event => { if (event.altKey && ["ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); event.stopPropagation(); move(s.key, event.key === "ArrowUp" ? -1 : 1); } }}>
         <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true"><circle cx="3" cy="4" r="1" /><circle cx="7" cy="4" r="1" /><circle cx="3" cy="8" r="1" /><circle cx="7" cy="8" r="1" /><circle cx="3" cy="12" r="1" /><circle cx="7" cy="12" r="1" /></svg>
       </button>
-      <button className="rd-shortcut-open" {...dragBindings(s.key)} aria-label={`Open pinned ${s.label}`} aria-description={locationOf(s)} aria-current={s.key === selected.key ? "true" : undefined}
-        title={`${folderLabel(s)} · ${s.hostLabel || hostName(s.key)}${s.hostOffline ? " · Offline" : ""}`} onClick={event => { if (!consumeClick(s.key, event.detail)) onOpen(s.key); }}>
-        <span className="rd-shortcut-name"><span className="rd-shortcut-folder">{s.group || "Ungrouped"}</span><span className="rd-shortcut-slash">/</span><span className="rd-shortcut-session">{s.label}</span></span>
-        <span className="rd-shortcut-badge" aria-hidden="true">{initials(s.label)}<ShortcutState session={s} /></span>
+      <button className="rd-shortcut-open" aria-label={`Open pinned ${s.label}`} aria-description={locationOf(s)} aria-current={s.key === selected.key ? "true" : undefined}
+        title={`${folderLabel(s)} · ${s.hostLabel || hostName(s.key)}${s.hostOffline ? " · Offline" : ""}`} onClick={() => onOpen(s.key)}>
+        <span className="rd-shortcut-name"><span className="rd-shortcut-session">{s.label}</span></span>
+        <span className="rd-shortcut-badge" aria-hidden="true"><span className="rd-shortcut-initials">{initials(s.label)}</span><ShortcutState session={s} /></span>
       </button>{pinButton(s, "from shortcuts")}
       <button className="rd-shortcut-color" aria-label={`Color for ${folderLabel(s)}: ${colorOf(s.key)}`} title={`Shortcut color: ${colorOf(s.key)}`}
         onClick={event => { setOpen(false); setCustomizing({ key: s.key, anchor: event.currentTarget }); }}><i aria-hidden="true" /></button>
-    </div>)}</div>
+    </div>)}</section>)}</div>
     <span className="rd-shortcut-announcement" role="status">{announcement}</span>
     {customizing && customSession && <ShortcutMenu target={customizing} color={colorOf(customSession.key)}
       onColor={color => update(previous => ({ ...previous, colors: { ...previous.colors, [customSession.key]: color } }))}

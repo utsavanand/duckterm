@@ -625,6 +625,11 @@ export const api = {
   // but from the Messages view — no tab switch to answer or steer).
   sendInput: (key: string, text: string) =>
     post<{ written: boolean }>(`/sessions/${key}/input`, { text }),
+  submitFollowUp: async (key: string, text: string) => {
+    const result = await post<{ written: boolean; submitted?: boolean }>(`/sessions/${key}/input`, { text, submit: true });
+    if (!result.submitted) throw new Error("This host did not confirm submission. Check its terminal and update DuckTerm before retrying.");
+    return result;
+  },
   // Move a session into a folder group; "" ungroups it.
   setGroup: async (key: string, group: string) => {
     if (desktop()?.canCollaborate) {

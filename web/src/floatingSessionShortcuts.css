@@ -6,7 +6,7 @@
 .rd-shortcut-heading > span { display:none; padding-left:10px; margin-right:auto; text-transform:uppercase; font-size:0.625rem; letter-spacing:.07em; }
 .rd-shortcut-heading button { border:0; background:transparent; color:var(--muted); cursor:pointer; width:36px; height:30px; flex-shrink:0; padding:0; font-size:1.3125rem; }
 .rd-shortcut-list { display:flex; flex-direction:column; gap:8px; min-height:0; overflow-y:auto; scrollbar-width:thin; }
-.rd-shortcut-tab { position:relative; display:flex; align-items:center; background:var(--card); border:1px solid var(--border); border-right:0; border-radius:5px 0 0 5px; height:38px; min-height:38px; flex-shrink:0; overflow:hidden; box-shadow:-2px 3px 8px #0002; }
+.rd-shortcut-tab { pointer-events:auto; touch-action:none; user-select:none; -webkit-user-select:none; backdrop-filter:blur(14px); position:relative; display:flex; align-items:center; background:var(--card); border:1px solid var(--border); border-right:0; border-radius:5px 0 0 5px; height:38px; min-height:38px; flex-shrink:0; overflow:hidden; box-shadow:-2px 3px 8px #0002; }
 .rd-shortcut-tab.active { background:color-mix(in srgb, var(--brand-green) 12%, var(--card)); box-shadow:inset 0 0 0 1px var(--text); }
 .rd-shortcut-open { display:flex; align-items:center; gap:0; padding:0; justify-content:flex-end; overflow:hidden; flex:1; min-width:0; border:0; border-radius:4px 0 0 4px; background:transparent; color:var(--text); text-align:left; cursor:pointer; font:inherit; height:36px; min-height:36px; }
 .rd-shortcut-name, .rd-shortcut-current span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -51,15 +51,15 @@
 .rd-shortcut-tab { border-left-width:3px; background:var(--card); }
 .rd-shortcut-tab.active { background:var(--card); }
 .rd-shortcut-tab[data-color]:not([data-color="None"]) {
-  background:color-mix(in srgb,var(--shortcut-color) 30%,var(--card));
-  border-color:color-mix(in srgb,var(--shortcut-color) 50%,var(--border));
+  background:color-mix(in srgb,var(--shortcut-color) 23%,color-mix(in srgb,var(--card) 86%,transparent));
+  border-color:color-mix(in srgb,var(--shortcut-color) 52%,var(--border));
   color:var(--text);
 }
 .rd-shortcut-tab[data-color]:not([data-color="None"]) :is(button,.rd-shortcut-folder,.rd-shortcut-slash,.rd-shortcut-badge) { color:var(--text); }
 .rd-floating-shortcuts .rd-shortcut-tab[data-color]:not([data-color="None"]) button:hover:not(:disabled) { background:color-mix(in srgb,var(--text) 8%,transparent); }
 .rd-shortcut-tab.active .rd-shortcut-session { font-weight:650; }
 .rd-shortcut-folder { color:var(--muted); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:0 1 auto; }
-.rd-shortcut-session { flex-shrink:0; max-width:60%; overflow:hidden; text-overflow:ellipsis; }
+.rd-shortcut-session { min-width:0; overflow:hidden; white-space:normal; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; line-height:15px; }
 .rd-shortcut-slash { color:var(--muted); flex-shrink:0; }
 .rd-shortcut-display { display:none; min-width:0; max-width:155px; background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:3px; font:inherit; font-size:0.6875rem; padding:3px 4px; pointer-events:auto; }
 .rd-shortcut-grip { display:none; order:-2; align-items:center; justify-content:center; width:18px; height:32px; flex-shrink:0; padding:0; border:0; background:transparent; color:var(--muted); cursor:grab; touch-action:none; }
@@ -87,3 +87,17 @@
 .rd-shortcut-open, .rd-shortcut-grip { touch-action:none; user-select:none; -webkit-user-select:none; }
 
 .rd-shortcut-name { font-family:"Avenir Next Condensed","Arial Narrow",system-ui,sans-serif; font-size:.875rem; font-weight:500; gap:4px; }
+
+/* One folder label per group leaves the row width to the session name. */
+.rd-shortcut-group { display:flex; flex-direction:column; gap:8px; min-width:0; flex-shrink:0; }
+.rd-shortcut-group-heading { display:flex; visibility:hidden; pointer-events:none; height:32px; box-sizing:border-box; flex-shrink:0; align-items:center; justify-content:space-between; gap:8px; width:100%; min-height:30px; padding:6px 10px; border:0; background:color-mix(in srgb,var(--card) 90%,transparent); backdrop-filter:blur(14px); color:var(--muted); font:inherit; text-align:left; cursor:grab; touch-action:none; }
+.rd-shortcut-group-heading > span:first-child { min-width:0; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.rd-shortcut-group-heading small { display:block; font-size:.625rem; margin-top:2px; }
+.rd-floating-shortcuts:is(.is-hovered,:has(:focus-visible),.picker-open,.always-expanded) .rd-shortcut-group-heading { visibility:visible; pointer-events:auto; }
+.rd-floating-shortcuts:is(.is-hovered,:has(:focus-visible),.picker-open,.always-expanded) .rd-shortcut-tab { margin-left:12px; }
+.rd-floating-shortcuts:is(.is-hovered,:has(:focus-visible),.picker-open,.always-expanded) .rd-shortcut-initials { display:none; }
+.rd-floating-shortcuts:is(.is-hovered,:has(:focus-visible),.picker-open,.always-expanded) .rd-shortcut-badge { width:36px; }
+.rd-shortcut-tab[data-color]:not([data-color="None"]) { border-left-color:color-mix(in srgb,var(--shortcut-color) 70%,var(--border)); }
+.rd-shortcut-group.dragging { opacity:.5; }
+.rd-shortcut-group.drop-before { box-shadow:0 -2px var(--text); }
+.rd-shortcut-group.drop-after { box-shadow:0 2px var(--text); }

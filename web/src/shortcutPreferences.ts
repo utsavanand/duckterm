@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { splitSessionRef } from "./hostTransport";
 
 export const SHORTCUT_COLORS = { None: "", Red: "#ed7878", Orange: "#eca763", Yellow: "#dfc45a", Green: "#65bb92", Blue: "#77a9e4", Purple: "#b396e2", Pink: "#dc92bb" } as const;
 export type ShortcutColor = keyof typeof SHORTCUT_COLORS;
@@ -46,7 +47,10 @@ export function useShortcutPreferences() {
   return { preferences, update, storageError };
 }
 
-export function orderShortcuts<T extends { key: string }>(sessions: T[], order: string[]): T[] {
+export function orderShortcuts<T extends { key: string; group?: string | null }>(sessions: T[], order: string[]): T[] {
   const positions = new Map(order.map((key, index) => [key, index]));
-  return [...sessions].sort((a, b) => (positions.get(a.key) ?? Infinity) - (positions.get(b.key) ?? Infinity));
+  const ordered = [...sessions].sort((a, b) => (positions.get(a.key) ?? Infinity) - (positions.get(b.key) ?? Infinity));
+  const group = (s: T) => JSON.stringify([splitSessionRef(s.key).host, s.group || ""]);
+  // Focus uses the same top-three order as the grouped floating rail.
+  return [...new Set(ordered.map(group))].flatMap(key => ordered.filter(s => group(s) === key));
 }
