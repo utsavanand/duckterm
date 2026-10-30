@@ -90,3 +90,13 @@ it("sends open questions to the authoring session and asks the chat", async () =
   expect(api.reviewSend).toHaveBeenCalledWith("/r", "307", { card: "questions", items: ["Where are the tests? (src/db.py)", "Run it"], session: "s1" });
   expect(await screen.findByRole("button", { name: "Send all to ui-dev" })).toBeEnabled();
 });
+
+it("says which cards a pending card is being written with", async () => {
+  const grouped = { ...cards, running: true, cards: cards.cards.map(card => card.id === "behaviour" ? { ...card, with: ["Intent vs diff", "Walkthrough"] } : card) };
+  vi.mocked(api.reviewCards).mockResolvedValue(grouped);
+  render(<CardsPane header={header} active={false} openFile={vi.fn()} ask={vi.fn()} />);
+  const tab = within(await screen.findByRole("tablist", { name: "Review cards" })).getAllByRole("tab")[4];
+  expect(tab).toHaveTextContent("Writing with Intent vs diff, Walkthrough…");
+  fireEvent.click(tab);
+  expect(screen.getByRole("tabpanel", { name: "5 Behaviour changes" })).toHaveTextContent("Writing this card together with Intent vs diff and Walkthrough…");
+});

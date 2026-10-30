@@ -36,7 +36,7 @@ export type Severity = "ok" | "warn" | "danger" | "neutral" | "muted";
 
 export function verdict(card: ReviewCard): string {
   if (card.status === "ready") return String(card.data?.verdict ?? "Ready");
-  if (card.status === "pending") return "Writing…";
+  if (card.status === "pending") return card.with?.length ? `Writing with ${card.with.join(", ")}…` : "Writing…";
   if (card.status === "stale") return "Head moved";
   if (card.status === "later") return "Later";
   return card.reason ? `Omitted: ${card.reason}` : "Omitted";
