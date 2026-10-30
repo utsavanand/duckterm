@@ -471,6 +471,7 @@ def test_api_streams_pass_text_deltas_through(monkeypatch):
         ),
         _sse([{"choices": [{"delta": {"content": "Hi"}}]}, {"choices": [{"delta": {}}]}, "[DONE]"]),
         _sse([{"type": "message_delta", "delta": {"stop_reason": "refusal"}}]),
+        _sse([{"type": "error", "error": {"message": "overloaded for sk-echoed"}}]),
     ]
     sent: list[dict] = []
 
@@ -487,6 +488,9 @@ def test_api_streams_pass_text_deltas_through(monkeypatch):
     assert list(api.openai_chat_stream("https://p", None, "m", "s", "p")) == ["Hi"]
     with pytest.raises(APIError, match="declined"):
         list(api.anthropic_stream("https://p", "k", "m", "s", "p", "low"))
+    with pytest.raises(APIError, match="overloaded") as caught:
+        list(api.anthropic_stream("https://p", "sk-echoed", "m", "s", "p", "low"))
+    assert "sk-echoed" not in str(caught.value)
 
 
 def test_claude_stream_yields_partial_text_from_the_cli(tmp_path, monkeypatch):
