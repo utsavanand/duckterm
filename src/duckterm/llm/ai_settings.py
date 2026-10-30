@@ -9,6 +9,10 @@ Backends:
 Keys live in the Keychain (connector secret store), never in this file. An
 exported ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY wins over the
 stored key, the way the provider CLIs and SDKs resolve them.
+
+A key only goes to the host it was saved for. Named providers always use their
+own address, and a custom key is stored with the URL it was verified against,
+so changing the settings file alone can't send a key somewhere else.
 """
 
 from __future__ import annotations
@@ -65,6 +69,8 @@ def validated(value: Any) -> dict[str, Any]:
         raise APIError(400, "The base URL must start with http:// or https://")
     if result["provider"] == "custom" and not result["base_url"]:
         raise APIError(400, "A custom provider needs its OpenAI-compatible base URL")
+    if result["provider"] != "custom":
+        result["base_url"] = ""
     if (
         result["backend"] == "api"
         and result["provider"] not in DEFAULT_MODELS
@@ -97,27 +103,38 @@ def save(value: Any) -> dict[str, Any]:
 
 
 def base_url(settings: dict[str, Any]) -> str:
-    return (settings["base_url"] or PROVIDERS[settings["provider"]][1]).rstrip("/")
+    if settings["provider"] != "custom":
+        return PROVIDERS[settings["provider"]][1]
+    return str(settings["base_url"]).rstrip("/")
 
 
 def model(settings: dict[str, Any], tier: str) -> str:
     return settings[f"{tier}_model"] or DEFAULT_MODELS.get(settings["provider"], {}).get(tier, "")
 
 
-def key(provider: str) -> tuple[str | None, str]:
-    """The key and where it came from: "env", "stored" or "" when none."""
+def key(provider: str, base: str = "") -> tuple[str | None, str]:
+    """The key and where it came from: "env", "stored" or "" when none. A
+    custom key counts only for the base URL it was verified against."""
     from duckterm import connectors
 
     env = PROVIDERS[provider][2]
     if env and os.environ.get(env):
         return os.environ[env], "env"
     stored = connectors.load_secret(f"ai-{provider}")
+    if stored and provider == "custom":
+        try:
+            bound = json.loads(stored)
+            stored = bound["key"] if bound["base_url"] == base.rstrip("/") else None
+        except (ValueError, KeyError, TypeError):
+            stored = None
     return (stored, "stored") if stored else (None, "")
 
 
-def save_key(provider: str, secret: str) -> None:
+def save_key(provider: str, secret: str, base: str = "") -> None:
     from duckterm import connectors
 
+    if provider == "custom":
+        secret = json.dumps({"key": secret, "base_url": base.rstrip("/")})
     connectors.save_secret(f"ai-{provider}", secret)
 
 
