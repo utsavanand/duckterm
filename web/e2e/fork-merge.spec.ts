@@ -24,10 +24,10 @@ test("reviewed merge preserves exact text and a closed child stays readable", as
     await page.evaluate(() => { localStorage.setItem("rd-theme", "dark"); document.documentElement.dataset.theme = "dark"; });
     await page.screenshot({ path: "/tmp/duckterm-fork-merge-dark.png" });
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(dialog.getByRole("button", { name: "Send summary & close child" })).toBeInViewport({ ratio: 1 });
+    await expect(dialog.getByRole("button", { name: "Merge and close child" })).toBeInViewport({ ratio: 1 });
     await page.screenshot({ path: "/tmp/duckterm-fork-merge-mobile.png" });
-    await dialog.getByRole("button", { name: "Send summary & close child" }).click();
-    await expect(dialog.getByText("Child is merged and remains readable. Both histories record this merge.")).toBeVisible();
+    await dialog.getByRole("button", { name: "Merge and close child" }).click();
+    await expect(dialog.getByText("Source closed. Its summaries and evidence remain readable. Both histories record this merge.")).toBeVisible();
     expect(await dialog.locator("pre").textContent()).toBe(summary);
     expect((await sessions()).find(row => row.session_key === child)?.state).toBe("merged");
     await dialog.getByRole("button", { name: "Done", exact: true }).click();

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { SourceMemory, mergeClosure } from "./SourceMemory";
 import { Modal } from "./ui";
 import "./forkMerge.css";
 
@@ -8,6 +9,7 @@ export interface ForkMergePreview {
   child: { key: string; name: string; branch?: string; commit?: string };
   parent: { key: string; name: string; model?: string; state: string; priorityDelivery: boolean } | null;
   summary: string;
+  memory?: { sourceSession: string; summaryRevision: string | null };
   allowed: boolean;
   reason?: string;
 }
@@ -17,22 +19,26 @@ export interface ForkMergeRecord {
   keepOpen: boolean;
   statusAvailable?: boolean;
   childClosed?: boolean;
+  memorySource?: string;
+  summaryRevision?: string | null;
+  closeState?: string | null;
   delivery: MergeDelivery;
   checkpoint: "pending" | "created" | "not created";
 }
 export interface ForkMergeService {
   preview: () => Promise<ForkMergePreview>;
-  send: (draft: { summary: string; keepOpen: boolean; requestKey: string }) => Promise<ForkMergeRecord>;
+  send: (draft: { summary: string; keepOpen: boolean; summaryRevision?: string | null; requestKey: string }) => Promise<ForkMergeRecord>;
   status: (id: string) => Promise<ForkMergeRecord>;
 }
 
 /** The service adapter maps the shared delivery broker; the dialog never injects terminal text. */
-export function ForkMergeDialog({ service, onClose, onSaved }: {
-  service: ForkMergeService; onClose: () => void; onSaved: (record: ForkMergeRecord) => void;
+export function ForkMergeDialog({ service, onClose, onSaved, sourceKey }: {
+  service: ForkMergeService; sourceKey?: string; onClose: () => void; onSaved: (record: ForkMergeRecord) => void;
 }) {
   const [preview, setPreview] = useState<ForkMergePreview | null>(null);
   const [summary, setSummary] = useState("");
-  const [keepOpen, setKeepOpen] = useState(false);
+  const [readingMemory, setReadingMemory] = useState(false);
+  const keepOpen = false;
   const [record, setRecord] = useState<ForkMergeRecord | null>(null);
   const [error, setError] = useState("");
   const [statusError, setStatusError] = useState("");
@@ -73,18 +79,19 @@ export function ForkMergeDialog({ service, onClose, onSaved }: {
     return () => { live = false; clearTimeout(timer); document.removeEventListener("visibilitychange", visibility); };
   }, [service, recordId]);
   async function send() {
-    if (sending.current || !preview?.allowed || !preview.parent || !summary.trim()) return;
-    const signature = JSON.stringify([preview.child.key, preview.parent.key, summary, keepOpen]);
+    if (sending.current || !preview?.allowed || !preview.memory || !preview.parent || !summary.trim()) return;
+    const signature = JSON.stringify([preview.child.key, preview.parent.key, summary, keepOpen, preview.memory.summaryRevision]);
     if (submission.current?.signature !== signature) submission.current = { signature, key: crypto.randomUUID() };
     sending.current = true; setBusy(true); setError("");
     try {
-      const result = await service.send({ summary, keepOpen, requestKey: submission.current.key });
+      const result = await service.send({ summary, keepOpen, summaryRevision: preview.memory.summaryRevision, requestKey: submission.current.key });
       if (active.current) { setRecord(result); onSaved(result); }
     } catch (cause) {
       if (active.current) setError(`Couldn’t confirm the merge: ${(cause as Error).message}. Your edits are kept. Retry unchanged to check the original send; the note may already be saved.`);
     } finally { sending.current = false; if (active.current) setBusy(false); }
   }
   const close = () => { if (!sending.current) onClose(); };
+  if (readingMemory && record?.memorySource && preview) return <SourceMemory origin={sourceKey ?? preview.child.key} target={{ source: record.memorySource, name: preview.child.name, revision: record.summaryRevision }} onClose={() => setReadingMemory(false)} />;
   return createPortal(<Modal title="Merge back to parent" onClose={close} width={660}>
     <div ref={dialog} className="rd-merge-review" role="dialog" aria-modal="true" aria-label="Merge back to parent" onKeyDown={event => {
       if (event.key === "Escape") { event.stopPropagation(); close(); }
@@ -102,17 +109,17 @@ export function ForkMergeDialog({ service, onClose, onSaved }: {
           <textarea ref={editor} id="fork-merge-summary" value={summary} disabled={busy || !preview.allowed} maxLength={16384} onChange={event => setSummary(event.target.value)} />
           <p>This sends a summary of the fork, not the full thread.</p>
           {preview.child.branch && <div className="rd-merge-worktree"><code>{preview.child.branch}{preview.child.commit && ` · ${preview.child.commit}`}</code><p>Code changes go through git or a pull request. This action does not merge code.</p></div>}
-          <label className="rd-merge-keep"><input type="checkbox" checked={keepOpen} disabled={busy} onChange={event => setKeepOpen(event.target.checked)} />Keep child open</label>
-          <p>{keepOpen ? "Continue working in the child and send another summary later." : "After the note is saved, the child closes in a readable, non-resumable merged state."}</p>
+          <p>The parent receives a link to the child’s saved summaries and evidence. After its current turn finishes and its input is empty, the child closes. Its history remains readable.</p>
+          {!preview.memory && <p role="alert">Update DuckTerm on this computer to merge with source memory.</p>}
           {preview.parent && <p>{!preview.parent.priorityDelivery ? "This parent receives inbox mail only; automatic delivery is unavailable." : preview.parent.state === "busy" ? "The parent finishes its current turn before receiving the note." : "The note can reach an idle parent immediately."}</p>}
           <p>A merge checkpoint is created on the parent only when the note is delivered.</p>
           {!preview.allowed && <p role="alert">{preview.reason || "This fork cannot be merged into its original parent."}</p>}
         </>}
-        {record && <section className="rd-merge-result" aria-label="Saved merge summary"><div className="rd-merge-delivery">Delivery to {preview.parent?.name ?? "parent"}<span>{record.delivery}</span></div><pre>{record.summary}</pre><p>{record.keepOpen ? "Child remains open." : "Child is merged and remains readable."} Both histories record this merge.</p><p>{record.checkpoint === "created" ? "Parent merge checkpoint created." : record.checkpoint === "pending" ? "Parent merge checkpoint will be created at delivery." : "No parent checkpoint was created."}</p>{record?.statusAvailable === false && <p role="status">Delivery tracking has retired. Showing the last recorded state.</p>}
+        {record && <section className="rd-merge-result" aria-label="Saved merge summary"><div className="rd-merge-delivery">Delivery to {preview.parent?.name ?? "parent"}<span>{record.delivery}</span></div><pre>{record.summary}</pre><p>{record.keepOpen ? "Child remains open." : mergeClosure(record.childClosed, record.closeState)} Both histories record this merge.</p>{record.memorySource && <button className="rd-btn rd-btn-ghost" onClick={() => setReadingMemory(true)}>Open source memory ↗</button>}<p>{record.checkpoint === "created" ? "Parent merge checkpoint created." : record.checkpoint === "pending" ? "Parent merge checkpoint will be created at delivery." : "No parent checkpoint was created."}</p>{record?.statusAvailable === false && <p role="status">Delivery tracking has retired. Showing the last recorded state.</p>}
       {statusError && <p role="status">{statusError}</p>}</section>}
       </>}
       {error && <p className="rd-merge-error" role="alert">{error}{!preview && !loading && <button className="rd-btn rd-btn-ghost" onClick={() => setRetry(n => n + 1)}>Retry</button>}</p>}
-      <footer><button className="rd-btn rd-btn-ghost" disabled={busy} onClick={close}>{record ? "Done" : "Cancel"}</button>{!record && <button className="rd-btn rd-btn-primary" disabled={loading || busy || !preview?.allowed || !preview.parent || !summary.trim()} onClick={() => void send()}>{busy ? "Saving summary…" : keepOpen ? "Send summary" : "Send summary & close child"}</button>}</footer>
+      <footer><button className="rd-btn rd-btn-ghost" disabled={busy} onClick={close}>{record ? "Done" : "Cancel"}</button>{!record && <button className="rd-btn rd-btn-primary" disabled={loading || busy || !preview?.allowed || !preview.memory || !preview.parent || !summary.trim()} onClick={() => void send()}>{busy ? "Saving summary…" : "Merge and close child"}</button>}</footer>
     </div>
   </Modal>, document.body);
 }
