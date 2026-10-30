@@ -54,9 +54,10 @@ final class ServerProcess {
         }
         AppDiagnostics.shared.record("Server process started")
         task = proc
-        for _ in 0..<40 {  // up to ~8s for the server to bind
+        for _ in 0..<40 {  // bounded attempts; each health request can take up to 3s
             if await isUp() {
                 guard await matchesEdition() else { return false }
+                if !proc.isRunning { task = nil }
                 AppDiagnostics.shared.record("Local server ready")
                 return true
             }
@@ -66,8 +67,17 @@ final class ServerProcess {
         if !proc.isRunning {
             errors.fileHandleForReading.readabilityHandler = nil
             log.append(errors.fileHandleForReading.readDataToEndOfFile())
-            if let reason = Self.startupReason(stderr: log.text, port: AppIdentity.localPort) {
+            task = nil // Only the exited child was ours; never own the existing server.
+            let stderr = log.text
+            if let reason = Self.startupReason(stderr: stderr, port: AppIdentity.localPort) {
                 startupError = reason
+                if await Self.reuseExistingServer(
+                    stderr: stderr, port: AppIdentity.localPort,
+                    isUp: { await self.isUp() }, matchesEdition: { await self.matchesEdition() }
+                ) {
+                    AppDiagnostics.shared.record("Connected to existing local server after startup refusal")
+                    return true
+                }
                 AppDiagnostics.shared.record("Server refused to start")
                 return false
             }
@@ -116,10 +126,38 @@ final class ServerProcess {
             let reason = printable.split(separator: " ").joined(separator: " ")
             return reason.isEmpty ? nil : String(reason.prefix(300))
         }
+        if let line = lines.last(where: {
+            $0 == "Port \(port) is already in use." ||
+                ($0.hasPrefix("another DuckTerm server") && $0.contains("already owns"))
+        }) {
+            return startupReason(stderr: "duckterm: " + line, port: port)
+        }
         if stderr.contains("Address already in use") {
             return "Port \(port) is in use by another program. Quit it, then reopen this app."
         }
         return nil
+    }
+
+    /// A slow existing server can miss the first probe, then refuse our child.
+    /// Retry only ownership/bind refusals, with health and edition checks. The
+    /// caller must clear its exited child: reusing a server never owns its PID.
+    static func reuseExistingServer(
+        stderr: String, port: Int,
+        isUp: () async -> Bool, matchesEdition: () async -> Bool,
+        pause: () async throws -> Void = { try await Task.sleep(nanoseconds: 500_000_000) }
+    ) async -> Bool {
+        let collision = stderr.contains("Port \(port) is already in use.") ||
+            stderr.contains("Address already in use") ||
+            (stderr.contains("another DuckTerm server") && stderr.contains("already owns"))
+        guard collision else { return false }
+        for attempt in 0..<5 {
+            guard !Task.isCancelled else { return false }
+            if await isUp() { return await matchesEdition() }
+            if attempt < 4 {
+                do { try await pause() } catch { return false }
+            }
+        }
+        return false
     }
 
     func stop() {
@@ -129,7 +167,7 @@ final class ServerProcess {
 
     private func isUp() async -> Bool {
         var req = URLRequest(url: url)
-        req.timeoutInterval = 1
+        req.timeoutInterval = 3
         guard let (_, resp) = try? await URLSession.shared.data(for: req),
             let http = resp as? HTTPURLResponse
         else { return false }

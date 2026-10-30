@@ -6656,7 +6656,7 @@ def _acquire_home_lock() -> Path:
         fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         guard.close()
-        raise SystemExit(f"another DuckTerm server already owns {home}") from None
+        raise SystemExit(f"duckterm: another DuckTerm server already owns {home}") from None
     if lock.exists():
         try:
             other = int(lock.read_text().strip() or "0")
@@ -6665,7 +6665,7 @@ def _acquire_home_lock() -> Path:
         if other and other != os.getpid() and _pid_alive(other):
             guard.close()
             raise SystemExit(
-                f"another DuckTerm server (pid {other}) already owns "
+                f"duckterm: another DuckTerm server (pid {other}) already owns "
                 f"{home} — run it with a distinct DUCKTERM_INSTANCE, or stop that one."
             )
         # Stale pidfile (process gone / crashed): reclaim it.

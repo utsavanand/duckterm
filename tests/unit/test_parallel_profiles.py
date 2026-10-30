@@ -152,7 +152,7 @@ def test_occupied_port_does_not_create_state_or_reconcile(monkeypatch):
 def test_live_home_lock_is_atomic_even_for_same_process():
     lock = _acquire_home_lock()
     try:
-        with pytest.raises(SystemExit, match="already owns"):
+        with pytest.raises(SystemExit, match="^duckterm: another DuckTerm server.*already owns"):
             _acquire_home_lock()
         assert int(lock.read_text()) == os.getpid()
     finally:
