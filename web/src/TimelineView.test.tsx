@@ -1,3 +1,4 @@
+import { sessionRef } from "./hostTransport";
 import { requestCheckpoint } from "./checkpointRequests";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -205,4 +206,14 @@ it("opens a general merge source revision from the destination Timeline", async 
   expect(screen.getByText("Memory child/old-exact")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
   expect(screen.getByRole("heading", { name: "Agent merges" })).toBeVisible();
+});
+
+it("does not reuse a source link when the selected destination changes hosts", async () => {
+  vi.mocked(agentMergeService).mockReturnValue({ history: vi.fn().mockResolvedValue({ merges: [{ id: "merge-1", sourceName: "Child", targetName: "Test", createdAt: 1, delivery: "delivered", memorySource: "child", summaryRevision: "old-exact" }] }) } as unknown as ReturnType<typeof agentMergeService>);
+  const view = render(<TimelineView session={session} />);
+  fireEvent.click(await screen.findByText(/Child → Test/));
+  fireEvent.click(screen.getByRole("button", { name: "Open source memory ↗" }));
+  expect(screen.getByText("Memory child/old-exact")).toBeVisible();
+  view.rerender(<TimelineView session={{ ...session, key: sessionRef("other-host", "one") }} />);
+  expect(screen.queryByRole("dialog", { name: "Source memory" })).not.toBeInTheDocument();
 });
