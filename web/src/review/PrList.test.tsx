@@ -127,6 +127,31 @@ it("shows no key note in a browser or when the bound key is this Mac's", async (
   }
 });
 
+it("keeps the Refresh button steady during background polls and busy only for a click", async () => {
+  vi.useFakeTimers();
+  try {
+    let finish: (value: PrListResult) => void = () => {};
+    vi.mocked(api.sessionPrs).mockResolvedValueOnce(result).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    render(<PrList scope={{ kind: "session", key: "s1", name: "ui-dev" }} active />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    const button = screen.getByRole("button", { name: "Refresh" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+    expect(api.sessionPrs).toHaveBeenCalledTimes(2);
+    expect(button).toHaveTextContent("Refresh");
+    expect(button).toBeEnabled();
+    expect(button).not.toHaveAttribute("aria-busy", "true");
+    await act(async () => { finish(result); await vi.advanceTimersByTimeAsync(0); });
+    fireEvent.click(button);
+    expect(button).toHaveTextContent("Refresh");
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("aria-busy", "true");
+    await act(async () => { finish(result); await vi.advanceTimersByTimeAsync(0); });
+    expect(button).toBeEnabled();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it("formats relative times in the unit the reader expects", () => {
   const now = 1_700_000_000_000;
   expect(ago(null, now)).toBe("");

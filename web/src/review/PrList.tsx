@@ -47,15 +47,17 @@ export function PrList({ scope, active, onOpenSession, onReview }: {
   const [filter, setFilter] = useState<Filter>("all");
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  // Only a click on Refresh shows as busy. Background polls update the rows
+  // quietly, so the toolbar does not change every minute.
   const load = useCallback(async (refresh: boolean) => {
-    setBusy(true);
+    if (refresh) setBusy(true);
     try {
       const result = scope.kind === "session" ? await api.sessionPrs(scope.key, refresh) : await api.folderPrs(scope.folder, refresh);
       if (alive.current) { setData(result); setError(""); }
     } catch (cause) {
       if (alive.current) setError((cause as Error).message);
     } finally {
-      if (alive.current) setBusy(false);
+      if (alive.current && refresh) setBusy(false);
     }
   }, [scope]);
   useEffect(() => { void load(false); }, [load]);
@@ -103,7 +105,7 @@ export function PrList({ scope, active, onOpenSession, onReview }: {
       </div>
       <div className="rd-prs-filters" role="group" aria-label="Filter pull requests">
         {FILTERS.map(f => <button key={f.id} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}{data ? ` ${counts[f.id]}` : ""}</button>)}
-        <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy} onClick={() => void load(true)}>{busy ? "Refreshing…" : "Refresh"}</button>
+        <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy} aria-busy={busy} onClick={() => void load(true)}>Refresh</button>
       </div>
     </div>
     {error && <p className="rd-prs-note" role="alert">{error}</p>}
