@@ -3,13 +3,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { apiDelete, apiPatch, apiPost, base, expandFolder, seedSession } from "./helpers";
+import { apiDelete, apiPatch, apiPost, base, expandFolder, postEvent, seedSession } from "./helpers";
 
-test("configure a root-to-agent merge, recover a lost response and preserve both sessions", async ({ page }) => {
+test("configure a root-to-agent merge, recover a lost response and preserve source memory", async ({ page }) => {
   const folder = `Merge agents ${Date.now()}`, source = `agent-source-${Date.now()}`, target = `agent-target-${Date.now()}`;
   try {
     await seedSession(target, { name: "Main development", runtime: "generic", group: folder, test: true });
-    await seedSession(source, { name: "Feature implementation", runtime: "generic", group: folder, test: true });
+    await seedSession(source, { launched: true, name: "Feature implementation", runtime: "generic", group: folder, test: true });
+    await postEvent({ event_type: "Notification", session_key: source, lifecycle: "stopped" });
     await apiPatch(`/sessions/${source}`, { notes: "Preserve the public API." });
     await apiPatch(`/sessions/${target}`, { notes: "Existing destination notes." });
     expect((await apiPost(`/sessions/${target}/collaboration`, { root: folder })).status).toBe(200);
@@ -35,29 +36,33 @@ test("configure a root-to-agent merge, recover a lost response and preserve both
     await dialog.getByRole("button", { name: "Review merge", exact: true }).click();
     await expect(dialog.getByText(/receives the request in its inbox/)).toBeVisible();
     await page.setViewportSize({ width: 390, height: 844 });
-    await dialog.getByRole("button", { name: "Send merge request" }).scrollIntoViewIfNeeded();
+    await dialog.getByRole("button", { name: /^Merge and close / }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: "/tmp/duckterm-agent-merge-review-narrow.png" });
     let sent = 0;
     await page.route(`**/sessions/${source}/agent-merge`, async route => {
       if (route.request().method() === "POST" && sent++ === 0) { await route.fetch(); await route.abort("failed"); }
       else await route.continue();
     });
-    await dialog.getByRole("button", { name: "Send merge request" }).click();
+    await dialog.getByRole("button", { name: /^Merge and close / }).click();
     await expect(dialog.getByRole("alert")).toContainText("Retry unchanged");
-    await dialog.getByRole("button", { name: "Send merge request" }).click();
+    await dialog.getByRole("button", { name: /^Merge and close / }).click();
     await expect(dialog.getByRole("region", { name: "Saved merge request" })).toBeVisible();
     await expect(dialog.getByText(/Notes appended once/)).toBeVisible();
     await dialog.getByRole("button", { name: "Done", exact: true }).click();
     await page.reload(); await expandFolder(page, folder);
-    await row.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Merge with agent", exact: true }).click();
-    await dialog.getByText("Recent merge requests (1)", { exact: true }).click();
-    await dialog.getByRole("button", { name: /Feature implementation → Main development/ }).click();
-    await expect(dialog.locator("pre")).toContainText(context.trim());
+    await page.locator(".rd-row-name", { hasText: "Main development" }).click();
+    await page.getByRole("button", { name: "Timeline", exact: true }).click();
+    await page.getByText(/Feature implementation → Main development/).click();
+    await page.getByRole("button", { name: "Open source memory ↗" }).click();
+    const memory = page.getByRole("dialog", { name: "Source memory", exact: true });
+    await expect(memory.getByText(/No saved summary yet/)).toBeVisible();
+    await expect(memory.getByRole("button", { name: "Checkpoint", exact: true })).toHaveCount(0);
+    await page.screenshot({ path: "/tmp/duckterm-linked-source-memory.png" });
+    await memory.getByRole("button", { name: "Back", exact: true }).click();
     const data = await (await page.request.get(`${base()}/sessions`)).json();
     const destination = data.sessions.find((s: { session_key: string }) => s.session_key === target);
     expect(destination.notes).toBe(`Existing destination notes.\n\nFrom Feature implementation (${source}):\nPreserve the public API.`);
-    expect(data.sessions.find((s: { session_key: string }) => s.session_key === source).state).not.toBe("merged");
+    expect(data.sessions.find((s: { session_key: string }) => s.session_key === source).state).toBe("merged");
   } finally { await apiDelete(`/sessions/${source}`); await apiDelete(`/sessions/${target}`); await apiDelete(`/folders/${encodeURIComponent(folder)}`); }
 });
 
@@ -75,7 +80,7 @@ test("different worktrees offer the exact committed code for review without chan
     writeFileSync(join(branch, "feature.txt"), "reviewed feature"); git(branch, "add", "feature.txt"); git(branch, "commit", "-m", "feature");
     const original = git(repo, "rev-parse", "HEAD"), reviewed = git(branch, "rev-parse", "HEAD");
     await seedSession(target, { name: "Main worktree", cwd: repo, runtime: "generic", group: folder, test: true });
-    await seedSession(source, { name: "Feature worktree", cwd: branch, runtime: "generic", group: folder, test: true, parent_session_key: target });
+    await seedSession(source, { launched: true, name: "Feature worktree", cwd: branch, runtime: "generic", group: folder, test: true, parent_session_key: target });
     expect((await apiPost(`/sessions/${target}/collaboration`, { root: folder })).status).toBe(200);
     await page.setViewportSize({ width: 1440, height: 1050 });
     await page.goto(base()); await expandFolder(page, folder);
@@ -91,7 +96,7 @@ test("different worktrees offer the exact committed code for review without chan
     await expect(dialog.locator("pre")).toContainText("feature.txt");
     await dialog.getByRole("button", { name: "Review merge", exact: true }).click();
     await page.screenshot({ path: "/tmp/duckterm-agent-merge-code-review.png" });
-    await dialog.getByRole("button", { name: "Send merge request", exact: true }).click();
+    await dialog.getByRole("button", { name: /^Merge and close /, exact: true }).click();
     await expect(dialog.getByText(/Code integration was requested/)).toBeVisible();
     expect(git(repo, "rev-parse", "HEAD")).toBe(original);
     expect(git(branch, "rev-parse", "HEAD")).toBe(reviewed);
@@ -108,7 +113,7 @@ test("empty context recovery keeps drafts, isolates count selection, and never a
   let checkpointCalls = 0, mergeCalls = 0, generated = false;
   try {
     await seedSession(target, { name: "Recovery main", runtime: "generic", group: folder, test: true });
-    await seedSession(source, { name: "Recovery notes", runtime: "generic", group: folder, test: true, parent_session_key: target });
+    await seedSession(source, { launched: true, name: "Recovery notes", runtime: "generic", group: folder, test: true, parent_session_key: target });
     expect((await apiPost(`/sessions/${target}/collaboration`, { root: folder })).status).toBe(200);
     await page.route(`**/sessions/${source}/checkpoint-plan`, route => route.fulfill({ json: { available_records: 8, processed_records: 0, pending_records: 8, default_records: 20, selected_records: 8, remaining_records: 0, batch_records: 20, order: "oldest_unprocessed_first", selection_plan: { source: "fixture" } } }));
     await page.route(`**/sessions/${source}/checkpoint`, async route => {
@@ -171,7 +176,7 @@ test("empty context recovery keeps drafts, isolates count selection, and never a
     expect(mergeCalls).toBe(0);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.evaluate(() => document.documentElement.dataset.theme = "light");
-    await dialog.getByRole("button", { name: "Send merge request" }).scrollIntoViewIfNeeded();
+    await dialog.getByRole("button", { name: /^Merge and close / }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: "/tmp/merge-recovery-app-light-narrow.png" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -188,7 +193,7 @@ test("a child can merge back to its parent or send context to another agent", as
   try {
     await seedSession(parent, { name: "Recorded parent", runtime: "generic", group: folder, test: true });
     await seedSession(target, { name: "Unrelated destination", runtime: "generic", group: folder, test: true });
-    await seedSession(source, { name: "Child with both actions", runtime: "generic", group: folder, test: true, parent_session_key: parent });
+    await seedSession(source, { launched: true, name: "Child with both actions", runtime: "generic", group: folder, test: true, parent_session_key: parent });
     for (const key of [parent, target]) expect((await apiPost(`/sessions/${key}/collaboration`, { root: folder })).status).toBe(200);
     await page.setViewportSize({ width: 1440, height: 1050 });
     await page.goto(base()); await expandFolder(page, folder);
@@ -212,7 +217,7 @@ test("a child can merge back to its parent or send context to another agent", as
     await page.screenshot({ path: "/tmp/duckterm-restored-general-merge.png" });
     await dialog.getByRole("button", { name: "Review merge", exact: true }).click();
     await expect(dialog.locator(".rd-merge-route")).toHaveText("Child with both actions→Unrelated destination");
-    await dialog.getByRole("button", { name: "Send merge request", exact: true }).click();
+    await dialog.getByRole("button", { name: /^Merge and close /, exact: true }).click();
     await expect(dialog.getByRole("region", { name: "Saved merge request" })).toContainText("Unrelated destination");
     const data = await (await page.request.get(`${base()}/sessions`)).json();
     for (const key of [source, parent, target]) expect(data.sessions.find((s: { session_key: string }) => s.session_key === key).state).not.toBe("merged");
@@ -220,4 +225,41 @@ test("a child can merge back to its parent or send context to another agent", as
     for (const key of [source, target, parent]) await apiDelete(`/sessions/${key}`);
     await apiDelete(`/folders/${encodeURIComponent(folder)}`);
   }
+});
+
+// Presentation fixture: authorization and retained-record integrity use backend tests.
+test("a destination opens the handed-off source revision and evidence, with explicit deletion errors", async ({ page }) => {
+  const target = `linked-reader-${Date.now()}`;
+  let writes = 0;
+  const reads: string[] = [];
+  try {
+    await seedSession(target, { name: "Linked memory destination", test: true });
+    await page.route(`**/sessions/${target}/agent-merges`, route => route.fulfill({ json: { merges: [{ id: "merge", source: "closed-source", sourceName: "Closed child", target, targetName: "Linked memory destination", memorySource: "closed-source", summaryRevision: "reviewed-revision", closeSource: true, sourceClosed: true, createdAt: Date.now(), delivery: "delivered", context: "Selected context" }] } }));
+    await page.route("**/sessions/closed-source/memory**", route => {
+      if (route.request().method() !== "GET") { writes++; return route.abort(); }
+      const url = new URL(route.request().url());
+      if (url.pathname.endsWith("/read")) return route.fulfill({ json: { text: "Original decision: preserve the memory link after closing.", next_offset: null } });
+      const revision = url.searchParams.get("revision") || "newer-revision"; reads.push(revision);
+      return route.fulfill({ json: { state: "available", revisions: [{ id: "reviewed-revision", created_at: 1000 }, { id: "newer-revision", created_at: 2000 }], checkpoint_clock: { state: "never" }, revision: { id: revision, created_at: 1000, summary: revision === "reviewed-revision" ? "The exact summary handed over." : "Later saved work.", groups: [{ field: "decisions", claims: [{ text: "Preserve memory links", record: "decision", evidence: [{ source: "conversation:child", record: "turn-1", title: "Original decision", kind: "conversation", role: "user", retained: true }] }] }] } } });
+    });
+    await page.setViewportSize({ width: 1440, height: 1000 }); await page.goto(base());
+    await page.locator(".rd-row", { hasText: "Linked memory destination" }).locator(".rd-row-click").click();
+    await page.getByRole("button", { name: "Timeline", exact: true }).click();
+    await page.getByText(/Closed child → Linked memory destination/).click();
+    await page.getByRole("button", { name: "Open source memory ↗" }).click();
+    const memory = page.getByRole("dialog", { name: "Source memory", exact: true });
+    await expect(memory.getByText("The exact summary handed over.")).toBeVisible();
+    await memory.getByText("Original decision · conversation").click();
+    await expect(memory.getByText("Original decision: preserve the memory link after closing.")).toBeVisible();
+    await expect(memory.getByRole("button", { name: "Checkpoint", exact: true })).toHaveCount(0);
+    await page.screenshot({ path: "/tmp/duckterm-linked-memory-evidence.png" });
+    await memory.getByRole("combobox").selectOption("newer-revision");
+    await expect(memory.getByText("Later saved work.")).toBeVisible();
+    expect(reads).toEqual(["reviewed-revision", "newer-revision"]);
+    await page.route("**/sessions/closed-source/memory**", route => route.fulfill({ status: 404, json: { error: "Source session was deleted; its memory is unavailable" } }));
+    await memory.getByRole("combobox").selectOption("reviewed-revision");
+    await expect(memory.getByRole("alert")).toContainText("Source session was deleted");
+    await expect(memory.getByText("Later saved work.")).toHaveCount(0);
+    expect(writes).toBe(0);
+  } finally { await apiDelete(`/sessions/${target}`); }
 });

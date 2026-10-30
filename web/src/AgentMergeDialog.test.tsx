@@ -3,11 +3,12 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AgentMergeDialog, type AgentMergePreview, type AgentMergeRecord, type AgentMergeService } from "./AgentMergeDialog";
 
 import { api, type CheckpointRecord } from "./api";
+vi.mock("./MemoryView", () => ({ MemoryView: ({ sessionKey, initialRevision, readOnly }: { sessionKey: string; initialRevision: string; readOnly: boolean }) => <p>Memory {sessionKey}/{initialRevision}/{String(readOnly)}</p> }));
 vi.mock("./api", () => ({ api: { checkpointPlan: vi.fn(), checkpoint: vi.fn(), checkpointAttempt: vi.fn() } }));
 beforeEach(() => { vi.resetAllMocks(); });
 afterEach(cleanup);
-const preview: AgentMergePreview = { source: { key: "source", name: "Source" }, target: { key: "target", name: "Destination", group: "Project", allowed: true, state: "busy", priorityDelivery: true }, context: "Saved context", notes: "Source notes", git: { allowed: false, reason: "These agents already share the same worktree." }, revision: "v1" };
-const receipt: AgentMergeRecord = { id: "merge", source: "source", sourceName: "Source", target: "target", targetName: "Destination", context: "Saved context", notes: "Source notes", git: null, packet: "Reviewed packet", createdAt: 1, delivery: "pending next turn", statusAvailable: true };
+const preview: AgentMergePreview = { source: { key: "source", name: "Source" }, target: { key: "target", name: "Destination", group: "Project", allowed: true, state: "busy", priorityDelivery: true }, context: "Saved context", notes: "Source notes", git: { allowed: false, reason: "These agents already share the same worktree." }, revision: "v1", memory: { sourceSession: "source", summaryRevision: "summary-v1", access: "read" } };
+const receipt: AgentMergeRecord = { id: "merge", source: "source", sourceName: "Source", target: "target", targetName: "Destination", context: "Saved context", notes: "Source notes", git: null, packet: "Reviewed packet", createdAt: 1, delivery: "pending next turn", statusAvailable: true, memorySource: "source", summaryRevision: "summary-v1", closeSource: true, sourceClosed: false, closeState: "pending" };
 function fixture() {
   const service: AgentMergeService = { targets: vi.fn().mockResolvedValue({ destinations: [preview.target, { ...preview.target, key: "other", name: "Other" }] }), preview: vi.fn().mockResolvedValue(preview), send: vi.fn().mockResolvedValue(receipt), history: vi.fn().mockResolvedValue({ merges: [] }) };
   const close = vi.fn();
@@ -29,14 +30,14 @@ it("reviews choices and retries an uncertain send without duplicate request iden
   fireEvent.click(screen.getByRole("checkbox", { name: /^Notes/ }));
   fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
   expect(service.send).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Send merge request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Merge and close Source" }));
   await screen.findByRole("alert");
-  fireEvent.click(screen.getByRole("button", { name: "Send merge request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Merge and close Source" }));
   await screen.findByRole("region", { name: "Saved merge request" });
   const calls = vi.mocked(service.send).mock.calls;
   expect(calls).toHaveLength(2);
   expect(calls[0][0]).toEqual(calls[1][0]);
-  expect(calls[0][0]).toMatchObject({ context: " Owner edited context \n", notes: null, code: false, target: "target", revision: "v1" });
+  expect(calls[0][0]).toMatchObject({ context: " Owner edited context \n", notes: null, code: false, target: "target", revision: "v1", memory: true, closeSource: true });
 });
 
 it("offers unrelated destinations as well as the parent", async () => {
@@ -66,7 +67,7 @@ it("code delivery is explicitly a request and never claims completed integration
   fireEvent.click(screen.getByRole("checkbox", { name: /Code from/ }));
   fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
   expect(screen.getByText(/Only committed changes are included/)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Send merge request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Merge and close Source" }));
   await screen.findByText("Found a conflict");
   expect(screen.getByText(/does not confirm that the code is merged/)).toBeVisible();
   expect(service.send).toHaveBeenCalledWith(expect.objectContaining({ code: true }));
@@ -87,7 +88,7 @@ it("refresh loads a newly available summary and notes when the fields were untou
   await screen.findByRole("option", { name: /Destination/ });
   fireEvent.change(screen.getByLabelText("Destination agent"), { target: { value: "target" } });
   await screen.findByText(/No saved conversation summary/);
-  expect(screen.getByRole("button", { name: "Review merge" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Review merge" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
   await screen.findByDisplayValue("Saved context");
   expect(screen.getByLabelText("Notes to append")).toHaveValue("Source notes");
@@ -121,7 +122,7 @@ it("refresh updates untouched notes independently of an edited context", async (
   expect(screen.getByLabelText("Context to send")).toHaveValue("Owner draft");
   fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
   expect(service.send).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Send merge request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Merge and close Source" }));
   await waitFor(() => expect(service.send).toHaveBeenCalledWith(expect.objectContaining({ context: "Owner draft", notes: "New notes", revision: "v2" })));
 });
 
@@ -154,7 +155,7 @@ async function emptySource() {
 }
 it("explains empty checked sections and permits manually reviewed context without a checkpoint", async () => {
   const { service } = await emptySource();
-  expect(screen.getByText(/Choose context, notes, or available code/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Review merge" })).toBeEnabled();
   fireEvent.click(screen.getByRole("checkbox", { name: /^Conversation context/ }));
   expect(screen.getByLabelText("Context to send")).toHaveAccessibleDescription(/Write context to send/);
   fireEvent.click(screen.getByRole("checkbox", { name: /^Notes/ }));
@@ -165,7 +166,7 @@ it("explains empty checked sections and permits manually reviewed context withou
   fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
   expect(service.send).not.toHaveBeenCalled();
   expect(api.checkpoint).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Send merge request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Merge and close Source" }));
   await waitFor(() => expect(service.send).toHaveBeenCalledWith(expect.objectContaining({ context: "My context", notes: null })));
 });
 it("canceling the existing checkpoint selector restores the merge draft without work", async () => {
@@ -197,7 +198,7 @@ it("generates only after count confirmation, reloads canonical context, and stil
   expect(service.send).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
   expect(service.send).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button", { name: "Send merge request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Merge and close Source" }));
   await waitFor(() => expect(service.send).toHaveBeenCalledWith(expect.objectContaining({ revision: "after-checkpoint", context: "Canonical new summary", notes: null })));
 });
 it("keeps context typed while a checkpoint runs and identifies a failed summary", async () => {
@@ -242,7 +243,7 @@ it("a failed refresh prevents stale revision sends and retains drafts for retry"
   fireEvent.click(screen.getByRole("button", { name: "Refresh preview" }));
   await screen.findByDisplayValue("My draft survives");
   fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
-  fireEvent.click(screen.getByRole("button", { name: "Send merge request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Merge and close Source" }));
   await waitFor(() => expect(service.send).toHaveBeenCalledWith(expect.objectContaining({ revision: "fresh", context: "My draft survives" })));
 });
 
@@ -260,6 +261,23 @@ it("changing destinations keeps edits but requires the new destination preview b
   expect(screen.getByLabelText("Context to send")).toHaveValue("Owner draft");
   fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
   expect(screen.getByText("Other", { selector: "strong" })).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Send merge request" }));
+  fireEvent.click(screen.getByRole("button", { name: "Merge and close Source" }));
   await waitFor(() => expect(service.send).toHaveBeenCalledWith(expect.objectContaining({ target: "other", revision: "other-v1", context: "Owner draft" })));
+});
+
+it("opens the exact source revision and returns without sending again", async () => {
+  const { service } = fixture(); await choose();
+  fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
+  fireEvent.click(screen.getByRole("button", { name: "Merge and close Source" }));
+  await screen.findByText(/Waiting to close the source/);
+  fireEvent.click(screen.getByRole("button", { name: "Open source memory ↗" }));
+  expect(screen.getByText("Memory source/summary-v1/true")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  expect(screen.getByRole("region", { name: "Saved merge request" })).toBeVisible();
+  expect(service.send).toHaveBeenCalledTimes(1);
+});
+it("requires an updated backend instead of silently keeping the source open", async () => {
+  const { service } = fixture(); vi.mocked(service.preview).mockResolvedValue({ ...preview, memory: undefined }); await choose();
+  expect(screen.getByRole("button", { name: "Review merge" })).toBeDisabled();
+  expect(screen.getByText(/Update DuckTerm on this computer/)).toBeVisible();
 });

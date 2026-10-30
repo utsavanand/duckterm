@@ -111,9 +111,12 @@ send/retry response can explain a deferral such as `draft_not_empty` or
 separate outcomes. A summary sent while a turn is running describes the reviewed
 state; the source link is how the destination retrieves later saved work.
 
-UI integration is a separate reviewed step: the merge result and Timeline should
-open the source's existing Memory view. These backend fields do not by themselves
-add a button to the installed application.
+The reviewed merge UI sends a durable memory link and close intent for both merge
+paths. The result and Timeline open the existing Memory reader at the receipt's
+exact source revision, with other revisions still browsable. This reader disables
+checkpoint creation/cancellation. A pending close is never described as completed.
+Old receipts without memory pointers remain visible without inventing a reference;
+clients refuse new merges against backends that lack the memory-link contract.
 
 The owner opens Memory through **Read saved memory** in the right panel. Current memory assembles published spans, including earlier claims; selecting a revision reads that historical span separately. Expanding evidence performs an exact original-record read. Opening Memory never calls a summary provider. Missing or revoked evidence is withheld instead of returning cached text.
 
