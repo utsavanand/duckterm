@@ -350,3 +350,108 @@ def test_each_call_logs_feature_time_and_what_served_it(memory_rig, provider, mo
     with pytest.raises(APIError):
         asyncio.run(backend.complete("p", tier="fast", feature="compaction"))
     assert capsys.readouterr().err.strip().endswith("failed: usage limit")
+
+
+def _sse(events: list[object]) -> _Response:
+    lines = [f"data: {json.dumps(e) if not isinstance(e, str) else e}\n\n" for e in events]
+    return _Response("".join(lines).encode())
+
+
+def test_api_streams_pass_text_deltas_through(monkeypatch):
+    replies = [
+        _sse(
+            [
+                {"type": "message_start"},
+                {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Two "}},
+                {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "wait."}},
+                {"type": "message_stop"},
+            ]
+        ),
+        _sse([{"choices": [{"delta": {"content": "Hi"}}]}, {"choices": [{"delta": {}}]}, "[DONE]"]),
+        _sse([{"type": "message_delta", "delta": {"stop_reason": "refusal"}}]),
+    ]
+    sent: list[dict] = []
+
+    def urlopen(req, timeout):
+        sent.append(json.loads(req.data))
+        return replies.pop(0)
+
+    monkeypatch.setattr(api.urllib.request, "urlopen", urlopen)
+    assert list(api.anthropic_stream("https://p", "k", "claude-haiku-5-5", "s", "p", "low")) == [
+        "Two ",
+        "wait.",
+    ]
+    assert sent[0]["stream"] is True and "output_config" in sent[0]
+    assert list(api.openai_chat_stream("https://p", None, "m", "s", "p")) == ["Hi"]
+    with pytest.raises(APIError, match="declined"):
+        list(api.anthropic_stream("https://p", "k", "m", "s", "p", "low"))
+
+
+def test_claude_stream_yields_partial_text_from_the_cli(tmp_path, monkeypatch):
+    fake = tmp_path / "bin" / "claude"
+    fake.parent.mkdir()
+    events = [
+        {"type": "system", "subtype": "init"},
+        {"type": "stream_event", "event": {"type": "message_start"}},
+        {
+            "type": "stream_event",
+            "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "A"}},
+        },
+        {
+            "type": "stream_event",
+            "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "B"}},
+        },
+        {"type": "result", "is_error": False, "result": "AB"},
+    ]
+    script = "\n".join(f"echo '{json.dumps(e)}'" for e in events)
+    fake.write_text(f"#!/bin/sh\ncat > /dev/null\n{script}\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake.parent}:/usr/bin:/bin")
+    monkeypatch.delenv("DUCKTERM_SUMMARIZER", raising=False)
+
+    async def collect() -> list[str]:
+        return [piece async for piece in memory_provider.stream("haiku", "p", effort="low")]
+
+    assert asyncio.run(collect()) == ["A", "B"]
+    failing = json.dumps({"type": "result", "is_error": True, "result": "limit"})
+    fake.write_text(f"#!/bin/sh\ncat > /dev/null\necho '{failing}'\n")
+    with pytest.raises(APIError, match="usage limit"):
+        asyncio.run(collect())
+
+
+def test_stream_falls_back_only_before_the_first_words(memory_rig, provider, monkeypatch):
+    _, replies = provider
+    monkeypatch.delenv("DUCKTERM_SUMMARIZER", raising=False)
+    monkeypatch.setattr(
+        backend.shutil, "which", lambda b: "/fixture/claude" if b == "claude" else None
+    )
+
+    async def harness_stream(model, prompt, *, effort=""):
+        yield "from harness"
+
+    monkeypatch.setattr(memory_provider, "stream", harness_stream)
+    ai_settings.save({"backend": "api"})
+    ai_settings.save_key("anthropic", "sk-expired")
+
+    async def collect() -> list[str]:
+        return [piece async for piece in backend.stream("p", tier="deep", feature="oracle")]
+
+    # The key fails before any words: the owner's login answers instead.
+    replies.append(urllib.error.HTTPError("u", 429, "Too Many", {}, io.BytesIO(b"{}")))  # type: ignore[arg-type]
+    assert asyncio.run(collect()) == ["from harness"]
+
+    # The key fails after some words: the error reaches the caller.
+    def partial(*_a, **_kw):
+        yield "half an "
+        raise APIError(503, "Provider could not be reached: reset")
+
+    monkeypatch.setattr(api, "anthropic_stream", partial)
+    shown: list[str] = []
+
+    async def until_failure() -> None:
+        async for piece in backend.stream("p", tier="deep"):
+            shown.append(piece)
+
+    with pytest.raises(APIError, match="reset"):
+        asyncio.run(until_failure())
+    assert shown == ["half an "]

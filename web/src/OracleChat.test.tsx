@@ -3,7 +3,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { api, RelayNote, RelayRule } from "./api";
 import { OracleChat } from "./OracleChat";
 vi.mock("./api", () => ({
-  api: { oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relayAnswer: vi.fn(), proposeRule: vi.fn(), createRule: vi.fn(), deleteRule: vi.fn() },
+  api: { oracleChat: vi.fn(), fleetAskStream: vi.fn(), clearOracleChat: vi.fn(), relayAnswer: vi.fn(), proposeRule: vi.fn(), createRule: vi.fn(), deleteRule: vi.fn() },
 }));
 const NO_RELAY = { notes: [], rules: [], open: 0 };
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
@@ -22,16 +22,16 @@ it("shows the saved conversation with answers rendered as markdown", async () =>
 it("sends on Enter, not Shift+Enter, and appends the stored exchange", async () => {
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
   let finish!: (v: { answer: string; exchange: { q: string; a: string; at: number }; sessions: string[] }) => void;
-  vi.mocked(api.fleetAsk).mockReturnValue(new Promise((r) => { finish = r; }));
+  vi.mocked(api.fleetAskStream).mockReturnValue(new Promise((r) => { finish = r; }));
   render(<OracleChat relay={NO_RELAY} onRelayChange={() => {}} onClose={() => {}} />);
   const box = screen.getByLabelText("Message Oracle");
   fireEvent.change(box, { target: { value: "status?" } });
   fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
-  expect(api.fleetAsk).not.toHaveBeenCalled();
+  expect(api.fleetAskStream).not.toHaveBeenCalled();
   fireEvent.keyDown(box, { key: "Enter" });
   fireEvent.keyDown(box, { key: "Enter" });
-  expect(api.fleetAsk).toHaveBeenCalledTimes(1);
-  expect(api.fleetAsk).toHaveBeenCalledWith("status?");
+  expect(api.fleetAskStream).toHaveBeenCalledTimes(1);
+  expect(api.fleetAskStream).toHaveBeenCalledWith("status?", expect.any(Function));
   expect(box).toHaveValue("");
   expect(screen.getByRole("status")).toHaveTextContent("Reading your sessions");
   await act(async () => {
@@ -43,7 +43,7 @@ it("sends on Enter, not Shift+Enter, and appends the stored exchange", async () 
 
 it("keeps a failed question in the box so it can be resent", async () => {
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
-  vi.mocked(api.fleetAsk).mockRejectedValue(new Error("no summarizer backend"));
+  vi.mocked(api.fleetAskStream).mockRejectedValue(new Error("no summarizer backend"));
   render(<OracleChat relay={NO_RELAY} onRelayChange={() => {}} onClose={() => {}} />);
   const box = screen.getByLabelText("Message Oracle");
   fireEvent.change(box, { target: { value: "status?" } });
@@ -54,11 +54,11 @@ it("keeps a failed question in the box so it can be resent", async () => {
 
 it("offers example questions on an empty chat and sends one when clicked", async () => {
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
-  vi.mocked(api.fleetAsk).mockReturnValue(new Promise(() => {}));
+  vi.mocked(api.fleetAskStream).mockReturnValue(new Promise(() => {}));
   render(<OracleChat relay={NO_RELAY} onRelayChange={() => {}} onClose={() => {}} />);
   const example = await screen.findByRole("button", { name: "Which sessions are waiting on me?" });
   fireEvent.click(example);
-  expect(api.fleetAsk).toHaveBeenCalledWith("Which sessions are waiting on me?");
+  expect(api.fleetAskStream).toHaveBeenCalledWith("Which sessions are waiting on me?", expect.any(Function));
   expect(screen.queryByRole("button", { name: "Which sessions are waiting on me?" })).toBeNull();
 });
 
@@ -132,7 +132,7 @@ it("turns an always sentence into a proposed rule, creates it on confirm, and st
   fireEvent.change(box, { target: { value: "Always approve pytest in Duckterm" } });
   await act(async () => { fireEvent.keyDown(box, { key: "Enter" }); });
   expect(api.proposeRule).toHaveBeenCalledWith("Always approve pytest in Duckterm");
-  expect(api.fleetAsk).not.toHaveBeenCalled();
+  expect(api.fleetAskStream).not.toHaveBeenCalled();
   expect(screen.getByText("Duckterm folder")).toBeVisible();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Create rule" })); });
   expect(api.createRule).toHaveBeenCalledWith(rule);
@@ -152,4 +152,23 @@ it("labels offers apart from needs-you notes and turns listed options into one-c
   expect(screen.getByRole("group", { name: "Offer from product-manager" })).toBeVisible();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Yes, make it" })); });
   expect(api.relayAnswer).toHaveBeenCalledWith("o1", "Yes, make it");
+});
+
+it("shows the answer as it is written and keeps the words if it stops", async () => {
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
+  let words!: (text: string) => void;
+  let fail!: (e: Error) => void;
+  vi.mocked(api.fleetAskStream).mockImplementation((_q, onWords) => { words = onWords; return new Promise((_r, reject) => { fail = reject; }); });
+  render(<OracleChat relay={NO_RELAY} onRelayChange={() => {}} onClose={() => {}} />);
+  const box = screen.getByLabelText("Message Oracle");
+  fireEvent.change(box, { target: { value: "who waits?" } });
+  fireEvent.keyDown(box, { key: "Enter" });
+  await act(async () => { words("Two are **waiting**"); });
+  expect(screen.getByText("waiting").tagName).toBe("STRONG");
+  expect(screen.queryByText(/Reading your sessions/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  await act(async () => { fail(new Error("Oracle stopped: usage limit")); });
+  expect(screen.getByText("waiting").tagName).toBe("STRONG");
+  expect(screen.getByRole("alert")).toHaveTextContent("Oracle stopped: usage limit");
+  expect(box).toHaveValue("who waits?");
 });

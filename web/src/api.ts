@@ -214,6 +214,41 @@ async function post<T>(path: string, body?: unknown, context?: string): Promise<
   return data as T;
 }
 
+// The server answers with server-sent events (words, then done or error), or
+// with plain JSON when it rejects the request before answering.
+async function streamPost<T>(path: string, body: object, onWords: (text: string) => void): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ ...body, stream: true }),
+  });
+  if (!res.body || !res.headers.get("Content-Type")?.startsWith("text/event-stream")) {
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((data as { error?: string }).error ?? `${res.status} ${res.statusText}`);
+    return data as T;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let end: number;
+    while ((end = buffer.indexOf("\n\n")) >= 0) {
+      const frame = buffer.slice(0, end);
+      buffer = buffer.slice(end + 2);
+      if (!frame.startsWith("data:")) continue;
+      const event = JSON.parse(frame.slice(5)) as { delta?: string; error?: string; done?: T };
+      if (event.delta !== undefined) { text += event.delta; onWords(text); }
+      if (event.error !== undefined) throw new Error(event.error);
+      if (event.done !== undefined) return event.done;
+    }
+  }
+  throw new Error("The answer was cut off before it finished");
+}
+
 // `authed` is for the few reads the server gates on the owner token — reads
 // whose body describes the owner rather than the UI's own state.
 async function get<T>(
@@ -582,6 +617,13 @@ export const api = {
     post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
       "/fleet/ask",
       { question, ...(folder !== undefined ? { folder } : {}) },
+    ),
+  // onWords gets the whole answer so far each time more of it arrives.
+  fleetAskStream: (question: string, onWords: (text: string) => void) =>
+    streamPost<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
+      "/fleet/ask",
+      { question },
+      onWords,
     ),
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
   controlTower: () => get<TowerInsights>("/control-tower"),

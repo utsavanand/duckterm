@@ -21,6 +21,7 @@ import os
 import shutil
 import sys
 import time
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -112,21 +113,85 @@ async def _complete(
             return await _gateway(tier, prompt, schema)
         except APIError as exc:
             fallback = str(exc)
-    name = harness(settings["harness"])
-    if name is None:
-        raise APIError(503, fallback or "No Claude Code or Codex CLI is installed")
-    if name == "codex":
-        model = _codex_model(tier)
-    else:
-        model = claude_model
-        if not model:
-            with contextlib.suppress(APIError):
-                chosen = checkpoint_settings.load()
-                model = chosen["writer_model" if tier == "fast" else "reviewer_model"]
+    name, model = _harness_model(settings, tier, claude_model, fallback)
     text = await memory_provider.generate(
         name, model, prompt, schema, user_settings=True, effort=EFFORT[tier]
     )
     return Reply(text, "harness", f"{name}/{model}" if model else name, fallback)
+
+
+async def stream(prompt: str, *, tier: str, feature: str = "") -> AsyncGenerator[str, None]:
+    """complete() for free text, yielding the answer as it is written. A backend
+    that fails before its first words falls back like complete(); after them,
+    the error reaches the caller, which already showed the partial answer."""
+    started = time.monotonic()
+    shown = False
+    try:
+        if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
+            raise APIError(503, "Automatic preparation is disabled on this host")
+        settings = ai_settings.load()
+        fallback = ""
+        if settings["backend"] == "api":
+            model = ai_settings.model(settings, tier)
+            try:
+                async for piece in _in_thread(lambda: _api_stream(settings, model, tier, prompt)):
+                    shown = True
+                    yield piece
+                _log(feature, tier, prompt, started, f"api {settings['provider']}/{model}")
+                return
+            except APIError as exc:
+                if shown:
+                    raise
+                fallback = str(exc)
+        elif settings["backend"] == "duckterm":
+            try:
+                yield (await _gateway(tier, prompt, None)).text
+                return
+            except APIError as exc:
+                fallback = str(exc)
+        name, model = _harness_model(settings, tier, "", fallback)
+        if name == "claude-code":
+            async for piece in memory_provider.stream(model, prompt, effort=EFFORT[tier]):
+                yield piece
+        else:
+            yield await memory_provider.generate(
+                name, model, prompt, None, user_settings=True, effort=EFFORT[tier]
+            )
+        served = f"harness {name}/{model}" if model else f"harness {name}"
+        _log(
+            feature,
+            tier,
+            prompt,
+            started,
+            served + (f" (fallback: {fallback})" if fallback else ""),
+        )
+    except APIError as exc:
+        _log(feature, tier, prompt, started, f"failed: {exc}")
+        raise
+
+
+def _harness_model(
+    settings: dict[str, Any], tier: str, claude_model: str, fallback: str
+) -> tuple[str, str]:
+    """The installed harness for the owner's choice and the tier's model on it."""
+    name = harness(settings["harness"])
+    if name is None:
+        raise APIError(503, fallback or "No Claude Code or Codex CLI is installed")
+    if name == "codex":
+        return name, _codex_model(tier)
+    if not claude_model:
+        with contextlib.suppress(APIError):
+            chosen = checkpoint_settings.load()
+            claude_model = chosen["writer_model" if tier == "fast" else "reviewer_model"]
+    return name, claude_model
+
+
+async def _in_thread(start: Callable[[], Iterator[str]]) -> AsyncIterator[str]:
+    """A blocking urllib stream, read on a worker thread, one piece at a time."""
+    pieces = start()
+    done = object()
+    while (piece := await asyncio.to_thread(next, pieces, done)) is not done:
+        yield str(piece)
 
 
 def _codex_model(tier: str) -> str:
@@ -170,6 +235,18 @@ def _api(
             base, key, model, memory_provider.SYSTEM_PROMPT, prompt, schema, EFFORT[tier]
         )
     return api.openai_chat(base, key, model, memory_provider.SYSTEM_PROMPT, prompt, schema)
+
+
+def _api_stream(settings: dict[str, Any], model: str, tier: str, prompt: str) -> Iterator[str]:
+    key = _api_key(settings)
+    if key is None:
+        raise APIError(401, f"No {settings['provider']} API key is saved")
+    base = ai_settings.base_url(settings)
+    if ai_settings.PROVIDERS[settings["provider"]][0] == "anthropic":
+        return api.anthropic_stream(
+            base, key, model, memory_provider.SYSTEM_PROMPT, prompt, EFFORT[tier]
+        )
+    return api.openai_chat_stream(base, key, model, memory_provider.SYSTEM_PROMPT, prompt)
 
 
 async def _gateway(tier: str, prompt: str, schema: dict[str, Any] | None) -> Reply:
