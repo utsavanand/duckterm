@@ -1,6 +1,6 @@
 import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
-import { apiDelete, base, expandFolder, postEvent, seedSession } from "./helpers";
+import { api, apiDelete, expandFolder, postEvent, seedSession } from "./helpers";
 
 test("deleting a parent immediately restores child controls and preserves descendants through reload", async ({ page }) => {
   const prefix = `e2e-parent-${Date.now()}`;
@@ -27,7 +27,7 @@ test("deleting a parent immediately restores child controls and preserves descen
 
     // The real server rejects a late supervisor event's stale parent link.
     await postEvent({ session_key: child, event_type: "PreToolUse", tool_name: "Read", parent_session_key: parent });
-    const response = await fetch(`${base()}/sessions`);
+    const response = await api(`/sessions`);
     const data = await response.json();
     expect(data.sessions.find((s: { session_key: string }) => s.session_key === child).parent_session_key).toBeNull();
     expect(data.sessions.find((s: { session_key: string }) => s.session_key === grandchild).parent_session_key).toBe(child);

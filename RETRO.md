@@ -1,3 +1,17 @@
+## 2026-10-29 — Loopback is not an identity
+
+The server asked for the owner token only on writes, reasoning that the origin
+check already stopped browsers. That reasoning covered browsers and nothing
+else: any local caller without the token (another macOS user, an agent sandboxed
+to network-only, an SSH-forwarded port) could read the token out of GET /, read
+any file under $HOME through GET /file, and type into agent panes through the
+terminal WebSocket. 37 owner GETs were open. Every owner route now requires the
+token as a header, an HttpOnly per-port cookie set by /login, or the owner
+WebSocket subprotocol. The app reads the token file, or reads it over SSH for a
+remote computer, instead of scraping the page. test_route_auth enumerates the
+route table, so a new route that skips auth fails the gate; it failed on main
+before the fix. Decide auth per route, never per method.
+
 ## 2026-10-25 — Floating CI environments can break a validated release
 
 The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,

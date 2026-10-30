@@ -32,7 +32,14 @@ def _post(port: int, path: str, payload: dict[str, object] | None = None) -> dic
 
 
 def _get(port: int, path: str) -> dict[str, object]:
-    return json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5).read())  # type: ignore[no-any-return]
+    return json.loads(
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"http://127.0.0.1:{port}{path}", headers={"X-Duckterm-Token": _token()}
+            ),
+            timeout=5,
+        ).read()
+    )  # type: ignore[no-any-return]
 
 
 def test_snapshot_list_and_restore(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

@@ -123,6 +123,6 @@ def test_relay_exposes_existing_urgency_and_approval_class(app):
         )
     # These are isolated fixture notes; no real approval is requested or answered.
     app._relay_sync_approvals = lambda: None
-    status, result = dispatch(app, "GET", "/relay", {}, b"")
+    status, result = dispatch(app, "GET", "/relay", {"x-duckterm-token": app.token}, b"")
     assert status == 200
     assert [note["urgency"] for note in result["notes"]] == ["approval", "offer", "blocked"]

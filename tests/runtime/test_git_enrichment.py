@@ -31,7 +31,14 @@ def _post(port: int, payload: dict) -> None:
 
 
 def _get(port: int, path: str) -> dict:
-    return json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5).read())
+    return json.loads(
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"http://127.0.0.1:{port}{path}", headers={"X-Duckterm-Token": _token()}
+            ),
+            timeout=5,
+        ).read()
+    )
 
 
 def test_watched_session_in_git_repo_gets_repo_and_branch(git_repo: Path, tmp_path: Path) -> None:

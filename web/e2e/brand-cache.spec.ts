@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createServer, request } from "node:http";
 import type { AddressInfo } from "node:net";
+import { ownerToken } from "./helpers";
 
 // Routing in Playwright disables the HTTP cache. Use a real HTTP proxy to keep
 // the stale response cached while loading the new build in the same browser.
@@ -21,8 +22,9 @@ test("brand bypasses a previously immutable green favicon", async ({ page, baseU
       res.end('<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><rect width="22" height="22" fill="#2ac58c"/></svg>');
       return;
     }
+    // The owner cookie is scoped to the server's port, not this proxy's.
     const upstream = request(new URL(req.url!, baseURL), {
-      method: req.method, headers: req.headers,
+      method: req.method, headers: { ...req.headers, "x-duckterm-token": ownerToken() },
     }, response => {
       res.writeHead(response.statusCode!, response.headers);
       response.pipe(res);

@@ -2,6 +2,8 @@
 fixed. These drive the check functions with controlled paths so they don't
 depend on the host's actual install."""
 
+import http.server
+import threading
 from pathlib import Path
 
 import pytest
@@ -43,6 +45,34 @@ def test_server_unreachable_is_a_failure() -> None:
     r = doctor._check_server("http://127.0.0.1:1/")
     assert r.status == "fail"
     assert "duckterm serve" in r.detail
+
+
+@pytest.mark.parametrize(("status", "probe", "verdict"), [(401, "1", "ok"), (401, None, "fail")])
+def test_the_locked_page_still_identifies_duckterm(
+    status: int, probe: str | None, verdict: str
+) -> None:
+    """GET / without the owner token is a 401; its self-probe header still
+    tells a running DuckTerm apart from another program on the port."""
+
+    class Locked(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(status)
+            if probe:
+                self.send_header("X-Duckterm", probe)
+            self.end_headers()
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), Locked)
+    thread = threading.Thread(target=httpd.handle_request)
+    thread.start()
+    try:
+        r = doctor._check_server(f"http://127.0.0.1:{httpd.server_port}/")
+    finally:
+        thread.join(5)
+        httpd.server_close()
+    assert r.status == verdict
 
 
 def test_token_missing_is_a_warning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -133,7 +133,8 @@ final class ServerProcess {
         guard let (_, resp) = try? await URLSession.shared.data(for: req),
             let http = resp as? HTTPURLResponse
         else { return false }
-        return http.statusCode == 200 && http.value(forHTTPHeaderField: "X-Duckterm") == "1"
+        // 401 is the locked page: the app signs in with the token file.
+        return [200, 401].contains(http.statusCode) && http.value(forHTTPHeaderField: "X-Duckterm") == "1"
     }
 }
 

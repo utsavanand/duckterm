@@ -223,7 +223,13 @@ def _mid(prefix: str, suffix: str) -> dict[str, str]:
 # GETs that require the owner token despite the open-read policy. /connectors
 # reports which providers the owner connected, under which identity, and when
 # each was last used — a description of the owner, not of the UI's own state.
-_OWNER_READS = frozenset({"/connectors", "/checkpoint-settings", "/edition"})
+# The bundle and icons carry no owner data, and the locked page needs them.
+_PUBLIC_ICONS = frozenset({"/favicon.svg", "/favicon.ico"})
+
+_LOCKED_PAGE = """<!doctype html><meta charset="utf-8"><title>DuckTerm</title>
+<body style="font:15px -apple-system,system-ui,sans-serif;margin:3em">
+<p>DuckTerm is running, but this page needs your sign-in link.</p>
+<p>Open DuckTerm from the app, or run <code>duckterm dashboard</code>.</p></body>"""
 
 
 # fmt: off
@@ -660,17 +666,30 @@ class Server:
                 writer, 403, {"error": "session credentials cannot access owner routes"}
             )
             return
-        # State-changing requests additionally require the per-install secret,
-        # which a blind CSRF can't read and therefore can't forge. GETs (the
-        # dashboard, static assets, read-only data) stay open so the browser can
-        # load the UI; they're already protected by the same-origin check above.
-        # _OWNER_READS are the exceptions: reads whose body describes the owner
-        # rather than the UI's own state, so they are worth the token even
-        # though the listener is loopback-only.
-        if (method != "GET" or path in _OWNER_READS) and not security.token_valid(
-            headers, self.token
-        ):
-            await _write_json(writer, 401, {"error": "missing or invalid token"})
+        # Every owner route needs the per-install secret, reads included: the
+        # origin check stops browsers, not other local callers (another macOS
+        # user, a sandboxed agent with loopback access, an SSH-forwarded port).
+        # Open GETs used to serve the token itself in index.html, any file under
+        # $HOME via /file, and keystrokes into agent panes via the terminal WS.
+        route_path = urllib.parse.urlsplit(path).path
+        if method == "GET" and route_path == "/login":
+            await self._login(writer, headers, path)
+            return
+        if not security.owner_authenticated(headers, self.token):
+            if method == "GET" and route_path == "/":
+                await _write_response(
+                    writer,
+                    401,
+                    _LOCKED_PAGE,
+                    content_type="text/html",
+                    extra_headers={SELF_PROBE_HEADER: "1", "Cache-Control": "no-store"},
+                )
+            elif method == "GET" and (
+                route_path in _PUBLIC_ICONS or route_path.startswith("/assets/")
+            ):
+                await self._dashboard(writer, route_path)
+            else:
+                await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
         for feature in editions.request_features(method, path, body):
@@ -937,6 +956,36 @@ class Server:
         if not self.edition.includes(feature):
             raise APIError(403, f"{feature} is unavailable in Duckterm {self.edition.name.title()}")
 
+    async def _login(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], path: str
+    ) -> None:
+        """Trade the token in ?token= for an HttpOnly cookie, then drop it from
+        the address bar. Browsers send the cookie on navigations, EventSource and
+        WebSockets, none of which can carry the header."""
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+        supplied = query.get("token", [""])[0]
+        if not security.token_valid({security.TOKEN_HEADER: supplied}, self.token):
+            await _write_response(
+                writer,
+                401,
+                _LOCKED_PAGE,
+                content_type="text/html",
+                extra_headers={SELF_PROBE_HEADER: "1", "Cache-Control": "no-store"},
+            )
+            return
+        name = security.owner_cookie_name(headers.get("host", ""))
+        await _write_response(
+            writer,
+            303,
+            "",
+            extra_headers={
+                "Location": "/",
+                "Set-Cookie": f"{name}={supplied}; Path=/; HttpOnly; SameSite=Strict",
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+            },
+        )
+
     async def _dashboard(self, writer: asyncio.StreamWriter, path: str) -> None:
         """Serve the built React dashboard so there's one URL. The self-probe
         header rides on every response. Falls back to a hint if not built."""
@@ -962,7 +1011,10 @@ class Server:
         rel = "index.html" if path == "/" else path.lstrip("/")
         target = (dist / rel).resolve()
         if not target.is_relative_to(dist.resolve()) or not target.is_file():
-            target = dist / "index.html"  # SPA fallback
+            # A missing asset is a 404, never index.html: assets are public, and
+            # index.html carries the owner token.
+            await _write_response(writer, 404, "not found")
+            return
         if target.name == "index.html":
             # Inject the per-install token so the dashboard's fetches can send it.
             # Same-origin script can read it; a cross-origin attacker can't.
@@ -5831,14 +5883,7 @@ class Server:
         method: str,
         body: bytes,
     ) -> None:
-        # Browsers cannot set custom WebSocket headers; use a subprotocol token
-        # only on this route, never URL query credentials or ambient session auth.
-        auth = dict(headers)
-        if terminal and "x-duckterm-token" not in auth:
-            for protocol in headers.get("sec-websocket-protocol", "").split(","):
-                if protocol.strip().startswith("duckterm-owner."):
-                    auth["x-duckterm-token"] = protocol.strip()[len("duckterm-owner.") :]
-        if not security.token_valid(auth, self.token):
+        if not security.owner_authenticated(headers, self.token):
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         try:
