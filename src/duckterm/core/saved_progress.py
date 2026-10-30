@@ -484,6 +484,7 @@ class ProgressCoordinator:
                 summarize,
                 prompt,
                 tier="fast",
+                feature="checkpoint-writer",
                 **(
                     {"claude_model": captured["checkpoint_settings"]["writer_model"]}
                     if "checkpoint_settings" in captured
@@ -651,6 +652,7 @@ class ProgressCoordinator:
                     summarize,
                     validation_prompt,
                     tier="deep",
+                    feature="checkpoint-reviewer",
                     **(
                         {"claude_model": captured["checkpoint_settings"]["reviewer_model"]}
                         if "checkpoint_settings" in captured

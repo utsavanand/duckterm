@@ -236,7 +236,11 @@ async def build_map(repo: str, slug: str | None, tag: str) -> dict[str, Any]:
         _save(repo, slug, tag, value)
         return value
     try:
-        reply = (await backend.complete(_prompt(tag, graph), tier="fast", schema=SCHEMA)).text
+        reply = (
+            await backend.complete(
+                _prompt(tag, graph), tier="fast", schema=SCHEMA, feature="release-map"
+            )
+        ).text
         parsed = cards._parse_reply(reply)
         if parsed is None or "modules" not in parsed:
             raise APIError(502, "The model did not return a module map")

@@ -2,6 +2,7 @@ import os
 import subprocess
 import urllib.error
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +14,7 @@ from duckterm.llm.summarizer import (
 
 
 @pytest.fixture
-def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+def clean_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
     # No env backends AND no auto-detectable agent on PATH, so summarize() takes
     # the true no-backend path.
     for k in ("DUCKTERM_SUMMARIZER_CMD", "DUCKTERM_SUMMARIZER_URL", "DUCKTERM_SUMMARIZER"):
@@ -21,6 +22,10 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     import duckterm.llm.summarizer as s
 
     monkeypatch.setattr(s.shutil, "which", lambda _b: None)
+    # The Codex model choice reads ~/.codex; keep this host's account out of it.
+    from duckterm.llm import backend
+
+    monkeypatch.setattr(backend.Path, "home", lambda: tmp_path)
     yield
 
 
