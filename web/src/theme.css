@@ -2656,7 +2656,8 @@ select {
   overflow-x: auto;
 }
 /* A blinking caret after the last words while the answer is still arriving. */
-.rd-oracle-a.is-writing > :last-child::after {
+.rd-oracle-a.is-writing > :last-child:not(ul, ol)::after,
+.rd-oracle-a.is-writing > :is(ul, ol):last-child > li:last-child::after {
   content: "";
   display: inline-block;
   width: 7px;
@@ -2670,7 +2671,7 @@ select {
   50% { opacity: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .rd-oracle-a.is-writing > :last-child::after { animation: none; }
+  .rd-oracle-a.is-writing *::after { animation: none; }
 }
 .rd-oracle-thinking {
   display: flex;
