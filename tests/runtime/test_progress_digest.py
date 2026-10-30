@@ -116,7 +116,7 @@ def test_stop_and_exit_do_not_schedule_refresh(fake_summarizer: Path, monkeypatc
     async def refresh(key):
         refreshes.append(key)
 
-    def summarize(prompt):
+    def summarize(prompt, **_kw):
         model_calls.append(prompt)
         raise AssertionError("Automatic events must not call the model")
 

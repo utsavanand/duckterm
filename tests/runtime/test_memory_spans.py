@@ -286,7 +286,7 @@ def test_changed_source_during_generation_does_not_save_leaf(memory_rig, monkeyp
 
     original = server_module.summarize
 
-    def changed(prompt):
+    def changed(prompt, **_kw):
         result = original(prompt)
         if len(calls) == 1:
             append(path, "New instruction while generating")
@@ -357,7 +357,7 @@ def test_cancelled_waiter_does_not_cancel_a_span_write(memory_rig, monkeypatch):
     generate = server_module.summarize
     entered, released = threading.Event(), threading.Event()
 
-    def paused(prompt):
+    def paused(prompt, **_kw):
         if not entered.is_set():
             entered.set()
             assert released.wait(3)

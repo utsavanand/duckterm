@@ -8,7 +8,7 @@ from pathlib import Path
 from test_memory import memory_rig, transcript
 
 from duckterm import memory_provider
-from duckterm.llm import summarizer
+from duckterm.llm import backend
 
 __all__ = ["memory_rig"]
 
@@ -41,7 +41,7 @@ print(json.dumps(result))
 def setup_runner(monkeypatch, tmp, mode="success"):
     monkeypatch.delenv("DUCKTERM_SUMMARIZER", raising=False)
     monkeypatch.setenv("DUCKTERM_SESSION_TOKEN", "fixture-not-a-credential")
-    monkeypatch.setattr(summarizer, "_auto_command", lambda: "claude -p")
+    monkeypatch.setattr(backend, "harness", lambda choice="auto": "claude-code")
     log = tmp / "runner.jsonl"
     monkeypatch.setattr(
         memory_provider,
