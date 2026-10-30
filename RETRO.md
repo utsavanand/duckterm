@@ -1,3 +1,13 @@
+## 2026-10-29 — A command filter that lists separators misses the ones it forgot
+
+Oracle approval rules refused ; & | ` < > and $( but not a newline, so a rule for
+`^pytest` approved "pytest -q", newline, "sh /tmp/p". $VAR, ${IFS} and backslash
+continuations also passed, and re.search let an unanchored model-written pattern
+approve any command that merely mentioned pytest. Claude Code's permission parser
+shipped the same class (CVE-2025-54795, CVE-2025-66032). Any of $ \ CR LF NUL now
+sends the command to the owner, patterns match from the first character, and
+commands over 2000 characters skip rules because re has no timeout.
+
 ## 2026-10-25 — Floating CI environments can break a validated release
 
 The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,
