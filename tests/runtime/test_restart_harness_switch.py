@@ -117,7 +117,9 @@ def offline(monkeypatch):
 def test_unknown_resume_identity_still_offers_switch(rig, monkeypatch):
     server, _, _, calls = rig
     monkeypatch.setattr(server.history, "session_id_for", lambda _: None)
-    status, result = dispatch(server, "GET", "/sessions/a/restart-options", {})
+    status, result = dispatch(
+        server, "GET", "/sessions/a/restart-options", {"x-duckterm-token": server.token}
+    )
     assert status == 200
     assert not result["resume_restart"]["available"]
     assert "Cannot verify" in result["resume_restart"]["reason"]

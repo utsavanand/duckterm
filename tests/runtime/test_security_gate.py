@@ -1,6 +1,6 @@
 """The request gate, end to end through the server: a cross-origin request is
-refused (403), a state-changing request without the valid token is refused
-(401), and a GET stays open (same-origin check only). This is the one test that
+refused (403), and a request without the valid token is refused (401), GETs
+included. This is the one test that
 catches the auth gate silently dying — every OTHER runtime test sends the valid
 token, so a weakened gate would leave them all green."""
 
@@ -59,10 +59,10 @@ def test_state_change_with_wrong_token_is_refused(tmp_path) -> None:  # type: ig
     assert "401" in _run(tmp_path, req)
 
 
-def test_get_is_open_without_a_token(tmp_path) -> None:  # type: ignore[no-untyped-def]
-    # GETs load the dashboard/read-only data; protected by same-origin, not token.
+def test_get_without_token_is_refused(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    # Reads need the token too: same-origin stops browsers, not other local callers.
     req = b"GET /sessions HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"
-    assert "200" in _run(tmp_path, req)
+    assert "401" in _run(tmp_path, req)
 
 
 def test_valid_token_passes_the_gate(tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]

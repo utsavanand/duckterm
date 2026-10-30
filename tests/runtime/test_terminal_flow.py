@@ -12,9 +12,10 @@ from duckterm.runtimes.generic import GenericRuntime
 from duckterm.server import Server
 
 
-def _client_handshake(key: str) -> bytes:
+def _client_handshake(key: str, token: str) -> bytes:
     return (
         f"GET /sessions/SKEY/terminal HTTP/1.1\r\nHost: localhost\r\n"
+        f"X-Duckterm-Token: {token}\r\n"
         f"Upgrade: websocket\r\nSec-WebSocket-Key: {key}\r\n\r\n"
     ).encode()
 
@@ -74,7 +75,7 @@ def test_terminal_streams_raw_pty_bytes(tmp_path: Path, monkeypatch: pytest.Monk
         port = srv.sockets[0].getsockname()[1]
         async with srv:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(_client_handshake("dGhlIHNhbXBsZSBub25jZQ=="))
+            writer.write(_client_handshake("dGhlIHNhbXBsZSBub25jZQ==", server.token))
             await writer.drain()
             await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 3)  # handshake
             # Give the command a moment to emit, then read whatever frames came.
@@ -150,7 +151,7 @@ def test_terminal_input_reaches_agent_and_keeps_connection(
         port = srv.sockets[0].getsockname()[1]
         async with srv:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(_client_handshake("dGhlIHNhbXBsZSBub25jZQ=="))
+            writer.write(_client_handshake("dGhlIHNhbXBsZSBub25jZQ==", server.token))
             await writer.drain()
             await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 3)
             # Type a keystroke; cat echoes it back through the PTY.

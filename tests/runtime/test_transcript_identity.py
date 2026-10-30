@@ -71,7 +71,9 @@ def test_parent_child_stay_on_recorded_conversations_across_writes_and_reopen(
             for key, sid in [("parent", A), ("child", B)]:
                 path = transcript(tmp_path, cwd, sid, runtime, f"{key}-{turn}")
                 os.utime(path, (time.time() + turn, time.time() + turn))
-                status, payload = dispatch(server, "GET", f"/sessions/{key}/messages", {})
+                status, payload = dispatch(
+                    server, "GET", f"/sessions/{key}/messages", {"x-duckterm-token": server.token}
+                )
                 assert status == 200
                 assert payload["messages"][0]["blocks"][0]["text"] == f"{key}-{turn}"
             # Newest file is the child; parent must remain bound to A.
@@ -93,7 +95,9 @@ def test_missing_identity_or_local_file_does_not_show_peer(tmp_path, monkeypatch
     server = Server(history=store)
     try:
         assert server._session_messages("child") == []
-        status, payload = dispatch(server, "GET", "/sessions/child/messages", {})
+        status, payload = dispatch(
+            server, "GET", "/sessions/child/messages", {"x-duckterm-token": server.token}
+        )
         assert status == 200 and payload["messages"] == []
         assert payload["transcript"]["status"] == ("not_found" if sid else "identity_missing")
         rt = ClaudeCodeRuntime() if runtime == "claude-code" else CodexRuntime()

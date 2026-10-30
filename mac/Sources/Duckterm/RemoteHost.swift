@@ -50,6 +50,14 @@ struct RemoteHost: Codable, Equatable {
          "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=no",
          "-L", "127.0.0.1:\(port):127.0.0.1:\(remotePort)", target]
     }
+
+    /// One command, no forwarding: reads the owner token (OwnerToken.remoteScript on stdin).
+    func tokenArguments() -> [String] {
+        ["-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes",
+         "-o", "ConnectTimeout=10", "-o", "ControlMaster=no", "-o", "ControlPath=none",
+         "-o", "ForwardAgent=no", "-o", "ClearAllForwardings=yes",
+         target, "sh", "-s"]
+    }
 }
 
 /// Owns only a tunnel; never sends a remote stop command. A dead tunnel is
@@ -84,6 +92,7 @@ final class RemoteConnection {
         guard bound == 0, read == 0 else { throw RemoteHost.HostError.noPort }
         port = Int(UInt16(bigEndian: address.sin_port))
         url = URL(string: "http://127.0.0.1:\(port)")!
+        OwnerToken.register(tunnelPort: port, host: host)
     }
 
     func start() {

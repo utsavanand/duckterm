@@ -61,31 +61,25 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
 
     func token(base: URL, attempts: Int = 30) async throws -> String {
         // Wait only for readiness. A launch POST is sent once, never retried.
-        var token: String?
+        // The locked page answers 401 with the self-probe header.
+        var ready = false
         for _ in 0..<attempts {
             var probe = URLRequest(url: base, cachePolicy: .reloadIgnoringLocalCacheData)
             probe.timeoutInterval = 2
-            if let (data, response) = try? await probes.perform(probe),
-               let http = response as? HTTPURLResponse, http.statusCode == 200,
+            if let (_, response) = try? await probes.perform(probe),
+               let http = response as? HTTPURLResponse,
                http.value(forHTTPHeaderField: "X-Duckterm") == "1" {
-                let html = String(decoding: data, as: UTF8.self)
-                let pattern = #"<meta name="duckterm-token" content="([A-Za-z0-9_-]+)">"#
-                let regex = try NSRegularExpression(pattern: pattern)
-                if let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
-                   let range = Range(match.range(at: 1), in: html) {
-                    token = String(html[range]); break
-                }
+                ready = true; break
             }
             try await Task.sleep(nanoseconds: 500_000_000)
         }
-        guard let token else { throw Failure.message("Could not connect to this computer. Check SSH access and try again.") }
-        return token
+        guard ready else { throw Failure.message("Could not connect to this computer. Check SSH access and try again.") }
+        return try await OwnerToken.token(base: base)
     }
 
     func perform(base: URL, operation: String, params: [String: Any]) async throws -> Any {
         var request = try Self.request(base: base, operation: operation, params: params)
-        let token = try await token(base: base, attempts: operation == "edition" ? 1 : 30)
-        if request.httpMethod == "POST" || operation == "edition" { request.setValue(token, forHTTPHeaderField: "X-Duckterm-Token") }
+        request.setValue(try await token(base: base, attempts: operation == "edition" ? 1 : 30), forHTTPHeaderField: "X-Duckterm-Token")
         let (data, response): (Data, URLResponse)
         do { (data, response) = try await session.data(for: request) }
         catch {

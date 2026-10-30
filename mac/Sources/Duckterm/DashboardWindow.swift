@@ -180,7 +180,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         replacement.uiDelegate = self
         self.web = replacement
         window.contentView = replacement
-        replacement.load(URLRequest(url: url))
+        replacement.load(entryRequest())
         window.title = title
     }
 
@@ -221,6 +221,18 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     }
 
 
+    /// The local dashboard signs in through /login, which sets the owner cookie
+    /// and redirects to /. GET / alone is the locked page.
+    private func entryRequest() -> URLRequest {
+        guard url.port == AppIdentity.localPort, let token = OwnerToken.local(),
+              var components = URLComponents(url: url, resolvingAgainstBaseURL: false) else {
+            return URLRequest(url: url)
+        }
+        components.path = "/login"
+        components.queryItems = [URLQueryItem(name: "token", value: token)]
+        return URLRequest(url: components.url ?? url)
+    }
+
     func show() {
         if let window {
             window.makeKeyAndOrderFront(nil)
@@ -241,7 +253,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         // while working fine in a browser.
         web.uiDelegate = self
         self.web = web
-        web.load(URLRequest(url: url))
+        web.load(entryRequest())
 
         let win = NSWindow(
             contentRect: web.frame,
@@ -287,7 +299,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         AppDiagnostics.shared.record("Dashboard connection failed", code: (error as NSError).code)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
             guard let self, self.url == failedURL, self.web === webView else { return }
-            webView.load(URLRequest(url: self.url))
+            webView.load(self.entryRequest())
         }
     }
 

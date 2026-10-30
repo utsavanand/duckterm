@@ -206,14 +206,14 @@ def test_ask_oracle_conversation_is_stored_and_feeds_follow_ups(tmp_path, monkey
     assert body["exchange"]["q"] == "and now?"
     assert "Q: who's stuck?\nA: **answer 1**" in prompts[1]
 
-    stored = dispatch(server, "GET", "/oracle/chat", {})[1]["messages"]
+    stored = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
     assert [(m["q"], m["a"]) for m in stored] == [
         ("who's stuck?", "**answer 1**"),
         ("and now?", "**answer 2**"),
     ]
     assert dispatch(server, "DELETE", "/oracle/chat", {})[0] == 401
     assert dispatch(server, "DELETE", "/oracle/chat", owner)[1] == {"messages": []}
-    assert dispatch(server, "GET", "/oracle/chat", {})[1] == {"messages": []}
+    assert dispatch(server, "GET", "/oracle/chat", owner)[1] == {"messages": []}
     history.close()
 
 

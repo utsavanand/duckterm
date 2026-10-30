@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { apiPost, base, seedSession } from "./helpers";
+import { api, apiPost, seedSession } from "./helpers";
 
 // Browser-click coverage for the row/topbar actions that the flow specs don't
 // exercise: Approve/Deny, Notes, the AGENTS.md modal, the theme toggle, and
@@ -29,7 +29,7 @@ test("a blocking permission request can be decided and polled", async () => {
   expect(decide.status).toBe(200);
 
   // The polling hook sees the decision (what actually unblocks the agent).
-  const res = await fetch(`${base()}/approvals/${id}/decision`);
+  const res = await api(`/approvals/${id}/decision`);
   expect(((await res.json()) as { status: string }).status).toBe("approve");
 });
 
@@ -47,7 +47,7 @@ test("notes open, save, and persist on the session", async ({ page }) => {
   await page.locator(".rd-session-controls").getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Notes saved")).toBeVisible();
 
-  const res = await fetch(`${base()}/sessions/${key}`);
+  const res = await api(`/sessions/${key}`);
   expect(((await res.json()) as { notes?: string }).notes).toBe(
     "check the retry logic",
   );
@@ -108,7 +108,7 @@ test("folder ✕ deletes the folder after confirm", async ({ page }) => {
   await head.locator(".rd-group-del").click();
   await expect(head).toHaveCount(0);
 
-  const res = await fetch(`${base()}/folders`);
+  const res = await api(`/folders`);
   expect(((await res.json()) as { folders: string[] }).folders).not.toContain(
     name,
   );

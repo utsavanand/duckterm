@@ -8,6 +8,8 @@ import json
 import os
 import shutil
 import sys
+import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Coroutine, Sequence
 from pathlib import Path
@@ -389,7 +391,7 @@ def _print_listening(host: str, port: int) -> None:
     if dashboard_dir() is not None and not os.environ.get("DUCKTERM_NO_BROWSER"):
         import webbrowser
 
-        webbrowser.open(url)
+        webbrowser.open(_login_url(url))
 
 
 def _print_port_in_use(host: str, port: int) -> None:
@@ -453,11 +455,20 @@ def _restart_identity_matches(host: str, port: int) -> bool:
         return False
 
 
+def _login_url(url: str) -> str:
+    """The dashboard needs the owner token; /login trades it for a cookie."""
+    from duckterm.helpers import security
+
+    return f"{url}/login?token={urllib.parse.quote(security.load_or_create_token())}"
+
+
 def _duckterm_responds(host: str, port: int) -> bool:
     """True if whatever owns the port answers with Duckterm's self-probe
     header, so we can tell 'already running' from 'foreign process'."""
     try:
         resp = urllib.request.urlopen(f"http://{host}:{port}/", timeout=1)
+    except urllib.error.HTTPError as locked:  # the sign-in page answers 401
+        resp = locked
     except OSError:
         return False
     return bool(resp.headers.get("X-Duckterm") == "1")
@@ -657,11 +668,13 @@ def _dashboard() -> int:
     url = _server_url()
     try:
         urllib.request.urlopen(f"{url}/", timeout=2)
+    except urllib.error.HTTPError:
+        pass  # the sign-in page answers 401; the server is up
     except OSError:
         print(f"server not reachable at {url} — start it with `duckterm serve`", file=sys.stderr)
         return 1
     print(f"opening {url}")
-    webbrowser.open(url)
+    webbrowser.open(_login_url(url))
     return 0
 
 

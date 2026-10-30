@@ -21,6 +21,7 @@ REQUEST_TIMEOUT_SECONDS = 10
 _REASON = {
     200: "OK",
     202: "Accepted",
+    303: "See Other",
     400: "Bad Request",
     401: "Unauthorized",
     403: "Forbidden",

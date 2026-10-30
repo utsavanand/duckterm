@@ -14,16 +14,17 @@ export function base(): string {
   return `http://127.0.0.1:${state().port}`;
 }
 
-function token(): string {
+export function ownerToken(): string {
   return readFileSync(join(state().home, "token"), "utf8").trim();
 }
 
-async function api(path: string, init?: RequestInit): Promise<Response> {
+// Every owner route needs the token, reads included.
+export async function api(path: string, init?: RequestInit): Promise<Response> {
   return fetch(`${base()}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      "X-Duckterm-Token": token(),
+      "X-Duckterm-Token": ownerToken(),
       ...(init?.headers || {}),
     },
   });
@@ -56,7 +57,7 @@ export interface SessionRow {
 }
 
 export async function sessions(): Promise<SessionRow[]> {
-  const res = await fetch(`${base()}/sessions`);
+  const res = await api("/sessions");
   return (await res.json()).sessions;
 }
 
@@ -114,7 +115,7 @@ export interface Checkpoint {
 }
 
 export async function checkpoints(key: string): Promise<Checkpoint[]> {
-  const res = await fetch(`${base()}/sessions/${key}/checkpoints`);
+  const res = await api(`/sessions/${key}/checkpoints`);
   return (await res.json()).checkpoints;
 }
 

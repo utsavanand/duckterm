@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiPost, base } from "./helpers";
+import { api, apiPost, base } from "./helpers";
 
 // The Messages view (structured-render foundation, step 1) renders a claude
 // session's conversation as HTML from /sessions/:key/messages. This test seeds a
@@ -120,7 +120,7 @@ test("annotating a span stores it and sends it back to the agent", async ({
   // Stored server-side.
   await expect
     .poll(async () => {
-      const res = await fetch(`${base()}/sessions/${key}/annotations`);
+      const res = await api(`/sessions/${key}/annotations`);
       const d = await res.json();
       return d.annotations?.length ?? 0;
     })
