@@ -30,6 +30,7 @@ import { GridView } from "./GridView";
 import { FloatingSessionShortcuts } from "./FloatingSessionShortcuts";
 import { orderShortcuts, useShortcutPreferences } from "./shortcutPreferences";
 import { CheckpointSettingsModal } from "./CheckpointSettingsModal";
+import { AiModelsModal } from "./AiModelsModal";
 import { CheckpointDialogHost } from "./CheckpointDialog";
 import { BackupModal } from "./BackupModal";
 import { BugReport } from "./BugReport";
@@ -112,7 +113,7 @@ function Dashboard() {
   const { density, setDensity } = useSidebarDensity();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "appearance" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | null
   >(desktop()?.draft ? "launch" : null);
   const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerChosen, setTowerOpen] = useState(false);
@@ -641,6 +642,7 @@ function Dashboard() {
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "appearance" && <AppearanceSettings {...appearance} onClose={() => setModal(null)} />}
       {modal === "checkpointing" && has("checkpoints") && <CheckpointSettingsModal onClose={() => setModal(null)} />}
+      {modal === "aimodels" && <AiModelsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal
           defaultDir={agentsMdDir}
