@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiDelete, apiPatch, apiPost, base, expandFolder, forEdition, sessionMenu } from "./helpers";
+import { apiDelete, apiPatch, apiPost, base, expandFolder, forEdition, seedSession, sessionMenu } from "./helpers";
 import { CODE, FULL, LITE } from "../src/test/editionFeatures";
 
 // Endpoint families that belong to features outside Lite.
@@ -77,6 +77,117 @@ test("Lite runs the core session flows without any advanced control or request",
   });
   expect(requests).toContain("/edition");
   expect(requests.filter(path => ADVANCED.some(pattern => pattern.test(path)))).toEqual([]);
+});
+
+test("Lite desktop folders and session assignments use core HTTP despite a native collaboration bridge", async ({ page }) => {
+  await forEdition(page, "lite", LITE);
+  const nativeCalls: string[] = [];
+  await page.exposeFunction("recordNativeCollaboration", (operation: string) => { nativeCalls.push(operation); });
+  await page.addInitScript(() => {
+    window.__rubbertermDesktop = { currentTarget: "local", canCollaborate: true,
+      targets: [{ id: "local", name: "This Mac" }] };
+    window.webkit = { messageHandlers: { launchRequest: { postMessage: async (raw: unknown) => {
+      const { operation } = raw as { operation: string };
+      if (operation.startsWith("collaboration-")) {
+        await (window as Window & { recordNativeCollaboration: (operation: string) => Promise<void> }).recordNativeCollaboration(operation);
+        throw new Error("This action is unavailable in Duckterm Lite");
+      }
+      return {};
+    } } } };
+  });
+
+  const suffix = Date.now();
+  const parent = `Lite folders ${suffix}`;
+  const original = `${parent}/Draft`;
+  const renamedLeaf = `Renamed ${suffix}`;
+  const renamed = `${parent}/${renamedLeaf}`;
+  const key = `lite-folder-agent-${suffix}`;
+  const name = "Lite folder agent";
+  const header = (folder: string) => page.locator(".rd-group-head").filter({
+    has: page.getByRole("button", { name: `Terminal colors for ${folder}`, exact: true }),
+  });
+  async function coreWrite(method: string, path: string, body: object | null, action: () => Promise<void>) {
+    const [response] = await Promise.all([
+      page.waitForResponse(response => response.url() === `${base()}${path}` && response.request().method() === method),
+      action(),
+    ]);
+    expect(response.status()).toBe(200);
+    if (body) expect(response.request().postDataJSON()).toEqual(body);
+  }
+  async function persistedGroup() {
+    const response = await page.request.get(`${base()}/sessions/${key}`);
+    expect(response.ok()).toBeTruthy();
+    const session = await response.json();
+    expect(session.test).toBe(1);
+    return session.grp || "";
+  }
+
+  try {
+    await seedSession(key, { name, runtime: "generic", test: true });
+    await page.goto(base());
+    await page.getByRole("button", { name: "New", exact: true }).click();
+    await page.getByRole("button", { name: "New folder", exact: true }).click();
+    await page.getByPlaceholder("e.g. payments").fill(original);
+    await coreWrite("POST", "/folders", { name: original }, async () => {
+      await page.getByRole("button", { name: "Create folder", exact: true }).click();
+    });
+    await expandFolder(page, parent);
+    await expect(header(original)).toBeVisible();
+
+    const row = page.locator(".rd-row", { has: page.getByText(name, { exact: true }) });
+    await row.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Move to folder", exact: true }).click();
+    const picker = page.getByRole("dialog", { name: `Move ${name} to folder` });
+    await picker.getByRole("button", { name: original, exact: true }).click();
+    await coreWrite("PATCH", `/sessions/${key}`, { group: original }, async () => {
+      await picker.getByRole("button", { name: "Move", exact: true }).click();
+    });
+    await expect(picker).toHaveCount(0);
+    expect(await persistedGroup()).toBe(original);
+    await expandFolder(page, original);
+    await expect(header(original).locator("..").locator(".rd-row", { hasText: name })).toBeVisible();
+
+    await coreWrite("PATCH", `/folders/${encodeURIComponent(original)}`, { name: renamedLeaf }, async () => {
+      const prompt = page.waitForEvent("dialog").then(dialog => dialog.accept(renamedLeaf));
+      await header(original).locator(".rd-group-name").dblclick();
+      await prompt;
+    });
+    await expect(header(renamed)).toBeVisible();
+    await expect(header(original)).toHaveCount(0);
+    expect(await persistedGroup()).toBe(renamed);
+
+    await header(renamed).hover();
+    await coreWrite("PATCH", `/folders/${encodeURIComponent(renamed)}`, { parent: "" }, async () => {
+      await header(renamed).getByTitle("Move this folder to the top level", { exact: true }).click();
+    });
+    await expect(header(renamedLeaf)).toBeVisible();
+    await expect(header(renamed)).toHaveCount(0);
+    expect(await persistedGroup()).toBe(renamedLeaf);
+    await page.reload();
+    await expandFolder(page, renamedLeaf);
+    await expect(header(renamedLeaf).locator("..").locator(".rd-row", { hasText: name })).toBeVisible();
+
+    await header(renamedLeaf).hover();
+    await coreWrite("DELETE", `/folders/${encodeURIComponent(renamedLeaf)}`, null, async () => {
+      const confirm = page.waitForEvent("dialog").then(dialog => dialog.accept());
+      await header(renamedLeaf).getByTitle("Delete folder and its subfolders (sessions return to Ungrouped)", { exact: true }).click();
+      await confirm;
+    });
+    await expect(header(renamedLeaf)).toHaveCount(0);
+    expect(await persistedGroup()).toBe("");
+    await page.reload();
+    await expect(row).toBeVisible();
+    await expect(page.locator(".rd-group-body .rd-row", { hasText: name })).toHaveCount(0);
+    const folders = await page.request.get(`${base()}/folders`);
+    expect(folders.ok()).toBeTruthy();
+    const saved = (await folders.json()).folders as string[];
+    for (const deleted of [original, renamed, renamedLeaf]) expect(saved).not.toContain(deleted);
+    expect(nativeCalls).toEqual([]);
+  } finally {
+    await apiDelete(`/sessions/${key}`);
+    await apiDelete(`/folders/${encodeURIComponent(parent)}`);
+    await apiDelete(`/folders/${encodeURIComponent(renamedLeaf)}`);
+  }
 });
 
 test("Code's Explorer browses files without artifact requests and offers pull requests but not the Oracle", async ({ page }) => {
