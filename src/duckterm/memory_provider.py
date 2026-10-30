@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm.core.session_api import APIError
+from duckterm.llm import ai_settings
 
 MAX_REPLY = 64000
 CALL_TIMEOUT = 180
@@ -132,10 +133,14 @@ async def generate(
 ) -> str:
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
         raise APIError(503, "Automatic preparation is disabled on this host")
-    env = {k: v for k, v in os.environ.items() if not k.startswith("DUCKTERM_")}
+    secrets = ai_settings.env_keys()
+    env = {
+        k: v for k, v in os.environ.items() if not k.startswith("DUCKTERM_") and k not in secrets
+    }
     env["DUCKTERM_INTERNAL"] = "1"
     # No repository instructions, project MCP configuration or inherited session
-    # capability. CLI login remains available, but this job has no DuckTerm token.
+    # capability. CLI login remains available, but this job has no DuckTerm token
+    # and no provider API key, so it can't quietly switch to per-token billing.
     with tempfile.TemporaryDirectory(prefix="duckterm-memory-") as folder:
         schema_path = None
         if schema is not None:

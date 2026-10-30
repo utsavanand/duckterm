@@ -65,3 +65,15 @@ it("shows a rejected key's reason and does not claim it was saved", async () => 
   expect(await screen.findByRole("alert")).toHaveTextContent("invalid x-api-key");
   expect(screen.queryByText(/Saved in your Keychain/)).toBeNull();
 });
+
+it("drops a custom base URL when the provider changes, so a named provider's key never goes there", async () => {
+  vi.mocked(api.aiSettings).mockResolvedValue(state({ backend: "api", provider: "custom", base_url: "https://gateway.example/v1", fast_model: "m", deep_model: "m" }));
+  vi.mocked(api.checkpointSettings).mockResolvedValue(checkpoint);
+  vi.mocked(api.saveAiKey).mockResolvedValue({ provider: "anthropic", saved: true, models: [] });
+  render(<AiModelsModal onClose={() => {}} />);
+  fireEvent.change(await screen.findByLabelText("Provider"), { target: { value: "anthropic" } });
+  fireEvent.change(screen.getByLabelText("API key"), { target: { value: "sk-test" } });
+  fireEvent.click(screen.getByRole("button", { name: "Verify and save" }));
+  expect(await screen.findByText(/Saved in your Keychain/)).toBeVisible();
+  expect(api.saveAiKey).toHaveBeenCalledExactlyOnceWith("anthropic", "sk-test", "");
+});

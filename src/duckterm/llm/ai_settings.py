@@ -35,6 +35,7 @@ DEFAULTS: dict[str, Any] = {
     "deep_model": "",
 }
 BACKENDS = {"harness", "api", "duckterm"}
+LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 HARNESSES = {"auto", "claude-code", "codex"}
 # provider -> (wire format, default base URL, env var holding a key)
 PROVIDERS: dict[str, tuple[str, str, str]] = {
@@ -65,12 +66,12 @@ def validated(value: Any) -> dict[str, Any]:
         raise APIError(400, "Choose auto, claude-code or codex as the harness")
     if result["provider"] not in PROVIDERS:
         raise APIError(400, "Choose anthropic, openai, openrouter or custom as the provider")
-    if result["base_url"] and urlparse(result["base_url"]).scheme not in ("http", "https"):
-        raise APIError(400, "The base URL must start with http:// or https://")
-    if result["provider"] == "custom" and not result["base_url"]:
-        raise APIError(400, "A custom provider needs its OpenAI-compatible base URL")
     if result["provider"] != "custom":
         result["base_url"] = ""
+    elif not result["base_url"]:
+        raise APIError(400, "A custom provider needs its OpenAI-compatible base URL")
+    else:
+        check_custom_url(result["base_url"])
     if (
         result["backend"] == "api"
         and result["provider"] not in DEFAULT_MODELS
@@ -78,6 +79,26 @@ def validated(value: Any) -> dict[str, Any]:
     ):
         raise APIError(400, "Choose a fast and a deep model for this provider")
     return result
+
+
+def check_custom_url(url: str) -> None:
+    """The key and every prompt go to this URL, so plain http is only allowed
+    to this Mac (Ollama, LM Studio)."""
+    parsed = urlparse(url)
+    if parsed.scheme == "https" and parsed.hostname:
+        return
+    if parsed.scheme == "http" and parsed.hostname in LOOPBACK:
+        return
+    raise APIError(400, "The base URL must be https://, or http:// on localhost")
+
+
+def check_named_url(provider: str, url: Any) -> None:
+    """Named providers only use their own address; a base URL sent with one is
+    a mistake or a redirect attempt, so it is refused rather than ignored."""
+    if provider != "custom" and url:
+        raise APIError(
+            400, f"{provider} always uses its own address; a base URL is only for custom"
+        )
 
 
 def load() -> dict[str, Any]:
@@ -97,6 +118,7 @@ def save(value: Any) -> dict[str, Any]:
         current = dict(DEFAULTS)
     if not isinstance(value, dict):
         raise APIError(400, "Unknown AI setting")
+    check_named_url(value.get("provider", current["provider"]), value.get("base_url"))
     updated = validated({**current, **value})
     private_write(_path(), json.dumps(updated))
     return updated
@@ -136,6 +158,10 @@ def save_key(provider: str, secret: str, base: str = "") -> None:
     if provider == "custom":
         secret = json.dumps({"key": secret, "base_url": base.rstrip("/")})
     connectors.save_secret(f"ai-{provider}", secret)
+
+
+def env_keys() -> set[str]:
+    return {env for _, _, env in PROVIDERS.values() if env}
 
 
 def delete_key(provider: str) -> None:
