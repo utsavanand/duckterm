@@ -811,6 +811,17 @@ class HistoryStore:
         ).fetchone()
         return int(row[0])
 
+    def push_commands(self, since_ms: int) -> list[tuple[str, int, str]]:
+        """(session key, ts, command) for recorded shell commands that may
+        push a branch or open a pull request, oldest first."""
+        rows = self._conn.execute(
+            "SELECT session_key, ts, json_extract(payload_json, '$.tool_input.command') AS c "
+            "FROM events WHERE event_type = 'PreToolUse' AND ts >= ? "
+            "AND (c LIKE '%push%' OR c LIKE '%pr create%') ORDER BY ts",
+            (since_ms,),
+        ).fetchall()
+        return [(str(row[0]), int(row[1]), str(row[2])) for row in rows if row[0] and row[2]]
+
     def last_event_ts(self, session_key: str, event_type: str) -> int:
         row = self._conn.execute(
             "SELECT MAX(ts) FROM events WHERE session_key = ? AND event_type = ?",

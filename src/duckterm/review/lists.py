@@ -1,8 +1,14 @@
 """Pull request rows for a session or a folder.
 
 A row is a branch a session's worktree is on, joined with the pull request
-whose head is that branch. A folder lists only its own sessions' branches,
-never other pull requests in the same repository (owner ruling, 2026-10-26).
+whose head is that branch. A session's branches are the one its checkout is
+on plus every branch it pushed or opened a PR for in the last PUSH_DAYS days,
+read from its recorded commands: most PRs are pushed from short-lived
+worktrees no session is registered on, so the checkout alone showed at most
+one PR per session. A branch belongs to the first session that pushed it, so
+a later merge pushed by the release session does not move it. A folder lists
+only its own sessions' branches, never other pull requests in the same
+repository (owner ruling, 2026-10-26).
 Git facts come from the local repository; PR facts come from GitHub and are
 cached per repository for CACHE_SECONDS, so a list that polls every minute
 costs one page of pulls plus one check-runs and one reviews call per open PR.
@@ -10,6 +16,8 @@ costs one page of pulls plus one check-runs and one reviews call per open PR.
 
 from __future__ import annotations
 
+import re
+import shlex
 import threading
 import time
 from datetime import datetime
@@ -20,9 +28,18 @@ from duckterm.persistence.folder_chats import within
 from duckterm.review import git, github, status
 
 CACHE_SECONDS = 60
+PUSH_DAYS = 14
+
+_BRANCH = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._/-]*")
+# git push options that take a separate value; the value is not a refspec.
+_PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 
 _lock = threading.Lock()
 _cache: dict[str, dict[str, Any]] = {}
+# Rows that can no longer change, by (repo, PR number, head sha): closed PRs,
+# and merged ones once a release tag contains them. A folder lists dozens of
+# these from its push history, and rebuilding them each poll cost seconds.
+_settled: dict[tuple[str, int, str], dict[str, Any]] = {}
 
 
 def _iso_to_epoch(value: Any) -> int | None:
@@ -32,6 +49,96 @@ def _iso_to_epoch(value: Any) -> int | None:
         return int(datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp())
     except ValueError:
         return None
+
+
+def _simple_commands(command: str) -> list[list[str]]:
+    """Shell words of each simple command on a line that mentions a push or
+    a PR create; the others are skipped unparsed, since shlex on a long
+    heredoc costs more than the rest of the list. A line shlex cannot read (an
+    unbalanced quote in a heredoc body, say) is skipped on its own, so one
+    stray apostrophe does not hide the push on the next line."""
+    out: list[list[str]] = []
+    for line in command.splitlines():
+        if "push" not in line and "pr create" not in line:
+            continue
+        try:
+            lexer = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lexer.whitespace_split = True
+            words = list(lexer)
+        except ValueError:
+            continue
+        current: list[str] = []
+        redirect = False
+        for word in words:
+            if redirect:
+                redirect = False
+            elif word and set(word) <= set("<>&") and set(word) & set("<>"):
+                # `2>&1`, `> out`: the target is not an argument.
+                if current and current[-1].isdigit():
+                    current.pop()
+                redirect = True
+            elif word and set(word) <= set(";&|()"):
+                out.append(current)
+                current = []
+            else:
+                current.append(word)
+        out.append(current)
+    return [words for words in out if words]
+
+
+def _branch_name(ref: str) -> str | None:
+    ref = ref.lstrip("+").removeprefix("refs/heads/")
+    if ref == "HEAD" or ref.startswith("refs/") or not _BRANCH.fullmatch(ref):
+        return None
+    return ref
+
+
+def _pushed(words: list[str]) -> list[str]:
+    """Branches a `git push` or `gh pr create` names. A bare `git push` names
+    none: which branch it pushed depends on a directory the record lacks."""
+    if words[:3] == ["gh", "pr", "create"]:
+        for i, word in enumerate(words):
+            if word in ("--head", "-H") and i + 1 < len(words):
+                name = _branch_name(words[i + 1].rsplit(":", 1)[-1])
+                return [name] if name else []
+            if word.startswith("--head="):
+                name = _branch_name(word.split("=", 1)[1].rsplit(":", 1)[-1])
+                return [name] if name else []
+        return []
+    if not words or words[0] != "git":
+        return []
+    i = 1
+    while i < len(words) and words[i].startswith("-"):
+        i += 2 if words[i] in ("-c", "-C") else 1
+    if i >= len(words) or words[i] != "push":
+        return []
+    args = words[i + 1 :]
+    if any(a in ("-d", "--delete", "--tags", "--all", "--mirror") for a in args):
+        return []
+    positional: list[str] = []
+    skip = False
+    for arg in args:
+        if skip:
+            skip = False
+        elif arg in _PUSH_VALUE_OPTIONS:
+            skip = True
+        elif not arg.startswith("-"):
+            positional.append(arg)
+    names = [_branch_name(spec.rsplit(":", 1)[-1]) for spec in positional[1:]]
+    return [name for name in names if name]
+
+
+def branch_owners(commands: list[tuple[str, int, str]]) -> dict[str, str]:
+    """{branch: session key} from (session key, ts, command) rows: the first
+    session to push a branch, or open a PR for it, owns it."""
+    owners: dict[str, str] = {}
+    for key, _, command in sorted(commands, key=lambda row: row[1]):
+        if "push" not in command and "pr create" not in command:
+            continue
+        for words in _simple_commands(command):
+            for branch in _pushed(words):
+                owners.setdefault(branch, key)
+    return owners
 
 
 def _repo_state(repo: str, branches: list[str], *, refresh: bool) -> dict[str, Any]:
@@ -204,7 +311,16 @@ def _worktree_branch(row: dict[str, Any]) -> tuple[str, str] | None:
     return (repo, branch) if branch else None
 
 
-def build(sessions: list[dict[str, Any]], *, refresh: bool = False) -> dict[str, Any]:
+def build(
+    sessions: list[dict[str, Any]],
+    *,
+    owners: dict[str, str] | None = None,
+    refresh: bool = False,
+) -> dict[str, Any]:
+    """Rows for `sessions`. `owners` ({branch: session key}, from
+    branch_owners) adds the branches each session pushed beyond the one it
+    is on; those are listed only when they have a pull request."""
+    owners = owners or {}
     by_repo: dict[str, list[tuple[dict[str, Any], str]]] = {}
     for row in sessions:
         found = _worktree_branch(row)
@@ -213,18 +329,35 @@ def build(sessions: list[dict[str, Any]], *, refresh: bool = False) -> dict[str,
     rows: list[dict[str, Any]] = []
     repos: list[dict[str, Any]] = []
     for repo, members in by_repo.items():
-        state = _repo_state(repo, [b for _, b in members], refresh=refresh)
-        for session_row, branch in members:
-            if branch == state["default"]:
+        current = {branch for _, branch in members}
+        pushed = [
+            (session_row, branch)
+            for session_row, _ in members
+            for branch, key in owners.items()
+            if key == session_row["session_key"] and branch not in current
+        ]
+        state = _repo_state(repo, [b for _, b in members] + [b for _, b in pushed], refresh=refresh)
+        seen: set[str] = set()
+        for session_row, branch in [*members, *pushed]:
+            if branch == state["default"] or branch in seen:
                 continue
+            seen.add(branch)
+            on_branch = branch in current
             pr = _pull_for(state["pulls"], branch)
+            if pr is None and not on_branch:
+                continue
             session = {
                 "key": str(session_row["session_key"]),
                 "name": str(session_row.get("name") or session_row["session_key"]),
             }
-            built = _row(repo, state, branch=branch, pr=pr, session=session, local=True)
+            settled_key = (repo, pr["number"], pr["head_sha"]) if pr else None
+            built = _settled.get(settled_key) if settled_key and not on_branch else None
+            if built is None:
+                built = _row(repo, state, branch=branch, pr=pr, session=session, local=on_branch)
+                if settled_key and built and (built["status"] == "closed" or built["version"]):
+                    _settled[settled_key] = built
             if built:
-                rows.append(built)
+                rows.append({**built, "session": session})
         repos.append(
             {
                 "path": repo,
