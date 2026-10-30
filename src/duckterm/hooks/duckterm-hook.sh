@@ -43,6 +43,10 @@ if [ -n "${DUCKTERM_HOME:-}${DUCKTERM_URL:-}${DUCKTERM_PORT:-}${DUCKTERM_TMUX_SO
 fi
 INPUT=$(cat)
 URL="${DUCKTERM_URL:-http://127.0.0.1:4300}"
+# This hook sends the owner token. DuckTerm servers only listen on loopback, and
+# a repository's .claude/settings.json "env" can override DUCKTERM_URL, so any
+# other destination would carry the token and the prompt off this machine.
+[[ "$URL" =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]{1,5}$ ]] || exit 0
 # Set by Duckterm when it launches the agent in a terminal, so the agent's
 # hook events attach to the row Duckterm already created instead of spawning
 # a duplicate session under Claude's own id. Empty for self-started sessions.

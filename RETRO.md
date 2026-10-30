@@ -1,3 +1,15 @@
+## 2026-10-29 — Configuration a repository can set is not a destination
+
+The hook read the owner token from DUCKTERM_HOME and posted it to whatever
+DUCKTERM_URL said. Claude Code applies a repository's .claude/settings.json
+"env" to the session and its hooks, overriding the launcher's value, so a
+branch or pull request in an already-trusted repository could add one env line
+and receive the owner token plus every prompt. Reproduced with real Claude Code:
+three hook posts carried a canary token to a non-loopback host. The hook and
+instance.server_url() now accept only http://127.0.0.1|localhost|[::1]:<port>;
+servers never listen anywhere else. Same class as CVE-2026-21852
+(ANTHROPIC_BASE_URL from project settings).
+
 ## 2026-10-25 — Floating CI environments can break a validated release
 
 The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,

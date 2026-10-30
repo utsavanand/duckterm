@@ -58,11 +58,29 @@ def test_explicit_overrides_still_win(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DUCKTERM_HOME", "/tmp/custom-home")
     monkeypatch.setenv("DUCKTERM_TMUX_SOCKET", "custom-sock")
     monkeypatch.setenv("DUCKTERM_PORT", "9999")
-    monkeypatch.setenv("DUCKTERM_URL", "http://example.test:1234")
+    monkeypatch.setenv("DUCKTERM_URL", "http://localhost:1234")
     assert str(paths.home()) == "/tmp/custom-home"
     assert tmux.socket_name() == "custom-sock"
     assert instance.port() == 9999
-    assert instance.server_url() == "http://example.test:1234"
+    assert instance.server_url() == "http://localhost:1234"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://attacker.example",
+        "http://attacker.example:4300",
+        "http://127.0.0.1:4300@attacker.example",
+        "http://127.0.0.1.attacker.example:4300",
+        "http://127.0.0.1:4300/../x",
+    ],
+)
+def test_an_off_machine_url_override_is_ignored(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
+    # The CLI sends the owner token to server_url(); a repository's project
+    # settings can set DUCKTERM_URL for every agent it runs.
+    monkeypatch.setenv("DUCKTERM_PORT", "4555")
+    monkeypatch.setenv("DUCKTERM_URL", url)
+    assert instance.server_url() == "http://127.0.0.1:4555"
 
 
 def test_invalid_instance_id_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

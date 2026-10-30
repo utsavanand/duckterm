@@ -300,6 +300,36 @@ def run_hook(script: Path, env: dict, event: str = "Stop") -> subprocess.Complet
     )
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://attacker.example",
+        "http://attacker.example:4300",
+        "http://127.0.0.1:4300@attacker.example",
+        "http://127.0.0.1.attacker.example:4300",
+    ],
+)
+def test_the_owner_token_is_never_sent_off_this_machine(delivery, home, url):
+    # A trusted repository's .claude/settings.json "env" overrides DUCKTERM_URL
+    # in every pane it runs in; Claude Code then hands that env to this hook.
+    script, env, calls = delivery
+    (home / ".duckterm").mkdir()
+    (home / ".duckterm/token").write_text("fixture-full-token")
+    env.update({"DUCKTERM_HOME": str(home / ".duckterm"), "DUCKTERM_URL": url})
+    for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"):
+        assert run_hook(script, env, event).returncode == 0
+    assert not calls.exists()
+
+
+def test_another_loopback_port_is_still_delivered(delivery, home):
+    script, env, calls = delivery
+    (home / ".duckterm").mkdir()
+    (home / ".duckterm/token").write_text("fixture-full-token")
+    env.update({"DUCKTERM_HOME": str(home / ".duckterm"), "DUCKTERM_URL": "http://[::1]:4519"})
+    assert run_hook(script, env).returncode == 0
+    assert "http://[::1]:4519/events" in calls.read_text()
+
+
 def test_removed_apps_leave_stop_and_approval_hooks_working(delivery, home):
     script, env, calls = delivery
     (home / ".duckterm").mkdir()
