@@ -87,6 +87,7 @@ def test_parent_reads_every_child_summary_and_evidence_after_close_and_reopen(
         if not cursor:
             break
     assert len({s["id"] for s in all_sources}) < len(all_sources)
+    assert next(s for s in all_sources if s["kind"] == "conversation")["current"]
     assert seen == [(s["id"], s["version"]) for s in all_sources]
     for row in revisions:
         source = row["id"] + ":" + row["version"]
