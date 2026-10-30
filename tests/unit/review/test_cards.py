@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from duckterm.core.session_api import APIError
+from duckterm.llm import backend
 from duckterm.review import cards, chat, lists, store, workspace
 
 NO_SIGNING = ["-c", "tag.gpgsign=false", "-c", "commit.gpgsign=false"]
@@ -29,11 +30,20 @@ def commit(repo: Path, message: str) -> str:
     return run(repo, "rev-parse", "HEAD")
 
 
+def serve(monkeypatch: pytest.MonkeyPatch, generate: Any) -> None:
+    """Answer backend calls with a fake harness reply."""
+
+    async def complete(prompt: str, *, tier: str, schema: Any = None) -> backend.Reply:
+        return backend.Reply(await generate("claude-code", "sonnet", prompt, schema), "harness", "")
+
+    monkeypatch.setattr(backend, "complete", complete)
+
+
 @pytest.fixture
 def target(git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> workspace.Target:
     monkeypatch.setattr(lists.git, "github_slug", lambda repo: None)
     monkeypatch.setattr(lists.git, "remote_heads", lambda repo: None)
-    monkeypatch.setattr(cards, "provider", lambda: ("claude-code", "sonnet"))
+    monkeypatch.setattr(backend, "ready", lambda: True)
     lists._cache.clear()
     write(git_repo, "src/duckterm/server.py", "def route():\n    return 1\n")
     write(git_repo, "src/duckterm/persistence/db.py", "TABLES = []\n")
@@ -162,9 +172,7 @@ def test_cards_are_checked_against_the_diff_and_cached_per_head(
     target: workspace.Target, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[str] = []
-    monkeypatch.setattr(
-        cards.memory_provider, "generate", fake_generate(calls, garbage_first={"intent"})
-    )
+    serve(monkeypatch, fake_generate(calls, garbage_first={"intent"}))
     payload = payload_for(target)
     row = {"conflict": False, "checks": {"total": 2, "failed": 0, "pending": 0, "passed": 2}}
     result = asyncio.run(cards.generate_all(target, payload, row))
@@ -212,9 +220,7 @@ def test_failed_cards_are_omitted_with_the_reason_and_questions_use_what_is_read
     target: workspace.Target, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[str] = []
-    monkeypatch.setattr(
-        cards.memory_provider, "generate", fake_generate(calls, fail={"intent", "behaviour"})
-    )
+    serve(monkeypatch, fake_generate(calls, fail={"intent", "behaviour"}))
     result = asyncio.run(cards.generate_all(target, payload_for(target), None))
     by_id = {c["id"]: c for c in result["cards"]}
     assert by_id["intent"] == {**by_id["intent"], "status": "omitted", "reason": "provider down"}
@@ -229,7 +235,7 @@ def test_failed_cards_are_omitted_with_the_reason_and_questions_use_what_is_read
 def test_no_provider_omits_every_model_card(
     target: workspace.Target, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(cards, "provider", lambda: None)
+    monkeypatch.setattr(backend, "ready", lambda: False)
     result = asyncio.run(cards.generate_all(target, payload_for(target), None))
     by_id = {c["id"]: c for c in result["cards"]}
     assert by_id["intent"]["status"] == "omitted"
@@ -241,7 +247,7 @@ def test_no_provider_omits_every_model_card(
 def test_stale_head_marks_cards_for_regeneration(
     target: workspace.Target, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(cards.memory_provider, "generate", fake_generate([]))
+    serve(monkeypatch, fake_generate([]))
     asyncio.run(cards.generate_all(target, payload_for(target), None))
     repo = Path(target.repo)
     run(repo, "checkout", "-q", "duckterm/feature")
@@ -318,7 +324,7 @@ def test_chat_cites_paths_from_the_diff_and_fetches_requested_files_once(
             }
         )
 
-    monkeypatch.setattr(chat.memory_provider, "generate", generate)
+    serve(monkeypatch, generate)
     entry = asyncio.run(
         chat.ask(
             target,
@@ -348,7 +354,7 @@ def test_draft_review_groups_open_questions_by_kind(
     with pytest.raises(APIError) as not_ready:
         chat.draft_review(target)
     assert not_ready.value.status == 409
-    monkeypatch.setattr(cards.memory_provider, "generate", fake_generate([]))
+    serve(monkeypatch, fake_generate([]))
     asyncio.run(cards.generate_all(target, payload_for(target), None))
     body = chat.draft_review(target)
     assert body.startswith(f"Review of duckterm/feature at {target.head_sha[:7]} from DuckTerm.")
@@ -384,7 +390,7 @@ def test_planted_trailer_and_truthy_matcher_are_caught(
     run(repo, "checkout", "-q", "main")
     lists._cache.clear()
     moved = workspace.resolve(target.repo, "duckterm/feature")
-    monkeypatch.setattr(cards, "provider", lambda: None)
+    monkeypatch.setattr(backend, "ready", lambda: False)
     result = asyncio.run(cards.generate_all(moved, payload_for(moved), None))
     by_id = {c["id"]: c for c in result["cards"]}
     tests = by_id["tests"]
@@ -430,7 +436,7 @@ def test_tests_card_merges_model_coverage_with_facts(
             {"rule": "bad", "status": "maybe", "location": "", "note": ""},
         ]
     }
-    monkeypatch.setattr(cards.memory_provider, "generate", fake_generate([]))
+    serve(monkeypatch, fake_generate([]))
     result = asyncio.run(cards.generate_all(target, payload_for(target), None))
     by_id = {c["id"]: c for c in result["cards"]}
     tests = by_id["tests"]["data"]

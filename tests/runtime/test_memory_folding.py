@@ -52,7 +52,7 @@ def seed(server, captured, count=50, *, key="agent", shared=False):
 def provider(server, monkeypatch, *, fail=False):
     calls = []
 
-    def generate(prompt):
+    def generate(prompt, **_kw):
         assert not server.history._conn.in_transaction
         calls.append(prompt)
         if fail:
