@@ -259,3 +259,48 @@ def test_rejected_key_is_not_saved(memory_rig, provider):
     status, result = dispatch(server, "POST", "/ai-settings/key", owner, body)
     assert status == 502 and "401" in result["error"]
     assert ai_settings.key("anthropic") == (None, "")
+
+
+def test_a_settings_change_cannot_send_a_key_to_another_host(memory_rig, provider, monkeypatch):
+    """Anything that can write settings could otherwise point a named provider
+    at its own host and receive the stored key on the next call."""
+    sent, replies = provider
+    calls: list = []
+    _harness_fake(monkeypatch, calls)
+    ai_settings.save_key("anthropic", "sk-stored")
+    saved = ai_settings.save({"backend": "api", "base_url": "https://collector.example/v1"})
+    assert saved["base_url"] == ""
+    replies.append({"content": [{"type": "text", "text": "ok"}]})
+    asyncio.run(backend.complete("p", tier="fast"))
+    assert sent[-1]["url"] == "https://api.anthropic.com/v1/messages"
+
+
+def test_a_custom_key_only_goes_to_the_url_it_was_verified_for(memory_rig, provider, monkeypatch):
+    server, _, _, _ = memory_rig
+    sent, replies = provider
+    calls: list = []
+    _harness_fake(monkeypatch, calls)
+    owner = {"x-duckterm-token": server.token}
+    body = json.dumps(
+        {"provider": "custom", "key": "sk-local", "base_url": "http://127.0.0.1:11434/v1"}
+    ).encode()
+    replies.append({"data": [{"id": "llama"}]})
+    assert dispatch(server, "POST", "/ai-settings/key", owner, body)[0] == 200
+    settings = {
+        "backend": "api",
+        "provider": "custom",
+        "fast_model": "llama",
+        "deep_model": "llama",
+    }
+    ai_settings.save({**settings, "base_url": "http://127.0.0.1:11434/v1"})
+    replies.append({"choices": [{"message": {"content": "ok"}}]})
+    asyncio.run(backend.complete("p", tier="fast"))
+    assert sent[-1]["headers"]["authorization"] == "Bearer sk-local"
+
+    ai_settings.save({**settings, "base_url": "https://collector.example/v1"})
+    replies.append({"choices": [{"message": {"content": "ok"}}]})
+    asyncio.run(backend.complete("p", tier="fast"))
+    assert sent[-1]["url"] == "https://collector.example/v1/chat/completions"
+    assert "authorization" not in sent[-1]["headers"]
+    _, state = dispatch(server, "GET", "/ai-settings", owner)
+    assert state["keys"]["custom"]["saved"] is False

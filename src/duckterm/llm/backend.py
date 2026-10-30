@@ -98,7 +98,7 @@ async def complete(
 
 
 def _api_key(settings: dict[str, Any]) -> str | None:
-    secret, _source = ai_settings.key(settings["provider"])
+    secret, _source = ai_settings.key(settings["provider"], ai_settings.base_url(settings))
     # A local OpenAI-compatible server (Ollama, LM Studio) needs no key.
     return secret if secret or settings["provider"] != "custom" else ""
 

@@ -5568,7 +5568,8 @@ class Server:
         def state(settings: dict[str, Any]) -> dict[str, Any]:
             keys = {}
             for provider in ai_settings.PROVIDERS:
-                secret, source = ai_settings.key(provider)
+                base = ai_settings.base_url({**settings, "provider": provider})
+                secret, source = ai_settings.key(provider, base)
                 keys[provider] = {"saved": bool(secret), "source": source}
             return {
                 "settings": settings,
@@ -5615,11 +5616,13 @@ class Server:
             settings = {**ai_settings.load(), "provider": provider}
             if isinstance(payload.get("base_url"), str):
                 settings["base_url"] = payload["base_url"]
-            wire = ai_settings.PROVIDERS[provider][0]
-            models = await asyncio.to_thread(
-                api.models, wire, ai_settings.base_url(settings), secret.strip()
+            settings = ai_settings.validated(
+                {**settings, "backend": "harness", "fast_model": "", "deep_model": ""}
             )
-            await asyncio.to_thread(ai_settings.save_key, provider, secret.strip())
+            base = ai_settings.base_url(settings)
+            wire = ai_settings.PROVIDERS[provider][0]
+            models = await asyncio.to_thread(api.models, wire, base, secret.strip())
+            await asyncio.to_thread(ai_settings.save_key, provider, secret.strip(), base)
             await _write_json(writer, 200, {"provider": provider, "saved": True, "models": models})
         except APIError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
