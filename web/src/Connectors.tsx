@@ -33,9 +33,6 @@ function availabilityLabel(c: Connector): string {
 const sourceNames: Record<string, string> = {
   "gh-cli": "GitHub CLI login on this computer",
   stored: "Stored API credentials",
-  anonymous: "Public access (no token)",
-  "google-oauth": "Google OAuth on this computer",
-  "gcloud-cli": "Google Cloud CLI account",
   "railway-cli": "Railway CLI login on this computer",
 };
 
@@ -176,12 +173,22 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
       </div>}
       {c.enabled && <div className="rd-connector-desc">{availabilityLabel(c)}</div>}
       {c.managed ? <div className="rd-connector-desc">Managed through the remote connector administrator.</div> : <>
-        {c.credential && <div className="rd-connector-installed">
-          <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => edit(c)}>Change connection</button>
-          <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Forget stored credentials</button>
-          <a href={c.revoke_url} target="_blank" rel="noreferrer">Revoke at {c.title} ↗</a>
-          <div>Revocation must be completed on the provider’s website. Disable does not revoke authorization.</div>
-        </div>}
+        {/* A secret can outlive its connection (saved, then never enabled),
+            so a stored one must stay forgettable even with no active source. */}
+        {(c.credential || c.stored_secret) && <>
+          <div className="rd-connector-installed">
+            {/* The row header already offers Connect when there is no source. */}
+            {c.credential && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => edit(c)}>Change connection</button>}
+            {/* Forget deletes a stored secret and disables the connector. Offering it
+                for a provider CLI login would disable a working connector to delete
+                nothing, so it appears only when Duckterm holds the credential. */}
+            {c.stored_secret && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Forget stored credentials</button>}
+            {c.stored_secret && <a href={c.revoke_url} target="_blank" rel="noreferrer">Revoke at {c.title} ↗</a>}
+          </div>
+          <div className="rd-connector-desc">{c.stored_secret
+            ? "Revocation must be completed on the provider’s website. Disable does not revoke authorization."
+            : `Uses your ${c.title} CLI login on this computer. Duckterm stores no credential for it — sign out of that CLI to revoke access.`}</div>
+        </>}
         {editing === c.name && <div className="rd-connector-token">
           <label>Credential source <select aria-label={`${c.title} credential source`} value={source} onChange={e => { setSource(e.target.value); setToken(""); setSecret(""); }}>
             <option value="" disabled>Choose a source</option>
