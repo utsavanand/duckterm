@@ -30,6 +30,13 @@ declare global {
 // exist for this dashboard; every host list, launch target and remote poll
 // reads them through desktop().
 let remoteWorkspaces: boolean | null = null;
+let collaboration = false;
+
+// The bridge advertises native support, but the active server may not provide
+// collaboration. Core folder actions must then use their ordinary HTTP routes.
+export function allowCollaboration(allowed: boolean): void {
+  collaboration = allowed;
+}
 
 export function allowRemoteWorkspaces(allowed: boolean | null): void {
   if (allowed === remoteWorkspaces) return;
@@ -45,8 +52,10 @@ export function hiddenHost(host: string): "pending" | "hidden" | null {
 
 export function desktop(): Desktop | undefined {
   const bridge = window.__rubbertermDesktop;
-  if (!bridge || remoteWorkspaces === true) return bridge;
-  return { ...bridge, currentTarget: "local", launchTarget: undefined, targets: bridge.targets.filter(t => t.id === "local") };
+  if (!bridge) return bridge;
+  const available = { ...bridge, canCollaborate: bridge.canCollaborate === true && collaboration };
+  if (remoteWorkspaces === true) return available;
+  return { ...available, currentTarget: "local", launchTarget: undefined, targets: bridge.targets.filter(t => t.id === "local") };
 }
 
 export function clearLaunchDraft(): void {

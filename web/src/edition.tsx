@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { api, EditionDescription } from "./api";
-import { allowRemoteWorkspaces } from "./desktop";
+import { allowCollaboration, allowRemoteWorkspaces } from "./desktop";
 
 // Features outside the Lite core. Core surfaces (folders, terminal, shell,
 // messages, forks, session status) are never gated here.
@@ -58,6 +58,11 @@ export function EditionProvider({ children, onError }: { children: ReactNode; on
   const reload = useCallback(() => refresh.current(), []);
   const remote = state.status === "ready" ? state.description.features.includes("remote_workspaces") : null;
   useEffect(() => allowRemoteWorkspaces(remote), [remote]);
+  const collaboration = state.status === "ready" && state.description.features.includes("inbox");
+  useEffect(() => {
+    allowCollaboration(collaboration);
+    return () => allowCollaboration(false);
+  }, [collaboration]);
   const error = state.status === "error" ? state.error : null;
   useEffect(() => { if (error) onError?.(error); }, [error, onError]);
   const value = useMemo(() => ({ state, refresh: reload }), [state, reload]);
