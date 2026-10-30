@@ -75,7 +75,7 @@ def test_artifact_scope_auth_and_session_lifecycle(app):
 def test_folder_ask_isolated_history_and_empty_scope(app, monkeypatch):
     prompts = []
 
-    def summarize(prompt):
+    def summarize(prompt, **_kw):
         prompts.append(prompt)
         return SimpleNamespace(text="Folder-specific answer", backend="test")
 
@@ -130,7 +130,7 @@ def test_subtree_rename_delete_and_late_answer(app, monkeypatch):
             "new", "later", lambda: app.history.move_folder("new", "later")
         )
 
-    def summarize(_):
+    def summarize(_, **_kw):
         # Concurrent requests mutate DB on its owner loop, not in inference.
         asyncio.run_coroutine_threadsafe(rename(), loop).result(timeout=5)
         return SimpleNamespace(text="Stale answer", backend="test")

@@ -1,3 +1,14 @@
+## 2026-10-29 — Measure where the seconds go before buying speed
+
+DuckTerm's AI features felt slow, and the assumed fix was API keys. Timing the
+harness showed that spawning Claude Code cost about 1.2 s of a 7.5 s call; output
+length and the model did the rest. Meanwhile, calls that named no model ran on
+the owner's default model (often Opus), and Claude ignored our JSON schemas,
+which cost a repair call. Each call now names a fast or deep tier, which sets the
+model and effort. Claude enforces schemas with `--json-schema`. Codex goes
+through the isolated runner. An API key backend is available as an option and
+falls back to the harness when it fails.
+
 ## 2026-10-25 — Floating CI environments can break a validated release
 
 The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,

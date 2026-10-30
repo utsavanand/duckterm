@@ -25,7 +25,7 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 def test_no_backend_returns_empty_none(clean_env: None) -> None:
-    result = summarize("anything")
+    result = summarize("anything", tier="fast")
     assert result.backend == "none"
     assert result.text == ""
     assert result.failure_reason == "no_provider"
@@ -34,14 +34,14 @@ def test_no_backend_returns_empty_none(clean_env: None) -> None:
 def test_cli_backend_runs_command(clean_env: None) -> None:
     # A trivial "summarizer" that echoes a fixed line.
     os.environ["DUCKTERM_SUMMARIZER_CMD"] = "printf 'did the thing'"
-    result = summarize("the prompt")
+    result = summarize("the prompt", tier="fast")
     assert result.backend == "cli"
     assert result.text == "did the thing"
 
 
 def test_cli_backend_failure_falls_back_to_none(clean_env: None) -> None:
     os.environ["DUCKTERM_SUMMARIZER_CMD"] = "false"
-    result = summarize("x")
+    result = summarize("x", tier="fast")
     assert result.backend == "none"
     assert result.failure_reason == "provider_failed"
 
@@ -51,7 +51,7 @@ def test_cli_subprocess_marks_itself_internal(clean_env: None) -> None:
     # hooks. Without DUCKTERM_INTERNAL the subprocess would report a phantom
     # session back into Duckterm on every checkpoint. Prove the env reaches it.
     os.environ["DUCKTERM_SUMMARIZER_CMD"] = 'printf "%s" "$DUCKTERM_INTERNAL"'
-    result = summarize("x")
+    result = summarize("x", tier="fast")
     assert result.backend == "cli"
     assert result.text == "1"
 
@@ -74,15 +74,15 @@ def test_build_prompt_includes_all_sections() -> None:
     assert "user: hi" in p
 
 
-def test_auto_detects_installed_agent(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    import duckterm.llm.summarizer as s
+def test_auto_detects_installed_harness(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    from duckterm.llm import backend
 
-    monkeypatch.delenv("DUCKTERM_SUMMARIZER_CMD", raising=False)
-    monkeypatch.delenv("DUCKTERM_SUMMARIZER_URL", raising=False)
-    monkeypatch.delenv("DUCKTERM_SUMMARIZER", raising=False)
     # Pretend only codex is installed.
-    monkeypatch.setattr(s.shutil, "which", lambda b: "/usr/bin/codex" if b == "codex" else None)
-    assert s._auto_command() == "codex exec -"
+    monkeypatch.setattr(
+        backend.shutil, "which", lambda b: "/usr/bin/codex" if b == "codex" else None
+    )
+    assert backend.harness() == "codex"
+    assert backend.harness("claude-code") is None
 
 
 def test_summarizer_off_disables_autodetect_only(monkeypatch) -> None:  # type: ignore[no-untyped-def]
@@ -93,12 +93,12 @@ def test_summarizer_off_disables_autodetect_only(monkeypatch) -> None:  # type: 
     monkeypatch.delenv("DUCKTERM_SUMMARIZER_URL", raising=False)
     monkeypatch.setenv("DUCKTERM_SUMMARIZER", "off")
     monkeypatch.setattr(s.shutil, "which", lambda _b: "/usr/bin/claude")
-    assert s.summarize("x").backend == "none"
-    assert s.summarize("x").failure_reason == "disabled"
+    assert s.summarize("x", tier="fast").backend == "none"
+    assert s.summarize("x", tier="fast").failure_reason == "disabled"
 
     # ...but an explicitly-set backend still wins.
     monkeypatch.setenv("DUCKTERM_SUMMARIZER_CMD", "printf done")
-    assert s.summarize("x").text == "done"
+    assert s.summarize("x", tier="fast").text == "done"
 
 
 @pytest.mark.parametrize(
@@ -117,7 +117,7 @@ def test_cli_failure_category_excludes_raw_output(clean_env, monkeypatch, failur
         raise failure
 
     monkeypatch.setattr(s.subprocess, "run", fail)
-    result = s.summarize("x")
+    result = s.summarize("x", tier="fast")
     assert result.failure_reason == reason
     assert result.text == ""
 
@@ -139,13 +139,22 @@ def test_http_failure_category_excludes_raw_output(clean_env, monkeypatch, failu
         raise failure
 
     monkeypatch.setattr(s.urllib.request, "urlopen", fail)
-    result = s.summarize("x")
+    result = s.summarize("x", tier="fast")
     assert result.failure_reason == reason
     assert result.text == ""
 
 
-@pytest.mark.parametrize("binary,harness", [("claude", "claude-code")])
-def test_auto_summary_uses_bounded_isolated_runner(clean_env, monkeypatch, binary, harness):
+@pytest.mark.parametrize(
+    ("binary", "harness", "tier", "model", "effort"),
+    [
+        ("claude", "claude-code", "fast", "haiku", "low"),
+        ("claude", "claude-code", "deep", "sonnet", "medium"),
+        ("codex", "codex", "fast", "", "low"),
+    ],
+)
+def test_auto_summary_uses_bounded_isolated_runner(
+    clean_env, monkeypatch, binary, harness, tier, model, effort
+):
     from duckterm import memory_provider
     from duckterm.llm import summarizer
 
@@ -159,15 +168,32 @@ def test_auto_summary_uses_bounded_isolated_runner(clean_env, monkeypatch, binar
     monkeypatch.setattr(summarizer, "_cli_summary", legacy)
     calls = []
 
-    async def generate(selected, model, prompt, **options):
-        calls.append((selected, model, prompt))
-        assert options == {"user_settings": True}
+    async def generate(selected, chosen, prompt, schema, **options):
+        calls.append((selected, chosen, prompt, schema, options))
         return "Prepared summary"
 
     monkeypatch.setattr(memory_provider, "generate", generate)
-    result = summarizer.summarize("Original evidence", claude_model="selected-model")
+    result = summarizer.summarize("Original evidence", tier=tier)
     assert result.text == "Prepared summary" and result.backend == "cli"
-    assert calls == [(harness, "selected-model" if binary == "claude" else "", "Original evidence")]
+    assert calls == [
+        (harness, model, "Original evidence", None, {"user_settings": True, "effort": effort})
+    ]
+
+
+def test_pinned_claude_model_wins_over_tier_model(clean_env, monkeypatch):
+    from duckterm import memory_provider
+    from duckterm.llm import summarizer
+
+    monkeypatch.setattr(summarizer.shutil, "which", lambda b: "/fixture/claude")
+    models = []
+
+    async def generate(selected, chosen, prompt, schema, **options):
+        models.append(chosen)
+        return "ok"
+
+    monkeypatch.setattr(memory_provider, "generate", generate)
+    summarizer.summarize("x", tier="deep", claude_model="opus")
+    assert models == ["opus"]
 
 
 @pytest.mark.parametrize("timed_out", [True, False])
@@ -191,24 +217,23 @@ def test_auto_summary_runner_failure_stays_explicit(clean_env, monkeypatch, time
         )
 
     monkeypatch.setattr(memory_provider, "generate", generate)
-    result = summarizer.summarize("Original evidence")
+    result = summarizer.summarize("Original evidence", tier="deep")
     assert result.text == "" and result.backend == "none"
     assert result.failure_reason == ("provider_timeout" if timed_out else "provider_failed")
 
 
-def test_auto_codex_keeps_existing_user_configuration_path(clean_env, monkeypatch):
+def test_copilot_is_the_last_resort_without_claude_or_codex(clean_env, monkeypatch):
     from duckterm.llm import summarizer
 
     monkeypatch.setattr(
-        summarizer.shutil, "which", lambda b: "/fixture/codex" if b == "codex" else None
+        summarizer.shutil, "which", lambda b: "/fixture/copilot" if b == "copilot" else None
     )
     calls = []
 
     def cli(command, prompt):
         calls.append((command, prompt))
-        return summarizer.Summary("Default Codex result", "cli")
+        return summarizer.Summary("Copilot result", "cli")
 
     monkeypatch.setattr(summarizer, "_cli_summary", cli)
-    result = summarizer.summarize("fixture", claude_model="claude-only-model")
-    assert result.text == "Default Codex result"
-    assert calls == [("codex exec -", "fixture")]
+    assert summarizer.summarize("fixture", tier="fast").text == "Copilot result"
+    assert calls == [("copilot -p", "fixture")]

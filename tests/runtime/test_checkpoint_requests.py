@@ -75,7 +75,7 @@ def test_summary_rejection_is_complete_request_but_failed_summary(rig, monkeypat
     from duckterm.llm.summarizer import Summary
 
     server, _, _ = rig
-    monkeypatch.setattr("duckterm.server.summarize", lambda _: Summary("", "none"))
+    monkeypatch.setattr("duckterm.server.summarize", lambda _, **_kw: Summary("", "none"))
     status, result = asyncio.run(request(server))
     assert status == 200 and result["summary_update"]["state"] == "failed"
     receipt = server.checkpoint_requests.receipt("test-save", "request-one")

@@ -72,7 +72,7 @@ def provider(monkeypatch, replies):
     calls = []
     values = iter(replies)
 
-    def summarize(prompt):
+    def summarize(prompt, **_kw):
         calls.append(prompt)
         value = next(values)
         if isinstance(value, Exception):
@@ -108,7 +108,7 @@ def test_coalesced_refresh_survives_one_waiter_cancel_and_reuses_without_calls(r
     started, release = threading.Event(), threading.Event()
     calls = []
 
-    def summarize(prompt):
+    def summarize(prompt, **_kw):
         calls.append(prompt)
         if len(calls) == 1:
             started.set()
@@ -146,7 +146,7 @@ def test_older_same_generation_completion_cannot_replace_newer_cache(rig, monkey
     calls = []
     lock = threading.Lock()
 
-    def summarize(prompt):
+    def summarize(prompt, **_kw):
         with lock:
             calls.append(prompt)
             number = len(calls)
@@ -266,7 +266,7 @@ def test_policy_changed_during_generation_cannot_promote_old_policy_as_ready(rig
     calls = []
     monkeypatch.setenv("DUCKTERM_SUMMARIZER_CMD", "synthetic-policy-A")
 
-    def summarize(prompt):
+    def summarize(prompt, **_kw):
         calls.append(prompt)
         if len(calls) == 1:
             started.set()
