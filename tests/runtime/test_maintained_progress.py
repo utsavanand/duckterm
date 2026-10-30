@@ -78,16 +78,16 @@ def test_new_revision_processes_only_new_records_and_checkpoint_reuses(memory_ri
             "memory_sources"
         ]  # native originals retained; no duplicate session-card snapshot
         again = await server.progress_coordinator.refresh("agent")
-        assert again["id"] == first["id"] and len(calls) == 2
+        assert again["id"] == first["id"] and len(calls) == 1
         append(path, "New owner constraint")
         second = await server.progress_coordinator.refresh("agent")
         assert second["id"] != first["id"]
-        data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
+        data = json.loads(calls[1].split("MEMORY UPDATE:\n", 1)[1])
         assert [r["text"] for r in data["records"]] == ["New owner constraint"]
         assert "prior_context" not in data
         cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
         assert cp["record"]["summary_ref"] == second["id"]
-        assert len(calls) == 4
+        assert len(calls) == 2
         assert server.digests.revision("agent", first["id"])["continuity"] == first["continuity"]
 
     asyncio.run(run())
@@ -104,11 +104,9 @@ def test_backlog_completes_bounded_spans_and_failure_preserves_completed_summary
 
     async def run():
         first = await server.progress_coordinator.refresh("agent")
-        assert len(calls) > 2
+        assert len(calls) > 1
         assert first["continuity"]["remaining_records"] == 0
-        assert all(
-            len(prompt.encode()) <= memory_spans.MAX_GENERATION_BYTES for prompt in calls[::2]
-        )
+        assert all(len(prompt.encode()) <= memory_spans.MAX_GENERATION_BYTES for prompt in calls)
         count = len(calls)
         second = await server.progress_coordinator.refresh("agent")
         assert second["id"] == first["id"] and len(calls) == count
@@ -134,7 +132,7 @@ def test_rewritten_record_refuses_reuse_without_reciting_removed_claim(memory_ri
         transcript(tmp, "agent-claude", "Corrected direction")
         update = await server.progress_coordinator.refresh_result("agent")
         assert update.state == "failed" and update.reason == "source_changed"
-        assert len(calls) == 2
+        assert len(calls) == 1
         assert server.digests.revision("agent", first["id"]) is not None
 
     asyncio.run(run())
@@ -192,7 +190,7 @@ def test_manual_checkpoint_joins_running_explicit_summary(memory_rig, monkeypatc
         finally:
             released.set()
         revision, cp = await asyncio.gather(automatic, manual)
-        assert cp["record"]["summary_ref"] == revision["id"] and len(calls) == 2
+        assert cp["record"]["summary_ref"] == revision["id"] and len(calls) == 1
 
     asyncio.run(run())
 
@@ -224,6 +222,7 @@ def test_scheduled_exit_update_does_not_summarize_a_replacement_conversation(
 
 
 def test_cold_start_preserves_chronology_then_processes_only_new_append(memory_rig, monkeypatch):
+    monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", 16000)
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Earlier direction: " + "x" * 11000)
     append(path, "Later correction: " + "y" * 11000)
@@ -231,18 +230,22 @@ def test_cold_start_preserves_chronology_then_processes_only_new_append(memory_r
 
     async def run():
         await server.progress_coordinator.refresh("agent")
-        assert len(calls) == 4
-        assert "Earlier direction" in calls[0] and "Later correction" in calls[2]
+        # Two spans, written concurrently in either order, each with its own records.
+        assert len(calls) == 2
+        assert sorted(("Earlier direction" in c, "Later correction" in c) for c in calls) == [
+            (False, True),
+            (True, False),
+        ]
         append(path, "New owner message after the first summary")
         await server.progress_coordinator.refresh("agent")
-        data = json.loads(calls[4].split("MEMORY UPDATE:\n", 1)[1])
+        data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
         assert [r["text"] for r in data["records"]] == ["New owner message after the first summary"]
         assert "prior_context" not in data
 
     asyncio.run(run())
 
 
-def test_checkpoint_reports_updated_only_after_all_bounded_spans(memory_rig, monkeypatch):
+def test_checkpoint_summarizes_all_records_by_default_across_bounded_spans(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Original constraint")
     for n in range(100):
@@ -251,12 +254,13 @@ def test_checkpoint_reports_updated_only_after_all_bounded_spans(memory_rig, mon
 
     async def run():
         cp = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
-        assert len(calls) > 2
+        assert len(calls) > 1
         assert cp["summary_update"]["state"] == "updated"
         revision = server.digests.revision("agent", cp["record"]["summary_ref"])
         rows = memory_folding.rows(server.digests, "agent", revision["source"]["scope_hash"])
-        assert sum(r["continuity"]["summarized_records"] for r in rows) == 20
-        assert cp["summary_update"]["span_coverage"]["outside_window_records"] == 81
+        assert sum(r["continuity"]["summarized_records"] for r in rows) == 101
+        assert cp["summary_update"]["span_coverage"]["outside_window_records"] == 0
+        assert cp["summary_update"]["span_coverage"]["lookback_records"] == "all"
         assert all(r["continuity"]["verified"] for r in rows)
         assert cp["handoff_eligible"]
 
@@ -322,7 +326,7 @@ def test_large_notes_remain_current_work_instead_of_reentering_summary_input(
         server.history.set_meta("agent", notes="🔒" * 6500)
         outcome = await server.progress_coordinator.refresh_result("agent")
         assert outcome.state == "reused"
-        assert len(calls) == 2
+        assert len(calls) == 1
         assert "🔒" * 6500 not in "".join(calls)
         assert server.digests.revision("agent", first["id"])["continuity"] == first["continuity"]
 

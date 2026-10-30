@@ -262,7 +262,8 @@ def test_view_and_evidence_reuse_records_without_generation_or_writes(memory_rig
 def test_complete_range_and_historical_span_are_distinct(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Oldest direction")
-    monkeypatch.setattr("duckterm.memory_spans.MAX_RECORDS", 4)
+    # Spans of a few ~1 KB records each.
+    monkeypatch.setattr("duckterm.memory_spans.MAX_GENERATION_BYTES", 8000)
     for n in range(12):
         append(path, f"Record {n}: " + "x" * 1000)
     provider(monkeypatch)

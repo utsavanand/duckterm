@@ -12,24 +12,25 @@ from duckterm.core.session_api import APIError
 from duckterm.helpers import paths
 
 DEFAULTS: dict[str, Any] = {
-    "lookback_records": 20,
-    "batch_records": 20,
+    "lookback_records": "all",
     "writer_model": "haiku",
+    # Used by pull-request review; checkpoint spans are no longer model-reviewed.
     "reviewer_model": "sonnet",
 }
 MODELS = {"haiku", "sonnet", "opus"}
+# Settings files written before spans were byte-bounded still carry this key.
+RETIRED = {"batch_records"}
 
 
 def validated(value: Any, *, stored: bool = False) -> dict[str, Any]:
-    allowed = set(DEFAULTS) if stored else set(DEFAULTS) - {"batch_records"}
-    if not isinstance(value, dict) or set(value) - allowed:
+    if isinstance(value, dict) and stored:
+        value = {k: v for k, v in value.items() if k not in RETIRED}
+    if not isinstance(value, dict) or set(value) - set(DEFAULTS):
         raise APIError(400, "Unknown checkpoint setting")
     result = {**DEFAULTS, **value}
     count = result["lookback_records"]
-    if type(count) is not int or not 1 <= count <= 1000:
-        raise APIError(400, "Checkpoint lookback must be an integer from 1 to 1000 records")
-    if type(result["batch_records"]) is not int or result["batch_records"] != 20:
-        raise APIError(400, "Checkpoint batches contain at most 20 records")
+    if count != "all" and (type(count) is not int or not 1 <= count <= 1000):
+        raise APIError(400, "Checkpoint lookback must be all or an integer from 1 to 1000 records")
     if any(
         result[k] not in MODELS
         for k in ("writer_model", "reviewer_model")

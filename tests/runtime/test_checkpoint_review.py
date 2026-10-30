@@ -1,4 +1,4 @@
-"""Review failures remain blocking and retain bounded, distinct diagnostics."""
+"""Review verdicts keep distinct diagnostics; checkpoint spans are checked mechanically."""
 
 import asyncio
 import json
@@ -66,42 +66,35 @@ def test_inconsistent_stored_verdict_cannot_be_reported_as_updated():
     assert result.diagnostic == "review_inconsistent_verdict:contradiction"
 
 
-@pytest.mark.parametrize(
-    "reply,state,codes",
-    [
-        ("private malformed reviewer response", "malformed_reply", []),
-        ({"accept": []}, "missing_verdict", []),
-        (
-            {
-                "accept": [],
-                "summary_validation": {
-                    "ready": False,
-                    "reason_codes": ["required_context_missing"],
-                },
-            },
-            "rejected",
-            ["required_context_missing"],
-        ),
-        (
-            {
-                "accept": [],
-                "summary_validation": {"ready": True, "reason_codes": ["contradiction"]},
-            },
-            "inconsistent_verdict",
-            ["contradiction"],
-        ),
-        ({"accept": [], "summary_validation": {"ready": True}}, "invalid_reason_codes", []),
-    ],
-)
-def test_checkpoint_attempt_keeps_review_diagnostic_and_last_good_revision(
-    memory_rig, monkeypatch, reply, state, codes
-):
+def test_checkpoint_span_is_not_model_reviewed(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
-    path = transcript(tmp, "agent-claude", "Initial owner constraint")
+    transcript(tmp, "agent-claude", "Initial owner constraint")
     provider(monkeypatch)
     import duckterm.server as server_module
 
     generate = server_module.summarize
+    prompts = []
+
+    def recorded(prompt, **kwargs):
+        prompts.append(prompt)
+        return generate(prompt, **kwargs)
+
+    monkeypatch.setattr(server_module, "summarize", recorded)
+    saved = asyncio.run(
+        server._create_checkpoint("agent", server.history.session("agent"), "manual")
+    )
+    assert saved["summary_update"]["state"] == "updated"
+    assert len(prompts) == 1 and not prompts[0].startswith("You are validating")
+    revision = server.digests.revision("agent", saved["record"]["summary_ref"])
+    assert revision["summary_review"] == {"state": "not_reviewed", "reason_codes": []}
+    assert revision["summary_validation"] == {"ready": True, "reason_codes": []}
+
+
+def test_unusable_writer_reply_keeps_diagnostic_and_last_good_revision(memory_rig, monkeypatch):
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "Initial owner constraint")
+    provider(monkeypatch)
+    import duckterm.server as server_module
 
     async def checkpoint():
         return await server._create_checkpoint("agent", server.history.session("agent"), "manual")
@@ -110,26 +103,26 @@ def test_checkpoint_attempt_keeps_review_diagnostic_and_last_good_revision(
         first = await checkpoint()
         assert first["summary_update"]["state"] == "updated"
         append(path, "Keep an additional owner constraint")
+        replies = []
 
-        def rejected(prompt, **kwargs):
-            if prompt.startswith("You are validating"):
-                return SimpleNamespace(text=reply if isinstance(reply, str) else json.dumps(reply))
-            return generate(prompt, **kwargs)
+        def unusable(prompt, **kwargs):
+            replies.append(prompt)
+            return SimpleNamespace(text="private malformed writer response")
 
-        monkeypatch.setattr(server_module, "summarize", rejected)
+        monkeypatch.setattr(server_module, "summarize", unusable)
         failed = await checkpoint()
         attempt = failed["summary_update"]
+        # The draft gets one format repair, then the attempt fails without saving.
+        assert len(replies) == 2
         assert attempt["state"] == "failed" and attempt["revision_id"] is None
-        assert attempt["reason"] == "summary_unverified"
-        assert attempt["review"] == {"state": state, "reason_codes": codes}
-        assert attempt["diagnostic"].startswith("review_" + state)
+        assert attempt["reason"] == "invalid_summary"
         assert failed["record"]["summary_ref"] == first["record"]["summary_ref"]
         assert failed["summary"] == first["summary"]
         stored = server.history._conn.execute(
             "SELECT record_json FROM checkpoints WHERE id=?", (failed["id"],)
         ).fetchone()[0]
         assert json.loads(stored)["summary_update"] == attempt
-        assert "private malformed reviewer response" not in stored
+        assert "private malformed writer response" not in stored
 
     asyncio.run(run())
 
@@ -155,93 +148,3 @@ def test_accepted_review_with_failed_source_fence_is_not_called_a_reviewer_rejec
     assert result.state == "failed"
     assert result.diagnostic == "summary_not_ready:legacy_baseline_unreviewed"
     assert result.review["state"] == "accepted"
-
-
-def test_vague_rejection_retries_reviewer_without_rewriting_summary(memory_rig, monkeypatch):
-    server, _, _, tmp = memory_rig
-    transcript(tmp, "agent-claude", "Keep the owner constraint")
-    provider(monkeypatch)
-    import duckterm.server as server_module
-
-    generate = server_module.summarize
-    reviews = []
-    drafts = []
-
-    def review_once_more(prompt, **kwargs):
-        if prompt.startswith("You are validating"):
-            reviews.append(prompt)
-            if len(reviews) == 1:
-                return SimpleNamespace(
-                    text=json.dumps(
-                        {
-                            "accept": [],
-                            "summary_validation": {
-                                "ready": False,
-                                "reason_codes": ["summary_unverified"],
-                            },
-                        }
-                    )
-                )
-            return generate(prompt, **kwargs)
-        drafts.append(prompt)
-        return generate(prompt, **kwargs)
-
-    monkeypatch.setattr(server_module, "summarize", review_once_more)
-    saved = asyncio.run(
-        server._create_checkpoint("agent", server.history.session("agent"), "manual")
-    )
-    assert saved["summary_update"]["state"] == "updated"
-    assert len(reviews) == 2 and reviews[0] == reviews[1]
-    assert len(drafts) == 1
-
-
-def test_specific_rejection_persists_bounded_corrections(memory_rig, monkeypatch):
-    server, _, _, tmp = memory_rig
-    path = transcript(tmp, "agent-claude", "Initial owner constraint")
-    provider(monkeypatch)
-    import duckterm.server as server_module
-
-    generate = server_module.summarize
-
-    async def checkpoint():
-        return await server._create_checkpoint("agent", server.history.session("agent"), "manual")
-
-    async def run():
-        first = await checkpoint()
-        append(path, "Keep an additional owner constraint")
-
-        def rejected(prompt, **kwargs):
-            if prompt.startswith("You are validating"):
-                return SimpleNamespace(
-                    text=json.dumps(
-                        {
-                            "accept": [],
-                            "summary_corrections": [
-                                {
-                                    "field": "summary",
-                                    "correction": "The new constraint is absent.",
-                                    "source": "record-2",
-                                }
-                            ],
-                            "summary_validation": {
-                                "ready": False,
-                                "reason_codes": ["required_context_missing"],
-                            },
-                        }
-                    )
-                )
-            return generate(prompt, **kwargs)
-
-        monkeypatch.setattr(server_module, "summarize", rejected)
-        failed = await checkpoint()
-        assert failed["summary_update"]["state"] == "failed"
-        assert failed["summary_update"]["summary_corrections"] == [
-            {
-                "field": "summary",
-                "correction": "The new constraint is absent.",
-                "source": "record-2",
-            }
-        ]
-        assert failed["record"]["summary_ref"] == first["record"]["summary_ref"]
-
-    asyncio.run(run())

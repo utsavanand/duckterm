@@ -8,29 +8,37 @@ from test_maintained_progress import append
 from test_memory import memory_rig, transcript
 from test_memory_spans import provider
 
+from duckterm import memory_spans
 from duckterm.checkpoint_clock import project
 from duckterm.core import memory_refresh
+from duckterm.llm.summarizer import Summary
 from duckterm.persistence.saved_state import current_revision
 
 __all__ = ["memory_rig"]
 
 
-@pytest.mark.parametrize("failing_batch", [1, 3])
+@pytest.mark.parametrize("failing_record", [0, 2])
 def test_failed_checkpoint_persists_coverage_and_retry_only_writes_remaining(
-    memory_rig, monkeypatch, failing_batch
+    memory_rig, monkeypatch, failing_record
 ):
+    from duckterm import server as server_module
+
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Earlier owner requirement")
-    calls, fail = provider(monkeypatch)
-    coordinator = server.progress_coordinator
-    write = coordinator.write_span
-    batch = 0
+    calls, _ = provider(monkeypatch)
+    # One of these ~11 KB records per span, so each record is its own leaf.
+    monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", 16000)
+    generate = server_module.summarize
+    failing = f"New owner requirement {failing_record}: "
+    fail = [False]
 
-    async def failing_write(*args):
-        nonlocal batch
-        batch += 1
-        fail[0] = batch == failing_batch
-        return await write(*args)
+    def failing_span(prompt, **kwargs):
+        if fail[0] and failing in prompt:
+            calls.append(prompt)
+            return Summary("", "none", "provider_timeout")
+        return generate(prompt, **kwargs)
+
+    monkeypatch.setattr(server_module, "summarize", failing_span)
 
     async def checkpoint():
         return await server._create_checkpoint("agent", server.history.session("agent"), "manual")
@@ -40,17 +48,16 @@ def test_failed_checkpoint_persists_coverage_and_retry_only_writes_remaining(
         previous = current_revision(server.history.session("agent"))
         previous_progress = server.history.session("agent")["progress"]
         assert previous and good["summary_update"]["state"] == "updated"
-        # The real byte selector admits one of these records per batch.
-        # No budget overrides, provider traffic, or real session data.
         for number in range(20):
             append(path, f"New owner requirement {number}: " + "x" * 11000)
-        monkeypatch.setattr(coordinator, "write_span", failing_write)
+        fail[0] = True
         failed = await checkpoint()
         update = failed["summary_update"]
         assert update["state"] == "failed" and update["reason"] == "provider_timeout"
         assert update["revision_id"] is None
         coverage = update["span_coverage"]
-        completed = failing_batch - 1
+        # Sibling spans that succeeded are kept; only the failed span is pending.
+        completed = 19
         assert coverage == {
             "state": "incomplete",
             "scope": "refresh_attempt",
@@ -65,7 +72,7 @@ def test_failed_checkpoint_persists_coverage_and_retry_only_writes_remaining(
         assert previous not in coverage["revision_ids"]
         for identity in coverage["revision_ids"]:
             revision = server.digests.revision("agent", identity)
-            assert revision["summary_review"]["state"] == "accepted"
+            assert revision["summary_review"]["state"] == "not_reviewed"
             assert revision["continuity"]["summarized_records"] == 1
         # Counts and links survive the checkpoint's DB/JSON projection.
         stored = server.history._conn.execute(
@@ -79,20 +86,16 @@ def test_failed_checkpoint_persists_coverage_and_retry_only_writes_remaining(
 
         before_retry = len(calls)
         fail[0] = False
-        monkeypatch.setattr(coordinator, "write_span", write)
         retried = await checkpoint()
         assert retried["summary_update"]["state"] == "updated"
         assert retried["summary_update"]["span_coverage"]["pending_records"] == 0
         writer_records = [
             record["text"]
             for prompt in calls[before_retry:]
-            if not prompt.startswith("You are validating")
             for record in json.loads(prompt.split("MEMORY UPDATE:\n", 1)[1])["records"]
         ]
-        assert writer_records == [
-            f"New owner requirement {number}: " + "x" * 11000 for number in range(completed, 20)
-        ]
-        assert len(calls) - before_retry == 2 * (20 - completed)
+        assert writer_records == [failing + "x" * 11000]
+        assert len(calls) - before_retry == 1
         assert project(server.history.checkpoints("agent"))["checkpoint_id"] == retried["id"]
         # A retry cannot retroactively turn the original failed attempt into success.
         original = next(
@@ -135,7 +138,7 @@ def test_waiter_source_change_keeps_only_this_attempts_accepted_refs(memory_rig,
         assert len(coverage["revision_ids"]) == 1
         assert earlier.revision["id"] not in coverage["revision_ids"]
         saved = server.digests.revision("agent", coverage["revision_ids"][0])
-        assert saved["summary_review"]["state"] == "accepted"
+        assert saved["summary_review"]["state"] == "not_reviewed"
         # Publication already happened before this late fence; the report must
         # not imply rollback or that the summary covers the just-appended work.
         assert current_revision(server.history.session("agent")) == saved["id"]
@@ -143,7 +146,7 @@ def test_waiter_source_change_keeps_only_this_attempts_accepted_refs(memory_rig,
         before_retry = len(calls)
         retried = await coordinator.refresh_result("agent")
         assert retried.state == "updated"
-        assert len(calls) - before_retry == 2
+        assert len(calls) - before_retry == 1
         records = json.loads(calls[before_retry].split("MEMORY UPDATE:\n", 1)[1])["records"]
         assert [record["text"] for record in records] == [
             "Later work arriving before the waiting caller resumes"

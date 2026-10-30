@@ -163,7 +163,7 @@ def test_summary_excludes_noise_without_claiming_originals_were_summarized(memor
             "COMMAND OUTPUT NOISE",
             "ARTIFACT BODY NOISE",
         ):
-            assert noise not in calls[0] and noise not in calls[1]
+            assert all(noise not in prompt for prompt in calls)
         assert "Failure: the fixture service is unavailable." in texts
         assert "Do not delete the fixture service." in texts
         assert "The failing service is still unresolved." in texts
@@ -202,12 +202,12 @@ def test_new_reference_only_event_refreshes_checkpoint_boundary(memory_rig, monk
         )
         second = await server.progress_coordinator.refresh("agent")
         assert second["id"] == first["id"]
-        assert len(calls) == 2  # successful tools do not generate another summary
+        assert len(calls) == 1  # successful tools do not generate another summary
         checkpoint = await server._create_checkpoint(
             "agent", server.history.session("agent"), "manual"
         )
         assert checkpoint["record"]["summary_ref"] == second["id"]
-        assert len(calls) == 2
+        assert len(calls) == 1
         assert checkpoint["summary_update"]["state"] == "reused"
         assert checkpoint["handoff_eligible"]
 

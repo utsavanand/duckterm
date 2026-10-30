@@ -17,6 +17,9 @@ from duckterm.persistence.saved_state import fingerprint, transaction
 if TYPE_CHECKING:
     from duckterm.core.saved_progress import ProgressCoordinator, SummaryUpdate
 
+# Four concurrent writer calls each held their ~20 s latency in measurement.
+PARALLEL_SPANS = 4
+
 
 async def refresh(
     coordinator: ProgressCoordinator,
@@ -178,7 +181,6 @@ async def _run(
     changed = False
     total: int | None = None
     completed = 0
-    batch_index = 0
     completed_ids: list[str] = []
 
     def attempt_coverage() -> dict[str, Any] | None:
@@ -203,47 +205,63 @@ async def _run(
             update, span_coverage=attempt_coverage(), attempt_coverage=attempt_coverage()
         )
 
+    # Plan every span of the frozen capture first; planning reads only the
+    # capture and the coverage loaded above, never the writes below.
+    spans: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    cursor = lower
     while True:
         if not wanted(coordinator, key):
             return incomplete(SummaryUpdate.failed("update_failed", diagnostic="update_canceled"))
         try:
-            planned = memory_spans.plan(captured, lower)
+            planned = memory_spans.plan(captured, cursor)
         except ValueError as exc:
             return incomplete(SummaryUpdate.failed("source_changed", diagnostic=str(exc)))
         if total is None:
             total = len(planned["selected"]) + planned["pending_records"]
-        coordinator.report_span_progress(key, stage="writing", completed=completed, total=total)
-        coordinator.span_status[key] = {
-            "completed_spans": len(leaves),
-            "pending_records": len(planned["selected"]) + planned["pending_records"],
-        }
         if not planned["selected"]:
             if planned["oversized"]:
                 return incomplete(
                     SummaryUpdate.failed("invalid_context", diagnostic="oversized_record")
                 )
             break
-        batch_index += 1
-        batch = {
-            **captured,
-            "trigger": {
-                **captured["trigger"],
-                "batch_index": batch_index,
-                "continuation": batch_index > 1,
-            },
-        }
-        update, planned = await coordinator.write_span(key, batch, lower)
+        spans.append((cursor, planned))
+        cursor = planned["next_boundary"]
+        if not planned["pending_records"]:
+            break
+    coordinator.report_span_progress(key, stage="writing", completed=0, total=total)
+    coordinator.span_status[key] = {"completed_spans": len(leaves), "pending_records": total}
+    slots = asyncio.Semaphore(PARALLEL_SPANS)
+
+    async def write(index: int, start: dict[str, Any]) -> tuple[SummaryUpdate, dict[str, Any]]:
+        nonlocal completed
+        async with slots:
+            if not wanted(coordinator, key):
+                return SummaryUpdate.failed("update_failed", diagnostic="update_canceled"), {}
+            batch = {
+                **captured,
+                "trigger": {**captured["trigger"], "batch_index": index, "continuation": index > 1},
+            }
+            update, planned = await coordinator.write_span(key, batch, start)
+        if update.state in {"updated", "reused"} and update.revision is not None:
+            completed += len(planned["selected"])
+            coordinator.report_span_progress(key, completed=completed, stage="writing")
+        return update, planned
+
+    results = await asyncio.gather(
+        *(write(index, start) for index, (start, _) in enumerate(spans, 1))
+    )
+    failure = None
+    for update, _ in results:
         if update.state not in {"updated", "reused"} or update.revision is None:
-            return incomplete(update)
-        completed += len(planned["selected"])
+            failure = failure or update
+            continue
+        # Every accepted leaf is kept even when a sibling fails; a retry reuses it.
         completed_ids.append(update.revision["id"])
-        coordinator.report_span_progress(key, completed=completed, stage="checking")
         latest = update.revision
         leaves.append(update.revision)
         changed = changed or update.state == "updated"
-        lower = planned["next_boundary"]
-        if not planned["pending_records"]:
-            break
+    if failure is not None:
+        return incomplete(failure)
     if not wanted(coordinator, key):
         return incomplete(SummaryUpdate.failed("update_failed", diagnostic="update_canceled"))
     if latest is None:

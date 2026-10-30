@@ -44,8 +44,7 @@ export type LocalVoiceStatus =
 
 // One Ask Oracle exchange, as stored server-side (at = epoch ms).
 export interface CheckpointSettings {
-  lookback_records: number;
-  batch_records: 20;
+  lookback_records: number | "all";
   writer_model: "haiku" | "sonnet" | "opus";
   reviewer_model: "haiku" | "sonnet" | "opus";
 }
@@ -54,12 +53,22 @@ export interface CheckpointPlan {
   available_records: number;
   processed_records: number;
   pending_records: number;
-  default_records: number;
+  default_records: number | "all";
   selected_records: number;
   remaining_records: number;
-  batch_records: 20;
   order: "oldest_unprocessed_first" | "newest_unprocessed_first";
   selection_plan: Record<string, unknown>;
+}
+// Remote hosts on older versions still send batch_records and a numeric default.
+export function validCheckpointPlan(value: CheckpointPlan) {
+  const counts = [value.available_records, value.processed_records, value.pending_records, value.selected_records, value.remaining_records];
+  const fallback = value.default_records === "all" ? value.pending_records : value.default_records;
+  return counts.every(n => Number.isSafeInteger(n) && n >= 0)
+    && (value.default_records === "all" || (Number.isSafeInteger(value.default_records) && value.default_records >= 1 && value.default_records <= 1000))
+    && value.available_records === value.processed_records + value.pending_records
+    && value.selected_records === Math.min(fallback, value.pending_records)
+    && value.remaining_records === value.pending_records - value.selected_records
+    && ["oldest_unprocessed_first", "newest_unprocessed_first"].includes(value.order);
 }
 export interface CheckpointSelection {
   plan: CheckpointPlan["selection_plan"];
@@ -478,7 +487,7 @@ export const api = {
   removeArtifact: (key: string, id: string) => artifactRequest<{ removed: boolean }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, "DELETE"),
 
   checkpointSettings: () => get<CheckpointSettings>("/checkpoint-settings", undefined, { authed: true }),
-  saveCheckpointSettings: (value: Omit<CheckpointSettings, "batch_records">) => post<CheckpointSettings>("/checkpoint-settings", value),
+  saveCheckpointSettings: (value: CheckpointSettings) => post<CheckpointSettings>("/checkpoint-settings", value),
   backupStatus: async (): Promise<BackupState> => {
     const res = await fetch("/backup", { cache: "no-store", headers: authHeaders() });
     const data = await res.json();
