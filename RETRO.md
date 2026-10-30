@@ -1,3 +1,23 @@
+## 2026-10-30 — Seven controls per row, three of which did the same thing
+
+The connector panel grew one control per capability until a single row carried
+Disable/Connect, Close, Refresh credentials, Check now, Change connection,
+Forget stored credentials and Revoke — more vertical space for one connector
+than the redesign now uses for three. Reading them side by side showed the
+duplication: "Refresh" and "Refresh credentials" called the identical function,
+and "Connect" and "Change connection" opened the identical form. A row now
+shows name, state and one Configure; everything else lives behind it.
+
+Two things that came out of doing it:
+
+- "Configured · not verified this session" was a non-answer the owner had to
+  click to resolve. Verification takes 0.42-1.23s per connector, so it runs on
+  panel open and the row reports a proved tool count. Measure before assuming a
+  check is too slow to be automatic.
+- Closing the settings panel on every successful change is wrong when one of
+  those changes is a toggle inside the panel. A test caught it: flipping
+  "Available to agents" dismissed the controls the owner was still using.
+
 ## 2026-10-30 — A field that names a source is not a field that answers "is it stored"
 
 The connector panel gated "Forget stored credentials" and "Revoke" on
