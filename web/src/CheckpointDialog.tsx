@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { api, type CheckpointPlan, type CheckpointSelection } from "./api";
+import { api, validCheckpointPlan, type CheckpointPlan, type CheckpointSelection } from "./api";
 import { CHECKPOINT_SELECT, type CheckpointChoiceRequest } from "./checkpointSelection";
 import { useCheckpointAttempt } from "./checkpointRequests";
 import { splitSessionRef } from "./hostTransport";
@@ -26,13 +26,7 @@ export function CheckpointDialogHost() {
 }
 
 function validPlan(value: CheckpointPlan) {
-  return value && [value.available_records, value.processed_records, value.pending_records, value.default_records, value.selected_records, value.remaining_records]
-    .every(n => Number.isSafeInteger(n) && n >= 0)
-    && value.default_records >= 1 && value.default_records <= 1000 && value.batch_records === 20
-    && value.available_records === value.processed_records + value.pending_records
-    && value.selected_records === Math.min(value.default_records, value.pending_records)
-    && value.remaining_records === value.pending_records - value.selected_records
-    && ["oldest_unprocessed_first", "newest_unprocessed_first"].includes(value.order) && value.selection_plan && typeof value.selection_plan === "object" && !Array.isArray(value.selection_plan);
+  return value && validCheckpointPlan(value) && value.selection_plan && typeof value.selection_plan === "object" && !Array.isArray(value.selection_plan);
 }
 
 export function CheckpointDialog({ request, onFinish }: { request: CheckpointChoiceRequest; onFinish: (selection: CheckpointSelection | null) => void }) {
@@ -50,7 +44,7 @@ export function CheckpointDialog({ request, onFinish }: { request: CheckpointCho
     setPlan(null); setError(""); setChoice("default");
     void api.checkpointPlan(request.key).then(value => {
       if (!validPlan(value)) throw new Error("Invalid checkpoint count response");
-      if (live) { setPlan(value); setCustom(String(value.default_records)); }
+      if (live) { setPlan(value); setCustom(String(value.default_records === "all" ? Math.min(value.pending_records, 1000) || 1 : value.default_records)); setChoice(value.default_records === "all" ? "all" : "default"); }
     }).catch(cause => { if (live) setError((cause as Error).message); });
     return () => { live = false; };
   }, [request.key, reload]);
@@ -61,7 +55,8 @@ export function CheckpointDialog({ request, onFinish }: { request: CheckpointCho
   }, []);
   const count = Number(custom);
   const valid = choice !== "custom" || (custom.trim() !== "" && Number.isInteger(count) && count >= 1 && count <= 1000);
-  const selected = plan && valid ? Math.min(plan.pending_records, choice === "all" ? plan.pending_records : choice === "custom" ? count : plan.default_records) : 0;
+  const fallback = plan ? plan.default_records === "all" ? plan.pending_records : plan.default_records : 0;
+  const selected = plan && valid ? Math.min(plan.pending_records, choice === "all" ? plan.pending_records : choice === "custom" ? count : fallback) : 0;
   const host = splitSessionRef(request.key).host;
   return createPortal(<div ref={container} style={{ position: "fixed", inset: 0, zIndex: 100 }} role="dialog" aria-label="Checkpoint" aria-modal="true" tabIndex={-1} onKeyDown={event => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onFinish(null); }
@@ -76,7 +71,7 @@ export function CheckpointDialog({ request, onFinish }: { request: CheckpointCho
       event.preventDefault();
       if (!plan || !selected || !valid || running || submitted.current) return;
       submitted.current = true;
-      onFinish({ plan: plan.selection_plan, records: choice === "all" ? "all" : choice === "custom" ? count : plan.default_records });
+      onFinish({ plan: plan.selection_plan, records: choice === "all" ? "all" : choice === "custom" ? count : fallback });
     }}>
       <p className="hint">{request.name} · {host === "local" ? "This Mac" : `Remote · ${host}`}</p>
       {!plan && !error && <p role="status">Counting unprocessed conversation records…</p>}
@@ -85,14 +80,13 @@ export function CheckpointDialog({ request, onFinish }: { request: CheckpointCho
         <p><strong>{plan.pending_records.toLocaleString()}</strong> conversation records haven’t been summarized.</p>
         <p className="hint">Records are individual user or assistant messages, not whole turns. Tool activity and routine inbox reminders are excluded.</p>
         {plan.pending_records > 0 && <fieldset><legend>How many should this checkpoint summarize?</legend>
-          <label><input type="radio" name="checkpoint-choice" checked={choice === "default"} onChange={() => setChoice("default")} /> {plan.order === "newest_unprocessed_first" ? "Latest" : "Earliest"} {Math.min(plan.default_records, plan.pending_records).toLocaleString()} · your configured default</label>
+          {plan.default_records !== "all" && <label><input type="radio" name="checkpoint-choice" checked={choice === "default"} onChange={() => setChoice("default")} /> {plan.order === "newest_unprocessed_first" ? "Latest" : "Earliest"} {Math.min(fallback, plan.pending_records).toLocaleString()} · your configured default</label>}
           <label><input type="radio" name="checkpoint-choice" checked={choice === "custom"} onChange={() => setChoice("custom")} /> Choose a count <input aria-label="Number of records" type="number" min="1" max="1000" step="1" value={custom} onChange={event => { setChoice("custom"); setCustom(event.target.value); }} /></label>
           <label><input type="radio" name="checkpoint-choice" checked={choice === "all"} onChange={() => setChoice("all")} /> All {plan.pending_records.toLocaleString()} unprocessed records</label>
         </fieldset>}
         <div className="rd-checkpoint-selection" aria-live="polite"><strong>{selected.toLocaleString()}</strong> records selected · <strong>{(plan.pending_records - selected).toLocaleString()}</strong> left for later
-          <p className="hint">{selected ? "Batches contain at most 20 records; large messages may need smaller batches." : "Nothing new to summarize."}</p></div>
+          {!selected && <p className="hint">Nothing new to summarize.</p>}</div>
         {plan.pending_records > 0 && <p className="hint">{plan.order === "newest_unprocessed_first" ? "Newest" : "Oldest"} unprocessed first. New messages arriving after this dialog opens are left for your next checkpoint.</p>}
-        <p className="hint">This choice applies once. Your default in Settings stays at {plan.default_records.toLocaleString()}.</p>
         {!valid && <p role="alert">Enter a whole number from 1 to 1,000.</p>}
       </>}
       {running && <p role="status">A checkpoint is already running for this session.</p>}

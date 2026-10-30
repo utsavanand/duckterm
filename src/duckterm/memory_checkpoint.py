@@ -38,7 +38,8 @@ async def freeze(
     rows = memory_spans.original_rows(captured)
     eligible = [r for r in rows if r["kind"] == "conversation" and not r["reference_only"]]
     eligible.sort(key=lambda r: bool(r["current"]))  # old generations before the current one
-    chosen = eligible[-settings["lookback_records"] :]
+    lookback = settings["lookback_records"]
+    chosen = eligible if lookback == "all" else eligible[-lookback:]
     available = len(eligible)
     if selection is not None:
         from duckterm import checkpoint_plan

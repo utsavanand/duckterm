@@ -14,20 +14,19 @@ from duckterm import memory_summary_input, prompts
 from duckterm.persistence.saved_state import fingerprint
 
 POLICY = "independent-conversation-spans-v2"
-MAX_INPUT_BYTES = 48000
-# Initial writer input leaves a generous output reserve inside the 48 KB envelope.
-GENERATION_RESERVE_BYTES = 32000
-MAX_GENERATION_BYTES = MAX_INPUT_BYTES - GENERATION_RESERVE_BYTES
-# A correction keeps the same original records and adds feedback. Give that call
-# a separate bounded allowance rather than shrinking the initial record window:
-# shrinking it made previously supported single records impossible to process.
-# The existing final size guard still refuses unusually large feedback.
-REPAIR_HEADROOM_BYTES = 4096
-MAX_RECORDS = 50
+# Writer latency follows reply length, not input: a short reply over 50 KB of
+# records takes about 20 s, while the old 16 KB cap with a 12 KB reply took
+# 47-84 s and split a busy half hour into dozens of sequential calls.
+MAX_GENERATION_BYTES = 50000
+# A correction keeps the same original records and adds the draft and feedback.
+REPAIR_HEADROOM_BYTES = 8192
+# One pasted log must not fail the whole span as oversized. Its middle stays
+# retrievable through memory read; the writer sees the head and the tail.
+MAX_RECORD_CHARS = 12000
 
 
 def repair_input_limit() -> int:
-    return min(MAX_INPUT_BYTES, MAX_GENERATION_BYTES + REPAIR_HEADROOM_BYTES)
+    return MAX_GENERATION_BYTES + REPAIR_HEADROOM_BYTES
 
 
 def original_rows(captured: dict[str, Any]) -> list[dict[str, Any]]:
@@ -126,11 +125,16 @@ def rows_through(captured: dict[str, Any], upper: dict[str, Any]) -> list[dict[s
 def prompt(plan: dict[str, Any]) -> str:
     """The entire generation prompt, including metadata, fits the byte budget."""
 
+    # Full refs are ~100 bytes each and the writer copies several per claim;
+    # short refs keep the reply small. short_refs() maps them back.
+    refs = short_refs(plan)
+
     def render(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
             {
-                **{k: row[k] for k in ("source", "version", "record", "position", "role", "text")},
-                "ref": row["source"] + ":" + row["version"] + ":" + row["record"],
+                "ref": refs[full_ref(row)],
+                **{k: row[k] for k in ("source", "version", "record", "position", "role")},
+                "text": clip(row["text"]),
             }
             for row in rows
         ]
@@ -139,6 +143,23 @@ def prompt(plan: dict[str, Any]) -> str:
     if plan.get("context_records"):
         payload["context_records"] = render(plan["context_records"])
     return prompts.render("span_write", payload=json.dumps(payload, ensure_ascii=False))
+
+
+def clip(text: str) -> str:
+    if len(text) <= MAX_RECORD_CHARS:
+        return text
+    half = MAX_RECORD_CHARS // 2
+    return text[:half] + "\n[... middle omitted; read the original record ...]\n" + text[-half:]
+
+
+def full_ref(row: dict[str, Any]) -> str:
+    return row["source"] + ":" + row["version"] + ":" + row["record"]
+
+
+def short_refs(plan: dict[str, Any]) -> dict[str, str]:
+    """Full record ref -> the short "#n" ref shown to the writer."""
+    rows = [*plan.get("context_records", []), *plan["selected"]]
+    return {full_ref(row): "#" + str(n) for n, row in enumerate(rows)}
 
 
 def original_context(plan: dict[str, Any]) -> list[dict[str, Any]]:
@@ -215,11 +236,7 @@ def plan(captured: dict[str, Any], lower: dict[str, Any]) -> dict[str, Any]:
             continue
         if not row["reference_only"]:
             candidate = {**result, "selected": [*result["selected"], row]}
-            if (
-                len(candidate["selected"])
-                > captured.get("checkpoint_settings", {}).get("batch_records", MAX_RECORDS)
-                or len(prompt(candidate).encode()) > MAX_GENERATION_BYTES
-            ):
+            if len(prompt(candidate).encode()) > MAX_GENERATION_BYTES:
                 stopped = True
                 pending.append(row)
                 continue

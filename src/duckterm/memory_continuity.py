@@ -19,6 +19,15 @@ from duckterm.persistence.saved_state import fingerprint
 MAX_UPDATE_BYTES = 48000
 
 
+SPAN_DEFAULT_KINDS = {
+    "goals": "goal",
+    "constraints": "constraint",
+    "decisions": "decision",
+    "unfinished": "unfinished",
+    "questions": "question",
+    "risks": "risk",
+}
+
 def _record_size(row: dict[str, Any]) -> int:
     # Include citation and chronology metadata as well as record text. Reserve
     # commas between records; using the full row conservatively includes fields
@@ -272,6 +281,23 @@ def context(reply: str, plan: dict[str, Any]) -> dict[str, Any]:
     for name in memory_summary.FIELDS:
         for item in (plan["prior_context"] or {}).get(name, []):
             refs.update(item["refs"])
+    if plan.get("span") == "incremental":
+        from duckterm import memory_spans
+
+        # The span writer sees short "#n" refs and leaves the default kind and
+        # open state implicit, which keeps its reply (and its latency) small.
+        full = {short: ref for ref, short in memory_spans.short_refs(plan).items()}
+        for name in memory_summary.FIELDS:
+            items = raw["context"].get(name)
+            for item in items if isinstance(items, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                if isinstance(item.get("refs"), str):
+                    item["refs"] = [item["refs"]]
+                if isinstance(item.get("refs"), list):
+                    item["refs"] = [full.get(r, r) if isinstance(r, str) else r for r in item["refs"]]
+                item.setdefault("kind", SPAN_DEFAULT_KINDS[name])
+                item.setdefault("state", "open")
     # A provider may serialize a single citation as a scalar. Normalize only
     # an exact supplied reference, without guessing, splitting or dropping it.
     # The canonical parser still enforces evidence membership and size limits.
