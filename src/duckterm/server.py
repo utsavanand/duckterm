@@ -1048,6 +1048,10 @@ class Server:
             # The accepted Stop is already durable. A disconnected hook client
             # must not leave an idle session's restart queued forever.
             self.restarts.hook_finished(event)
+            if event.get("event_type") == events.STOP:
+                from duckterm.merge_closing import recover as recover_merge_closures
+
+                await recover_merge_closures(self)
 
     def _inbox_hook_output(self, raw: dict[str, Any], key: str) -> dict[str, Any] | None:
         if not self.edition.includes("inbox"):
@@ -6415,6 +6419,12 @@ class Server:
         while True:
             await asyncio.sleep(20)
             ticks += 1
+            from duckterm.merge_closing import recover as recover_merge_closures
+
+            try:
+                await recover_merge_closures(self)
+            except Exception:
+                traceback.print_exc()
             if ticks % 3 == 0:
                 try:
                     await self._relay_check_stuck(int(time.time() * 1000))

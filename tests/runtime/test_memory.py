@@ -136,7 +136,7 @@ def test_session_credential_cannot_read_peers_even_in_same_folder(memory_rig):
     )
     assert status == 409 and "Alpha-only" not in json.dumps(body)
     assert dispatch(server, "GET", "/api/v1/session/memory/sources", {})[0] == 401
-    assert dispatch(server, "GET", "/api/v1/session/memory/sources?session=peer", headers)[0] == 400
+    assert dispatch(server, "GET", "/api/v1/session/memory/sources?session=peer", headers)[0] == 403
     assert dispatch(server, "POST", "/api/v1/session/memory/search", headers)[0] == 405
 
 

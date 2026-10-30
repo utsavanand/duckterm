@@ -1,7 +1,8 @@
-"""Reviewed agent handoffs never mutate live worktrees or lifecycles."""
+"""Reviewed handoffs retain memory and close only with explicit, safe consent."""
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 from tests.runtime.test_session_api import dispatch, enroll
@@ -89,6 +90,187 @@ def test_append_exact_notes_once_and_recover_lost_response(rig):
     for key in ("source", "target"):
         result = dispatch(server, "GET", f"/sessions/{key}/agent-merges", auth)[1]
         assert result["merges"][0]["id"] == record["id"]
+
+
+def test_memory_grant_is_explicit_and_remains_as_deleted_source_pointer(rig):
+    history, server, _ = rig
+    history._conn.execute("UPDATE sessions SET parent_session_key=NULL WHERE session_key='source'")
+    history._conn.commit()
+    target_auth = enroll(history, "target")
+    path = "/api/v1/session/memory/sources?session=source"
+    assert send(rig, request(rig))[0] == 200
+    assert dispatch(server, "GET", path, target_auth)[0] == 403
+    code, receipt = send(rig, request(rig, memory=True, requestKey="linked"))
+    assert code == 200 and receipt["memorySource"] == "source"
+    assert "SOURCE MEMORY: source" in receipt["packet"]
+    assert dispatch(server, "GET", path, target_auth)[0] == 200
+    assert send(rig, request(rig, memory=True, requestKey="linked"))[0] == 200
+    assert (
+        history._conn.execute(
+            "SELECT count(*) FROM digest_items WHERE bucket='session_memory_link_v1'"
+        ).fetchone()[0]
+        == 1
+    )
+    history.delete_session("source")
+    links = dispatch(server, "GET", "/api/v1/session/memory/sessions", target_auth)[1]
+    assert links["sessions"] == [
+        {
+            "session": "source",
+            "available": False,
+            "reason": "Source session was deleted; its memory is unavailable",
+        }
+    ]
+    assert dispatch(server, "GET", path, target_auth)[0] == 404
+
+
+def test_new_merge_grant_does_not_survive_target_scope_change(rig):
+    history, server, _ = rig
+    history._conn.execute("UPDATE sessions SET parent_session_key=NULL WHERE session_key='source'")
+    history._conn.commit()
+    target_auth = enroll(history, "target")
+    assert send(rig, request(rig, memory=True))[0] == 200
+    history._conn.execute(
+        "UPDATE session_api_members SET root='different' WHERE session_key='target'"
+    )
+    history._conn.commit()
+    assert (
+        dispatch(server, "GET", "/api/v1/session/memory/sources?session=source", target_auth)[0]
+        == 403
+    )
+
+
+def test_close_waits_for_turn_and_empty_draft_then_recovers_without_redelivery(rig, monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from duckterm import merge_closing
+
+    history, server, _ = rig
+    history._conn.execute("UPDATE sessions SET launched=1 WHERE session_key='source'")
+    history._conn.commit()
+    ready, empty, stopped = [False], [True], []
+    sup = SimpleNamespace(last_owner_input_ms=0, running=True)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: sup)
+    monkeypatch.setattr(server.restarts, "turn_finished", lambda key: ready[0])
+
+    async def draft(*_):
+        return empty[0]
+
+    async def stop(key):
+        stopped.append(key)
+        return True
+
+    monkeypatch.setattr(server.restarts, "draft_free", draft)
+    monkeypatch.setattr(server.orchestrator, "stop", stop)
+    draft_request = request(rig, memory=True, closeSource=True)
+    code, receipt = send(rig, draft_request)
+    assert code == 200 and receipt["closeState"] == "waiting_for_turn"
+    assert not stopped and history.fork_merges.closing("source")
+    ready[0], empty[0] = True, False
+    assert send(rig, draft_request)[1]["closeState"] == "draft_not_empty"
+    assert not stopped
+    empty[0] = True
+    asyncio.run(merge_closing.recover(server))
+    assert stopped == ["source"] and history.session("source")["state"] == "merged"
+    assert history.session("source")["notes"] == "source original notes"
+    assert send(rig, draft_request)[1]["sourceClosed"]
+    assert len(stopped) == 1
+    assert history._conn.execute("SELECT count(*) FROM session_questions").fetchone()[0] == 1
+
+
+def test_new_keystroke_during_draft_probe_defers_close(rig, monkeypatch):
+    from types import SimpleNamespace
+
+    history, server, _ = rig
+    history._conn.execute("UPDATE sessions SET launched=1 WHERE session_key='source'")
+    history._conn.commit()
+    sup = SimpleNamespace(last_owner_input_ms=0, running=True)
+    monkeypatch.setattr(server.orchestrator, "get", lambda key: sup)
+    monkeypatch.setattr(server.restarts, "turn_finished", lambda key: True)
+
+    async def draft(*_):
+        sup.last_owner_input_ms += 1
+        return True
+
+    async def stop(_):
+        pytest.fail("must preserve a new keystroke")
+
+    monkeypatch.setattr(server.restarts, "draft_free", draft)
+    monkeypatch.setattr(server.orchestrator, "stop", stop)
+    code, result = send(rig, request(rig, memory=True, closeSource=True))
+    assert code == 200 and result["closeState"] == "source_changed"
+    assert history.session("source")["state"] != "merged"
+
+
+def test_close_choice_survives_server_reopen_and_preserves_source(rig):
+    import asyncio
+
+    from duckterm import merge_closing
+
+    history, _, _ = rig
+    history._conn.execute("UPDATE sessions SET launched=1 WHERE session_key='source'")
+    history._conn.commit()
+    code, receipt = send(rig, request(rig, memory=True, closeSource=True))
+    assert code == 200 and receipt["closeState"] == "terminal_unavailable"
+    path = history._conn.execute("PRAGMA database_list").fetchone()[2]
+    reopened_history = HistoryStore(Path(path))
+    try:
+        reopened = Server(history=reopened_history)
+        # The source exited while the app was closed. Its retained identity,
+        # message, notes and grant are sufficient to finish without resending.
+        reopened_history._conn.execute(
+            "UPDATE sessions SET state='terminated' WHERE session_key='source'"
+        )
+        reopened_history._conn.commit()
+        asyncio.run(merge_closing.recover(reopened))
+        assert reopened_history.session("source")["state"] == "merged"
+        assert reopened_history.session("source")["notes"] == "source original notes"
+        assert (
+            reopened_history._conn.execute("SELECT count(*) FROM session_questions").fetchone()[0]
+            == 1
+        )
+    finally:
+        reopened_history.close()
+
+
+def test_retry_reports_closed_immediately_and_stopped_supervisor_is_safe(rig, monkeypatch):
+    from types import SimpleNamespace
+
+    history, server, _ = rig
+    history._conn.execute("UPDATE sessions SET launched=1 WHERE session_key='source'")
+    history._conn.commit()
+    draft = request(rig, memory=True, closeSource=True)
+    assert send(rig, draft)[1]["closeState"] == "terminal_unavailable"
+    history._conn.execute("UPDATE sessions SET state='terminated' WHERE session_key='source'")
+    history._conn.commit()
+    monkeypatch.setattr(server.orchestrator, "get", lambda _: SimpleNamespace(running=False))
+    code, result = send(rig, draft)
+    # get must return a stable supervisor: replace the intentionally different
+    # object before the successful retry, exercising the identity fence too.
+    assert code == 200 and result["closeState"] == "source_changed"
+    ended = SimpleNamespace(running=False)
+    monkeypatch.setattr(server.orchestrator, "get", lambda _: ended)
+    code, result = send(rig, draft)
+    assert code == 200 and result["sourceClosed"] and result["closeState"] == "closed"
+
+
+def test_memory_grant_and_message_roll_back_as_one_transaction(rig):
+    history, _, _ = rig
+    draft = request(rig, memory=True)
+    history._conn.execute(
+        "CREATE TEMP TRIGGER reject_receipt BEFORE INSERT ON digest_items "
+        "WHEN NEW.bucket='agent_merge_v1' BEGIN SELECT RAISE(ABORT, 'simulated write failure'); END"
+    )
+    # Failure after grant insertion must roll back grant, notes and inbox.
+    assert send(rig, draft)[0] == 500
+    assert history._conn.execute("SELECT count(*) FROM session_questions").fetchone()[0] == 0
+    assert (
+        history._conn.execute(
+            "SELECT count(*) FROM digest_items WHERE bucket='session_memory_link_v1'"
+        ).fetchone()[0]
+        == 0
+    )
+    assert history.session("target")["notes"] == "target original notes"
 
 
 def test_options_and_stale_preview_do_not_copy_unselected_material(rig):
