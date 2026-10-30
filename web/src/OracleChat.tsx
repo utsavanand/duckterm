@@ -45,6 +45,8 @@ export function OracleChat({
   const [loaded, setLoaded] = useState(false);
   const [q, setQ] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+  const [words, setWords] = useState("");
+  const [stopped, setStopped] = useState<{ q: string; a: string } | null>(null);
   const [error, setError] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -72,7 +74,7 @@ export function OracleChat({
     // scrollable ancestor, which pushed the control tower's header off screen.
     const log = logRef.current;
     if (log) log.scrollTop = log.scrollHeight;
-  }, [log, pending, error, locals.length, relay.notes.length]);
+  }, [log, pending, words, error, locals.length, relay.notes.length]);
 
   const addLocal = (l: Local) => setLocals((ls) => [...ls, l]);
 
@@ -128,14 +130,19 @@ export function OracleChat({
     setPending(question);
     setQ("");
     setError("");
+    setStopped(null);
+    let shown = "";
     try {
-      const r = await api.fleetAsk(question);
+      const r = await api.fleetAskStream(question, (text) => { shown = text; setWords(text); });
       setLog((l) => [...l, r.exchange]);
     } catch (e) {
+      // Words already on screen stay there, above the reason it stopped.
+      if (shown) setStopped({ q: question, a: shown });
       setError(`Oracle could not answer: ${(e as Error).message}`);
       setQ(question);
     } finally {
       setPending(null);
+      setWords("");
     }
   }
 
@@ -226,9 +233,19 @@ export function OracleChat({
         {pending !== null && (
           <div className="rd-oracle-exchange">
             <div className="rd-oracle-q">{pending}</div>
-            <div className="rd-oracle-thinking" role="status">
-              <span className="rd-spinner" /> Reading your sessions…
-            </div>
+            {words ? (
+              <div className="rd-oracle-a rd-msg-text is-writing" aria-busy="true" dangerouslySetInnerHTML={{ __html: html(words) }} />
+            ) : (
+              <div className="rd-oracle-thinking" role="status">
+                <span className="rd-spinner" /> Reading your sessions…
+              </div>
+            )}
+          </div>
+        )}
+        {stopped && pending === null && (
+          <div className="rd-oracle-exchange">
+            <div className="rd-oracle-q">{stopped.q}</div>
+            <div className="rd-oracle-a rd-msg-text" dangerouslySetInnerHTML={{ __html: html(stopped.a) }} />
           </div>
         )}
         {error && <p className="rd-oracle-error" role="alert">{error}</p>}

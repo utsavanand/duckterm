@@ -222,3 +222,68 @@ def test_fleet_ask_bounds_the_prompt_in_bytes(
     answer = str(body["answer"]).split("Earlier exchanges:")[0]
     assert answer.count("### ") == 1
     assert "1 more running sessions were left out" in answer
+
+
+def _ask_stream(port: int, payload: dict[str, object]) -> list[dict[str, object]]:
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}/fleet/ask",
+        data=json.dumps({**payload, "stream": True}).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "X-Duckterm-Token": security.load_or_create_token(),
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        assert resp.headers["Content-Type"] == "text/event-stream"
+        return [
+            json.loads(line[5:])
+            for line in resp.read().decode().splitlines()
+            if line.startswith("data:")
+        ]
+
+
+def test_fleet_ask_streams_words_then_the_saved_exchange(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from duckterm.core.session_api import APIError
+    from duckterm.llm import backend
+
+    monkeypatch.delenv("DUCKTERM_SUMMARIZER_CMD", raising=False)
+    monkeypatch.delenv("DUCKTERM_SUMMARIZER", raising=False)
+    monkeypatch.setattr(backend, "ready", lambda: True)
+    answers = [["Two are ", "waiting."], ["Half an ", APIError(503, "usage limit")]]
+
+    async def stream(prompt, *, tier, feature=""):
+        for piece in answers.pop(0):
+            if isinstance(piece, Exception):
+                raise piece
+            yield piece
+
+    monkeypatch.setattr(backend, "stream", stream)
+
+    async def scenario() -> list[list[dict[str, object]]]:
+        server = Server(history=HistoryStore(tmp_path / "db.sqlite"))
+        try:
+            await server.orchestrator.launch(
+                runtime=GenericRuntime("cat"), cwd=str(tmp_path), session_key="fleet-s", test=True
+            )
+            srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+            port = srv.sockets[0].getsockname()[1]
+            async with srv:
+                return [
+                    await asyncio.to_thread(_ask_stream, port, {"question": "who waits?"}),
+                    await asyncio.to_thread(_ask_stream, port, {"question": "and now?"}),
+                ]
+        finally:
+            await server.orchestrator.stop("fleet-s")
+
+    finished, failed = asyncio.run(scenario())
+    assert finished[:2] == [{"delta": "Two are "}, {"delta": "waiting."}]
+    done = finished[2]["done"]
+    assert isinstance(done, dict) and done["answer"] == "Two are waiting."
+    assert done["exchange"]["a"] == "Two are waiting."  # type: ignore[index]
+    # A failure after some words keeps them shown, ends with the reason, and
+    # saves nothing to the chat.
+    assert failed == [{"delta": "Half an "}, {"error": "Oracle stopped: usage limit"}]

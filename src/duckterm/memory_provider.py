@@ -12,6 +12,7 @@ import json
 import os
 import signal
 import tempfile
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -133,32 +134,13 @@ async def generate(
 ) -> str:
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
         raise APIError(503, "Automatic preparation is disabled on this host")
-    secrets = ai_settings.env_keys()
-    env = {
-        k: v for k, v in os.environ.items() if not k.startswith("DUCKTERM_") and k not in secrets
-    }
-    env["DUCKTERM_INTERNAL"] = "1"
-    # No repository instructions, project MCP configuration or inherited session
-    # capability. CLI login remains available, but this job has no DuckTerm token
-    # and no provider API key, so it can't quietly switch to per-token billing.
     with tempfile.TemporaryDirectory(prefix="duckterm-memory-") as folder:
         schema_path = None
         if schema is not None:
             schema_path = Path(folder) / "response-schema.json"
             schema_path.write_text(json.dumps(schema), encoding="utf-8")
         args = arguments(harness, model, schema_path, user_settings=user_settings, effort=effort)
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                cwd=Path(folder),
-                env=env,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-                start_new_session=os.name != "nt",
-            )
-        except OSError as exc:
-            raise APIError(503, "The selected preparation harness could not start") from exc
+        proc = await _start(args, folder)
         try:
             assert proc.stdin is not None and proc.stdout is not None
             async with asyncio.timeout(CALL_TIMEOUT):
@@ -183,10 +165,91 @@ async def generate(
         except (UnicodeError, BrokenPipeError) as exc:
             raise APIError(503, "Preparation did not return a complete response") from exc
         finally:
-            if proc.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    if os.name != "nt":
-                        os.killpg(proc.pid, signal.SIGKILL)
-                    else:
-                        proc.kill()
-                await proc.wait()
+            await _stop(proc)
+
+
+async def stream(model: str, prompt: str, *, effort: str = "") -> AsyncIterator[str]:
+    """Claude Code's answer as it is written, isolated like generate(). Codex
+    exec sends no partial text, so only Claude Code streams."""
+    if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
+        raise APIError(503, "Automatic preparation is disabled on this host")
+    args = arguments("claude-code", model, user_settings=True, effort=effort) + [
+        "--output-format",
+        "stream-json",
+        "--include-partial-messages",
+        "--verbose",
+    ]
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + CALL_TIMEOUT
+    with tempfile.TemporaryDirectory(prefix="duckterm-memory-") as folder:
+        proc = await _start(args, folder)
+        try:
+            assert proc.stdin is not None and proc.stdout is not None
+            proc.stdin.write(prompt.encode())
+            await proc.stdin.drain()
+            proc.stdin.close()
+            size = 0
+            # A per-read deadline, not asyncio.timeout: the caller runs between
+            # yields, and a timeout spanning a yield would cancel the caller.
+            while line := await asyncio.wait_for(proc.stdout.readline(), deadline - loop.time()):
+                # The answer appears up to three times: deltas, message, result.
+                size += len(line)
+                if size > 4 * MAX_REPLY:
+                    raise APIError(503, "Preparation returned too much output")
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if event.get("type") == "result" and event.get("is_error"):
+                    raise APIError(
+                        503, "Preparation failed; check the selected harness login or usage limit"
+                    )
+                delta = (event.get("event") or {}).get("delta") or {}
+                if event.get("type") == "stream_event" and delta.get("type") == "text_delta":
+                    yield str(delta.get("text") or "")
+            await asyncio.wait_for(proc.wait(), deadline - loop.time())
+            if proc.returncode:
+                raise APIError(
+                    503, "Preparation failed; check the selected harness login or usage limit"
+                )
+        except TimeoutError as exc:
+            raise BatchTimeout() from exc
+        except (UnicodeError, BrokenPipeError) as exc:
+            raise APIError(503, "Preparation did not return a complete response") from exc
+        finally:
+            await _stop(proc)
+
+
+async def _start(args: list[str], folder: str) -> asyncio.subprocess.Process:
+    secrets = ai_settings.env_keys()
+    env = {
+        k: v for k, v in os.environ.items() if not k.startswith("DUCKTERM_") and k not in secrets
+    }
+    env["DUCKTERM_INTERNAL"] = "1"
+    # No repository instructions, project MCP configuration or inherited session
+    # capability. CLI login remains available, but this job has no DuckTerm token
+    # and no provider API key, so it can't quietly switch to per-token billing.
+    try:
+        return await asyncio.create_subprocess_exec(
+            *args,
+            cwd=Path(folder),
+            env=env,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            start_new_session=os.name != "nt",
+            limit=4 * MAX_REPLY,
+        )
+    except OSError as exc:
+        raise APIError(503, "The selected preparation harness could not start") from exc
+
+
+async def _stop(proc: asyncio.subprocess.Process) -> None:
+    if proc.returncode is None:
+        # macOS answers EPERM, not ESRCH, for a group whose leader already exited.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            if os.name != "nt":
+                os.killpg(proc.pid, signal.SIGKILL)
+            else:
+                proc.kill()
+        await proc.wait()

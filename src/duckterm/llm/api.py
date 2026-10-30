@@ -5,9 +5,11 @@ Groq, ...). Stdlib urllib only; the key is sent to the provider and nowhere else
 
 from __future__ import annotations
 
+import contextlib
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Iterator
 from typing import Any
 
 from duckterm.core.session_api import APIError
@@ -30,16 +32,36 @@ _open = urllib.request.build_opener(_NoRedirect).open
 
 
 def _request(url: str, headers: dict[str, str], body: dict[str, Any] | None = None) -> Any:
-    req = urllib.request.Request(
+    with _errors(headers), _open(_build(url, headers, body), timeout=TIMEOUT) as response:
+        return json.loads(response.read())
+
+
+def _events(url: str, headers: dict[str, str], body: dict[str, Any]) -> Iterator[Any]:
+    """The JSON payload of each server-sent event, until the stream ends."""
+    with _errors(headers), _open(_build(url, headers, body), timeout=TIMEOUT) as reply:
+        for raw in reply:
+            line = raw.decode("utf-8").strip()
+            if not line.startswith("data:") or line == "data: [DONE]":
+                continue
+            yield json.loads(line[5:])
+
+
+def _build(
+    url: str, headers: dict[str, str], body: dict[str, Any] | None
+) -> urllib.request.Request:
+    return urllib.request.Request(
         url,
         data=None if body is None else json.dumps(body).encode(),
         headers={"Content-Type": "application/json", "User-Agent": "duckterm", **headers},
         method="GET" if body is None else "POST",
     )
+
+
+@contextlib.contextmanager
+def _errors(headers: dict[str, str]) -> Iterator[None]:
     secrets = [v.removeprefix("Bearer ") for k, v in headers.items() if k.lower() in _KEY_HEADERS]
     try:
-        with _open(req, timeout=TIMEOUT) as response:
-            return json.loads(response.read())
+        yield
     except urllib.error.HTTPError as exc:
         # Error bodies name the problem ("invalid x-api-key", "model not found"),
         # but a custom endpoint can say anything, including the key it was sent.
@@ -97,6 +119,33 @@ def anthropic(
     schema: dict[str, Any] | None,
     effort: str,
 ) -> str:
+    body = _anthropic_body(model, system, prompt, schema, effort)
+    reply = _request(f"{base}/messages", _anthropic_headers(key), body)
+    if reply.get("stop_reason") == "refusal":
+        raise APIError(502, "The model declined this request")
+    return "".join(b.get("text", "") for b in reply.get("content", []) if b.get("type") == "text")
+
+
+def anthropic_stream(
+    base: str, key: str, model: str, system: str, prompt: str, effort: str
+) -> Iterator[str]:
+    body = {**_anthropic_body(model, system, prompt, None, effort), "stream": True}
+    for event in _events(f"{base}/messages", _anthropic_headers(key), body):
+        kind = event.get("type")
+        delta = event.get("delta") or {}
+        if kind == "content_block_delta" and delta.get("type") == "text_delta":
+            yield str(delta.get("text") or "")
+        elif kind == "message_delta" and delta.get("stop_reason") == "refusal":
+            raise APIError(502, "The model declined this request")
+        elif kind == "error":
+            message = (event.get("error") or {}).get("message") or "stream failed"
+            said = _redacted(str(message), [key])[:300]
+            raise APIError(502, f"Provider stopped the answer. Provider said: {said}")
+
+
+def _anthropic_body(
+    model: str, system: str, prompt: str, schema: dict[str, Any] | None, effort: str
+) -> dict[str, Any]:
     output: dict[str, Any] = {}
     if model in EFFORT_MODELS:
         output["effort"] = effort
@@ -110,10 +159,7 @@ def anthropic(
     }
     if output:
         body["output_config"] = output
-    reply = _request(f"{base}/messages", _anthropic_headers(key), body)
-    if reply.get("stop_reason") == "refusal":
-        raise APIError(502, "The model declined this request")
-    return "".join(b.get("text", "") for b in reply.get("content", []) if b.get("type") == "text")
+    return body
 
 
 def openai_chat(
@@ -140,6 +186,21 @@ def openai_chat(
         return str(reply["choices"][0]["message"]["content"] or "")
     except (KeyError, IndexError, TypeError) as exc:
         raise APIError(502, "Provider returned no message") from exc
+
+
+def openai_chat_stream(
+    base: str, key: str | None, model: str, system: str, prompt: str
+) -> Iterator[str]:
+    body = {
+        "model": model,
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        "stream": True,
+    }
+    for event in _events(f"{base}/chat/completions", _openai_headers(key), body):
+        for choice in event.get("choices") or []:
+            text = (choice.get("delta") or {}).get("content")
+            if text:
+                yield str(text)
 
 
 def models(wire: str, base: str, key: str | None) -> list[str]:
