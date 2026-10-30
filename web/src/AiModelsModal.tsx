@@ -122,7 +122,7 @@ export function AiModelsModal({ onClose }: { onClose: () => void }) {
                 <small>{role === "writer_model" ? FAST_USE : DEEP_USE}</small>
               </div>)}
             </div>
-            <small>Model choices apply when Claude Code serves the call. Codex uses its default model.</small>
+            <small>Model choices apply when Claude Code serves the call. Codex uses GPT-6-Luna for fast calls when your account offers it, and its default model otherwise.</small>
           </>}
 
           {settings.backend === "api" && <>

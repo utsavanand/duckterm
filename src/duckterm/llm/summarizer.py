@@ -33,9 +33,12 @@ class Summary:
     failure_reason: str | None = None
 
 
-def summarize(prompt: str, *, tier: str, claude_model: str | None = None) -> Summary:
+def summarize(
+    prompt: str, *, tier: str, claude_model: str | None = None, feature: str = ""
+) -> Summary:
     """claude_model pins the model when Claude Code serves the call (e.g.
-    "sonnet" for a classifier measured on Sonnet)."""
+    "sonnet" for a classifier measured on Sonnet); feature names the caller in
+    the server log."""
     # Explicit config always wins. DUCKTERM_SUMMARIZER=off only disables the
     # automatic backends (so e.g. tests don't shell out to a real agent), not
     # a backend the user set on purpose.
@@ -54,7 +57,9 @@ def summarize(prompt: str, *, tier: str, claude_model: str | None = None) -> Sum
             if shutil.which("copilot"):
                 return _cli_summary("copilot -p", prompt)
             return Summary(text="", backend="none", failure_reason="no_provider")
-        reply = asyncio.run(backend.complete(prompt, tier=tier, claude_model=claude_model or ""))
+        reply = asyncio.run(
+            backend.complete(prompt, tier=tier, claude_model=claude_model or "", feature=feature)
+        )
     except memory_provider.BatchTimeout:
         return Summary(text="", backend="none", failure_reason="provider_timeout")
     except APIError:

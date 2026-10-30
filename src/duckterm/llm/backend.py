@@ -16,9 +16,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import os
 import shutil
+import sys
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from duckterm import checkpoint_settings, memory_provider
@@ -27,6 +31,10 @@ from duckterm.llm import ai_settings, api
 
 TIERS = ("fast", "deep")
 EFFORT = {"fast": "low", "deep": "medium"}
+# exec ignores the owner's Codex config, so without a model it runs Codex's
+# built-in default. Luna answered a one-line summary in 3 s against 5-6 s for
+# the default (2026-10-29). Deep keeps the default for its judgement.
+CODEX_MODELS = {"fast": "gpt-6-luna"}
 _HARNESS_BINARIES = (("claude-code", "claude"), ("codex", "codex"))
 
 
@@ -63,10 +71,31 @@ async def complete(
     tier: str,
     schema: dict[str, Any] | None = None,
     claude_model: str = "",
+    feature: str = "",
 ) -> Reply:
     """claude_model pins the model when Claude Code serves the call (a
     checkpoint keeps the models captured with it); other backends use the
-    tier's model."""
+    tier's model. feature names the caller in the server log."""
+    started = time.monotonic()
+    try:
+        reply = await _complete(prompt, tier, schema, claude_model)
+    except APIError as exc:
+        _log(feature, tier, prompt, started, f"failed: {exc}")
+        raise
+    served = f"{reply.backend} {reply.detail}"
+    _log(
+        feature,
+        tier,
+        prompt,
+        started,
+        served + (f" (fallback: {reply.fallback})" if reply.fallback else ""),
+    )
+    return reply
+
+
+async def _complete(
+    prompt: str, tier: str, schema: dict[str, Any] | None, claude_model: str
+) -> Reply:
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
         raise APIError(503, "Automatic preparation is disabled on this host")
     settings = ai_settings.load()
@@ -86,15 +115,41 @@ async def complete(
     name = harness(settings["harness"])
     if name is None:
         raise APIError(503, fallback or "No Claude Code or Codex CLI is installed")
-    model = claude_model if name == "claude-code" else ""
-    if name == "claude-code" and not model:
-        with contextlib.suppress(APIError):
-            chosen = checkpoint_settings.load()
-            model = chosen["writer_model" if tier == "fast" else "reviewer_model"]
+    if name == "codex":
+        model = _codex_model(tier)
+    else:
+        model = claude_model
+        if not model:
+            with contextlib.suppress(APIError):
+                chosen = checkpoint_settings.load()
+                model = chosen["writer_model" if tier == "fast" else "reviewer_model"]
     text = await memory_provider.generate(
         name, model, prompt, schema, user_settings=True, effort=EFFORT[tier]
     )
-    return Reply(text, "harness", name, fallback)
+    return Reply(text, "harness", f"{name}/{model}" if model else name, fallback)
+
+
+def _codex_model(tier: str) -> str:
+    """The tier's Codex model when the owner's account lists it, else "" for
+    Codex's default. A model the account lacks would fail every call."""
+    model = CODEX_MODELS.get(tier, "")
+    if not model:
+        return ""
+    try:
+        listed = json.loads((Path.home() / ".codex" / "models_cache.json").read_text())
+        slugs = {m.get("slug") for m in listed.get("models", []) if isinstance(m, dict)}
+    except (OSError, ValueError, AttributeError):
+        return ""
+    return model if model in slugs else ""
+
+
+def _log(feature: str, tier: str, prompt: str, started: float, outcome: str) -> None:
+    seconds = time.monotonic() - started
+    size = len(prompt.encode()) / 1000
+    print(
+        f"[duckterm] ai {feature or '-'} {tier} {seconds:.1f}s in={size:.0f}KB {outcome}",
+        file=sys.stderr,
+    )
 
 
 def _api_key(settings: dict[str, Any]) -> str | None:

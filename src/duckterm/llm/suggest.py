@@ -56,9 +56,27 @@ Corrections observed:
 {corrections}
 """
 
+# Up to 80 corrections are sent, and one pasted follow-up can be a whole log.
+MAX_CORRECTION_BYTES = 32000
+MAX_ONE_CORRECTION_BYTES = 2000
+
 _LINE = re.compile(
     r"^- \[(?P<scope>[a-z0-9/._-]+)\]\s*(?:\[(?P<count>\d+)\])?\s*(?P<text>.+)$", re.IGNORECASE
 )
+
+
+def _newest_within(corrections: list[Correction], budget: int) -> list[str]:
+    """Correction lines, each cut to MAX_ONE_CORRECTION_BYTES, keeping the
+    newest (the list's end) that fit in budget bytes, in their original order."""
+    kept: list[str] = []
+    for c in reversed(corrections):
+        text = c.text.encode()[:MAX_ONE_CORRECTION_BYTES].decode(errors="ignore")
+        line = f"- [{c.runtime or 'unknown'}] [{c.kind}] {text}"
+        budget -= len(line.encode()) + 1
+        if budget < 0:
+            break
+        kept.append(line)
+    return kept[::-1]
 
 
 def suggest_rules(corrections: list[Correction], current_rules: list[RuleBlock]) -> list[RuleBlock]:
@@ -69,10 +87,10 @@ def suggest_rules(corrections: list[Correction], current_rules: list[RuleBlock])
     distilled twice proposes the same id."""
     if not corrections:
         return []
-    lines = "\n".join(f"- [{c.runtime or 'unknown'}] [{c.kind}] {c.text}" for c in corrections)
+    lines = "\n".join(_newest_within(corrections, MAX_CORRECTION_BYTES))
     current = "\n".join(f"- {r.text}" for r in current_rules if r.status == "active")
     prompt = _PROMPT.format(current=current or "(empty)", corrections=lines)
-    result = summarize(prompt, tier="deep")
+    result = summarize(prompt, tier="deep", feature="suggest-rules")
 
     runtimes = {c.runtime for c in corrections if c.runtime}
     models = {c.model for c in corrections if c.model}
