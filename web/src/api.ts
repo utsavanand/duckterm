@@ -424,7 +424,7 @@ export interface DiffFile {
 export interface ReviewDiff { base_sha: string; head_sha: string; since: string | null; whitespace: boolean; files: DiffFile[]; counts: { high: number; read: number; skim: number; viewed: number; changed_since: number } }
 export interface ReviewHeader { repo: string; repo_name: string; github: string | null; ref: string; branch: string; base: string; base_sha: string; head_sha: string; commits: number; pr: PrSummary | null; row: PrRow | null; previous_head: string | null; session: { key: string; name: string; progress: string | null } | null }
 export type CardStatus = "ready" | "pending" | "omitted" | "failed" | "later" | "stale";
-export interface ReviewCard { id: string; number: number; title: string; status: CardStatus; reason?: string; data?: Record<string, unknown>; at?: number; sent?: { session: string; message_id: string; at: number }[] }
+export interface ReviewCard { id: string; number: number; title: string; status: CardStatus; reason?: string; data?: Record<string, unknown>; at?: number; with?: string[]; sent?: { session: string; message_id: string; at: number }[] }
 export interface ReviewCards { head_sha: string | null; stale: boolean; running: boolean; cards: ReviewCard[] }
 export interface Citation { path: string; line: number }
 export interface Release { tag: string; at: number; sha: string; subject: string; previous: string | null; merges: { sha: string; subject: string; pr: number | null }[] }

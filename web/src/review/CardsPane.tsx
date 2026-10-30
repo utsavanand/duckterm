@@ -74,7 +74,7 @@ export function CardsPane({ header, active, openFile, ask }: { header: ReviewHea
 }
 
 function CardBody({ card, actions }: { card: ReviewCard; actions: CardActions }) {
-  if (card.status === "pending") return <p className="rd-prs-empty" role="status">Writing this card from the diff…</p>;
+  if (card.status === "pending") return <p className="rd-prs-empty" role="status">{card.with?.length ? `Writing this card together with ${together(card.with)}…` : "Writing this card from the diff…"}</p>;
   if (card.status === "stale") return <p className="rd-prs-empty" role="status">The branch moved; this card is being rewritten for the new head.</p>;
   if (card.status === "later") return <p className="rd-prs-empty">{card.reason}</p>;
   if (card.status !== "ready" || !card.data) return <p className="rd-prs-note">Omitted: {card.reason ?? "no result"}</p>;
@@ -92,4 +92,8 @@ function CardBody({ card, actions }: { card: ReviewCard; actions: CardActions })
     case "questions": return <QuestionsCard card={card} data={data as QuestionsData} actions={actions} />;
     default: return <pre className="rd-card-raw">{JSON.stringify(card.data, null, 1)}</pre>;
   }
+}
+
+function together(titles: string[]): string {
+  return titles.length < 2 ? titles.join("") : `${titles.slice(0, -1).join(", ")} and ${titles[titles.length - 1]}`;
 }

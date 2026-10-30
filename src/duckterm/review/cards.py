@@ -45,6 +45,13 @@ DIFF_ONLY = [
     "blast",
     "author",
 ]
+# Cards that read the diff the same way share one call, so the diff is sent once
+# per group instead of once per card.
+GROUPS: dict[str, list[str]] = {
+    "changed": ["intent", "walkthrough", "behaviour"],
+    "break": ["risk", "blast", "tests", "guardrails"],
+}
+TITLES = {card: title for card, _, title in CARDS}
 LATER: dict[str, str] = {}
 FILE = "cards.json"
 CONCURRENCY = 2
@@ -402,6 +409,39 @@ TASKS: dict[str, str] = {
 def prompt_for(card: str, ctx: dict[str, Any], ready: dict[str, Any]) -> str:
     schema = json.dumps(SCHEMAS[card])
     tail = f"\n\nReply with one JSON object matching this schema and nothing else:\n{schema}"
+    if card == "author":
+        return author.prompt(ctx, ctx["author"], SCHEMAS[card])
+    if card == "questions":
+        cards_text = json.dumps(dict(ready), indent=1)[:40000]
+        return (
+            f"{EVIDENCE}\n\n# Pull request\nTitle: {ctx['title']}\n\n"
+            f"# Findings from the other review cards\n{cards_text}\n\n" + TASKS[card] + tail
+        )
+    return _preamble(ctx) + task_for(card, ctx) + tail
+
+
+def group_prompt(group: list[str], ctx: dict[str, Any]) -> str:
+    """One prompt for several diff cards: the diff once, then each card's task."""
+    tasks = "\n\n".join(task_for(card, ctx) for card in group)
+    schema = json.dumps(group_schema(group))
+    return (
+        _preamble(ctx)
+        + f"Do each task below. Put each task's answer under its key ({', '.join(group)}).\n\n"
+        + tasks
+        + f"\n\nReply with one JSON object matching this schema and nothing else:\n{schema}"
+    )
+
+
+def group_schema(group: list[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "required": group,
+        "properties": {card: SCHEMAS[card] for card in group},
+    }
+
+
+def task_for(card: str, ctx: dict[str, Any]) -> str:
+    """A diff card's task section, read after the shared preamble."""
     if card == "blast":
         table = "\n".join(
             f"- {r['symbol']} ({r['change']}, {r['path']}:{r['line']}): "
@@ -409,7 +449,7 @@ def prompt_for(card: str, ctx: dict[str, Any], ready: dict[str, Any]) -> str:
             f"{'tested' if r['tested'] else 'no test references it'}"
             for r in ctx["blast"]["symbols"][:40]
         )
-        task = (
+        return (
             "# Changed symbols and their callers (from the symbol index)\n"
             f"{table or '- (none)'}\n\n"
             "# Task: Blast radius\n"
@@ -418,21 +458,17 @@ def prompt_for(card: str, ctx: dict[str, Any], ready: dict[str, Any]) -> str:
             "risks: for each changed symbol whose outside callers could be affected, one "
             "sentence. Only use symbols from the table."
         )
-        return _preamble(ctx) + task + tail
-    if card == "author":
-        return author.prompt(ctx, ctx["author"], SCHEMAS[card])
     if card == "risk":
         high = [f["path"] for f in ctx["files"] if f["bucket"] == "high"]
-        task = (
+        return (
             "# Task: Risk map\n"
             f"These files are high risk by rule: {', '.join(high)}. For each, write one "
             "sentence saying what could go wrong in production if this hunk is wrong, "
             "specific to the code shown."
         )
-        return _preamble(ctx) + task + tail
     if card == "guardrails":
         rules = "\n\n".join(f"## {path}\n{text}" for path, text in ctx["rules"].items())
-        task = (
+        return (
             "# Project rules at this head\n"
             f"{rules or '(no AGENTS.md or .claude/rules found)'}\n\n"
             "# Task: Guardrails\n"
@@ -443,14 +479,7 @@ def prompt_for(card: str, ctx: dict[str, Any], ready: dict[str, Any]) -> str:
             "from the diff or '' and a one-sentence note. Commit format, trailers, stdlib "
             "imports and retired terms are checked mechanically elsewhere; skip them."
         )
-        return _preamble(ctx) + task + tail
-    if card == "questions":
-        cards_text = json.dumps(dict(ready), indent=1)[:40000]
-        return (
-            f"{EVIDENCE}\n\n# Pull request\nTitle: {ctx['title']}\n\n"
-            f"# Findings from the other review cards\n{cards_text}\n\n" + TASKS[card] + tail
-        )
-    return _preamble(ctx) + TASKS[card] + tail
+    return TASKS[card]
 
 
 # ── deterministic cards and checks ──
@@ -818,6 +847,27 @@ async def generate_card(card: str, ctx: dict[str, Any], ready: dict[str, Any]) -
     return finish(card, ctx, value)
 
 
+async def generate_group(name: str, group: list[str], ctx: dict[str, Any]) -> dict[str, Any]:
+    """Write several diff cards in one call. Returns the cards that came back
+    valid; the caller writes any missing one on its own."""
+    if not backend.ready():
+        raise APIError(503, "No Claude Code or Codex CLI is installed to write review cards")
+    reply = (
+        await backend.complete(
+            group_prompt(group, ctx),
+            tier="deep",
+            schema=group_schema(group),
+            feature=f"pr-cards-{name}",
+        )
+    ).text
+    value = _parse_reply(reply) or {}
+    return {
+        card: finish(card, ctx, value[card])
+        for card in group
+        if isinstance(value.get(card), dict) and _valid(card, value[card])
+    }
+
+
 def load(target: Target) -> dict[str, Any]:
     state = store.load(target.directory, FILE)
     cards = state.get("cards") or {}
@@ -887,24 +937,41 @@ async def generate_all(
         ctx["author"] = facts["author"]
     semaphore = asyncio.Semaphore(CONCURRENCY)
 
+    def record(card: str, data: dict[str, Any] | APIError) -> None:
+        if isinstance(data, APIError):
+            if card in facts:
+                # The deterministic half still stands; say what is missing.
+                kept = {**facts[card], "model_status": "omitted", "model_reason": str(data)}
+                kept["verdict"] = facts_verdict(card, kept)
+                cards[card] = {"status": "ready", "data": kept, "at": int(time.time())}
+            else:
+                cards[card] = {"status": "omitted", "reason": str(data), "at": int(time.time())}
+        else:
+            if card in facts:
+                data = {**facts[card], **data, "model_status": "ready"}
+                data["verdict"] = facts_verdict(card, data)
+            cards[card] = {"status": "ready", "data": data, "at": int(time.time())}
+        _write(target, target.head_sha, cards)
+
     async def run(card: str) -> None:
         async with semaphore:
             try:
-                data = await generate_card(card, ctx, {})
+                record(card, await generate_card(card, ctx, {}))
             except APIError as exc:
-                if card in facts:
-                    # The deterministic half still stands; say what is missing.
-                    data = {**facts[card], "model_status": "omitted", "model_reason": str(exc)}
-                    data["verdict"] = facts_verdict(card, data)
-                    cards[card] = {"status": "ready", "data": data, "at": int(time.time())}
-                else:
-                    cards[card] = {"status": "omitted", "reason": str(exc), "at": int(time.time())}
-            else:
-                if card in facts:
-                    data = {**facts[card], **data, "model_status": "ready"}
-                    data["verdict"] = facts_verdict(card, data)
-                cards[card] = {"status": "ready", "data": data, "at": int(time.time())}
-            _write(target, target.head_sha, cards)
+                record(card, exc)
+
+    async def run_group(name: str, group: list[str]) -> None:
+        async with semaphore:
+            try:
+                written = await generate_group(name, group, ctx)
+            except APIError as exc:
+                for card in group:
+                    record(card, exc)
+                return
+        for card, data in written.items():
+            record(card, data)
+        # A card the grouped reply left out or garbled is written on its own.
+        await asyncio.gather(*(run(card) for card in group if card not in written))
 
     model_cards = [c for c in wanted if c != "release"]
     if "author" in model_cards and author_facts is None:
@@ -935,7 +1002,19 @@ async def generate_all(
                 "at": now,
             }
         model_cards = []
-    await asyncio.gather(*(run(card) for card in model_cards))
+    groups = {
+        name: [card for card in group if card in model_cards] for name, group in GROUPS.items()
+    }
+    groups = {name: group for name, group in groups.items() if len(group) > 1}
+    grouped = {card for group in groups.values() for card in group}
+    for group in groups.values():
+        for card in group:
+            cards[card]["with"] = [TITLES[other] for other in group if other != card]
+    _write(target, target.head_sha, cards)
+    await asyncio.gather(
+        *(run_group(name, group) for name, group in groups.items()),
+        *(run(card) for card in model_cards if card not in grouped),
+    )
     ready = {
         k: v["data"] for k, v in cards.items() if v.get("status") == "ready" and k != "questions"
     }

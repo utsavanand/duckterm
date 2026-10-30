@@ -142,28 +142,34 @@ def fake_generate(  # type: ignore[no-untyped-def]
     async def generate(
         harness: str, model: str, prompt: str, schema: Any = None, *, user_settings: bool = False
     ) -> str:
-        card = "unknown"
-        for name, marker in (
-            ("questions", "# Task: Open questions"),
-            ("intent", "# Task: Intent vs diff"),
-            ("walkthrough", "# Task: Walkthrough"),
-            ("behaviour", "# Task: Behaviour changes"),
-            ("risk", "# Task: Risk map"),
-            ("tests", "# Task: Tests"),
-            ("guardrails", "# Task: Guardrails"),
-            ("blast", "# Task: Blast radius"),
-            ("author", "# Task: How the author got here"),
-        ):
-            if marker in prompt:
-                card = name
-                break
-        calls.append(card)
-        if card in fail:
+        asked = [
+            name
+            for name, marker in (
+                ("questions", "# Task: Open questions"),
+                ("intent", "# Task: Intent vs diff"),
+                ("walkthrough", "# Task: Walkthrough"),
+                ("behaviour", "# Task: Behaviour changes"),
+                ("risk", "# Task: Risk map"),
+                ("tests", "# Task: Tests"),
+                ("guardrails", "# Task: Guardrails"),
+                ("blast", "# Task: Blast radius"),
+                ("author", "# Task: How the author got here"),
+            )
+            if marker in prompt
+        ]
+        # The questions prompt quotes other cards' findings, not their tasks.
+        asked = ["questions"] if "questions" in asked else asked or ["unknown"]
+        calls.append("+".join(asked))
+        if fail & set(asked):
             raise APIError(503, "provider down")
-        seen[card] = seen.get(card, 0) + 1
-        if card in garbage_first and seen[card] == 1:
-            return "not json at all"
-        return "```json\n" + json.dumps(REPLIES[card]) + "\n```"
+        for card in asked:
+            seen[card] = seen.get(card, 0) + 1
+        good = [c for c in asked if not (c in garbage_first and seen[c] == 1)]
+        if len(asked) == 1:
+            reply = REPLIES[asked[0]] if good else None
+            return "```json\n" + json.dumps(reply) + "\n```" if reply else "not json at all"
+        # A grouped reply that garbles a card leaves it out.
+        return json.dumps({card: REPLIES[card] for card in good})
 
     return generate
 
@@ -178,8 +184,10 @@ def test_cards_are_checked_against_the_diff_and_cached_per_head(
     result = asyncio.run(cards.generate_all(target, payload, row))
     by_id = {c["id"]: c for c in result["cards"]}
     assert result["stale"] is False and result["head_sha"] == target.head_sha
-    assert calls.count("intent") == 2  # one repair round after the garbage reply
-    assert calls[-1] == "questions"
+    # One call per group; the card the grouped reply garbled is written on its own.
+    assert sorted(calls[:2]) == ["intent+walkthrough+behaviour", "risk+tests+guardrails+blast"]
+    assert calls[2] == "intent"
+    assert calls[-1] == "questions" and len(calls) == 4
     intent = by_id["intent"]["data"]
     assert intent["claims"][1]["evidence"] == ["docs/notes.md"]
     assert intent["claims"][1]["evidence_missing"] == ["docs/missing.md"]
@@ -220,12 +228,14 @@ def test_failed_cards_are_omitted_with_the_reason_and_questions_use_what_is_read
     target: workspace.Target, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[str] = []
-    serve(monkeypatch, fake_generate(calls, fail={"intent", "behaviour"}))
+    serve(monkeypatch, fake_generate(calls, fail={"intent"}))
     result = asyncio.run(cards.generate_all(target, payload_for(target), None))
     by_id = {c["id"]: c for c in result["cards"]}
+    # A failed grouped call omits every card in it, each with the reason.
     assert by_id["intent"] == {**by_id["intent"], "status": "omitted", "reason": "provider down"}
+    assert by_id["walkthrough"]["status"] == "omitted"
     assert by_id["behaviour"]["status"] == "omitted"
-    assert by_id["walkthrough"]["status"] == "ready"
+    assert by_id["tests"]["status"] == "ready"
     assert by_id["questions"]["status"] == "ready"
     release = by_id["release"]["data"]
     assert {c["name"]: c["status"] for c in release["checks"]}["CI"] == "conditional"
