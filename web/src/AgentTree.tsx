@@ -701,7 +701,7 @@ function TreeRow({
         <div className="rd-row-density-detail">
           {s.runtime ?? "agent"} · {effState === "waiting" ? "Waiting for input" : s.lastTool && effState === "busy" ? `Running ${s.lastTool}` : stateLabel}
         </div>
-        {s.subagents && <HelperAgents agents={s.subagents} sessionKey={s.key} />}
+        {s.subagents && <HelperAgents agents={s.subagents} sessionKey={s.key} showCompleted={false} />}
       </div>
       {!collapsed &&
         node.children.map((child) => (

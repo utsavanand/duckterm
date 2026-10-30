@@ -1,6 +1,6 @@
 import { SubAgent } from "./types";
 
-export function HelperAgents({ agents, sessionKey }: { agents: SubAgent[]; sessionKey: string }) {
+export function HelperAgents({ agents, sessionKey, showCompleted = true }: { agents: SubAgent[]; sessionKey: string; showCompleted?: boolean }) {
   const active = agents.filter((agent) => agent.state !== "done");
   const completed = agents.filter((agent) => agent.state === "done");
   const rows = (items: SubAgent[]) => <ul className="rd-subagents">{items.map((agent) => <li key={agent.agent_id} className={`rd-subagent st-${agent.state}`} title={agent.agent_prompt ?? undefined}>
@@ -11,7 +11,7 @@ export function HelperAgents({ agents, sessionKey }: { agents: SubAgent[]; sessi
   </li>)}</ul>;
   return <>
     {active.length > 0 && rows(active)}
-    {completed.length > 0 && <details key={sessionKey} className="rd-completed-helpers">
+    {showCompleted && completed.length > 0 && <details key={sessionKey} className="rd-completed-helpers">
       <summary aria-label={`${completed.length} completed ${completed.length === 1 ? "helper" : "helpers"}`}>{completed.length} completed</summary>
       {rows(completed)}
     </details>}

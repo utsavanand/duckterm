@@ -2,6 +2,8 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { apiDelete, apiPost, base, expandFolder, seedSession } from "./helpers";
 
 async function drag(page: Page, source: Locator, target: Locator, after = false, cancel = false) {
+  await source.scrollIntoViewIfNeeded();
+  await target.scrollIntoViewIfNeeded();
   const from = await source.boundingBox(), to = await target.boundingBox();
   if (!from || !to) throw new Error("Missing drag geometry");
   await page.mouse.move(from.x + 100, from.y + from.height / 2);

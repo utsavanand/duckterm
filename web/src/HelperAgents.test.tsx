@@ -26,3 +26,13 @@ it("moves a newly completed helper into collapsed history without losing its pro
   fireEvent.click(screen.getByLabelText("1 completed helper"));
   expect(screen.getByText("Review the release")).toBeVisible();
 });
+
+it("omits completed sidebar helpers while retaining active work", () => {
+  render(<HelperAgents sessionKey="a" showCompleted={false} agents={[
+    {agent_id:"done",agent_type:"Explore",state:"done",started_at:1},
+    {agent_id:"live",agent_type:"Research",state:"running",started_at:1},
+  ]} />);
+  expect(screen.queryByText("Explore")).toBeNull();
+  expect(screen.queryByText(/completed/)).toBeNull();
+  expect(screen.getByText("Research")).toBeVisible();
+});

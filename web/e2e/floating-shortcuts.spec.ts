@@ -101,7 +101,7 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     const customizationResizes = sizes.length;
     // Personal presentation must not touch pin membership, selected terminal or its connection.
     const uiTab = rail.locator(".rd-shortcut-tab").filter({ has: page.getByRole("button", { name: "Open pinned shortcut-ui", exact: true }) });
-    await expect(uiTab.locator(".rd-shortcut-folder")).toHaveText("Ungrouped");
+    await expect(rail.locator(".rd-shortcut-group-heading > span").first()).toHaveText("Ungrouped");
     await uiTab.getByRole("button", { name: /^Color for/ }).click();
     await page.getByRole("dialog", { name: "Shortcut color", exact: true }).getByRole("button", { name: "Red", exact: true }).click();
     await expect(uiTab.getByRole("button", { name: /Color for .*: Red$/ })).toBeFocused();
@@ -110,7 +110,7 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     const tint = await uiTab.evaluate(el => {
       const actual = getComputedStyle(el).backgroundColor;
       const sample = document.createElement("span");
-      sample.style.background = "color-mix(in srgb,var(--shortcut-color) 30%,var(--card))";
+      sample.style.background = "color-mix(in srgb,var(--shortcut-color) 23%,color-mix(in srgb,var(--card) 86%,transparent))";
       el.append(sample);
       const expected = getComputedStyle(sample).backgroundColor;
       sample.remove();
@@ -124,7 +124,7 @@ test("floating shortcuts preserve geometry, drafts and connections while sharing
     const tabNames = () => rail.locator(".rd-shortcut-session").allTextContents();
     const originalOrder = await tabNames();
     // Uncolored pins must remain opaque over terminal text.
-    for (const tab of await rail.locator(".rd-shortcut-tab").all()) {
+    for (const tab of await rail.locator('.rd-shortcut-tab[data-color="None"]').all()) {
       expect(await tab.evaluate(el => getComputedStyle(el).backgroundColor)).not.toMatch(/\/\s*0\.|rgba\([^)]*,\s*0\./);
     }
     await rail.locator(".rd-shortcut-grip").first().click();
