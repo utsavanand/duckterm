@@ -34,6 +34,10 @@ test("grouped pins preserve names, drag rows and folders, and tolerate pointer d
     await drag(rail.locator('.rd-shortcut-group-heading').nth(1),rail.locator('.rd-shortcut-group').first());
     await expect.poll(names).toEqual([labels[1],labels[3],labels[0],labels[2]]);
     await page.reload(); await expect.poll(names).toEqual([labels[1],labels[3],labels[0],labels[2]]);
+    const longRow=rail.locator('.rd-shortcut-tab').filter({has:page.getByRole('button',{name:`Open pinned ${labels[3]}`,exact:true})});
+    const labelBounds=(await longRow.locator('.rd-shortcut-name').boundingBox())!;
+    const colorBounds=(await longRow.locator('.rd-shortcut-color').boundingBox())!;
+    expect(labelBounds.x+labelBounds.width).toBeLessThanOrEqual(colorBounds.x+1);
     for(const colorScheme of ['dark','light'] as const){
       await page.emulateMedia({colorScheme});
       await page.screenshot({path:`/tmp/grouped-shortcuts-${colorScheme}.png`});

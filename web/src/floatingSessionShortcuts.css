@@ -64,7 +64,7 @@
 .rd-shortcut-display { display:none; min-width:0; max-width:155px; background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:3px; font:inherit; font-size:0.6875rem; padding:3px 4px; pointer-events:auto; }
 .rd-shortcut-grip { display:none; order:-2; align-items:center; justify-content:center; width:18px; height:32px; flex-shrink:0; padding:0; border:0; background:transparent; color:var(--muted); cursor:grab; touch-action:none; }
 .rd-shortcut-grip:active { cursor:grabbing; }
-.rd-shortcut-color { display:none; position:absolute; right:36px; top:3px; align-items:center; justify-content:center; width:24px; height:30px; padding:0; border:0; background:transparent; color:var(--text); cursor:pointer; }
+.rd-shortcut-color { display:none; position:absolute; right:16px; top:3px; align-items:center; justify-content:center; width:24px; height:30px; padding:0; border:0; background:transparent; color:var(--text); cursor:pointer; }
 .rd-shortcut-color i { display:block; width:10px; height:10px; border:1px solid color-mix(in srgb,var(--text) 40%,transparent); border-radius:2px; background:var(--shortcut-color,transparent); }
 .rd-floating-shortcuts:is(.is-hovered, :has(:focus-visible), .picker-open, .always-expanded) .rd-shortcut-name,
 .rd-floating-shortcuts:is(.is-hovered, :has(:focus-visible), .picker-open, .always-expanded) .rd-shortcut-grip,
