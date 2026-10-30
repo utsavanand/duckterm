@@ -30,7 +30,7 @@ it("does not render an obsolete context response after selecting a different hos
   const view = render(<Connectors sessionKey="local-a" />);
   view.rerender(<Connectors sessionKey={sessionRef("other-mac", "local-b")} />);
   await act(async () => { current.resolve({ connectors: [] }); });
-  expect(screen.getByText("Connectors (0) · other-mac")).toBeInTheDocument();
+  expect(screen.getByText(/^Connectors · other-mac$/)).toBeInTheDocument();
   await act(async () => {
     previous.resolve({ connectors: [{ name: "github", title: "Obsolete connector result", description: "old", credential: null, stored_secret: false, identity: null, sources: [], write_access: false, enabled: false, installed: {}, ready: false, detail: null, managed: false, revoke_url: "", last_used: null, use_count: 0, harnesses: [], harnesses_present: {} }] });
   });

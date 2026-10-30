@@ -825,6 +825,85 @@ code,
   font-weight: 600;
   font-size: 0.8125rem;
 }
+.rd-connector-row {
+  padding: 4px 0;
+}
+/* The row carries name over state, so the dot aligns to the first line
+   rather than floating against the middle of a two-line block. */
+.rd-connector-row .dot {
+  align-self: flex-start;
+  margin-top: 6px;
+}
+.rd-connector-main {
+  flex: 1;
+  min-width: 0;
+}
+.rd-connector-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 0.6875rem;
+  color: var(--text-soft);
+}
+.rd-connector-tag {
+  font-size: 0.625rem;
+  padding: 1px 6px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+/* Write access is the only permission here that can destroy the owner's
+   data, so it must not read as just another grey tag. */
+.rd-connector-tag.warn {
+  color: var(--wait);
+  border-color: var(--wait);
+}
+.rd-connector-config {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  margin: 9px 0 6px 15px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--line);
+}
+.rd-connector-config .rd-connector-harnesses legend {
+  margin-bottom: 2px;
+}
+.rd-connector-config > .rd-connector-desc {
+  margin-left: 0;
+}
+.rd-connector-config > .rd-connector-installed {
+  margin-left: 0;
+}
+.rd-connector-config select,
+.rd-connector-config input[type="password"] {
+  max-width: 100%;
+  min-width: 0;
+}
+.rd-connector-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+}
+.rd-connector-source {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+.rd-connector-warn {
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: var(--wait);
+  border-left: 2px solid var(--wait);
+  padding: 4px 0 4px 9px;
+}
 .rd-connector-cred {
   flex: 1;
   font-size: 0.6875rem;
