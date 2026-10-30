@@ -33,7 +33,7 @@ def commit(repo: Path, message: str) -> str:
 def serve(monkeypatch: pytest.MonkeyPatch, generate: Any) -> None:
     """Answer backend calls with a fake harness reply."""
 
-    async def complete(prompt: str, *, tier: str, schema: Any = None) -> backend.Reply:
+    async def complete(prompt: str, *, tier: str, schema: Any = None, **_kw: Any) -> backend.Reply:
         return backend.Reply(await generate("claude-code", "sonnet", prompt, schema), "harness", "")
 
     monkeypatch.setattr(backend, "complete", complete)

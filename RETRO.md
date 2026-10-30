@@ -1,3 +1,13 @@
+## 2026-10-29 — `--ignore-user-config` also drops the owner's model choice
+
+Isolating `codex exec` from the owner's config kept tools and rules out, but it
+also meant every call ran Codex's built-in default model. A one-line summary
+took 5-6 s that way and about 3 s on GPT-6-Luna. Fast calls now ask for Luna
+when the account lists it. Oracle and rule suggestions had no byte limit on
+their input, so both are now capped in bytes, not by session or row count.
+Each AI call writes one `[duckterm] ai` line with its feature, time and what
+served it, so the next speed change can be measured per feature.
+
 ## 2026-10-29 — Measure where the seconds go before buying speed
 
 DuckTerm's AI features felt slow, and the assumed fix was API keys. Timing the

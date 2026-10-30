@@ -126,7 +126,7 @@ async def ask(
     value: dict[str, Any] | None = None
     for _round in range(2):
         prompt = _prompt(target, ctx, ready, digest, history, question, hunk, files)
-        reply = (await backend.complete(prompt, tier="deep", schema=SCHEMA)).text
+        reply = (await backend.complete(prompt, tier="deep", schema=SCHEMA, feature="pr-chat")).text
         value = cards._parse_reply(reply)
         if value is None or "answer" not in value:
             raise APIError(502, "The model did not return an answer")

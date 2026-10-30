@@ -259,3 +259,49 @@ def test_rejected_key_is_not_saved(memory_rig, provider):
     status, result = dispatch(server, "POST", "/ai-settings/key", owner, body)
     assert status == 502 and "401" in result["error"]
     assert ai_settings.key("anthropic") == (None, "")
+
+
+def test_codex_fast_tier_uses_luna_only_when_the_account_lists_it(
+    memory_rig, monkeypatch, tmp_path
+):
+    monkeypatch.delenv("DUCKTERM_SUMMARIZER", raising=False)
+    monkeypatch.setattr(
+        backend.shutil, "which", lambda b: "/fixture/codex" if b == "codex" else None
+    )
+    monkeypatch.setattr(backend.Path, "home", lambda: tmp_path)
+    calls: list = []
+
+    async def generate(name, model, prompt, schema, **options):
+        calls.append((name, model, options["effort"]))
+        return "ok"
+
+    monkeypatch.setattr(memory_provider, "generate", generate)
+    # No models cache (or an account without Luna): Codex's default model.
+    reply = asyncio.run(backend.complete("p", tier="fast"))
+    assert calls[-1] == ("codex", "", "low") and reply.detail == "codex"
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "models_cache.json").write_text(
+        json.dumps({"models": [{"slug": "gpt-6-astra"}, {"slug": "gpt-6-luna"}]})
+    )
+    reply = asyncio.run(backend.complete("p", tier="fast"))
+    assert calls[-1] == ("codex", "gpt-6-luna", "low") and reply.detail == "codex/gpt-6-luna"
+    asyncio.run(backend.complete("p", tier="deep"))
+    assert calls[-1] == ("codex", "", "medium")
+
+
+def test_each_call_logs_feature_time_and_what_served_it(memory_rig, provider, monkeypatch, capsys):
+    calls: list = []
+    _harness_fake(monkeypatch, calls)
+    ai_settings.save({"backend": "api"})
+    asyncio.run(backend.complete("p" * 3000, tier="deep", feature="oracle"))
+    line = capsys.readouterr().err.strip().splitlines()[-1]
+    assert line.startswith("[duckterm] ai oracle deep ")
+    assert "in=3KB harness claude-code/sonnet (fallback: No anthropic API key" in line
+
+    async def broken(*_a, **_kw):
+        raise APIError(503, "usage limit")
+
+    monkeypatch.setattr(memory_provider, "generate", broken)
+    with pytest.raises(APIError):
+        asyncio.run(backend.complete("p", tier="fast", feature="compaction"))
+    assert capsys.readouterr().err.strip().endswith("failed: usage limit")
