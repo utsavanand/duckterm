@@ -462,3 +462,33 @@ def test_tests_card_merges_model_coverage_with_facts(
     guard = by_id["guardrails"]["data"]
     assert [f["rule"] for f in guard["findings"]] == ["Comment slop", "Over-engineering"]
     assert guard["verdict"] == "2 findings"  # the model finding plus the fixture commit subject
+
+
+def test_an_all_empty_grouped_reply_is_written_card_by_card(
+    target: workspace.Target, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    real = fake_generate(calls)
+
+    async def generate(harness: str, model: str, prompt: str, schema: Any = None, **kw: Any) -> str:
+        reply = await real(harness, model, prompt, schema)
+        if calls[-1].startswith("risk+"):
+            empty = {"reasons": [], "coverage": [], "gaps": [], "suggested": [], "findings": []}
+            return json.dumps(
+                {
+                    "risk": {"reasons": []},
+                    "tests": {k: empty[k] for k in ("coverage", "gaps", "suggested")},
+                    "guardrails": {"findings": []},
+                    "blast": {"consequence": "", "risks": []},
+                }
+            )
+        return reply
+
+    serve(monkeypatch, generate)
+    result = asyncio.run(cards.generate_all(target, payload_for(target), None))
+    by_id = {c["id"]: c for c in result["cards"]}
+    assert {"risk", "tests", "guardrails", "blast"} <= set(calls)
+    assert by_id["risk"]["data"]["reasons"] == [
+        {"path": "src/duckterm/persistence/db.py", "reason": "Schema drift"}
+    ]
+    assert by_id["guardrails"]["status"] == "ready"
