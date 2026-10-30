@@ -30,7 +30,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
     onInstall: () => void;
     onRemove: () => void;
   };
-  onAction: (action: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "appearance") => void;
+  onAction: (action: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance") => void;
 }) {
   const [open, setOpen] = useState<Menu | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -61,7 +61,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
     };
   }, [open]);
 
-  const action = (value: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "appearance") => {
+  const action = (value: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance") => {
     setOpen(null);
     onAction(value);
   };
@@ -98,6 +98,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
         <div className="rd-header-menu-divider" />
         {has("inbox") && <button className="rd-header-menu-item" onClick={() => action("collaboration")}>Collaboration <span aria-hidden="true">›</span></button>}
         {has("checkpoints") && <button className="rd-header-menu-item" onClick={() => action("checkpointing")}>Checkpointing <span aria-hidden="true">›</span></button>}
+        {(has("checkpoints") || has("oracle") || has("pr_review")) && <button className="rd-header-menu-item" onClick={() => action("aimodels")}>AI models <span aria-hidden="true">›</span></button>}
         <button className="rd-header-menu-item" onClick={() => action("bugreport")}>Report a bug <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" title="Manage skill kits for your projects" onClick={() => action("harnesses")}>Harnesses <span aria-hidden="true">›</span></button>

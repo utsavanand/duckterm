@@ -50,6 +50,25 @@ export interface CheckpointSettings {
   reviewer_model: "haiku" | "sonnet" | "opus";
 }
 
+export type AiProvider = "anthropic" | "openai" | "openrouter" | "custom";
+
+export interface AiSettings {
+  backend: "harness" | "api" | "duckterm";
+  harness: "auto" | "claude-code" | "codex";
+  provider: AiProvider;
+  base_url: string;
+  fast_model: string;
+  deep_model: string;
+}
+
+// GET /ai-settings. keys never carry the key itself, only whether one is set.
+export interface AiState {
+  settings: AiSettings;
+  keys: Record<AiProvider, { saved: boolean; source: "env" | "stored" | "" }>;
+  harness: "claude-code" | "codex" | null;
+  models: { fast: string; deep: string };
+}
+
 export interface CheckpointPlan {
   available_records: number;
   processed_records: number;
@@ -479,6 +498,18 @@ export const api = {
 
   checkpointSettings: () => get<CheckpointSettings>("/checkpoint-settings", undefined, { authed: true }),
   saveCheckpointSettings: (value: Omit<CheckpointSettings, "batch_records">) => post<CheckpointSettings>("/checkpoint-settings", value),
+  aiSettings: () => get<AiState>("/ai-settings", undefined, { authed: true }),
+  saveAiSettings: (value: AiSettings) => post<AiState>("/ai-settings", value),
+  saveAiKey: (provider: AiProvider, key: string, base_url: string) =>
+    post<{ provider: AiProvider; saved: true; models: string[] }>("/ai-settings/key", { provider, key, base_url }),
+  forgetAiKey: async (provider: AiProvider): Promise<void> => {
+    const res = await fetch("/ai-settings/key", {
+      method: "DELETE",
+      headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ provider }),
+    });
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `${res.status} ${res.statusText}`);
+  },
   backupStatus: async (): Promise<BackupState> => {
     const res = await fetch("/backup", { cache: "no-store", headers: authHeaders() });
     const data = await res.json();
