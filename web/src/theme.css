@@ -2655,6 +2655,23 @@ select {
 .rd-oracle-a pre {
   overflow-x: auto;
 }
+/* A blinking caret after the last words while the answer is still arriving. */
+.rd-oracle-a.is-writing > :last-child::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 14px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: var(--brand-green);
+  animation: rd-oracle-caret 1s steps(1) infinite;
+}
+@keyframes rd-oracle-caret {
+  50% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rd-oracle-a.is-writing > :last-child::after { animation: none; }
+}
 .rd-oracle-thinking {
   display: flex;
   align-items: center;
