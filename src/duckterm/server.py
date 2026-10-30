@@ -5666,6 +5666,7 @@ class Server:
             secret = payload.get("key")
             if not isinstance(secret, str) or not secret.strip():
                 raise APIError(400, "Paste the API key to save")
+            ai_settings.check_named_url(provider, payload.get("base_url"))
             settings = {**ai_settings.load(), "provider": provider}
             if isinstance(payload.get("base_url"), str):
                 settings["base_url"] = payload["base_url"]

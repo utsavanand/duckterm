@@ -4,8 +4,10 @@ available). These tests pin the wire format sent to providers, the fallback to
 the harness, and that a saved key is never written to settings or echoed."""
 
 import asyncio
+import http.server
 import io
 import json
+import threading
 import urllib.error
 from pathlib import Path
 
@@ -48,7 +50,7 @@ def provider(monkeypatch):
             raise reply
         return _Response(json.dumps(reply).encode())
 
-    monkeypatch.setattr(api.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(api, "_open", urlopen)
     monkeypatch.setenv("DUCKTERM_NO_KEYCHAIN", "1")
     for env in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"):
         monkeypatch.delenv(env, raising=False)
@@ -128,6 +130,9 @@ def test_provider_error_names_the_problem_without_the_key(provider):
         {"harness": "copilot"},
         {"provider": "custom"},  # no base URL
         {"base_url": "file:///etc/passwd"},
+        {"base_url": "https://collector.example/v1"},  # anthropic has its own address
+        {"provider": "custom", "base_url": "http://gateway.example/v1"},  # key in clear text
+        {"provider": "custom", "base_url": "file:///etc/passwd"},
         {"backend": "api", "provider": "openrouter"},  # no models chosen
         {"unexpected": "x"},
     ],
@@ -261,18 +266,115 @@ def test_rejected_key_is_not_saved(memory_rig, provider):
     assert ai_settings.key("anthropic") == (None, "")
 
 
-def test_a_settings_change_cannot_send_a_key_to_another_host(memory_rig, provider, monkeypatch):
-    """Anything that can write settings could otherwise point a named provider
-    at its own host and receive the stored key on the next call."""
+def test_switching_away_from_custom_drops_its_base_url(memory_rig, provider, monkeypatch):
+    """An owner who once tried a gateway and then picks Anthropic must not send
+    the Anthropic key to that gateway."""
     sent, replies = provider
-    calls: list = []
-    _harness_fake(monkeypatch, calls)
+    _harness_fake(monkeypatch, [])
     ai_settings.save_key("anthropic", "sk-stored")
-    saved = ai_settings.save({"backend": "api", "base_url": "https://collector.example/v1"})
+    ai_settings.save(
+        {
+            "backend": "api",
+            "provider": "custom",
+            "base_url": "https://gateway.example/v1",
+            "fast_model": "m",
+            "deep_model": "m",
+        }
+    )
+    saved = ai_settings.save({"provider": "anthropic", "fast_model": "", "deep_model": ""})
     assert saved["base_url"] == ""
     replies.append({"content": [{"type": "text", "text": "ok"}]})
     asyncio.run(backend.complete("p", tier="fast"))
     assert sent[-1]["url"] == "https://api.anthropic.com/v1/messages"
+
+
+def test_a_named_provider_refuses_a_base_url(memory_rig, provider):
+    server, _, _, _ = memory_rig
+    sent, _ = provider
+    with pytest.raises(APIError):
+        ai_settings.save({"backend": "api", "base_url": "http://attacker.example"})
+    body = json.dumps(
+        {"provider": "anthropic", "key": "sk-new", "base_url": "http://attacker.example"}
+    ).encode()
+    status, _ = dispatch(
+        server, "POST", "/ai-settings/key", {"x-duckterm-token": server.token}, body
+    )
+    assert status == 400 and sent == []
+
+
+def test_a_provider_redirect_does_not_carry_the_key(memory_rig):
+    """urllib copies key headers onto a redirect, even to another host."""
+    received: list[dict] = []
+
+    class Collector(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            received.append(dict(self.headers))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"data": []}')
+
+        def log_message(self, *args):
+            pass
+
+    collector = http.server.HTTPServer(("127.0.0.1", 0), Collector)
+    target = f"http://127.0.0.1:{collector.server_port}/v1/models"
+
+    class Redirector(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(302)
+            self.send_header("Location", target)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    redirector = http.server.HTTPServer(("127.0.0.1", 0), Redirector)
+    servers = [collector, redirector]
+    for server in servers:
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        base = f"http://127.0.0.1:{redirector.server_port}/v1"
+        for wire in ("anthropic", "openai"):
+            with pytest.raises(APIError, match="redirected"):
+                api.models(wire, base, "sk-CANARY")
+    finally:
+        for server in servers:
+            server.shutdown()
+            server.server_close()
+    assert received == []
+
+
+def test_a_provider_error_never_repeats_the_key(memory_rig, provider):
+    server, _, _, _ = memory_rig
+    _, replies = provider
+    secret = "sk-synthetic-echo"
+    echo = json.dumps({"error": {"message": f"invalid key {secret}"}}).encode()
+    replies.append(urllib.error.HTTPError("u", 401, "no", {}, io.BytesIO(echo)))  # type: ignore[arg-type]
+    replies.append(urllib.error.URLError(f"refused for {secret}"))
+    owner = {"x-duckterm-token": server.token}
+    for provider_name in ("anthropic", "openai"):
+        body = json.dumps({"provider": provider_name, "key": secret}).encode()
+        status, result = dispatch(server, "POST", "/ai-settings/key", owner, body)
+        assert status in (502, 503) and secret not in json.dumps(result)
+        assert "[key]" in result["error"]
+
+
+def test_the_harness_never_sees_a_provider_key(monkeypatch):
+    """A key in the server's environment would let the CLI switch from the
+    owner's login to per-token billing."""
+    monkeypatch.delenv("DUCKTERM_SUMMARIZER", raising=False)
+    for env in ai_settings.env_keys():
+        monkeypatch.setenv(env, "sk-synthetic-env")
+    captured: dict = {}
+
+    async def spawn(*args, **kwargs):
+        captured.update(kwargs["env"])
+        raise OSError("stop before spawning")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    with pytest.raises(APIError):
+        asyncio.run(memory_provider.generate("claude-code", "haiku", "p"))
+    assert captured and not ai_settings.env_keys() & set(captured)
 
 
 def test_a_custom_key_only_goes_to_the_url_it_was_verified_for(memory_rig, provider, monkeypatch):

@@ -44,7 +44,9 @@ export function AiModelsModal({ onClose }: { onClose: () => void }) {
 
   function change(patch: Partial<AiSettings>) {
     if (!settings) return;
-    setSettings({ ...settings, ...patch }); setSaved(false);
+    // A base URL belongs to the custom provider only; carrying it into another
+    // provider would be refused by the server.
+    setSettings({ ...settings, ...patch, ...(patch.provider ? { base_url: "" } : {}) }); setSaved(false);
     if (patch.provider) { setModels([]); setKeyStatus(""); setKey(""); }
   }
 

@@ -17,6 +17,18 @@ TIMEOUT = 180
 EFFORT_MODELS = {"claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "claude-fable-5-1"}
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """urllib copies x-api-key and Authorization onto a redirect's Location even
+    when the host changes, and no provider API needs a redirect."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        fp.close()
+        raise APIError(502, "Provider redirected; check the base URL")
+
+
+_open = urllib.request.build_opener(_NoRedirect).open
+
+
 def _request(url: str, headers: dict[str, str], body: dict[str, Any] | None = None) -> Any:
     req = urllib.request.Request(
         url,
@@ -24,22 +36,35 @@ def _request(url: str, headers: dict[str, str], body: dict[str, Any] | None = No
         headers={"Content-Type": "application/json", "User-Agent": "duckterm", **headers},
         method="GET" if body is None else "POST",
     )
+    secrets = [v.removeprefix("Bearer ") for k, v in headers.items() if k.lower() in _KEY_HEADERS]
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as response:
+        with _open(req, timeout=TIMEOUT) as response:
             return json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        # Provider error bodies name the problem ("invalid x-api-key", "model not
-        # found") and never echo the key back.
+        # Error bodies name the problem ("invalid x-api-key", "model not found"),
+        # but a custom endpoint can say anything, including the key it was sent.
         detail = exc.read(2000).decode("utf-8", "replace")
         try:
             message = json.loads(detail).get("error", {}).get("message") or detail
         except (ValueError, AttributeError):
             message = detail
-        raise APIError(502, f"Provider returned {exc.code}: {str(message)[:300]}") from exc
+        said = _redacted(str(message), secrets)[:300]
+        raise APIError(502, f"Provider returned {exc.code}. Provider said: {said}") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        raise APIError(503, f"Provider could not be reached: {exc}") from exc
+        reason = _redacted(str(exc), secrets)
+        raise APIError(503, f"Provider could not be reached: {reason}") from exc
     except ValueError as exc:
         raise APIError(502, "Provider returned a reply that is not JSON") from exc
+
+
+_KEY_HEADERS = {"x-api-key", "authorization"}
+
+
+def _redacted(text: str, secrets: list[str]) -> str:
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "[key]")
+    return text
 
 
 def _anthropic_headers(key: str) -> dict[str, str]:
