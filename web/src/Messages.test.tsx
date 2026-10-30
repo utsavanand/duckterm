@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { api } from "./api";
 import { Messages as ActualMessages } from "./Messages";
 
 // Messages fetches /sessions/:key/messages directly and polls it.
@@ -145,4 +146,20 @@ it("does not claim a cached conversation before the first verified snapshot", as
   flush();
   await waitFor(() => expect(screen.getByText("No verified conversation snapshot is available yet.")).toBeTruthy());
   expect(screen.queryByText(/Showing the last verified conversation/)).toBeNull();
+});
+
+it("submits the next turn once and retains the draft if delivery fails", async () => {
+  const send = vi.spyOn(api,"submitFollowUp").mockRejectedValueOnce(new Error("Could not submit"));
+  render(<Messages sessionKey="a" />); flush();
+  await screen.findByText("ALPHA REPLY");
+  const input = screen.getByPlaceholderText("send a follow-up to the agent…");
+  fireEvent.change(input,{target:{value:"Please start the next turn"}});
+  fireEvent.click(screen.getByRole("button",{name:"Send"}));
+  await waitFor(() => expect(send).toHaveBeenCalledWith(`${scope}-a`,"Please start the next turn"));
+  await waitFor(() => expect(screen.getByRole("button",{name:"Send"})).toBeEnabled());
+  expect(input).toHaveValue("Please start the next turn");
+  send.mockResolvedValueOnce({written:true});
+  fireEvent.click(screen.getByRole("button",{name:"Send"}));
+  await waitFor(() => expect(input).toHaveValue(""));
+  expect(send).toHaveBeenCalledTimes(2); send.mockRestore();
 });

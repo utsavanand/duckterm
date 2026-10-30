@@ -5780,9 +5780,37 @@ class Server:
         if supervisor is None:
             await _write_json(writer, 404, {"error": "no live session (not launched by Duckterm)"})
             return
-        text = json.loads(body or b"{}").get("text", "")
-        wrote = await asyncio.to_thread(supervisor.write_input, text)
-        await _write_json(writer, 200 if wrote else 409, {"written": wrote})
+        request = json.loads(body or b"{}")
+        text = request.get("text", "")
+        submit = request.get("submit", False)
+        if not isinstance(text, str) or not isinstance(submit, bool):
+            await _write_json(writer, 400, {"error": "text must be a string; submit a boolean"})
+            return
+        if submit:
+            if not text.strip() or len(text.encode()) > 16384:
+                await _write_json(writer, 400, {"error": "text must be 1 to 16384 bytes"})
+                return
+            # A multiline paste is one prompt. Enter must arrive separately once
+            # the harness has left paste mode, not in the same tmux/PTY burst.
+            wrote = await supervisor.write_queued_bytes(b"\x1b[200~" + text.encode() + b"\x1b[201~")
+            if wrote:
+                await asyncio.sleep(Server._SUBMIT_GAP_S)
+                wrote = await supervisor.write_queued_bytes(b"\r")
+            if not wrote:
+                await _write_json(
+                    writer,
+                    409,
+                    {
+                        "written": False,
+                        "error": "Could not submit. Check the terminal before retrying.",
+                    },
+                )
+                return
+        else:
+            wrote = await asyncio.to_thread(supervisor.write_input, text)
+        await _write_json(
+            writer, 200 if wrote else 409, {"written": wrote, "submitted": submit and wrote}
+        )
 
     async def _output(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, session_key: str
