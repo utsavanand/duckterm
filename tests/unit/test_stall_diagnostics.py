@@ -62,21 +62,19 @@ asyncio.run(main())
 def test_healthy_waits_and_exception_cleanup_do_not_dump(tmp_path: Path, exception: str) -> None:
     run_probe(
         tmp_path,
-        """
+        f"""
 async def main():
     try:
         with watch_stalls(log, timeout=0.5):
             await asyncio.sleep(1.2)
             await asyncio.to_thread(time.sleep, 0.8)
-            raise EXIT_ERROR('exit probe')
-    except EXIT_ERROR:
+            raise {exception}('exit probe')
+    except {exception}:
         pass
     time.sleep(0.8)
 
 asyncio.run(main())
-""".replace(
-            "EXIT_ERROR", exception
-        ),
+""",
     )
     assert "Timeout (" not in (tmp_path / "server-stalls.log").read_text()
 
