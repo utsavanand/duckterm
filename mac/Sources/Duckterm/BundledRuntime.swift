@@ -2,7 +2,7 @@ import Foundation
 
 /// The backend is installed inside the private interpreter's site-packages.
 /// Its import isolation never changes the Python environment of user projects.
-struct BundledRuntime {
+struct BundledRuntime: Sendable {
     let resources: URL
 
     var python: URL { resources.appendingPathComponent("python/bin/python3.13") }
