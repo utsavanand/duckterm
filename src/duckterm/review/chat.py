@@ -9,8 +9,8 @@ import re
 import time
 from typing import Any
 
-from duckterm import memory_provider
 from duckterm.core.session_api import APIError
+from duckterm.llm import backend
 from duckterm.review import cards, git, store
 from duckterm.review.workspace import Target
 
@@ -117,10 +117,8 @@ async def ask(
     hunk: str | None,
     digest: str | None,
 ) -> dict[str, Any]:
-    provider = cards.provider()
-    if provider is None:
+    if not backend.ready():
         raise APIError(503, "No Claude Code or Codex CLI is installed to answer")
-    harness, model = provider
     ctx = cards.context(target, payload)
     ready = {c["id"]: c["data"] for c in cards.load(target)["cards"] if c.get("status") == "ready"}
     history = transcript(target)
@@ -128,7 +126,7 @@ async def ask(
     value: dict[str, Any] | None = None
     for _round in range(2):
         prompt = _prompt(target, ctx, ready, digest, history, question, hunk, files)
-        reply = await memory_provider.generate(harness, model, prompt, SCHEMA, user_settings=True)
+        reply = (await backend.complete(prompt, tier="deep", schema=SCHEMA)).text
         value = cards._parse_reply(reply)
         if value is None or "answer" not in value:
             raise APIError(502, "The model did not return an answer")

@@ -6,7 +6,10 @@ from typing import Any
 
 import pytest
 
-from duckterm.review import cards, history, lists, workspace
+from duckterm.llm import backend
+from duckterm.review import history, lists, workspace
+
+from .test_cards import serve
 
 NO_SIGNING = [
     "-c",
@@ -122,7 +125,7 @@ REVIEW = {
 def test_build_map_caches_and_compare_marks_modules(
     tagged: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(cards, "provider", lambda: ("claude-code", "sonnet"))
+    monkeypatch.setattr(backend, "ready", lambda: True)
     prompts: list[str] = []
 
     async def generate(harness: str, model: str, prompt: str, schema: Any = None, **_: Any) -> str:
@@ -131,7 +134,7 @@ def test_build_map_caches_and_compare_marks_modules(
         edges = [["server", "db"], ["web", "server"], ["review", "ghost"]]
         return json.dumps({"modules": modules, "edges": edges})
 
-    monkeypatch.setattr(history.memory_provider, "generate", generate)
+    serve(monkeypatch, generate)
     repo = str(tagged)
     first = asyncio.run(history.build_map(repo, None, "v0.1.0"))
     assert first["status"] == "ready"
@@ -160,7 +163,7 @@ def test_build_map_caches_and_compare_marks_modules(
 def test_build_map_without_provider_is_omitted_with_the_graph(
     tagged: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(cards, "provider", lambda: None)
+    monkeypatch.setattr(backend, "ready", lambda: False)
     value = asyncio.run(history.build_map(str(tagged), None, "v0.1.0"))
     assert value["status"] == "omitted"
     assert "No Claude Code or Codex CLI" in value["reason"]

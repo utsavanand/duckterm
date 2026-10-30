@@ -72,7 +72,7 @@ def suggest_rules(corrections: list[Correction], current_rules: list[RuleBlock])
     lines = "\n".join(f"- [{c.runtime or 'unknown'}] [{c.kind}] {c.text}" for c in corrections)
     current = "\n".join(f"- {r.text}" for r in current_rules if r.status == "active")
     prompt = _PROMPT.format(current=current or "(empty)", corrections=lines)
-    result = summarize(prompt)
+    result = summarize(prompt, tier="deep")
 
     runtimes = {c.runtime for c in corrections if c.runtime}
     models = {c.model for c in corrections if c.model}

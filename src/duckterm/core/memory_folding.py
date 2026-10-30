@@ -108,7 +108,7 @@ async def prepare(
     async def provider(prompt: str) -> str:
         from duckterm.server import summarize
 
-        reply = await asyncio.to_thread(summarize, prompt)
+        reply = await asyncio.to_thread(summarize, prompt, tier="fast")
         if getattr(reply, "failure_reason", None):
             raise RuntimeError("compaction_provider_failed")
         return reply.text

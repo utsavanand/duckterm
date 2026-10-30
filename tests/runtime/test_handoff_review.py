@@ -40,7 +40,7 @@ def test_long_reviewed_brief_uses_one_revision_without_provider_and_can_prepare(
     server, transcript, _ = rig
     transcript[0]["text"] = "Long legacy conversation. " * 2000
 
-    def no_provider(_):
+    def no_provider(_, **_kw):
         raise AssertionError("Explicit review must not require an available LLM")
 
     monkeypatch.setattr("duckterm.server.summarize", no_provider)

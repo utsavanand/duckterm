@@ -16,7 +16,7 @@ def test_first_handoff_requires_a_summary_and_retains_source_when_provider_unava
 
     server, calls, _ = preparation
     monkeypatch.setattr(
-        "duckterm.server.summarize", lambda _: Summary("", "none", "provider_timeout")
+        "duckterm.server.summarize", lambda _, **_kw: Summary("", "none", "provider_timeout")
     )
     result = asyncio.run(fixtures.prepare(server))
     assert result["state"] == "failed"
@@ -41,7 +41,7 @@ def test_existing_complete_spans_prepare_without_model_or_raw_tail(preparation, 
         await server.progress_coordinator.refresh("agent")
         assert len(calls) == 4
 
-        def forbidden(*args):
+        def forbidden(*args, **_kw):
             raise AssertionError("Complete summaries must be reused")
 
         monkeypatch.setattr("duckterm.server.summarize", forbidden)

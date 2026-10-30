@@ -83,7 +83,7 @@ def offline(monkeypatch):
     monkeypatch.setattr("duckterm.model_catalog.ModelCatalog.choices", choices)
     monkeypatch.setattr("duckterm.restarts.cli_version", version)
 
-    def summary(prompt):
+    def summary(prompt, **_kw):
         if "validating a candidate" in prompt:
             text = {
                 "accept": [],
