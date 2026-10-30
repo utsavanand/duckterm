@@ -479,13 +479,20 @@ class Memory:
                 if len(kind) > 32 or len(cursor) > 128:
                     raise APIError(400, "Invalid source listing query")
                 limit = self._number(query, "limit", 20, 1, 100)
+
+                def source_cursor(source: dict[str, Any]) -> str:
+                    # Preserve current-before-retained ordering, while giving
+                    # each version a distinct cursor at a page boundary.
+                    order = 0 if source.get("current") else 1
+                    return f"{source['id']}:{order}:{source['version']}"
+
                 selected = sorted(
                     (
                         s
                         for s in sources
-                        if s["id"] + ":" + s["version"] > cursor and (not kind or s["kind"] == kind)
+                        if source_cursor(s) > cursor and (not kind or s["kind"] == kind)
                     ),
-                    key=lambda s: s["id"] + ":" + s["version"],
+                    key=source_cursor,
                 )
                 result["sources"] = [
                     {
@@ -507,9 +514,7 @@ class Memory:
                     for s in selected[:limit]
                 ]
                 result["next_cursor"] = (
-                    selected[limit - 1]["id"] + ":" + selected[limit - 1]["version"]
-                    if len(selected) > limit
-                    else None
+                    source_cursor(selected[limit - 1]) if len(selected) > limit else None
                 )
             elif action == "search":
                 text = query.get("q", [""])[0].strip()
