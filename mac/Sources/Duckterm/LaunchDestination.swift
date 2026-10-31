@@ -62,19 +62,20 @@ final class LaunchDestination: NSObject, URLSessionTaskDelegate {
     func token(base: URL, attempts: Int = 30) async throws -> String {
         // Wait only for readiness. A launch POST is sent once, never retried.
         // The locked page answers 401 with the self-probe header.
-        var ready = false
+        var ready = false, open = false
         for _ in 0..<attempts {
             var probe = URLRequest(url: base, cachePolicy: .reloadIgnoringLocalCacheData)
             probe.timeoutInterval = 2
+            probe.httpShouldHandleCookies = false
             if let (_, response) = try? await probes.perform(probe),
                let http = response as? HTTPURLResponse,
                http.value(forHTTPHeaderField: "X-Duckterm") == "1" {
-                ready = true; break
+                ready = true; open = http.statusCode == 200; break
             }
             try await Task.sleep(nanoseconds: 500_000_000)
         }
         guard ready else { throw Failure.message("Could not connect to this computer. Check SSH access and try again.") }
-        return try await OwnerToken.token(base: base)
+        return try await OwnerToken.token(base: base, open: open)
     }
 
     func perform(base: URL, operation: String, params: [String: Any]) async throws -> Any {

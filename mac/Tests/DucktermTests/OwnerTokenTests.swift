@@ -66,4 +66,100 @@ final class OwnerTokenTests: XCTestCase {
         try "<html>not a token</html>".write(to: file, atomically: true, encoding: .utf8)
         XCTAssertNil(OwnerToken.local(home: home))
     }
+
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        func next() -> Int { lock.withLock { value += 1; return value } }
+        var count: Int { lock.withLock { value } }
+    }
+
+    private var clock = Date(timeIntervalSince1970: 1_000_000)
+
+    override func tearDown() {
+        OwnerToken.fetch = { _ in throw LaunchDestination.Failure.message("not in tests") }
+        OwnerToken.now = Date.init
+        super.tearDown()
+    }
+
+    /// Registers a tunnel whose SSH read always fails, counting the reads.
+    private func failingRemote(port: Int, delay: UInt64 = 0) throws -> Counter {
+        let reads = Counter()
+        OwnerToken.fetch = { _ in
+            _ = reads.next()
+            if delay > 0 { try await Task.sleep(nanoseconds: delay) }
+            throw LaunchDestination.Failure.message("no server.json")
+        }
+        OwnerToken.now = { [unowned self] in self.clock }
+        OwnerToken.register(tunnelPort: port, host: try RemoteHost(name: "Work", target: "duckterm@server.example"))
+        return reads
+    }
+
+    private func ask(_ port: Int, open: Bool = false) async -> Bool {
+        (try? await OwnerToken.token(base: URL(string: "http://127.0.0.1:\(port)")!, open: open)) != nil
+    }
+
+    func testAFailedReadIsNotRetriedUntilTheBackoffEnds() async throws {
+        let reads = try failingRemote(port: 50101)
+        for _ in 0..<20 { _ = await ask(50101) }
+        XCTAssertEqual(reads.count, 1)
+        clock += 29
+        _ = await ask(50101)
+        XCTAssertEqual(reads.count, 1)
+        clock += 2
+        _ = await ask(50101)
+        XCTAssertEqual(reads.count, 2)
+        // The second failure waits twice as long: 60 s.
+        clock += 59
+        _ = await ask(50101)
+        XCTAssertEqual(reads.count, 2)
+        clock += 2
+        _ = await ask(50101)
+        XCTAssertEqual(reads.count, 3)
+    }
+
+    func testTheBackoffStopsAtFiveMinutes() async throws {
+        let reads = try failingRemote(port: 50102)
+        for _ in 0..<8 { _ = await ask(50102); clock += OwnerToken.maxBackoff + 1 }
+        XCTAssertEqual(reads.count, 8)
+    }
+
+    func testConcurrentCallsShareOneRead() async throws {
+        let reads = try failingRemote(port: 50103, delay: 200_000_000)
+        await withTaskGroup(of: Bool.self) { group in
+            for _ in 0..<10 { group.addTask { await self.ask(50103) } }
+        }
+        XCTAssertEqual(reads.count, 1)
+    }
+
+    func testANewTunnelRetriesAtOnce() async throws {
+        let reads = try failingRemote(port: 50104)
+        _ = await ask(50104)
+        OwnerToken.reset(tunnelPort: 50104)
+        _ = await ask(50104)
+        XCTAssertEqual(reads.count, 2)
+    }
+
+    func testAnOlderServerIsReportedWithoutSSH() async throws {
+        let reads = try failingRemote(port: 50105)
+        do {
+            _ = try await OwnerToken.token(base: URL(string: "http://127.0.0.1:50105")!, open: true)
+            XCTFail("an older server has no token to read")
+        } catch {
+            XCTAssertEqual(error.localizedDescription, "DuckTerm on Work is older than this app. Update DuckTerm there, then reconnect.")
+        }
+        XCTAssertEqual(reads.count, 0)
+    }
+
+    func testASuccessfulReadIsCached() async throws {
+        let reads = Counter()
+        OwnerToken.fetch = { _ in _ = reads.next(); return "remote-token" }
+        OwnerToken.register(tunnelPort: 50106, host: try RemoteHost(name: "Work", target: "duckterm@server.example"))
+        let base = URL(string: "http://127.0.0.1:50106")!
+        for _ in 0..<5 {
+            let token = try await OwnerToken.token(base: base)
+            XCTAssertEqual(token, "remote-token")
+        }
+        XCTAssertEqual(reads.count, 1)
+    }
 }

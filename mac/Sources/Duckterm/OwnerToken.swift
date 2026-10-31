@@ -5,14 +5,32 @@ import Foundation
 /// the local workspace's token file, or over SSH for a remote computer, which is
 /// the same trust that opens its tunnel.
 enum OwnerToken {
+    private struct Failure { let until: Date; let delay: TimeInterval; let error: Error }
     private static let lock = NSLock()
     private static var remotes: [Int: RemoteHost] = [:]
     private static var cache: [Int: String] = [:]
+    // Status polling asks for the token every second; a failed SSH read must
+    // not be retried on each poll (0.4.186 started ~1 ssh per second).
+    private static var failures: [Int: Failure] = [:]
+    private static var pending: [Int: Task<String, Error>] = [:]
+    private static var generation: [Int: Int] = [:]
+    static var fetch: (RemoteHost) async throws -> String = remote
+    static var now: () -> Date = Date.init
+    static let firstBackoff: TimeInterval = 30
+    static let maxBackoff: TimeInterval = 300
 
     static func register(tunnelPort: Int, host: RemoteHost) {
+        lock.withLock { remotes[tunnelPort] = host }
+        reset(tunnelPort: tunnelPort)
+    }
+
+    /// A new tunnel may reach a restarted or updated server: forget the token and any backoff.
+    static func reset(tunnelPort: Int) {
         lock.withLock {
-            remotes[tunnelPort] = host
             cache[tunnelPort] = nil
+            failures[tunnelPort] = nil
+            pending[tunnelPort] = nil
+            generation[tunnelPort, default: 0] += 1
         }
     }
 
@@ -22,18 +40,49 @@ enum OwnerToken {
         return valid(token) ? token : nil
     }
 
-    static func token(base: URL) async throws -> String {
+    /// `open` means GET / answered 200 without a token: a server from before
+    /// 0.4.186, which has no token for the app to read. Say so instead of
+    /// retrying SSH or reading the token out of its page.
+    static func token(base: URL, open: Bool = false) async throws -> String {
         guard let port = base.port else { throw LaunchDestination.Failure.message("Invalid destination") }
         if port == AppIdentity.localPort {
             guard let token = local() else { throw LaunchDestination.Failure.message("This Mac's DuckTerm token is missing.") }
             return token
         }
-        let (host, cached) = lock.withLock { (remotes[port], cache[port]) }
-        if let cached { return cached }
-        guard let host else { throw LaunchDestination.Failure.message("Unknown computer") }
-        let token = try await remote(host)
-        lock.withLock { cache[port] = token }
-        return token
+        let task: Task<String, Error> = try lock.withLock {
+            if let cached = cache[port] { return Task { cached } }
+            guard let host = remotes[port] else { throw LaunchDestination.Failure.message("Unknown computer") }
+            if open {
+                throw LaunchDestination.Failure.message(
+                    "DuckTerm on \(host.name) is older than this app. Update DuckTerm there, then reconnect.")
+            }
+            if let failure = failures[port], now() < failure.until { throw failure.error }
+            if let running = pending[port] { return running }
+            let started = generation[port, default: 0]
+            let running = Task {
+                do {
+                    let token = try await fetch(host)
+                    lock.withLock {
+                        guard generation[port, default: 0] == started else { return }
+                        cache[port] = token
+                        failures[port] = nil
+                        pending[port] = nil
+                    }
+                    return token
+                } catch {
+                    lock.withLock {
+                        guard generation[port, default: 0] == started else { return }
+                        let delay = min(failures[port].map { $0.delay * 2 } ?? firstBackoff, maxBackoff)
+                        failures[port] = Failure(until: now().addingTimeInterval(delay), delay: delay, error: error)
+                        pending[port] = nil
+                    }
+                    throw error
+                }
+            }
+            pending[port] = running
+            return running
+        }
+        return try await task.value
     }
 
     static func valid(_ token: String) -> Bool {
