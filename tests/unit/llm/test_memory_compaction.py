@@ -230,7 +230,7 @@ def test_provider_failure_preserves_inputs_and_never_returns_a_parent(failure):
     assert "private diagnostic" not in str(result)
 
 
-def test_over_budget_input_remains_intact_and_costs_no_provider_call():
+def test_large_items_are_copied_by_code_and_never_sent_to_the_narrative_fold():
     children = [node(n) for n in range(10)]
     for child in children:
         claim = child["context"]["goals"][0]
@@ -238,9 +238,9 @@ def test_over_budget_input_remains_intact_and_costs_no_provider_call():
         claim["id"] = memory_contract.claim_id("goals", claim["text"], claim["refs"])
     calls, generate, validate = providers()
     result = asyncio.run(compaction.compact(children, generate, validate))
-    assert result["reason"] == "budget_exhausted" and result["children_preserved"]
-    assert result["coverage"]["omitted"][0]["reason"] == "budget_exhausted"
-    assert calls == []
+    assert result["state"] == "compacted"
+    assert [c["text"] for c in result["context"]["goals"]] == ["🔒" * 2000] * 10
+    assert len(calls) == 2 and all("🔒" not in call for call in calls)
 
 
 @pytest.mark.parametrize("bad_tier", [False, 0.0, None, "0", -1])
@@ -281,3 +281,54 @@ def test_cancelled_provider_propagates_without_producing_parent(stage):
 
     asyncio.run(scenario())
     assert children == original
+
+
+def test_fenced_reply_and_one_rewrite_with_validator_feedback():
+    children = [node(n) for n in range(10)]
+    children[0]["narrative"] = "Full span summary: B5 advanced and DuckCloud planned."
+    prompts, verdicts = [], [
+        {"ready": False, "reason_codes": ["missing:duckcloud_plan"]},
+        {"ready": True, "reason_codes": []},
+    ]
+
+    async def generate(prompt):
+        prompts.append(prompt)
+        return '```json\n{"overview": "Spans advanced B5 and planned DuckCloud."}\n```'
+
+    async def validate(prompt):
+        return json.dumps(verdicts.pop(0))
+
+    result = asyncio.run(compaction.compact(children, generate, validate))
+    assert result["state"] == "compacted"
+    assert "Full span summary: B5 advanced" in prompts[0]
+    assert "missing:duckcloud_plan" not in prompts[0] and "missing:duckcloud_plan" in prompts[1]
+    # The correction edits the rejected draft rather than starting over.
+    assert "REJECTED DRAFT" in prompts[1] and "planned DuckCloud" in prompts[1]
+
+
+def test_third_rejection_keeps_children_and_records_reasons():
+    calls, generate, _ = providers()
+
+    async def validate(prompt):
+        calls.append(prompt)
+        return json.dumps({"ready": False, "reason_codes": ["missing:artifact_work"]})
+
+    result = asyncio.run(compaction.compact([node(n) for n in range(10)], generate, validate))
+    assert result["reason"] == "summary_unverified" and result["children_preserved"]
+    assert result["reason_codes"] == ["missing:artifact_work"]
+    assert len(calls) == 6
+
+
+def test_over_length_draft_is_rewritten_once_with_its_size():
+    prompts, replies = [], ["x" * (compaction.MAX_NARRATIVE_BYTES + 1), "Short fold."]
+
+    async def generate(prompt):
+        prompts.append(prompt)
+        return json.dumps({"overview": replies.pop(0)})
+
+    async def validate(prompt):
+        return json.dumps({"ready": True, "reason_codes": []})
+
+    result = asyncio.run(compaction.compact([node(n) for n in range(10)], generate, validate))
+    assert result["state"] == "compacted" and result["context"]["overview"] == "Short fold."
+    assert f"too_long: {compaction.MAX_NARRATIVE_BYTES + 1} bytes" in prompts[1]

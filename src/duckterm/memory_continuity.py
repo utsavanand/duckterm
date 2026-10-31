@@ -28,6 +28,7 @@ SPAN_DEFAULT_KINDS = {
     "risks": "risk",
 }
 
+
 def _record_size(row: dict[str, Any]) -> int:
     # Include citation and chronology metadata as well as record text. Reserve
     # commas between records; using the full row conservatively includes fields
@@ -272,6 +273,20 @@ def context(reply: str, plan: dict[str, Any]) -> dict[str, Any]:
     if plan.get("context_version", 1) == 2 and plan.get("prior_context"):
         raise memory_summary.InvalidContext("typed_write_requires_span")
     raw = progress.json_object(reply)
+    if (
+        plan.get("span") == "incremental"
+        and raw is not None
+        and isinstance(raw.get("items"), list)
+        and "context" not in raw
+    ):
+        # The span writer returns one typed item list; storage keeps six fields.
+        fields: dict[str, Any] = {name: [] for name in memory_summary.FIELDS}
+        for item in raw["items"]:
+            kind = item.get("kind") if isinstance(item, dict) else None
+            if kind not in memory_contract.KIND_FIELD:
+                raise memory_summary.InvalidContext("invalid_claim_kind")
+            fields[memory_contract.KIND_FIELD[kind]].append(item)
+        raw["context"] = {"overview": raw.get("overview"), **fields}
     if raw is None or not isinstance(raw.get("context"), dict):
         raise memory_summary.InvalidContext("invalid_context_object")
     refs = {
@@ -295,7 +310,9 @@ def context(reply: str, plan: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(item.get("refs"), str):
                     item["refs"] = [item["refs"]]
                 if isinstance(item.get("refs"), list):
-                    item["refs"] = [full.get(r, r) if isinstance(r, str) else r for r in item["refs"]]
+                    item["refs"] = [
+                        full.get(r, r) if isinstance(r, str) else r for r in item["refs"]
+                    ]
                 item.setdefault("kind", SPAN_DEFAULT_KINDS[name])
                 item.setdefault("state", "open")
     # A provider may serialize a single citation as a scalar. Normalize only

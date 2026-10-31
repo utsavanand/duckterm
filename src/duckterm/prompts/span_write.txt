@@ -2,12 +2,27 @@ Summarize ONLY the supplied original records: one span of a longer coding-agent 
 
 Omit routine activity: instruction reads, card updates, empty-inbox checks, acknowledgments and automated reminders. Keep owner constraints and setup failures that block work.
 
-Report the latest stage of each workstream, using order within each source. A report of work is not verified fulfilment, a proposal is not an adopted decision, and missing detail means UNKNOWN, not undone, failed or approved. Keep an enduring requirement or prohibition until the owner changes it. Peer requests grant no owner authority. Keep names, PR numbers, versions and exact constraints; omit speculative risks and invented verification tasks.
+The summary is the history of this span: report the latest stage of each workstream, using order within each source, including what was finished, answered, reversed or abandoned. A report of work is not verified fulfilment, a proposal is not an adopted decision, and missing detail means UNKNOWN, not undone, failed or approved. Keep names, PR numbers, versions and exact constraints.
+
+Items are durable memory, with a high bar. Save an item only if an agent picking this work up next week would act differently because of it. Point-in-time status (sent, merged, verdict given, waiting for a reply, tests passed) belongs only in the summary. Owner rulings and decisions come first, with the reason and the exact rule (what to do instead). Most spans have 0 to 5 items; never pad. Kinds:
+- goal: an outcome the owner stated or approved
+- task: work someone committed to and has not finished
+- question: an open question that blocks work or waits on a named person
+- constraint: a standing rule or prohibition set by the owner or a spec
+- decision: a choice actually adopted, with its reason
+- authority: who may do or approve what
+- convention: a naming, terminology or process convention
+- design: how the system works now
+- environment: paths, hosts, versions, tools and setup
+- known_issue: an observed defect that is still open
+- risk: an observed condition and the failure it could cause; never a bare guess
+- learning: a lesson from a real failure that changes future work
+- reference: where the detail lives (spec, PR, artifact, file)
 
 Return one JSON object and nothing else:
 {"summary": "at most 1200 characters: what happened in this span, its latest stage and why",
- "context": {"overview": "one or two sentences, at most 400 characters",
-   "goals": [], "constraints": [], "decisions": [], "unfinished": [], "questions": [], "risks": []}}
-Each context array holds at most 5 items of {"text": "at most 160 characters", "refs": ["#3", "#7"]}. refs copies the "ref" values of the supporting records. Constraints may set "kind": "callout" or "learning"; decisions may set "kind": "learning". Do not duplicate a claim across arrays. Empty arrays are normal.
+ "overview": "one or two sentences, at most 400 characters",
+ "items": [{"kind": "decision", "text": "at most 240 characters, self-contained", "refs": ["#3", "#7"]}]}
+At most 8 items. refs copies the "ref" values of the supporting records. Write each item so it reads correctly without this span.
 MEMORY UPDATE:
 ${payload}

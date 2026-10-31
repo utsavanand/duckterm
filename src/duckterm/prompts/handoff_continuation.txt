@@ -9,7 +9,7 @@ ${launch}
 Current session and work pointers (read task and inbox contents before acting):
 ${required}
 
-Saved historical memory (statements reflect their source period, not a live status check):
+Saved memory items by category: intent (goals, tasks, questions), rules (constraints, decisions, authority, conventions) and facts (design, environment, known issues, risks, learnings, references). Each line is "kind #item-id: text [refs]" and reflects its source period, not a live status check:
 ${summary}
 
 Available history is retained and retrievable. Searchable does not mean read; a summary is not the full conversation.

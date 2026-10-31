@@ -237,7 +237,8 @@ def test_cold_start_preserves_chronology_then_processes_only_new_append(memory_r
             (True, False),
         ]
         append(path, "New owner message after the first summary")
-        await server.progress_coordinator.refresh("agent")
+        update = await server.progress_coordinator.refresh_result("agent")
+        assert len(calls) == 3, (update.state, update.reason, update.diagnostic)
         data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
         assert [r["text"] for r in data["records"]] == ["New owner message after the first summary"]
         assert "prior_context" not in data
@@ -419,5 +420,38 @@ def test_new_oversized_mail_refreshes_boundary_without_summarizing_body(memory_r
         assert not second.revision["continuity"]["pending_updates"]
         assert not second.revision["continuity"]["gaps"]
         assert second.revision["span"] == "incremental"
+
+    asyncio.run(run())
+
+
+def test_next_checkpoint_continues_after_the_furthest_span_when_saved_out_of_order(
+    memory_rig, monkeypatch
+):
+    import time
+
+    from duckterm import server as server_module
+
+    monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", 16000)
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "Earlier direction: " + "x" * 11000)
+    append(path, "Later correction: " + "y" * 11000)
+    calls = provider(monkeypatch)
+    generate = server_module.summarize
+
+    def slow_first_span(prompt, **kwargs):
+        # The earlier span finishes last, so the later span is saved first.
+        if "Earlier direction" in prompt:
+            time.sleep(0.5)
+        return generate(prompt, **kwargs)
+
+    monkeypatch.setattr(server_module, "summarize", slow_first_span)
+
+    async def run():
+        await server.progress_coordinator.refresh("agent")
+        append(path, "New owner message after the first summary")
+        update = await server.progress_coordinator.refresh_result("agent")
+        assert update.state == "updated", (update.reason, update.diagnostic)
+        data = json.loads(calls[2].split("MEMORY UPDATE:\n", 1)[1])
+        assert [r["text"] for r in data["records"]] == ["New owner message after the first summary"]
 
     asyncio.run(run())

@@ -5,6 +5,8 @@ import json
 
 from tests.runtime import test_memory_preparation as fixtures
 
+from duckterm import memory_budget
+
 memory_rig = fixtures.memory_rig
 preparation = fixtures.preparation
 
@@ -27,7 +29,7 @@ def test_first_handoff_requires_a_summary_and_retains_source_when_provider_unava
     assert server.history.session("agent")["runtime"] == "claude-code"
 
 
-def test_existing_complete_spans_prepare_without_model_or_raw_tail(preparation, monkeypatch):
+def test_complete_spans_prepare_without_model_and_clip_the_raw_tail(preparation, monkeypatch):
     from test_maintained_progress import append
 
     server, _, tmp = preparation
@@ -51,9 +53,10 @@ def test_existing_complete_spans_prepare_without_model_or_raw_tail(preparation, 
         assert result["state"] == "ready", result
         detail = server.memory_preparation.details("agent", result["preparation_id"])
         text = detail["brief"]["text"]
-        assert "duckterm memory read" in text and "x" * 100 not in text
+        assert "duckterm memory read" in text
+        assert "[... middle omitted ...]" in text and "x" * 1600 not in text
         assert result["coverage"]["handoff"]["protected_kinds"]["constraint"] == 2
-        assert len(text.encode()) <= 32000
+        assert len(text.encode()) <= memory_budget.MAX_BRIEF_BYTES
 
     asyncio.run(run())
 

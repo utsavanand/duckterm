@@ -18,9 +18,10 @@ test("checkpoint dialog counts real pending records, cancels cleanly and sends t
     await page.locator(".rd-row", { hasText: "Checkpoint selection" }).locator(".rd-row-click").click();
     await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Checkpoint", exact: true });
-    await expect(dialog.getByRole("button", { name: "Checkpoint 20 records" })).toBeEnabled();
-    await expect(dialog.getByRole("radio", { name: "Latest 20 · your configured default" })).toBeChecked();
-    await expect(dialog.getByText(/records selected/)).toContainText("20 records selected · 27 left for later");
+    // The default is every unsummarized record.
+    await expect(dialog.getByRole("button", { name: "Checkpoint 47 records" })).toBeEnabled();
+    await expect(dialog.getByRole("radio", { name: "All 47 unprocessed records" })).toBeChecked();
+    await expect(dialog.getByText(/records selected/)).toContainText("47 records selected · 0 left for later");
     await expect(page.getByRole("menu")).toHaveCount(0);
     await expect(page.getByRole("region", { name: "Checkpoint progress" })).toHaveCount(0);
     expect(await checkpoints(key)).toHaveLength(0);
@@ -33,7 +34,7 @@ test("checkpoint dialog counts real pending records, cancels cleanly and sends t
     expect(posts).toHaveLength(0); expect(await checkpoints(key)).toHaveLength(0);
 
     await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
-    await expect(dialog.getByRole("button", { name: "Checkpoint 20 records" })).toBeEnabled();
+    await expect(dialog.getByRole("button", { name: "Checkpoint 47 records" })).toBeEnabled();
     await dialog.getByRole("spinbutton").fill("0");
     await expect(dialog.getByRole("button", { name: "Checkpoint", exact: true })).toBeDisabled();
     await dialog.getByRole("spinbutton").fill("35");

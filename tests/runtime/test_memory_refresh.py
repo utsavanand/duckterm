@@ -84,7 +84,8 @@ def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
         assert third_trigger["range_id"] != first_trigger["range_id"]
         assert coverage["protected_kinds"]["constraint"] == 3
         assert "duckterm memory read" in brief
-        assert "x" * 100 not in brief  # no raw transcript tail in a span brief
+        # The latest messages are verbatim but each is clipped; the original stays readable.
+        assert "[... middle omitted ...]" in brief and "x" * 1600 not in brief
         assert included == []
         again = await server.progress_coordinator.refresh_result("agent")
         assert again.state == "reused" and len(calls) == 3

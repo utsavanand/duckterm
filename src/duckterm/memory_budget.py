@@ -10,7 +10,10 @@ from typing import Any
 from duckterm import prompts
 from duckterm.core.session_api import APIError
 
-MAX_BRIEF_BYTES = 32000
+# Raised from 32,000 on 2026-10-30: reconciled items for a 2,014-message session
+# need ~59 KB. A 96 KB brief launches unchanged through tmux
+# (test_large_handoff_launch).
+MAX_BRIEF_BYTES = 96000
 
 
 def render(
@@ -23,6 +26,7 @@ def render(
     metadata: dict[str, Any],
     source_map: list[dict[str, str]],
     tools: str,
+    recent: str = "",
 ) -> str:
     """Omit whole optional units, declare them, and preserve all open claims."""
     from duckterm import memory_contract
@@ -90,6 +94,12 @@ def render(
             heading
             + "\nRecent summary narratives (oldest first):\n"
             + json.dumps(kept_narratives, ensure_ascii=False)
+            + (
+                "\nLatest messages, verbatim (oldest first; newer than any summary detail):\n"
+                + recent
+                if recent
+                else ""
+            )
             + "\nSource references (memory sources lists the full catalog):\n"
             + json.dumps(kept_map, ensure_ascii=False)
             + "\nCoverage:\n"
@@ -163,7 +173,8 @@ def render(
         )
         raise APIError(
             409,
-            "Protected claims and required onboarding exceed the 32,000-byte handoff budget"
+            f"Protected claims and required onboarding exceed the {MAX_BRIEF_BYTES:,}-byte "
+            "handoff budget"
             + ("; protected kinds: " + ", ".join(kinds) if kinds else "")
             + ". Source agent kept; no handoff was saved",
         )

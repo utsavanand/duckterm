@@ -62,22 +62,18 @@ def test_folded_claim_keeps_origin_type_state_and_exact_citation():
     assert before == [leaf, parent, top]
 
 
-@pytest.mark.parametrize("failure", ["missing", "cycle", "budget"])
+@pytest.mark.parametrize("failure", ["missing", "cycle"])
 def test_failed_resolution_withholds_entire_claim_view_and_summary(failure):
     item = claim()
     parent = revision("parent", [{"id": item["id"], "ref_revision": "leaf"}])
     rows = [parent]
     if failure == "cycle":
         rows.insert(0, revision("leaf", [{"id": item["id"], "ref_revision": "parent"}]))
-    elif failure == "budget":
-        rows = [revision("parent", [claim("x" * 11000)])]
     records = project(rows)[-1]["records"]
     assert [r["role"] for r in records] == ["summary_metadata"]
     metadata = json.loads(records[0]["text"])
     assert metadata["retrieval_error"]
-    assert metadata["retrieval_coverage"]["omitted"][0]["reason"] == (
-        "budget_exhausted" if failure == "budget" else "unreadable_source"
-    )
+    assert metadata["retrieval_coverage"]["omitted"][0]["reason"] == "unreadable_source"
 
 
 def test_revoked_original_does_not_expose_folded_claim_or_preview():

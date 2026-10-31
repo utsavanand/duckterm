@@ -17,7 +17,7 @@ export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
   const result = attempt.state === "complete" ? attempt.result : null;
   const failed = attempt.state === "unknown" || !!result && checkpointAttemptFailed(result);
   const progress = attempt.state === "running" ? attempt.progress : undefined;
-  const stages = { checking: "Checking checkpoint…", writing: "Writing summary…", reviewing: "Reviewing summary…", repairing: "Correcting summary…", saving: "Saving checkpoint…" };
+  const stages = { checking: "Checking checkpoint…", writing: "Writing summary…", reviewing: "Reviewing summary…", repairing: "Correcting summary…", reconciling: "Updating memory…", saving: "Saving checkpoint…" };
   const label = running ? progress ? stages[progress.stage] : "Updating summary…" : result ? result.label : "Result not confirmed";
   const measured = progress?.total !== undefined && progress.total > 0 && progress.completed !== undefined;
   const percent = measured ? 100 * progress.completed! / progress.total! : undefined;
@@ -25,6 +25,7 @@ export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
     ? `${progress.completed!.toLocaleString()} of ${progress.total!.toLocaleString()} conversation entries checked. Earlier saved summaries are reused.`
     : "Checking the work to do. You can continue using this session.";
   if (running && progress?.stage === "saving") detail = "Finishing saved checkpoint checks. The result will appear when saving finishes.";
+  if (running && progress?.stage === "reconciling") detail = "Merging new items with saved memory.";
   if (attempt.state === "unknown") detail = attempt.recovering
     ? "The connection ended before a result arrived. Checking this checkpoint’s saved result."
     : "The connection ended before a result arrived. Check the latest checkpoint before trying again.";

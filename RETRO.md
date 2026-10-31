@@ -1,3 +1,19 @@
+## 2026-10-31 — Measure memory by resuming from it, and parallel writes need an order
+
+Checkpoints covered 20 messages and took up to 7 minutes because the writer
+asked for 8 KB of JSON per span and a reviewer that never corrected anything
+gated every save. Spans now run 4 at a time over all unsummarized messages, and
+items are reconciled (duplicate, merge, done, superseded) under an owner
+taxonomy. Shape checks and unit tests stayed green while answers were wrong:
+only a resume exam (Opus questions from the raw transcript, another harness
+answering from the brief, blind grading, two runs, two sessions) found the real
+defects. Parallel span writes saved out of order: folds skipped a span, blending
+releases, and the next checkpoint resumed from the last span saved, overlapped a
+later one and was refused. Order spans by how far they reach, never by save
+time, and fold after the batch. A fold validator that rejects omissions never passes a 4:1 compression;
+reject only errors. Before calling a brief wrong, check the question: three
+references were superseded later in the session.
+
 ## 2026-10-25 — Floating CI environments can break a validated release
 
 The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,

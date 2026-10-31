@@ -3,7 +3,7 @@ import { api, type CheckpointSettings } from "./api";
 import { Button, inputStyle, Modal } from "./ui";
 import "./checkpointSettings.css";
 
-const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "haiku", reviewer_model: "sonnet" };
+const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "sonnet", reviewer_model: "sonnet" };
 
 export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<CheckpointSettings | null>(null);
