@@ -11,11 +11,11 @@ final class OwnerTokenTests: XCTestCase {
     }
 
     /// Runs the script the way `ssh host sh -s` does, against a fake remote home.
-    private func runRemoteScript(home: URL, port: Int) throws -> (Int32, String) {
+    private func runRemoteScript(home: URL, port: Int, bin: URL? = nil) throws -> (Int32, String) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-s"]
-        process.environment = ["HOME": home.path, "PATH": "/usr/bin:/bin"]
+        process.environment = ["HOME": home.path, "PATH": (bin.map { $0.path + ":" } ?? "") + "/usr/bin:/bin"]
         let input = Pipe(), output = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -44,6 +44,59 @@ final class OwnerTokenTests: XCTestCase {
         let (status, text) = try runRemoteScript(home: home, port: 430)
         XCTAssertNotEqual(status, 0)
         XCTAssertEqual(text, "")
+    }
+
+    /// A service install: the server runs as uid 1234 ("duckterm") with its own
+    /// home; the login's home has no workspace. Fake ps, id and sudo stand in.
+    private func serviceInstall(_ root: URL, serverArgs: String, sudoAllowed: Bool) throws -> (login: URL, bin: URL) {
+        let login = root.appendingPathComponent("login"), service = root.appendingPathComponent("service")
+        let bin = root.appendingPathComponent("bin")
+        try FileManager.default.createDirectory(at: login, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        try workspace(service, ".duckterm", port: 4300, token: "service-token")
+        let tools = [
+            "ps": "echo '  501 -zsh'; echo ' 1234 /opt/duckterm/venv/bin/duckterm \(serverArgs)'",
+            "id": #"if [ "$1" = -u ]; then echo 501; else echo duckterm; fi"#,
+            "sudo": sudoAllowed
+                ? #"[ "$*" = "-n -H -u #1234 sh -s" ] || exit 1; HOME="\#(service.path)" exec /bin/sh -s"#
+                : "exit 1",
+        ]
+        for (name, body) in tools {
+            let file = bin.appendingPathComponent(name)
+            try ("#!/bin/sh\n" + body + "\n").write(to: file, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path)
+        }
+        return (login, bin)
+    }
+
+    func testRemoteScriptReadsAServiceAccountsTokenThroughSudo() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (login, bin) = try serviceInstall(root, serverArgs: "serve --port 4300", sudoAllowed: true)
+        let (status, text) = try runRemoteScript(home: login, port: 4300, bin: bin)
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(text, "service-token")
+    }
+
+    func testRemoteScriptNamesTheServiceAccountWhenSudoIsRefused() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (login, bin) = try serviceInstall(root, serverArgs: "serve", sudoAllowed: false)
+        let (status, text) = try runRemoteScript(home: login, port: 4300, bin: bin)
+        XCTAssertEqual(status, 3)
+        XCTAssertEqual(text, "needs-user duckterm")
+        let host = try RemoteHost(name: "Work", target: "me@server.example")
+        XCTAssertEqual(OwnerToken.failure(host: host, status: status, output: text),
+                       "DuckTerm on Work runs as duckterm. Connect as duckterm, or let your login run `sudo -u duckterm sh` without a password.")
+        XCTAssertEqual(OwnerToken.failure(host: host, status: 3, output: "needs-user $(reboot)"),
+                       "DuckTerm on Work runs as another account. Connect as that account, or let your login sudo to it without a password.")
+    }
+
+    func testRemoteScriptIgnoresAServerOnAnotherPort() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (login, bin) = try serviceInstall(root, serverArgs: "serve --port 43001", sudoAllowed: true)
+        XCTAssertEqual(try runRemoteScript(home: login, port: 4300, bin: bin).0, 1)
     }
 
     func testTokenCommandRunsOnlyAShellReadingStdinWithoutForwarding() throws {

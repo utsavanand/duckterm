@@ -93,16 +93,49 @@ enum OwnerToken {
     /// Finds the workspace serving `remotePort` from the server.json each server
     /// writes under its home, then prints that home's token. Sent on stdin to
     /// `sh -s` so the remote login shell never parses it.
+    ///
+    /// A server installed as a service runs under its own account, whose home
+    /// the SSH login can't read. Then the script asks `sudo -n` to run the same
+    /// search as that account. The token is worth exactly what that account
+    /// can do (its agents run as it), so being allowed to act as it is the
+    /// right proof. A ps line only names the account to ask for; sudo decides.
+    /// Without sudo it prints `needs-user <name>` and exits 3.
     static func remoteScript(port: Int) -> String {
-        """
+        let search = #"""
         for f in "$HOME"/.duckterm*/session-credentials/server.json; do
-          if grep -q '"url": "http://127.0.0.1:\(port)"' "$f" 2>/dev/null; then
-            cat "${f%/session-credentials/server.json}/token"; exit
+          if grep -q '"url": "http://127.0.0.1:\#(port)"' "$f" 2>/dev/null; then
+            cat "${f%/session-credentials/server.json}/token"; exit 0
           fi
         done
         exit 1
+        """#
+        return #"""
+        (
+        \#(search)
+        ) && exit 0
+        uid=$(ps -eo uid=,args= 2>/dev/null | awk -v me="$(id -u)" -v port=\#(port) '
+          $1 != me && index($0, "duckterm serve") &&
+            ($0 ~ ("--port[ =]" port "( |$)") || (port == 4300 && $0 !~ /--port/)) { print $1; exit }')
+        [ -n "$uid" ] || exit 1
+        sudo -n -H -u "#$uid" sh -s 2>/dev/null <<'DUCKTERM_SEARCH' && exit 0
+        \#(search)
+        DUCKTERM_SEARCH
+        echo "needs-user $(id -un "$uid" 2>/dev/null || echo "$uid")"
+        exit 3
 
-        """
+        """#
+    }
+
+    static func failure(host: RemoteHost, status: Int32, output: String) -> String {
+        let prefix = "needs-user "
+        if status == 3, output.hasPrefix(prefix) {
+            let user = String(output.dropFirst(prefix.count))
+            if user.range(of: #"^[A-Za-z0-9._-]{1,64}$"#, options: .regularExpression) != nil {
+                return "DuckTerm on \(host.name) runs as \(user). Connect as \(user), or let your login run `sudo -u \(user) sh` without a password."
+            }
+            return "DuckTerm on \(host.name) runs as another account. Connect as that account, or let your login sudo to it without a password."
+        }
+        return "Could not read DuckTerm's token on \(host.name). Check SSH access and that DuckTerm runs there on port \(host.remotePort)."
     }
 
     private static func remote(_ host: RemoteHost) async throws -> String {
@@ -121,7 +154,7 @@ enum OwnerToken {
                     continuation.resume(returning: token)
                 } else {
                     continuation.resume(throwing: LaunchDestination.Failure.message(
-                        "Could not read DuckTerm's token on \(host.name). Check SSH access and that DuckTerm runs there on port \(host.remotePort)."))
+                        failure(host: host, status: finished.terminationStatus, output: token)))
                 }
             }
             do {
