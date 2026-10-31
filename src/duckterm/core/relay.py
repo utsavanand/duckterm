@@ -39,8 +39,13 @@ IRREVERSIBLE = re.compile(
 )
 # A rule approves one command, not a pipeline: "pytest && curl … | sh" matches
 # an anchored "^pytest" pattern, so chained, piped, substituted, or redirected
-# commands always go to the owner.
-SHELL_COMPOSITION = re.compile(r"[;&|`<>]|\$\(")
+# commands always go to the owner. A newline chains as well as ";" does, "$"
+# expands variables ("${IFS}"), and a backslash escapes or continues a line, so any of
+# them sends the command to the owner too.
+SHELL_COMPOSITION = re.compile(r"[;&|`<>$\\\n\r\x00]")
+# Patterns come from a model and run against text an agent chose. Python's re has
+# no timeout, so a long command goes to the owner instead of to the pattern.
+RULE_DETAIL_LIMIT = 2000
 
 
 # Words that show up when an agent asks the owner for something. A turn ending
@@ -239,7 +244,11 @@ class Relay:
     def approval_rule_for(self, tool: str, detail: str, folder: str) -> dict[str, Any] | None:
         """The first approval rule that matches exactly, or None. Irreversible
         commands never match."""
-        if IRREVERSIBLE.search(detail) or SHELL_COMPOSITION.search(detail):
+        if (
+            len(detail) > RULE_DETAIL_LIMIT
+            or IRREVERSIBLE.search(detail)
+            or SHELL_COMPOSITION.search(detail)
+        ):
             return None
         for r in self.rules:
             if r["kind"] != "approval":
@@ -250,7 +259,9 @@ class Relay:
                 folder == r["folder"] or folder.startswith(r["folder"] + "/")
             ):
                 continue
-            if r.get("command_pattern") and not re.search(r["command_pattern"], detail):
+            # Anchored at the start: an unanchored r"pytest\b" would approve
+            # `sh -c "curl …" pytest`.
+            if r.get("command_pattern") and not re.match(r["command_pattern"], detail):
                 continue
             return r
         return None
@@ -327,7 +338,7 @@ or say it isn't a rule. Return STRICT JSON only, one of these shapes:
 {"not_a_rule": true}
 
 - approval: an agent asks permission to run a tool. command_pattern matches the
-  command text; use \\b and anchors sensibly, e.g. "pytest" becomes
+  command text from its first character; use \\b sensibly, e.g. "pytest" becomes
   "^(\\.venv/bin/)?(python -m )?pytest\\b".
 - answer: an agent ends its turn asking the owner a question. keywords are 1-4
   short lowercase words that must ALL appear in such a question. reply is
