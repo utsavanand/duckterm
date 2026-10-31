@@ -398,7 +398,7 @@ def _print_listening(host: str, port: int) -> None:
 
 
 def _print_port_in_use(host: str, port: int) -> None:
-    print(f"Port {port} is already in use.", file=sys.stderr)
+    print(f"duckterm: Port {port} is already in use.", file=sys.stderr)
     if _duckterm_responds(host, port):
         print(
             f"\nAnother Duckterm is already running:\n  open http://{host}:{port}",

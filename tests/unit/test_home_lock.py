@@ -29,7 +29,7 @@ def test_live_owner_blocks_a_second_server(tmp_path, monkeypatch: pytest.MonkeyP
     sleeper = subprocess.Popen(["sleep", "30"])
     try:
         (tmp_path / "server.pid").write_text(str(sleeper.pid))
-        with pytest.raises(SystemExit, match="already owns"):
+        with pytest.raises(SystemExit, match="^duckterm: another DuckTerm server.*already owns"):
             _acquire_home_lock()
     finally:
         sleeper.terminate()

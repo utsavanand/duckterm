@@ -63,6 +63,94 @@ final class ServerProcessTests: XCTestCase {
         XCTAssertNil(ServerProcess.startupReason(stderr: "serving on http://127.0.0.1:4519\n", port: 4519))
     }
 
+    func testActualCLIAndHomeLockRefusalsExplainTheFailure() {
+        for prefix in ["", "duckterm: "] {
+            let cli = "\(prefix)Port 4300 is already in use.\n\nAnother Duckterm is already running:\n  open http://127.0.0.1:4300\n"
+            XCTAssertEqual(ServerProcess.startupReason(stderr: cli, port: 4300), "Port 4300 is already in use.")
+            let lock = "\(prefix)another DuckTerm server already owns /private/test-home"
+            XCTAssertEqual(ServerProcess.startupReason(stderr: lock, port: 4300),
+                           "another DuckTerm server already owns /private/test-home")
+        }
+    }
+
+    func testBusyThenReadyServerIsReusedAfterCollision() async {
+        var probes = 0
+        var pauses = 0
+        var editionChecks = 0
+        let reused = await ServerProcess.reuseExistingServer(
+            stderr: "duckterm: Port 4300 is already in use.", port: 4300,
+            isUp: { probes += 1; return probes == 3 },
+            matchesEdition: { editionChecks += 1; return true },
+            pause: { pauses += 1 }
+        )
+        XCTAssertTrue(reused)
+        XCTAssertEqual(probes, 3)
+        XCTAssertEqual(pauses, 2)
+        XCTAssertEqual(editionChecks, 1)
+    }
+
+    func testHomeLockAndBindRaceAlsoRetry() async {
+        for refusal in ["duckterm: another DuckTerm server already owns /private/test-home",
+                        "duckterm: another DuckTerm server (pid 123) already owns /private/test-home",
+                        "OSError: [Errno 48] Address already in use"] {
+            var probes = 0
+            let reused = await ServerProcess.reuseExistingServer(
+                stderr: refusal, port: 4300, isUp: { probes += 1; return probes == 2 },
+                matchesEdition: { true }, pause: {}
+            )
+            XCTAssertTrue(reused, refusal)
+            XCTAssertEqual(probes, 2)
+        }
+    }
+
+    func testWrongEditionIsNeverReused() async {
+        var probes = 0
+        var pauses = 0
+        let reused = await ServerProcess.reuseExistingServer(
+            stderr: "Port 4300 is already in use.", port: 4300,
+            isUp: { probes += 1; return true }, matchesEdition: { false }, pause: { pauses += 1 }
+        )
+        XCTAssertFalse(reused)
+        XCTAssertEqual(probes, 1)
+        XCTAssertEqual(pauses, 0)
+    }
+
+    func testUnresponsiveOrForeignServerExhaustsBoundedRetries() async {
+        var probes = 0
+        var pauses = 0
+        var editionChecks = 0
+        let reused = await ServerProcess.reuseExistingServer(
+            stderr: "Port 4300 is already in use.", port: 4300,
+            isUp: { probes += 1; return false },
+            matchesEdition: { editionChecks += 1; return true }, pause: { pauses += 1 }
+        )
+        XCTAssertFalse(reused)
+        XCTAssertEqual(probes, 5)
+        XCTAssertEqual(pauses, 4)
+        XCTAssertEqual(editionChecks, 0)
+    }
+
+    func testUnrelatedStartupFailureDoesNotConnectToAnotherServer() async {
+        var probes = 0
+        let reused = await ServerProcess.reuseExistingServer(
+            stderr: "duckterm: Existing workspace is not owned by this desktop profile.", port: 4300,
+            isUp: { probes += 1; return true }, matchesEdition: { true }, pause: {}
+        )
+        XCTAssertFalse(reused)
+        XCTAssertEqual(probes, 0)
+    }
+
+    func testCancellationDuringRetryStopsRecovery() async {
+        var probes = 0
+        let reused = await ServerProcess.reuseExistingServer(
+            stderr: "Port 4300 is already in use.", port: 4300,
+            isUp: { probes += 1; return false }, matchesEdition: { true },
+            pause: { throw CancellationError() }
+        )
+        XCTAssertFalse(reused)
+        XCTAssertEqual(probes, 1)
+    }
+
     func testStartupLogKeepsOnlyTheTail() {
         let log = StartupLog()
         log.append(Data(String(repeating: "x", count: 10_000).utf8))
