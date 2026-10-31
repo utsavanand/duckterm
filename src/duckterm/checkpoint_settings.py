@@ -13,7 +13,9 @@ from duckterm.helpers import paths
 
 DEFAULTS: dict[str, Any] = {
     "lookback_records": "all",
-    "writer_model": "haiku",
+    # Sonnet over Haiku, measured 2026-10-31 on two 1,800-2,000-message sessions:
+    # 0-1 wrong resume answers per run against 2-4, and ~10 s per span against ~30 s.
+    "writer_model": "sonnet",
     # Used by pull-request review; checkpoint spans are no longer model-reviewed.
     "reviewer_model": "sonnet",
 }

@@ -846,7 +846,7 @@ export interface CheckpointActivity {
 }
 
 export interface CheckpointWorkProgress {
-  stage: "checking" | "writing" | "reviewing" | "repairing" | "saving";
+  stage: "checking" | "writing" | "reviewing" | "repairing" | "reconciling" | "saving";
   completed?: number;
   total?: number;
 }

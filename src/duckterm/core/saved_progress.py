@@ -223,6 +223,7 @@ class ProgressCoordinator:
         self.span_progress: dict[str, dict[str, Any]] = {}
         self.span_observers: dict[str, dict[object, Callable[[dict[str, Any]], None]]] = {}
         self.persist_locks: dict[str, asyncio.Lock] = {}
+        self.span_batches: set[str] = set()
 
     def report_span_progress(self, key: str, **fields: Any) -> None:
         value = {**self.span_progress.get(key, {}), **fields}
@@ -627,7 +628,11 @@ class ProgressCoordinator:
                 # Span drafts are checked mechanically (shape, sizes, refs). A model
                 # reviewer never corrected a saved span and caused half of the
                 # recorded checkpoint failures, so it no longer gates the write.
-                review, verdicts, corrections = {"state": "not_reviewed", "reason_codes": []}, None, []
+                review, verdicts, corrections = (
+                    {"state": "not_reviewed", "reason_codes": []},
+                    None,
+                    [],
+                )
                 break
             policy_check = await self._validation_capture(key, captured)
             if policy_check is None or policy_check["policy"] != captured["policy"]:
@@ -793,7 +798,9 @@ class ProgressCoordinator:
         # Parallel spans fold and commit one at a time: a fold reads the leaves
         # the previous commit just wrote.
         async with self.persist_locks.setdefault(key, asyncio.Lock()):
-            return await self._commit(key, captured, prior, value, digest, accepted, verdicts, span_plan)
+            return await self._commit(
+                key, captured, prior, value, digest, accepted, verdicts, span_plan
+            )
 
     async def _commit(
         self,

@@ -269,7 +269,9 @@ def test_complete_range_and_historical_span_are_distinct(memory_rig, monkeypatch
     provider(monkeypatch)
     first = asyncio.run(server.progress_coordinator.refresh("agent"))
     append(path, "One more owner direction")
-    second = asyncio.run(server.progress_coordinator.refresh("agent"))
+    update = asyncio.run(server.progress_coordinator.refresh_result("agent"))
+    assert update.revision is not None, (update.state, update.reason, update.diagnostic)
+    second = update.revision
     code, latest = get(server)
     assert code == 200 and latest["revision"]["id"] == second["id"]
     coverage = latest["revision"]["coverage_at_save"]

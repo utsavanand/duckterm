@@ -179,13 +179,13 @@ def test_provider_failure_saves_checkpoint_and_defers_repeat_cost(memory_rig, mo
             server.progress_coordinator, "agent", captured, leaf(captured, 52)
         )
         assert retry["attempts"][0]["reason"] == "retry_deferred" and len(calls) == 1
-        with monkeypatch.context() as m:
-            m.setattr(
-                folding.time, "time", lambda: proposal["attempts"][0]["retry_after"] / 1000 + 1
-            )
-            await folding.prepare(
-                server.progress_coordinator, "agent", captured, leaf(captured, 52)
-            )
+        # The next checkpoint has a new capture time and retries at once.
+        await folding.prepare(
+            server.progress_coordinator,
+            "agent",
+            {**captured, "captured_at": captured["captured_at"] + 1},
+            leaf(captured, 52),
+        )
         assert len(calls) == 2
 
     asyncio.run(run())
@@ -382,5 +382,47 @@ def test_rejected_summary_is_never_certified_by_folding(memory_rig, monkeypatch)
         )
         assert proposal["state"] == "pending" and proposal["parents"] == []
         assert calls == []
+
+    asyncio.run(run())
+
+
+def test_heads_follow_conversation_order_not_save_order():
+    # Parallel span writes save position 2701 after position 3002.
+    rows = [
+        {
+            "id": str(end),
+            "span": "incremental",
+            "span_input": {"next_boundary": {"sources": {"conversation": {"count": end}}}},
+        }
+        for end in (0, 2441, 3002, 2701, 3329)
+    ]
+    assert [node["id"] for node in folding.active(rows)] == ["0", "2441", "2701", "3002", "3329"]
+
+
+def test_no_fold_while_a_checkpoint_writes_spans_then_one_pass_folds(memory_rig, monkeypatch):
+    from duckterm.core import memory_refresh
+
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Owner instruction")
+    calls = provider(server, monkeypatch)
+
+    async def run():
+        captured = await server.progress_coordinator.capture("agent")
+        seed(server, captured, 60)
+        server.progress_coordinator.span_batches.add("agent")
+        assert (
+            await folding.prepare(
+                server.progress_coordinator, "agent", captured, leaf(captured, 60)
+            )
+            is None
+        )
+        assert calls == []
+        server.progress_coordinator.span_batches.discard("agent")
+        await memory_refresh.fold(server.progress_coordinator, "agent", captured)
+        heads = folding.active(
+            folding.rows(server.digests, "agent", captured["source"]["scope_hash"])
+        )
+        # Sixty leaves fold group by group until fewer than fifty remain at tier 0.
+        assert [n["tier"] for n in heads].count(1) == 2 and len(heads) == 42
 
     asyncio.run(run())

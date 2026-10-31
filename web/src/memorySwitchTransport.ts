@@ -293,8 +293,8 @@ export function memorySwitchService(input: SwitchSelection) {
       const v = obj(await request(`${path()}/restart-preparation/${identity(id)}?${query}`));
       if (v.preparation_id !== id || v.snapshot_id !== snapshotId) invalid();
       const b = obj(v.brief);
-      const brief = { text: str(b.text, 32000), utf8_bytes: num(b.utf8_bytes), budget_bytes: num(b.budget_bytes) };
-      if (brief.budget_bytes > 32000 || brief.utf8_bytes > brief.budget_bytes
+      const brief = { text: str(b.text, 96000), utf8_bytes: num(b.utf8_bytes), budget_bytes: num(b.budget_bytes) };
+      if (brief.budget_bytes > 96000 || brief.utf8_bytes > brief.budget_bytes
         || new TextEncoder().encode(brief.text).length !== brief.utf8_bytes) invalid();
       return { preparationId: id, snapshotId, brief, sources: list(v.sources, source => {
         const s = obj(source), source_id = nonempty(s.source_id), source_version = nonempty(s.source_version);

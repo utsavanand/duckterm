@@ -99,6 +99,56 @@ async def refresh(
             coordinator.span_waiters.pop(key, None)
 
 
+async def fold(coordinator: ProgressCoordinator, key: str, captured: dict[str, Any]) -> None:
+    """Fold once every span is saved, group by group; a rejected fold stops the pass
+    and keeps its spans unfolded until the next checkpoint."""
+    async with coordinator.persist_locks.setdefault(key, asyncio.Lock()):
+        for _ in range(memory_folding.MAX_FOLDS):
+            proposal = await memory_folding.prepare(
+                coordinator, key, captured, {"span": "incremental", "context_version": 2}
+            )
+            if not proposal or not proposal.get("parents"):
+                return
+            with transaction(coordinator.server.digests._conn):
+                status = memory_folding.apply(
+                    coordinator.server.digests, key, proposal, int(time.time() * 1000)
+                )
+            if status["state"] != "compacted":
+                return
+
+
+def reconcile_reply(prompt: str, model: str | None) -> str:
+    from duckterm.server import summarize
+
+    reply = summarize(prompt, **({"claude_model": model} if model else {}))
+    if getattr(reply, "failure_reason", None):
+        raise RuntimeError("reconcile_provider_failed")
+    return str(reply.text)
+
+
+async def reconcile(
+    coordinator: ProgressCoordinator,
+    key: str,
+    captured: dict[str, Any],
+    leaves: list[dict[str, Any]],
+) -> dict[str, Any]:
+    from duckterm import memory_reconcile
+
+    model = captured.get("checkpoint_settings", {}).get("writer_model")
+
+    async def generate(prompt: str) -> str:
+        return await asyncio.to_thread(reconcile_reply, prompt, model)
+
+    async with coordinator.persist_locks.setdefault(key, asyncio.Lock()):
+        return await memory_reconcile.reconcile(
+            coordinator.server.digests,
+            key,
+            captured["source"]["scope_hash"],
+            leaves,
+            generate,
+        )
+
+
 def wanted(coordinator: ProgressCoordinator, key: str) -> bool:
     # A canceled preparation stops before the next batch; another dialog or an
     # accepted checkpoint may still need the same range. No new queue or timer.
@@ -170,6 +220,9 @@ async def _run(
         and not leaf.get("span_input", {}).get("selection_window")
     ]
     latest = leaves[-1] if leaves else None
+    # Spans written in parallel are saved out of order; continue after the span
+    # furthest along the conversation, not the one saved last.
+    sequential.sort(key=lambda leaf: memory_folding.span_position(leaf) or 0)
     predecessor = sequential[-1] if sequential and selection is None else None
     if latest and latest.get("policy") != captured["policy"]:
         return SummaryUpdate.failed("source_changed", diagnostic="summary_policy_changed")
@@ -247,9 +300,13 @@ async def _run(
             coordinator.report_span_progress(key, completed=completed, stage="writing")
         return update, planned
 
-    results = await asyncio.gather(
-        *(write(index, start) for index, (start, _) in enumerate(spans, 1))
-    )
+    coordinator.span_batches.add(key)
+    try:
+        results = await asyncio.gather(
+            *(write(index, start) for index, (start, _) in enumerate(spans, 1))
+        )
+    finally:
+        coordinator.span_batches.discard(key)
     failure = None
     for update, _ in results:
         if update.state not in {"updated", "reused"} or update.revision is None:
@@ -266,6 +323,15 @@ async def _run(
         return incomplete(SummaryUpdate.failed("update_failed", diagnostic="update_canceled"))
     if latest is None:
         return incomplete(SummaryUpdate.failed("no_transcript"))
+    await fold(coordinator, key, captured)
+    coordinator.report_span_progress(key, stage="reconciling")
+    try:
+        await reconcile(coordinator, key, captured, leaves)
+    except (ValueError, KeyError, TypeError, RuntimeError) as exc:
+        # Accepted leaves stay saved; the next checkpoint reconciles them.
+        return incomplete(
+            SummaryUpdate.failed("invalid_context", diagnostic="reconcile:" + str(exc)[:80])
+        )
     coordinator.report_span_progress(key, stage="checking")
     try:
         final = await coordinator._validation_capture(key, captured)

@@ -91,6 +91,15 @@ def _fast_prompt_submit(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Server, "_SUBMIT_CONFIRM_S", 0.05)
 
 
+@pytest.fixture(autouse=True)
+def _keep_memory_items(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Span-writer fakes don't answer the reconcile call; keep every item.
+    Reconciliation tests replace this reply."""
+    from duckterm.core import memory_refresh
+
+    monkeypatch.setattr(memory_refresh, "reconcile_reply", lambda prompt, model: '{"ops": []}')
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _no_summarizer_autodetect() -> Iterator[None]:
     """Disable the summarizer's CLI-agent auto-detection in tests, so a
