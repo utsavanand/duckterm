@@ -18,6 +18,7 @@ AppleScript.
 
 import re
 import secrets
+from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -25,6 +26,7 @@ from duckterm.helpers import paths
 from duckterm.helpers.private_files import private_read, private_write
 
 TOKEN_HEADER = "x-duckterm-token"
+OWNER_PROTOCOL_PREFIX = "duckterm-owner."
 
 # Host validation prevents a rebound attacker domain from reading the dashboard
 # token. Browser origins must also match the requested host AND port.
@@ -111,6 +113,38 @@ def write_private_text(path: Path, text: str) -> None:
 def token_valid(headers: dict[str, str], token: str) -> bool:
     supplied = headers.get(TOKEN_HEADER, "")
     return bool(token) and secrets.compare_digest(supplied.encode(), token.encode())
+
+
+def owner_cookie_name(host: str) -> str:
+    """Browsers share cookies across ports on 127.0.0.1, so each port gets its
+    own name: an edition on :4301 must never present Full's :4300 token."""
+    try:
+        port = urlsplit("http://" + host).port or 80
+    except ValueError:
+        port = 0
+    return f"duckterm_owner_{port}"
+
+
+def owner_authenticated(headers: dict[str, str], token: str) -> bool:
+    """The header (CLI, hooks, the native app), the login cookie (the dashboard's
+    navigations, EventSource and WebSockets, which cannot set headers), or the
+    owner WebSocket subprotocol."""
+    if token_valid(headers, token):
+        return True
+    jar = SimpleCookie()
+    try:
+        jar.load(headers.get("cookie", ""))
+    except CookieError:
+        return False
+    morsel = jar.get(owner_cookie_name(headers.get("host", "")))
+    if morsel is not None and token_valid({TOKEN_HEADER: morsel.value}, token):
+        return True
+    protocols = [p.strip() for p in headers.get("sec-websocket-protocol", "").split(",")]
+    return any(
+        token_valid({TOKEN_HEADER: p.removeprefix(OWNER_PROTOCOL_PREFIX)}, token)
+        for p in protocols
+        if p.startswith(OWNER_PROTOCOL_PREFIX)
+    )
 
 
 def _token_path() -> Path:

@@ -47,7 +47,7 @@ def post(server, headers, path, body):
 
 
 def notes(server):
-    return dispatch(server, "GET", "/relay", {})[1]["notes"]
+    return dispatch(server, "GET", "/relay", {"x-duckterm-token": server.token})[1]["notes"]
 
 
 def test_blocking_approval_becomes_a_note_and_the_answer_decides_it(world) -> None:
@@ -66,7 +66,9 @@ def test_blocking_approval_becomes_a_note_and_the_answer_decides_it(world) -> No
         "product-manager",
         "open",
     )
-    assert dispatch(server, "GET", "/relay/count", {})[1] == {"open": 1}
+    assert dispatch(server, "GET", "/relay/count", {"x-duckterm-token": server.token})[1] == {
+        "open": 1
+    }
     assert post(server, {}, f"/relay/{note['id']}/answer", {"answer": "approve"})[0] == 401
     status, body = post(server, owner, f"/relay/{note['id']}/answer", {"answer": "approve"})
     assert status == 200 and body["note"]["status"] == "answered"
@@ -275,7 +277,12 @@ def test_answer_rule_prefills_a_draft_and_counts_unchanged_sends(world, monkeypa
     [note] = question_note(server, monkeypatch, "Should I keep going with B2?", keep_going)
     assert note["suggestion"] == {"rule_id": rule["id"], "reply": "Yes, continue."}
     post(server, owner, f"/relay/{note['id']}/answer", {"answer": "Yes, continue."})
-    assert dispatch(server, "GET", "/relay", {})[1]["rules"][0]["streak"] == 1
+    assert (
+        dispatch(server, "GET", "/relay", {"x-duckterm-token": server.token})[1]["rules"][0][
+            "streak"
+        ]
+        == 1
+    )
 
 
 def test_rule_proposal_comes_from_the_model_and_is_validated(world, monkeypatch) -> None:
@@ -302,7 +309,9 @@ def test_rule_proposal_comes_from_the_model_and_is_validated(world, monkeypatch)
         server, owner, "/relay/rules/propose", {"text": "always approve pytest in Duckterm"}
     )
     assert status == 200 and body["rule"]["command_pattern"] == r"^pytest\b"
-    assert dispatch(server, "GET", "/relay", {})[1]["rules"] == []  # proposing doesn't create
+    assert (
+        dispatch(server, "GET", "/relay", {"x-duckterm-token": server.token})[1]["rules"] == []
+    )  # proposing doesn't create
     assert post(server, owner, "/relay/rules/propose", {"text": "hello"})[0] == 422
 
 
@@ -320,7 +329,9 @@ def test_offer_shows_but_does_not_count_as_needing_you(world, monkeypatch) -> No
     offer = '{"kind": "offer", "ask": "Want the quiz deck too?", "options": ["Yes", "No"]}'
     [note] = question_note(server, monkeypatch, "Done. Want the quiz deck too?", offer)
     assert (note["urgency"], note["options"]) == ("offer", ["Yes", "No"])
-    assert dispatch(server, "GET", "/relay/count", {})[1] == {"open": 0}
+    assert dispatch(server, "GET", "/relay/count", {"x-duckterm-token": server.token})[1] == {
+        "open": 0
+    }
 
 
 def test_classifier_none_raises_no_note(world, monkeypatch) -> None:

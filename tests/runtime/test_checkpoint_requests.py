@@ -187,7 +187,8 @@ def test_http_contract_requires_write_token_and_recovers_exact_id(rig):
     status, result = dispatch(server, "POST", path, owner, body)
     assert status == 200 and result["request_id"] == "http-request"
     receipt_path = "/sessions/test-save/checkpoint-attempts/http-request"
-    status, receipt = dispatch(server, "GET", receipt_path, {})
+    assert dispatch(server, "GET", receipt_path, {})[0] == 401
+    status, receipt = dispatch(server, "GET", receipt_path, owner)
     assert status == 200 and receipt["result"]["id"] == result["id"]
     assert dispatch(server, "GET", receipt_path, {"authorization": "Bearer agent"})[0] == 403
     from test_session_api import Writer
@@ -206,7 +207,7 @@ def test_http_contract_requires_write_token_and_recovers_exact_id(rig):
 
     asyncio.run(cross_origin())
     assert int(writer.data.split(b"\r\n", 1)[0].split()[1]) == 403
-    assert dispatch(server, "GET", receipt_path + "-absent", {})[0] == 404
+    assert dispatch(server, "GET", receipt_path + "-absent", owner)[0] == 404
     for invalid in (b"null", b"[]", b"{"):
         assert dispatch(server, "POST", path, owner, invalid)[0] == 400
 

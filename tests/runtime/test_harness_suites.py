@@ -52,6 +52,13 @@ async def _post(port: int, token: str, path: str, payload: dict) -> tuple[int, d
     )
 
 
+async def _get(port: int, token: str, path: str) -> tuple[int, dict]:
+    return await _request(
+        port,
+        f"GET {path} HTTP/1.1\r\nHost: localhost\r\nX-Duckterm-Token: {token}\r\n\r\n".encode(),
+    )
+
+
 def test_register_list_install_roundtrip(tmp_path: Path) -> None:
     suite = _make_suite(tmp_path, manifest=True)
     target = tmp_path / "proj"
@@ -64,7 +71,7 @@ def test_register_list_install_roundtrip(tmp_path: Path) -> None:
         port = srv.sockets[0].getsockname()[1]
         async with srv:
             _, reg = await _post(port, server.token, "/harnesses/register", {"path": str(suite)})
-            _, listed = await _request(port, b"GET /harnesses HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            _, listed = await _get(port, server.token, "/harnesses")
             _, installed = await _post(
                 port, server.token, "/harnesses/kit/install", {"dir": str(target)}
             )
@@ -133,7 +140,7 @@ def test_uninstall_runs_declared_command_and_choices_are_listed(tmp_path: Path) 
         port = srv.sockets[0].getsockname()[1]
         async with srv:
             await _post(port, server.token, "/harnesses/register", {"path": str(suite)})
-            _, listed = await _request(port, b"GET /harnesses HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            _, listed = await _get(port, server.token, "/harnesses")
             await _post(port, server.token, "/harnesses/kit/install", {"dir": str(target)})
             assert (target / "installed.marker").is_file()
             _, uninstalled = await _post(
@@ -282,7 +289,7 @@ def test_sessions_report_detected_meta_harness(tmp_path: Path) -> None:
         port = srv.sockets[0].getsockname()[1]
         async with srv:
             await _post(port, server.token, "/harnesses/register", {"path": str(suite)})
-            _, listed = await _request(port, b"GET /sessions HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            _, listed = await _get(port, server.token, "/sessions")
         return list(listed["sessions"])
 
     rows = {r["session_key"]: r for r in asyncio.run(scenario())}
@@ -318,9 +325,7 @@ def test_harness_contents_lists_what_ships_with_descriptions(tmp_path: Path) -> 
         port = srv.sockets[0].getsockname()[1]
         async with srv:
             await _post(port, server.token, "/harnesses/register", {"path": str(suite)})
-            _, body = await _request(
-                port, b"GET /harnesses/kit/contents HTTP/1.1\r\nHost: localhost\r\n\r\n"
-            )
+            _, body = await _get(port, server.token, "/harnesses/kit/contents")
         return body
 
     body = asyncio.run(scenario())

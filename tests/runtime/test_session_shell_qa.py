@@ -68,7 +68,8 @@ def test_real_http_shell_auth_rejects_query_tokens_and_foreign_origins(rig):
                 ("/sessions/shell-test/shell", {}, 401),
                 ("/sessions/shell-test/shell", {"authorization": "Bearer synthetic"}, 403),
                 ("/sessions/shell-test/shell/terminal", {}, 401),
-                ("/sessions/shell-test/shell/terminal?token=" + rig.token, {}, 404),
+                # A query-string token is not an owner credential.
+                ("/sessions/shell-test/shell/terminal?token=" + rig.token, {}, 401),
                 (
                     "/sessions/shell-test/shell/terminal",
                     {

@@ -14,6 +14,7 @@ points you at /hooks rather than claiming a trust state it can't prove.
 
 import os
 import shutil
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,6 +64,8 @@ def _check_server(url: str) -> Result:
     """A running Duckterm answers / with its self-probe header."""
     try:
         resp = urllib.request.urlopen(url, timeout=1)
+    except urllib.error.HTTPError as locked:  # the sign-in page answers 401
+        resp = locked
     except OSError:
         return Result(
             "fail",

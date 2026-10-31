@@ -1,5 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
-import { initializeRunState } from "./e2e/run-state";
+import { authStatePath, initializeRunState } from "./e2e/run-state";
 
 // Workers inherit one run identity; independent invocations never share teardown state.
 initializeRunState();
@@ -20,6 +20,9 @@ export default defineConfig({
   globalTeardown: "./e2e/global-teardown.ts",
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
+    // GET / is locked without the owner token; global-setup writes the
+    // login cookie here once the private server is up.
+    storageState: authStatePath(),
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },

@@ -34,7 +34,9 @@ def test_write_then_read_agents_md(tmp_path: Path) -> None:
         async with srv:
             # GET before write: empty, exists=false.
             _, before = await _request(
-                port, f"GET /agents-md?dir={tmp_path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode()
+                port,
+                f"GET /agents-md?dir={tmp_path} HTTP/1.1\r\nHost: localhost\r\n"
+                f"X-Duckterm-Token: {token}\r\n\r\n".encode(),
             )
             # POST writes the file (state-changing -> token required).
             payload = json.dumps({"dir": str(tmp_path), "text": "# rules\nno tabs"}).encode()
@@ -47,7 +49,9 @@ def test_write_then_read_agents_md(tmp_path: Path) -> None:
             )
             # GET after write: the text we wrote.
             _, after = await _request(
-                port, f"GET /agents-md?dir={tmp_path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode()
+                port,
+                f"GET /agents-md?dir={tmp_path} HTTP/1.1\r\nHost: localhost\r\n"
+                f"X-Duckterm-Token: {token}\r\n\r\n".encode(),
             )
             return before, after, (tmp_path / "AGENTS.md").read_text()
 
@@ -89,7 +93,9 @@ def test_typed_rules_round_trip_and_render(tmp_path: Path) -> None:
             )
             assert status == 200
             _, after = await _request(
-                port, f"GET /agents-md?dir={tmp_path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode()
+                port,
+                f"GET /agents-md?dir={tmp_path} HTTP/1.1\r\nHost: localhost\r\n"
+                f"X-Duckterm-Token: {token}\r\n\r\n".encode(),
             )
             return after, (tmp_path / "AGENTS.md").read_text()
 
@@ -170,7 +176,9 @@ def test_agents_md_refuses_paths_outside_home(tmp_path: Path) -> None:
                 b"Content-Length: " + str(len(payload)).encode() + b"\r\n\r\n" + payload,
             )
             read_status, _ = await _request(
-                port, b"GET /agents-md?dir=/etc HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                port,
+                f"GET /agents-md?dir=/etc HTTP/1.1\r\nHost: localhost\r\n"
+                f"X-Duckterm-Token: {token}\r\n\r\n".encode(),
             )
         return write_status, read_status
 

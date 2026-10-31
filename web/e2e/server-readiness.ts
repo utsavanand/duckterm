@@ -23,7 +23,10 @@ export async function waitForOwnedServer(
       try { token = readFileSync(join(home, "token"), "utf8").trim(); } catch { /* starting */ }
       if (token) {
         try {
-          const response = await fetch(base, { signal: AbortSignal.timeout(Math.min(1000, Math.max(1, deadline - Date.now()))) });
+          const response = await fetch(base, {
+            headers: { "X-Duckterm-Token": token },
+            signal: AbortSignal.timeout(Math.min(1000, Math.max(1, deadline - Date.now()))),
+          });
           const html = await response.text();
           checkChild();
           if (response.ok && html.includes(`<meta name="duckterm-token" content="${token}">`)) return;

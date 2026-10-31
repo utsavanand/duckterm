@@ -25,7 +25,7 @@ def owner(server):
 
 def test_unsupported_machine_is_told_so_and_cannot_install(server, monkeypatch) -> None:
     monkeypatch.setattr(service.sys, "platform", "linux")
-    status, body = dispatch(server, "GET", "/voice/status", {})
+    status, body = dispatch(server, "GET", "/voice/status", owner(server))
     assert (status, body["state"]) == (200, "unsupported")
     status, body = dispatch(server, "POST", "/voice/install", owner(server))
     assert (status, body["reason"]) == (409, "Natural voices need a Mac.")
@@ -33,7 +33,7 @@ def test_unsupported_machine_is_told_so_and_cannot_install(server, monkeypatch) 
 
 def test_speaking_before_install_is_a_503_with_the_reason(server, monkeypatch) -> None:
     monkeypatch.setattr(service, "unsupported_reason", lambda: None)
-    assert dispatch(server, "GET", "/voice/status", {})[1] == {
+    assert dispatch(server, "GET", "/voice/status", owner(server))[1] == {
         "state": "absent",
         "size": service.SIZE_NOTE,
     }
