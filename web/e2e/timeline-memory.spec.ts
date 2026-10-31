@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { apiDelete, seedSession } from "./helpers";
 
-test("Timeline opens an exact historical revision; the session panel still opens current memory", async ({ page }) => {
+test("Timeline opens an exact historical revision; the session panel opens a dated saved revision", async ({ page }) => {
   const key = `e2e-timeline-memory-${Date.now()}`;
   await seedSession(key, { name: "Timeline memory acceptance" });
   let checkpoints = 0;
@@ -15,6 +15,7 @@ test("Timeline opens an exact historical revision; the session panel still opens
     // Presentation fixture; backend evidence authorization is tested separately.
     await page.route(`**/sessions/${key}/memory**`, route => {
       const url = new URL(route.request().url());
+      if (url.pathname.endsWith("/revisions")) return route.fulfill({ json: { revisions: [{ id: "newer-revision", created_at: now }], next_cursor: null } });
       if (url.pathname.endsWith("/read")) return route.fulfill({ json: { source: "conversation:old", text: "Original evidence for the earlier saved decision.", next_offset: null } });
       if (url.searchParams.get("checkpoint") === "older") return route.fulfill({ json: {
         scope: "checkpoint", session_key: key, checkpoint: { id: "older", label: "Earlier saved checkpoint", created_at: now - 60000,
@@ -53,11 +54,12 @@ test("Timeline opens an exact historical revision; the session panel still opens
     await page.screenshot({ path: "/tmp/timeline-memory-implemented.png" });
     await memory.getByRole("button", { name: "← Timeline" }).click();
     await expect(page.getByRole("region", { name: "Session timeline" })).toBeVisible();
-    await page.getByRole("button", { name: "Read saved memory ↗", exact: true }).click();
+    await page.getByRole("button", { name: "View memory ↗", exact: true }).click();
     await expect(memory.getByText("Newer current summary.")).toBeVisible();
-    await expect(memory.getByRole("combobox")).toHaveValue("");
-    expect(reads).toEqual(["older-revision", ""]);
+    await expect(memory.getByRole("combobox")).toHaveValue("newer-revision");
+    expect(reads).toEqual(["older-revision", "newer-revision"]);
     await page.getByRole("button", { name: "Timeline", exact: true }).click();
+    await page.getByText("Earlier saved checkpoint", { exact: true }).click();
     await page.getByRole("button", { name: "Read checkpoint result ↗" }).first().click();
     await expect(memory.getByText("Saved batch from the failed checkpoint.")).toBeVisible();
     await expect(memory.getByText("Checkpoint failed", { exact: true })).toBeVisible();

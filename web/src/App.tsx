@@ -20,7 +20,6 @@ import { api } from "./api";
 import { clearLaunchDraft, desktop, openNativeBugReport } from "./desktop";
 import { Connectors } from "./Connectors";
 import { SessionPanelSection } from "./SessionPanelSection";
-import { CheckpointProgress } from "./CheckpointProgress";
 import { ContextViews } from "./ContextViews";
 import { Analytics } from "./Analytics";
 import { AnalyticsTab } from "./analyticsData";
@@ -594,7 +593,6 @@ function Dashboard() {
               <TerminalAppearance key={`folder-${appearanceFolder}`} scope="folders" target={appearanceFolder} mode={mode} theme={themeOverrides.folders[appearanceFolder]} effectiveTheme={resolveTermTheme(themeOverrides, termTheme, mode, "", appearanceFolder)} onTheme={pick => setFolderTheme(appearanceFolder, pick)} overrideCount={sessions.filter(s => (s.group === appearanceFolder || s.group?.startsWith(appearanceFolder + "/")) && themeOverrides.sessions[s.key]).length} />
               <button className="rd-btn rd-btn-ghost" style={{ margin: "0 18px 18px" }} onClick={() => setAppearanceFolder(null)}>View session override →</button>
             </> : <ContextViews session={<>
-              {selected && has("checkpoints") && <CheckpointProgress sessionKey={selected.key} />}
               {selected && <LiveContextPanel key={`context-${selected.key}`} session={selected} onMemory={revision => { setMemoryTarget(revision ? { key: selected.key, revision } : null); setView("memory"); }} onCheckpointMemory={checkpoint => { setMemoryTarget({ key: selected.key, revision: "", checkpoint }); setView("memory"); }} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
               {selected && selected.ptyOwned && <SessionPanelSection key={`appearance-${selected.key}`} title="Terminal appearance" status={themeOverrides.sessions[selected.key] || "Folder default"}>
                 <TerminalAppearance scope="sessions" target={selected.key} mode={mode} theme={themeOverrides.sessions[selected.key]} effectiveTheme={themeFor(selected)} onTheme={pick => setSessionTheme(selected.key, pick)} />

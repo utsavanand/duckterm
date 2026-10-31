@@ -4,7 +4,7 @@ import { checkpointAttemptFailed, checkpointFailure } from "./checkpointState";
 import "./checkpointProgress.css";
 import { checkpointMemoryAfterFailure } from "./CheckpointFailureCoverage";
 
-export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
+export function CheckpointProgress({ sessionKey, compact = false, onDetails }: { sessionKey: string; compact?: boolean; onDetails?: (id: string) => void }) {
   const attempt = useCheckpointAttempt(sessionKey);
   const section = useRef<HTMLElement>(null);
   const startedAt = attempt?.startedAt;
@@ -39,6 +39,12 @@ export function CheckpointProgress({ sessionKey }: { sessionKey: string }) {
     }
   }
   if (result?.export_reason) detail += " Markdown export is unavailable.";
+  if (compact) return <section ref={section} className={`rd-session-save-status${failed ? " rd-checkpoint-progress-failure" : ""}`} aria-label="Checkpoint progress">
+    <span role="status">{running ? `${label}${measured ? ` · ${progress.completed} of ${progress.total} records` : ""}` : result ? result.label : attempt.state === "unknown" && attempt.recovering ? "Checking saved result…" : "Result not confirmed"}</span>
+    {result?.id && onDetails && <button className="rd-timeline-link" onClick={() => onDetails(result.id!)}>Details ↗</button>}
+    {running && <div className={`rd-checkpoint-progress-track${measured ? " rd-checkpoint-progress-measured" : ""}`} role="progressbar" aria-label="Checkpoint entries checked" aria-valuemin={measured ? 0 : undefined} aria-valuemax={measured ? progress.total : undefined} aria-valuenow={measured ? progress.completed : undefined} aria-valuetext={label}>
+      <span style={measured ? { width: `${percent}%` } : undefined} /></div>}
+  </section>;
   return <section ref={section} className={`rd-checkpoint-progress${failed ? " rd-checkpoint-progress-failure" : ""}`} aria-label="Checkpoint progress">
     <div className="rd-checkpoint-progress-title"><strong role="status">{label}</strong></div>
     {running && <div className={`rd-checkpoint-progress-track${measured ? " rd-checkpoint-progress-measured" : ""}`} role="progressbar" aria-label="Checkpoint entries checked"
