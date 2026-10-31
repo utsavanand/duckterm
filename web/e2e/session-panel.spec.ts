@@ -62,6 +62,7 @@ h.close()
     expect(writes).toBe(0);
     await page.emulateMedia({ colorScheme: "light" });
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
+    await expect(saved.getByRole("button", { name: "Retry checkpoint", exact: true })).toHaveCSS("background-color", "rgb(255, 255, 255)");
     await page.screenshot({ path: "/tmp/duckterm-session-panel-e2e-light.png" });
     expect(await panel.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
   } finally { await apiDelete(`/sessions/${key}`); }
