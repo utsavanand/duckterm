@@ -2,7 +2,7 @@ import { useCallback, useSyncExternalStore } from "react";
 import { api, type CheckpointAttemptReceipt, type CheckpointRecord, type CheckpointSelection, type CheckpointWorkProgress } from "./api";
 import { checkpointStatus } from "./checkpointState";
 
-type CheckpointOutcome = Pick<CheckpointRecord, "saved" | "summary_update" | "export_reason"> & { label: string };
+type CheckpointOutcome = Pick<CheckpointRecord, "saved" | "summary_update" | "export_reason"> & { id?: string; label: string };
 
 export type CheckpointAttempt =
   | { state: "running"; startedAt: number; progress?: CheckpointWorkProgress }
@@ -61,7 +61,7 @@ export function requestCheckpoint(key: string, selection?: CheckpointSelection):
     } finally { stopProgress(); }
   }).then(result => {
     // Retain only status metadata, not another cached copy of conversation text.
-    const outcome = { saved: result.saved, summary_update: result.summary_update, export_reason: result.export_reason, label: checkpointStatus(result).label };
+    const outcome = { id: result.id, saved: result.saved, summary_update: result.summary_update, export_reason: result.export_reason, label: checkpointStatus(result).label };
     publish(key, { state: "complete", startedAt, result: outcome });
     return result;
   }, error => {

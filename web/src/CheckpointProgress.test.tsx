@@ -109,7 +109,8 @@ it("keeps compact progress measured and its final outcome honest", async () => {
   let finish!: (cp: CheckpointRecord) => void;
   vi.mocked(api.checkpoint).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   vi.mocked(api.checkpointAttempt).mockImplementation(async (_key, id) => ({ request_id: id, state: "running", progress: { stage: "reviewing", completed: 8, total: 20 } }));
-  render(<CheckpointProgress sessionKey="compact-panel-progress" compact />);
+  const details = vi.fn();
+  render(<CheckpointProgress sessionKey="compact-panel-progress" compact onDetails={details} />);
   let work!: Promise<CheckpointRecord>;
   await act(async () => { work = requestCheckpoint("compact-panel-progress"); });
   await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
@@ -119,4 +120,6 @@ it("keeps compact progress measured and its final outcome honest", async () => {
   await act(async () => { finish(result("partial")); await work; });
   expect(screen.getByRole("status")).toHaveTextContent("Checkpoint failed · summary incomplete");
   expect(screen.queryByRole("progressbar")).toBeNull();
+  screen.getByRole("button", { name: "Details ↗" }).click();
+  expect(details).toHaveBeenCalledWith("cp");
 });

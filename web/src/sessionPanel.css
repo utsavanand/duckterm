@@ -77,3 +77,5 @@ button.rd-session-work { cursor: pointer; }
 .rd-session-token-line { font-variant-numeric: tabular-nums; }
 .rd-session-save-status { margin: 12px 0 0; font-size: .75rem; color: var(--text-soft); }
 .rd-session-save-status .rd-checkpoint-progress-track { margin-top: 8px; }
+
+.rd-session-save-status > .rd-timeline-link { margin-left: 8px; }

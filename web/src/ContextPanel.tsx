@@ -125,8 +125,8 @@ export function ContextPanel({ session, active = true, onMemory, onCheckpointMem
       </header>
       {checkpoints && <SessionPanelSection key={`memory-${session.key}`} title="Saved memory" initiallyOpen forceOpen={!!checkpointRunning}>
         <SavedMemoryTable key={session.key} sessionKey={session.key} active={active} onMemory={onMemory} />
-        {attempt && attempt.state !== "complete" && <CheckpointProgress sessionKey={session.key} compact />}
-        {!checkpointRunning && lastCheckpoint && (checkpointAttemptFailed(lastCheckpoint) || checkpointCanRetry(lastCheckpoint)) && <p className="rd-session-save-status">
+        {attempt && <CheckpointProgress sessionKey={session.key} compact onDetails={onCheckpointMemory} />}
+        {!attempt && lastCheckpoint && (checkpointAttemptFailed(lastCheckpoint) || checkpointCanRetry(lastCheckpoint)) && <p className="rd-session-save-status">
           {onCheckpointMemory ? <button className="rd-timeline-link" onClick={() => onCheckpointMemory(lastCheckpoint.id)}>Latest checkpoint · {checkpointStatus(lastCheckpoint).label} ↗</button>
             : checkpointStatus(lastCheckpoint).label}
         </p>}
