@@ -3,7 +3,9 @@ import { apiDelete, apiPost, base, expandFolder, seedSession } from "./helpers";
 
 async function drag(page: Page, source: Locator, target: Locator, after = false, cancel = false) {
   await source.scrollIntoViewIfNeeded();
-  await target.scrollIntoViewIfNeeded();
+  // scrollIntoViewIfNeeded can leave the target at the tree's edge, inside the
+  // 28px auto-scroll band, so the list scrolls away under the pointer mid-drag.
+  await target.evaluate(el => el.scrollIntoView({ block: "center" }));
   const from = await source.boundingBox(), to = await target.boundingBox();
   if (!from || !to) throw new Error("Missing drag geometry");
   await page.mouse.move(from.x + 100, from.y + from.height / 2);
