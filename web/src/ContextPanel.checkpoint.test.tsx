@@ -1,105 +1,86 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api, CheckpointRecord, CheckpointActivity, ContextEvidence } from "./api";
+import { api, CheckpointRecord, ContextEvidence } from "./api";
+import { memoryGet } from "./memoryViewApi";
 import { ContextPanel } from "./ContextPanel";
 import { edition, FULL } from "./test/editions";
 import type { SessionView } from "./types";
 const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
 vi.mock("./api", () => ({ api: { checkpoints: vi.fn(), checkpoint: vi.fn(), sendInput: vi.fn() } }));
+vi.mock("./memoryViewApi", () => ({ memoryGet: vi.fn() }));
 vi.mock("./ui", () => ({ useToast: () => toast }));
 vi.mock("./Duck", () => ({ Duck: () => null, duckPhrase: () => "idle", poseFor: () => "idle" }));
 vi.mock("./FileEditModal", () => ({ FileEditModal: () => null }));
 const session = { key: "one", state: "idle", label: "Test", startedAt: 1, contextTokens: 190000, ptyOwned: true, runtime: "codex", model: "gpt-6-astra" } as SessionView;
-const cp: CheckpointRecord = { id: "c", label: "manual", created_at: 1000, summary: "Saved summary", saved: true, summary_state: "unavailable", record: { prompts: [], files: [], tools: [], event_count: 0 } };
-beforeEach(() => { vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [cp] }); Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" }); });
-afterEach(() => { cleanup(); vi.resetAllMocks(); });
-it("groups checkpoint information and actions separately from active context", async () => {
-  render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
-  fireEvent.click(await screen.findByText("Latest attempt · Summary unavailable"));
-  expect(screen.getByText(new Date(cp.created_at).toLocaleString())).toBeInTheDocument();
-  expect(screen.getByText("Summary unavailable")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Checkpoint" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Compact" })).toBeEnabled();
-});
-it("ignores a checkpoint fetch from a previous session", async () => {
-  let finish!: (value: { checkpoints: CheckpointRecord[] }) => void;
-  vi.mocked(api.checkpoints).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue({ checkpoints: [] });
-  const view = render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
-  view.rerender(<ContextPanel session={{ ...session, key: "two" }} />);
-  await act(async () => { finish({ checkpoints: [cp] }); });
-  expect(screen.queryByLabelText("Latest checkpoint")).toBeNull();
-});
-
-it("does not invent event counts or infer compaction from lifetime events and model usage", async () => {
-  render(<ContextPanel session={{ ...session, eventCount: 40000, contextTokens: 334881, model: "claude-opus-5" }} />, { wrapper: edition(FULL) });
-  await screen.findByText("Latest attempt · Summary unavailable");
-  expect(screen.getByText("Events since saved capture").nextElementSibling).toHaveTextContent("Not provided by this server");
-  expect(screen.getByText("Last compaction").nextElementSibling).toHaveTextContent("Not provided by this server");
-  expect(screen.getByText("Context window").nextElementSibling).toHaveTextContent("Not provided by this server");
-  expect(screen.getByText("334,881")).toBeVisible();
-  expect(api.sendInput).not.toHaveBeenCalled();
-  expect(api.checkpoint).not.toHaveBeenCalled();
-});
-it("keeps zero reported context distinct from unknown", () => {
-  const view = render(<ContextPanel session={{ ...session, contextTokens: 0 }} />, { wrapper: edition(FULL) });
-  expect(screen.getByText("0")).toBeVisible();
-  view.rerender(<ContextPanel session={{ ...session, contextTokens: undefined }} />);
-  expect(screen.queryByText("tokens reported")).toBeNull();
-});
-
-const activity = (count: number): CheckpointActivity => ({ state: "known", checkpoint_id: "saved", events_since_capture: count, event_filter: "work-v1", reason: null });
-it.each([0, 1026])("shows measured activity %s despite a newer failed attempt and lifetime totals", async count => {
-  vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [cp], checkpoint_activity: activity(count) });
-  render(<ContextPanel session={{ ...session, eventCount: 90000 }} />, { wrapper: edition(FULL) });
-  await screen.findByText("Latest attempt · Summary unavailable");
-  expect(screen.getByText("Events since saved capture").nextElementSibling).toHaveTextContent(count.toLocaleString());
-  expect(api.checkpoint).not.toHaveBeenCalled();
-});
-it.each([
-  { ...activity(0), state: "never" as const, events_since_capture: null, reason: "no_successful_checkpoint" },
-  { ...activity(0), state: "unknown" as const, events_since_capture: null, reason: "boundary_missing" },
-])("distinguishes absent evidence: $state", async value => {
-  vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [], checkpoint_activity: value });
-  render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
-  await screen.findByText(value.state === "never" ? "No successful checkpoint yet" : "Capture boundary unavailable");
-  expect(screen.getByText("Events since saved capture").nextElementSibling).not.toHaveTextContent(/^0$/);
-});
-it("clears a previously measured count when refresh fails", async () => {
-  vi.mocked(api.checkpoints).mockResolvedValueOnce({ checkpoints: [], checkpoint_activity: activity(1026) }).mockRejectedValue(new Error("offline"));
-  render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
-  await screen.findByText("1,026");
-  act(() => { window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: session.key })); });
-  await screen.findByText("Couldn’t load activity");
-  expect(screen.queryByText("1,026")).toBeNull();
-});
-it("ignores activity returned after selection changes", async () => {
-  let finish!: (value: Awaited<ReturnType<typeof api.checkpoints>>) => void;
-  vi.mocked(api.checkpoints).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue({ checkpoints: [], checkpoint_activity: activity(2) });
-  const view = render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
-  view.rerender(<ContextPanel session={{ ...session, key: "two" }} />);
-  await act(async () => { finish({ checkpoints: [cp], checkpoint_activity: activity(1026) }); });
-  expect(screen.getByText("Events since saved capture").nextElementSibling).toHaveTextContent(/^2$/);
-  expect(screen.queryByText("1,026")).toBeNull();
-});
-
+const cp: CheckpointRecord = { id: "c", label: "manual", created_at: 1000, summary: "Saved summary", saved: true, summary_state: "unavailable", summary_update: { state: "failed", reason: "summary_unverified" }, record: { prompts: [], files: [], tools: [], event_count: 0 } };
 const evidence: ContextEvidence = { state: "available", reason: null, context_window_tokens: 258400, last_compaction_at: "2026-10-19T10:00:00Z", history_scope: "recent" };
-it("shows explicit native capacity and compaction, then clears evidence when the host fails", async () => {
+beforeEach(() => { vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [cp] }); vi.mocked(memoryGet).mockResolvedValue({ revisions: [], next_cursor: null }); Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" }); });
+afterEach(() => { cleanup(); vi.resetAllMocks(); });
+it("opens the exact dated revision without checkpointing or generating memory", async () => {
+  vi.mocked(memoryGet).mockResolvedValue({ revisions: [{ id: "new", created_at: 2000 }, { id: "old", created_at: 1000 }], next_cursor: null });
+  const open = vi.fn();
+  render(<ContextPanel session={session} onMemory={open} />, { wrapper: edition(FULL) });
+  const buttons = await screen.findAllByRole("button", { name: "View memory ↗" });
+  fireEvent.click(buttons[1]); expect(open).toHaveBeenCalledWith("old");
+  expect(memoryGet).toHaveBeenCalledWith("one", "revisions", { limit: "20" });
+  expect(api.checkpoint).not.toHaveBeenCalled(); expect(api.sendInput).not.toHaveBeenCalled();
+  expect(screen.queryByText("Last successful save")).toBeNull();
+});
+it("shows empty memory distinctly from failed loading and allows reload", async () => {
+  vi.mocked(memoryGet).mockRejectedValueOnce(new Error("offline")).mockResolvedValue({ revisions: [], next_cursor: null });
+  render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
+  await screen.findByText("Couldn’t load saved memories.");
+  expect(screen.queryByText("No saved memories yet.")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Reload memories" }));
+  await screen.findByText("No saved memories yet.");
+});
+it("loads older entries and refreshes the first page when a checkpoint completes", async () => {
+  vi.mocked(memoryGet).mockResolvedValueOnce({ revisions: [{ id: "first", created_at: 2000 }], next_cursor: "first" }).mockResolvedValueOnce({ revisions: [{ id: "older", created_at: 1000 }], next_cursor: null }).mockResolvedValue({ revisions: [{ id: "latest", created_at: 3000 }], next_cursor: null });
+  const open = vi.fn(); render(<ContextPanel session={session} onMemory={open} />, { wrapper: edition(FULL) });
+  fireEvent.click(await screen.findByRole("button", { name: "Older memories" }));
+  await screen.findAllByRole("button", { name: "View memory ↗" });
+  await act(async () => {});
+  const buttons = screen.getAllByRole("button", { name: "View memory ↗" }); expect(buttons).toHaveLength(2);
+  fireEvent.click(buttons[1]); expect(open).toHaveBeenLastCalledWith("older");
+  act(() => { window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: session.key })); });
+  await act(async () => {});
+  fireEvent.click(screen.getByRole("button", { name: "View memory ↗" })); expect(open).toHaveBeenLastCalledWith("latest");
+});
+it("does not invent capacity or compaction from model name or lifetime events", async () => {
+  render(<ContextPanel session={{ ...session, eventCount: 40000, contextTokens: 334881, model: "claude-opus-5" }} />, { wrapper: edition(FULL) });
+  await screen.findByText("No saved memories yet.");
+  expect(screen.getByLabelText("Context tokens")).toHaveTextContent("334,881 used · — left");
+  expect(screen.queryByText(/Compacted/)).toBeNull();
+});
+it("keeps zero reported usage distinct from missing usage", async () => {
+  vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [], context_evidence: evidence });
+  const view = render(<ContextPanel session={{ ...session, contextTokens: 0 }} />, { wrapper: edition(FULL) });
+  await screen.findByText("258,400 left"); expect(screen.getByLabelText("Context tokens")).toHaveTextContent("0 used");
+  view.rerender(<ContextPanel session={{ ...session, contextTokens: undefined }} />);
+  expect(screen.getByLabelText("Context tokens")).toHaveTextContent("— used · — left");
+});
+it("shows reported remaining capacity and clears it after host failure", async () => {
   vi.mocked(api.checkpoints).mockResolvedValueOnce({ checkpoints: [], context_evidence: evidence }).mockRejectedValue(new Error("offline"));
   render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
-  await screen.findByText("258,400 tokens");
-  expect(screen.getByText("Last compaction").nextElementSibling?.querySelector("time")).toHaveAttribute("datetime", evidence.last_compaction_at);
-  expect(screen.getByText(/Only recent history was inspected/)).toBeInTheDocument();
+  await screen.findByText("68,400 left");
+  expect(document.querySelector("time")).toHaveAttribute("datetime", evidence.last_compaction_at);
   act(() => { window.dispatchEvent(new CustomEvent("duckterm-checkpoint", { detail: session.key })); });
-  await screen.findByText("Couldn’t load activity");
-  expect(screen.queryByText("258,400 tokens")).toBeNull();
-  expect(screen.getByText("Last compaction").nextElementSibling).toHaveTextContent("Couldn’t load context");
+  await screen.findByTitle("Couldn’t load context"); expect(screen.queryByText("68,400 left")).toBeNull();
 });
-it("does not retain another session’s context evidence after a late response", async () => {
+it("ignores late memory and context from a previously selected host/session", async () => {
   let finish!: (value: Awaited<ReturnType<typeof api.checkpoints>>) => void;
+  let finishMemory!: (value: unknown) => void;
   vi.mocked(api.checkpoints).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValue({ checkpoints: [] });
+  vi.mocked(memoryGet).mockImplementationOnce(() => new Promise(resolve => { finishMemory = resolve; })).mockResolvedValue({ revisions: [], next_cursor: null });
   const view = render(<ContextPanel session={session} />, { wrapper: edition(FULL) });
-  view.rerender(<ContextPanel session={{ ...session, key: "two" }} />);
-  await act(async () => { finish({ checkpoints: [], context_evidence: evidence }); });
-  expect(screen.queryByText("258,400 tokens")).toBeNull();
-  expect(screen.getByText("Last compaction").nextElementSibling).toHaveTextContent("Not provided by this server");
+  view.rerender(<ContextPanel session={{ ...session, key: "remote:two" }} />);
+  await act(async () => { finish({ checkpoints: [cp], context_evidence: evidence }); finishMemory({ revisions: [{ id: "wrong-host", created_at: 1 }], next_cursor: null }); });
+  expect(screen.queryByRole("button", { name: "View memory ↗" })).toBeNull(); expect(screen.queryByText("68,400 left")).toBeNull();
+});
+it("retains a compact failure link and sends compact only on request", async () => {
+  const open = vi.fn(); render(<ContextPanel session={session} onCheckpointMemory={open} />, { wrapper: edition(FULL) });
+  fireEvent.click(await screen.findByRole("button", { name: /Latest checkpoint/ })); expect(open).toHaveBeenCalledWith("c");
+  const activeContext = screen.getByText("Active context").closest("details")!;
+  fireEvent.click(within(activeContext).getByRole("button", { name: "Compact" }));
+  await act(async () => {}); expect(api.sendInput).toHaveBeenCalledWith("one", "/compact\n");
 });

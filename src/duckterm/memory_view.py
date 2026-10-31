@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from typing import Any
 
 from duckterm import checkpoint_clock, memory_assembly, memory_contract, memory_summary
 from duckterm.core.session_api import APIError
-from duckterm.persistence.saved_state import fingerprint
+from duckterm.persistence.saved_state import REVISION_BUCKET, fingerprint
 
 
 def page(
@@ -321,3 +322,39 @@ def project(
     elif claims_cursor is not None:
         raise APIError(409, "Saved memory changed; reload its first page")
     return result
+
+
+def revision_headers(
+    conn: sqlite3.Connection, key: str, *, cursor: str | None = None, limit: int = 20
+) -> dict[str, Any]:
+    """Small owner-facing index; full reads still validate each revision's evidence.
+
+    Keyset pagination tolerates new saves without skipping older entries. Never
+    read revision bodies or native transcripts merely to populate the sidebar.
+    """
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise APIError(400, "Page limit must be between 1 and 100")
+    if not conn.execute("SELECT 1 FROM sessions WHERE session_key=?", (key,)).fetchone():
+        raise APIError(404, "Session not found")
+    boundary = ""
+    params: list[Any] = [key, REVISION_BUCKET]
+    if cursor is not None:
+        anchor = conn.execute(
+            "SELECT created_at,rowid FROM digest_items WHERE session_key=? AND bucket=? AND id=?",
+            (key, REVISION_BUCKET, cursor),
+        ).fetchone()
+        if anchor is None:
+            raise APIError(409, "Saved memory changed; reload its first page")
+        boundary = " AND (created_at,rowid)<(?,?)"
+        params.extend(anchor)
+    rows = conn.execute(
+        "SELECT id,created_at FROM digest_items WHERE session_key=? AND bucket=?"
+        + boundary
+        + " ORDER BY created_at DESC,rowid DESC LIMIT ?",
+        [*params, limit + 1],
+    ).fetchall()
+    selected = rows[:limit]
+    return {
+        "revisions": [{"id": row[0], "created_at": row[1]} for row in selected],
+        "next_cursor": selected[-1][0] if len(rows) > limit else None,
+    }

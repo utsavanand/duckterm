@@ -738,7 +738,7 @@ class Server:
 
         memory_url = urllib.parse.urlsplit(path)
         memory_view_route = re.fullmatch(
-            r"/sessions/([A-Za-z0-9._-]{1,128})/memory(?:/(read|related))?", memory_url.path
+            r"/sessions/([A-Za-z0-9._-]{1,128})/memory(?:/(read|related|revisions))?", memory_url.path
         )
         if memory_view_route:
             from duckterm.memory_view_http import handle as memory_view_handle

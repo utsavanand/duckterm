@@ -359,3 +359,48 @@ def test_scope_change_during_projection_cannot_return_stale_memory(memory_rig, m
         assert exc.value.status == 409
 
     asyncio.run(read())
+
+
+def test_sidebar_revision_headers_are_bounded_scoped_and_do_not_read_bodies(
+    memory_rig, monkeypatch
+):
+    from duckterm.persistence.saved_state import REVISION_BUCKET
+
+    server, _, _, _ = memory_rig
+    conn = server.history._conn
+    for i in range(25):
+        conn.execute(
+            "INSERT INTO digest_items VALUES (?,?,?,?,'active',?,?)",
+            (
+                f"rev-{i}",
+                "agent",
+                REVISION_BUCKET,
+                "large body is deliberately not decoded",
+                100,
+                100,
+            ),
+        )
+    conn.execute(
+        "INSERT INTO digest_items VALUES (?,?,?,?,'active',?,?)",
+        ("private", "peer", REVISION_BUCKET, "private", 100, 100),
+    )
+    conn.commit()
+    monkeypatch.setattr(server.memory, "catalog", lambda *a, **k: pytest.fail("full catalog read"))
+    before = conn.total_changes
+    status, first = get(server, action="revisions")
+    assert status == 200 and len(first["revisions"]) == 20
+    assert first["revisions"][0]["id"] == "rev-24"
+    conn.execute(
+        "INSERT INTO digest_items VALUES (?,?,?,?,'active',?,?)",
+        ("new", "agent", REVISION_BUCKET, "new", 101, 101),
+    )
+    conn.commit()
+    status, second = get(server, action="revisions", cursor=first["next_cursor"])
+    assert status == 200 and len(second["revisions"]) == 5 and second["next_cursor"] is None
+    assert len({r["id"] for r in first["revisions"] + second["revisions"]}) == 25
+    assert get(server, key="peer", action="revisions", cursor=first["next_cursor"])[0] == 409
+    assert get(server, key="missing", action="revisions")[0] == 404
+    assert get(server, action="revisions", limit=101)[0] == 400
+    assert get(server, action="revisions", revision="wrong")[0] == 400
+    assert dispatch(server, "GET", "/sessions/agent/memory/revisions", {})[0] == 401
+    assert conn.total_changes == before + 1

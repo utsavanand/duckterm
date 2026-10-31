@@ -400,6 +400,7 @@ class Memory:
                 "revisions_cursor",
                 "revisions_limit",
             },
+            "revisions": {"cursor", "limit"},
             "sources": set(),
             "search": {"q", "limit"},
             "read": {"source", "record", "offset", "limit"},
@@ -425,6 +426,13 @@ class Memory:
         return await asyncio.shield(task)
 
     async def _operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:
+        if action == "revisions":
+            return memory_view.revision_headers(
+                self.server.history._conn,
+                key,
+                cursor=query.get("cursor", [None])[0],
+                limit=self._number(query, "limit", 20, 1, 100),
+            )
         async with self.locks.setdefault(key, asyncio.Lock()):
             catalog = self.catalog(key, retrieval=True)
             read_catalog = (

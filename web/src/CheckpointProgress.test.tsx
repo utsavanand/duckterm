@@ -103,3 +103,20 @@ it.each(["wrong-id", "invalid-count"])("does not display fabricated progress fro
   expect(screen.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
   await act(async () => { finish(result("failed")); await work; });
 });
+
+it("keeps compact progress measured and its final outcome honest", async () => {
+  vi.useFakeTimers();
+  let finish!: (cp: CheckpointRecord) => void;
+  vi.mocked(api.checkpoint).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  vi.mocked(api.checkpointAttempt).mockImplementation(async (_key, id) => ({ request_id: id, state: "running", progress: { stage: "reviewing", completed: 8, total: 20 } }));
+  render(<CheckpointProgress sessionKey="compact-panel-progress" compact />);
+  let work!: Promise<CheckpointRecord>;
+  await act(async () => { work = requestCheckpoint("compact-panel-progress"); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+  expect(screen.getByRole("status")).toHaveTextContent("Reviewing summary… · 8 of 20 records");
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "8");
+  expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuemax", "20");
+  await act(async () => { finish(result("partial")); await work; });
+  expect(screen.getByRole("status")).toHaveTextContent("Checkpoint failed · summary incomplete");
+  expect(screen.queryByRole("progressbar")).toBeNull();
+});
