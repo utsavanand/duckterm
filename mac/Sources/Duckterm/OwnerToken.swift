@@ -5,14 +5,32 @@ import Foundation
 /// the local workspace's token file, or over SSH for a remote computer, which is
 /// the same trust that opens its tunnel.
 enum OwnerToken {
+    private struct Failure { let until: Date; let delay: TimeInterval; let error: Error }
     private static let lock = NSLock()
     private static var remotes: [Int: RemoteHost] = [:]
     private static var cache: [Int: String] = [:]
+    // Status polling asks for the token every second; a failed SSH read must
+    // not be retried on each poll (0.4.186 started ~1 ssh per second).
+    private static var failures: [Int: Failure] = [:]
+    private static var pending: [Int: Task<String, Error>] = [:]
+    private static var generation: [Int: Int] = [:]
+    static var fetch: (RemoteHost) async throws -> String = remote
+    static var now: () -> Date = Date.init
+    static let firstBackoff: TimeInterval = 30
+    static let maxBackoff: TimeInterval = 300
 
     static func register(tunnelPort: Int, host: RemoteHost) {
+        lock.withLock { remotes[tunnelPort] = host }
+        reset(tunnelPort: tunnelPort)
+    }
+
+    /// A new tunnel may reach a restarted or updated server: forget the token and any backoff.
+    static func reset(tunnelPort: Int) {
         lock.withLock {
-            remotes[tunnelPort] = host
             cache[tunnelPort] = nil
+            failures[tunnelPort] = nil
+            pending[tunnelPort] = nil
+            generation[tunnelPort, default: 0] += 1
         }
     }
 
@@ -22,18 +40,49 @@ enum OwnerToken {
         return valid(token) ? token : nil
     }
 
-    static func token(base: URL) async throws -> String {
+    /// `open` means GET / answered 200 without a token: a server from before
+    /// 0.4.186, which has no token for the app to read. Say so instead of
+    /// retrying SSH or reading the token out of its page.
+    static func token(base: URL, open: Bool = false) async throws -> String {
         guard let port = base.port else { throw LaunchDestination.Failure.message("Invalid destination") }
         if port == AppIdentity.localPort {
             guard let token = local() else { throw LaunchDestination.Failure.message("This Mac's DuckTerm token is missing.") }
             return token
         }
-        let (host, cached) = lock.withLock { (remotes[port], cache[port]) }
-        if let cached { return cached }
-        guard let host else { throw LaunchDestination.Failure.message("Unknown computer") }
-        let token = try await remote(host)
-        lock.withLock { cache[port] = token }
-        return token
+        let task: Task<String, Error> = try lock.withLock {
+            if let cached = cache[port] { return Task { cached } }
+            guard let host = remotes[port] else { throw LaunchDestination.Failure.message("Unknown computer") }
+            if open {
+                throw LaunchDestination.Failure.message(
+                    "DuckTerm on \(host.name) is older than this app. Update DuckTerm there, then reconnect.")
+            }
+            if let failure = failures[port], now() < failure.until { throw failure.error }
+            if let running = pending[port] { return running }
+            let started = generation[port, default: 0]
+            let running = Task {
+                do {
+                    let token = try await fetch(host)
+                    lock.withLock {
+                        guard generation[port, default: 0] == started else { return }
+                        cache[port] = token
+                        failures[port] = nil
+                        pending[port] = nil
+                    }
+                    return token
+                } catch {
+                    lock.withLock {
+                        guard generation[port, default: 0] == started else { return }
+                        let delay = min(failures[port].map { $0.delay * 2 } ?? firstBackoff, maxBackoff)
+                        failures[port] = Failure(until: now().addingTimeInterval(delay), delay: delay, error: error)
+                        pending[port] = nil
+                    }
+                    throw error
+                }
+            }
+            pending[port] = running
+            return running
+        }
+        return try await task.value
     }
 
     static func valid(_ token: String) -> Bool {
@@ -44,16 +93,49 @@ enum OwnerToken {
     /// Finds the workspace serving `remotePort` from the server.json each server
     /// writes under its home, then prints that home's token. Sent on stdin to
     /// `sh -s` so the remote login shell never parses it.
+    ///
+    /// A server installed as a service runs under its own account, whose home
+    /// the SSH login can't read. Then the script asks `sudo -n` to run the same
+    /// search as that account. The token is worth exactly what that account
+    /// can do (its agents run as it), so being allowed to act as it is the
+    /// right proof. A ps line only names the account to ask for; sudo decides.
+    /// Without sudo it prints `needs-user <name>` and exits 3.
     static func remoteScript(port: Int) -> String {
-        """
+        let search = #"""
         for f in "$HOME"/.duckterm*/session-credentials/server.json; do
-          if grep -q '"url": "http://127.0.0.1:\(port)"' "$f" 2>/dev/null; then
-            cat "${f%/session-credentials/server.json}/token"; exit
+          if grep -q '"url": "http://127.0.0.1:\#(port)"' "$f" 2>/dev/null; then
+            cat "${f%/session-credentials/server.json}/token"; exit 0
           fi
         done
         exit 1
+        """#
+        return #"""
+        (
+        \#(search)
+        ) && exit 0
+        uid=$(ps -eo uid=,args= 2>/dev/null | awk -v me="$(id -u)" -v port=\#(port) '
+          $1 != me && index($0, "duckterm serve") &&
+            ($0 ~ ("--port[ =]" port "( |$)") || (port == 4300 && $0 !~ /--port/)) { print $1; exit }')
+        [ -n "$uid" ] || exit 1
+        sudo -n -H -u "#$uid" sh -s 2>/dev/null <<'DUCKTERM_SEARCH' && exit 0
+        \#(search)
+        DUCKTERM_SEARCH
+        echo "needs-user $(id -un "$uid" 2>/dev/null || echo "$uid")"
+        exit 3
 
-        """
+        """#
+    }
+
+    static func failure(host: RemoteHost, status: Int32, output: String) -> String {
+        let prefix = "needs-user "
+        if status == 3, output.hasPrefix(prefix) {
+            let user = String(output.dropFirst(prefix.count))
+            if user.range(of: #"^[A-Za-z0-9._-]{1,64}$"#, options: .regularExpression) != nil {
+                return "DuckTerm on \(host.name) runs as \(user). Connect as \(user), or let your login run `sudo -u \(user) sh` without a password."
+            }
+            return "DuckTerm on \(host.name) runs as another account. Connect as that account, or let your login sudo to it without a password."
+        }
+        return "Could not read DuckTerm's token on \(host.name). Check SSH access and that DuckTerm runs there on port \(host.remotePort)."
     }
 
     private static func remote(_ host: RemoteHost) async throws -> String {
@@ -72,7 +154,7 @@ enum OwnerToken {
                     continuation.resume(returning: token)
                 } else {
                     continuation.resume(throwing: LaunchDestination.Failure.message(
-                        "Could not read DuckTerm's token on \(host.name). Check SSH access and that DuckTerm runs there on port \(host.remotePort)."))
+                        failure(host: host, status: finished.terminationStatus, output: token)))
                 }
             }
             do {

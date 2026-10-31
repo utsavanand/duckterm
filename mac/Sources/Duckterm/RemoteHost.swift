@@ -109,6 +109,7 @@ final class RemoteConnection {
                     process.standardInput = FileHandle.nullDevice
                     process.standardOutput = FileHandle.nullDevice
                     process.standardError = FileHandle.nullDevice
+                    OwnerToken.reset(tunnelPort: self.port)
                     do { try process.run(); self.process = process }
                     catch { self.onStatus?("SSH could not start", false) }
                 }
