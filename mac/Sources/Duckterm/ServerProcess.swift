@@ -16,12 +16,21 @@ final class ServerProcess {
         }
         var env = ServerEnvironment.make(inheriting: ProcessInfo.processInfo.environment)
         guard let resources = Bundle.main.resourceURL else { return false }
-        let runtime = BundledRuntime(resources: resources)
+        let bundle = Bundle.main.bundleURL
+        let bundled = Bundle.main.object(forInfoDictionaryKey: "DucktermBundledRuntime") as? Bool == true
+        let profile = AppIdentity.profile?.id
+        let store = StableRuntimeStore(home: AppIdentity.userHome(isTest: AppIdentity.isTest,
+                                                                 environment: ProcessInfo.processInfo.environment))
+        let runtime: BundledRuntime
         do {
-            try runtime.validate()
+            // Copy/verify off the UI thread, before spawning any persistent
+            // process. Existing matching servers above are still reused.
+            runtime = try await Task.detached(priority: .userInitiated) {
+                try store.runtime(bundle: bundle, resources: resources, bundled: bundled, profile: profile)
+            }.value
         } catch {
             startupError = error.localizedDescription
-            AppDiagnostics.shared.record("Bundled runtime is incomplete")
+            AppDiagnostics.shared.record("Bundled runtime preparation failed")
             return false
         }
         if AppIdentity.isTest,
