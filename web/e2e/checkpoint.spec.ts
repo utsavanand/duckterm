@@ -75,8 +75,6 @@ test("checkpoint captures the session's prompts and commands", async ({
   await page.screenshot({ path: "/tmp/timeline-implemented-dark.png", animations: "disabled" });
   await page.emulateMedia({ colorScheme: "light" });
   await page.screenshot({ path: "/tmp/timeline-implemented-light.png", animations: "disabled" });
-  await page.locator('.rd-section-disclosure[aria-label="Latest checkpoint"] > summary').click();
-  await page.getByRole("button", { name: "Latest checkpoint ↗", exact: true }).click();
   await expect(timeline.locator(".rd-timeline-checkpoint")).toHaveAttribute("open", "");
   await timeline.getByRole("button", { name: "Retry summary update", exact: true }).click();
     await confirmCheckpoint(page);

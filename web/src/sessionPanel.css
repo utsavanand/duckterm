@@ -16,7 +16,7 @@ button.rd-session-work { cursor: pointer; }
 .rd-session-section > summary::-webkit-details-marker { display: none; }
 .rd-session-section > summary:after { content: '›'; font-size: 1.125rem; line-height: 16px; width: 8px; flex: none; color: var(--text-soft); }
 .rd-session-section[open] > summary:after { transform: rotate(90deg); }
-.rd-session-section > summary > span:first-child { font-weight: 600; }
+.rd-session-section > summary > span:first-child { font-weight: 400; }
 .rd-session-section > summary:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
 .rd-section-status { margin-left: auto; font-size: .75rem; color: var(--text-soft); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .rd-session-section[open] > summary .rd-section-status { visibility: hidden; }
@@ -65,3 +65,17 @@ button.rd-session-work { cursor: pointer; }
 .rd-session-work-text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .rd-session-work.open .rd-session-work-text { display: block; }
 .rd-session-section .rd-section-actions > .rd-btn { background: var(--card); color: var(--text); border: 1px solid var(--border-strong); }
+
+/* Saved revisions are a compact index; full summaries open on demand. */
+.rd-saved-memory-table { max-height: 206px; overflow: auto; }
+.rd-saved-memory-table table { width: 100%; border-collapse: collapse; font-size: .75rem; }
+.rd-saved-memory-table th { position: sticky; top: 0; background: var(--bg-soft); color: var(--text-soft); font-weight: 400; text-align: left; }
+.rd-saved-memory-table th, .rd-saved-memory-table td { padding: 8px 0; border-bottom: 1px solid var(--border); }
+.rd-saved-memory-table th + th, .rd-saved-memory-table td + td { padding-left: 12px; }
+.rd-saved-memory-table .rd-timeline-link { white-space: nowrap; }
+.rd-memory-actions { justify-content: flex-end; }
+.rd-session-token-line { font-variant-numeric: tabular-nums; }
+.rd-session-save-status { margin: 12px 0 0; font-size: .75rem; color: var(--text-soft); }
+.rd-session-save-status .rd-checkpoint-progress-track { margin-top: 8px; }
+
+.rd-session-save-status > .rd-timeline-link { margin-left: 8px; }
