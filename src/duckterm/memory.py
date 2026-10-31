@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from duckterm import (
+    memory_access,
     memory_graph,
     memory_index,
     memory_lifecycle,
@@ -400,7 +401,7 @@ class Memory:
                 "revisions_cursor",
                 "revisions_limit",
             },
-            "sources": set(),
+            "sources": {"kind", "limit", "cursor"},
             "search": {"q", "limit"},
             "read": {"source", "record", "offset", "limit"},
             "related": {"source", "record", "limit", "cursor"},
@@ -473,6 +474,26 @@ class Memory:
                         )
                     )
             elif action == "sources":
+                kind = query.get("kind", [""])[0]
+                cursor = query.get("cursor", [""])[0]
+                if len(kind) > 32 or len(cursor) > 128:
+                    raise APIError(400, "Invalid source listing query")
+                limit = self._number(query, "limit", 20, 1, 100)
+
+                def source_cursor(source: dict[str, Any]) -> str:
+                    # Preserve current-before-retained ordering, while giving
+                    # each version a distinct cursor at a page boundary.
+                    order = 0 if source.get("current") else 1
+                    return f"{source['id']}:{order}:{source['version']}"
+
+                selected = sorted(
+                    (
+                        s
+                        for s in sources
+                        if source_cursor(s) > cursor and (not kind or s["kind"] == kind)
+                    ),
+                    key=source_cursor,
+                )
                 result["sources"] = [
                     {
                         k: s[k]
@@ -490,8 +511,11 @@ class Memory:
                         )
                         if k in s
                     }
-                    for s in sources
+                    for s in selected[:limit]
                 ]
+                result["next_cursor"] = (
+                    source_cursor(selected[limit - 1]) if len(selected) > limit else None
+                )
             elif action == "search":
                 text = query.get("q", [""])[0].strip()
                 if not text or len(text.encode()) > 1024:
@@ -739,9 +763,31 @@ class Memory:
                 raise APIError(400, "Invalid memory link JSON") from exc
             result = await self.link(key, request, headers, lifecycle=action == "claim")
         elif method == "GET" and action not in {"link", "claim"}:
-            result = await self.operate(
-                key, action, urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
-            )
+            query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            if action == "sessions":
+                if set(query) - {"limit", "cursor"} or any(len(v) != 1 for v in query.values()):
+                    raise APIError(400, "Invalid linked-session query")
+                cursor = query.get("cursor", [""])[0]
+                if len(cursor) > 128:
+                    raise APIError(400, "Invalid linked-session cursor")
+                result = memory_access.sessions(
+                    self.server, key, self._number(query, "limit", 20, 1, 100), cursor
+                )
+            else:
+                selected = query.pop("session", [key])
+                if len(selected) != 1 or not selected[0] or len(selected[0]) > 128:
+                    raise APIError(400, "Invalid source session")
+                source = selected[0]
+                access = (
+                    memory_access.authorize(self.server, key, source) if source != key else None
+                )
+                result = await self.operate(source, action, query)
+                if access is not None:
+                    if memory_access.authorize(self.server, key, source) != access:
+                        raise APIError(409, "Memory link changed during retrieval; retry")
+                    result["coverage"]["scope"] = "linked_session"
+                    result["source_session"] = source
+                    result["relation"] = access["relation"]
         else:
             raise APIError(405, "Use GET for memory retrieval or POST for a typed link")
         # Enrollment/token may have been revoked during a worker read.

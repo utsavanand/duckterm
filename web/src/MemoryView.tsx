@@ -36,7 +36,7 @@ function Evidence({ sessionKey, evidence }: { sessionKey: string; evidence: Memo
     {read?.next_offset != null && <button className="rd-btn rd-btn-sm" disabled={busy} onClick={() => void load(true)}>Read more</button>}
   </details>;
 }
-export function MemoryView({ sessionKey, name, active = true, initialRevision = "", initialCheckpoint = "", onBack }: { sessionKey: string; name: string; active?: boolean; initialRevision?: string; initialCheckpoint?: string; onBack?: () => void }) {
+export function MemoryView({ sessionKey, name, active = true, initialRevision = "", initialCheckpoint = "", onBack, readOnly = false }: { sessionKey: string; name: string; active?: boolean; initialRevision?: string; initialCheckpoint?: string; onBack?: () => void; readOnly?: boolean }) {
   const [revision, setRevision] = useState(initialRevision);
   const [mode, setMode] = useState<"checkpoint" | "knowledge" | "history">(initialCheckpoint ? "checkpoint" : initialRevision ? "history" : "knowledge");
   const [checkpointId, setCheckpointId] = useState(initialCheckpoint);
@@ -86,9 +86,9 @@ export function MemoryView({ sessionKey, name, active = true, initialRevision = 
       <button aria-pressed={mode === "knowledge"} onClick={() => navigate("knowledge")}>Saved knowledge</button>
       <button aria-pressed={mode === "history"} onClick={() => navigate("history")}>Revision history</button>
     </nav>
-    <div className="rd-memory-actions"><button className="rd-btn rd-btn-primary" disabled={attempt?.state === "running" || (attempt?.state === "unknown" && attempt.recovering)} onClick={() => { void chooseCheckpoint(sessionKey, name).catch(cause => toast(checkpointRequestError(cause), "err")); }}>Checkpoint</button>
-      <span className="hint">History is recorded automatically. Checkpoint updates the summary when you choose.</span></div>
-    <CheckpointProgress sessionKey={sessionKey} />
+    {!readOnly && <div className="rd-memory-actions"><button className="rd-btn rd-btn-primary" disabled={attempt?.state === "running" || (attempt?.state === "unknown" && attempt.recovering)} onClick={() => { void chooseCheckpoint(sessionKey, name).catch(cause => toast(checkpointRequestError(cause), "err")); }}>Checkpoint</button>
+      <span className="hint">History is recorded automatically. Checkpoint updates the summary when you choose.</span></div>}
+    {!readOnly && <CheckpointProgress sessionKey={sessionKey} />}
     {mode !== "checkpoint" && !attempt && (latestUpdate?.state === "failed" || latestUpdate?.state === "partial") && <div className="rd-memory-failure" role="status">
       <strong>{latestUpdate.state === "partial" ? "Checkpoint failed · summary incomplete" : "Latest summary update failed"}</strong>
       <p>{latestUpdate.state === "partial" ? "The latest attempt did not summarize its required range." : checkpointFailure({ summary_update: latestUpdate }) + "."} {checkpointMemoryAfterFailure({ summary_update: latestUpdate })} {current?.summary ? "Saved memory is shown below." : "No usable saved summary is displayed."}</p>

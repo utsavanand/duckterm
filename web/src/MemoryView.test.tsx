@@ -173,3 +173,15 @@ it("pages revision history and opens the exact historical revision", async () =>
   await screen.findByText("Exact historical evidence");
   expect(get).toHaveBeenLastCalledWith("history-pages", "", { revision: "oldest-exact" });
 });
+
+it("keeps linked-source memory read-only while allowing historical evidence reads", async () => {
+  render(<MemoryView sessionKey="closed-child" name="Closed child" readOnly />);
+  await screen.findByText("Keep the earlier decision");
+  expect(screen.queryByRole("button", { name: "Checkpoint" })).not.toBeInTheDocument();
+  get.mockResolvedValueOnce({ text: "Retained owner decision", next_offset: null });
+  const evidence = screen.getByText("Original conversation · conversation").parentElement!;
+  evidence.setAttribute("open", ""); fireEvent(evidence, new Event("toggle"));
+  await screen.findByText("Retained owner decision");
+  expect(get).toHaveBeenLastCalledWith("closed-child", "read", { source: "conversation:version", record: "turn-1" });
+  expect(requestCheckpoint).not.toHaveBeenCalled();
+});

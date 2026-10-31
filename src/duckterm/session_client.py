@@ -96,20 +96,34 @@ def add_memory_parser(sub: Any) -> None:
     parser = sub.add_parser("memory", help="search and read your session history across harnesses")
     parser.set_defaults(session_action="memory")
     actions = parser.add_subparsers(dest="memory_action", required=True)
-    actions.add_parser("sources", help="show available conversation and work sources")
+    sessions = actions.add_parser(
+        "sessions", help="list linked children and merged source sessions"
+    )
+    sessions.add_argument("--limit", type=int, default=20)
+    sessions.add_argument("--cursor")
+    sources = actions.add_parser("sources", help="show available conversation and work sources")
+    sources.add_argument(
+        "--session", help="read a linked source session, including closed sessions"
+    )
+    sources.add_argument("--kind", help="filter sources, for example revision for saved summaries")
+    sources.add_argument("--limit", type=int, default=20)
+    sources.add_argument("--cursor")
     search = actions.add_parser("search", help="find older context in your own session")
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=20)
+    search.add_argument("--session")
     read = actions.add_parser("read", help="read a versioned source returned by search")
     read.add_argument("source")
     read.add_argument("--record")
     read.add_argument("--offset", type=int, default=0)
     read.add_argument("--limit", type=int, default=8000)
+    read.add_argument("--session")
     related = actions.add_parser("related", help="follow evidenced context relationships")
     related.add_argument("source")
     related.add_argument("--record")
     related.add_argument("--limit", type=int, default=20)
     related.add_argument("--cursor")
+    related.add_argument("--session")
     link = actions.add_parser("link", help="record a typed relationship with original evidence")
     link.add_argument("--file", required=True, type=Path)
     claim = actions.add_parser("claim", help="explicitly retire or supersede your own claim")
@@ -202,7 +216,13 @@ def main(args: argparse.Namespace) -> int:
         download = False
         if action == "memory":
             query: dict[str, Any] = {}
-            if args.memory_action == "search":
+            if args.memory_action in {"sessions", "sources"}:
+                query = {"limit": args.limit}
+                if args.cursor is not None:
+                    query["cursor"] = args.cursor
+                if getattr(args, "kind", None) is not None:
+                    query["kind"] = args.kind
+            elif args.memory_action == "search":
                 query = {"q": args.query, "limit": args.limit}
             elif args.memory_action == "read":
                 query = {"source": args.source, "offset": args.offset, "limit": args.limit}
@@ -223,6 +243,8 @@ def main(args: argparse.Namespace) -> int:
                 if not isinstance(body, dict):
                     raise ValueError("Memory link file must contain a JSON object")
                 method = "POST"
+            if getattr(args, "session", None) is not None:
+                query["session"] = args.session
             path = "/memory/" + args.memory_action
             if query:
                 path += "?" + urllib.parse.urlencode(query)
