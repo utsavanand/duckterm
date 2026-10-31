@@ -47,6 +47,8 @@ def test_server_signal_reaps_tunnel_and_preserves_agent(tmp_path: Path, signum, 
     tunnel_pid = None
     try:
         wait_for(tmp_path / "ready.json", server)
+        stall_log = tmp_path / "state" / "server-stalls.log"
+        assert "armed; threshold=10s" in stall_log.read_text()
         tunnel_pid = json.loads((tmp_path / "ready.json").read_text())["tunnel_pid"]
         server.send_signal(signum)
         wait_for(tmp_path / "closing", server)

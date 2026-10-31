@@ -192,6 +192,8 @@ def _serve(host: str, port: int, reload: bool = False, *, recover: bool = False)
     async def run(serve: Coroutine[Any, Any, None]) -> None:
         import signal
 
+        from duckterm.stall_diagnostics import watch_stalls
+
         loop = asyncio.get_running_loop()
         task = asyncio.current_task()
         assert task is not None
@@ -207,7 +209,8 @@ def _serve(host: str, port: int, reload: bool = False, *, recover: bool = False)
         previous = signal.getsignal(signal.SIGTERM)
         loop.add_signal_handler(signal.SIGTERM, stop)
         try:
-            await serve
+            with watch_stalls(instance.home() / "server-stalls.log"):
+                await serve
         except asyncio.CancelledError:
             if not stopping:
                 raise
