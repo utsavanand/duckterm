@@ -13,7 +13,10 @@ const fixture = (): SavedMemory => ({
   state: "available", current_revision_id: "latest", checkpoint_clock: { state: "known", succeeded_at: Date.now() - 3_600_000, checkpoint_id: "success" },
   revisions: [{ id: "latest", created_at: 2000 }, { id: "older", created_at: 1000 }], revisions_truncated: false,
   revision: { id: "latest", source: "revision:latest", created_at: 2000, summary: "Latest span narrative", overview: null, is_current: true, verified_at_save: true, groups: [], withheld_claims: 0, coverage_at_save: {} },
-  memory: { state: "available", span_count: 2, narratives: [], groups: [{ field: "decisions", claims: [{ id: "claim-one", text: "Keep the earlier decision", kind: "decision", state: "open", record: "decision:0", evidence: [{ source: "conversation:version", record: "turn-1", title: "Original conversation", kind: "conversation", role: "user", retained: true }] }] }] },
+  memory: { state: "available", span_count: 2, narratives: [], groups: [{ field: "decisions", claims: [{ id: "claim-one", text: "Keep the earlier decision", kind: "decision", state: "open", record: "decision:0", evidence: [{ source: "conversation:version", record: "turn-1", title: "Original conversation", kind: "conversation", role: "user", retained: true }] }] },
+    // Pre-taxonomy kinds count under their current names.
+    { field: "unfinished", claims: [{ id: "claim-two", text: "Ship the backup button", kind: "unfinished", state: "open", record: "unfinished:0", evidence: [] }] },
+    { field: "constraints", claims: [{ id: "claim-three", text: "Locks fail instantly", kind: "known_issue", state: "open", record: "constraints:0", evidence: [] }] }] },
 });
 beforeEach(() => { get.mockResolvedValue(fixture()); vi.mocked(requestCheckpoint).mockResolvedValue({} as never); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.useRealTimers(); });
@@ -21,7 +24,9 @@ afterEach(() => { cleanup(); vi.resetAllMocks(); vi.useRealTimers(); });
 it("reads combined saved claims without checkpointing; original evidence is lazy, paginated and escaped", async () => {
   render(<MemoryView sessionKey="remote::session" name="Test memory" />);
   await screen.findByText("Keep the earlier decision");
-  expect(screen.getByText("decision: 1")).toBeVisible();
+  expect(screen.getByText("Intent: 1 task")).toBeVisible();
+  expect(screen.getByText("Rules: 1 decision")).toBeVisible();
+  expect(screen.getByText("Facts: 1 known issue")).toBeVisible();
   expect(get).toHaveBeenCalledOnce();
   expect(requestCheckpoint).not.toHaveBeenCalled();
   get.mockResolvedValueOnce({ text: "<script>original</script>", next_offset: 25 });
