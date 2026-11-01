@@ -32,7 +32,8 @@ test("saved Memory opens from the session panel and reads original evidence with
     const memory = page.getByRole("region", { name: "Session memory" });
     await expect(memory.getByText("Keep checkpoints manual.")).toBeVisible();
     await expect(memory.getByText("Last checkpointed 3d ago")).toBeVisible();
-    await memory.getByText("Owner decision · conversation").click();
+    await memory.getByText("Evidence: 1 message", { exact: true }).click();
+    await memory.getByText("user · #turn-1", { exact: true }).click();
     await expect(memory.getByText("Please keep checkpoint generation manual.")).toBeVisible();
     for (const colorScheme of ["dark", "light"] as const) {
       await page.emulateMedia({ colorScheme });

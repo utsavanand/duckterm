@@ -49,7 +49,10 @@ function Evidence({ sessionKey, evidence }: { sessionKey: string; evidence: Memo
     finally { setBusy(false); }
   }
   return <details className="rd-memory-source" onToggle={event => { if (event.currentTarget.open && !read && !busy && !error) void load(); }}>
-    <summary>{evidence.title} · {evidence.kind}</summary>
+    {/* The title and kind repeat for every message in a session; who said it and
+        the record number tell citations apart. */}
+    <summary>{evidence.role} · #{evidence.record}{evidence.kind === "conversation" ? "" : ` · ${evidence.title}`}</summary>
+    <p className="hint">{evidence.title} · {evidence.kind}</p>
     <p className="hint">{evidence.retained ? "Retained original" : "Original source"} · {evidence.role}</p>
     <code>{evidence.source} / {evidence.record}</code>
     {read && <pre tabIndex={0}>{read.text}</pre>}
@@ -138,7 +141,9 @@ export function MemoryView({ sessionKey, name, active = true, initialRevision = 
         {aggregate?.pagination && <><p className="hint">Counts above describe this page. Open, retired and superseded are recorded states; reading this list does not declare a handoff ready.</p><MemoryPages page={aggregate.pagination} noun="saved items" previous={pages.length > 1} onPrevious={() => setPages(p => p.slice(0, -1))} onNext={next => setPages(p => [...p, next])} /></>}
         {sections.map(([name, claims]) => <section key={name}><h2>{name}</h2>{claims.length ? claims.map(claim => <div className="rd-memory-claim" key={`${claim.source ?? current.source}/${claim.id ?? claim.record}`}>
           <p>{claim.text}</p><span className="hint">{kindOf(claim).replace("_", " ")} · {claim.state ?? "open"}</span>
-          {claim.evidence.map(evidence => <Evidence key={`${sessionKey}/${evidence.source}/${evidence.record}`} sessionKey={sessionKey} evidence={evidence} />)}
+          {claim.evidence.length > 0 && <details className="rd-memory-evidence"><summary>Evidence: {claim.evidence.length} {claim.evidence.every(e => e.kind === "conversation") ? "message" : "source"}{claim.evidence.length === 1 ? "" : "s"}</summary>
+            {claim.evidence.map(evidence => <Evidence key={`${sessionKey}/${evidence.source}/${evidence.record}`} sessionKey={sessionKey} evidence={evidence} />)}
+          </details>}
         </div>) : <p className="hint">None saved.</p>}</section>)}
         {Boolean(current.withheld_claims) && <p role="alert">Some claims are withheld because their evidence is unavailable.</p>}
       </>}
