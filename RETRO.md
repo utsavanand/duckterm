@@ -1,3 +1,7 @@
+## Retained transcript pointers must survive growth and interrupted retries
+
+A fixed 256-hop reader limit made valid old snapshots unreadable after enough appends. Track visited references to reject cycles without rejecting valid chains. Rewriting an existing pointer in place after an interrupted index update could destroy the last readable route; publish pointer JSON with the existing atomic private-file writer before unlinking a full copy. Test long histories and failure/retry boundaries, not only three appends.
+
 ## 2026-10-25 — Floating CI environments can break a validated release
 
 The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,

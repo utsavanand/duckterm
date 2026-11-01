@@ -15,6 +15,7 @@ from duckterm.core.saved_progress import file_version
 from duckterm.core.session_api import APIError
 from duckterm.harnesses import runtime_for
 from duckterm.helpers import paths
+from duckterm.helpers.private_files import private_write
 from duckterm.persistence.saved_state import fingerprint
 
 MAX_TEXT_BYTES = 64 * 1024 * 1024
@@ -99,7 +100,9 @@ def snapshot_file(key: str, snapshot: str) -> tuple[Path, int | None]:
     """
     path = directory(key) / (snapshot + ".jsonl")
     limit: int | None = None
-    for _ in range(256):
+    visited: set[Path] = set()
+    while path not in visited:
+        visited.add(path)
         if path.exists() or path.is_symlink():
             return path, limit
         pointer = path.with_suffix(".prefix")
@@ -114,7 +117,7 @@ def snapshot_file(key: str, snapshot: str) -> tuple[Path, int | None]:
             raise APIError(409, "Invalid retained conversation reference")
         limit = length if limit is None else min(limit, length)
         path = directory(key) / (target + ".jsonl")
-    raise APIError(409, "Retained conversation reference chain is too long")
+    raise APIError(409, "Retained conversation reference cycle")
 
 
 def _replace_with_pointer(
@@ -140,8 +143,18 @@ def _replace_with_pointer(
         ):
             old = root / (previous["digest"] + ".jsonl")
             pointer = old.with_suffix(".prefix")
-            pointer.write_text(json.dumps({"of": version, "bytes": previous["bytes"]}))
-            # The pointer exists before the copy goes, so a reader always finds one.
+            private_write(pointer, json.dumps({"of": version, "bytes": previous["bytes"]}))
+            # Re-aim older pointers at the whole copy, so every version is one
+            # hop away; otherwise a year of checkpoints is a chain of thousands.
+            # Each rewrite is atomic and either target still reads correctly.
+            for other in root.glob("*.prefix"):
+                try:
+                    value = json.loads(other.read_text())
+                except (OSError, ValueError):
+                    continue
+                if isinstance(value, dict) and value.get("of") == previous["digest"]:
+                    private_write(other, json.dumps({**value, "of": version}))
+            # The pointers exist before the copy goes, so a reader always finds one.
             old.unlink(missing_ok=True)
         index[identity] = {"digest": version, "bytes": max(prefixes) if prefixes else 0}
         fd, name = tempfile.mkstemp(prefix=".latest-", dir=root)

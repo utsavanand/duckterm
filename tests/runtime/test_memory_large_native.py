@@ -124,6 +124,8 @@ def test_an_appended_transcript_keeps_one_copy_and_every_version_reads_exactly(
     # One whole copy; the older versions are pointers into it.
     assert sorted(p.name for p in root.glob("*.jsonl")) == [v3["snapshot"] + ".jsonl"]
     assert {p.stem for p in root.glob("*.prefix")} == {v1["snapshot"], v2["snapshot"]}
+    # Every older version points straight at the whole copy: one hop, not a chain.
+    assert {json.loads(p.read_text())["of"] for p in root.glob("*.prefix")} == {v3["snapshot"]}
     path.unlink()
     for saved, texts in ((v1, ["first decision"]), (v2, ["first decision", "second decision"])):
         restored = memory_sources.read_native("probe", saved)
