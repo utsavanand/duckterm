@@ -1,3 +1,11 @@
+## 2026-10-31 — A new store needs every reader, and a parsed reply is still untrusted
+
+QA found reconciliation crashing on a scalar op or list-valued ids inside valid
+JSON, and the current Memory view still assembling span claims after a
+reconcile retired or merged them. Validate each field's type before any set or
+dict lookup, and when adding a derived store, list every reader of the old one
+(brief, Memory view, retrieval) and move them together.
+
 ## 2026-10-31 — Measure memory by resuming from it, and parallel writes need an order
 
 Checkpoints covered 20 messages and took up to 7 minutes because the writer

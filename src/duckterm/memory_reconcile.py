@@ -99,14 +99,19 @@ def apply(
     rejected = 0
     position = {ref: index for index, ref in enumerate(order)}
     for op in ops if isinstance(ops, list) else []:
-        kind = op.get("op") if isinstance(op, dict) else None
-        subject = op.get("id") if isinstance(op, dict) else None
+        # A parsed reply can still carry scalars or lists where ids belong
+        # (main-qa, #364); reject those before any set or dict lookup.
+        if not isinstance(op, dict) or not isinstance(op.get("op"), str):
+            rejected += 1
+            continue
+        kind, subject = op["op"], op.get("id")
         if kind == "merge":
             ids = op.get("ids")
             text = op.get("text")
             new_kind = op.get("kind")
             if (
                 not isinstance(ids, list)
+                or any(not isinstance(i, str) for i in ids)
                 or len(set(ids)) < 2
                 or any(i not in items or i in used for i in ids)
                 or not isinstance(text, str)
@@ -132,6 +137,9 @@ def apply(
             closed += [{**items[i], "op": "merged", "by": item["id"]} for i in ids]
             continue
         target = op.get("of") if kind == "duplicate" else op.get("by")
+        if not isinstance(subject, str) or not isinstance(target, str | None):
+            rejected += 1
+            continue
         valid = (
             kind in {"duplicate", "done", "superseded", "drop"}
             and subject in items

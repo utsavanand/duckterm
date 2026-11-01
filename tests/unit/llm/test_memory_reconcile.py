@@ -105,6 +105,13 @@ def test_duplicate_merge_done_and_silence(store):
         {"op": "merge", "ids": ["o1"], "kind": "task", "text": "One"},
         {"op": "merge", "ids": ["o1", "n1"], "kind": "constraint", "text": "Wrong category"},
         {"op": "rewrite", "id": "o1", "text": "Anything"},
+        # Malformed shapes inside a parsed reply (main-qa, #364).
+        42,
+        {"op": ["done"], "id": "o1", "by": "s1"},
+        {"op": "merge", "ids": [["o1"], "n1"], "kind": "task", "text": "Merged"},
+        {"op": "done", "id": [], "by": "s1"},
+        {"op": "done", "id": "o1", "by": []},
+        {"op": "duplicate", "id": "n1", "of": {"id": "o1"}},
     ],
 )
 def test_unsupported_closures_keep_the_item(store, op):
