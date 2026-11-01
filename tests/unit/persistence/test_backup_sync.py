@@ -183,3 +183,18 @@ def test_validation_and_missing_gcloud_fail_before_creating_backup(source, monke
     assert main(["backup", "--sync", "--to", "gs://test-bucket/mac"]) == 1
     assert "Install and sign in to gcloud" in capsys.readouterr().err
     assert not (root / "backups").exists()
+
+
+def test_a_successful_sync_keeps_only_its_own_local_archive(source, cloud):
+    _, root = source
+    first = backup_sync.create("gs://test-bucket/mac")
+    cloud.fail_step = len(cloud.calls) + 1  # the next run's first upload
+    with pytest.raises(backup_sync.SyncUploadError) as error:
+        backup_sync.create("gs://test-bucket/mac")
+    # A failed run keeps every archive, its own included.
+    assert Path(first.archive_path).is_file() and Path(error.value.archive_path).is_file()
+    cloud.fail_step = None
+    latest = backup_sync.create("gs://test-bucket/mac")
+    assert sorted((root / "backups").glob("duckterm-backup-*.tar.gz")) == [
+        Path(latest.archive_path)
+    ]

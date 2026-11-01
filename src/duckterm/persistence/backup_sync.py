@@ -127,6 +127,12 @@ def create(destination: str) -> SyncResult:
             )
     except (OSError, ValueError, tarfile.TarError, subprocess.SubprocessError) as exc:
         raise SyncUploadError(archive_path) from exc
+    # Each run builds a multi-GB archive; once a sync has fully succeeded the
+    # bucket holds the data, so older local archives are only disk use. A failed
+    # run raised above and keeps every archive.
+    for older in archive_path.parent.glob("duckterm-backup-*.tar.gz"):
+        if older != archive_path and older.is_file() and not older.is_symlink():
+            older.unlink()
     return SyncResult(
         str(archive_path),
         f"{archive_path}\nSynced to {current_uri}\nDatabase: {database_uri}"
