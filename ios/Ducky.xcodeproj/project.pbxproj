@@ -1,0 +1,301 @@
+// !$*UTF8*$!
+{
+	"classes" = {
+	};
+	"objectVersion" = "56";
+	"archiveVersion" = "1";
+	"objects" = {
+		"000000000000000000000014" = {
+			"isa" = "XCBuildConfiguration";
+			"buildSettings" = {
+				"GENERATE_INFOPLIST_FILE" = "NO";
+				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
+				"MARKETING_VERSION" = "0.1.0";
+				"TARGETED_DEVICE_FAMILY" = "1";
+				"INFOPLIST_FILE" = "App/Info.plist";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "com.rubberduckhq.ducky";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"SWIFT_EMIT_LOC_STRINGS" = "YES";
+				"ENABLE_PREVIEWS" = "YES";
+				"CURRENT_PROJECT_VERSION" = "1";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+			};
+			"name" = "Release";
+		};
+		"000000000000000000000003" = {
+			"path" = "Info.plist";
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "text.plist.xml";
+			"sourceTree" = "<group>";
+		};
+		"00000000000000000000000D" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("00000000000000000000000A", "00000000000000000000000B");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"000000000000000000000008" = {
+			"isa" = "XCLocalSwiftPackageReference";
+			"relativePath" = ".";
+		};
+		"000000000000000000000019" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "000000000000000000000018";
+		};
+		"000000000000000000000012" = {
+			"isa" = "XCConfigurationList";
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+			"buildConfigurations" = ("000000000000000000000010", "000000000000000000000011");
+		};
+		"000000000000000000000001" = {
+			"path" = "DuckyApp.swift";
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000017" = {
+			"buildConfigurationList" = "000000000000000000000012";
+			"packageReferences" = ("000000000000000000000008");
+			"targets" = ("000000000000000000000016", "00000000000000000000002B");
+			"developmentRegion" = "en";
+			"knownRegions" = ("en", "Base");
+			"isa" = "PBXProject";
+			"compatibilityVersion" = "Xcode 14.0";
+			"productRefGroup" = "000000000000000000000006";
+			"projectDirPath" = "";
+			"attributes" = {
+				"LastUpgradeCheck" = "1500";
+				"BuildIndependentTargetsInParallel" = "YES";
+				"TargetAttributes" = {
+					"000000000000000000000016" = {
+						"CreatedOnToolsVersion" = "15.0";
+					};
+					"00000000000000000000002B" = {
+						"CreatedOnToolsVersion" = "15.0";
+						"TestTargetID" = "000000000000000000000016";
+					};
+				};
+			};
+			"hasScannedForEncodings" = "0";
+			"projectRoot" = "";
+			"mainGroup" = "000000000000000000000007";
+		};
+		"000000000000000000000006" = {
+			"isa" = "PBXGroup";
+			"name" = "Products";
+			"children" = ("000000000000000000000004", "000000000000000000000021");
+			"sourceTree" = "<group>";
+		};
+		"00000000000000000000000B" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "000000000000000000000002";
+		};
+		"000000000000000000000010" = {
+			"isa" = "XCBuildConfiguration";
+			"buildSettings" = {
+				"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+				"ONLY_ACTIVE_ARCH" = "YES";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "16.0";
+				"SWIFT_VERSION" = "5.0";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SDKROOT" = "iphoneos";
+			};
+			"name" = "Debug";
+		};
+		"000000000000000000000015" = {
+			"isa" = "XCConfigurationList";
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+			"buildConfigurations" = ("000000000000000000000013", "000000000000000000000014");
+		};
+		"000000000000000000000004" = {
+			"path" = "Ducky.app";
+			"isa" = "PBXFileReference";
+			"includeInIndex" = "0";
+			"explicitFileType" = "wrapper.application";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"00000000000000000000000E" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("00000000000000000000000C");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"000000000000000000000009" = {
+			"isa" = "XCSwiftPackageProductDependency";
+			"package" = "000000000000000000000008";
+			"productName" = "DuckyCore";
+		};
+		"000000000000000000000013" = {
+			"isa" = "XCBuildConfiguration";
+			"buildSettings" = {
+				"GENERATE_INFOPLIST_FILE" = "NO";
+				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
+				"MARKETING_VERSION" = "0.1.0";
+				"TARGETED_DEVICE_FAMILY" = "1";
+				"INFOPLIST_FILE" = "App/Info.plist";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "com.rubberduckhq.ducky";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"SWIFT_EMIT_LOC_STRINGS" = "YES";
+				"ENABLE_PREVIEWS" = "YES";
+				"CURRENT_PROJECT_VERSION" = "1";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+			};
+			"name" = "Debug";
+		};
+		"000000000000000000000002" = {
+			"path" = "ContentView.swift";
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"sourceTree" = "<group>";
+		};
+		"00000000000000000000000C" = {
+			"isa" = "PBXBuildFile";
+			"productRef" = "000000000000000000000009";
+		};
+		"000000000000000000000007" = {
+			"isa" = "PBXGroup";
+			"sourceTree" = "<group>";
+			"children" = ("000000000000000000000005", "000000000000000000000006", "000000000000000000000022");
+		};
+		"000000000000000000000018" = {
+			"path" = "Assets.xcassets";
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "folder.assetcatalog";
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000011" = {
+			"isa" = "XCBuildConfiguration";
+			"buildSettings" = {
+				"SWIFT_OPTIMIZATION_LEVEL" = "-O";
+				"SWIFT_COMPILATION_MODE" = "wholemodule";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "16.0";
+				"SWIFT_VERSION" = "5.0";
+				"CLANG_ENABLE_MODULES" = "YES";
+				"SDKROOT" = "iphoneos";
+			};
+			"name" = "Release";
+		};
+		"00000000000000000000000A" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "000000000000000000000001";
+		};
+		"000000000000000000000005" = {
+			"path" = "App";
+			"isa" = "PBXGroup";
+			"children" = ("000000000000000000000001", "000000000000000000000002", "000000000000000000000003", "000000000000000000000018");
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000016" = {
+			"productType" = "com.apple.product-type.application";
+			"productReference" = "000000000000000000000004";
+			"buildConfigurationList" = "000000000000000000000015";
+			"packageProductDependencies" = ("000000000000000000000009");
+			"productName" = "Ducky";
+			"isa" = "PBXNativeTarget";
+			"buildPhases" = ("00000000000000000000000D", "00000000000000000000000E", "00000000000000000000000F");
+			"dependencies" = ();
+			"name" = "Ducky";
+			"buildRules" = ();
+		};
+		"00000000000000000000000F" = {
+			"isa" = "PBXResourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("000000000000000000000019");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"000000000000000000000020" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "ViewerTests.swift";
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000021" = {
+			"isa" = "PBXFileReference";
+			"explicitFileType" = "wrapper.cfbundle";
+			"path" = "DuckyUITests.xctest";
+			"sourceTree" = "BUILT_PRODUCTS_DIR";
+		};
+		"000000000000000000000022" = {
+			"isa" = "PBXGroup";
+			"path" = "UITests";
+			"children" = ("000000000000000000000020");
+			"sourceTree" = "<group>";
+		};
+		"000000000000000000000023" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "000000000000000000000020";
+		};
+		"000000000000000000000024" = {
+			"isa" = "PBXSourcesBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ("000000000000000000000023");
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"000000000000000000000025" = {
+			"isa" = "PBXFrameworksBuildPhase";
+			"buildActionMask" = "2147483647";
+			"files" = ();
+			"runOnlyForDeploymentPostprocessing" = "0";
+		};
+		"000000000000000000000026" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Debug";
+			"buildSettings" = {
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "com.rubberduckhq.ducky.uitests";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"TEST_TARGET_NAME" = "Ducky";
+				"TARGETED_DEVICE_FAMILY" = "1";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "16.4";
+			};
+		};
+		"000000000000000000000027" = {
+			"isa" = "XCBuildConfiguration";
+			"name" = "Release";
+			"buildSettings" = {
+				"GENERATE_INFOPLIST_FILE" = "YES";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "com.rubberduckhq.ducky.uitests";
+				"PRODUCT_NAME" = "$(TARGET_NAME)";
+				"CODE_SIGN_STYLE" = "Automatic";
+				"TEST_TARGET_NAME" = "Ducky";
+				"TARGETED_DEVICE_FAMILY" = "1";
+				"IPHONEOS_DEPLOYMENT_TARGET" = "16.4";
+			};
+		};
+		"000000000000000000000028" = {
+			"isa" = "XCConfigurationList";
+			"buildConfigurations" = ("000000000000000000000026", "000000000000000000000027");
+			"defaultConfigurationIsVisible" = "0";
+			"defaultConfigurationName" = "Release";
+		};
+		"000000000000000000000029" = {
+			"isa" = "PBXContainerItemProxy";
+			"containerPortal" = "000000000000000000000017";
+			"proxyType" = "1";
+			"remoteGlobalIDString" = "000000000000000000000016";
+			"remoteInfo" = "Ducky";
+		};
+		"00000000000000000000002A" = {
+			"isa" = "PBXTargetDependency";
+			"target" = "000000000000000000000016";
+			"targetProxy" = "000000000000000000000029";
+		};
+		"00000000000000000000002B" = {
+			"isa" = "PBXNativeTarget";
+			"buildConfigurationList" = "000000000000000000000028";
+			"buildPhases" = ("000000000000000000000024", "000000000000000000000025");
+			"buildRules" = ();
+			"dependencies" = ("00000000000000000000002A");
+			"name" = "DuckyUITests";
+			"productName" = "DuckyUITests";
+			"productReference" = "000000000000000000000021";
+			"productType" = "com.apple.product-type.bundle.ui-testing";
+		};
+	};
+	"rootObject" = "000000000000000000000017";
+}
