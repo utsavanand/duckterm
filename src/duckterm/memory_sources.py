@@ -90,6 +90,66 @@ def normalized(message: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def snapshot_file(key: str, snapshot: str) -> tuple[Path, int | None]:
+    """A retained version is a whole file, or the first N bytes of a newer one.
+
+    Transcripts only grow, so each checkpoint used to keep another whole copy
+    (a 107 MB Codex rollout per checkpoint). An older copy whose bytes start the
+    newer one is replaced by a pointer; read_native still verifies its digest.
+    """
+    path = directory(key) / (snapshot + ".jsonl")
+    limit: int | None = None
+    for _ in range(256):
+        if path.exists() or path.is_symlink():
+            return path, limit
+        pointer = path.with_suffix(".prefix")
+        try:
+            value = json.loads(pointer.read_text())
+            target, length = value["of"], value["bytes"]
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise APIError(409, "Retained conversation is unavailable") from exc
+        if not isinstance(target, str) or not re.fullmatch(r"[a-f0-9]{64}", target):
+            raise APIError(409, "Invalid retained conversation reference")
+        if type(length) is not int or length < 0:
+            raise APIError(409, "Invalid retained conversation reference")
+        limit = length if limit is None else min(limit, length)
+        path = directory(key) / (target + ".jsonl")
+    raise APIError(409, "Retained conversation reference chain is too long")
+
+
+def _replace_with_pointer(
+    key: str, source: dict[str, Any], version: str, prefixes: dict[int, str]
+) -> None:
+    """Keep one whole copy per conversation: point the previous copy at this one."""
+    import fcntl
+
+    root = directory(key)
+    identity = source["runtime"] + ":" + source["native_id"]
+    with (root / "latest.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        index_path = root / "latest.json"
+        try:
+            index = json.loads(index_path.read_text())
+        except (OSError, ValueError):
+            index = {}
+        previous = index.get(identity)
+        if (
+            isinstance(previous, dict)
+            and previous.get("digest") != version
+            and prefixes.get(previous.get("bytes", -1)) == previous.get("digest")
+        ):
+            old = root / (previous["digest"] + ".jsonl")
+            pointer = old.with_suffix(".prefix")
+            pointer.write_text(json.dumps({"of": version, "bytes": previous["bytes"]}))
+            # The pointer exists before the copy goes, so a reader always finds one.
+            old.unlink(missing_ok=True)
+        index[identity] = {"digest": version, "bytes": max(prefixes) if prefixes else 0}
+        fd, name = tempfile.mkstemp(prefix=".latest-", dir=root)
+        with os.fdopen(fd, "w") as stream:
+            json.dump(index, stream)
+        os.replace(name, index_path)
+
+
 def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> dict[str, Any]:
     """Stream and validate raw bytes before exposing normalized text/tool records."""
     path: Path | None
@@ -97,9 +157,9 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
     if snapshot is not None:
         if not isinstance(snapshot, str) or not re.fullmatch(r"[a-f0-9]{64}", snapshot):
             raise APIError(409, "Invalid retained conversation reference")
-        path = directory(key) / (snapshot + ".jsonl")
+        path, limit = snapshot_file(key, snapshot)
     else:
-        path = native_path(source)
+        path, limit = native_path(source), None
     if path is None:
         raise APIError(409, "Native conversation is unavailable")
     before = file_version(str(path))
@@ -120,6 +180,18 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
     records = []
     digest = hashlib.sha256()
     size = text_size = attachments = 0
+    end = before[2] if limit is None else min(limit, before[2])
+    # Digests at line boundaries let a retained copy prove an older one is its prefix.
+    previous_sizes: set[int] = set()
+    if output is not None:
+        try:
+            latest = json.loads((directory(key) / "latest.json").read_text())
+            entry = latest.get(source["runtime"] + ":" + source["native_id"], {})
+            if type(entry.get("bytes")) is int:
+                previous_sizes.add(entry["bytes"])
+        except (OSError, ValueError, AttributeError):
+            pass
+    prefixes: dict[int, str] = {}
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(fd, "rb") as stream:
@@ -133,13 +205,13 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
             # Bound allocations by line and accumulated text, not total file size.
             # Read only the captured extent so an appending writer cannot keep
             # this scan alive indefinitely; the fence below still rejects changes.
-            while size < before[2] and (
-                raw := stream.readline(min(MAX_LINE_BYTES + 1, before[2] - size))
-            ):
+            while size < end and (raw := stream.readline(min(MAX_LINE_BYTES + 1, end - size))):
                 size += len(raw)
                 if len(raw) > MAX_LINE_BYTES:
                     raise APIError(413, "Conversation record exceeds the current read bound")
                 digest.update(raw)
+                if size in previous_sizes:
+                    prefixes[size] = digest.hexdigest()
                 if output is not None:
                     output.write(raw)
                 if not raw.strip():
@@ -265,11 +337,15 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
             assert temporary is not None
             os.replace(temporary, destination)
             temporary = None
+            prefixes[size] = version
+            _replace_with_pointer(key, source, version, prefixes)
         return {
             **source,
             "version": version,
             "path": str(path),
-            "fence": before,
+            # A retained copy is verified by digest and never changes; the file it
+            # resolves through can become a pointer when a newer copy is kept.
+            "fence": before if snapshot is None else None,
             "records": records,
             "bytes": size,
             "unprocessed_attachments": attachments,

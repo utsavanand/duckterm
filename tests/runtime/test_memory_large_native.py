@@ -105,3 +105,42 @@ def test_scan_stops_at_captured_extent_and_refuses_concurrent_append(tmp_path, m
         memory_sources.read_native("probe", source(path), retain=True)
     assert seen == [0]
     assert not list(memory_sources.directory("probe").iterdir())
+
+
+def test_an_appended_transcript_keeps_one_copy_and_every_version_reads_exactly(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
+    path = tmp_path / "native.jsonl"
+    path.write_bytes(message("first decision"))
+    v1 = memory_sources.read_native("probe", source(path), retain=True)
+    with path.open("ab") as stream:
+        stream.write(message("second decision"))
+    v2 = memory_sources.read_native("probe", source(path), retain=True)
+    with path.open("ab") as stream:
+        stream.write(message("third decision"))
+    v3 = memory_sources.read_native("probe", source(path), retain=True)
+    root = memory_sources.directory("probe")
+    # One whole copy; the older versions are pointers into it.
+    assert sorted(p.name for p in root.glob("*.jsonl")) == [v3["snapshot"] + ".jsonl"]
+    assert {p.stem for p in root.glob("*.prefix")} == {v1["snapshot"], v2["snapshot"]}
+    path.unlink()
+    for saved, texts in ((v1, ["first decision"]), (v2, ["first decision", "second decision"])):
+        restored = memory_sources.read_native("probe", saved)
+        assert [r["text"] for r in restored["records"]] == texts
+        assert restored["version"] == saved["snapshot"]
+
+
+def test_a_rewritten_transcript_keeps_both_whole_copies(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
+    path = tmp_path / "native.jsonl"
+    path.write_bytes(message("original wording"))
+    v1 = memory_sources.read_native("probe", source(path), retain=True)
+    path.write_bytes(message("rewritten wording") + message("more"))
+    v2 = memory_sources.read_native("probe", source(path), retain=True)
+    root = memory_sources.directory("probe")
+    assert {p.stem for p in root.glob("*.jsonl")} == {v1["snapshot"], v2["snapshot"]}
+    assert not list(root.glob("*.prefix"))
+    assert [r["text"] for r in memory_sources.read_native("probe", v1)["records"]] == [
+        "original wording"
+    ]
