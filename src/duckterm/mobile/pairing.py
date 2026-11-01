@@ -95,9 +95,10 @@ def prepare(
     else:
         # Preserve the original certificate and key, including legacy CA:TRUE
         # identities. A new DNS locator can retain its original IP TLS name.
+        if not current.get("hostname") and (hostname or selected_address != current["address"]):
+            current.setdefault("tls_name", address(current["address"]))
         if hostname and not current.get("hostname"):
             current["hostname"] = hostname
-            current["tls_name"] = address(current["address"])
         current.update(address=selected_address, port=selected_port)
         if candidate and hostname:
             current.update(interface=candidate.interface, family=candidate.family)
@@ -148,10 +149,32 @@ def wait_for_listener(directory: Path, config: dict[str, Any], *, timeout: float
 
 
 def read_decision(expires_at: int) -> str:
-    remaining = max(0, expires_at - time.time())
-    if remaining == 0 or not select.select([sys.stdin], [], [], remaining)[0]:
+    # Canonical terminals can report a partial line after Ctrl-D. readline()
+    # would then block past expiry, so consume bounded bytes without blocking.
+    fd = sys.stdin.fileno()
+    flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+    deadline = time.monotonic() + min(600, max(0, expires_at - time.time()))
+    received = bytearray()
+    try:
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+        while len(received) < 128:
+            remaining = min(expires_at - time.time(), deadline - time.monotonic())
+            if remaining <= 0:
+                return ""
+            try:
+                if not select.select([fd], [], [], remaining)[0]:
+                    return ""
+                chunk = os.read(fd, 128 - len(received))
+            except (BlockingIOError, InterruptedError):
+                continue
+            if not chunk:
+                return ""
+            received.extend(chunk)
+            if b"\n" in received:
+                return received.split(b"\n", 1)[0].decode("ascii", errors="replace").strip().lower()
         return ""
-    return sys.stdin.readline().strip().lower()
+    finally:
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags)
 
 
 def pair(directory: Path, *, selected_address: str | None = None, port: int | None = None) -> int:

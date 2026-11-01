@@ -1,11 +1,18 @@
 """Pairing ceremonies use scratch identities and real grants, never an owner app."""
 
+import contextlib
 import copy
+import fcntl
 import hashlib
 import json
 import os
+import pty
 import secrets
+import select
 import ssl
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -186,6 +193,32 @@ def test_legacy_loopback_configuration_stays_usable_without_new_fields(tmp_path)
     assert pin(tmp_path) == original_pin
 
 
+def test_ip_only_relocations_keep_original_tls_identity_without_bonjour(tmp_path, isolated_runtime):
+    _, candidates = isolated_runtime
+    candidates.clear()
+    configure(tmp_path, "192.168.12.7", 43346)
+    identity = {
+        name: (tmp_path / name).read_bytes() for name in ("ducky-cert.pem", "ducky-key.pem")
+    }
+    original_pin = pin(tmp_path)
+    grants = Grants(tmp_path)
+    _, token, device = pending_phone(grants)
+    grants.approve(device["id"])
+    approved_grants = (tmp_path / "ducky-grants.json").read_bytes()
+    for destination in ("192.168.12.99", "10.1.2.3", "fd12::5"):
+        config = pairing.prepare(tmp_path, selected_address=destination)
+        assert config["address"] == destination
+        assert config["tls_name"] == "192.168.12.7"
+        assert not {"hostname", "interface", "family"} & config.keys()
+        assert {name: (tmp_path / name).read_bytes() for name in identity} == identity
+        assert (tmp_path / "ducky-grants.json").read_bytes() == approved_grants
+    payload = invitation_payload(tmp_path)
+    assert payload["url"] == "https://[fd12::5]:43346"
+    assert payload["tls_name"] == "192.168.12.7"
+    assert payload["certificate_sha256"] == original_pin
+    assert grants.authenticate(token)["id"] == device["id"]
+
+
 def test_changed_bonjour_name_cannot_silently_change_existing_identity(tmp_path, monkeypatch):
     pairing.prepare(tmp_path)
     before = {path.name: path.read_bytes() for path in tmp_path.iterdir() if path.is_file()}
@@ -211,38 +244,149 @@ def test_noninteractive_pairing_creates_no_files_or_identity(stdout_tty, tmp_pat
     assert not root.exists()
 
 
-@pytest.mark.parametrize(("line", "decision"), [(" YES \n", "yes"), ("n\n", "n"), ("", "")])
-def test_timed_terminal_decision_normalizes_input_and_treats_eof_as_no(line, decision, monkeypatch):
-    terminal = SimpleNamespace(readline=lambda: line)
-    monkeypatch.setattr(pairing, "sys", SimpleNamespace(stdin=terminal))
+@pytest.fixture
+def decision_pipe(monkeypatch):
+    reader, writer = os.pipe()
+    monkeypatch.setattr(
+        pairing, "sys", SimpleNamespace(stdin=SimpleNamespace(fileno=lambda: reader))
+    )
+    try:
+        yield reader, writer
+    finally:
+        for fd in (reader, writer):
+            with contextlib.suppress(OSError):
+                os.close(fd)
 
-    def readable(readers, writers, errors, timeout):
-        assert readers == [terminal]
-        assert writers == errors == []
-        assert timeout == 37
-        return readers, [], []
 
-    monkeypatch.setattr(pairing.select, "select", readable)
+@pytest.mark.parametrize(
+    ("line", "decision"),
+    [
+        (b" YES \n", "yes"),
+        (b"n\n", "n"),
+        (b"", ""),
+        (b"y", ""),
+        (b"y\nn\n", "y"),
+        (b"y" + b" " * 127 + b"\n", ""),
+    ],
+)
+def test_timed_decision_requires_a_complete_bounded_line_and_restores_flags(
+    line, decision, decision_pipe
+):
+    reader, writer = decision_pipe
+    flags = fcntl.fcntl(reader, fcntl.F_GETFL)
+    if line:
+        os.write(writer, line)
+    os.close(writer)
     assert pairing.read_decision(10_037) == decision
+    assert fcntl.fcntl(reader, fcntl.F_GETFL) == flags
 
 
-def test_expired_terminal_decision_never_reads_input(monkeypatch):
+def test_expired_terminal_decision_never_reads_input(monkeypatch, decision_pipe):
     def no_read(*args):
         raise AssertionError("An expired invitation must not wait for input")
 
+    reader, _ = decision_pipe
+    flags = fcntl.fcntl(reader, fcntl.F_GETFL)
     monkeypatch.setattr(pairing.select, "select", no_read)
-    monkeypatch.setattr(pairing, "sys", SimpleNamespace(stdin=SimpleNamespace(readline=no_read)))
     assert pairing.read_decision(10_000) == ""
+    assert fcntl.fcntl(reader, fcntl.F_GETFL) == flags
 
 
-def test_terminal_timeout_never_reads_or_approves_input(monkeypatch):
-    def no_read():
+def test_terminal_timeout_never_reads_or_approves_input(monkeypatch, decision_pipe):
+    def no_read(*args):
         raise AssertionError("Timed-out input must not be consumed")
 
-    terminal = SimpleNamespace(readline=no_read)
-    monkeypatch.setattr(pairing, "sys", SimpleNamespace(stdin=terminal))
+    reader, _ = decision_pipe
+    flags = fcntl.fcntl(reader, fcntl.F_GETFL)
     monkeypatch.setattr(pairing.select, "select", lambda *args: ([], [], []))
+    monkeypatch.setattr(pairing.os, "read", no_read)
     assert pairing.read_decision(10_037) == ""
+    assert fcntl.fcntl(reader, fcntl.F_GETFL) == flags
+
+
+def test_terminal_interrupt_restores_original_descriptor_flags(monkeypatch, decision_pipe):
+    reader, writer = decision_pipe
+    flags = fcntl.fcntl(reader, fcntl.F_GETFL)
+    os.write(writer, b"y\n")
+
+    def interrupt(*args):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(pairing.os, "read", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        pairing.read_decision(10_037)
+    assert fcntl.fcntl(reader, fcntl.F_GETFL) == flags
+
+
+def test_terminal_deadline_is_monotonic_and_capped_at_ten_minutes(monkeypatch, decision_pipe):
+    reader, writer = decision_pipe
+    os.write(writer, b"y")
+    ticks = iter((100, 100, 701))
+    monkeypatch.setattr(pairing.time, "monotonic", lambda: next(ticks))
+    waits = []
+
+    def readable(readers, writers, errors, timeout):
+        waits.append(timeout)
+        return readers, [], []
+
+    monkeypatch.setattr(pairing.select, "select", readable)
+    flags = fcntl.fcntl(reader, fcntl.F_GETFL)
+    assert pairing.read_decision(13_600) == ""
+    assert waits == [600]
+    assert fcntl.fcntl(reader, fcntl.F_GETFL) == flags
+
+
+def test_real_owned_pty_partial_eof_cannot_extend_approval_deadline(tmp_path):
+    # y + Ctrl-D produces a readable partial canonical line, but no newline.
+    # An outer subprocess timeout makes the old select + readline hang bounded.
+    script = """
+import fcntl, json, sys, time
+from duckterm.mobile.pairing import read_decision
+fd = sys.stdin.fileno()
+flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+print('ready', flush=True)
+started = time.monotonic()
+decision = read_decision(time.time() + 0.5)
+print(json.dumps({'decision': decision, 'elapsed': time.monotonic() - started,
+                  'flags_restored': fcntl.fcntl(fd, fcntl.F_GETFL) == flags,
+                  'stdin_tty': sys.stdin.isatty()}), flush=True)
+"""
+    master, slave = pty.openpty()
+    process = None
+    try:
+        process = subprocess.Popen(
+            [sys.executable, "-c", script],
+            stdin=slave,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=tmp_path,
+            env={
+                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+                "PYTHONPATH": str(Path(pairing.__file__).resolve().parents[2]),
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "DUCKTERM_HOME": str(tmp_path / "scratch-home"),
+                "DUCKTERM_NO_TERMINAL": "1",
+                "DUCKTERM_SUMMARIZER": "off",
+            },
+            start_new_session=True,
+        )
+        assert select.select([process.stdout], [], [], 3)[0], "Owned PTY reader did not start"
+        assert process.stdout.readline() == "ready\n"
+        os.write(master, b"y\x04")
+        output, errors = process.communicate(timeout=4)
+        assert process.returncode == 0, errors
+        result = json.loads(output)
+        assert result["stdin_tty"]
+        assert result["decision"] == ""
+        assert result["flags_restored"]
+        assert 0.25 <= result["elapsed"] < 2
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.communicate(timeout=3)
+        os.close(master)
+        os.close(slave)
 
 
 @pytest.fixture
