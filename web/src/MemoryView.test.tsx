@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryView } from "./MemoryView";
 import { CheckpointAge, publishCheckpointClock } from "./CheckpointAge";
@@ -27,6 +27,12 @@ it("reads combined saved claims without checkpointing; original evidence is lazy
   expect(screen.getByText("Intent: 1 task")).toBeVisible();
   expect(screen.getByText("Rules: 1 decision")).toBeVisible();
   expect(screen.getByText("Facts: 1 known issue")).toBeVisible();
+  // Sections follow the categories, not the six storage fields.
+  const section = (name: string) => screen.getByRole("heading", { name, level: 2 }).parentElement!;
+  expect(within(section("Intent")).getByText("Ship the backup button")).toBeVisible();
+  expect(within(section("Intent")).getByText("task · open")).toBeVisible();
+  expect(within(section("Rules")).getByText("Keep the earlier decision")).toBeVisible();
+  expect(within(section("Facts")).getByText("known issue · open")).toBeVisible();
   expect(get).toHaveBeenCalledOnce();
   expect(requestCheckpoint).not.toHaveBeenCalled();
   get.mockResolvedValueOnce({ text: "<script>original</script>", next_offset: 25 });
