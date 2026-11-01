@@ -151,3 +151,47 @@ def test_atomic_pointer_publication_failure_preserves_prior_route(tmp_path, monk
         with pytest.raises(APIError):
             memory_sources.read_native("probe", source(p), retain=True)
     assert memory_sources.read_native("probe", first)["version"] == first["version"]
+
+
+def test_checkpoints_do_not_retain_tool_events(memory_rig, monkeypatch):
+    from duckterm import server as sm
+
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Retain the owner instruction.")
+    provider(monkeypatch)
+    writer = sm.summarize
+
+    def shaped(prompt, *, tier, claude_model=None, effort=None, schema=None):
+        if "MEMORY UPDATE:\n" in prompt:
+            return writer(prompt)
+        return SimpleNamespace(text='{"ops": []}', failure_reason=None)
+
+    monkeypatch.setattr(memory_refresh, "reconcile_reply", REAL_RECONCILE)
+    monkeypatch.setattr(sm, "summarize", shaped)
+    root = tmp / "duckterm" / "checkpoints" / "agent" / "memory"
+    sizes = []
+    for n in range(3):
+        for i in range(40):
+            for kind in ("PreToolUse", "PostToolUse"):
+                server.history.record(
+                    {
+                        "_id": f"{kind}-{n}-{i}",
+                        "_ts": 10 + 100 * n + i,
+                        "event_type": kind,
+                        "session_key": "agent",
+                        "tool_name": "Bash",
+                        "tool_input": {"command": f"ls {n} {i}"},
+                    }
+                )
+        asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
+        row = server.history._conn.execute(
+            "SELECT record_json FROM checkpoints WHERE session_key='agent' "
+            "ORDER BY created_at DESC, rowid DESC"
+        ).fetchone()
+        record = json.loads(row["record_json"])
+        assert record["summary_update"]["state"] in {"updated", "reused"}
+        assert [r["kind"] for r in record["retained_sources"]] == ["session"]
+        sizes.append(len(row["record_json"]))
+    # 240 tool events later, nothing per event was copied or listed.
+    assert len(list(root.glob("record-*.json"))) == 1  # the session card only
+    assert max(sizes) - min(sizes) < 2000, sizes
