@@ -153,7 +153,7 @@ def clip(text: str) -> str:
 
 
 def full_ref(row: dict[str, Any]) -> str:
-    return row["source"] + ":" + row["version"] + ":" + row["record"]
+    return f"{row['source']}:{row['version']}:{row['record']}"
 
 
 def short_refs(plan: dict[str, Any]) -> dict[str, str]:

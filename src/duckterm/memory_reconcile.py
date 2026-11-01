@@ -136,10 +136,12 @@ def apply(
             used.update(ids)
             closed += [{**items[i], "op": "merged", "by": item["id"]} for i in ids]
             continue
-        target = op.get("of") if kind == "duplicate" else op.get("by")
-        if not isinstance(subject, str) or not isinstance(target, str | None):
+        raw_target = op.get("of") if kind == "duplicate" else op.get("by")
+        if not isinstance(subject, str) or not isinstance(raw_target, str | None):
             rejected += 1
             continue
+        # "" is never an id, span or other item, so a missing target fails lookups.
+        target = raw_target or ""
         valid = (
             kind in {"duplicate", "done", "superseded", "drop"}
             and subject in items
