@@ -36,7 +36,10 @@ it("reads combined saved claims without checkpointing; original evidence is lazy
   expect(get).toHaveBeenCalledOnce();
   expect(requestCheckpoint).not.toHaveBeenCalled();
   get.mockResolvedValueOnce({ text: "<script>original</script>", next_offset: 25 });
-  const details = screen.getByText("Original conversation · conversation").parentElement!;
+  // One collapsed line per item; each citation is labelled by role and record.
+  expect(screen.getByText("Evidence: 1 message")).toBeVisible();
+  expect(screen.queryByText("Original conversation · conversation")?.closest("summary")).toBeFalsy();
+  const details = screen.getByText("user · #turn-1").parentElement!;
   details.setAttribute("open", ""); fireEvent(details, new Event("toggle"));
   await screen.findByText("<script>original</script>");
   expect(document.querySelector("script")).toBeNull();
@@ -122,7 +125,7 @@ it("opens a linked revision outside the recent list and reads its own evidence o
   await screen.findByText("Historical linked summary");
   expect(get).toHaveBeenCalledExactlyOnceWith("remote::same", "", { revision: "older-exact" });
   expect(screen.getByRole("combobox")).toHaveValue("older-exact");
-  const evidence = screen.getByText("Original conversation · conversation").parentElement!;
+  const evidence = screen.getByText("user · #turn-1").parentElement!;
   get.mockResolvedValueOnce({ text: "Original older evidence", next_offset: null });
   evidence.setAttribute("open", ""); fireEvent(evidence, new Event("toggle"));
   await screen.findByText("Original older evidence");
