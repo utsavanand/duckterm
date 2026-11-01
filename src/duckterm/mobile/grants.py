@@ -45,7 +45,20 @@ class Grants:
                 if raw
                 else {"version": 1, "host_id": uuid.uuid4().hex, "invites": {}, "devices": {}}
             )
-            if not isinstance(state, dict) or state.get("version") != 1:
+            if (
+                not isinstance(state, dict)
+                or state.get("version") != 1
+                or not isinstance(state.get("host_id"), str)
+                or not state["host_id"]
+                or any(
+                    not isinstance(state.get(section), dict)
+                    or any(
+                        not isinstance(key, str) or not isinstance(value, dict)
+                        for key, value in state[section].items()
+                    )
+                    for section in ("invites", "devices")
+                )
+            ):
                 raise ValueError("Invalid Ducky grant store")
             yield state
             if write:

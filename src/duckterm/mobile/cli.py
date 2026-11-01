@@ -169,6 +169,7 @@ def add_parser(sub: Any) -> None:
     pair.add_argument(
         "--port", type=int, help="phone listener port (reuse the existing port by default)"
     )
+    pair.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     for name in ("enable", "disable", "invite", "devices"):
         commands.add_parser(name)
     for name in ("approve", "revoke"):
@@ -180,6 +181,10 @@ def run(args: argparse.Namespace) -> int:
     grants = Grants(directory)
     try:
         if args.ducky_command == "pair":
+            if getattr(args, "json", False):
+                from duckterm.mobile.pairing_stream import pair_json
+
+                return pair_json(directory, selected_address=args.address, port=args.port)
             from duckterm.mobile.pairing import pair
 
             return pair(directory, selected_address=args.address, port=args.port)
