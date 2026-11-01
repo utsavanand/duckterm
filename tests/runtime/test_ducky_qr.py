@@ -69,6 +69,7 @@ def test_terminal_pixels_match_pinned_upstream_vectors(text, size, digest):
 def test_full_invitation_has_solid_quiet_zone_and_never_wraps(url):
     invitation = pairing_link(url)
     assert 350 <= len(invitation) <= 550
+    assert qr.render_terminal_qr(invitation, columns=80, is_tty=True) is None
     rendered = qr.render_terminal_qr(invitation, columns=160, is_tty=True)
     assert rendered is not None
     image = pixels(rendered)
@@ -98,10 +99,6 @@ def test_unrepresentable_payload_falls_back_without_error_or_secret_output(text,
     assert qr.render_terminal_qr(text, columns=160, is_tty=True) is None
     captured = capsys.readouterr()
     assert captured.out == captured.err == ""
-
-
-def test_long_invitation_on_normal_narrow_terminal_falls_back_to_link():
-    assert qr.render_terminal_qr(pairing_link(), columns=80, is_tty=True) is None
 
 
 def test_one_module_version_preserves_all_four_quiet_edges():
