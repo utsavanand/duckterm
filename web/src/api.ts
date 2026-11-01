@@ -46,7 +46,6 @@ export type LocalVoiceStatus =
 export interface CheckpointSettings {
   lookback_records: number | "all";
   writer_model: "haiku" | "sonnet" | "opus";
-  reviewer_model: "haiku" | "sonnet" | "opus";
 }
 
 export type AiProvider = "anthropic" | "openai" | "openrouter" | "custom";
@@ -58,6 +57,8 @@ export interface AiSettings {
   base_url: string;
   fast_model: string;
   deep_model: string;
+  harness_fast_model: "haiku" | "sonnet" | "opus";
+  harness_deep_model: "haiku" | "sonnet" | "opus";
 }
 
 // GET /ai-settings. keys never carry the key itself, only whether one is set.

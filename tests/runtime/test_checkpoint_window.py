@@ -16,7 +16,6 @@ __all__ = ["memory_rig"]
 OPTIONS = {
     "lookback_records": 20,
     "writer_model": "haiku",
-    "reviewer_model": "sonnet",
 }
 
 

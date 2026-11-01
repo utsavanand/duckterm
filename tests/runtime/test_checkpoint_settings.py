@@ -30,11 +30,18 @@ def test_defaults_and_partial_concurrent_updates_survive_reload(memory_rig):
     assert checkpoint_settings.save({"lookback_records": "all"})["lookback_records"] == "all"
 
 
-def test_settings_file_with_retired_batch_records_still_loads(memory_rig):
+def test_settings_file_with_retired_keys_still_loads(memory_rig):
     from duckterm.helpers import paths
 
     (paths.home() / "checkpoint-settings.json").write_text(
-        json.dumps({"lookback_records": 60, "batch_records": 20, "writer_model": "sonnet"})
+        json.dumps(
+            {
+                "lookback_records": 60,
+                "batch_records": 20,
+                "reviewer_model": "opus",
+                "writer_model": "sonnet",
+            }
+        )
     )
     loaded = checkpoint_settings.load()
     assert loaded == {
@@ -43,9 +50,8 @@ def test_settings_file_with_retired_batch_records_still_loads(memory_rig):
         "writer_model": "sonnet",
     }
     assert checkpoint_settings.save({"writer_model": "opus"})["lookback_records"] == 60
-    assert "batch_records" not in json.loads(
-        (paths.home() / "checkpoint-settings.json").read_text()
-    )
+    saved = json.loads((paths.home() / "checkpoint-settings.json").read_text())
+    assert "batch_records" not in saved and "reviewer_model" not in saved
 
 
 @pytest.mark.parametrize(

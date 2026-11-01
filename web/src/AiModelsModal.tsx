@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type AiProvider, type AiSettings, type AiState, type CheckpointSettings } from "./api";
+import { api, type AiProvider, type AiSettings, type AiState } from "./api";
 import { Button, inputStyle, Modal } from "./ui";
 import "./aiModels.css";
 
@@ -9,14 +9,13 @@ const PROVIDERS: { id: AiProvider; label: string; env: string }[] = [
   { id: "openrouter", label: "OpenRouter", env: "OPENROUTER_API_KEY" },
   { id: "custom", label: "Custom (OpenAI-compatible URL)", env: "" },
 ];
-const FAST_USE = "Checkpoint writer, rule from English, compaction, release map";
-const DEEP_USE = "Oracle, checkpoint reviewer, PR review, rule suggestions";
+const FAST_USE = "Rule from English, compaction, release map";
+const DEEP_USE = "Oracle, PR review, rule suggestions";
 const HARNESS_NAME = { "claude-code": "Claude Code", codex: "Codex" } as const;
 
 export function AiModelsModal({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<AiState | null>(null);
   const [settings, setSettings] = useState<AiSettings | null>(null);
-  const [checkpoint, setCheckpoint] = useState<CheckpointSettings | null>(null);
   const [key, setKey] = useState("");
   const [models, setModels] = useState<string[]>([]);
   const [keyStatus, setKeyStatus] = useState("");
@@ -29,9 +28,9 @@ export function AiModelsModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     let canceled = false;
     setError("");
-    void Promise.all([api.aiSettings(), api.checkpointSettings()]).then(([ai, chosen]) => {
+    void api.aiSettings().then(ai => {
       if (canceled) return;
-      setState(ai); setSettings(ai.settings); setCheckpoint(chosen);
+      setState(ai); setSettings(ai.settings);
     }).catch((e: Error) => { if (!canceled) setError(e.message); });
     return () => { canceled = true; };
   }, [retry]);
@@ -66,16 +65,9 @@ export function AiModelsModal({ onClose }: { onClose: () => void }) {
   });
 
   const save = () => run(async () => {
-    if (!settings || !checkpoint) return;
+    if (!settings) return;
     setSaved(false);
     const next = await api.saveAiSettings(settings);
-    if (settings.backend === "harness") {
-      setCheckpoint(await api.saveCheckpointSettings({
-        lookback_records: checkpoint.lookback_records,
-        writer_model: checkpoint.writer_model,
-        reviewer_model: checkpoint.reviewer_model,
-      }));
-    }
     setState(next); setSettings(next.settings); setSaved(true);
   });
 
@@ -87,7 +79,7 @@ export function AiModelsModal({ onClose }: { onClose: () => void }) {
     <div className="rd-ai-models">
       <p>Oracle, checkpoints, PR review and rule suggestions use these. Your coding sessions always run on their own harness login.</p>
       {!settings && !error && <p role="status">Loading AI settings…</p>}
-      {settings && checkpoint && state && <form onSubmit={e => { e.preventDefault(); void save(); }}>
+      {settings && state && <form onSubmit={e => { e.preventDefault(); void save(); }}>
         <fieldset disabled={busy}>
           <legend>Run DuckTerm's AI on</legend>
           <label className={`rd-ai-option${settings.backend === "harness" ? " is-on" : ""}`}>
@@ -114,12 +106,12 @@ export function AiModelsModal({ onClose }: { onClose: () => void }) {
               <option value="codex">Codex</option>
             </select>
             <div className="rd-ai-tiers">
-              {(["writer_model", "reviewer_model"] as const).map(role => <div key={role}>
-                <label htmlFor={`ai-${role}`}>{role === "writer_model" ? "Fast model" : "Deep model"}</label>
-                <select id={`ai-${role}`} style={inputStyle} value={checkpoint[role]} onChange={e => { setCheckpoint({ ...checkpoint, [role]: e.target.value as CheckpointSettings[typeof role] }); setSaved(false); }}>
+              {(["harness_fast_model", "harness_deep_model"] as const).map(role => <div key={role}>
+                <label htmlFor={`ai-${role}`}>{role === "harness_fast_model" ? "Fast model" : "Deep model"}</label>
+                <select id={`ai-${role}`} style={inputStyle} value={settings[role]} onChange={e => change({ [role]: e.target.value as AiSettings[typeof role] })}>
                   <option value="haiku">Haiku</option><option value="sonnet">Sonnet</option><option value="opus">Opus</option>
                 </select>
-                <small>{role === "writer_model" ? FAST_USE : DEEP_USE}</small>
+                <small>{role === "harness_fast_model" ? FAST_USE : DEEP_USE}</small>
               </div>)}
             </div>
             <small>Model choices apply when Claude Code serves the call. Codex uses its default model.</small>

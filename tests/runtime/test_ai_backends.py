@@ -196,6 +196,23 @@ def test_api_backend_without_a_key_uses_the_harness(memory_rig, provider, monkey
     assert calls == [("claude-code", "haiku", "low")]
 
 
+def test_harness_tiers_keep_their_models_when_the_checkpoint_writer_changes(
+    memory_rig, monkeypatch
+):
+    from duckterm import checkpoint_settings
+
+    calls: list = []
+    _harness_fake(monkeypatch, calls)
+    checkpoint_settings.save({"writer_model": "opus"})
+    asyncio.run(backend.complete("p", tier="fast"))
+    asyncio.run(backend.complete("p", tier="deep"))
+    ai_settings.save({"harness_fast_model": "sonnet"})
+    asyncio.run(backend.complete("p", tier="fast"))
+    assert [model for _, model, _ in calls] == ["haiku", "sonnet", "sonnet"]
+    with pytest.raises(APIError):
+        ai_settings.save({"harness_deep_model": "gpt"})
+
+
 def test_duckterm_gateway_is_a_stub_that_falls_back(memory_rig, monkeypatch):
     calls: list = []
     _harness_fake(monkeypatch, calls)

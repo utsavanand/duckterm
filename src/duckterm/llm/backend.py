@@ -15,13 +15,12 @@ without the owner configuring it.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
 import shutil
 from dataclasses import dataclass
 from typing import Any
 
-from duckterm import checkpoint_settings, memory_provider
+from duckterm import memory_provider
 from duckterm.core.session_api import APIError
 from duckterm.llm import ai_settings, api
 
@@ -88,9 +87,7 @@ async def complete(
         raise APIError(503, fallback or "No Claude Code or Codex CLI is installed")
     model = claude_model if name == "claude-code" else ""
     if name == "claude-code" and not model:
-        with contextlib.suppress(APIError):
-            chosen = checkpoint_settings.load()
-            model = chosen["writer_model" if tier == "fast" else "reviewer_model"]
+        model = settings[f"harness_{tier}_model"]
     text = await memory_provider.generate(
         name, model, prompt, schema, user_settings=True, effort=EFFORT[tier]
     )

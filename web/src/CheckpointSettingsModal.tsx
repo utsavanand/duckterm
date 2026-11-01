@@ -3,7 +3,7 @@ import { api, type CheckpointSettings } from "./api";
 import { Button, inputStyle, Modal } from "./ui";
 import "./checkpointSettings.css";
 
-const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "sonnet", reviewer_model: "sonnet" };
+const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "sonnet" };
 
 export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<CheckpointSettings | null>(null);
@@ -28,7 +28,7 @@ export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
     if (!settings || !valid || sending.current) return;
     sending.current = true; setSaving(true); setSaved(false); setError("");
     try {
-      const value = await api.saveCheckpointSettings({ lookback_records: all ? "all" : count, writer_model: settings.writer_model, reviewer_model: settings.reviewer_model });
+      const value = await api.saveCheckpointSettings({ lookback_records: all ? "all" : count, writer_model: settings.writer_model });
       setSettings(value); setLookback(String(value.lookback_records)); setSaved(true);
     } catch (e) { setError(`Settings save was not confirmed: ${(e as Error).message}. Reload to check the saved values.`); }
     finally { sending.current = false; setSaving(false); }
@@ -44,12 +44,13 @@ export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
             <input id="checkpoint-lookback" aria-label="Latest records per checkpoint" style={inputStyle} type="number" min="1" max="1000" step="1" disabled={all} value={all ? "" : lookback} onChange={e => { setLookback(e.target.value); setSaved(false); }} /></label>
           {!valid && <div role="alert">Enter a whole number from 1 to 1,000.</div>}
           <div className="rd-checkpoint-models">
-            {(["writer_model", "reviewer_model"] as const).map(role => <div key={role}>
-              <label htmlFor={`checkpoint-${role}`}>{role === "writer_model" ? "Summary writer" : "Pull request reviewer"}</label>
-              <select id={`checkpoint-${role}`} style={inputStyle} value={settings[role]} onChange={e => { setSettings({ ...settings, [role]: e.target.value as CheckpointSettings[typeof role] }); setSaved(false); }}>
+            <div>
+              <label htmlFor="checkpoint-writer_model">Summary writer</label>
+              <select id="checkpoint-writer_model" style={inputStyle} value={settings.writer_model} onChange={e => { setSettings({ ...settings, writer_model: e.target.value as CheckpointSettings["writer_model"] }); setSaved(false); }}>
                 <option value="haiku">Claude Haiku</option><option value="sonnet">Claude Sonnet</option><option value="opus">Claude Opus</option>
               </select>
-            </div>)}
+              <small>Checkpoint summaries only. Other AI features use Settings → AI models.</small>
+            </div>
           </div>
           <footer><span role="status">{saved ? "Settings saved" : saving ? "Saving…" : ""}</span>
             <button type="button" className="rd-btn rd-btn-ghost" onClick={() => { setSettings(defaults); setLookback("all"); setSaved(false); }}>Reset defaults</button>

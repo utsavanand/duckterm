@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { apiPost } from "./helpers";
 
 test("checkpoint settings save and reopen through the real API", async ({ page }) => {
-  const defaults = { lookback_records: "all", writer_model: "sonnet", reviewer_model: "sonnet" };
+  const defaults = { lookback_records: "all", writer_model: "sonnet" };
   await apiPost("/checkpoint-settings", defaults);
   try {
     await page.setViewportSize({ width: 1440, height: 1000 });

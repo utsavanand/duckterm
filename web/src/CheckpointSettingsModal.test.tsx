@@ -5,7 +5,7 @@ import { CheckpointSettingsModal } from "./CheckpointSettingsModal";
 
 vi.mock("./api", () => ({ api: { checkpointSettings: vi.fn(), saveCheckpointSettings: vi.fn() } }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
-const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "sonnet", reviewer_model: "sonnet" };
+const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "sonnet" };
 
 it("defaults to all unsummarized messages and saves a latest-N choice", async () => {
   vi.mocked(api.checkpointSettings).mockResolvedValue(defaults);
@@ -15,7 +15,8 @@ it("defaults to all unsummarized messages and saves a latest-N choice", async ()
   expect(all).toBeChecked();
   const input = screen.getByLabelText("Latest records per checkpoint");
   expect(input).toBeDisabled();
-  expect(screen.getByLabelText("Pull request reviewer")).toHaveValue("sonnet");
+  // Other AI features' models live in AI models settings, not here.
+  expect(screen.queryByLabelText("Pull request reviewer")).toBeNull();
   expect(screen.queryByText(/batch/i)).toBeNull();
   fireEvent.click(screen.getByRole("radio", { name: /Only the latest/ }));
   expect(input).toBeEnabled();
@@ -23,7 +24,7 @@ it("defaults to all unsummarized messages and saves a latest-N choice", async ()
   fireEvent.change(screen.getByLabelText("Summary writer"), { target: { value: "opus" } });
   fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
   expect(await screen.findByText("Settings saved")).toBeVisible();
-  expect(api.saveCheckpointSettings).toHaveBeenCalledExactlyOnceWith({ lookback_records: 60, writer_model: "opus", reviewer_model: "sonnet" });
+  expect(api.saveCheckpointSettings).toHaveBeenCalledExactlyOnceWith({ lookback_records: 60, writer_model: "opus" });
   fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }));
   expect(all).toBeChecked();
   expect(screen.getByLabelText("Summary writer")).toHaveValue("sonnet");
@@ -38,7 +39,7 @@ it("saves all as the literal setting", async () => {
   fireEvent.click(screen.getByRole("radio", { name: "All unsummarized messages (default)" }));
   fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
   expect(await screen.findByText("Settings saved")).toBeVisible();
-  expect(api.saveCheckpointSettings).toHaveBeenCalledExactlyOnceWith({ lookback_records: "all", writer_model: "sonnet", reviewer_model: "sonnet" });
+  expect(api.saveCheckpointSettings).toHaveBeenCalledExactlyOnceWith({ lookback_records: "all", writer_model: "sonnet" });
 });
 
 it("rejects invalid limits and does not claim success after a lost response", async () => {

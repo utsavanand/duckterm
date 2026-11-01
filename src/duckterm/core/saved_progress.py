@@ -659,11 +659,6 @@ class ProgressCoordinator:
                     summarize,
                     validation_prompt,
                     tier="deep",
-                    **(
-                        {"claude_model": captured["checkpoint_settings"]["reviewer_model"]}
-                        if "checkpoint_settings" in captured
-                        else {}
-                    ),
                 )
                 review_ms += round((time.monotonic() - review_started) * 1000)
                 if failure_reason := getattr(verdict_reply, "failure_reason", None):

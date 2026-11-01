@@ -16,12 +16,11 @@ DEFAULTS: dict[str, Any] = {
     # Sonnet over Haiku, measured 2026-10-31 on two 1,800-2,000-message sessions:
     # 0-1 wrong resume answers per run against 2-4, and ~10 s per span against ~30 s.
     "writer_model": "sonnet",
-    # Used by pull-request review; checkpoint spans are no longer model-reviewed.
-    "reviewer_model": "sonnet",
 }
 MODELS = {"haiku", "sonnet", "opus"}
-# Settings files written before spans were byte-bounded still carry this key.
-RETIRED = {"batch_records"}
+# Keys older settings files still carry: batches became byte-bounded spans, and
+# spans are not model-reviewed (the deep tier lives in AI models settings).
+RETIRED = {"batch_records", "reviewer_model"}
 
 
 def validated(value: Any, *, stored: bool = False) -> dict[str, Any]:
@@ -33,12 +32,8 @@ def validated(value: Any, *, stored: bool = False) -> dict[str, Any]:
     count = result["lookback_records"]
     if count != "all" and (type(count) is not int or not 1 <= count <= 1000):
         raise APIError(400, "Checkpoint lookback must be all or an integer from 1 to 1000 records")
-    if any(
-        result[k] not in MODELS
-        for k in ("writer_model", "reviewer_model")
-        if isinstance(result[k], str)
-    ) or any(not isinstance(result[k], str) for k in ("writer_model", "reviewer_model")):
-        raise APIError(400, "Choose haiku, sonnet or opus for each checkpoint model")
+    if not isinstance(result["writer_model"], str) or result["writer_model"] not in MODELS:
+        raise APIError(400, "Choose haiku, sonnet or opus for the summary writer")
     return result
 
 
