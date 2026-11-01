@@ -149,3 +149,62 @@ def test_approval_callback_queues_keys_in_order(tmp_path, monkeypatch):
                     await sup._input_task
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("cancel_at_shutdown", [False, True])
+def test_cancelled_terminal_reader_does_not_end_live_session(
+    tmp_path, monkeypatch, cancel_at_shutdown
+):
+    """Stopping the server detaches its reader; tmux and its agent survive."""
+    from duckterm.persistence.history import HistoryStore
+
+    store = HistoryStore(tmp_path / "state.sqlite")
+    key = "test-loop"
+    store.record(
+        {
+            "event_type": "SessionStart",
+            "session_key": key,
+            "test": True,
+            "launched": True,
+            "_ts": 1,
+            "_id": "start",
+        }
+    )
+    store.record({"event_type": "Stop", "session_key": key, "_ts": 2, "_id": "idle"})
+    before = store.session(key)
+    emitted = []
+
+    async def scenario():
+        sup = supervisor(tmp_path)
+        sup.bus = EventBus(sink=store.record)
+        original_emit = sup._emit
+
+        def emit(event, **fields):
+            emitted.append(event)
+            original_emit(event, **fields)
+
+        monkeypatch.setattr(sup, "_emit", emit)
+        ready = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def exists(target):
+            loop.call_soon_threadsafe(ready.set)
+            return True
+
+        monkeypatch.setattr(tmux, "session_exists", exists)
+        task = asyncio.create_task(sup._tail_pipe())
+        await asyncio.wait_for(ready.wait(), 2)
+        if not cancel_at_shutdown:
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        # Otherwise asyncio.run cancels the pending reader during shutdown.
+
+    try:
+        asyncio.run(scenario())
+        assert events.SESSION_END not in emitted
+        after = store.session(key)
+        for field in ("state", "ended_at", "updated_at", "event_count"):
+            assert after[field] == before[field]
+    finally:
+        store.close()
