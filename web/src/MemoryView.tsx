@@ -11,6 +11,26 @@ import { checkpointFailure } from "./checkpointState";
 import "./memoryView.css";
 import { checkpointMemoryAfterFailure } from "./CheckpointFailureCoverage";
 
+// Owner taxonomy, 2026-10-30; mirrors memory_contract.CATEGORIES and LEGACY_KINDS.
+const categories: [string, string[]][] = [
+  ["Intent", ["goal", "task", "question"]],
+  ["Rules", ["constraint", "decision", "authority", "convention"]],
+  ["Facts", ["design", "environment", "known_issue", "risk", "learning", "reference"]],
+];
+const legacyKinds: Record<string, string> = { unfinished: "task", callout: "constraint" };
+
+function KindCounts({ claims }: { claims: { kind?: string }[] }) {
+  const counts: Record<string, number> = {};
+  for (const claim of claims) {
+    const kind = legacyKinds[claim.kind ?? ""] ?? claim.kind ?? "unclassified";
+    counts[kind] = (counts[kind] ?? 0) + 1;
+  }
+  return <div className="rd-memory-kind-counts">
+    {categories.map(([name, kinds]) => <span key={name}>{name}: {kinds.filter(k => counts[k]).map(k => `${counts[k]} ${k.replace("_", " ")}`).join(" · ") || "none"}</span>)}
+    {Boolean(counts.unclassified) && <span>Unclassified: {counts.unclassified}</span>}
+  </div>;
+}
+
 const labels: Record<string, string> = { goals: "Goals", constraints: "Constraints, callouts and learnings", decisions: "Decisions and learnings", unfinished: "Unfinished work", questions: "Open questions", risks: "Risks" };
 function Evidence({ sessionKey, evidence }: { sessionKey: string; evidence: MemoryEvidence }) {
   const [read, setRead] = useState<MemoryRead | null>(null);
@@ -105,7 +125,7 @@ export function MemoryView({ sessionKey, name, active = true, initialRevision = 
         {current.summary && <section><h2>Saved summary</h2><p className="rd-memory-summary">{current.summary}</p></section>}
         {aggregate?.state === "unavailable" && <p role="alert">Combined memory is unavailable ({aggregate.reason === "budget_exhausted" ? "saved claims exceed the combined-view budget" : "evidence could not be verified"}). Select an individual summary to inspect its retained content.</p>}
         <section><h2>Saved knowledge</h2><p className="hint">{aggregate?.span_count ? `${aggregate.span_count} independent spans. ` : ""}These are saved claims with linked evidence. Reading this view does not generate a summary or certify a new harness switch.</p>
-          <div className="rd-memory-kind-counts">{["decision", "constraint", "learning", "callout", "question", "unfinished", "goal", "risk", "unclassified"].map(kind => <span key={kind}>{kind}: {groups.flatMap(g => g.claims).filter(c => (c.kind ?? "unclassified") === kind).length}</span>)}</div>
+          <KindCounts claims={groups.flatMap(g => g.claims)} />
         </section>
         {aggregate?.narratives?.length ? <section><h2>Recent work</h2>{aggregate.narratives.map(row => <p key={row.revision}>{row.text}</p>)}{Boolean(aggregate.older_narratives_for_retrieval) && <p className="hint">Earlier narrative summaries remain available through memory read tools.</p>}</section> : current.overview && <section><h2>Saved working context</h2><p>{current.overview}</p></section>}
         {aggregate?.pagination && <><p className="hint">Counts above describe this page. Open, retired and superseded are recorded states; reading this list does not declare a handoff ready.</p><MemoryPages page={aggregate.pagination} noun="saved items" previous={pages.length > 1} onPrevious={() => setPages(p => p.slice(0, -1))} onNext={next => setPages(p => [...p, next])} /></>}
