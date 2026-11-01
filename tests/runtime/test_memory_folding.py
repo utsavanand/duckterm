@@ -10,6 +10,9 @@ from test_memory import memory_rig, transcript
 
 from duckterm import memory_contract, memory_summary
 from duckterm.core import memory_folding as folding
+
+# Imported before the suite-wide stub in conftest replaces it.
+from duckterm.core.memory_refresh import reconcile_reply as real_reconcile_reply
 from duckterm.persistence.saved_state import current_revision, transaction
 
 __all__ = ["memory_rig"]
@@ -179,13 +182,13 @@ def test_provider_failure_saves_checkpoint_and_defers_repeat_cost(memory_rig, mo
             server.progress_coordinator, "agent", captured, leaf(captured, 52)
         )
         assert retry["attempts"][0]["reason"] == "retry_deferred" and len(calls) == 1
-        with monkeypatch.context() as m:
-            m.setattr(
-                folding.time, "time", lambda: proposal["attempts"][0]["retry_after"] / 1000 + 1
-            )
-            await folding.prepare(
-                server.progress_coordinator, "agent", captured, leaf(captured, 52)
-            )
+        # The next checkpoint has a new capture time and retries at once.
+        await folding.prepare(
+            server.progress_coordinator,
+            "agent",
+            {**captured, "captured_at": captured["captured_at"] + 1},
+            leaf(captured, 52),
+        )
         assert len(calls) == 2
 
     asyncio.run(run())
@@ -384,3 +387,84 @@ def test_rejected_summary_is_never_certified_by_folding(memory_rig, monkeypatch)
         assert calls == []
 
     asyncio.run(run())
+
+
+def test_heads_follow_conversation_order_not_save_order():
+    # Parallel span writes save position 2701 after position 3002.
+    rows = [
+        {
+            "id": str(end),
+            "span": "incremental",
+            "span_input": {"next_boundary": {"sources": {"conversation": {"count": end}}}},
+        }
+        for end in (0, 2441, 3002, 2701, 3329)
+    ]
+    assert [node["id"] for node in folding.active(rows)] == ["0", "2441", "2701", "3002", "3329"]
+
+
+def test_no_fold_while_a_checkpoint_writes_spans_then_one_pass_folds(memory_rig, monkeypatch):
+    from duckterm.core import memory_refresh
+
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Owner instruction")
+    calls = provider(server, monkeypatch)
+
+    async def run():
+        captured = await server.progress_coordinator.capture("agent")
+        seed(server, captured, 60)
+        server.progress_coordinator.span_batches.add("agent")
+        assert (
+            await folding.prepare(
+                server.progress_coordinator, "agent", captured, leaf(captured, 60)
+            )
+            is None
+        )
+        assert calls == []
+        server.progress_coordinator.span_batches.discard("agent")
+        await memory_refresh.fold(server.progress_coordinator, "agent", captured)
+        heads = folding.active(
+            folding.rows(server.digests, "agent", captured["source"]["scope_hash"])
+        )
+        # Sixty leaves fold group by group until fewer than fifty remain at tier 0.
+        assert [n["tier"] for n in heads].count(1) == 2 and len(heads) == 42
+
+    asyncio.run(run())
+
+
+def test_reconcile_and_folds_call_summarize_with_its_real_signature(memory_rig, monkeypatch):
+    # The suite-wide reconcile stub hid a missing tier argument; call the real path.
+    from duckterm.core import memory_refresh
+    from duckterm.llm import summarizer
+
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Owner instruction")
+    calls = []
+
+    def real_shaped(prompt, *, tier, claude_model=None):
+        calls.append((tier, claude_model))
+        value = (
+            {"ready": True, "reason_codes": []}
+            if prompt.startswith("Validate")
+            else {"overview": "Combined work."}
+        )
+        return SimpleNamespace(text=json.dumps(value), failure_reason=None)
+
+    assert list(inspect_signature(summarizer.summarize)) == ["prompt", "tier", "claude_model"]
+    monkeypatch.setattr("duckterm.server.summarize", real_shaped)
+    assert json.loads(real_reconcile_reply("prompt", "sonnet"))["overview"]
+
+    async def run():
+        captured = await server.progress_coordinator.capture("agent")
+        captured = {**captured, "checkpoint_settings": {"writer_model": "opus"}}
+        seed(server, captured, 60)
+        await memory_refresh.fold(server.progress_coordinator, "agent", captured)
+
+    asyncio.run(run())
+    assert calls[0] == ("fast", "sonnet")
+    assert set(calls[1:]) == {("fast", "opus")}
+
+
+def inspect_signature(function):
+    import inspect
+
+    return inspect.signature(function).parameters

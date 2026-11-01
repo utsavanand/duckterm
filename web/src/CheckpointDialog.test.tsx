@@ -7,10 +7,11 @@ import { CheckpointProgress } from "./CheckpointProgress";
 import { checkpointRequestError } from "./checkpointRequests";
 import { sessionRef } from "./hostTransport";
 
-vi.mock("./api", () => ({ api: { checkpointPlan: vi.fn(), checkpoint: vi.fn(), checkpointAttempt: vi.fn() } }));
+vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(), api: { checkpointPlan: vi.fn(), checkpoint: vi.fn(), checkpointAttempt: vi.fn() } }));
 afterEach(async () => { cleanup(); await act(async () => {}); vi.resetAllMocks(); });
-function plan(pending = 47, count = 20): CheckpointPlan {
-  return { available_records: pending + 8, processed_records: 8, pending_records: pending, default_records: count, selected_records: Math.min(pending, count), remaining_records: Math.max(0, pending - count), batch_records: 20, order: "oldest_unprocessed_first", selection_plan: { version: 1, boundary: { source: "frozen" } } };
+function plan(pending = 47, count: number | "all" = 20): CheckpointPlan {
+  const selected = count === "all" ? pending : Math.min(pending, count);
+  return { available_records: pending + 8, processed_records: 8, pending_records: pending, default_records: count, selected_records: selected, remaining_records: pending - selected, order: "oldest_unprocessed_first", selection_plan: { version: 1, boundary: { source: "frozen" } } };
 }
 function result(id = "cp"): CheckpointRecord { return { id, label: "manual", created_at: 1, saved: true, summary: "Summary", summary_update: { state: "updated" }, record: { prompts: [], files: [], tools: [], event_count: 0 } }; }
 async function open(key = "dialog-session") {
@@ -62,7 +63,6 @@ it("keeps configured defaults, bounds custom counts and handles zero remaining",
   vi.mocked(api.checkpointPlan).mockResolvedValue(plan(7, 40)); render(<CheckpointDialogHost />);
   const { work } = await open("small");
   expect(screen.getByRole("radio", { name: "Earliest 7 · your configured default" })).toBeChecked();
-  expect(screen.getByText(/Your default in Settings stays at 40/)).toBeVisible();
   for (const value of ["", "0", "-2", "1.5", "1001"]) {
     fireEvent.change(screen.getByRole("spinbutton"), { target: { value } });
     expect(screen.getByRole("button", { name: "Checkpoint" })).toBeDisabled();
@@ -108,4 +108,23 @@ it("uses an exact failed receipt to distinguish changed selection from an uncert
   expect(screen.getByRole("status")).toHaveTextContent("Checkpoint not saved");
   expect(screen.queryByText("Result not confirmed")).toBeNull();
   expect(api.checkpoint).toHaveBeenCalledOnce();
+});
+it("preselects all unprocessed records when the configured default is all", async () => {
+  const preview = plan(2014, "all");
+  vi.mocked(api.checkpointPlan).mockResolvedValue(preview); vi.mocked(api.checkpoint).mockResolvedValue(result());
+  render(<CheckpointDialogHost />); const { work } = await open("default-all");
+  expect(screen.getByRole("radio", { name: "All 2,014 unprocessed records" })).toBeChecked();
+  expect(screen.queryByRole("radio", { name: /your configured default/ })).toBeNull();
+  expect(screen.getByText(/records selected/)).toHaveTextContent("2,014 records selected · 0 left for later");
+  // More than 1,000 pending records must still submit; the custom count's max cannot block "All".
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Checkpoint 2,014 records" })); });
+  expect(api.checkpoint).toHaveBeenCalledExactlyOnceWith("default-all", "manual", expect.any(String), { plan: preview.selection_plan, records: "all" });
+  await act(async () => { await work; });
+});
+it("accepts a plan from an older host that still reports batch_records", async () => {
+  vi.mocked(api.checkpointPlan).mockResolvedValue({ ...plan(), batch_records: 20 } as CheckpointPlan);
+  render(<CheckpointDialogHost />); const { work } = await open("older-host");
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("button", { name: "Checkpoint 20 records" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" })); await work;
 });

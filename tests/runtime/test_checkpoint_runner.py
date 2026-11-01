@@ -51,7 +51,7 @@ def setup_runner(monkeypatch, tmp, mode="success"):
     return log
 
 
-def test_checkpoint_generation_and_validation_use_isolated_subprocess(memory_rig, monkeypatch):
+def test_checkpoint_generation_uses_isolated_subprocess(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Keep the owner constraint.")
     log = setup_runner(monkeypatch, tmp)
@@ -69,7 +69,7 @@ def test_checkpoint_generation_and_validation_use_isolated_subprocess(memory_rig
 
     asyncio.run(run())
     rows = [json.loads(line) for line in log.read_text().splitlines()]
-    assert len(rows) == 2  # generation and review; the unchanged retry uses neither
+    assert len(rows) == 1  # one span write; the unchanged retry makes no call
     assert all(row["internal"] == "1" and not row["has_token"] for row in rows)
     assert all(not Path(row["cwd"]).exists() for row in rows)
 
@@ -110,6 +110,6 @@ def test_checkpoint_timeout_keeps_previous_revision_and_reaps_child(memory_rig, 
         )
 
     asyncio.run(run())
-    assert len(processes) == 3
+    assert len(processes) == 2
     assert all(proc.returncode is not None for proc in processes)
     assert processes[-1].returncode != 0

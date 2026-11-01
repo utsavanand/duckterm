@@ -9,6 +9,12 @@ from duckterm import memory_budget, memory_contract, memory_handoff
 from duckterm.core.session_api import APIError
 
 
+@pytest.fixture(autouse=True)
+def _brief_budget(monkeypatch):
+    """Fixtures here are sized against a 32,000-byte budget; the rules don't depend on it."""
+    monkeypatch.setattr(memory_budget, "MAX_BRIEF_BYTES", 32000)
+
+
 def render(**kwargs):
     return memory_budget.render(
         introduction="Continue the named session",

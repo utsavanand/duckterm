@@ -82,7 +82,8 @@ async def preview(server: Any, key: str) -> dict[str, Any]:
     covered = coverage(server, key, captured)
     pending = _pending(rows, covered)
     available = sum(r["kind"] == "conversation" and not r["reference_only"] for r in rows)
-    selected = min(settings["lookback_records"], len(pending))
+    lookback = settings["lookback_records"]
+    selected = len(pending) if lookback == "all" else min(lookback, len(pending))
     return {
         "available_records": available,
         "processed_records": available - len(pending),
@@ -90,7 +91,6 @@ async def preview(server: Any, key: str) -> dict[str, Any]:
         "default_records": settings["lookback_records"],
         "selected_records": selected,
         "remaining_records": len(pending) - selected,
-        "batch_records": settings["batch_records"],
         "order": "newest_unprocessed_first",
         "selection_plan": {
             "version": 2,

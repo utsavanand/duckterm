@@ -116,6 +116,6 @@ def test_claude_session_summary_uses_transcript(
     assert row["outcome_summary"] == "Added /healthz."
     revision_id = json.loads(row["progress"])["revision_id"]
     assert server.digests.revision(key, revision_id)["summary_validation"]["ready"]
-    assert len(prompts) == 2
+    assert len(prompts) == 1  # one span write; spans are not model-reviewed
     store.purge_test_sessions()
     store.close()

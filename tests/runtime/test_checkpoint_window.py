@@ -15,9 +15,7 @@ __all__ = ["memory_rig"]
 
 OPTIONS = {
     "lookback_records": 20,
-    "batch_records": 20,
     "writer_model": "haiku",
-    "reviewer_model": "sonnet",
 }
 
 
@@ -56,7 +54,9 @@ def writer_texts(calls):
     ]
 
 
-def test_default_twenty_excludes_backlog_and_model_roles_are_explicit(memory_rig, monkeypatch):
+def test_twenty_record_lookback_excludes_backlog_and_uses_only_the_writer_model(
+    memory_rig, monkeypatch
+):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Record 0")
     for n in range(1, 61):
@@ -67,7 +67,7 @@ def test_default_twenty_excludes_backlog_and_model_roles_are_explicit(memory_rig
         result = await checkpoint(server)
         assert result.state == "updated", result
         assert writer_texts(calls) == [[f"Record {n}" for n in range(41, 61)]]
-        assert models == ["haiku", "sonnet"]
+        assert models == ["haiku"]  # spans are not model-reviewed
         coverage = result.span_coverage
         assert coverage["scope"] == "recent_window"
         assert coverage["summarized_records"] == 20
@@ -81,7 +81,7 @@ def test_default_twenty_excludes_backlog_and_model_roles_are_explicit(memory_rig
     asyncio.run(run())
 
 
-def test_larger_window_batches_twenty_and_fills_holes_without_repeating(memory_rig, monkeypatch):
+def test_larger_window_fills_holes_without_repeating(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Record 0")
     for n in range(1, 61):
@@ -94,7 +94,7 @@ def test_larger_window_batches_twenty_and_fills_holes_without_repeating(memory_r
         second = await checkpoint(server, 60)
         assert second.state == "updated", second
         batches = writer_texts(calls)
-        assert [len(b) for b in batches] == [20, 20, 20]
+        assert [len(b) for b in batches] == [20, 40]
         assert set(sum(batches, [])) == {f"Record {n}" for n in range(1, 61)}
         assert second.span_coverage["outside_window_records"] == 1
         # A later full-range preparation must fill the older hole, not pretend

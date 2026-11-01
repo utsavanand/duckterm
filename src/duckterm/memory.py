@@ -261,7 +261,7 @@ class Memory:
         ):
             raise APIError(409, "Invalid retained conversation reference")
         path = (
-            memory_sources.directory(key) / (snapshot + ".jsonl")
+            memory_sources.snapshot_file(key, snapshot)[0]
             if snapshot is not None
             else memory_sources.native_path(source)
         )
@@ -425,6 +425,13 @@ class Memory:
         task.add_done_callback(finished)
         return await asyncio.shield(task)
 
+    def reconciled(self, key: str, catalog: dict[str, Any]) -> dict[str, Any] | None:
+        from duckterm import memory_reconcile
+
+        rows = catalog["canonical"]["revisions"]
+        scope = rows[-1].get("source", {}).get("scope_hash") if rows else None
+        return memory_reconcile.latest(self.server.digests, key, scope) if scope else None
+
     async def _operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:
         if action == "revisions":
             return memory_view.revision_headers(
@@ -478,6 +485,7 @@ class Memory:
                             claims_limit=self._number(query, "claims_limit", 25, 1, 100),
                             revisions_cursor=query.get("revisions_cursor", [None])[0],
                             revisions_limit=self._number(query, "revisions_limit", 20, 1, 100),
+                            items=self.reconciled(key, catalog),
                         )
                     )
             elif action == "sources":

@@ -73,9 +73,9 @@ def test_large_history_saves_usable_context_with_resolvable_evidence(memory_rig,
         revision = server.digests.revision("agent", cp["record"]["summary_ref"])
         continuity = revision["continuity"]
         coverage = cp["summary_update"]["span_coverage"]
-        assert coverage["eligible_records"] == 20
-        assert coverage["history_eligible_records"] > 5000
-        assert coverage["outside_window_records"] == coverage["history_eligible_records"] - 20
+        # The default lookback is every unprocessed record, across many spans.
+        assert coverage["eligible_records"] == coverage["history_eligible_records"] > 5000
+        assert coverage["outside_window_records"] == 0
         assert coverage["summarized_records"] == coverage["eligible_records"]
         assert coverage["pending_records"] == 0
         assert continuity["verified"] and continuity["update_complete"]
@@ -118,6 +118,10 @@ def test_skipped_new_work_survives_advancing_observation_frontiers(memory_rig, m
 
 
 def test_oversized_latest_record_fails_without_promoting_partial_coverage(memory_rig, monkeypatch):
+    from duckterm import memory_spans
+
+    # Long records are clipped, so only a span limit below the clip can be exceeded.
+    monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", 8000)
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "A small retained fact")
     append(path, "Latest owner constraints " + "x" * 60000)

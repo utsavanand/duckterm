@@ -1,4 +1,4 @@
-"""Slow preparation retains reviewed work without admitting partial coverage."""
+"""Slow preparation retains finished work without admitting partial coverage."""
 
 import asyncio
 import json
@@ -117,7 +117,7 @@ def test_failed_retention_retries_without_rewriting_completed_spans(
         first = await prepare(server)
         assert first["state"] == "failed" and first["retryable"]
         assert not server.history.checkpoints("agent")
-        assert "proof" not in first and len(calls) == 2
+        assert "proof" not in first and len(calls) == 1
         assert server.history.session("agent")["progress"]
         completed_progress = server.history.session("agent")["progress"]
         job = manager.jobs[first["preparation_id"]]
@@ -147,13 +147,13 @@ def test_failed_retention_retries_without_rewriting_completed_spans(
             assert result["state"] == "stale_source", result
             assert not server.history.checkpoints("agent")
             assert server.history.session("agent")["progress"] == completed_progress
-            assert len(calls) == 2
+            assert len(calls) == 1
             return
         assert result["state"] == "ready", result
         assert result["preparation_id"] != first["preparation_id"]
         assert len(server.history.checkpoints("agent")) == 1
         assert server.history.session("agent")["runtime"] == "claude-code"
-        assert len(calls) == 2
+        assert len(calls) == 1
         brief = manager.details("agent", result["preparation_id"])["brief"]["text"]
         if change == "source":
             assert "Changed owner instructions" in brief

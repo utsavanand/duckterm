@@ -17,7 +17,6 @@ from duckterm.memory_provider import CALL_TIMEOUT
 from duckterm.persistence.saved_state import REVISION_BUCKET, fingerprint
 
 DEADLINE_SECONDS = 2 * CALL_TIMEOUT
-RETRY_MS = 5 * 60 * 1000
 MAX_FOLDS = 8
 
 
@@ -36,8 +35,30 @@ def rows(store: Any, key: str, scope: str) -> list[dict[str, Any]]:
     return result
 
 
+def span_position(row: dict[str, Any]) -> int | None:
+    """How far along the conversation a span ends; grows from span to span.
+
+    A start position does not order spans: a later span can be the first to
+    include a source that begins at 0.
+    """
+    span = row.get("span_input", {})
+    sources = span.get("next_boundary", {}).get("sources")
+    if isinstance(sources, dict) and sources:
+        return sum(int(v.get("count", 0)) for v in sources.values() if isinstance(v, dict))
+    ends = [
+        r["end"]
+        for r in span.get("ranges") or []
+        if isinstance(r, dict) and type(r.get("end")) is int
+    ]
+    return sum(ends) if ends else None
+
+
 def active(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Legacy cumulative rows never acquire inferred span boundaries."""
+    """Legacy cumulative rows never acquire inferred span boundaries.
+
+    Heads come back in conversation order. Spans written in parallel are saved
+    out of order, and folding the first ten saved skipped a span (2026-10-31).
+    """
     seen: dict[str, dict[str, Any]] = {}
     consumed: set[str] = set()
     for row in records:
@@ -59,8 +80,19 @@ def active(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ):
             raise ValueError("invalid_fold_history")
         consumed.update(children)
-        seen[row["id"]] = {"id": row["id"], "tier": tier, "span": "incremental"}
-    return [node for identity, node in seen.items() if identity not in consumed]
+        start = (
+            span_position(row)
+            if tier == 0
+            else max(
+                (seen[child]["start"] for child in children if seen[child]["start"] is not None),
+                default=None,
+            )
+        )
+        seen[row["id"]] = {"id": row["id"], "tier": tier, "span": "incremental", "start": start}
+    heads = [node for identity, node in seen.items() if identity not in consumed]
+    order = {identity: n for n, identity in enumerate(seen)}
+    heads.sort(key=lambda n: (n["start"] is None, n["start"] or 0, order[n["id"]]))
+    return heads
 
 
 def _node(row: dict[str, Any], index: dict[str, dict[str, Any]], tier: int) -> dict[str, Any]:
@@ -70,6 +102,8 @@ def _node(row: dict[str, Any], index: dict[str, dict[str, Any]], tier: int) -> d
     return {
         "id": row["id"],
         "tier": tier,
+        # A span's full summary, not its short overview, is what folds.
+        "narrative": row.get("summary") if tier == 0 else None,
         "span": row.get("span", "cumulative"),
         "context_version": row.get("context_version", 1),
         "coverage": row.get("coverage"),
@@ -85,6 +119,10 @@ async def prepare(
     """Stage folds before a typed leaf append; failures never reject that leaf."""
     if incoming.get("span", "cumulative") != "incremental":
         return None
+    if key in coordinator.span_batches:
+        # Parallel span writes leave gaps until every span is saved; the batch
+        # runs one fold pass after its last write.
+        return None
     if incoming.get("context_version") != 2:
         return {"state": "pending", "reason": "unsupported_context_version"}
     scope = captured["source"]["scope_hash"]
@@ -94,9 +132,15 @@ async def prepare(
         heads = active(existing)
     except (ValueError, TypeError, KeyError, AttributeError, sqlite3.Error):
         return {"state": "pending", "reason": "invalid_fold_history"}
+    index = {row["id"]: row for row in existing}
+    for node in heads:
+        row = index[node["id"]]
+        narrative = (row.get("summary") if node["tier"] == 0 else None) or row.get(
+            "continuity", {}
+        ).get("context", {}).get("overview", "")
+        node["bytes"] = len(str(narrative).encode())
     if not memory_compaction.select(heads, 0):
         return None
-    index = {row["id"]: row for row in existing}
     proposal: dict[str, Any] = {
         "state": "prepared",
         "base_hash": fingerprint(existing),
@@ -108,7 +152,12 @@ async def prepare(
     async def provider(prompt: str) -> str:
         from duckterm.server import summarize
 
-        reply = await asyncio.to_thread(summarize, prompt, tier="fast")
+        # Folds are checkpoint summaries: same writer as the spans, not the
+        # fast tier's model.
+        writer = captured.get("checkpoint_settings", {}).get("writer_model")
+        reply = await asyncio.to_thread(
+            summarize, prompt, tier="fast", **({"claude_model": writer} if writer else {})
+        )
         if getattr(reply, "failure_reason", None):
             raise RuntimeError("compaction_provider_failed")
         return reply.text
@@ -121,7 +170,7 @@ async def prepare(
             "input_key": fingerprint([index[node["id"]] for node in selected]),
             "state": "pending",
             "reason": "deadline",
-            "retry_after": now + RETRY_MS,
+            "captured_at": captured.get("captured_at"),
         }
         proposal["attempts"].append(attempt)
         previous = next(
@@ -133,8 +182,14 @@ async def prepare(
             ),
             None,
         )
-        if previous and previous.get("state") == "pending" and previous.get("retry_after", 0) > now:
-            attempt.update(reason="retry_deferred", retry_after=previous["retry_after"])
+        # A rejected fold waits for the next checkpoint, not a timer: every span
+        # of one checkpoint shares its capture time.
+        if (
+            previous
+            and previous.get("state") == "pending"
+            and previous.get("captured_at") == attempt["captured_at"]
+        ):
+            attempt["reason"] = "retry_deferred"
             return
         if len(proposal["attempts"]) > MAX_FOLDS:
             attempt["reason"] = "fold_budget_exhausted"
@@ -151,7 +206,7 @@ async def prepare(
             attempt["reason"] = "unreadable_fold_input"
             return
         if result["state"] != "compacted":
-            attempt.update(reason=result["reason"])
+            attempt.update(reason=result["reason"], reason_codes=result.get("reason_codes", []))
             if "coverage" in result:
                 attempt["coverage"] = result["coverage"]
             return
@@ -196,7 +251,7 @@ async def prepare(
             "summary_validation": {"ready": True, "reason_codes": []},
         }
         proposal["parents"].append(parent)
-        attempt.update(state="compacted", reason=None, retry_after=0)
+        attempt.update(state="compacted", reason=None)
         child_ids = set(result["children"])
         heads[:] = [node for node in heads if node["id"] not in child_ids]
         heads.append({"id": "staged:" + attempt["input_key"], "tier": tier + 1})
@@ -245,7 +300,7 @@ def apply(store: Any, key: str, proposal: dict[str, Any], now: int) -> dict[str,
     if "parent_ids" not in status:
         status["attempts"] = [
             (
-                {**attempt, "state": "pending", "reason": status["reason"], "retry_after": 0}
+                {**attempt, "state": "pending", "reason": status["reason"]}
                 if attempt["state"] == "compacted"
                 else attempt
             )

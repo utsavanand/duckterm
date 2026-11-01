@@ -17,6 +17,9 @@ from duckterm.persistence.saved_state import fingerprint, transaction
 if TYPE_CHECKING:
     from duckterm.core.saved_progress import ProgressCoordinator, SummaryUpdate
 
+# Four concurrent writer calls each held their ~20 s latency in measurement.
+PARALLEL_SPANS = 4
+
 
 async def refresh(
     coordinator: ProgressCoordinator,
@@ -96,6 +99,56 @@ async def refresh(
             coordinator.span_waiters.pop(key, None)
 
 
+async def fold(coordinator: ProgressCoordinator, key: str, captured: dict[str, Any]) -> None:
+    """Fold once every span is saved, group by group; a rejected fold stops the pass
+    and keeps its spans unfolded until the next checkpoint."""
+    async with coordinator.persist_locks.setdefault(key, asyncio.Lock()):
+        for _ in range(memory_folding.MAX_FOLDS):
+            proposal = await memory_folding.prepare(
+                coordinator, key, captured, {"span": "incremental", "context_version": 2}
+            )
+            if not proposal or not proposal.get("parents"):
+                return
+            with transaction(coordinator.server.digests._conn):
+                status = memory_folding.apply(
+                    coordinator.server.digests, key, proposal, int(time.time() * 1000)
+                )
+            if status["state"] != "compacted":
+                return
+
+
+def reconcile_reply(prompt: str, model: str | None) -> str:
+    from duckterm.server import summarize
+
+    reply = summarize(prompt, tier="fast", **({"claude_model": model} if model else {}))
+    if getattr(reply, "failure_reason", None):
+        raise RuntimeError("reconcile_provider_failed")
+    return str(reply.text)
+
+
+async def reconcile(
+    coordinator: ProgressCoordinator,
+    key: str,
+    captured: dict[str, Any],
+    leaves: list[dict[str, Any]],
+) -> dict[str, Any]:
+    from duckterm import memory_reconcile
+
+    model = captured.get("checkpoint_settings", {}).get("writer_model")
+
+    async def generate(prompt: str) -> str:
+        return await asyncio.to_thread(reconcile_reply, prompt, model)
+
+    async with coordinator.persist_locks.setdefault(key, asyncio.Lock()):
+        return await memory_reconcile.reconcile(
+            coordinator.server.digests,
+            key,
+            captured["source"]["scope_hash"],
+            leaves,
+            generate,
+        )
+
+
 def wanted(coordinator: ProgressCoordinator, key: str) -> bool:
     # A canceled preparation stops before the next batch; another dialog or an
     # accepted checkpoint may still need the same range. No new queue or timer.
@@ -167,6 +220,9 @@ async def _run(
         and not leaf.get("span_input", {}).get("selection_window")
     ]
     latest = leaves[-1] if leaves else None
+    # Spans written in parallel are saved out of order; continue after the span
+    # furthest along the conversation, not the one saved last.
+    sequential.sort(key=lambda leaf: memory_folding.span_position(leaf) or 0)
     predecessor = sequential[-1] if sequential and selection is None else None
     if latest and latest.get("policy") != captured["policy"]:
         return SummaryUpdate.failed("source_changed", diagnostic="summary_policy_changed")
@@ -178,7 +234,6 @@ async def _run(
     changed = False
     total: int | None = None
     completed = 0
-    batch_index = 0
     completed_ids: list[str] = []
 
     def attempt_coverage() -> dict[str, Any] | None:
@@ -203,51 +258,80 @@ async def _run(
             update, span_coverage=attempt_coverage(), attempt_coverage=attempt_coverage()
         )
 
+    # Plan every span of the frozen capture first; planning reads only the
+    # capture and the coverage loaded above, never the writes below.
+    spans: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    cursor = lower
     while True:
         if not wanted(coordinator, key):
             return incomplete(SummaryUpdate.failed("update_failed", diagnostic="update_canceled"))
         try:
-            planned = memory_spans.plan(captured, lower)
+            planned = memory_spans.plan(captured, cursor)
         except ValueError as exc:
             return incomplete(SummaryUpdate.failed("source_changed", diagnostic=str(exc)))
         if total is None:
             total = len(planned["selected"]) + planned["pending_records"]
-        coordinator.report_span_progress(key, stage="writing", completed=completed, total=total)
-        coordinator.span_status[key] = {
-            "completed_spans": len(leaves),
-            "pending_records": len(planned["selected"]) + planned["pending_records"],
-        }
         if not planned["selected"]:
             if planned["oversized"]:
                 return incomplete(
                     SummaryUpdate.failed("invalid_context", diagnostic="oversized_record")
                 )
             break
-        batch_index += 1
-        batch = {
-            **captured,
-            "trigger": {
-                **captured["trigger"],
-                "batch_index": batch_index,
-                "continuation": batch_index > 1,
-            },
-        }
-        update, planned = await coordinator.write_span(key, batch, lower)
+        spans.append((cursor, planned))
+        cursor = planned["next_boundary"]
+        if not planned["pending_records"]:
+            break
+    coordinator.report_span_progress(key, stage="writing", completed=0, total=total)
+    coordinator.span_status[key] = {"completed_spans": len(leaves), "pending_records": total}
+    slots = asyncio.Semaphore(PARALLEL_SPANS)
+
+    async def write(index: int, start: dict[str, Any]) -> tuple[SummaryUpdate, dict[str, Any]]:
+        nonlocal completed
+        async with slots:
+            if not wanted(coordinator, key):
+                return SummaryUpdate.failed("update_failed", diagnostic="update_canceled"), {}
+            batch = {
+                **captured,
+                "trigger": {**captured["trigger"], "batch_index": index, "continuation": index > 1},
+            }
+            update, planned = await coordinator.write_span(key, batch, start)
+        if update.state in {"updated", "reused"} and update.revision is not None:
+            completed += len(planned["selected"])
+            coordinator.report_span_progress(key, completed=completed, stage="writing")
+        return update, planned
+
+    coordinator.span_batches.add(key)
+    try:
+        results = await asyncio.gather(
+            *(write(index, start) for index, (start, _) in enumerate(spans, 1))
+        )
+    finally:
+        coordinator.span_batches.discard(key)
+    failure = None
+    for update, _ in results:
         if update.state not in {"updated", "reused"} or update.revision is None:
-            return incomplete(update)
-        completed += len(planned["selected"])
+            failure = failure or update
+            continue
+        # Every accepted leaf is kept even when a sibling fails; a retry reuses it.
         completed_ids.append(update.revision["id"])
-        coordinator.report_span_progress(key, completed=completed, stage="checking")
         latest = update.revision
         leaves.append(update.revision)
         changed = changed or update.state == "updated"
-        lower = planned["next_boundary"]
-        if not planned["pending_records"]:
-            break
+    if failure is not None:
+        return incomplete(failure)
     if not wanted(coordinator, key):
         return incomplete(SummaryUpdate.failed("update_failed", diagnostic="update_canceled"))
     if latest is None:
         return incomplete(SummaryUpdate.failed("no_transcript"))
+    await fold(coordinator, key, captured)
+    coordinator.report_span_progress(key, stage="reconciling")
+    try:
+        await reconcile(coordinator, key, captured, leaves)
+    except (ValueError, KeyError, TypeError, RuntimeError) as exc:
+        # Accepted leaves stay saved; the next checkpoint reconciles them.
+        return incomplete(
+            SummaryUpdate.failed("invalid_context", diagnostic="reconcile:" + str(exc)[:80])
+        )
     coordinator.report_span_progress(key, stage="checking")
     try:
         final = await coordinator._validation_capture(key, captured)

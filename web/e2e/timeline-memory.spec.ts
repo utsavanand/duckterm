@@ -49,7 +49,8 @@ test("Timeline opens an exact historical revision; the session panel opens a dat
     await expect(memory.getByText("Historical summary from the clicked checkpoint.")).toBeVisible();
     await expect(memory.getByRole("combobox")).toHaveValue("older-revision");
     expect(reads).toEqual(["older-revision"]);
-    await memory.getByText("Earlier decision evidence · conversation").click();
+    await memory.getByText("Evidence: 1 message", { exact: true }).click();
+    await memory.getByText("user · #turn-1", { exact: true }).click();
     await expect(memory.getByText("Original evidence for the earlier saved decision.")).toBeVisible();
     await page.screenshot({ path: "/tmp/timeline-memory-implemented.png" });
     await memory.getByRole("button", { name: "← Timeline" }).click();

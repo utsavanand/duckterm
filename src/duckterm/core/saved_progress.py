@@ -222,6 +222,8 @@ class ProgressCoordinator:
         self.span_status: dict[str, dict[str, int]] = {}
         self.span_progress: dict[str, dict[str, Any]] = {}
         self.span_observers: dict[str, dict[object, Callable[[dict[str, Any]], None]]] = {}
+        self.persist_locks: dict[str, asyncio.Lock] = {}
+        self.span_batches: set[str] = set()
 
     def report_span_progress(self, key: str, **fields: Any) -> None:
         value = {**self.span_progress.get(key, {}), **fields}
@@ -416,17 +418,20 @@ class ProgressCoordinator:
         saved = memory_folding.rows(self.server.digests, key, captured["source"]["scope_hash"])
         if any(memory_spans.overlaps(planned, revision) for revision in saved):
             return SummaryUpdate.failed("invalid_context", diagnostic="overlapping_span"), planned
-        # Join the existing single-writer guard rather than introducing a queue.
+        # Spans of one capture cover disjoint records, so they generate side by
+        # side; only a whole-history writer excludes them. Identical retries join.
         active = self.active.get(key)
         if active and not active.done():
             await asyncio.shield(active)
             return await self.write_span(key, captured, lower)
-        row = self.server.history.session(key)
-        prior = self.server.digests.revision(key, current_revision(row)) if row else None
-        task = asyncio.create_task(
-            self._generate(key, captured, prior, input_key, span_plan=planned)
-        )
-        self.active[key] = task
+        task = self.pending.get(input_key)
+        if task is None:
+            row = self.server.history.session(key)
+            prior = self.server.digests.revision(key, current_revision(row)) if row else None
+            task = asyncio.create_task(
+                self._generate(key, captured, prior, input_key, span_plan=planned)
+            )
+            self.pending[input_key] = task
         try:
             return await asyncio.shield(task), planned
         except APIError as exc:
@@ -442,8 +447,8 @@ class ProgressCoordinator:
         finally:
 
             def finished(done: asyncio.Task[SummaryUpdate]) -> None:
-                if self.active.get(key) is done:
-                    self.active.pop(key, None)
+                if self.pending.get(input_key) is done:
+                    self.pending.pop(input_key, None)
                 if not done.cancelled():
                     done.exception()
 
@@ -620,6 +625,16 @@ class ProgressCoordinator:
             if isinstance(drafted, SummaryUpdate):
                 return drafted
             digest, context = drafted
+            if span_plan is not None:
+                # Span drafts are checked mechanically (shape, sizes, refs). A model
+                # reviewer never corrected a saved span and caused half of the
+                # recorded checkpoint failures, so it no longer gates the write.
+                review, verdicts, corrections = (
+                    {"state": "not_reviewed", "reason_codes": []},
+                    None,
+                    [],
+                )
+                break
             policy_check = await self._validation_capture(key, captured)
             if policy_check is None or policy_check["policy"] != captured["policy"]:
                 return SummaryUpdate.failed(
@@ -638,24 +653,12 @@ class ProgressCoordinator:
                 source=original_prompt,
                 required=bounded_required,
             )
-            if (
-                span_plan is not None
-                and len(validation_prompt.encode()) > memory_spans.MAX_INPUT_BYTES
-            ):
-                return SummaryUpdate.failed("invalid_context", diagnostic="review_input_too_large")
-            if span_plan is not None:
-                self.report_span_progress(key, stage="reviewing")
             for reviewer_attempt in range(2):
                 review_started = time.monotonic()
                 verdict_reply = await asyncio.to_thread(
                     summarize,
                     validation_prompt,
                     tier="deep",
-                    **(
-                        {"claude_model": captured["checkpoint_settings"]["reviewer_model"]}
-                        if "checkpoint_settings" in captured
-                        else {}
-                    ),
                 )
                 review_ms += round((time.monotonic() - review_started) * 1000)
                 if failure_reason := getattr(verdict_reply, "failure_reason", None):
@@ -700,7 +703,7 @@ class ProgressCoordinator:
             if len(prompt.encode()) > memory_spans.repair_input_limit():
                 return SummaryUpdate.failed("invalid_context", diagnostic="repair_input_too_large")
         reasons = []
-        if review["state"] != "accepted":
+        if span_plan is None and review["state"] != "accepted":
             reasons.append("summary_unverified")
         if too_large and maintained is None:
             reasons.append("required_context_too_large")
@@ -789,6 +792,24 @@ class ProgressCoordinator:
         }
         if span_plan is not None:
             self.report_span_progress(key, stage="checking")
+        # Parallel spans fold and commit one at a time: a fold reads the leaves
+        # the previous commit just wrote.
+        async with self.persist_locks.setdefault(key, asyncio.Lock()):
+            return await self._commit(
+                key, captured, prior, value, digest, accepted, verdicts, span_plan
+            )
+
+    async def _commit(
+        self,
+        key: str,
+        captured: dict[str, Any],
+        prior: dict[str, Any] | None,
+        value: dict[str, Any],
+        digest: dict[str, Any],
+        accepted: list[dict[str, str]],
+        verdicts: dict[str, Any] | None,
+        span_plan: dict[str, Any] | None,
+    ) -> SummaryUpdate:
         folding = await memory_folding.prepare(self, key, captured, value)
         if folding is not None:
             # Optional model work ran after the summary's fence. Revalidate it

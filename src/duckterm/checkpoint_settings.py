@@ -12,30 +12,28 @@ from duckterm.core.session_api import APIError
 from duckterm.helpers import paths
 
 DEFAULTS: dict[str, Any] = {
-    "lookback_records": 20,
-    "batch_records": 20,
-    "writer_model": "haiku",
-    "reviewer_model": "sonnet",
+    "lookback_records": "all",
+    # Sonnet over Haiku, measured 2026-10-31 on two 1,800-2,000-message sessions:
+    # 0-1 wrong resume answers per run against 2-4, and ~10 s per span against ~30 s.
+    "writer_model": "sonnet",
 }
 MODELS = {"haiku", "sonnet", "opus"}
+# Keys older settings files still carry: batches became byte-bounded spans, and
+# spans are not model-reviewed (the deep tier lives in AI models settings).
+RETIRED = {"batch_records", "reviewer_model"}
 
 
 def validated(value: Any, *, stored: bool = False) -> dict[str, Any]:
-    allowed = set(DEFAULTS) if stored else set(DEFAULTS) - {"batch_records"}
-    if not isinstance(value, dict) or set(value) - allowed:
+    if isinstance(value, dict) and stored:
+        value = {k: v for k, v in value.items() if k not in RETIRED}
+    if not isinstance(value, dict) or set(value) - set(DEFAULTS):
         raise APIError(400, "Unknown checkpoint setting")
     result = {**DEFAULTS, **value}
     count = result["lookback_records"]
-    if type(count) is not int or not 1 <= count <= 1000:
-        raise APIError(400, "Checkpoint lookback must be an integer from 1 to 1000 records")
-    if type(result["batch_records"]) is not int or result["batch_records"] != 20:
-        raise APIError(400, "Checkpoint batches contain at most 20 records")
-    if any(
-        result[k] not in MODELS
-        for k in ("writer_model", "reviewer_model")
-        if isinstance(result[k], str)
-    ) or any(not isinstance(result[k], str) for k in ("writer_model", "reviewer_model")):
-        raise APIError(400, "Choose haiku, sonnet or opus for each checkpoint model")
+    if count != "all" and (type(count) is not int or not 1 <= count <= 1000):
+        raise APIError(400, "Checkpoint lookback must be all or an integer from 1 to 1000 records")
+    if not isinstance(result["writer_model"], str) or result["writer_model"] not in MODELS:
+        raise APIError(400, "Choose haiku, sonnet or opus for the summary writer")
     return result
 
 
