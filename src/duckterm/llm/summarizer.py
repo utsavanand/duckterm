@@ -1,16 +1,16 @@
-"""Turn a session's transcript (or its raw PTY log) into a one-paragraph
-outcome summary. Backends, in priority order:
+"""The synchronous entry to DuckTerm's AI backends for prompt-in, text-out
+features. Backends, in priority order:
 
     DUCKTERM_SUMMARIZER_CMD   a shell command fed the prompt on stdin
                                 (e.g. "claude -p --bare")
     DUCKTERM_SUMMARIZER_URL   POST {prompt} -> {text}
-    auto-detected CLI agent     if claude/codex is on PATH, use it
+    llm.backend                 the owner's AI settings: harness CLI login
+                                (default), API key, or DuckTerm's gateway
                                 (disable with DUCKTERM_SUMMARIZER=off)
-    mechanical fallback         no LLM, a fact-only summary
+    copilot -p                  last resort when no claude/codex is installed
 
-Auto-detection means good LLM summaries work out of the box for anyone who has
-an agent installed — they don't have to set an env var. The mechanical fallback
-still works with zero configuration and zero API key.
+Every call names a tier (see llm.backend). Callers fall back to a mechanical,
+fact-only summary when no backend answers.
 """
 
 import asyncio
@@ -22,6 +22,9 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
+from duckterm import memory_provider
+from duckterm.core.session_api import APIError
+
 
 @dataclass
 class Summary:
@@ -30,24 +33,11 @@ class Summary:
     failure_reason: str | None = None
 
 
-# CLI agents we'll auto-use for summaries, in preference order. Each entry is
-# the command run with the prompt piped on stdin (non-interactive, plain text).
-# Bring-your-own agents: set DUCKTERM_SUMMARIZER_CMD to your agent's own
-# non-interactive command (e.g. "aider --message-file -").
-_AUTO_AGENTS = [
-    ("claude", "claude -p"),
-    ("codex", "codex exec -"),
-    ("copilot", "copilot -p"),
-]
-
-
-def summarize(prompt: str, *, claude_model: str | None = None) -> Summary:
-    """claude_model picks the model when the auto-detected backend is Claude
-    Code (e.g. "sonnet" for a classifier that must be accurate but needn't be
-    the user's default, often slower, model). Explicit backends are used as
-    configured."""
+def summarize(prompt: str, *, tier: str, claude_model: str | None = None) -> Summary:
+    """claude_model pins the model when Claude Code serves the call (e.g.
+    "sonnet" for a classifier measured on Sonnet)."""
     # Explicit config always wins. DUCKTERM_SUMMARIZER=off only disables the
-    # auto-detect fallback (so e.g. tests don't shell out to a real agent), not
+    # automatic backends (so e.g. tests don't shell out to a real agent), not
     # a backend the user set on purpose.
     cmd = os.environ.get("DUCKTERM_SUMMARIZER_CMD")
     if cmd:
@@ -57,38 +47,19 @@ def summarize(prompt: str, *, claude_model: str | None = None) -> Summary:
         return _http_summary(url, prompt)
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
         return Summary(text="", backend="none", failure_reason="disabled")
-    auto = _auto_command()
-    if auto:
-        if auto == "claude -p":
-            return _isolated_summary(claude_model or "", prompt)
-        return _cli_summary(auto, prompt)
-    return Summary(text="", backend="none", failure_reason="no_provider")
-
-
-def _auto_command() -> str | None:
-    """The first installed CLI agent we can summarize with, or None."""
-    for binary, command in _AUTO_AGENTS:
-        if shutil.which(binary):
-            return command
-    return None
-
-
-def _isolated_summary(model: str, prompt: str) -> Summary:
-    # Reuse the bounded memory runner: no project instructions, agent tools,
-    # session enrollment, or shell child left behind when the call times out.
-    # Provider preference and the selected/default model stay unchanged.
-    from duckterm import memory_provider
-    from duckterm.core.session_api import APIError
+    from duckterm.llm import backend
 
     try:
-        text = asyncio.run(
-            memory_provider.generate("claude-code", model, prompt, user_settings=True)
-        )
+        if not backend.ready():
+            if shutil.which("copilot"):
+                return _cli_summary("copilot -p", prompt)
+            return Summary(text="", backend="none", failure_reason="no_provider")
+        reply = asyncio.run(backend.complete(prompt, tier=tier, claude_model=claude_model or ""))
     except memory_provider.BatchTimeout:
         return Summary(text="", backend="none", failure_reason="provider_timeout")
     except APIError:
         return Summary(text="", backend="none", failure_reason="provider_failed")
-    return Summary(text=text.strip(), backend="cli")
+    return Summary(text=reply.text.strip(), backend="cli" if reply.backend == "harness" else "api")
 
 
 def _cli_summary(cmd: str, prompt: str) -> Summary:

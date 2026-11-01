@@ -18,9 +18,9 @@ def _run_session(store, tmp_path, intention, monkeypatch):
     model_calls = []
     summarize = server_module.summarize
 
-    def observed(prompt):
+    def observed(prompt, **_kw):
         model_calls.append(prompt)
-        return summarize(prompt)
+        return summarize(prompt, **_kw)
 
     monkeypatch.setattr(server_module, "summarize", observed)
     server = Server(history=store)

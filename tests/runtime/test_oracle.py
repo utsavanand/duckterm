@@ -192,7 +192,7 @@ def test_ask_oracle_conversation_is_stored_and_feeds_follow_ups(tmp_path, monkey
     owner = {"x-duckterm-token": server.token}
     prompts: list[str] = []
 
-    def fake(prompt: str) -> Summary:
+    def fake(prompt: str, **_kw) -> Summary:
         prompts.append(prompt)
         return Summary(text=f"**answer {len(prompts)}**", backend="cli")
 

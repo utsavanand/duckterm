@@ -433,7 +433,7 @@ def test_real_isolated_terminal_restarts_under_same_key(
         lambda *args: [{"role": "user", "text": "Keep the test task on the same card"}],
     )
 
-    def summarize(prompt):
+    def summarize(prompt, **_kw):
         value = (
             {
                 "accept": [],

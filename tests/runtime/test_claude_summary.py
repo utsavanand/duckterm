@@ -31,7 +31,7 @@ def test_claude_session_summary_uses_transcript(
 ) -> None:
     prompts = []
 
-    def summarize(prompt):
+    def summarize(prompt, **_kw):
         prompts.append(prompt)
         data = (
             {
