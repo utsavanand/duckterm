@@ -255,7 +255,9 @@ def project(
                         claim = json.loads(record["text"])
                         if claim.get("id"):
                             locations.setdefault(claim["id"], (source, record))
-            current_claims = {field: [] for field in memory_summary.FIELDS}
+            current_claims: dict[str, list[dict[str, Any]]] = {
+                field: [] for field in memory_summary.FIELDS
+            }
             if items is not None:
                 from duckterm import memory_lifecycle, memory_reconcile
 
