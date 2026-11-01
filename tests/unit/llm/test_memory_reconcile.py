@@ -145,7 +145,10 @@ def test_invalid_reply_twice_fails_without_saving(store):
                 store, "s", "scope", [leaf("a", ("goal", "Ship", "r:v:1"))], generate
             )
         )
-    assert memory_reconcile.latest(store, "s", "scope") is None
+    saved = store._conn.execute(
+        "SELECT COUNT(*) FROM digest_items WHERE bucket=?", (memory_reconcile.BUCKET,)
+    ).fetchone()[0]
+    assert saved == 0
 
 
 @pytest.mark.parametrize("later_fact", [True, False])
