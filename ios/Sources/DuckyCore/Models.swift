@@ -1,5 +1,4 @@
 import Foundation
-import Network
 
 public enum DuckyError: LocalizedError {
     case invalidInvitation, expiredInvitation, invalidResponse, unavailable(Int), credentialStorage(Int32)
@@ -23,9 +22,16 @@ public struct Invitation: Codable, Equatable {
     public let expiresAt: Int
     public let url: URL
     public let certificateSHA256: String
+    public let tlsName: String?
+    public init(version: Int, hostID: String, invite: String, expiresAt: Int, url: URL,
+                certificateSHA256: String, tlsName: String? = nil) {
+        self.version = version; self.hostID = hostID; self.invite = invite
+        self.expiresAt = expiresAt; self.url = url; self.certificateSHA256 = certificateSHA256
+        self.tlsName = tlsName
+    }
     enum CodingKeys: String, CodingKey {
         case version, invite, url
-        case hostID = "host_id", expiresAt = "expires_at", certificateSHA256 = "certificate_sha256"
+        case hostID = "host_id", expiresAt = "expires_at", certificateSHA256 = "certificate_sha256", tlsName = "tls_name"
     }
     public static func parse(_ text: String, now: Date = Date()) throws -> Invitation {
         guard text.utf8.count <= 4096,
@@ -39,7 +45,7 @@ public struct Invitation: Codable, Equatable {
               value.hostID.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil,
               value.invite.range(of: "^[A-Za-z0-9_-]{43,128}$", options: .regularExpression) != nil,
               value.certificateSHA256.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
-              validEndpoint(value.url) else { throw DuckyError.invalidInvitation }
+              validEndpoint(value.url), LocalEndpoint.validTLSName(value.tlsName, for: value.url) else { throw DuckyError.invalidInvitation }
         guard Double(value.expiresAt) > now.timeIntervalSince1970 else { throw DuckyError.expiredInvitation }
         return value
     }
@@ -49,15 +55,7 @@ public struct Invitation: Codable, Equatable {
               parts.query == nil, parts.fragment == nil, parts.path.isEmpty || parts.path == "/",
               let port = parts.port, (1024...65535).contains(port), let rawHost = parts.host else { return false }
         let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-        if let ip = IPv4Address(host) {
-            let octets = Array(ip.rawValue)
-            return octets[0] == 10 || octets[0] == 127 || (octets[0] == 192 && octets[1] == 168) || (octets[0] == 172 && (16...31).contains(octets[1]))
-        }
-        if let ip = IPv6Address(host) {
-            let octets = Array(ip.rawValue)
-            return ip == IPv6Address.loopback || (octets[0] & 0xfe) == 0xfc
-        }
-        return false
+        return LocalEndpoint.privateLiteral(host) != nil || LocalEndpoint.isLocalName(host)
     }
 }
 
@@ -66,9 +64,10 @@ public struct PairedHost: Codable, Equatable {
     public let hostID: String
     public let certificateSHA256: String
     public let token: String
+    public let tlsName: String?
     public init(invitation: Invitation, token: String) {
         url = invitation.url; hostID = invitation.hostID
-        certificateSHA256 = invitation.certificateSHA256; self.token = token
+        certificateSHA256 = invitation.certificateSHA256; self.token = token; tlsName = invitation.tlsName
     }
 }
 public struct PairStatus: Decodable {

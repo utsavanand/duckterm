@@ -143,8 +143,10 @@ class Bridge:
             writer.close()
 
 
-async def start(server: Server) -> Bridge | None:
-    directory = instance.home()
+async def start(
+    server: Server, *, directory: Path | None = None, bind_address: str | None = None
+) -> Bridge | None:
+    directory = directory or instance.home()
     raw = private_read(directory / "ducky-bridge.json")
     if not raw:
         return None
@@ -154,7 +156,7 @@ async def start(server: Server) -> Bridge | None:
     # No plaintext fallback. The CLI records an explicit private network IP.
     from duckterm.mobile.cli import address
 
-    host = address(config["address"])
+    host = address(bind_address if bind_address is not None else config["address"])
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(directory / "ducky-cert.pem", directory / "ducky-key.pem")
