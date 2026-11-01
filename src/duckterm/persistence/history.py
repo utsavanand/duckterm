@@ -299,6 +299,7 @@ class HistoryStore:
     ) -> None:
         edition = edition or editions.configured()
         path = db_path if db_path is not None else paths.db_path()
+        self.path = path
         self.folder_chats = FolderChats(path.parent / "folder-chats.json", self.folders)
         self.layouts = Layouts(path.parent / "layouts.json", self.folders)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -811,16 +812,33 @@ class HistoryStore:
         ).fetchone()
         return int(row[0])
 
-    def push_commands(self, since_ms: int) -> list[tuple[str, int, str]]:
-        """(session key, ts, command) for recorded shell commands that may
-        push a branch or open a pull request, oldest first."""
-        rows = self._conn.execute(
-            "SELECT session_key, ts, json_extract(payload_json, '$.tool_input.command') AS c "
-            "FROM events WHERE event_type = 'PreToolUse' AND ts >= ? "
-            "AND (c LIKE '%push%' OR c LIKE '%pr create%') ORDER BY ts",
-            (since_ms,),
-        ).fetchall()
-        return [(str(row[0]), int(row[1]), str(row[2])) for row in rows if row[0] and row[2]]
+    def push_commands(self, since_ms: int) -> list[tuple[str, int, str, str]]:
+        """(session key, ts, command, directory) for recorded shell commands
+        that may push a branch or open a pull request, oldest first. Test
+        events and test sessions are left out, so a probe cannot take a real
+        branch. The scan reads every recent event, so it opens its own
+        read-only connection: callers run it in a worker, off the loop that
+        owns `_conn`."""
+        with contextlib.closing(
+            sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        ) as conn:
+            rows = conn.execute(
+                "SELECT e.session_key, e.ts, "
+                "json_extract(e.payload_json, '$.tool_input.command') AS c, "
+                "COALESCE(json_extract(e.payload_json, '$.repo_path'), "
+                "json_extract(e.payload_json, '$.cwd'), '') "
+                "FROM events e LEFT JOIN sessions s ON s.session_key = e.session_key "
+                "WHERE e.event_type = 'PreToolUse' AND e.ts >= ? "
+                "AND NOT COALESCE(json_extract(e.payload_json, '$.test'), 0) "
+                "AND NOT COALESCE(s.test, 0) "
+                "AND (c LIKE '%push%' OR c LIKE '%pr create%') ORDER BY e.ts",
+                (since_ms,),
+            ).fetchall()
+        return [
+            (str(row[0]), int(row[1]), str(row[2]), str(row[3]))
+            for row in rows
+            if row[0] and row[2]
+        ]
 
     def last_event_ts(self, session_key: str, event_type: str) -> int:
         row = self._conn.execute(
