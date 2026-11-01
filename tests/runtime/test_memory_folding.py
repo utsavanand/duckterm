@@ -440,8 +440,8 @@ def test_reconcile_and_folds_call_summarize_with_its_real_signature(memory_rig, 
     transcript(tmp, "agent-claude", "Owner instruction")
     calls = []
 
-    def real_shaped(prompt, *, tier, claude_model=None):
-        calls.append((tier, claude_model))
+    def real_shaped(prompt, *, tier, claude_model=None, effort=None, schema=None):
+        calls.append((tier, claude_model, effort, schema is not None))
         value = (
             {"ready": True, "reason_codes": []}
             if prompt.startswith("Validate")
@@ -449,7 +449,13 @@ def test_reconcile_and_folds_call_summarize_with_its_real_signature(memory_rig, 
         )
         return SimpleNamespace(text=json.dumps(value), failure_reason=None)
 
-    assert list(inspect_signature(summarizer.summarize)) == ["prompt", "tier", "claude_model"]
+    assert list(inspect_signature(summarizer.summarize)) == [
+        "prompt",
+        "tier",
+        "claude_model",
+        "effort",
+        "schema",
+    ]
     monkeypatch.setattr("duckterm.server.summarize", real_shaped)
     assert json.loads(real_reconcile_reply("prompt", "sonnet"))["overview"]
 
@@ -460,8 +466,10 @@ def test_reconcile_and_folds_call_summarize_with_its_real_signature(memory_rig, 
         await memory_refresh.fold(server.progress_coordinator, "agent", captured)
 
     asyncio.run(run())
-    assert calls[0] == ("fast", "sonnet")
-    assert set(calls[1:]) == {("fast", "opus")}
+    # Checkpoint calls run at the model's default effort; reconcile asks for
+    # schema-checked JSON.
+    assert calls[0] == ("fast", "sonnet", "", True)
+    assert set(calls[1:]) == {("fast", "opus", "", False)}
 
 
 def inspect_signature(function):

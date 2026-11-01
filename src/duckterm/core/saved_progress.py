@@ -489,6 +489,9 @@ class ProgressCoordinator:
                 summarize,
                 prompt,
                 tier="fast",
+                # Default effort: the fast tier's "low" cut resume-quality from
+                # 75-84% with 0 wrong to 68-74% with 1 wrong (2026-11-01).
+                effort="",
                 **(
                     {"claude_model": captured["checkpoint_settings"]["writer_model"]}
                     if "checkpoint_settings" in captured

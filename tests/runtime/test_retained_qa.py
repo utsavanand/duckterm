@@ -25,7 +25,7 @@ def test_real_checkpoint_without_reconcile_stub(memory_rig, monkeypatch):
     writer = sm.summarize
     calls = []
 
-    def shaped(prompt, *, tier, claude_model=None):
+    def shaped(prompt, *, tier, claude_model=None, effort=None, schema=None):
         calls.append((prompt, tier, claude_model))
         if "MEMORY UPDATE:\n" in prompt:
             return writer(prompt)
