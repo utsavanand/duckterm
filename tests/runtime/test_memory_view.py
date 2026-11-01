@@ -407,3 +407,57 @@ def test_sidebar_revision_headers_are_bounded_scoped_and_do_not_read_bodies(
     assert get(server, action="revisions", revision="wrong")[0] == 400
     assert dispatch(server, "GET", "/sessions/agent/memory/revisions", {})[0] == 401
     assert conn.total_changes == before + 1
+
+
+def test_current_memory_shows_reconciled_items_and_revisions_stay_historical(
+    memory_rig, monkeypatch
+):
+    from duckterm import memory_reconcile
+
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Original owner constraint must remain traceable.")
+    provider(monkeypatch)
+    asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
+
+    def current_claims():
+        code, view = get(server)
+        assert code == 200
+        return view, [c for g in view["memory"]["groups"] for c in g["claims"]]
+
+    view, before = current_claims()
+    assert before and [c["id"] for c in claims(view)] == [c["id"] for c in before]
+    conn = server.history._conn
+    row = conn.execute(
+        "SELECT id,text FROM digest_items WHERE session_key=? AND bucket=?",
+        ("agent", memory_reconcile.BUCKET),
+    ).fetchone()
+    saved = json.loads(row["text"])
+    original = saved["items"][0]
+    # A merge rewrites the item: new id and text, same evidence.
+    merged = {
+        **original,
+        "id": "0123456789abcdef",
+        "text": "Merged owner constraint",
+        "merged_from": [original["id"]],
+    }
+    conn.execute(
+        "UPDATE digest_items SET text=? WHERE id=?",
+        (json.dumps({**saved, "items": [merged]}), row["id"]),
+    )
+    conn.commit()
+    view, after = current_claims()
+    assert [(c["id"], c["text"]) for c in after] == [
+        ("0123456789abcdef", "Merged owner constraint")
+    ]
+    assert (
+        after[0]["record"] == before[0]["record"] and after[0]["evidence"] == before[0]["evidence"]
+    )
+    # The exact revision still shows what that span saved.
+    assert claims(view) == claims(get(server, revision=view["revision"]["id"])[1])
+    assert [c["text"] for c in claims(view)] == [before[0]["text"]]
+    conn.execute(
+        "UPDATE digest_items SET text=? WHERE id=?",
+        (json.dumps({**saved, "items": [], "closed": [original]}), row["id"]),
+    )
+    conn.commit()
+    assert current_claims()[1] == []

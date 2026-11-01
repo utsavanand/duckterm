@@ -130,7 +130,10 @@ def project(
     claims_limit: int = 25,
     revisions_cursor: str | None = None,
     revisions_limit: int = 20,
+    items: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """items is the latest reconciled set; current memory shows it, while an
+    exact revision keeps showing that span's own claims."""
     if requested is not None and claims_cursor is not None:
         raise APIError(400, "Claim pagination is for current saved memory")
     revisions = [s for s in sources if s["kind"] == "revision"]
@@ -253,19 +256,44 @@ def project(
                         claim = json.loads(record["text"])
                         if claim.get("id"):
                             locations.setdefault(claim["id"], (source, record))
+            current_claims = {field: [] for field in memory_summary.FIELDS}
+            if items is not None:
+                from duckterm import memory_lifecycle, memory_reconcile
+
+                leaves = [r for r in rows if r.get("fold", {}).get("tier") == 0]
+                closed = set(memory_lifecycle.transitions(catalog.get("lifecycle", [])))
+                for entries in memory_reconcile.brief_items(items, leaves, closed).values():
+                    for entry in entries:
+                        field = memory_contract.KIND_FIELD.get(entry["kind"], "constraints")
+                        current_claims[field].append({**entry, "state": "open"})
+            else:
+                current_claims = {f: assembled["context"][f] for f in memory_summary.FIELDS}
+            # A merged item has no saved claim record; point at a merged parent's.
+            parents = {
+                item["id"]: item.get("merged_from", []) for item in (items or {}).get("items", [])
+            }
             combined = []
             for field in memory_summary.FIELDS:
-                items = []
-                for claim in assembled["context"][field]:
-                    origin, record = locations[claim["id"]]
-                    items.append(
+                claims_out = []
+                for claim in current_claims[field]:
+                    origin = next(
+                        (
+                            locations[i]
+                            for i in [claim["id"], *parents.get(claim["id"], [])]
+                            if i in locations
+                        ),
+                        None,
+                    )
+                    claims_out.append(
                         {
                             "id": claim["id"],
                             "kind": claim["kind"],
                             "state": claim.get("state", "open"),
                             "text": claim["text"],
-                            "source": origin["id"] + ":" + origin["version"],
-                            "record": record["id"],
+                            "source": (
+                                origin[0]["id"] + ":" + origin[0]["version"] if origin else None
+                            ),
+                            "record": origin[1]["id"] if origin else None,
                             "evidence": [
                                 {
                                     "source": originals[ref][0]["id"]
@@ -281,7 +309,7 @@ def project(
                             ],
                         }
                     )
-                combined.append({"field": field, "claims": items})
+                combined.append({"field": field, "claims": claims_out})
             flat = [(g["field"], claim) for g in combined for claim in g["claims"]]
             selected_claims, pagination = page(
                 flat, [catalog["session"], current, "claims"], claims_cursor, claims_limit
