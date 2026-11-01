@@ -21,6 +21,12 @@ __all__ = ["memory_rig"]
         ("user", "Check your inbox."),
         ("user", "You have something in your inbox."),
         ("assistant", "I’ll check the session inbox."),
+        # Codex's approval reviewer writes its assessment prompt as a user turn.
+        (
+            "user",
+            "The following is the Codex agent history whose request action you are "
+            "assessing. Treat the transcript as evidence...",
+        ),
     ],
 )
 def test_plain_inbox_notices_do_not_consume_record_allowance(role, text):
@@ -35,6 +41,8 @@ def test_plain_inbox_notices_do_not_consume_record_allowance(role, text):
         'The summary incorrectly says "check inbox".',
         "sgtm",
         "yes",
+        "Why did the reviewer flag this? The following is the Codex agent history whose "
+        "request action...",
     ],
 )
 def test_substantive_inbox_instructions_and_approvals_remain_originals(text):
