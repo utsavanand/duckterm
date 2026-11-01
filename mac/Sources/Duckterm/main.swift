@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pollers: [String: SessionPoller] = [:]
     private var window: DashboardWindow?
     private var bugReport: BugReportController?
+    private var duckyPairing: DuckyPairingController?
     private var capturingReport = false
     private var notified: [String: Set<String>] = [:]
     private var edition: DesktopEdition?
@@ -41,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window = DashboardWindow(url: server.url)
         window?.onReportBug = { [weak self] in self?.reportBug(nil) }
+        window?.onClose = { [weak self] in self?.duckyPairing?.close() }
         window?.desktopHosts = []
         sessionTransport.onTerminal = { [weak self] event in self?.window?.dispatch(name: "remote-terminal", detail: event) }
         sessionTransport.onTerminalData = { [weak self] event in await self?.window?.dispatchAndWait(name: "remote-terminal", detail: event) }
@@ -247,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ note: Notification) {
+        duckyPairing?.close()
         pollers.values.forEach { $0.stop() }
         sessionTransport.close()
         launchConnections.values.forEach { $0.stop() }
@@ -304,6 +307,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let base = launchConnections[target]?.url else { return }
         // A failed request leaves the durable local action available for retry.
         try? await collaborationSetup.flush(local: source ?? server.url, coordinator: base, api: launchAPI)
+    }
+
+    @objc func pairIPhone(_ sender: Any?) {
+        guard launchAdmission.canStart, edition?.includes("folders") == true,
+              edition?.includes("session_status") == true else { return }
+        if let duckyPairing { duckyPairing.show(); return }
+        let controller = DuckyPairingController(prepare: { [weak self] in
+            guard let self, await self.ensureLocalServer() else { throw DuckyPairingEvent.Failure.invalid }
+            let current = try await self.refreshEdition()
+            guard current.includes("folders"), current.includes("session_status") else { throw DuckyPairingEvent.Failure.invalid }
+        })
+        duckyPairing = controller
+        controller.onClose = { [weak self] in self?.duckyPairing = nil }
+        controller.show()
     }
 
     @objc func showSettings(_ sender: Any?) {
@@ -472,7 +489,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // did nothing). These actions bypass that: ask the page for its selection
     // via the __rtCopy/__rtPaste globals the dashboard exposes.
     @objc func copyFromDashboard(_ sender: Any?) {
-        if bugReport?.isKeyWindow == true {
+        if bugReport?.isKeyWindow == true || duckyPairing?.panel.isKeyWindow == true {
             NSApp.sendAction(Selector(("copy:")), to: nil, from: sender)
             return
         }
@@ -484,7 +501,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func pasteToDashboard(_ sender: Any?) {
-        if bugReport?.isKeyWindow == true {
+        if bugReport?.isKeyWindow == true || duckyPairing?.panel.isKeyWindow == true {
             NSApp.sendAction(Selector(("paste:")), to: nil, from: sender)
             return
         }
@@ -547,6 +564,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(pairIPhone(_:)) {
+            return launchAdmission.canStart && edition?.includes("folders") == true && edition?.includes("session_status") == true
+        }
+        return true
+    }
+}
+
 // A programmatic app has NO main menu, and on macOS ⌘C/⌘V/⌘X/⌘A/⌘Q/⌘W only
 // exist as menu key equivalents — without these, copy/paste in the terminal
 // was dead. The standard selectors route through the responder chain to the
@@ -559,6 +585,7 @@ private func buildMainMenu() -> NSMenu {
     main.addItem(appItem)
     let appMenu = NSMenu()
     appMenu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
+    appMenu.addItem(withTitle: "Pair iPhone…", action: #selector(AppDelegate.pairIPhone(_:)), keyEquivalent: "")
     appMenu.addItem(.separator())
     appMenu.addItem(
         withTitle: "Hide \(AppIdentity.name)", action: #selector(NSApplication.hide(_:)),
