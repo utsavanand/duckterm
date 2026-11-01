@@ -213,6 +213,14 @@ def test_harness_tiers_keep_their_models_when_the_checkpoint_writer_changes(
         ai_settings.save({"harness_deep_model": "gpt"})
 
 
+def test_checkpoint_calls_can_drop_the_tier_effort(memory_rig, monkeypatch):
+    calls: list = []
+    _harness_fake(monkeypatch, calls)
+    asyncio.run(backend.complete("p", tier="fast"))
+    asyncio.run(backend.complete("p", tier="fast", claude_model="sonnet", effort=""))
+    assert calls == [("claude-code", "haiku", "low"), ("claude-code", "sonnet", "")]
+
+
 def test_duckterm_gateway_is_a_stub_that_falls_back(memory_rig, monkeypatch):
     calls: list = []
     _harness_fake(monkeypatch, calls)

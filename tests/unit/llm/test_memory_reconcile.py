@@ -26,13 +26,12 @@ def leaf(identity, *items, summary="Work happened."):
     return {"id": identity, "summary": summary, "continuity": {"context": context}}
 
 
-def provider(replies):
+def provider(ops):
     prompts = []
 
     async def generate(prompt):
         prompts.append(prompt)
-        category = json.loads(prompt.split("INPUT:\n", 1)[1])["category"]
-        return json.dumps({"ops": replies.get(category, [])})
+        return json.dumps({"ops": ops})
 
     return prompts, generate
 
@@ -65,18 +64,17 @@ def test_duplicate_merge_done_and_silence(store):
         ("constraint", "Release-dev alone tags; builders stop at push", "r:v:5"),
         summary="Dialog cap fixed and verified.",
     )
-    replies = {
-        "rules": [
-            {"op": "duplicate", "id": "n3", "of": "n1"},
-            {
-                "op": "merge",
-                "ids": ["n1", "n4"],
-                "kind": "authority",
-                "text": "Ship through release-dev; it alone tags, builders stop at push",
-            },
-        ],
-        "intent": [{"op": "done", "id": "n1", "by": "s2"}],
-    }
+    # One numbering over all items: a gives n1-n3, b gives n4-n5.
+    replies = [
+        {"op": "duplicate", "id": "n4", "of": "n1"},
+        {
+            "op": "merge",
+            "ids": ["n1", "n5"],
+            "kind": "authority",
+            "text": "Ship through release-dev; it alone tags, builders stop at push",
+        },
+        {"op": "done", "id": "n3", "by": "s2"},
+    ]
     result, prompts, saved = run(store, [first, second], replies)
     assert result["state"] == "reconciled" and result["rejected_ops"] == 0
     assert texts(saved) == [
@@ -89,8 +87,8 @@ def test_duplicate_merge_done_and_silence(store):
     closed = {item["text"]: (item["op"], item["by"]) for item in saved["closed"]}
     assert closed["Fix dialog cap"] == ("done", "b")
     assert closed["Releases go via release-dev"][0] == "duplicate"
-    # Facts had no candidates, so only two categories cost a provider call.
-    assert len(prompts) == 2
+    # One provider call covers every category.
+    assert len(prompts) == 1
     again, prompts, _ = run(store, [first, second], replies)
     assert again["state"] == "current" and prompts == []
 
@@ -103,7 +101,7 @@ def test_duplicate_merge_done_and_silence(store):
         {"op": "done", "id": "o1", "by": "s9"},
         {"op": "superseded", "id": "n1", "by": "o1"},
         {"op": "merge", "ids": ["o1"], "kind": "task", "text": "One"},
-        {"op": "merge", "ids": ["o1", "n1"], "kind": "constraint", "text": "Wrong category"},
+        {"op": "merge", "ids": ["o1", "n1"], "kind": "callout", "text": "Retired kind"},
         {"op": "rewrite", "id": "o1", "text": "Anything"},
         # Malformed shapes inside a parsed reply (main-qa, #364).
         42,
@@ -115,14 +113,14 @@ def test_duplicate_merge_done_and_silence(store):
     ],
 )
 def test_unsupported_closures_keep_the_item(store, op):
-    run(store, [leaf("a", ("task", "Old task", "r:v:1"))], {})
-    result, _, saved = run(store, [leaf("b", ("task", "New task", "r:v:2"))], {"intent": [op]})
+    run(store, [leaf("a", ("task", "Old task", "r:v:1"))], [])
+    result, _, saved = run(store, [leaf("b", ("task", "New task", "r:v:2"))], [op])
     assert result["rejected_ops"] == 1
     assert texts(saved) == ["Old task", "New task"]
 
 
 def test_brief_adds_unreconciled_items_and_omits_lifecycle_closures(store):
-    run(store, [leaf("a", ("decision", "Use spans", "r:v:1"))], {})
+    run(store, [leaf("a", ("decision", "Use spans", "r:v:1"))], [])
     saved = memory_reconcile.latest(store, "s", "scope")
     later = leaf("b", ("risk", "Unregistered domain in share URLs", "r:v:2"))
     brief = memory_reconcile.brief_items(saved, [later], set())
@@ -156,10 +154,12 @@ def test_a_later_fact_supersedes_a_contradicting_rule_across_categories(store, l
     rule = leaf("a", ("constraint", "Notary keychain is a dedicated file; unlock it", "r:v:1"))
     fact = leaf("b", ("environment", "Notary credentials moved to the login keychain", "r:v:2"))
     leaves = [rule, fact] if later_fact else [fact, rule]
-    result, prompts, saved = run(
-        store, leaves, {"rules": [{"op": "superseded", "id": "n1", "by": "c1"}]}
-    )
-    assert "Notary credentials moved" in prompts[0] or "Notary credentials moved" in prompts[1]
+    # The rule is superseded by the fact; refs follow the leaves' order.
+    op = {"op": "superseded", "id": "n1", "by": "n2"}
+    if not later_fact:
+        op = {"op": "superseded", "id": "n2", "by": "n1"}
+    result, prompts, saved = run(store, leaves, [op])
+    assert "Notary credentials moved" in prompts[0] and "Notary keychain" in prompts[0]
     remaining = texts(saved)
     if later_fact:
         assert remaining == ["Notary credentials moved to the login keychain"]

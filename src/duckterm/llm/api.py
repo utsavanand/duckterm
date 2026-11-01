@@ -98,7 +98,7 @@ def anthropic(
     effort: str,
 ) -> str:
     output: dict[str, Any] = {}
-    if model in EFFORT_MODELS:
+    if model in EFFORT_MODELS and effort:
         output["effort"] = effort
     if schema is not None:
         output["format"] = {"type": "json_schema", "schema": _closed(schema)}

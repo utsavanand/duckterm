@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from duckterm import memory_continuity, memory_spans
+from duckterm import memory_continuity, memory_reconcile, memory_spans
 from duckterm.core import memory_folding
 from duckterm.core.session_api import APIError
 from duckterm.persistence.saved_state import fingerprint, transaction
@@ -120,7 +120,13 @@ async def fold(coordinator: ProgressCoordinator, key: str, captured: dict[str, A
 def reconcile_reply(prompt: str, model: str | None) -> str:
     from duckterm.server import summarize
 
-    reply = summarize(prompt, tier="fast", **({"claude_model": model} if model else {}))
+    reply = summarize(
+        prompt,
+        tier="fast",
+        effort="",
+        schema=memory_reconcile.REPLY_SCHEMA,
+        **({"claude_model": model} if model else {}),
+    )
     if getattr(reply, "failure_reason", None):
         raise RuntimeError("reconcile_provider_failed")
     return str(reply.text)
@@ -132,8 +138,6 @@ async def reconcile(
     captured: dict[str, Any],
     leaves: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    from duckterm import memory_reconcile
-
     model = captured.get("checkpoint_settings", {}).get("writer_model")
 
     async def generate(prompt: str) -> str:

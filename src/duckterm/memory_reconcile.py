@@ -8,7 +8,6 @@ saves a new row, so earlier item sets stay readable.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 import uuid
@@ -20,6 +19,34 @@ from duckterm.core import progress
 from duckterm.persistence.saved_state import transaction
 
 BUCKET = "memory_items_v1"
+# Claude Code returns this as validated structured output, so a reply always
+# parses; apply() still checks every value. Plain-text replies from 2 of 8
+# replayed checkpoints did not parse (2026-11-01).
+REPLY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "ops": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "op": {
+                        "type": "string",
+                        "enum": ["duplicate", "merge", "done", "superseded", "drop"],
+                    },
+                    "id": {"type": "string"},
+                    "of": {"type": "string"},
+                    "by": {"type": "string"},
+                    "ids": {"type": "array", "items": {"type": "string"}},
+                    "kind": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+                "required": ["op"],
+            },
+        }
+    },
+    "required": ["ops"],
+}
 MAX_ITEM_CHARS = 300
 Provider = Callable[[str], Awaitable[str]]
 
@@ -58,21 +85,16 @@ def pending(leaves: list[dict[str, Any]], saved: dict[str, Any] | None) -> list[
 
 
 def build_prompt(
-    category: str,
     current: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
     spans: list[dict[str, Any]],
-    others: dict[str, dict[str, Any]],
 ) -> str:
+    # Open items first: they change little between checkpoints, so the
+    # provider can reuse the cached prefix; new items and summaries follow.
     payload = {
-        "category": category,
-        "kinds": list(memory_contract.CATEGORIES[category]),
         "open_items": [{"id": i["ref"], "kind": i["kind"], "text": i["text"]} for i in current],
         "new_items": [{"id": i["ref"], "kind": i["kind"], "text": i["text"]} for i in candidates],
         "span_summaries": spans,
-        "other_category_items": [
-            {"id": ref, "kind": i["kind"], "text": i["text"]} for ref, i in others.items()
-        ],
     }
     return prompts.render("reconcile", payload=json.dumps(payload, ensure_ascii=False))
 
@@ -82,17 +104,11 @@ def apply(
     items: dict[str, dict[str, Any]],
     order: list[str],
     spans: dict[str, str],
-    category: str,
-    others: dict[str, dict[str, Any]] | None = None,
-    rank: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     """Return kept items, closed records and the count of rejected operations.
 
-    others are read-only items of other categories, citable as evidence; rank
-    orders leaves so a cross-category supersession must come from a later span.
     An invalid operation is skipped, which keeps its item: the safe default.
     """
-    others, rank = others or {}, rank or {}
     used: set[str] = set()
     closed: list[dict[str, Any]] = []
     merged: dict[str, dict[str, Any]] = {}
@@ -117,7 +133,7 @@ def apply(
                 or not isinstance(text, str)
                 or not text.strip()
                 or len(text) > MAX_ITEM_CHARS
-                or new_kind not in memory_contract.CATEGORIES[category]
+                or new_kind not in memory_contract.KIND_FIELD
             ):
                 rejected += 1
                 continue
@@ -151,11 +167,7 @@ def apply(
             # Only a new candidate may fail the bar; an open item needs evidence.
             valid = valid and items[subject]["new"]
         elif kind == "done":
-            valid = valid and (
-                target in spans or target in others or (target in items and target != subject)
-            )
-        elif valid and kind == "superseded" and target in others:
-            valid = rank.get(others[target]["since"], -1) >= rank.get(items[subject]["since"], -1)
+            valid = valid and (target in spans or (target in items and target != subject))
         elif valid:
             valid = target in items and target != subject and target not in used
             if kind == "superseded":
@@ -164,11 +176,7 @@ def apply(
             rejected += 1
             continue
         used.add(subject)
-        evidence = spans.get(target) or (
-            items[target]["id"]
-            if target in items
-            else others[target]["id"] if target in others else None
-        )
+        evidence = spans.get(target) or (items[target]["id"] if target in items else None)
         closed.append({**items[subject], "op": kind, "by": evidence})
     kept = []
     for ref in order:
@@ -189,60 +197,46 @@ async def reconcile(
     leaves: list[dict[str, Any]],
     generate: Provider,
 ) -> dict[str, Any]:
-    """Absorb every leaf not yet reconciled, one provider call per category."""
+    """Absorb every leaf not yet reconciled in one provider call.
+
+    One call over every item: three per-category calls each re-read the whole
+    list as cross-category context, and reconcile was ~75% of checkpoint cost.
+    """
     saved = latest(store, key, scope)
     new_leaves = pending(leaves, saved)
     if not new_leaves:
         return {"state": "current", "id": saved["id"] if saved else None}
-    current = [dict(item) for item in (saved or {}).get("items", [])]
-    candidates = [item for leaf in new_leaves for item in leaf_items(leaf)]
+    old = [dict(item) for item in (saved or {}).get("items", [])]
+    seen = {item["id"] for item in old}
+    new = []
+    for leaf in new_leaves:
+        for item in leaf_items(leaf):
+            # The same text and refs re-emitted by a later span is the same item.
+            if item["id"] not in seen:
+                seen.add(item["id"])
+                new.append(item)
     spans = {f"s{n}": leaf["id"] for n, leaf in enumerate(new_leaves, 1)}
     summaries = [
         {"id": f"s{n}", "summary": leaf.get("summary", "")} for n, leaf in enumerate(new_leaves, 1)
     ]
-
-    rank = {leaf["id"]: n for n, leaf in enumerate(leaves)}
-    everything: dict[str, dict[str, Any]] = {}
-    for item in [*current, *candidates]:
-        everything.setdefault(item["id"], item)
-
-    async def run(category: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
-        # Contradictions cross categories (a fact can retire a rule), so every
-        # call sees the other categories read-only, and runs whenever anything
-        # is new.
-        others = {
-            f"c{n}": item
-            for n, item in enumerate(
-                (i for i in everything.values() if memory_contract.category(i["kind"]) != category),
-                1,
-            )
-        }
-        old = [i for i in current if memory_contract.category(i["kind"]) == category]
-        seen = {i["id"] for i in old}
-        new = []
-        for item in candidates:
-            # The same text and refs re-emitted by a later span is the same item.
-            if memory_contract.category(item["kind"]) == category and item["id"] not in seen:
-                seen.add(item["id"])
-                new.append(dict(item))
-        for n, item in enumerate(old, 1):
-            item.update(ref=f"o{n}", new=False)
-        for n, item in enumerate(new, 1):
-            item.update(ref=f"n{n}", new=True)
-        items = {i["ref"]: i for i in [*old, *new]}
-        order = [i["ref"] for i in [*old, *new]]
-        if not items:
-            return [], [], 0
-        prompt = build_prompt(category, old, new, summaries, others)
+    for n, item in enumerate(old, 1):
+        item.update(ref=f"o{n}", new=False)
+    for n, item in enumerate(new, 1):
+        item.update(ref=f"n{n}", new=True)
+    items = {i["ref"]: i for i in [*old, *new]}
+    order = [i["ref"] for i in [*old, *new]]
+    kept: list[dict[str, Any]] = []
+    closed: list[dict[str, Any]] = []
+    rejected = 0
+    if items:
+        prompt = build_prompt(old, new, summaries)
         for _ in range(2):
             raw = progress.json_object(await generate(prompt))
             if raw is not None and isinstance(raw.get("ops"), list):
-                return apply(raw["ops"], items, order, spans, category, others, rank)
-        raise ValueError("invalid_reconcile_reply")
-
-    results = await asyncio.gather(*(run(name) for name in memory_contract.CATEGORIES))
-    kept = [item for result in results for item in result[0]]
-    closed = [item for result in results for item in result[1]]
+                kept, closed, rejected = apply(raw["ops"], items, order, spans)
+                break
+        else:
+            raise ValueError("invalid_reconcile_reply")
     value = {
         "format": BUCKET,
         "scope_hash": scope,
@@ -250,7 +244,7 @@ async def reconcile(
         "absorbed": [*(saved or {}).get("absorbed", []), *(leaf["id"] for leaf in new_leaves)],
         "items": kept,
         "closed": closed,
-        "rejected_ops": sum(result[2] for result in results),
+        "rejected_ops": rejected,
     }
     identity = uuid.uuid4().hex
     conn = store._conn

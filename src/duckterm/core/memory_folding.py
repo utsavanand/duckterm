@@ -156,7 +156,11 @@ async def prepare(
         # fast tier's model.
         writer = captured.get("checkpoint_settings", {}).get("writer_model")
         reply = await asyncio.to_thread(
-            summarize, prompt, tier="fast", **({"claude_model": writer} if writer else {})
+            summarize,
+            prompt,
+            tier="fast",
+            effort="",
+            **({"claude_model": writer} if writer else {}),
         )
         if getattr(reply, "failure_reason", None):
             raise RuntimeError("compaction_provider_failed")
