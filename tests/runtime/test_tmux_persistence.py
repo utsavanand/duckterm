@@ -54,3 +54,49 @@ def test_session_is_readopted_after_restart(tmp_path: Path) -> None:
         assert stopped is True  # and could control it
     finally:
         tmux.kill_session(tmux.target_for(key))
+
+
+@pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
+def test_reader_shutdown_preserves_status_and_real_exit_still_completes(tmp_path: Path):
+    import contextlib
+    import shlex
+
+    key = "reader-shutdown-test"
+    command = shlex.join([sys.executable, "-c", "import time; time.sleep(60)"])
+    store = HistoryStore(tmp_path / "db.sqlite")
+    completed = []
+
+    async def scenario():
+        bus = EventBus(sink=lambda event: store.record({**event, "test": True}))
+        first = Orchestrator(bus, history=store)
+        first.on_completed = completed.append
+        await first.launch(
+            runtime=GenericRuntime(command), cwd=str(tmp_path), session_key=key, test=True
+        )
+        reader = first.get(key)
+        await asyncio.sleep(0.1)
+        before = store.session(key)
+        assert reader._task is not None
+        reader._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reader._task
+        await asyncio.sleep(0)
+        assert completed == []
+        assert tmux.session_exists(tmux.target_for(key))
+        after = store.session(key)
+        assert after["state"] == before["state"]
+        assert after["ended_at"] is None
+        assert after["event_count"] == before["event_count"]
+
+        second = Orchestrator(bus, history=store)
+        assert key in await second.reconcile()
+        assert store.session(key)["state"] == before["state"]
+        await second.stop(key)
+        assert store.session(key)["state"] == "terminated"
+        assert store.session(key)["ended_at"] is not None
+
+    try:
+        asyncio.run(scenario())
+    finally:
+        tmux.kill_session(tmux.target_for(key))
+        store.close()

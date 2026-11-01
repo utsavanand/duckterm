@@ -293,9 +293,9 @@ class SessionSupervisor:
 
     async def _tail_pipe(self) -> None:
         """Follow the tmux pane's output file, applying the same state/tool
-        detection as the PTY pump. Ends when the tmux session is gone. Always
-        emits SessionEnd, even if the loop raises — otherwise a crash here would
-        leave the session stuck 'live' forever with no signal of why."""
+        detection as the PTY pump. Ends when the tmux session is gone. Emits
+        SessionEnd on completion or capture failure. Cancellation only detaches
+        this server's reader: the persistent tmux agent may still be running."""
         assert self._tmux_target is not None
         target = self._tmux_target
         path = Path(self._pipe_path)
@@ -304,6 +304,7 @@ class SessionSupervisor:
         writer_finished = False
         drain_deadline = 0.0
         output_error = None
+        detached = False
         try:
             completion = completion_for(path)
             # Read the pipe in BINARY so the terminal gets the pane's raw bytes
@@ -388,6 +389,9 @@ class SessionSupervisor:
                     await asyncio.sleep(_TAIL_ACTIVE_SLEEP if loop.time() - active < 5 else 0.2)
             finally:
                 fh.close()
+        except asyncio.CancelledError:
+            detached = True
+            raise
         except Exception as e:  # noqa: BLE001 — boundary: a background task
             output_error = f"Terminal output capture failed: {e}"
         finally:
@@ -397,9 +401,10 @@ class SessionSupervisor:
                 self._preparing = True
                 await self._preparation.close()
             self._close_byte_subs()
-            self._emit(
-                events.SESSION_END, **({"output_error": output_error} if output_error else {})
-            )
+            if not detached:
+                self._emit(
+                    events.SESSION_END, **({"output_error": output_error} if output_error else {})
+                )
 
     async def _pump(self, primary: int) -> None:
         loop = asyncio.get_running_loop()
@@ -951,7 +956,10 @@ class Orchestrator:
             def _on_done(task: asyncio.Task[None], k: str = key) -> None:
                 # Surface a crash in the supervisor task — a done-callback that
                 # ignores task.exception() would let it vanish silently.
-                if not task.cancelled() and task.exception() is not None:
+                # Reader cancellation during server shutdown is not agent completion.
+                if task.cancelled():
+                    return
+                if task.exception() is not None:
                     print(
                         f"[duckterm] session {k} task ended with error: " f"{task.exception()}",
                         file=sys.stderr,
