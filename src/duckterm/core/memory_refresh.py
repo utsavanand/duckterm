@@ -120,7 +120,7 @@ async def fold(coordinator: ProgressCoordinator, key: str, captured: dict[str, A
 def reconcile_reply(prompt: str, model: str | None) -> str:
     from duckterm.server import summarize
 
-    reply = summarize(prompt, **({"claude_model": model} if model else {}))
+    reply = summarize(prompt, tier="fast", **({"claude_model": model} if model else {}))
     if getattr(reply, "failure_reason", None):
         raise RuntimeError("reconcile_provider_failed")
     return str(reply.text)

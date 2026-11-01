@@ -10,6 +10,9 @@ from test_memory import memory_rig, transcript
 
 from duckterm import memory_contract, memory_summary
 from duckterm.core import memory_folding as folding
+
+# Imported before the suite-wide stub in conftest replaces it.
+from duckterm.core.memory_refresh import reconcile_reply as real_reconcile_reply
 from duckterm.persistence.saved_state import current_revision, transaction
 
 __all__ = ["memory_rig"]
@@ -426,3 +429,42 @@ def test_no_fold_while_a_checkpoint_writes_spans_then_one_pass_folds(memory_rig,
         assert [n["tier"] for n in heads].count(1) == 2 and len(heads) == 42
 
     asyncio.run(run())
+
+
+def test_reconcile_and_folds_call_summarize_with_its_real_signature(memory_rig, monkeypatch):
+    # The suite-wide reconcile stub hid a missing tier argument; call the real path.
+    from duckterm.core import memory_refresh
+    from duckterm.llm import summarizer
+
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Owner instruction")
+    calls = []
+
+    def real_shaped(prompt, *, tier, claude_model=None):
+        calls.append((tier, claude_model))
+        value = (
+            {"ready": True, "reason_codes": []}
+            if prompt.startswith("Validate")
+            else {"overview": "Combined work."}
+        )
+        return SimpleNamespace(text=json.dumps(value), failure_reason=None)
+
+    assert list(inspect_signature(summarizer.summarize)) == ["prompt", "tier", "claude_model"]
+    monkeypatch.setattr("duckterm.server.summarize", real_shaped)
+    assert json.loads(real_reconcile_reply("prompt", "sonnet"))["overview"]
+
+    async def run():
+        captured = await server.progress_coordinator.capture("agent")
+        captured = {**captured, "checkpoint_settings": {"writer_model": "opus"}}
+        seed(server, captured, 60)
+        await memory_refresh.fold(server.progress_coordinator, "agent", captured)
+
+    asyncio.run(run())
+    assert calls[0] == ("fast", "sonnet")
+    assert set(calls[1:]) == {("fast", "opus")}
+
+
+def inspect_signature(function):
+    import inspect
+
+    return inspect.signature(function).parameters

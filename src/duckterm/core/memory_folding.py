@@ -152,7 +152,12 @@ async def prepare(
     async def provider(prompt: str) -> str:
         from duckterm.server import summarize
 
-        reply = await asyncio.to_thread(summarize, prompt, tier="fast")
+        # Folds are checkpoint summaries: same writer as the spans, not the
+        # fast tier's model.
+        writer = captured.get("checkpoint_settings", {}).get("writer_model")
+        reply = await asyncio.to_thread(
+            summarize, prompt, tier="fast", **({"claude_model": writer} if writer else {})
+        )
         if getattr(reply, "failure_reason", None):
             raise RuntimeError("compaction_provider_failed")
         return reply.text
