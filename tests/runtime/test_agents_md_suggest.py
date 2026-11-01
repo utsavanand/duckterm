@@ -95,7 +95,7 @@ def test_suggest_gathers_corrections_and_returns_rules(
 
     seen: dict = {}
 
-    def fake_summarize(prompt: str) -> Summary:
+    def fake_summarize(prompt: str, **_kw) -> Summary:
         seen["prompt"] = prompt
         return Summary(
             text="- [all] [1] Use rg, not grep\n- [codex] [1] Don't add obvious comments",
@@ -133,7 +133,7 @@ def test_suggest_with_no_corrections_skips_the_llm(
     store = HistoryStore(tmp_path / "db.sqlite")
     (tmp_path / "empty").mkdir()
 
-    def boom(prompt: str) -> Summary:
+    def boom(prompt: str, **_kw) -> Summary:
         raise AssertionError("summarize must not be called with no corrections")
 
     monkeypatch.setattr(suggest_mod, "summarize", boom)
@@ -195,7 +195,7 @@ def test_rejected_tombstone_blocks_reproposal(
     monkeypatch.setattr(
         suggest_mod,
         "summarize",
-        lambda prompt: Summary(text="- [all] [2] Use rg, not grep", backend="fake"),
+        lambda prompt, **_kw: Summary(text="- [all] [2] Use rg, not grep", backend="fake"),
     )
 
     async def scenario() -> tuple[int, dict]:

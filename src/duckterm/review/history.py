@@ -2,7 +2,7 @@
 at that release, and the difference between any two.
 
 Releases come from `git tag --sort=creatordate` matching v*. A module map per
-tag is one memory_provider call over the import graph at that tag (Python
+tag is one llm.backend call over the import graph at that tag (Python
 imports through ast, TypeScript import statements), cached as JSON. Maps are
 generated lazily, newest first, so the tab is usable within seconds."""
 
@@ -16,8 +16,8 @@ from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from duckterm import memory_provider
 from duckterm.core.session_api import APIError
+from duckterm.llm import backend
 from duckterm.review import cards, git, store, symbols
 
 TAG = re.compile(r"^v\d")
@@ -225,8 +225,7 @@ async def build_map(repo: str, slug: str | None, tag: str) -> dict[str, Any]:
         return existing
     _save(repo, slug, tag, {"tag": tag, "status": "pending", "at": int(time.time())})
     graph = import_graph(repo, tag)
-    provider = cards.provider()
-    if provider is None:
+    if not backend.ready():
         value = {
             "tag": tag,
             "status": "omitted",
@@ -236,11 +235,8 @@ async def build_map(repo: str, slug: str | None, tag: str) -> dict[str, Any]:
         }
         _save(repo, slug, tag, value)
         return value
-    harness, model = provider
     try:
-        reply = await memory_provider.generate(
-            harness, model, _prompt(tag, graph), SCHEMA, user_settings=True
-        )
+        reply = (await backend.complete(_prompt(tag, graph), tier="fast", schema=SCHEMA)).text
         parsed = cards._parse_reply(reply)
         if parsed is None or "modules" not in parsed:
             raise APIError(502, "The model did not return a module map")

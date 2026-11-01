@@ -36,7 +36,7 @@ def rig(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "_progress_transcript", lambda *args: list(text))
     calls = []
 
-    def provider(prompt):
+    def provider(prompt, **_kw):
         calls.append(prompt)
         if "validating a candidate" in prompt:
             return Summary(
@@ -95,7 +95,7 @@ def test_fresh_marker_reuses_revision_and_projects_original_events(rig):
 
 def test_unavailable_provider_saves_facts_but_cannot_prepare_switch(rig, monkeypatch):
     server, _, _ = rig
-    monkeypatch.setattr("duckterm.server.summarize", lambda _: Summary("", "none"))
+    monkeypatch.setattr("duckterm.server.summarize", lambda _, **_kw: Summary("", "none"))
 
     async def run():
         cp = await checkpoint(server)
@@ -112,7 +112,7 @@ def test_unvalidated_paragraph_never_becomes_ready(rig, monkeypatch):
     server, _, _ = rig
     monkeypatch.setattr(
         "duckterm.server.summarize",
-        lambda _: Summary(
+        lambda _, **_kw: Summary(
             json.dumps(
                 {"summary": "Generated but not verified", "accept": [], "done_next_action_ids": []}
             ),
@@ -150,7 +150,7 @@ def test_provider_failure_keeps_last_good_summary_with_its_age(rig, monkeypatch)
         first = await checkpoint(server)
         old = server.history.session("test-save")["progress"]
         text.append({"role": "user", "text": "An additional requirement"})
-        monkeypatch.setattr("duckterm.server.summarize", lambda _: Summary("", "none"))
+        monkeypatch.setattr("duckterm.server.summarize", lambda _, **_kw: Summary("", "none"))
         second = await checkpoint(server)
         assert second["summary"] == first["summary"]
         assert second["summary_source_at"] == first["summary_source_at"]
@@ -325,7 +325,7 @@ def test_manual_checkpoint_records_failed_summary_attempt_without_inventing_succ
 ):
     server, _, _ = rig
     monkeypatch.setattr(
-        "duckterm.server.summarize", lambda _: Summary("", "none", failure_reason=reason)
+        "duckterm.server.summarize", lambda _, **_kw: Summary("", "none", failure_reason=reason)
     )
     cp = asyncio.run(checkpoint(server))
     assert cp["saved"]  # the marker/history boundary survived, not the summary update
@@ -354,7 +354,7 @@ def test_manual_checkpoint_distinguishes_updated_reused_and_failed_with_old_summ
         text.append({"role": "user", "text": "A later constraint"})
         monkeypatch.setattr(
             "duckterm.server.summarize",
-            lambda _: Summary("", "none", failure_reason="provider_timeout"),
+            lambda _, **_kw: Summary("", "none", failure_reason="provider_timeout"),
         )
         failed = await checkpoint(server)
         assert failed["summary_update"]["state"] == "failed"
@@ -369,7 +369,7 @@ def test_manual_checkpoint_distinguishes_updated_reused_and_failed_with_old_summ
 def test_manual_checkpoint_does_not_store_raw_provider_output_as_a_failure_reason(rig, monkeypatch):
     server, _, _ = rig
     monkeypatch.setattr(
-        "duckterm.server.summarize", lambda _: Summary("private invalid response", "cli")
+        "duckterm.server.summarize", lambda _, **_kw: Summary("private invalid response", "cli")
     )
     cp = asyncio.run(checkpoint(server))
     assert cp["summary_update"]["state"] == "failed"
@@ -388,7 +388,7 @@ def test_rejected_candidate_keeps_last_good_checkpoint_summary(rig, monkeypatch)
         text.append({"role": "user", "text": "An additional constraint"})
         monkeypatch.setattr(
             "duckterm.server.summarize",
-            lambda _: Summary(json.dumps({"summary": "Unverified replacement"}), "stub"),
+            lambda _, **_kw: Summary(json.dumps({"summary": "Unverified replacement"}), "stub"),
         )
         failed = await checkpoint(server)
         assert failed["summary_update"]["state"] == "failed"

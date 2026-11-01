@@ -114,3 +114,20 @@ jobs:
           scripts/test_mac_clipboard.sh
       - name: Signed app archive extraction
         run: python3 mac/Tests/archive-bundle.py
+
+  ducky-protocol:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Native phone protocol and real TLS host contracts
+        run: swift test --package-path ios
+      - name: Compile for the iPhone SDK
+        run: |
+          DUCKY_SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          xcrun swiftc -typecheck -target arm64-apple-ios16.0 -sdk "$DUCKY_SDK" ios/Sources/DuckyCore/*.swift
+      - name: Build the native iPhone viewer
+        run: xcodebuild -project ios/Ducky.xcodeproj -scheme Ducky -configuration Debug -sdk iphonesimulator CODE_SIGN_IDENTITY=- build

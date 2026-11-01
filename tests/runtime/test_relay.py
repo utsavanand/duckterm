@@ -151,7 +151,7 @@ def question_note(server, monkeypatch, text, verdict=BLOCKED, calls=None):
     reply = {"role": "assistant", "blocks": [{"type": "text", "text": text}]}
     monkeypatch.setattr(server, "_read_messages", lambda source: [owner, reply])
 
-    def classify(prompt, claude_model=None):
+    def classify(prompt, claude_model=None, **_kw):
         if calls is not None:
             calls.append((prompt, claude_model))
         return Summary(text=verdict, backend="cli" if verdict else "none")
@@ -303,7 +303,8 @@ def test_rule_proposal_comes_from_the_model_and_is_validated(world, monkeypatch)
         ]
     )
     monkeypatch.setattr(
-        "duckterm.server.summarize", lambda prompt: Summary(text=next(replies), backend="cli")
+        "duckterm.server.summarize",
+        lambda prompt, **_kw: Summary(text=next(replies), backend="cli"),
     )
     status, body = post(
         server, owner, "/relay/rules/propose", {"text": "always approve pytest in Duckterm"}

@@ -488,6 +488,7 @@ class ProgressCoordinator:
             reply = await asyncio.to_thread(
                 summarize,
                 prompt,
+                tier="fast",
                 **(
                     {"claude_model": captured["checkpoint_settings"]["writer_model"]}
                     if "checkpoint_settings" in captured
@@ -657,6 +658,7 @@ class ProgressCoordinator:
                 verdict_reply = await asyncio.to_thread(
                     summarize,
                     validation_prompt,
+                    tier="deep",
                     **(
                         {"claude_model": captured["checkpoint_settings"]["reviewer_model"]}
                         if "checkpoint_settings" in captured

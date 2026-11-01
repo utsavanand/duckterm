@@ -157,7 +157,7 @@ def test_different_capture_cannot_join_an_older_update(memory_rig, monkeypatch):
     original = server_module.summarize
     entered, released = threading.Event(), threading.Event()
 
-    def paused(prompt):
+    def paused(prompt, **_kw):
         entered.set()
         assert released.wait(3)
         return original(prompt)
@@ -324,7 +324,7 @@ def test_canceling_one_preparation_does_not_cancel_shared_checkpoint(
     entered, released = threading.Event(), threading.Event()
     keep = [True]
 
-    def slow(prompt):
+    def slow(prompt, **_kw):
         if not entered.is_set():
             entered.set()
             assert released.wait(5)
