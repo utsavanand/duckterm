@@ -22,7 +22,7 @@ const legacyKinds: Record<string, string> = { unfinished: "task", callout: "cons
 function KindCounts({ claims }: { claims: { kind?: string }[] }) {
   const counts: Record<string, number> = {};
   for (const claim of claims) {
-    const kind = legacyKinds[claim.kind ?? ""] ?? claim.kind ?? "unclassified";
+    const kind = kindOf(claim);
     counts[kind] = (counts[kind] ?? 0) + 1;
   }
   return <div className="rd-memory-kind-counts">
@@ -31,7 +31,9 @@ function KindCounts({ claims }: { claims: { kind?: string }[] }) {
   </div>;
 }
 
-const labels: Record<string, string> = { goals: "Goals", constraints: "Constraints, callouts and learnings", decisions: "Decisions and learnings", unfinished: "Unfinished work", questions: "Open questions", risks: "Risks" };
+function kindOf(claim: { kind?: string }) {
+  return legacyKinds[claim.kind ?? ""] ?? claim.kind ?? "unclassified";
+}
 function Evidence({ sessionKey, evidence }: { sessionKey: string; evidence: MemoryEvidence }) {
   const [read, setRead] = useState<MemoryRead | null>(null);
   const [error, setError] = useState("");
@@ -92,6 +94,11 @@ export function MemoryView({ sessionKey, name, active = true, initialRevision = 
   const aggregate = revision ? undefined : saved?.memory;
   const latestUpdate = saved?.latest_checkpoint?.summary_update;
   const groups = aggregate?.state === "available" ? aggregate.groups : aggregate ? [] : current?.groups ?? [];
+  // Items are stored in six fields; show them in the owner's categories, in kind order.
+  const all = groups.flatMap(g => g.claims);
+  const sections = categories.map(([name, kinds]) => [name, kinds.flatMap(kind => all.filter(c => kindOf(c) === kind))] as const);
+  const unclassified = all.filter(c => !categories.some(([, kinds]) => kinds.includes(kindOf(c))));
+  if (unclassified.length) sections.push(["Unclassified", unclassified]);
   return <section className="rd-memory-view" aria-label="Session memory">
     {onBack && <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={onBack}>← Timeline</button>}
     <header><div><span className="hint">{name} · Memory</span><h1>{mode === "checkpoint" ? "Checkpoint result" : mode === "history" && !revision ? "Revision history" : "Saved summary and evidence"}</h1><CheckpointAge sessionKey={sessionKey} /></div>
@@ -129,10 +136,10 @@ export function MemoryView({ sessionKey, name, active = true, initialRevision = 
         </section>
         {aggregate?.narratives?.length ? <section><h2>Recent work</h2>{aggregate.narratives.map(row => <p key={row.revision}>{row.text}</p>)}{Boolean(aggregate.older_narratives_for_retrieval) && <p className="hint">Earlier narrative summaries remain available through memory read tools.</p>}</section> : current.overview && <section><h2>Saved working context</h2><p>{current.overview}</p></section>}
         {aggregate?.pagination && <><p className="hint">Counts above describe this page. Open, retired and superseded are recorded states; reading this list does not declare a handoff ready.</p><MemoryPages page={aggregate.pagination} noun="saved items" previous={pages.length > 1} onPrevious={() => setPages(p => p.slice(0, -1))} onNext={next => setPages(p => [...p, next])} /></>}
-        {groups.map(group => <section key={group.field}><h2>{labels[group.field] ?? group.field}</h2>{group.claims.length ? group.claims.map(claim => <div className="rd-memory-claim" key={`${claim.source ?? current.source}/${claim.id ?? claim.record}`}>
-          <p>{claim.text}</p><span className="hint">{claim.kind ?? "unclassified"} · {claim.state ?? "open"}</span>
+        {sections.map(([name, claims]) => <section key={name}><h2>{name}</h2>{claims.length ? claims.map(claim => <div className="rd-memory-claim" key={`${claim.source ?? current.source}/${claim.id ?? claim.record}`}>
+          <p>{claim.text}</p><span className="hint">{kindOf(claim).replace("_", " ")} · {claim.state ?? "open"}</span>
           {claim.evidence.map(evidence => <Evidence key={`${sessionKey}/${evidence.source}/${evidence.record}`} sessionKey={sessionKey} evidence={evidence} />)}
-        </div>) : <p className="hint">No saved claim in this group.</p>}</section>)}
+        </div>) : <p className="hint">None saved.</p>}</section>)}
         {Boolean(current.withheld_claims) && <p role="alert">Some claims are withheld because their evidence is unavailable.</p>}
       </>}
       {saved.revisions_truncated && !saved.revisions_pagination && <p className="hint">Older revisions remain accessible through memory read tools.</p>}
